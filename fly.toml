@@ -1,0 +1,45 @@
+app = "seazn-club"
+primary_region = "lhr"
+
+[build]
+  # NEXT_PUBLIC_* vars are baked into the bundle at build time.
+  # Override these per-environment with `fly deploy --build-arg KEY=value`
+  # or set them here for the primary deployment.
+  [build.args]
+    NEXT_PUBLIC_SUPABASE_URL    = "https://YOUR_PROJECT.supabase.co"
+    NEXT_PUBLIC_SUPABASE_ANON_KEY = "YOUR_ANON_KEY"
+    # NEXT_PUBLIC_SENTRY_DSN    = "https://..."  # uncomment when Sentry project created
+
+[http_service]
+  internal_port       = 3000
+  force_https         = true
+  auto_stop_machines  = "stop"
+  auto_start_machines = true
+  min_machines_running = 1          # keep one warm; avoids cold-start for users
+
+  [http_service.concurrency]
+    type       = "connections"
+    hard_limit = 500
+    soft_limit = 400
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval     = "30s"
+    method       = "GET"
+    path         = "/api/health"
+    protocol     = "http"
+    timeout      = "5s"
+
+[[vm]]
+  size   = "shared-cpu-1x"
+  memory = "512mb"
+
+# ── Secrets (set via `fly secrets set KEY=value`) ─────────────────────────────
+# DATABASE_URL             — Supabase transaction pooler URL (port 6543)
+# AUTH_SECRET              — random 32-byte hex; `openssl rand -hex 32`
+# SUPABASE_SERVICE_ROLE_KEY
+# SUPABASE_JWT_SECRET
+# STRIPE_SECRET_KEY
+# STRIPE_WEBHOOK_SECRET
+# RESEND_API_KEY
+# SENTRY_AUTH_TOKEN        — only needed if uploading source maps in CI

@@ -1,0 +1,10 @@
+.git
+.gitignore
+.github
+node_modules
+.next
+.env*
+*.local
+development/
+*.md
+!README.md
