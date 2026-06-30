@@ -46,12 +46,12 @@ premature rewrite. We evolve the existing modular monolith.
             ┌───────────────┘       │       │     └───────────────┐
             ▼                       ▼       ▼                     ▼
    ┌─────────────────┐   ┌──────────────┐ ┌───────────────┐ ┌──────────────┐
-   │ PostgreSQL      │   │ Redis        │ │ Object storage│ │ Job queue /  │
-   │ (primary,       │   │ - cache      │ │ (player imgs, │ │ workers      │
-   │  pooled via     │   │ - rate limit │ │  exports, PDFs│ │ (email,      │
-   │  PgBouncer)     │   │ - pub/sub    │ │  via signed   │ │  exports,    │
-   │ + read replica  │   │   for SSE    │ │  URLs)        │ │  billing     │
-   │   (LATER)       │   │ - idempotency│ │               │ │  reconcile)  │
+   │ PostgreSQL      │   │ Upstash Redis│ │ Object storage│ │ Inngest      │
+   │ (primary,       │   │ - cache      │ │ (player imgs, │ │ (email,      │
+   │  pooled via     │   │ - rate limit │ │  exports, PDFs│ │  exports,    │
+   │  PgBouncer)     │   │ - idempotency│ │  via signed   │ │  billing     │
+   │ + read replica  │   │ - session    │ │  URLs)        │ │  reconcile,  │
+   │   (LATER)       │   │   cache      │ │               │ │  GDPR purge) │
    └─────────────────┘   └──────────────┘ └───────────────┘ └──────────────┘
             │
             ▼
@@ -76,11 +76,17 @@ premature rewrite. We evolve the existing modular monolith.
 - Add **RLS** as defense-in-depth (doc 03).
 - Read replica is `LATER` (only when read load demands).
 
-### 5.3 Redis (new)
+### 5.3 Redis — Upstash (locked)
+
+**Upstash Redis** — serverless, global, great free tier, works well with Fly.io and any platform.
+
+Responsibilities:
 - **Rate limiting** (auth, invite, write endpoints).
 - **Cache** of hot reads (standings, public pages, entitlements).
 - **Idempotency keys** for billing webhooks and result submission.
-- Not used for realtime fan-out (Supabase Realtime handles that — doc 10).
+- **Session / cache data** as needed.
+
+Redis is **completely out of the realtime path**. No pub/sub. Supabase Realtime handles all fan-out (§5.6).
 
 ### 5.4 Object storage — Supabase Storage (locked)
 
@@ -94,30 +100,38 @@ Summary:
 - Shared `supabase-admin.ts` with Realtime (doc 10).
 - Gated by `branding` / Pro+ for storage uploads; Community keeps initials or inline data URLs.
 
-### 5.5 Job queue / workers (new)
-- Email sending, export generation, billing reconciliation, scheduled reports, data export
-  (GDPR), webhook retries to customers.
-- Options: Inngest or Trigger.dev (managed, TS-native) or pg-boss/pg-cron (DB-backed).
-  Recommend **Inngest/Trigger.dev** to avoid running our own worker infra early.
+### 5.5 Job queue / workers — Inngest (locked)
+
+**Inngest** — native Next.js integration, works on Fly.io, durable retries, cron jobs, long-running workflows, no worker infra, excellent TypeScript support.
+
+Responsibilities: email sending, export generation, billing reconciliation, scheduled reports, GDPR data purge, webhook retries.
 
 ### 5.6 Realtime — Supabase (locked)
 
-Use **Supabase Realtime broadcast channels** — not self-hosted WebSockets on Vercel.
+Redis is **not in the realtime path**. Full flow:
+
+```
+Server mutation (start / result / undo / reset / checkin)
+        │
+        ▼
+Postgres transaction (tournament.ts)
+        │
+        ▼
+Supabase Realtime Broadcast  ← publishTournamentUpdate() via service role REST
+        │
+        ▼
+Browser receives event (use-tournament-realtime.ts)
+        │
+        ▼
+Refetch GET /api/tournaments/[id]/state
+```
+
 Full design: [10-supabase-realtime.md](10-supabase-realtime.md).
 
-Summary:
-- Server keeps writing via `postgres` package + `tournament.ts`.
-- After each mutation, server publishes `{ reason, v, at }` on `tournament:{id}` (service role).
-- Client uses `@supabase/supabase-js` **for realtime only**; refetches `GET /state` on event.
-- Subscriber JWT minted by `GET /api/tournaments/[id]/realtime-token` (custom auth + `SUPABASE_JWT_SECRET`).
-- Community tier: no token → 5 s polling fallback. Pro+: `realtime` entitlement.
-
-### 5.7 Realtime (original design note — superseded by doc 10)
-- **Phase 2 priority.** Server-Sent Events endpoint `GET /api/tournaments/[id]/stream`
-  subscribes a client to a Redis channel `tournament:{id}`. On `recordResult`/round
-  generation, publish a compact event; clients refetch or patch state.
-- Alternative: managed (Supabase Realtime, Ably, Pusher) if we want WebSockets + presence
-  without managing fan-out. Decision in doc 08.
+- Server writes via `postgres` package; publishes `{ reason, v, at }` on `tournament:{id}`.
+- Client uses `@supabase/supabase-js` for realtime only; re-fetches `/state` on event.
+- Subscriber JWT minted by `GET /api/tournaments/[id]/realtime-token` (gated by `realtime` entitlement).
+- Community: no token → 5s polling fallback. Pro+: realtime push.
 
 ## 6. Request lifecycle (write path example: record result)
 
@@ -168,15 +182,16 @@ src/lib/
 
 ## 9. Build vs buy (recommended defaults)
 
-| Concern | Build | Buy/managed (recommended) |
-|---------|-------|---------------------------|
-| Queue/jobs | pg-boss | **Inngest / Trigger.dev** |
-| Realtime | self SSE + Redis | self SSE first; **Ably/Pusher** if WS/presence needed |
-| Object storage | — | **S3 / Cloudflare R2 / Supabase Storage** |
-| Errors | — | **Sentry** |
-| Email | — | **Resend** (already) |
+| Concern | Build | Buy/managed (locked) |
+|---------|-------|----------------------|
+| Queue/jobs | pg-boss | **Inngest** ✓ |
+| Realtime | self SSE + Redis pub/sub | **Supabase Realtime Broadcast** ✓ |
+| Redis | — | **Upstash Redis** ✓ |
+| Object storage | — | **Supabase Storage** ✓ |
+| Errors | — | **Sentry** ✓ |
+| Email | — | **Resend** ✓ |
 | Billing | — | **Stripe** (doc 05) |
-| Auth/SSO | partial | **WorkOS / Auth0** for SAML/SCIM (doc 04) |
+| Auth/SSO | partial | **WorkOS / Auth0** for SAML/SCIM (doc 04, Enterprise) |
 
 ## 10. Failure modes & resilience
 
@@ -198,8 +213,7 @@ src/lib/
 ## 12. Decisions (locked vs open)
 
 **Locked:**
-- **Hosting:** Vercel (app) + Supabase (Postgres + Realtime).
-- **Realtime:** Supabase Realtime broadcast — see [10-supabase-realtime.md](10-supabase-realtime.md).
-
-**Still open:**
-1. Queue: managed (Inngest/Trigger.dev) vs pg-boss.
+- **Hosting:** Fly.io (app) + Supabase (Postgres + Realtime).
+- **Realtime:** Supabase Realtime broadcast (no Redis pub/sub) — see [10-supabase-realtime.md](10-supabase-realtime.md).
+- **Queue/jobs:** Inngest.
+- **Redis:** Upstash Redis (cache, rate limiting, idempotency — not realtime).

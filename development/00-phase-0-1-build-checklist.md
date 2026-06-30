@@ -8,7 +8,7 @@ out of scope here — see doc 09.
 **How to use:** work top-down within each phase; items in the same sub-section can run in
 parallel. Each line links the owning doc for detail. Check boxes as you go.
 
-**Locked decisions (context):** Vercel + Supabase · flat per-org pricing · Pro/clubs first,
+**Locked decisions (context):** Fly.io + Supabase · flat per-org pricing · Pro/clubs first,
 Enterprise coming soon · Supabase Realtime (Phase 2) · Supabase Storage (Phase 2).
 
 ---
@@ -90,7 +90,7 @@ enforced at the DB; engine guarded by property tests + CI; no secrets in repo.
 - [x] **Dunning** banner (past_due / suspended). ✓ `src/components/billing-banner.tsx`
 - [x] **Stripe Tax** + `allow_promotion_codes` wired into checkout. ✓
 - [x] Billing UI: `/settings/billing` plan page, usage bars, upgrade prompts. ✓ `src/app/settings/billing/page.tsx`
-- [ ] Wire `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` in Vercel env + Stripe dashboard webhook URL → `https://<domain>/api/webhooks/stripe`.
+- [ ] Wire `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET` in Fly.io env + Stripe dashboard webhook URL → `https://<domain>/api/webhooks/stripe`.
 
 ### 1.3 Account & org lifecycle (must-fix gaps) — doc 13
 - [x] **Last-owner protection** — role-change and remove-member use `FOR UPDATE` transaction row locks. ✓
@@ -121,7 +121,7 @@ enforced at the DB; engine guarded by property tests + CI; no secrets in repo.
 - [x] Bounce/complaint **webhooks → suppression list**; honor before non-transactional sends. ✓ `src/app/api/webhooks/resend/route.ts` + `email_suppressions` table
 - [x] Email queue table in DB (`email_queue`). ✓ `supabase/migrations/004_email_deliverability.sql` _(processor deferred: needs job runner Phase 0 / Inngest)_
 - [x] Reliable transactional emails: verify, reset, change-email, account-deletion, invite. ✓ `src/lib/email.ts`
-- [ ] `RESEND_WEBHOOK_SECRET` set in Vercel env + Resend dashboard webhook URL → `https://<domain>/api/webhooks/resend`.
+- [ ] `RESEND_WEBHOOK_SECRET` set in Fly.io env + Resend dashboard webhook URL → `https://<domain>/api/webhooks/resend`.
 
 ### 1.6 Onboarding & activation (conversion) — doc 14
 - [x] Instrument **activation funnel** events (first_tournament_created, tournament_started, tournament_completed). ✓ `src/lib/activation.ts` + `activation_events` table (migration 005)
@@ -137,7 +137,7 @@ enforced at the DB; engine guarded by property tests + CI; no secrets in repo.
 - [x] Cookie consent banner (essential-only; localStorage; no tracking). ✓ `src/components/cookie-consent.tsx`
 - [x] SEO metadata on all pages; `src/app/sitemap.ts`; `src/app/robots.ts` (disallows app routes). ✓
 - [x] Shared `MarketingNav` (auth-aware: Dashboard vs Login) + `MarketingFooter`. ✓
-- [ ] Lighthouse perf & SEO ≥ 90 — run after deploying to Vercel.
+- [ ] Lighthouse perf & SEO ≥ 90 — run after deploying to Fly.io.
 
 ### 1.8 Accessibility & performance gates (carry-in) — doc 12 / 15
 - [ ] **axe-core** checks in Playwright on dashboard/create/live/settings as a CI gate.
