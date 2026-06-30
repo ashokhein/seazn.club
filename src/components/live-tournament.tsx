@@ -18,9 +18,17 @@ import { AuditModal } from "@/components/audit-modal";
 import { Avatar } from "@/components/avatar";
 import { ClientTime } from "@/components/client-time";
 import type { Match, Player, Round, StandingRow, TournamentState } from "@/lib/types";
+import { useTournamentRealtime } from "@/hooks/use-tournament-realtime";
 
 function imageOf(players: Player[], pid: string | null): string | null {
-  return players.find((p) => p.id === pid)?.image_url ?? null;
+  const p = players.find((pl) => pl.id === pid);
+  if (!p) return null;
+  if (p.image_storage_path) {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    if (url) return `${url}/storage/v1/object/public/assets/${p.image_storage_path}`;
+  }
+  if (p.image_url?.startsWith("https://")) return p.image_url;
+  return null;
 }
 
 interface ClockTarget {
@@ -33,10 +41,14 @@ export function LiveTournament({
   id,
   canEdit,
   initial,
+  realtimeEnabled = false,
+  canExport = false,
 }: {
   id: string;
   canEdit: boolean;
   initial: TournamentState;
+  realtimeEnabled?: boolean;
+  canExport?: boolean;
 }) {
   const router = useRouter();
   const [state, setState] = useState<TournamentState>(initial);
@@ -57,10 +69,14 @@ export function LiveTournament({
     }
   }, [id]);
 
+  // Realtime: Pro orgs get broadcast push; Community falls back to polling.
+  useTournamentRealtime(id, refresh, realtimeEnabled);
+
   useEffect(() => {
+    if (realtimeEnabled) return; // realtime handles updates
     const t = setInterval(refresh, 5000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, realtimeEnabled]);
 
   const act = useCallback(
     async (fn: () => Promise<unknown>, opts?: { skipRefresh?: boolean }) => {
@@ -69,13 +85,15 @@ export function LiveTournament({
       inFlight.current = true;
       try {
         await fn();
-        if (!opts?.skipRefresh) await refresh();
       } catch (err) {
         setError(err instanceof Error ? err.message : "Action failed");
-      } finally {
         inFlight.current = false;
         setBusy(false);
+        return;
       }
+      inFlight.current = false;
+      setBusy(false);
+      if (!opts?.skipRefresh) await refresh();
     },
     [refresh],
   );
@@ -146,6 +164,7 @@ export function LiveTournament({
           message="This clears every result and returns the tournament to setup. This cannot be undone."
           confirmLabel="Reset everything"
           danger
+          typeToConfirm="RESET"
           onClose={() => setConfirmReset(false)}
           onConfirm={() =>
             act(() => api(`/api/tournaments/${id}/reset`, { method: "POST" }))
@@ -182,6 +201,7 @@ export function LiveTournament({
             <span className="chip">{t.category}</span>
             <span className="chip">{formatLabel}</span>
             <StatusBadge status={t.status} />
+            {t.venue && <span className="chip">📍 {t.venue}</span>}
             {t.starts_at && (
               <span className="chip">
                 <ClientTime value={t.starts_at} mode="datetime" />
@@ -191,7 +211,19 @@ export function LiveTournament({
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
-          <SharePanel id={id} name={t.name} />
+          <SharePanel
+            id={id}
+            name={t.name}
+            isPublic={t.is_public}
+            publicSlug={t.public_slug}
+            canEdit={canEdit}
+            onPublicChanged={(p, s) =>
+              setState((prev) => ({
+                ...prev,
+                tournament: { ...prev.tournament, is_public: p, public_slug: s },
+              }))
+            }
+          />
           <Link
             href={`/tournaments/${id}/slideshow`}
             target="_blank"
@@ -206,9 +238,11 @@ export function LiveTournament({
           >
             🖨 <span className="hidden xs:inline">Print</span>
           </Link>
-          <button onClick={exportCsv} className="btn btn-ghost">
-            ⬇ CSV
-          </button>
+          {canExport ? (
+            <button onClick={exportCsv} className="btn btn-ghost">⬇ CSV</button>
+          ) : (
+            <a href="/settings/billing" className="btn btn-ghost text-xs text-slate-400" title="Upgrade to Pro to export CSV">⬇ CSV ✦</a>
+          )}
           {canEdit && (
             <button onClick={() => setShowAudit(true)} className="btn btn-ghost">
               📜 <span className="hidden xs:inline">History</span>
@@ -425,47 +459,118 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`badge ${map[status] ?? map.setup}`}>{status}</span>;
 }
 
-function SharePanel({ id, name }: { id: string; name: string }) {
+function SharePanel({
+  id,
+  name,
+  isPublic,
+  publicSlug,
+  canEdit,
+  onPublicChanged,
+}: {
+  id: string;
+  name: string;
+  isPublic: boolean;
+  publicSlug: string | null;
+  canEdit: boolean;
+  onPublicChanged: (isPublic: boolean, slug: string | null) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const [url, setUrl] = useState("");
   const [qr, setQr] = useState("");
   const [copied, setCopied] = useState(false);
+  const [toggling, setToggling] = useState(false);
+
+  const privateUrl = typeof window !== "undefined"
+    ? `${window.location.origin}/tournaments/${id}`
+    : "";
+  const publicUrl = publicSlug && typeof window !== "undefined"
+    ? `${window.location.origin}/t/${publicSlug}`
+    : null;
+
+  const activeUrl = publicUrl ?? privateUrl;
 
   useEffect(() => {
-    if (!open) return;
-    const u = `${window.location.origin}/tournaments/${id}`;
-    setUrl(u);
+    if (!open || !activeUrl) return;
     import("qrcode").then((QR) =>
-      QR.toDataURL(u, { width: 220, margin: 1 }).then(setQr).catch(() => {}),
+      QR.toDataURL(activeUrl, { width: 200, margin: 1 }).then(setQr).catch(() => {}),
     );
-  }, [open, id]);
+  }, [open, activeUrl]);
+
+  async function togglePublic() {
+    setToggling(true);
+    try {
+      const res = await api<{ is_public: boolean; public_slug: string | null }>(
+        `/api/tournaments/${id}/public`,
+        { method: "PATCH", body: JSON.stringify({ is_public: !isPublic }) },
+      );
+      onPublicChanged(res.is_public, res.public_slug);
+      setQr(""); // regenerate QR for new URL
+    } catch {
+      /* ignore */
+    } finally {
+      setToggling(false);
+    }
+  }
+
+  function copyUrl(u: string) {
+    navigator.clipboard.writeText(u).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  }
 
   return (
     <div className="relative">
       <button onClick={() => setOpen((v) => !v)} className="btn btn-ghost">
-        🔗 Share
+        🔗 <span className="hidden xs:inline">Share</span>
       </button>
       {open && (
-        <div className="absolute left-0 z-20 mt-2 w-72 max-w-[calc(100vw-2rem)] rounded-xl border border-purple-100 bg-white p-4 shadow-xl sm:left-auto sm:right-0">
-          <p className="mb-2 text-sm font-medium text-purple-900">{name}</p>
+        <div className="absolute left-0 z-20 mt-2 w-80 max-w-[calc(100vw-2rem)] rounded-xl border border-purple-100 bg-white p-4 shadow-xl sm:left-auto sm:right-0">
+          <p className="mb-3 text-sm font-semibold text-purple-900">{name}</p>
+
+          {/* Public page toggle */}
+          {canEdit && (
+            <div className="mb-3 flex items-center justify-between rounded-lg bg-purple-50 px-3 py-2">
+              <div>
+                <p className="text-xs font-medium text-slate-700">Public live page</p>
+                <p className="text-[11px] text-slate-400">Anyone with link can view</p>
+              </div>
+              <button
+                onClick={togglePublic}
+                disabled={toggling}
+                className={`relative h-5 w-9 rounded-full transition-colors disabled:opacity-50 ${isPublic ? "bg-purple-600" : "bg-slate-300"}`}
+              >
+                <span
+                  className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${isPublic ? "left-4" : "left-0.5"}`}
+                />
+              </button>
+            </div>
+          )}
+
+          {/* QR + link */}
           {qr && (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={qr} alt="QR code" className="mx-auto mb-3 rounded-lg border border-purple-100 p-1" />
+            <img src={qr} alt="QR code" className="mx-auto mb-3 rounded-lg border border-purple-100 p-1" width={200} height={200} />
           )}
-          <p className="mb-2 break-all rounded-lg bg-purple-50 px-2 py-1.5 text-xs text-slate-500">
-            {url}
-          </p>
-          <button
-            onClick={() => {
-              navigator.clipboard.writeText(url).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              });
-            }}
-            className="btn btn-primary w-full"
-          >
-            {copied ? "Copied!" : "Copy link"}
-          </button>
+
+          {publicUrl && (
+            <div className="mb-2">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-purple-500">Public link</p>
+              <p className="break-all rounded-lg bg-purple-50 px-2 py-1.5 text-xs text-slate-600">{publicUrl}</p>
+              <button onClick={() => copyUrl(publicUrl)} className="btn btn-primary mt-2 w-full text-sm">
+                {copied ? "Copied!" : "Copy public link"}
+              </button>
+            </div>
+          )}
+
+          <div className={publicUrl ? "mt-2 border-t border-purple-50 pt-2" : ""}>
+            {publicUrl && <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">Private link (requires login)</p>}
+            <p className="break-all rounded-lg bg-slate-50 px-2 py-1.5 text-xs text-slate-500">{privateUrl}</p>
+            {!publicUrl && (
+              <button onClick={() => copyUrl(privateUrl)} className="btn btn-primary mt-2 w-full text-sm">
+                {copied ? "Copied!" : "Copy link"}
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>

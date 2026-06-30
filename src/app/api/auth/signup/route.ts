@@ -5,6 +5,8 @@ import { baseUrl } from "@/lib/oauth";
 import { sendVerificationEmail } from "@/lib/email";
 import { createVerificationToken } from "@/lib/verification";
 import { signupSchema } from "@/lib/types";
+import { rateLimit, AUTH_LIMIT } from "@/lib/rate-limit";
+import { headers } from "next/headers";
 
 /** Turn an email into a friendly default display name (the part before @). */
 function displayNameFromEmail(email: string): string {
@@ -19,6 +21,9 @@ function displayNameFromEmail(email: string): string {
 
 export async function POST(req: Request) {
   return handler(async () => {
+    const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    await rateLimit(`signup:${ip}`, AUTH_LIMIT);
+
     const body = await req.json();
     const { email, password } = signupSchema.parse(body);
     const next = safeNextPath((body as { next?: unknown })?.next);

@@ -4,7 +4,7 @@ import { createSession, postAuthLanding } from "@/lib/auth";
 import { handler } from "@/lib/http";
 import { consumeVerificationToken } from "@/lib/verification";
 
-const schema = z.object({ token: z.string().min(10) });
+const schema = z.object({ token: z.string().min(10) }).strict();
 
 /** Verify an email token, mark the account verified, and sign the user in. */
 export async function POST(req: Request) {

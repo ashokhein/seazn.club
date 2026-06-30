@@ -34,6 +34,8 @@ export interface Organization {
   slug: string;
   created_by: string | null;
   created_at: string;
+  logo_url: string | null;
+  logo_storage_path: string | null;
 }
 
 /** An organization paired with the current user's role in it. */
@@ -140,6 +142,10 @@ export interface Tournament {
   starts_at: string | null;
   round_minutes: number;
   clock_minutes: number;
+  is_public: boolean;
+  public_slug: string | null;
+  state_version: number;
+  venue: string | null;
   created_at: string;
 }
 
@@ -150,6 +156,7 @@ export interface Player {
   seed: number;
   checked_in: boolean;
   image_url: string | null;
+  image_storage_path: string | null;
 }
 
 export type RoundStage = "group" | "playoff" | "knockout" | "final";
@@ -236,7 +243,7 @@ export interface StandingRow {
 export const loginSchema = z.object({
   email: z.string().email().max(120),
   password: z.string().min(6).max(100),
-});
+}).strict();
 
 export const signupSchema = loginSchema;
 
@@ -245,25 +252,25 @@ export const signupSchema = loginSchema;
 // The slug is generated automatically; only a display name is collected.
 export const createOrgSchema = z.object({
   name: z.string().min(1).max(60),
-});
+}).strict();
 
 export const renameOrgSchema = z.object({
   name: z.string().min(1).max(60),
-});
+}).strict();
 
 export const createInviteSchema = z.object({
   role: z.enum(["admin", "viewer"]),
   max_uses: z.number().int().min(0).max(1000).default(1),
   expires_in_days: z.number().int().min(1).max(365).nullable().optional(),
-});
+}).strict();
 
 export const setRoleSchema = z.object({
   role: z.enum(ORG_ROLES),
-});
+}).strict();
 
 export const setActiveOrgSchema = z.object({
   org_id: z.string().uuid(),
-});
+}).strict();
 
 const sportPresetFieldsSchema = z.object({
   sport_name: z.string().min(1).max(40),
@@ -285,7 +292,7 @@ const sportPresetFieldsSchema = z.object({
     .int()
     .refine((n) => [0, 2, 4, 8, 16].includes(n))
     .nullable(),
-});
+}).strict();
 
 export const createSportPresetSchema = sportPresetFieldsSchema;
 
@@ -300,7 +307,7 @@ export const playerInputSchema = z.union([
   z.object({
     name: z.string().min(1).max(60),
     image_url: z.string().max(1_500_000).nullable().optional(),
-  }),
+  }).strict(),
 ]);
 export type PlayerInput = z.infer<typeof playerInputSchema>;
 
@@ -323,7 +330,8 @@ export const createTournamentSchema = z.object({
   starts_at: z.string().nullable().optional(),
   round_minutes: z.number().int().min(1).max(600).default(30),
   clock_minutes: z.number().int().min(0).max(600).default(0),
-});
+  venue: z.string().max(120).nullable().optional(),
+}).strict();
 
 export const createSeasonSchema = z.object({
   name: z.string().min(1).max(60),
@@ -332,7 +340,7 @@ export const createSeasonSchema = z.object({
     .min(2)
     .max(40)
     .regex(/^[a-z0-9-]+$/, "Use lowercase letters, numbers and dashes only"),
-});
+}).strict();
 
 /** Record a match result: either a winner (win_loss) or scores (score mode). */
 export const recordResultSchema = z
@@ -343,6 +351,7 @@ export const recordResultSchema = z
     player2_score: z.number().int().min(0).max(100000).nullable().optional(),
     is_draw: z.boolean().optional(),
   })
+  .strict()
   .refine(
     (v) =>
       v.winner_id != null ||
@@ -354,9 +363,64 @@ export const recordResultSchema = z
 export const setCheckInSchema = z.object({
   player_id: z.string().uuid(),
   checked_in: z.boolean(),
-});
+}).strict();
 
 /** Add entrants to a tournament that has not started yet. */
 export const addPlayersSchema = z.object({
   players: z.array(playerInputSchema).min(1).max(32),
-});
+}).strict();
+
+// ---- account lifecycle schemas -----------------------------------------------
+
+export const transferOwnerSchema = z.object({
+  new_owner_id: z.string().uuid(),
+}).strict();
+
+export const changeEmailSchema = z.object({
+  new_email: z.string().email().max(120),
+}).strict();
+
+export const deleteAccountSchema = z.object({
+  confirm: z.literal("DELETE"),
+}).strict();
+
+// ---- billing request schemas -------------------------------------------------
+
+export const checkoutSchema = z.object({
+  plan_key: z.enum(["pro"]),
+  interval: z.enum(["monthly", "annual"]),
+}).strict();
+
+// ---- billing types -----------------------------------------------------------
+
+export const PLAN_KEYS = ["community", "pro"] as const;
+export const SUBSCRIPTION_STATUSES = [
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+  "suspended",
+] as const;
+export type PlanKey = (typeof PLAN_KEYS)[number];
+export type SubscriptionStatus = (typeof SUBSCRIPTION_STATUSES)[number];
+
+export interface Plan {
+  key: PlanKey;
+  name: string;
+  stripe_price_id_monthly: string | null;
+  stripe_price_id_annual: string | null;
+  is_public: boolean;
+  created_at: string;
+}
+
+export interface Subscription {
+  org_id: string;
+  plan_key: PlanKey;
+  status: SubscriptionStatus;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  current_period_end: string | null;
+  trial_end: string | null;
+  cancel_at_period_end: boolean;
+  updated_at: string;
+}

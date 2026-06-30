@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { Nav } from "@/components/nav";
+import { BillingBanner } from "@/components/billing-banner";
 import { CreateSeasonForm } from "@/components/create-season-form";
 import type { Season, Tournament } from "@/lib/types";
 
@@ -77,6 +78,7 @@ export default async function DashboardPage() {
   return (
     <>
       <Nav />
+      <BillingBanner orgId={active.id} />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <div className="min-w-0">
@@ -105,11 +107,37 @@ export default async function DashboardPage() {
         </div>
 
         {tournaments.length === 0 && seasons.length === 0 ? (
-          <p className="text-sm text-slate-500">
-            {canEdit
-              ? "Nothing yet — create your first tournament."
-              : "No tournaments yet."}
-          </p>
+          canEdit ? (
+            <div className="mt-12 flex flex-col items-center gap-6 text-center">
+              <div className="text-6xl">🏆</div>
+              <div>
+                <h2 className="text-xl font-semibold text-slate-800">
+                  No tournaments yet
+                </h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  Create your first tournament in under a minute. Pick a sport,
+                  add players, and you&apos;re live.
+                </p>
+              </div>
+              <div className="flex flex-wrap justify-center gap-3">
+                <Link href="/tournaments/new" className="btn btn-primary">
+                  + New tournament
+                </Link>
+                <Link
+                  href="/settings"
+                  className="btn btn-ghost border border-purple-200 text-purple-700"
+                >
+                  Customize sport presets
+                </Link>
+              </div>
+              <p className="text-xs text-slate-400">
+                Pro tip: you can also create a season first to group multiple
+                tournaments together.
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">No tournaments yet.</p>
+          )
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {sections.map((s) => {

@@ -6,13 +6,19 @@ import { cookies } from "next/headers";
 import { sql } from "@/lib/db";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { EDITOR_ROLES } from "@/lib/types";
+import { AuthError, HttpError } from "@/lib/errors";
 
 const COOKIE_NAME = "safe_session";
 const ORG_COOKIE = "safe_org";
 const SESSION_DAYS = 30;
 
 function secretKey(): Uint8Array {
-  const secret = process.env.AUTH_SECRET || "dev-insecure-secret-change-me";
+  const secret = process.env.AUTH_SECRET;
+  if (!secret) {
+    if (process.env.NODE_ENV === "production")
+      throw new Error("AUTH_SECRET environment variable is required in production");
+    return new TextEncoder().encode("dev-insecure-secret-change-me");
+  }
   return new TextEncoder().encode(secret);
 }
 
@@ -87,7 +93,8 @@ export async function requireUser(): Promise<User> {
 /** Every organization the user belongs to, with their role, newest first. */
 export async function getUserOrgs(userId: string): Promise<OrgMembership[]> {
   return sql<OrgMembership[]>`
-    select o.id, o.name, o.slug, o.created_by, o.created_at, m.role
+    select o.id, o.name, o.slug, o.created_by, o.created_at,
+           o.logo_url, o.logo_storage_path, m.role
     from org_members m
     join organizations o on o.id = m.org_id
     where m.user_id = ${userId}
@@ -162,6 +169,10 @@ export async function createOrgForUser(
     await tx`
       insert into org_members (org_id, user_id, role)
       values (${o.id}, ${userId}, 'owner')`;
+    await tx`
+      insert into subscriptions (org_id, plan_key, status)
+      values (${o.id}, 'community', 'active')
+      on conflict (org_id) do nothing`;
     const { seedDefaultSportPresets } = await import("@/lib/sport-presets");
     await seedDefaultSportPresets(tx, o.id);
     return o;
@@ -214,7 +225,10 @@ export async function postAuthLanding(
     return { redirect: safe, orgId: null, hasOrg: false };
   }
   const orgId = await ensureActiveOrg(userId);
-  return { redirect: "/dashboard", orgId, hasOrg: true };
+  // New users (onboarding_completed_at null) go to the first-run wizard.
+  const { needsOnboarding } = await import("@/lib/activation");
+  const isNew = await needsOnboarding(userId);
+  return { redirect: isNew ? "/onboarding" : "/dashboard", orgId, hasOrg: true };
 }
 
 /**
@@ -234,20 +248,21 @@ export async function requireOrgRole(
 
 /**
  * Require the current user to be an editor (owner/admin) of the organization
- * that owns the given tournament. Returns the user for audit attribution.
+ * that owns the given tournament. Returns the user and orgId for downstream use.
  */
 export async function requireTournamentEditor(
   tournamentId: string,
-): Promise<User> {
+): Promise<{ user: User; orgId: string }> {
   const user = await requireUser();
   const rows = await sql<{ org_id: string }[]>`
     select org_id from tournaments where id = ${tournamentId} limit 1`;
-  if (!rows[0]) throw new AuthError("Tournament not found");
-  const role = await getOrgRole(rows[0].org_id, user.id);
+  if (!rows[0]) throw new HttpError(404, "Tournament not found");
+  const orgId = rows[0].org_id;
+  const role = await getOrgRole(orgId, user.id);
   if (!role || !EDITOR_ROLES.includes(role as (typeof EDITOR_ROLES)[number])) {
     throw new AuthError("You don't have edit access to this tournament");
   }
-  return user;
+  return { user, orgId };
 }
 
-export class AuthError extends Error {}
+export { AuthError } from "@/lib/errors";

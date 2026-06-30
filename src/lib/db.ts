@@ -1,6 +1,7 @@
 import postgres from "postgres";
 
 type Sql = ReturnType<typeof postgres>;
+type Tx = postgres.TransactionSql;
 
 /**
  * Lazily-initialised postgres client.
@@ -46,6 +47,24 @@ function getClient(): Sql {
   });
   if (process.env.NODE_ENV !== "production") globalForDb._sql = client;
   return client;
+}
+
+/**
+ * Run `fn` inside a transaction with the tenant context set. The `app_user`
+ * role (non-superuser) is activated for the transaction so RLS policies
+ * enforce org isolation. All tournament mutations must go through this.
+ */
+export async function withTenant<T>(
+  orgId: string,
+  fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  // postgres types begin() as Promise<UnwrapPromiseArray<T>>; for non-array T
+  // this equals T at runtime but TS can't prove it — safe cast.
+  return getClient().begin(async (tx) => {
+    await tx`select set_config('app.current_org', ${orgId}, true)`;
+    await tx`set local role app_user`;
+    return fn(tx);
+  }) as unknown as T;
 }
 
 // A Proxy that forwards both tagged-template calls and method access

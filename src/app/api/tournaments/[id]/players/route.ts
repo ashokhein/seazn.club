@@ -10,9 +10,9 @@ export async function POST(
 ) {
   return handler(async () => {
     const { id } = await params;
-    const user = await requireTournamentEditor(id);
+    const { user, orgId } = await requireTournamentEditor(id);
     const { players } = addPlayersSchema.parse(await req.json());
-    const added = await addPlayers(id, players, user.display_name);
+    const added = await addPlayers(id, orgId, players, user.display_name);
     return { added };
   });
 }

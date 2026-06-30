@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /** Lightweight centered modal with an overlay. */
 export function Modal({
@@ -55,12 +55,13 @@ export function Modal({
   );
 }
 
-/** Confirm dialog built on Modal. */
+/** Confirm dialog built on Modal. Pass `typeToConfirm` to require the user to type a word. */
 export function ConfirmModal({
   title,
   message,
   confirmLabel = "Confirm",
   danger,
+  typeToConfirm,
   onConfirm,
   onClose,
 }: {
@@ -68,9 +69,13 @@ export function ConfirmModal({
   message: string;
   confirmLabel?: string;
   danger?: boolean;
+  typeToConfirm?: string;
   onConfirm: () => void;
   onClose: () => void;
 }) {
+  const [typed, setTyped] = useState("");
+  const canConfirm = !typeToConfirm || typed.trim().toUpperCase() === typeToConfirm.toUpperCase();
+
   return (
     <Modal
       title={title}
@@ -81,18 +86,34 @@ export function ConfirmModal({
             Cancel
           </button>
           <button
+            disabled={!canConfirm}
             onClick={() => {
               onConfirm();
               onClose();
             }}
-            className={`btn ${danger ? "btn-danger" : "btn-primary"}`}
+            className={`btn ${danger ? "btn-danger" : "btn-primary"} disabled:opacity-40`}
           >
             {confirmLabel}
           </button>
         </>
       }
     >
-      {message}
+      <p>{message}</p>
+      {typeToConfirm && (
+        <div className="mt-4">
+          <p className="mb-1.5 text-xs text-slate-500">
+            Type <span className="font-mono font-semibold text-red-600">{typeToConfirm}</span> to confirm
+          </p>
+          <input
+            autoFocus
+            type="text"
+            value={typed}
+            onChange={(e) => setTyped(e.target.value)}
+            className="input w-full"
+            placeholder={typeToConfirm}
+          />
+        </div>
+      )}
     </Modal>
   );
 }

@@ -1,7 +1,8 @@
 import "server-only";
 import { randomUUID } from "crypto";
 import type postgres from "postgres";
-import { sql } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
+import { HttpError } from "@/lib/errors";
 import { computeStandings, type ScoringConfig } from "@/lib/standings";
 import {
   knockoutFirstRound,
@@ -339,13 +340,14 @@ function groupMatchesFromPairings(
 
 export async function startTournament(
   tournamentId: string,
+  orgId: string,
   actor: string | null = null,
 ): Promise<void> {
-  await sql.begin(async (tx) => {
+  await withTenant(orgId, async (tx) => {
     const [t] = await tx<Tournament[]>`
       select * from tournaments where id = ${tournamentId} for update`;
-    if (!t) throw new Error("Tournament not found");
-    if (t.status !== "setup") throw new Error("Tournament already started");
+    if (!t) throw new HttpError(404, "Tournament not found");
+    if (t.status !== "setup") throw new HttpError(409, "Tournament already started");
 
     const players = await tx<Player[]>`
       select ${tx(PLAYER_COLS as unknown as string[])} from players
@@ -428,20 +430,21 @@ export interface ResultInput {
 
 export async function recordResult(
   tournamentId: string,
+  orgId: string,
   matchId: string,
   input: ResultInput,
   actor: string | null = null,
 ): Promise<void> {
-  await sql.begin(async (tx) => {
+  await withTenant(orgId, async (tx) => {
     const [t] = await tx<Tournament[]>`
       select * from tournaments where id = ${tournamentId} for update`;
-    if (!t) throw new Error("Tournament not found");
+    if (!t) throw new HttpError(404, "Tournament not found");
 
     const [m] = await tx<Match[]>`
       select ${tx(MATCH_COLS as unknown as string[])} from matches
       where id = ${matchId} and tournament_id = ${tournamentId}`;
-    if (!m) throw new Error("Match not found");
-    if (m.status === "completed") throw new Error("Match already decided");
+    if (!m) throw new HttpError(404, "Match not found");
+    if (m.status === "completed") throw new HttpError(409, "Match already decided");
     if (!m.player1_id || !m.player2_id)
       throw new Error("Both players must be present");
 
@@ -864,11 +867,12 @@ async function resolveByes(tx: Tx, tournamentId: string) {
 
 export async function setCheckIn(
   tournamentId: string,
+  orgId: string,
   playerId: string,
   checkedIn: boolean,
   actor: string | null = null,
 ): Promise<void> {
-  await sql.begin(async (tx) => {
+  await withTenant(orgId, async (tx) => {
     const [t] = await tx<Tournament[]>`
       select status from tournaments where id = ${tournamentId}`;
     if (!t) throw new Error("Tournament not found");
@@ -899,12 +903,13 @@ const MAX_TOURNAMENT_PLAYERS = 128;
  */
 export async function addPlayers(
   tournamentId: string,
+  orgId: string,
   inputs: PlayerInput[],
   actor: string | null = null,
 ): Promise<Player[]> {
   if (inputs.length === 0) throw new Error("Add at least one player");
 
-  return sql.begin(async (tx) => {
+  return withTenant(orgId, async (tx) => {
     const [t] = await tx<Tournament[]>`
       select status from tournaments where id = ${tournamentId}`;
     if (!t) throw new Error("Tournament not found");
@@ -969,7 +974,7 @@ export async function addPlayers(
       tx,
       tournamentId,
       actor,
-      "checkin",
+      "create",
       `Added ${label}`,
       { player_ids: added.map((p) => p.id) },
     );
@@ -980,10 +985,11 @@ export async function addPlayers(
 /** Remove a player while the tournament is still in setup (min 2 remain). */
 export async function removePlayer(
   tournamentId: string,
+  orgId: string,
   playerId: string,
   actor: string | null = null,
 ): Promise<void> {
-  await sql.begin(async (tx) => {
+  await withTenant(orgId, async (tx) => {
     const [t] = await tx<Tournament[]>`
       select status from tournaments where id = ${tournamentId}`;
     if (!t) throw new Error("Tournament not found");
@@ -1001,13 +1007,13 @@ export async function removePlayer(
       delete from players
       where id = ${playerId} and tournament_id = ${tournamentId}
       returning name`;
-    if (!removed) throw new Error("Player not found");
+    if (!removed) throw new HttpError(404, "Player not found");
 
     await writeAudit(
       tx,
       tournamentId,
       actor,
-      "checkin",
+      "reset",
       `Removed ${removed.name}`,
       { player_id: playerId },
     );
@@ -1020,14 +1026,15 @@ export async function removePlayer(
 
 export async function undoLast(
   tournamentId: string,
+  orgId: string,
   actor: string | null = null,
 ): Promise<void> {
-  await sql.begin(async (tx) => {
+  await withTenant(orgId, async (tx) => {
     const [t] = await tx<Tournament[]>`
       select * from tournaments where id = ${tournamentId} for update`;
-    if (!t) throw new Error("Tournament not found");
+    if (!t) throw new HttpError(404, "Tournament not found");
     if (t.undo_remaining <= 0)
-      throw new Error("Undo limit reached (max 3 steps).");
+      throw new HttpError(409, "Undo limit reached (max 3 steps).");
 
     const [evt] = await tx<
       {
@@ -1039,7 +1046,7 @@ export async function undoLast(
       select id, action, before_state from match_events
       where tournament_id = ${tournamentId} and undone = false
       order by seq desc limit 1`;
-    if (!evt) throw new Error("Nothing to undo.");
+    if (!evt) throw new HttpError(409, "Nothing to undo.");
 
     await restoreSnapshot(tx, tournamentId, evt.before_state);
     await tx`update match_events set undone = true where id = ${evt.id}`;
@@ -1109,14 +1116,15 @@ async function restoreSnapshot(
 
 export async function resetTournament(
   tournamentId: string,
+  orgId: string,
   actor: string | null = null,
 ): Promise<void> {
-  await sql.begin(async (tx) => {
+  await withTenant(orgId, async (tx) => {
     const [t] = await tx<{ status: string }[]>`
       select status from tournaments where id = ${tournamentId} for update`;
-    if (!t) throw new Error("Tournament not found");
+    if (!t) throw new HttpError(404, "Tournament not found");
     if (t.status === "completed")
-      throw new Error("This tournament is finished — reset is disabled.");
+      throw new HttpError(409, "This tournament is finished — reset is disabled.");
     await tx`delete from matches where tournament_id = ${tournamentId}`;
     await tx`delete from rounds where tournament_id = ${tournamentId}`;
     await tx`delete from match_events where tournament_id = ${tournamentId}`;
@@ -1134,14 +1142,16 @@ export async function resetTournament(
 }
 
 /** Permanently remove a tournament that has not been started yet. */
-export async function deleteTournament(tournamentId: string): Promise<void> {
-  await sql.begin(async (tx) => {
+export async function deleteTournament(
+  tournamentId: string,
+  orgId: string,
+): Promise<void> {
+  await withTenant(orgId, async (tx) => {
     const [t] = await tx<{ status: string }[]>`
       select status from tournaments where id = ${tournamentId} for update`;
-    if (!t) throw new Error("Tournament not found");
-    if (t.status !== "setup") {
-      throw new Error("Only tournaments that have not started can be deleted");
-    }
+    if (!t) throw new HttpError(404, "Tournament not found");
+    if (t.status !== "setup")
+      throw new HttpError(409, "Only tournaments that have not started can be deleted");
     await tx`delete from tournaments where id = ${tournamentId}`;
   });
 }

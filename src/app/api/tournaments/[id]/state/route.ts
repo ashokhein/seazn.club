@@ -1,4 +1,4 @@
-import { handler } from "@/lib/http";
+import { handler, HttpError } from "@/lib/http";
 import { loadState } from "@/lib/tournament";
 
 export async function GET(
@@ -8,7 +8,7 @@ export async function GET(
   return handler(async () => {
     const { id } = await params;
     const state = await loadState(id);
-    if (!state) throw new Error("Tournament not found");
+    if (!state) throw new HttpError(404, "Tournament not found");
     return state;
   });
 }

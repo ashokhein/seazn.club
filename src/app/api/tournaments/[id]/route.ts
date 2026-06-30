@@ -9,8 +9,8 @@ export async function DELETE(
 ) {
   return handler(async () => {
     const { id } = await params;
-    await requireTournamentEditor(id);
-    await deleteTournament(id);
+    const { orgId } = await requireTournamentEditor(id);
+    await deleteTournament(id, orgId);
     return { deleted: true };
   });
 }

@@ -17,12 +17,16 @@ import type {
 export function NewTournamentForm({
   seasons,
   presets,
+  defaultPresetId,
+  canUploadImages = false,
 }: {
   seasons: Season[];
   presets: SportPreset[];
+  defaultPresetId?: string;
+  canUploadImages?: boolean;
 }) {
   const router = useRouter();
-  const initial = presets[0];
+  const initial = (defaultPresetId ? presets.find((p) => p.id === defaultPresetId) : undefined) ?? presets[0];
 
   const [seasonId, setSeasonId] = useState("");
   const [presetId, setPresetId] = useState(initial?.id ?? "");
@@ -49,11 +53,13 @@ export function NewTournamentForm({
     initial?.use_progress_score ?? false,
   );
   const [clockMinutes, setClockMinutes] = useState(initial?.clock_minutes ?? 0);
+  const [venue, setVenue] = useState("");
   const [startsAt, setStartsAt] = useState("");
   const [roundMinutes, setRoundMinutes] = useState(initial?.round_minutes ?? 30);
   const [players, setPlayers] = useState<PlayerDraft[]>([]);
   const [nameInput, setNameInput] = useState("");
   const [imageInput, setImageInput] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -72,9 +78,10 @@ export function NewTournamentForm({
       setImageInput(null);
       return;
     }
-    setPlayers((prev) => [...prev, { name: n, image_url: imageInput }]);
+    setPlayers((prev) => [...prev, { name: n, image_url: imageInput, _file: imageFile ?? undefined }]);
     setNameInput("");
     setImageInput(null);
+    setImageFile(null);
   }
   function removePlayer(index: number) {
     setPlayers((prev) => prev.filter((_, i) => i !== index));
@@ -83,6 +90,7 @@ export function NewTournamentForm({
     if (!file) return;
     try {
       setImageInput(await fileToDataUrl(file, 160));
+      setImageFile(file);
     } catch {
       setError("Could not read that image");
     }
@@ -143,38 +151,82 @@ export function NewTournamentForm({
     }
     setBusy(true);
     try {
-      const t = await api<Tournament>("/api/tournaments", {
-        method: "POST",
-        json: {
-          season_id: seasonId || null,
-          sport: sport || "Game",
-          name: name || `${sport || "Game"} ${category}`,
-          category,
-          format,
-          num_group_rounds:
-            format === "swiss_knockout" || format === "progress_stepladder"
-              ? effGroupRounds
-              : 0,
-          knockout_size:
-            format === "knockout"
-              ? 0
-              : format === "progress_stepladder"
-                ? ladderSize
-                : effKnockoutSize,
-          players,
-          result_mode: resultMode,
-          score_label: scoreLabel,
-          points_win: pointsWin,
-          points_draw: pointsDraw,
-          points_loss: pointsLoss,
-          allow_draws: allowDraws,
-          use_progress_score: showProgressScore ? useProgress : false,
-          starts_at: startsAt ? new Date(startsAt).toISOString() : null,
-          round_minutes: roundMinutes,
-          clock_minutes: clockMinutes,
+      // When storage upload is available, omit data URLs from creation payload
+      const playerPayload = players.map((p) => ({
+        name: p.name,
+        image_url: canUploadImages && p._file ? null : p.image_url,
+      }));
+
+      const res = await api<Tournament & { players: { id: string; name: string; seed: number }[] }>(
+        "/api/tournaments",
+        {
+          method: "POST",
+          json: {
+            season_id: seasonId || null,
+            sport: sport || "Game",
+            name: name || `${sport || "Game"} ${category}`,
+            category,
+            format,
+            num_group_rounds:
+              format === "swiss_knockout" || format === "progress_stepladder"
+                ? effGroupRounds
+                : 0,
+            knockout_size:
+              format === "knockout"
+                ? 0
+                : format === "progress_stepladder"
+                  ? ladderSize
+                  : effKnockoutSize,
+            players: playerPayload,
+            result_mode: resultMode,
+            score_label: scoreLabel,
+            points_win: pointsWin,
+            points_draw: pointsDraw,
+            points_loss: pointsLoss,
+            allow_draws: allowDraws,
+            use_progress_score: showProgressScore ? useProgress : false,
+            venue: venue.trim() || null,
+            starts_at: startsAt ? new Date(startsAt).toISOString() : null,
+            round_minutes: roundMinutes,
+            clock_minutes: clockMinutes,
+          },
         },
-      });
-      router.push(`/tournaments/${t.id}`);
+      );
+
+      if (canUploadImages && res.players) {
+        // Upload files to storage in parallel (fire-and-forget — navigate even on failure)
+        const uploads = players
+          .map((p, i) => ({ draft: p, created: res.players[i] }))
+          .filter(({ draft }) => !!draft._file);
+        void Promise.all(
+          uploads.map(async ({ draft, created }) => {
+            if (!created?.id || !draft._file) return;
+            try {
+              const { upload_url, storage_path } = await api<{
+                upload_url: string;
+                token: string;
+                storage_path: string;
+              }>(`/api/tournaments/${res.id}/upload-url`, {
+                method: "POST",
+                json: { player_id: created.id },
+              });
+              await fetch(upload_url, {
+                method: "PUT",
+                headers: { "Content-Type": "image/webp" },
+                body: draft._file,
+              });
+              await api(`/api/tournaments/${res.id}/players/${created.id}`, {
+                method: "PATCH",
+                json: { image_storage_path: storage_path },
+              });
+            } catch {
+              // storage upload failure is non-fatal
+            }
+          }),
+        );
+      }
+
+      router.push(`/tournaments/${res.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create");
     } finally {
@@ -271,7 +323,7 @@ export function NewTournamentForm({
               active={format === "swiss_knockout"}
               onClick={() => setFormat("swiss_knockout")}
               title="Progress league + knockout"
-              desc="Several rounds (winners vs winners), ranked by points & progress, then top players enter a knockout. The S.A.F.E format."
+              desc="Several rounds (winners vs winners), ranked by points & progress, then top players enter a knockout. The Seazn Club format."
             />
             <FormatCard
               active={format === "progress_stepladder"}
@@ -542,7 +594,17 @@ export function NewTournamentForm({
           )}
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Labeled label="Venue / location (optional)">
+            <input
+              type="text"
+              placeholder="e.g. City Sports Hall"
+              maxLength={120}
+              value={venue}
+              onChange={(e) => setVenue(e.target.value)}
+              className="input"
+            />
+          </Labeled>
           <Labeled label="Start time (optional)">
             <input
               type="datetime-local"
@@ -551,6 +613,9 @@ export function NewTournamentForm({
               className="input"
             />
           </Labeled>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
           <Labeled label="Minutes per round">
             <input
               type="number"
@@ -585,7 +650,7 @@ export function NewTournamentForm({
   );
 }
 
-type PlayerDraft = { name: string; image_url: string | null };
+type PlayerDraft = { name: string; image_url: string | null; _file?: File };
 
 /**
  * Reads an image file and returns a downscaled JPEG/PNG data URL so we can

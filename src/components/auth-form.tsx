@@ -141,14 +141,24 @@ export function AuthForm({ next }: { next?: string }) {
           placeholder="you@example.com"
           autoComplete="email"
         />
-        <Field
-          label="Password"
-          value={password}
-          onChange={setPassword}
-          type="password"
-          placeholder="••••••••"
-          autoComplete={mode === "login" ? "current-password" : "new-password"}
-        />
+        <div>
+          <Field
+            label="Password"
+            value={password}
+            onChange={setPassword}
+            type="password"
+            placeholder="••••••••"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+          />
+          {mode === "login" && (
+            <a
+              href="/forgot-password"
+              className="mt-1 block text-right text-xs text-purple-600 hover:underline"
+            >
+              Forgot password?
+            </a>
+          )}
+        </div>
 
         {error && (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">

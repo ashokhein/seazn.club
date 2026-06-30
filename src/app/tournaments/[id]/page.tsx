@@ -4,6 +4,7 @@ import { Nav } from "@/components/nav";
 import { LiveTournament } from "@/components/live-tournament";
 import { loadBundle } from "@/lib/tournament";
 import { computeStandings } from "@/lib/standings";
+import { hasFeature } from "@/lib/entitlements";
 
 export default async function TournamentPage({
   params,
@@ -18,6 +19,10 @@ export default async function TournamentPage({
   // Only owners/admins of the owning org may edit; everyone else is read-only.
   const role = user ? await getOrgRole(t.org_id, user.id) : null;
   const canEdit = role === "owner" || role === "admin";
+  const [realtimeEnabled, canExport] = await Promise.all([
+    hasFeature(t.org_id, "realtime"),
+    hasFeature(t.org_id, "exports"),
+  ]);
   const standings = computeStandings(bundle.players, bundle.rounds, bundle.matches, {
     points_win: t.points_win,
     points_draw: t.points_draw,
@@ -33,6 +38,8 @@ export default async function TournamentPage({
           id={id}
           canEdit={canEdit}
           initial={{ ...bundle, standings }}
+          realtimeEnabled={realtimeEnabled}
+          canExport={canExport}
         />
       </main>
     </>

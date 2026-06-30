@@ -5,9 +5,14 @@ import { baseUrl } from "@/lib/oauth";
 import { sendVerificationEmail } from "@/lib/email";
 import { createVerificationToken } from "@/lib/verification";
 import { loginSchema } from "@/lib/types";
+import { rateLimit, AUTH_LIMIT } from "@/lib/rate-limit";
+import { headers } from "next/headers";
 
 export async function POST(req: Request) {
   return handler(async () => {
+    const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+    await rateLimit(`login:${ip}`, AUTH_LIMIT);
+
     const body = await req.json();
     const { email, password } = loginSchema.parse(body);
     const next = (body as { next?: unknown })?.next;

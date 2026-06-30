@@ -1,6 +1,7 @@
 import { requireTournamentEditor } from "@/lib/auth";
 import { handler } from "@/lib/http";
 import { undoLast } from "@/lib/tournament";
+import { publishTournamentUpdate } from "@/lib/realtime";
 
 export async function POST(
   _req: Request,
@@ -8,8 +9,9 @@ export async function POST(
 ) {
   return handler(async () => {
     const { id } = await params;
-    const user = await requireTournamentEditor(id);
-    await undoLast(id, user.display_name);
+    const { user, orgId } = await requireTournamentEditor(id);
+    await undoLast(id, orgId, user.display_name);
+    void publishTournamentUpdate(id, "undo");
     return { undone: true };
   });
 }

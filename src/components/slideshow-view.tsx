@@ -28,9 +28,11 @@ function formatLabel(format: string): string {
 export function SlideshowView({
   id,
   initial,
+  orgLogoUrl,
 }: {
   id: string;
   initial: TournamentState;
+  orgLogoUrl?: string | null;
 }) {
   const [state, setState] = useState<TournamentState>(initial);
   const [slide, setSlide] = useState(0);
@@ -95,8 +97,14 @@ export function SlideshowView({
       {/* header */}
       <header className="relative mb-10 flex items-end justify-between gap-6">
         <div className="flex items-center gap-5">
-          <div className="grid h-20 w-20 place-items-center rounded-3xl bg-white/10 text-5xl shadow-inner ring-1 ring-white/20">
-            🏆
+          <div className="grid h-20 w-20 place-items-center rounded-3xl bg-white/10 shadow-inner ring-1 ring-white/20 overflow-hidden">
+            {orgLogoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={orgLogoUrl} alt="Organisation logo" className="h-full w-full object-contain p-2" />
+            ) : (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src="/logo-wide.png" alt="Seazn Club" className="h-full w-full object-contain p-2" />
+            )}
           </div>
           <div>
             <h1 className="text-6xl font-black leading-none tracking-tight drop-shadow-sm">
@@ -106,6 +114,7 @@ export function SlideshowView({
               <Pill>{t.sport}</Pill>
               <Pill className="capitalize">{t.category}</Pill>
               <Pill>{formatLabel(t.format)}</Pill>
+              {t.venue && <Pill>📍 {t.venue}</Pill>}
             </div>
           </div>
         </div>

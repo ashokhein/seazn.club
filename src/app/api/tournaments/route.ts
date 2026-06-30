@@ -1,7 +1,10 @@
 import { sql } from "@/lib/db";
 import { getActiveOrgId, requireOrgRole } from "@/lib/auth";
 import { handler } from "@/lib/http";
+import { HttpError } from "@/lib/errors";
+import { withinLimit } from "@/lib/entitlements";
 import { writeAudit } from "@/lib/tournament";
+import { trackEvent } from "@/lib/activation";
 import {
   EDITOR_ROLES,
   createTournamentSchema,
@@ -22,13 +25,41 @@ export async function POST(req: Request) {
       if (ok.length === 0) throw new Error("Unknown season for this organization");
     }
 
+    // Entitlement checks
+    const { ok: playersOk, limit: playersLimit } = await withinLimit(
+      orgId,
+      "players.max",
+      input.players.length,
+    );
+    if (!playersOk)
+      throw new HttpError(
+        402,
+        `Player limit is ${playersLimit} on your current plan. Upgrade to Pro for up to 256 players.`,
+      );
+
+    if (input.season_id) {
+      const [{ count }] = await sql<{ count: number }[]>`
+        select count(*)::int as count from tournaments where season_id = ${input.season_id}`;
+      const { ok, limit } = await withinLimit(
+        orgId,
+        "tournaments.per_season.max",
+        count + 1,
+      );
+      if (!ok)
+        throw new HttpError(
+          402,
+          `Tournament limit per season is ${limit} on your current plan. Upgrade to Pro for unlimited tournaments.`,
+        );
+    }
+
     const id = await sql.begin(async (tx) => {
       const [t] = await tx<{ id: string }[]>`
         insert into tournaments
           (org_id, season_id, created_by, sport, name, category, format,
            num_group_rounds, knockout_size, result_mode, score_label,
            points_win, points_draw, points_loss, allow_draws,
-           use_progress_score, starts_at, round_minutes, clock_minutes, status)
+           use_progress_score, starts_at, round_minutes, clock_minutes,
+           venue, status)
         values
           (${orgId}, ${input.season_id ?? null}, ${user.id}, ${input.sport},
            ${input.name}, ${input.category}, ${input.format},
@@ -36,7 +67,8 @@ export async function POST(req: Request) {
            ${input.result_mode}, ${input.score_label}, ${input.points_win},
            ${input.points_draw}, ${input.points_loss}, ${input.allow_draws},
            ${input.use_progress_score}, ${input.starts_at ?? null},
-           ${input.round_minutes}, ${input.clock_minutes}, 'setup')
+           ${input.round_minutes}, ${input.clock_minutes},
+           ${input.venue ?? null}, 'setup')
         returning id`;
 
       const rows = input.players.map((p, i) => {
@@ -67,8 +99,23 @@ export async function POST(req: Request) {
       return t.id;
     });
 
-    const [tournament] = await sql<Tournament[]>`
-      select * from tournaments where id = ${id}`;
-    return tournament;
+    const [[tournament], players] = await Promise.all([
+      sql<Tournament[]>`select * from tournaments where id = ${id}`,
+      sql<{ id: string; name: string; seed: number }[]>`
+        select id, name, seed from players where tournament_id = ${id} order by seed`,
+    ]);
+
+    // Count BEFORE this insert (we just inserted, so count is now ≥ 1).
+    // If count = 1, this is the first tournament for the org.
+    const [{ cnt }] = await sql<{ cnt: number }[]>`
+      select count(*)::int as cnt from tournaments where org_id = ${orgId}`;
+    if (cnt === 1) {
+      void trackEvent(user.id, orgId, "first_tournament_created", {
+        sport: input.sport,
+        format: input.format,
+      });
+    }
+
+    return { ...tournament, players };
   });
 }

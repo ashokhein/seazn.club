@@ -1,6 +1,8 @@
 import { sql } from "@/lib/db";
 import { getActiveOrgId, requireOrgRole, requireUser } from "@/lib/auth";
 import { handler } from "@/lib/http";
+import { HttpError } from "@/lib/errors";
+import { withinLimit } from "@/lib/entitlements";
 import { EDITOR_ROLES, createSeasonSchema, type Season } from "@/lib/types";
 
 /** List seasons within the current user's active organization. */
@@ -22,6 +24,16 @@ export async function POST(req: Request) {
     if (!orgId) throw new Error("Select or create an organization first");
     await requireOrgRole(orgId, EDITOR_ROLES);
     const { name, slug } = createSeasonSchema.parse(await req.json());
+
+    const [{ count }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from seasons where org_id = ${orgId}`;
+    const { ok, limit } = await withinLimit(orgId, "seasons.max", count + 1);
+    if (!ok)
+      throw new HttpError(
+        402,
+        `Season limit reached (${limit}). Upgrade to Pro for unlimited seasons.`,
+      );
+
     const existing = await sql`
       select 1 from seasons where org_id = ${orgId} and slug = ${slug}`;
     if (existing.length)

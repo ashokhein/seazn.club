@@ -2,32 +2,46 @@ import Link from "next/link";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { LogoutButton } from "@/components/logout-button";
 
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+
+function orgLogoUrl(org: { logo_storage_path: string | null; logo_url: string | null }): string | null {
+  if (org.logo_storage_path && SUPABASE_URL)
+    return `${SUPABASE_URL}/storage/v1/object/public/assets/${org.logo_storage_path}`;
+  if (org.logo_url?.startsWith("https://")) return org.logo_url;
+  return null;
+}
+
 export async function Nav() {
   const user = await getCurrentUser();
-  let activeOrgName: string | null = null;
+  let activeOrg: { name: string; logo_storage_path: string | null; logo_url: string | null } | null = null;
   if (user) {
     const orgs = await getUserOrgs(user.id);
     if (orgs.length > 0) {
       const activeId = await getActiveOrgId();
-      activeOrgName = (orgs.find((o) => o.id === activeId) ?? orgs[0]).name;
+      activeOrg = orgs.find((o) => o.id === activeId) ?? orgs[0];
     }
   }
+  const logoUrl = activeOrg ? orgLogoUrl(activeOrg) : null;
   return (
     <header className="sticky top-0 z-20 border-b border-purple-100 bg-white/80 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
         <Link href="/" className="flex items-center gap-2">
-          <span className="grid h-8 w-8 place-items-center rounded-lg bg-gradient-to-br from-purple-500 to-fuchsia-500 font-bold text-white">
-            S
-          </span>
-          <span className="text-lg font-semibold tracking-tight text-purple-900">
-            S.A.F.E Tournaments
-          </span>
+          {logoUrl ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={logoUrl} alt="Org logo" className="h-8 w-8 rounded-lg object-cover" />
+              <span className="text-lg font-semibold tracking-tight text-purple-900">Seazn Club</span>
+            </>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src="/logo-wide.png" alt="Seazn Club" className="h-9 w-auto" />
+          )}
         </Link>
         {user ? (
           <div className="flex items-center gap-3">
-            {activeOrgName && (
+            {activeOrg && (
               <span className="hidden max-w-[160px] truncate rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 sm:inline">
-                {activeOrgName}
+                {activeOrg.name}
               </span>
             )}
             <span className="hidden text-sm text-slate-500 sm:inline">
@@ -39,7 +53,7 @@ export async function Nav() {
             >
               Dashboard
             </Link>
-            {activeOrgName && (
+            {activeOrg && (
               <Link
                 href="/settings"
                 className="rounded-lg px-3 py-1.5 text-sm text-purple-700 transition hover:bg-purple-50"

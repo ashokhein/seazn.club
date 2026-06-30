@@ -2,11 +2,16 @@ import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { listOrgSportPresets } from "@/lib/sport-presets";
+import { hasFeature } from "@/lib/entitlements";
 import { Nav } from "@/components/nav";
 import { NewTournamentForm } from "@/components/new-tournament-form";
 import type { Season } from "@/lib/types";
 
-export default async function NewTournamentPage() {
+export default async function NewTournamentPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ preset?: string }>;
+}) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
@@ -20,7 +25,11 @@ export default async function NewTournamentPage() {
     select id, org_id, name, slug, created_at from seasons
     where org_id = ${active.id} order by created_at asc`;
 
-  const sportPresets = await listOrgSportPresets(active.id);
+  const [sportPresets, canUploadImages] = await Promise.all([
+    listOrgSportPresets(active.id),
+    hasFeature(active.id, "branding"),
+  ]);
+  const { preset: defaultPresetId } = await searchParams;
 
   return (
     <>
@@ -37,7 +46,12 @@ export default async function NewTournamentPage() {
           </a>
           .
         </p>
-        <NewTournamentForm seasons={seasons} presets={sportPresets} />
+        <NewTournamentForm
+          seasons={seasons}
+          presets={sportPresets}
+          defaultPresetId={defaultPresetId}
+          canUploadImages={canUploadImages}
+        />
       </main>
     </>
   );
