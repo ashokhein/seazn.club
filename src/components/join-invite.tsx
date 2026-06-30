@@ -1,0 +1,42 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { api } from "@/lib/client";
+
+/** Accept an invite the current (logged-in) user is viewing. */
+export function JoinInvite({ token }: { token: string }) {
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function join() {
+    setError(null);
+    setBusy(true);
+    try {
+      await api(`/api/invites/${token}/accept`, { method: "POST" });
+      router.push("/dashboard");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to join");
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <button
+        onClick={join}
+        disabled={busy}
+        className="btn btn-primary w-full py-2.5"
+      >
+        {busy ? "Joining…" : "Join organization"}
+      </button>
+      {error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
