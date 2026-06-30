@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { Trophy, Calendar, Layers } from "lucide-react";
 import {
   getActiveOrgId,
   getCurrentUser,
@@ -109,7 +110,9 @@ export default async function DashboardPage() {
         {tournaments.length === 0 && seasons.length === 0 ? (
           canEdit ? (
             <div className="mt-12 flex flex-col items-center gap-6 text-center">
-              <div className="text-6xl">🏆</div>
+              <div className="grid h-16 w-16 place-items-center rounded-2xl bg-purple-100">
+                <Trophy className="h-8 w-8 text-purple-500" strokeWidth={1.5} />
+              </div>
               <div>
                 <h2 className="text-xl font-semibold text-slate-800">
                   No tournaments yet
@@ -144,14 +147,16 @@ export default async function DashboardPage() {
               const list = bySeason.get(s.id) ?? [];
               return (
                 <section key={s.id} className="card p-4">
-                  <div className="mb-3 flex items-baseline justify-between">
-                    <h2 className="text-lg font-semibold text-purple-900">
-                      {s.name}
-                    </h2>
+                  <div className="mb-3 flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      {s.id === NO_SEASON
+                        ? <Layers className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />
+                        : <Calendar className="h-4 w-4 shrink-0 text-purple-400" strokeWidth={1.75} />
+                      }
+                      <h2 className="text-sm font-semibold text-slate-800">{s.name}</h2>
+                    </div>
                     {s.slug && (
-                      <span className="font-mono text-xs text-purple-400">
-                        {s.slug}
-                      </span>
+                      <span className="font-mono text-xs text-purple-400">{s.slug}</span>
                     )}
                   </div>
                   {list.length === 0 ? (

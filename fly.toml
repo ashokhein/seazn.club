@@ -1,14 +1,13 @@
-app = "seazn-club"
+app = "seazn-club-prod"
 primary_region = "lhr"
 
 [build]
-  # NEXT_PUBLIC_* vars are baked into the bundle at build time.
-  # Override these per-environment with `fly deploy --build-arg KEY=value`
-  # or set them here for the primary deployment.
+  # NEXT_PUBLIC_* vars baked into bundle at build time — not secrets.
   [build.args]
-    NEXT_PUBLIC_SUPABASE_URL    = "https://YOUR_PROJECT.supabase.co"
-    NEXT_PUBLIC_SUPABASE_ANON_KEY = "YOUR_ANON_KEY"
-    # NEXT_PUBLIC_SENTRY_DSN    = "https://..."  # uncomment when Sentry project created
+    NEXT_PUBLIC_SUPABASE_URL          = "https://hoksroegadfdfwererzu.supabase.co"
+    NEXT_PUBLIC_SUPABASE_ANON_KEY     = "sb_publishable_jsKiT5L45u-yNlyCMIDGCg_GIIoj4H9"
+    NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = "pk_live_REPLACE_ME"
+    # NEXT_PUBLIC_SENTRY_DSN          = "https://..."  # uncomment when Sentry project created
 
 [http_service]
   internal_port       = 3000

@@ -1,5 +1,11 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import {
+  Building2, Sliders, Users, CreditCard, UserCircle,
+  Pencil, Image as ImageIcon, ArrowLeftRight, Zap, BarChart2,
+  TrendingUp, User, Mail, Download, AlertTriangle, ShieldOff,
+  type LucideIcon,
+} from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs, requireOrgRole } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { listOrgSportPresets } from "@/lib/sport-presets";
@@ -19,6 +25,31 @@ import {
   TransferOwnerForm,
   DeleteAccountButton,
 } from "@/components/account-actions";
+
+function SectionHeader({ icon: Icon, children, action }: {
+  icon: LucideIcon;
+  children: React.ReactNode;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-5 flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2">
+        <Icon className="h-4 w-4 text-purple-500" strokeWidth={1.75} />
+        <h2 className="text-sm font-semibold text-slate-800">{children}</h2>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function SubSection({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+  return (
+    <div className="mb-2 flex items-center gap-1.5">
+      <Icon className="h-3.5 w-3.5 text-slate-400" strokeWidth={1.75} />
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+    </div>
+  );
+}
 
 const ROLE_BADGE: Record<string, string> = {
   owner: "bg-amber-100 text-amber-700",
@@ -87,12 +118,12 @@ function UsageRow({
 
 type Tab = "organization" | "sport-presets" | "team" | "billing" | "account";
 
-const NAV_ITEMS: { tab: Tab; label: string }[] = [
-  { tab: "organization",  label: "Organisation"   },
-  { tab: "sport-presets", label: "Sport presets"  },
-  { tab: "team",          label: "Team"           },
-  { tab: "billing",       label: "Plan & billing" },
-  { tab: "account",       label: "Account"        },
+const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon }[] = [
+  { tab: "organization",  label: "Organisation",   icon: Building2    },
+  { tab: "sport-presets", label: "Sport presets",  icon: Sliders      },
+  { tab: "team",          label: "Team",           icon: Users        },
+  { tab: "billing",       label: "Plan & billing", icon: CreditCard   },
+  { tab: "account",       label: "Account",        icon: UserCircle   },
 ];
 
 export default async function SettingsPage({
@@ -178,19 +209,26 @@ export default async function SettingsPage({
               Settings
             </p>
             <nav className="space-y-0.5">
-              {NAV_ITEMS.map((item) => (
-                <Link
-                  key={item.tab}
-                  href={`/settings?tab=${item.tab}`}
-                  className={`block rounded-lg px-3 py-2 text-sm transition ${
-                    tab === item.tab
-                      ? "bg-purple-100 font-medium text-purple-800"
-                      : "text-slate-600 hover:bg-purple-50 hover:text-purple-700"
-                  }`}
-                >
-                  {item.label}
-                </Link>
-              ))}
+              {NAV_ITEMS.map(({ tab: t, label, icon: Icon }) => {
+                const active = tab === t;
+                return (
+                  <Link
+                    key={t}
+                    href={`/settings?tab=${t}`}
+                    className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+                      active
+                        ? "bg-purple-100 font-medium text-purple-800"
+                        : "text-slate-600 hover:bg-purple-50 hover:text-purple-700"
+                    }`}
+                  >
+                    <Icon
+                      className={`h-4 w-4 shrink-0 ${active ? "text-purple-600" : "text-slate-400"}`}
+                      strokeWidth={1.75}
+                    />
+                    {label}
+                  </Link>
+                );
+              })}
             </nav>
             <div className="my-4 border-t border-purple-100" />
             <Link
@@ -207,14 +245,14 @@ export default async function SettingsPage({
             {/* ── ORGANISATION ── */}
             {tab === "organization" && (
               <section className="card p-6">
-                <h2 className="mb-5 text-base font-semibold text-slate-800">Organisation</h2>
+                <SectionHeader icon={Building2}>Organisation</SectionHeader>
 
                 <div className="flex items-center gap-3">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-purple-500 to-fuchsia-500 text-lg font-bold text-white">
                     {active.name.charAt(0).toUpperCase()}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-base font-semibold text-slate-800">{active.name}</p>
+                    <p className="truncate text-sm font-semibold text-slate-800">{active.name}</p>
                     <p className="truncate font-mono text-xs text-purple-400">{active.slug}</p>
                   </div>
                   <span className={`badge ${ROLE_BADGE[active.role]}`}>{active.role}</span>
@@ -222,14 +260,14 @@ export default async function SettingsPage({
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Rename</p>
+                    <SubSection icon={Pencil} label="Rename" />
                     <OrgRename orgId={active.id} initialName={active.name} />
                   </div>
                 )}
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Logo</p>
+                    <SubSection icon={ImageIcon} label="Logo" />
                     {canBrand ? (
                       <OrgLogo
                         orgId={active.id}
@@ -251,7 +289,7 @@ export default async function SettingsPage({
                 )}
 
                 <div className="mt-5 border-t border-slate-100 pt-5">
-                  <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">Switch organisation</p>
+                  <SubSection icon={ArrowLeftRight} label="Switch organisation" />
                   <OrgSwitcher orgs={orgs} activeId={active.id} />
                 </div>
               </section>
@@ -260,10 +298,12 @@ export default async function SettingsPage({
             {/* ── SPORT PRESETS ── */}
             {tab === "sport-presets" && (
               <section className="card p-6">
-                <div className="mb-5 flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-slate-800">Sport presets</h2>
-                  {canEdit && <span className="text-[11px] text-slate-400">Editors only</span>}
-                </div>
+                <SectionHeader
+                  icon={Sliders}
+                  action={canEdit ? <span className="text-[11px] text-slate-400">Editors only</span> : undefined}
+                >
+                  Sport presets
+                </SectionHeader>
                 <OrgSportPresets
                   orgId={active.id}
                   initialPresets={sportPresets}
@@ -275,7 +315,7 @@ export default async function SettingsPage({
             {/* ── TEAM ── */}
             {tab === "team" && (
               <section className="card p-6">
-                <h2 className="mb-5 text-base font-semibold text-slate-800">Team</h2>
+                <SectionHeader icon={Users}>Team</SectionHeader>
                 <OrgTeam orgId={active.id} role={active.role} currentUserId={user.id} />
               </section>
             )}
@@ -285,9 +325,7 @@ export default async function SettingsPage({
               <div className="space-y-5">
                 {/* Current plan */}
                 <section className="card p-5">
-                  <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-400">
-                    Current plan
-                  </h2>
+                  <SectionHeader icon={Zap}>Current plan</SectionHeader>
                   <div className="flex items-center justify-between gap-4">
                     <div>
                       <div className="flex items-center gap-2">
@@ -317,9 +355,7 @@ export default async function SettingsPage({
 
                 {/* Usage */}
                 <section className="card p-5">
-                  <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-400">
-                    Usage
-                  </h2>
+                  <SectionHeader icon={BarChart2}>Usage</SectionHeader>
                   <div className="space-y-3">
                     <UsageRow label="Seasons" current={seasonsCount} limit={isPro ? null : 5} />
                     <UsageRow label="Tournaments per season" current={null} limit={isPro ? null : 10} note="counted per season" />
@@ -330,9 +366,7 @@ export default async function SettingsPage({
                 {/* Upgrade */}
                 {!isPro && isOwner && (
                   <section className="card p-5">
-                    <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-400">
-                      Upgrade to Pro
-                    </h2>
+                    <SectionHeader icon={TrendingUp}>Upgrade to Pro</SectionHeader>
                     <div className="mb-5 grid grid-cols-2 gap-3 text-sm">
                       <div className="rounded-xl border border-slate-200 p-4">
                         <p className="mb-1 font-semibold text-slate-700">Community</p>
@@ -389,7 +423,7 @@ export default async function SettingsPage({
 
                 {/* Profile */}
                 <section className="card space-y-1 p-5">
-                  <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-purple-400">Profile</h2>
+                  <SectionHeader icon={User}>Profile</SectionHeader>
                   <p className="text-sm text-slate-500">
                     Display name: <span className="font-medium text-slate-700">{user.display_name}</span>
                   </p>
@@ -403,29 +437,31 @@ export default async function SettingsPage({
 
                 {/* Change email */}
                 <section className="card p-5">
-                  <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-purple-400">Change email</h2>
+                  <SectionHeader icon={Mail}>Change email</SectionHeader>
                   <ChangeEmailForm currentEmail={user.email} />
                 </section>
 
                 {/* Export */}
                 <section className="card p-5">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="text-xs font-semibold uppercase tracking-wide text-purple-400">Export your data</h2>
-                      <p className="mt-1 text-sm text-slate-500">
-                        Download a copy of your profile, organizations, and tournaments.
-                      </p>
-                    </div>
-                    <a href="/api/users/me/export" download className="btn btn-ghost text-sm">
-                      Download JSON
-                    </a>
-                  </div>
+                  <SectionHeader
+                    icon={Download}
+                    action={
+                      <a href="/api/users/me/export" download className="btn btn-ghost text-xs">
+                        Download JSON
+                      </a>
+                    }
+                  >
+                    Export your data
+                  </SectionHeader>
+                  <p className="text-sm text-slate-500">
+                    Download a copy of your profile, organizations, and tournaments.
+                  </p>
                 </section>
 
                 {/* Org actions */}
                 {orgs.length > 0 && (
                   <section className="card p-5">
-                    <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-400">Organizations</h2>
+                    <SectionHeader icon={Building2}>Organizations</SectionHeader>
                     <div className="space-y-6">
                       {orgs.map((org) => {
                         const members = orgMembersMap.get(org.id) ?? [];
@@ -471,7 +507,10 @@ export default async function SettingsPage({
 
                 {/* Danger zone */}
                 <section className="card border-red-100 p-5">
-                  <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-red-400">Danger zone</h2>
+                  <div className="mb-4 flex items-center gap-2">
+                    <ShieldOff className="h-4 w-4 text-red-400" strokeWidth={1.75} />
+                    <h2 className="text-sm font-semibold text-red-600">Danger zone</h2>
+                  </div>
                   <p className="mb-4 text-sm text-slate-500">
                     Deleting your account removes you from all organizations and schedules your
                     data for permanent erasure within 30 days.
