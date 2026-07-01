@@ -7,6 +7,7 @@ primary_region = "lhr"
     NEXT_PUBLIC_SUPABASE_URL          = "https://hoksroegadfdfwererzu.supabase.co"
     NEXT_PUBLIC_SUPABASE_ANON_KEY     = "sb_publishable_jsKiT5L45u-yNlyCMIDGCg_GIIoj4H9"
     NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY = "pk_live_REPLACE_ME"
+    NEXT_PUBLIC_BASE_URL              = "https://seazn-club-prod.fly.dev"
     # NEXT_PUBLIC_SENTRY_DSN          = "https://..."  # uncomment when Sentry project created
 
 [http_service]

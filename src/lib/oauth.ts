@@ -21,6 +21,14 @@ export function baseUrl(req: Request): string {
   const override =
     process.env.OAUTH_BASE_URL || process.env.NEXT_PUBLIC_BASE_URL;
   if (override) return override.replace(/\/$/, "");
+
+  // Behind a reverse proxy (Fly.io), req.url is the internal binding
+  // (http://0.0.0.0:3000). Reconstruct from forwarded headers instead.
+  const headers = req instanceof Request ? new Headers((req as Request).headers) : new Headers();
+  const forwardedHost = headers.get("x-forwarded-host");
+  const forwardedProto = headers.get("x-forwarded-proto") ?? "https";
+  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+
   return new URL(req.url).origin;
 }
 
