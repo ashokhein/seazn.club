@@ -33,7 +33,7 @@ export async function requireSuperadmin(): Promise<StaffUser> {
 export async function logStaffAction(
   actorId: string,
   action: string,
-  targetType: "org" | "user" | "entitlement",
+  targetType: "org" | "user" | "entitlement" | "coupon",
   targetId: string,
   detail?: Record<string, unknown>,
 ): Promise<void> {
