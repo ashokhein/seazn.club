@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
@@ -129,6 +129,37 @@ export function LiveTournament({
           ? "progress + stepladder"
           : "progress + knockout";
 
+  function roundsSummary(t: typeof state.tournament): string | null {
+    if (t.format === "knockout") {
+      return `${t.knockout_size}-player bracket`;
+    }
+    if (t.format === "round_robin") {
+      return `${t.num_group_rounds} rounds`;
+    }
+    if (t.format === "swiss_knockout") {
+      return `${t.num_group_rounds} group rounds + top ${t.knockout_size}`;
+    }
+    if (t.format === "progress_stepladder") {
+      return `${t.num_group_rounds} group rounds + stepladder`;
+    }
+    return null;
+  }
+
+  function currentRoundChip(
+    group: typeof groupRounds,
+    ko: typeof koRounds,
+  ): React.ReactNode {
+    if (t.status === "setup" || t.status === "completed") return null;
+    const active = group.find((r) => r.status === "active") ?? ko.find((r) => r.status === "active");
+    if (!active) return null;
+    const totalGroup = t.format !== "knockout" ? t.num_group_rounds : 0;
+    const idx = group.indexOf(active);
+    if (idx !== -1 && totalGroup > 0) {
+      return <span className="chip font-medium text-purple-700">Round {idx + 1} of {totalGroup}</span>;
+    }
+    return <span className="chip font-medium text-purple-700">{active.name}</span>;
+  }
+
   function exportCsv() {
     const blob = new Blob([buildCsv(state)], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
@@ -207,6 +238,19 @@ export function LiveTournament({
                 <ClientTime value={t.starts_at} mode="datetime" />
               </span>
             )}
+          </div>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+            <span className="chip">{state.players.length} players</span>
+            {roundsSummary(t) && <span className="chip">{roundsSummary(t)}</span>}
+            {t.round_minutes > 0 && <span className="chip">⏱ {t.round_minutes} min/round</span>}
+            {t.clock_minutes > 0 && <span className="chip">⏰ {t.clock_minutes} min clock</span>}
+            {t.allow_draws && <span className="chip">draws allowed</span>}
+            {t.points_win !== 1 || t.points_draw !== 0 ? (
+              <span className="chip">
+                {t.points_win}W / {t.points_draw}D / {t.points_loss}L pts
+              </span>
+            ) : null}
+            {currentRoundChip(groupRounds, koRounds)}
           </div>
         </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { api } from "@/lib/client";
 import {
   activeMatches,
@@ -23,6 +23,22 @@ function formatLabel(format: string): string {
   if (format === "round_robin") return "Round robin";
   if (format === "progress_stepladder") return "Stepladder finals";
   return "Progress + knockout";
+}
+
+function slideshowRoundPill(
+  t: TournamentState["tournament"],
+  rounds: TournamentState["rounds"],
+): React.ReactNode {
+  if (t.status === "completed") return null;
+  const groupRounds = rounds
+    .filter((r) => r.stage === "group")
+    .sort((a, b) => a.round_number - b.round_number);
+  const active = groupRounds.find((r) => r.status === "active");
+  if (!active) return null;
+  const idx = groupRounds.indexOf(active) + 1;
+  const total = t.format !== "knockout" ? t.num_group_rounds : 0;
+  if (!total) return <Pill>{active.name}</Pill>;
+  return <Pill>Round {idx} of {total}</Pill>;
 }
 
 export function SlideshowView({
@@ -114,6 +130,8 @@ export function SlideshowView({
               <Pill>{t.sport}</Pill>
               <Pill className="capitalize">{t.category}</Pill>
               <Pill>{formatLabel(t.format)}</Pill>
+              <Pill>{state.players.length} players</Pill>
+              {slideshowRoundPill(t, state.rounds)}
               {t.venue && <Pill>📍 {t.venue}</Pill>}
             </div>
           </div>
