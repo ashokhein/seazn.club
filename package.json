@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
+    "engine:check": "node --experimental-strip-types scripts/engine-check.ts",
     "db:apply": "node --experimental-strip-types scripts/apply-db.ts"
   },
   "dependencies": {
