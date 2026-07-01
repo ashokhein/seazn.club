@@ -139,7 +139,8 @@ async function main() {
   // A default org is auto-provisioned on first sign-in (no forced form).
   check("default org auto-provisioned", !!ver.org_id && ver.has_org === true);
   check("active org cookie set", admin.cookies["safe_org"] === ver.org_id);
-  check("verify redirects to dashboard", ver.redirect === "/dashboard");
+  // A brand-new account (no onboarding completed) lands on the first-run wizard.
+  check("verify redirects new user to onboarding", ver.redirect === "/onboarding");
   const org = { id: ver.org_id };
 
   const season = (await call(admin, "/api/seasons", "POST", {

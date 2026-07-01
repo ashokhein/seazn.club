@@ -1,0 +1,91 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Fast, DB-free gate: typecheck + the full unit / property / grid suite.
+  # -------------------------------------------------------------------------
+  test:
+    name: Unit + typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npm test
+
+  # -------------------------------------------------------------------------
+  # Integration gate: real Postgres container -> real HTTP -> real DB.
+  # Exercises the tournament.ts -> engine delegation end to end.
+  # -------------------------------------------------------------------------
+  smoke:
+    name: Smoke (Postgres container)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Superuser connection so the app can `set role app_user` (RLS). Local =>
+      # no SSL. Port 5432 keeps prepared statements on (not the Supabase pooler).
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DATABASE_SSL: disable
+      # Session signing secret (jose HS256) — CI-only dummy.
+      AUTH_SECRET: ci-only-insecure-secret-please-change-in-prod-0123456789
+      NEXT_PUBLIC_SUPABASE_URL: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Bootstrap database (schema + migrations)
+        run: npm run db:apply
+
+      - name: Start dev server
+        run: |
+          npm run dev > dev-server.log 2>&1 &
+          echo "waiting for server…"
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:3000/api/health >/dev/null; then
+              echo "server up after ${i}s window"; exit 0
+            fi
+            sleep 2
+          done
+          echo "server did not become healthy"; cat dev-server.log; exit 1
+
+      - name: Run smoke test
+        run: npm run test:smoke
+
+      - name: Dev server log (on failure)
+        if: failure()
+        run: cat dev-server.log || true
