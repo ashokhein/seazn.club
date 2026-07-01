@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
 import { supportsProgressScore } from "@/lib/scoring";
+import { sportIcon } from "@/lib/sport-icons";
 import type {
   ResultMode,
   SportPreset,
@@ -104,6 +105,7 @@ function PresetEditor({
   const [saved, setSaved] = useState(false);
 
   const dirty = JSON.stringify(draft) !== JSON.stringify(preset);
+  const Icon = sportIcon(preset.sport_key);
 
   async function save() {
     setBusy(true);
@@ -166,7 +168,10 @@ function PresetEditor({
       className="rounded-xl border border-purple-100 bg-white"
     >
       <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3">
-        <span className="font-medium text-purple-900">{preset.sport_name}</span>
+        <span className="flex items-center gap-2 font-medium text-purple-900">
+          <Icon className="h-4 w-4 shrink-0 text-purple-500" strokeWidth={1.75} />
+          {preset.sport_name}
+        </span>
         <span className="text-xs text-slate-400">
           {preset.entity_label} · {formatLabel(preset.format)}
           {preset.clock_minutes > 0 && ` · ${preset.clock_minutes}m clock`}
