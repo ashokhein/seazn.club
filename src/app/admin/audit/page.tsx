@@ -4,19 +4,34 @@ import { sql } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export default async function AdminAuditPage() {
-  const rows = await sql<{
+  type Row = {
     id: string; actor_email: string; action: string; target_type: string;
     target_id: string; detail: unknown; created_at: string;
-  }[]>`
+  };
+  const baseSelect = `
     select s.id, u.email as actor_email, s.action, s.target_type, s.target_id,
            s.detail, s.created_at
-    from staff_audit_log s join users u on u.id = s.actor_id
-    order by s.chain_seq desc nulls last, s.created_at desc
-    limit 200`;
+    from staff_audit_log s join users u on u.id = s.actor_id`;
 
-  // Tamper-evidence: re-walk the hash chain (doc 04 §6). null = intact.
-  const [{ broken }] = await sql<{ broken: string | null }[]>`
-    select verify_staff_audit_log_chain() as broken`;
+  // chain_seq + verify_staff_audit_log_chain() land in migration 011. Until it
+  // is applied the column/function don't exist, so fall back gracefully instead
+  // of 500-ing the page.
+  let rows: Row[];
+  let broken: string | null = null;
+  let chainAvailable = true;
+  try {
+    rows = (await sql.unsafe(
+      `${baseSelect} order by s.chain_seq desc nulls last, s.created_at desc limit 200`,
+    )) as unknown as Row[];
+    const [v] = await sql<{ broken: string | null }[]>`
+      select verify_staff_audit_log_chain() as broken`;
+    broken = v.broken;
+  } catch {
+    chainAvailable = false;
+    rows = (await sql.unsafe(
+      `${baseSelect} order by s.created_at desc limit 200`,
+    )) as unknown as Row[];
+  }
 
   return (
     <div className="space-y-6">
@@ -29,14 +44,18 @@ export default async function AdminAuditPage() {
 
       <div
         className={`rounded-lg border px-3 py-2 text-sm ${
-          broken
-            ? "border-red-700 bg-red-900/30 text-red-300"
-            : "border-emerald-800 bg-emerald-900/20 text-emerald-300"
+          !chainAvailable
+            ? "border-slate-700 bg-slate-800/50 text-slate-400"
+            : broken
+              ? "border-red-700 bg-red-900/30 text-red-300"
+              : "border-emerald-800 bg-emerald-900/20 text-emerald-300"
         }`}
       >
-        {broken
-          ? `⚠ Hash chain broken at row ${broken} — the audit log may have been tampered with.`
-          : "✓ Hash chain verified — no tampering detected."}
+        {!chainAvailable
+          ? "Hash-chain verification unavailable — migration 011 not applied yet."
+          : broken
+            ? `⚠ Hash chain broken at row ${broken} — the audit log may have been tampered with.`
+            : "✓ Hash chain verified — no tampering detected."}
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-800">
