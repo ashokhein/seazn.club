@@ -3,6 +3,7 @@ import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { syncSubscription } from "@/lib/billing";
+import { invalidateOrgEntitlements } from "@/lib/entitlements";
 
 // ---------------------------------------------------------------------------
 // Event handlers
@@ -26,6 +27,7 @@ async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
   const orgId = stripeSub.metadata?.org_id;
   if (!orgId) return;
   await syncSubscription(orgId, stripeSub);
+  await invalidateOrgEntitlements(orgId);
 }
 
 async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
@@ -35,6 +37,7 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
     update subscriptions
     set plan_key = 'community', status = 'canceled', updated_at = now()
     where org_id = ${orgId}`;
+  await invalidateOrgEntitlements(orgId);
 }
 
 /** In Stripe v22 the subscription ref moved to invoice.parent.subscription_details.subscription */

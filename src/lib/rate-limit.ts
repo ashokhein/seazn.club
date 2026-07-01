@@ -1,6 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
+import { incrWindow } from "@/lib/cache";
 
 export interface RateLimitConfig {
   /** Max requests allowed within `windowSeconds`. */
@@ -24,6 +25,16 @@ export async function rateLimit(
   key: string,
   { max, windowSeconds }: RateLimitConfig,
 ): Promise<void> {
+  // Prefer Redis (single INCR + EXPIRE, no DB contention). incrWindow returns
+  // null when Redis is unavailable, so we fall back to the Postgres bucket.
+  const redisCount = await incrWindow(`rl:${key}`, windowSeconds);
+  if (redisCount !== null) {
+    if (redisCount > max) {
+      throw new HttpError(429, "Too many requests — slow down and try again.");
+    }
+    return;
+  }
+
   const now = new Date();
   const windowStart = new Date(
     Math.floor(now.getTime() / (windowSeconds * 1000)) * (windowSeconds * 1000),

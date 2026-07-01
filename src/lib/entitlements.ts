@@ -1,16 +1,40 @@
 import { sql } from "@/lib/db";
 import { PaymentRequiredError } from "@/lib/errors";
+import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 
 export { PaymentRequiredError } from "@/lib/errors";
 
 type Resolved = { bool_value: boolean | null; int_value: number | null };
 
+// Resolved entitlements change only on subscription / override writes, so they
+// cache well. Short TTL bounds staleness even if an invalidation is missed.
+const ENT_TTL_SECONDS = 300;
+const entKey = (orgId: string, featureKey: string) => `ent:${orgId}:${featureKey}`;
+
 /**
- * Resolve a single entitlement for an org.
+ * Drop all cached entitlements for an org. Call after any subscription or
+ * entitlement-override change (Stripe webhook, admin override).
+ */
+export async function invalidateOrgEntitlements(orgId: string): Promise<void> {
+  await cacheDelPattern(`ent:${orgId}:*`);
+}
+
+/**
+ * Resolve a single entitlement for an org (cache-aside).
  * Priority: org_entitlement_overrides → plan_entitlements → null (deny).
  * Falls back to 'community' plan when no subscription row exists.
  */
 async function resolve(orgId: string, featureKey: string): Promise<Resolved | null> {
+  const cached = await cacheGet<Resolved | null>(entKey(orgId, featureKey));
+  if (cached !== null) return cached;
+
+  const fresh = await resolveFromDb(orgId, featureKey);
+  // Cache the resolved value (including a "deny" null, stored as JSON null).
+  await cacheSet(entKey(orgId, featureKey), fresh, ENT_TTL_SECONDS);
+  return fresh;
+}
+
+async function resolveFromDb(orgId: string, featureKey: string): Promise<Resolved | null> {
   const [ov] = await sql<Resolved[]>`
     select bool_value, int_value
     from org_entitlement_overrides
