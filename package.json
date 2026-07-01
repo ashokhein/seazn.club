@@ -12,7 +12,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
-    "db:apply": "node --experimental-strip-types scripts/apply-db.ts"
+    "db:apply": "node --experimental-strip-types scripts/apply-db.ts",
+    "check:rls": "node --experimental-strip-types scripts/check-rls.ts"
   },
   "dependencies": {
     "@sentry/nextjs": "^10.62.0",
