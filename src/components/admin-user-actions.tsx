@@ -26,8 +26,9 @@ export function AdminUserActions({
         const d = await res.json().catch(() => ({}));
         throw new Error(d.error ?? "Failed");
       }
-      const data = await res.json();
-      if (path === "impersonate") setImpersonateUrl(data.url);
+      const body = await res.json();
+      // handler() wraps payloads as { ok: true, data: {...} }
+      if (path === "impersonate") setImpersonateUrl(body.data.url);
       else router.refresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
