@@ -6,13 +6,17 @@ import {
   GOOGLE_TOKEN_URL,
   GOOGLE_USERINFO_URL,
   OAUTH_STATE_COOKIE,
+  baseUrl,
   googleConfigured,
   googleRedirectUri,
   type GoogleProfile,
 } from "@/lib/oauth";
 
+// Redirect against the external base URL, not req.url — behind Fly's proxy
+// req.url is the internal binding (http://0.0.0.0:3000), which would send the
+// browser to an unreachable address.
 function fail(req: Request, reason: string) {
-  return NextResponse.redirect(new URL(`/login?error=${reason}`, req.url));
+  return NextResponse.redirect(new URL(`/login?error=${reason}`, baseUrl(req)));
 }
 
 /** Handle Google's redirect: verify state, exchange code, upsert user, sign in. */
@@ -65,7 +69,7 @@ export async function GET(req: Request) {
   const next = jar.get("safe_oauth_next")?.value;
   jar.delete("safe_oauth_next");
   const landing = await postAuthLanding(userId, next);
-  return NextResponse.redirect(new URL(landing.redirect, req.url));
+  return NextResponse.redirect(new URL(landing.redirect, baseUrl(req)));
 }
 
 async function upsertGoogleUser(p: GoogleProfile): Promise<string> {
