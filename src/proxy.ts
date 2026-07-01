@@ -22,9 +22,13 @@ export function proxy(request: NextRequest) {
     if (!origin) {
       return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
     }
+    // Use X-Forwarded-Host when behind a reverse proxy (Fly.io, Vercel, etc.)
+    // so the comparison is against the public hostname, not the internal port.
+    const appHost =
+      request.headers.get("x-forwarded-host") ?? request.nextUrl.hostname;
     try {
-      const originHost = new URL(origin).host;
-      if (originHost !== request.nextUrl.host) {
+      const originHostname = new URL(origin).hostname;
+      if (originHostname !== appHost) {
         return NextResponse.json({ ok: false, error: "Forbidden" }, { status: 403 });
       }
     } catch {
