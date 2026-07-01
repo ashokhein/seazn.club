@@ -40,7 +40,7 @@ export function CreateSeasonForm() {
         onClick={() => (open ? close() : setOpen(true))}
         className="btn btn-ghost"
       >
-        + New season
+        + New Season
       </button>
 
       {open && (
@@ -55,6 +55,7 @@ export function CreateSeasonForm() {
             <span className="label">Name</span>
             <input
               autoFocus
+              required
               value={name}
               onChange={(e) => {
                 setName(e.target.value);

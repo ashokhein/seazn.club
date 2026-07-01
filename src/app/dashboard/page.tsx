@@ -102,7 +102,7 @@ export default async function DashboardPage() {
             {canEdit && <CreateSeasonForm />}
             {canEdit && (
               <Link href="/tournaments/new" className="btn btn-primary">
-                + New tournament
+                + New Tournament
               </Link>
             )}
           </div>
@@ -125,7 +125,7 @@ export default async function DashboardPage() {
               </div>
               <div className="flex flex-wrap justify-center gap-3">
                 <Link href="/tournaments/new" className="btn btn-primary">
-                  + New tournament
+                  + New Tournament
                 </Link>
                 <Link
                   href="/settings"
