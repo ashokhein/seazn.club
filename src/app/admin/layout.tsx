@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import Link from "next/link";
 import { requireStaff } from "@/lib/admin";
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const staff = await requireStaff().catch(() => null);
   if (!staff) redirect("/login");

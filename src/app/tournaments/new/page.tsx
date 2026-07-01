@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { sql } from "@/lib/db";

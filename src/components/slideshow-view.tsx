@@ -149,7 +149,7 @@ export function SlideshowView({
           <MatchesScene state={state} live={live} />
         )}
         {scene === "standings" && (
-          <StandingsScene standings={state.standings} />
+          <StandingsScene standings={state.standings} completed={t.status === "completed"} />
         )}
       </div>
 
@@ -273,13 +273,14 @@ function Side({ name, img }: { name: string; img: string | null }) {
   );
 }
 
-function StandingsScene({ standings }: { standings: StandingRow[] }) {
-  const top3 = standings.slice(0, 3);
-  const rest = standings.slice(3, 12);
+function StandingsScene({ standings, completed }: { standings: StandingRow[]; completed: boolean }) {
+  const top3 = completed ? standings.slice(0, 3) : [];
+  const tableRows = completed ? standings.slice(3, 12) : standings.slice(0, 12);
+  const rest = tableRows;
   return (
     <section>
       <SceneTitle>Standings</SceneTitle>
-      {top3.length >= 3 && <Podium top3={top3} />}
+      {completed && top3.length >= 3 && <Podium top3={top3} />}
       {rest.length > 0 && (
         <div className="mt-8 overflow-hidden rounded-3xl border border-white/15 bg-white/5">
           <table className="w-full text-2xl">
