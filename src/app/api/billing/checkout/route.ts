@@ -45,7 +45,7 @@ export async function POST(req: Request) {
         metadata: { org_id: orgId },
       },
       line_items: [{ price: plan.price_id, quantity: 1 }],
-      success_url: `${base}/settings/billing?checkout=success`,
+      success_url: `${base}/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${base}/settings/billing`,
       allow_promotion_codes: true,
       tax_id_collection: { enabled: true },

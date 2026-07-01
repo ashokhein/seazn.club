@@ -2,64 +2,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Look up our plan_key from a Stripe price ID. */
-async function planKeyForPrice(priceId: string): Promise<string | null> {
-  const [row] = await sql<{ key: string }[]>`
-    select key from plans
-    where stripe_price_id_monthly = ${priceId}
-       or stripe_price_id_annual  = ${priceId}`;
-  return row?.key ?? null;
-}
-
-/** Upsert subscription row from a Stripe Subscription object. */
-async function syncSubscription(
-  orgId: string,
-  stripeSub: Stripe.Subscription,
-): Promise<void> {
-  const priceId = stripeSub.items.data[0]?.price?.id ?? null;
-  const planKey = priceId ? (await planKeyForPrice(priceId)) : null;
-
-  // Map Stripe status to our status enum
-  const statusMap: Record<string, string> = {
-    trialing: "trialing",
-    active: "active",
-    past_due: "past_due",
-    canceled: "canceled",
-    incomplete: "past_due",
-    incomplete_expired: "canceled",
-    unpaid: "past_due",
-    paused: "past_due",
-  };
-  const status = statusMap[stripeSub.status] ?? "past_due";
-
-  // In Stripe v22, current_period_end lives on each subscription item
-  const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
-
-  await sql`
-    insert into subscriptions
-      (org_id, plan_key, status, stripe_subscription_id,
-       current_period_end, trial_end, cancel_at_period_end, updated_at)
-    values
-      (${orgId}, ${planKey ?? "community"}, ${status},
-       ${stripeSub.id},
-       ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
-       ${stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null},
-       ${stripeSub.cancel_at_period_end},
-       now())
-    on conflict (org_id) do update set
-      plan_key              = excluded.plan_key,
-      status                = excluded.status,
-      stripe_subscription_id = excluded.stripe_subscription_id,
-      current_period_end    = excluded.current_period_end,
-      trial_end             = excluded.trial_end,
-      cancel_at_period_end  = excluded.cancel_at_period_end,
-      updated_at            = now()`;
-}
+import { syncSubscription } from "@/lib/billing";
 
 // ---------------------------------------------------------------------------
 // Event handlers

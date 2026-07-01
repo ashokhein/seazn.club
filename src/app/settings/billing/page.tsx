@@ -3,6 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, requireOrgRole } from "@/lib/auth";
 import { sql } from "@/lib/db";
+import { reconcileCheckout } from "@/lib/billing";
 import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, ManageBillingButton } from "@/components/billing-actions";
@@ -30,7 +31,11 @@ const STATUS_BADGE: Record<string, string> = {
   suspended: "bg-red-100 text-red-700",
 };
 
-export default async function BillingPage() {
+export default async function BillingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ checkout?: string; session_id?: string }>;
+}) {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
@@ -39,6 +44,14 @@ export default async function BillingPage() {
 
   const { role } = await requireOrgRole(orgId, ORG_ROLES);
   const isOwner = role === "owner";
+
+  // Reconcile straight from Stripe on return from checkout, so the plan updates
+  // even if the webhook is delayed or missing (best-effort, never throws).
+  const sp = await searchParams;
+  const justCheckedOut = sp.checkout === "success";
+  if (justCheckedOut && sp.session_id) {
+    await reconcileCheckout(orgId, sp.session_id);
+  }
 
   const [sub] = await sql<Subscription[]>`
     select * from subscriptions where org_id = ${orgId}`;
@@ -66,6 +79,13 @@ export default async function BillingPage() {
             ← Settings
           </Link>
         </div>
+
+        {justCheckedOut && (
+          <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+            Checkout complete — your plan is now <span className="font-semibold capitalize">{planKey}</span>
+            {status === "trialing" ? " (trial)" : ""}.
+          </div>
+        )}
 
         {/* Current plan */}
         <section className="card mb-6 p-5">
