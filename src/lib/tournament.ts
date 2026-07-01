@@ -5,12 +5,12 @@ import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { computeStandings, type ScoringConfig } from "@/lib/standings";
 import {
-  knockoutFirstRound,
-  nextPowerOfTwo,
-  pairKey,
-  roundRobinRounds,
-  swissPairings,
-} from "@/lib/pairing";
+  diffState,
+  engineFromBundle,
+  recordResult as engineRecordResult,
+  start as engineStart,
+  type EngineDiff,
+} from "@/lib/engine";
 import type { Match, Player, PlayerInput, Round, Tournament } from "@/lib/types";
 
 // A transaction handle (the `sql` passed into sql.begin's callback).
@@ -149,15 +149,13 @@ export async function writeAudit(
 }
 
 // ---------------------------------------------------------------------------
-// Round / match builders
+// Round / match persistence
+//
+// All progression logic (pairings, brackets, stepladder, byes) lives in the
+// pure engine (src/lib/engine.ts) so production and the test suite run the exact
+// same rules. This module only loads the DB bundle, runs the engine, and
+// persists the resulting diff.
 // ---------------------------------------------------------------------------
-
-function knockoutRoundName(matchCount: number): string {
-  if (matchCount === 1) return "Final";
-  if (matchCount === 2) return "Semi-final";
-  if (matchCount === 4) return "Quarter-final";
-  return `Round of ${matchCount * 2}`;
-}
 
 interface NewRound {
   id: string;
@@ -183,26 +181,6 @@ interface NewMatch {
   is_bye: boolean;
   status: Match["status"];
   label: string | null;
-}
-
-function blankMatch(round_id: string, board: number): NewMatch {
-  return {
-    id: randomUUID(),
-    round_id,
-    board_number: board,
-    player1_id: null,
-    player2_id: null,
-    winner_id: null,
-    loser_id: null,
-    player1_score: null,
-    player2_score: null,
-    is_draw: false,
-    next_match_id: null,
-    next_slot: null,
-    is_bye: false,
-    status: "ready",
-    label: null,
-  };
 }
 
 async function insertRounds(tx: Tx, tournamentId: string, rounds: NewRound[]) {
@@ -268,70 +246,35 @@ async function insertMatches(tx: Tx, tournamentId: string, matches: NewMatch[]) 
   }
 }
 
-function buildKnockoutPlan(
-  rankedIds: string[],
-  startRoundNumber: number,
-): { rounds: NewRound[]; matches: NewMatch[] } {
-  const size = nextPowerOfTwo(Math.max(2, rankedIds.length));
-  const numRounds = Math.log2(size);
-  const rounds: NewRound[] = [];
-  const matchIdsByRound: string[][] = [];
-
-  for (let r = 0; r < numRounds; r++) {
-    const matchCount = size / Math.pow(2, r + 1);
-    matchIdsByRound.push(Array.from({ length: matchCount }, () => randomUUID()));
-    rounds.push({
-      id: randomUUID(),
-      round_number: startRoundNumber + r,
-      stage: matchCount === 1 ? "final" : "knockout",
-      name: knockoutRoundName(matchCount),
-      status: "active",
-    });
+/**
+ * Persist the difference between the pre-mutation DB state and the state the
+ * engine produced: insert new rounds/matches, update rounds whose status
+ * changed, and update matches whose mutable fields changed. next_match_id /
+ * next_slot are fixed at creation, so they only ride along on new matches.
+ */
+async function persistEngineDiff(
+  tx: Tx,
+  tournamentId: string,
+  diff: EngineDiff,
+) {
+  await insertRounds(tx, tournamentId, diff.newRounds);
+  for (const r of diff.updatedRounds) {
+    await tx`update rounds set status = ${r.status} where id = ${r.id}`;
   }
-
-  const matches: NewMatch[] = [];
-  const firstRound = knockoutFirstRound(rankedIds);
-  for (let r = 0; r < numRounds; r++) {
-    const ids = matchIdsByRound[r];
-    const round = rounds[r];
-    for (let i = 0; i < ids.length; i++) {
-      const next =
-        r < numRounds - 1
-          ? { id: matchIdsByRound[r + 1][Math.floor(i / 2)], slot: (i % 2) + 1 }
-          : null;
-      const base = blankMatch(round.id, i + 1);
-      base.id = ids[i];
-      base.next_match_id = next?.id ?? null;
-      base.next_slot = next?.slot ?? null;
-      base.status = r === 0 ? "ready" : "pending";
-      base.label = `${round.name} ${ids.length > 1 ? i + 1 : ""}`.trim();
-      if (r === 0) {
-        const p = firstRound[i];
-        base.player1_id = p.player1 || null;
-        base.player2_id = p.player2;
-        base.is_bye = !!base.player1_id && !base.player2_id;
-      }
-      matches.push(base);
-    }
+  await insertMatches(tx, tournamentId, diff.newMatches);
+  for (const m of diff.updatedMatches) {
+    await tx`update matches set
+        player1_id = ${m.player1_id},
+        player2_id = ${m.player2_id},
+        winner_id = ${m.winner_id},
+        loser_id = ${m.loser_id},
+        player1_score = ${m.player1_score},
+        player2_score = ${m.player2_score},
+        is_draw = ${m.is_draw},
+        is_bye = ${m.is_bye},
+        status = ${m.status}
+      where id = ${m.id}`;
   }
-  return { rounds, matches };
-}
-
-function groupMatchesFromPairings(
-  roundId: string,
-  pairings: { player1: string; player2: string | null }[],
-): NewMatch[] {
-  return pairings.map((p, i) => {
-    const m = blankMatch(roundId, i + 1);
-    m.player1_id = p.player1;
-    m.player2_id = p.player2;
-    if (!p.player2) {
-      m.is_bye = true;
-      m.winner_id = p.player1;
-      m.status = "completed";
-    }
-    return m;
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -367,52 +310,19 @@ export async function startTournament(
       }`,
       { players: players.length, format: t.format },
     );
-    const ids = players.map((p) => p.id);
-
-    if (t.format === "knockout") {
-      const plan = buildKnockoutPlan(ids, 1);
-      await insertRounds(tx, tournamentId, plan.rounds);
-      await insertMatches(tx, tournamentId, plan.matches);
-      await tx`update tournaments set status = 'knockout' where id = ${tournamentId}`;
-      await resolveByes(tx, tournamentId);
-    } else if (t.format === "round_robin") {
-      const schedule = roundRobinRounds(ids);
-      const newRounds: NewRound[] = [];
-      const newMatches: NewMatch[] = [];
-      schedule.forEach((pairs, idx) => {
-        const roundId = randomUUID();
-        newRounds.push({
-          id: roundId,
-          round_number: idx + 1,
-          stage: "group",
-          name: `Round ${idx + 1}`,
-          status: "active",
-        });
-        newMatches.push(...groupMatchesFromPairings(roundId, pairs));
-      });
-      await insertRounds(tx, tournamentId, newRounds);
-      await insertMatches(tx, tournamentId, newMatches);
-      await tx`update tournaments set status = 'group' where id = ${tournamentId}`;
-    } else {
-      // swiss_knockout: first progress round by seed order.
-      const pairings = swissPairings(ids, new Set(), new Set());
-      const roundId = randomUUID();
-      await insertRounds(tx, tournamentId, [
-        {
-          id: roundId,
-          round_number: 1,
-          stage: "group",
-          name: "Round 1",
-          status: "active",
-        },
-      ]);
-      await insertMatches(
-        tx,
-        tournamentId,
-        groupMatchesFromPairings(roundId, pairings),
-      );
-      await tx`update tournaments set status = 'group' where id = ${tournamentId}`;
-    }
+    // Delegate all bracket/pairing construction to the pure engine, then
+    // persist what it produced.
+    const state = engineFromBundle(
+      { tournament: t, players, rounds: [], matches: [] },
+      randomUUID,
+    );
+    engineStart(state);
+    await persistEngineDiff(
+      tx,
+      tournamentId,
+      diffState({ rounds: [], matches: [] }, state),
+    );
+    await tx`update tournaments set status = ${state.status} where id = ${tournamentId}`;
     await refreshUndoBudget(tx, tournamentId);
   });
 }
@@ -440,424 +350,51 @@ export async function recordResult(
       select * from tournaments where id = ${tournamentId} for update`;
     if (!t) throw new HttpError(404, "Tournament not found");
 
-    const [m] = await tx<Match[]>`
-      select ${tx(MATCH_COLS as unknown as string[])} from matches
-      where id = ${matchId} and tournament_id = ${tournamentId}`;
+    const bundle = await loadForCompute(tx, tournamentId);
+    const m = bundle.matches.find((x) => x.id === matchId);
     if (!m) throw new HttpError(404, "Match not found");
     if (m.status === "completed") throw new HttpError(409, "Match already decided");
-    if (!m.player1_id || !m.player2_id)
-      throw new Error("Both players must be present");
 
-    const [round] = await tx<Round[]>`
-      select ${tx(ROUND_COLS as unknown as string[])} from rounds
-      where id = ${m.round_id}`;
-    const isKnockout = round.stage !== "group";
-
-    // Resolve the outcome.
-    let winnerId: string | null = null;
-    let loserId: string | null = null;
-    let isDraw = false;
-    const p1 = input.player1_score ?? null;
-    const p2 = input.player2_score ?? null;
-
-    if (p1 != null && p2 != null) {
-      if (p1 === p2) {
-        if (isKnockout || !t.allow_draws)
-          throw new Error("This match needs a winner (no draws allowed).");
-        isDraw = true;
-      } else {
-        winnerId = p1 > p2 ? m.player1_id : m.player2_id;
-        loserId = p1 > p2 ? m.player2_id : m.player1_id;
-      }
-    } else if (input.is_draw) {
-      if (isKnockout || !t.allow_draws)
-        throw new Error("This match needs a winner (no draws allowed).");
-      isDraw = true;
-    } else if (input.winner_id) {
-      if (input.winner_id !== m.player1_id && input.winner_id !== m.player2_id)
-        throw new Error("Winner must be one of the two players");
-      winnerId = input.winner_id;
-      loserId = winnerId === m.player1_id ? m.player2_id : m.player1_id;
-    } else {
-      throw new Error("Provide a winner, a draw, or both scores");
-    }
+    // Run the recording + all downstream progression in the pure engine. It
+    // validates the outcome (both players present, no draws in knockout, winner
+    // is a participant) and throws with the same messages as before on bad
+    // input, so nothing is persisted for an invalid request.
+    const before = { rounds: bundle.rounds, matches: bundle.matches };
+    const state = engineFromBundle(
+      { tournament: t, players: bundle.players, rounds: bundle.rounds, matches: bundle.matches },
+      randomUUID,
+    );
+    engineRecordResult(state, matchId, input);
 
     await takeSnapshot(tx, tournamentId, "record_result");
     await refreshUndoBudget(tx, tournamentId);
+    await persistEngineDiff(tx, tournamentId, diffState(before, state));
+    await tx`update tournaments set status = ${state.status} where id = ${tournamentId}`;
 
-    await tx`update matches set
-        winner_id = ${winnerId}, loser_id = ${loserId}, is_draw = ${isDraw},
-        player1_score = ${p1}, player2_score = ${p2}, status = 'completed'
-      where id = ${matchId}`;
-
-    // Audit entry with readable player names.
-    const names = await tx<{ id: string; name: string }[]>`
-      select id, name from players
-      where id in (${m.player1_id}, ${m.player2_id})`;
+    // Audit entry with readable player names, read from the decided match.
+    const rm = state.matches.find((x) => x.id === matchId)!;
+    const round = bundle.rounds.find((r) => r.id === m.round_id);
     const nameOf = (pid: string | null) =>
-      names.find((n) => n.id === pid)?.name ?? "?";
+      bundle.players.find((p) => p.id === pid)?.name ?? "?";
     const stageLabel = round?.name ? `${round.name}: ` : "";
     let summary: string;
-    if (isDraw) {
+    if (rm.is_draw) {
       summary = `${stageLabel}${nameOf(m.player1_id)} drew with ${nameOf(m.player2_id)}`;
-    } else if (p1 != null && p2 != null) {
-      summary = `${stageLabel}${nameOf(m.player1_id)} ${p1}–${p2} ${nameOf(m.player2_id)}`;
+    } else if (rm.player1_score != null && rm.player2_score != null) {
+      summary = `${stageLabel}${nameOf(m.player1_id)} ${rm.player1_score}–${rm.player2_score} ${nameOf(m.player2_id)}`;
     } else {
-      summary = `${stageLabel}${nameOf(winnerId)} beat ${nameOf(loserId)}`;
+      summary = `${stageLabel}${nameOf(rm.winner_id)} beat ${nameOf(rm.loser_id)}`;
     }
     await writeAudit(tx, tournamentId, actor, "record_result", summary, {
       match_id: matchId,
       round: round?.name ?? null,
-      winner_id: winnerId,
-      loser_id: loserId,
-      is_draw: isDraw,
-      player1_score: p1,
-      player2_score: p2,
+      winner_id: rm.winner_id,
+      loser_id: rm.loser_id,
+      is_draw: rm.is_draw,
+      player1_score: rm.player1_score,
+      player2_score: rm.player2_score,
     });
-
-    if (round.stage === "group") {
-      await maybeAdvanceGroup(tx, t, round);
-    } else if (round.stage === "playoff") {
-      await resolveSeedingPlayoff(tx, t, matchId);
-    } else {
-      await propagateKnockout(tx, tournamentId, matchId);
-    }
   });
-}
-
-/** Group / round-robin progression. */
-async function maybeAdvanceGroup(tx: Tx, t: Tournament, round: Round) {
-  if (t.format === "round_robin") {
-    // mark this round complete (cosmetic) if done
-    const roundPending = await tx`
-      select 1 from matches where round_id = ${round.id}
-      and status <> 'completed' limit 1`;
-    if (!roundPending.length)
-      await tx`update rounds set status = 'completed' where id = ${round.id}`;
-
-    const anyPending = await tx`
-      select 1 from matches m join rounds r on r.id = m.round_id
-      where r.tournament_id = ${t.id} and r.stage = 'group'
-        and m.status <> 'completed' limit 1`;
-    if (anyPending.length) return;
-    await buildKnockoutFromStandings(tx, t, 0);
-    return;
-  }
-
-  // swiss_knockout
-  const pending = await tx`
-    select 1 from matches where round_id = ${round.id}
-    and status <> 'completed' limit 1`;
-  if (pending.length) return;
-  await tx`update rounds set status = 'completed' where id = ${round.id}`;
-
-  if (round.round_number < t.num_group_rounds) {
-    await generateNextGroupRound(tx, t, round.round_number + 1);
-  } else if (t.format === "progress_stepladder") {
-    await buildStepladderFromStandings(tx, t, round.round_number + 1);
-  } else {
-    await buildKnockoutFromStandings(tx, t, round.round_number + 1);
-  }
-}
-
-async function generateNextGroupRound(tx: Tx, t: Tournament, roundNumber: number) {
-  const { players, rounds, matches } = await loadForCompute(tx, t.id);
-  const standings = computeStandings(players, rounds, matches, cfgOf(t));
-  const rankedIds = standings.map((s) => s.player.id);
-
-  const playedKeys = new Set<string>();
-  const hadBye = new Set<string>();
-  for (const m of matches) {
-    if (m.is_bye && m.player1_id) hadBye.add(m.player1_id);
-    if (m.player1_id && m.player2_id)
-      playedKeys.add(pairKey(m.player1_id, m.player2_id));
-  }
-
-  const pairings = swissPairings(rankedIds, playedKeys, hadBye);
-  const roundId = randomUUID();
-  await insertRounds(tx, t.id, [
-    {
-      id: roundId,
-      round_number: roundNumber,
-      stage: "group",
-      name: `Round ${roundNumber}`,
-      status: "active",
-    },
-  ]);
-  await insertMatches(tx, t.id, groupMatchesFromPairings(roundId, pairings));
-}
-
-async function buildKnockoutFromStandings(
-  tx: Tx,
-  t: Tournament,
-  startRoundNumber: number,
-) {
-  const { players, rounds, matches } = await loadForCompute(tx, t.id);
-  // Knockout rounds continue after the last existing round number.
-  const maxRound = rounds.reduce((mx, r) => Math.max(mx, r.round_number), 0);
-  const start = Math.max(startRoundNumber, maxRound + 1);
-
-  const standings = computeStandings(players, rounds, matches, cfgOf(t));
-  const k = Math.min(t.knockout_size || 0, standings.length);
-  if (k < 2) {
-    await tx`update tournaments set status = 'completed' where id = ${t.id}`;
-    return;
-  }
-  const seeded = standings.slice(0, k).map((s) => s.player.id);
-  const plan = buildKnockoutPlan(seeded, start);
-  await insertRounds(tx, t.id, plan.rounds);
-  await insertMatches(tx, t.id, plan.matches);
-  await tx`update tournaments set status = 'knockout' where id = ${t.id}`;
-  await resolveByes(tx, t.id);
-}
-
-// ---------------------------------------------------------------------------
-// Stepladder finals (Top 3 / Top 4)
-//   Top 4: Eliminator (3v4) -> Semi-final (2 vs winner) -> Final (1 vs winner)
-//   Top 3:                     Semi-final (2v3)         -> Final (1 vs winner)
-//   1st gets a bye straight to the Final; 2nd waits in the Semi-final.
-//   If 2nd and 3rd are level on points, a one-match seeding play-off decides
-//   who takes the 2nd seed before the ladder is built.
-// ---------------------------------------------------------------------------
-
-function buildStepladderPlan(
-  seedIds: string[],
-  startRoundNumber: number,
-): { rounds: NewRound[]; matches: NewMatch[] } {
-  const rounds: NewRound[] = [];
-  const matches: NewMatch[] = [];
-  const n = seedIds.length;
-  if (n < 2) return { rounds, matches };
-
-  // Only two qualifiers: a single Final.
-  if (n === 2) {
-    const fr: NewRound = {
-      id: randomUUID(),
-      round_number: startRoundNumber,
-      stage: "final",
-      name: "Final",
-      status: "active",
-    };
-    const f = blankMatch(fr.id, 1);
-    f.player1_id = seedIds[0];
-    f.player2_id = seedIds[1];
-    f.status = "ready";
-    f.label = "Final";
-    return { rounds: [fr], matches: [f] };
-  }
-
-  const hasElim = n >= 4;
-  const finalRoundNumber = startRoundNumber + (hasElim ? 2 : 1);
-  const sfRoundNumber = startRoundNumber + (hasElim ? 1 : 0);
-
-  const finalRound: NewRound = {
-    id: randomUUID(),
-    round_number: finalRoundNumber,
-    stage: "final",
-    name: "Final",
-    status: "active",
-  };
-  const finalMatch = blankMatch(finalRound.id, 1);
-  finalMatch.label = "Final";
-  finalMatch.player1_id = seedIds[0]; // top seed waits in the Final
-  finalMatch.status = "pending";
-
-  const sfRound: NewRound = {
-    id: randomUUID(),
-    round_number: sfRoundNumber,
-    stage: "knockout",
-    name: "Semi-final",
-    status: "active",
-  };
-  const sfMatch = blankMatch(sfRound.id, 1);
-  sfMatch.label = "Semi-final";
-  sfMatch.next_match_id = finalMatch.id;
-  sfMatch.next_slot = 2;
-
-  if (hasElim) {
-    const elimRound: NewRound = {
-      id: randomUUID(),
-      round_number: startRoundNumber,
-      stage: "knockout",
-      name: "Eliminator",
-      status: "active",
-    };
-    const elim = blankMatch(elimRound.id, 1);
-    elim.label = "Eliminator (3rd v 4th)";
-    elim.player1_id = seedIds[2];
-    elim.player2_id = seedIds[3];
-    elim.status = "ready";
-    elim.next_match_id = sfMatch.id;
-    elim.next_slot = 2;
-
-    sfMatch.player1_id = seedIds[1]; // 2nd seed waits in the Semi-final
-    sfMatch.player2_id = null;
-    sfMatch.status = "pending";
-
-    rounds.push(elimRound, sfRound, finalRound);
-    matches.push(elim, sfMatch, finalMatch);
-  } else {
-    sfMatch.player1_id = seedIds[1];
-    sfMatch.player2_id = seedIds[2];
-    sfMatch.status = "ready";
-    rounds.push(sfRound, finalRound);
-    matches.push(sfMatch, finalMatch);
-  }
-
-  return { rounds, matches };
-}
-
-async function buildStepladderFromStandings(
-  tx: Tx,
-  t: Tournament,
-  startRoundNumber: number,
-) {
-  const { players, rounds, matches } = await loadForCompute(tx, t.id);
-  const maxRound = rounds.reduce((mx, r) => Math.max(mx, r.round_number), 0);
-  const start = Math.max(startRoundNumber, maxRound + 1);
-
-  const standings = computeStandings(players, rounds, matches, cfgOf(t));
-  // Ladder size is 3 or 4 (from knockout_size), clamped to the field size.
-  const desired = t.knockout_size >= 4 ? 4 : 3;
-  const k = Math.min(desired, standings.length);
-  if (k < 2) {
-    await tx`update tournaments set status = 'completed' where id = ${t.id}`;
-    return;
-  }
-
-  // Tiebreak: if 2nd and 3rd are level on points, settle the 2nd seed first.
-  //
-  // A seeding play-off is only sound for a 3-seed ladder, where it cleanly
-  // REPLACES the semi-final (play-off winner goes straight to the Final, loser
-  // is eliminated). For a 4-seed ladder it would re-pair the play-off opponents
-  // in the Semi-final — the exact stepladder rematch defect from doc 12 §2 / P6
-  // (loser drops to the Eliminator, wins, and meets the play-off winner again).
-  // So for k === 4 we resolve the 2nd/3rd order via the existing standings
-  // tiebreakers instead — no extra match, no rematch.
-  if (k === 3 && standings[1].points === standings[2].points) {
-    await buildSeedingPlayoff(
-      tx,
-      t,
-      start,
-      standings[1].player.id,
-      standings[2].player.id,
-    );
-    return;
-  }
-
-  const seeds = standings.slice(0, k).map((s) => s.player.id);
-  const plan = buildStepladderPlan(seeds, start);
-  await insertRounds(tx, t.id, plan.rounds);
-  await insertMatches(tx, t.id, plan.matches);
-  await tx`update tournaments set status = 'knockout' where id = ${t.id}`;
-}
-
-async function buildSeedingPlayoff(
-  tx: Tx,
-  t: Tournament,
-  startRoundNumber: number,
-  aId: string,
-  bId: string,
-) {
-  const roundId = randomUUID();
-  await insertRounds(tx, t.id, [
-    {
-      id: roundId,
-      round_number: startRoundNumber,
-      stage: "playoff",
-      name: "Seeding play-off",
-      status: "active",
-    },
-  ]);
-  const m = blankMatch(roundId, 1);
-  m.player1_id = aId;
-  m.player2_id = bId;
-  m.status = "ready";
-  m.label = "Seeding play-off (2nd v 3rd)";
-  await insertMatches(tx, t.id, [m]);
-  await tx`update tournaments set status = 'knockout' where id = ${t.id}`;
-}
-
-async function resolveSeedingPlayoff(tx: Tx, t: Tournament, matchId: string) {
-  const [m] = await tx<Match[]>`
-    select ${tx(MATCH_COLS as unknown as string[])} from matches
-    where id = ${matchId}`;
-  if (!m?.winner_id) return;
-  await tx`update rounds set status = 'completed' where id = ${m.round_id}`;
-
-  const { players, rounds, matches } = await loadForCompute(tx, t.id);
-  const standings = computeStandings(players, rounds, matches, cfgOf(t));
-  const s1 = standings[0].player.id;
-  const maxRound = rounds.reduce((mx, r) => Math.max(mx, r.round_number), 0);
-
-  // A seeding play-off is only ever created for a 3-seed ladder (see
-  // buildStepladderFromStandings), so the play-off already settled 2nd v 3rd:
-  // the winner goes straight to the Final vs 1st and the loser is eliminated —
-  // no Semi-final rematch.
-  const finalRound: NewRound = {
-    id: randomUUID(),
-    round_number: maxRound + 1,
-    stage: "final",
-    name: "Final",
-    status: "active",
-  };
-  const finalMatch = blankMatch(finalRound.id, 1);
-  finalMatch.label = "Final";
-  finalMatch.player1_id = s1;
-  finalMatch.player2_id = m.winner_id;
-  finalMatch.status = "ready";
-  await insertRounds(tx, t.id, [finalRound]);
-  await insertMatches(tx, t.id, [finalMatch]);
-}
-
-// ---------------------------------------------------------------------------
-// Knockout propagation
-// ---------------------------------------------------------------------------
-
-async function propagateKnockout(tx: Tx, tournamentId: string, matchId: string) {
-  const [m] = await tx<Match[]>`
-    select ${tx(MATCH_COLS as unknown as string[])} from matches
-    where id = ${matchId}`;
-  if (!m?.winner_id) return;
-
-  if (!m.next_match_id) {
-    await tx`update rounds set status = 'completed' where id = ${m.round_id}`;
-    await tx`update tournaments set status = 'completed' where id = ${tournamentId}`;
-    return;
-  }
-
-  const slotCol = m.next_slot === 1 ? "player1_id" : "player2_id";
-  await tx`update matches set ${tx(slotCol)} = ${m.winner_id}
-    where id = ${m.next_match_id}`;
-
-  const remaining = await tx`
-    select 1 from matches where round_id = ${m.round_id}
-    and status <> 'completed' limit 1`;
-  if (!remaining.length)
-    await tx`update rounds set status = 'completed' where id = ${m.round_id}`;
-
-  const [next] = await tx<Match[]>`
-    select ${tx(MATCH_COLS as unknown as string[])} from matches
-    where id = ${m.next_match_id}`;
-  if (next && next.player1_id && next.player2_id && next.status === "pending")
-    await tx`update matches set status = 'ready' where id = ${next.id}`;
-}
-
-async function resolveByes(tx: Tx, tournamentId: string) {
-  for (let guard = 0; guard < 64; guard++) {
-    const byes = await tx<Match[]>`
-      select ${tx(MATCH_COLS as unknown as string[])} from matches
-      where tournament_id = ${tournamentId}
-        and status <> 'completed'
-        and player1_id is not null and player2_id is null
-        and next_slot is not null limit 1`;
-    if (!byes.length) break;
-    const m = byes[0];
-    await tx`update matches
-      set winner_id = ${m.player1_id}, status = 'completed', is_bye = true
-      where id = ${m.id}`;
-    await propagateKnockout(tx, tournamentId, m.id);
-  }
 }
 
 // ---------------------------------------------------------------------------

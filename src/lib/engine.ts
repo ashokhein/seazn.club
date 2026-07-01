@@ -25,6 +25,7 @@ import type {
   Player,
   ResultMode,
   Round,
+  Tournament,
   TournamentFormat,
   TournamentStatus,
 } from "@/lib/types";
@@ -47,8 +48,14 @@ export interface EngineState {
   rounds: Round[];
   matches: Match[];
   status: TournamentStatus;
-  /** monotonic id source */
+  /** monotonic id source (used when no _idgen is supplied) */
   _seq: number;
+  /**
+   * Optional id generator. In production the DB adapter passes `randomUUID` so
+   * engine-created rounds/matches get real UUIDs; tests leave it unset and get
+   * deterministic `r-N` / `m-N` ids.
+   */
+  _idgen?: () => string;
 }
 
 export interface ResultInput {
@@ -108,8 +115,93 @@ function cfgOf(config: EngineConfig): ScoringConfig {
 }
 
 function nextId(state: EngineState, prefix: string): string {
+  if (state._idgen) return state._idgen();
   state._seq += 1;
   return `${prefix}-${state._seq}`;
+}
+
+/**
+ * Build an engine state from a database bundle so production progression runs
+ * the exact same rules as the tests. Rows are cloned so the caller's `bundle`
+ * arrays stay untouched as the "before" state for {@link diffState}.
+ */
+export function engineFromBundle(
+  bundle: {
+    tournament: Tournament;
+    players: Player[];
+    rounds: Round[];
+    matches: Match[];
+  },
+  idgen: () => string,
+): EngineState {
+  const t = bundle.tournament;
+  return {
+    config: {
+      format: t.format,
+      num_group_rounds: t.num_group_rounds,
+      knockout_size: t.knockout_size,
+      result_mode: t.result_mode,
+      points_win: t.points_win,
+      points_draw: t.points_draw,
+      points_loss: t.points_loss,
+      allow_draws: t.allow_draws,
+      use_progress_score: t.use_progress_score,
+    },
+    players: bundle.players.map((p) => ({ ...p })),
+    rounds: bundle.rounds.map((r) => ({ ...r })),
+    matches: bundle.matches.map((m) => ({ ...m })),
+    status: t.status,
+    _seq: 0,
+    _idgen: idgen,
+  };
+}
+
+/** Mutable match fields the DB adapter must persist on an update. */
+const MUTABLE_MATCH_FIELDS = [
+  "player1_id",
+  "player2_id",
+  "winner_id",
+  "loser_id",
+  "player1_score",
+  "player2_score",
+  "is_draw",
+  "is_bye",
+  "status",
+] as const;
+
+export interface EngineDiff {
+  newRounds: Round[];
+  updatedRounds: Round[];
+  newMatches: Match[];
+  updatedMatches: Match[];
+  status: TournamentStatus;
+}
+
+/**
+ * Pure diff between the pre-mutation DB state and the post-engine state. The DB
+ * adapter turns this into inserts/updates. next_match_id / next_slot are set at
+ * creation and never change, so they are only carried on new matches.
+ */
+export function diffState(
+  before: { rounds: Round[]; matches: Match[] },
+  after: EngineState,
+): EngineDiff {
+  const beforeRounds = new Map(before.rounds.map((r) => [r.id, r]));
+  const beforeMatches = new Map(before.matches.map((m) => [m.id, m]));
+
+  const newRounds = after.rounds.filter((r) => !beforeRounds.has(r.id));
+  const updatedRounds = after.rounds.filter((r) => {
+    const b = beforeRounds.get(r.id);
+    return b != null && b.status !== r.status;
+  });
+  const newMatches = after.matches.filter((m) => !beforeMatches.has(m.id));
+  const updatedMatches = after.matches.filter((m) => {
+    const b = beforeMatches.get(m.id);
+    if (!b) return false;
+    return MUTABLE_MATCH_FIELDS.some((k) => b[k] !== m[k]);
+  });
+
+  return { newRounds, updatedRounds, newMatches, updatedMatches, status: after.status };
 }
 
 export function standings(state: EngineState) {
