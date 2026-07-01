@@ -726,7 +726,15 @@ async function buildStepladderFromStandings(
   }
 
   // Tiebreak: if 2nd and 3rd are level on points, settle the 2nd seed first.
-  if (k >= 3 && standings[1].points === standings[2].points) {
+  //
+  // A seeding play-off is only sound for a 3-seed ladder, where it cleanly
+  // REPLACES the semi-final (play-off winner goes straight to the Final, loser
+  // is eliminated). For a 4-seed ladder it would re-pair the play-off opponents
+  // in the Semi-final — the exact stepladder rematch defect from doc 12 §2 / P6
+  // (loser drops to the Eliminator, wins, and meets the play-off winner again).
+  // So for k === 4 we resolve the 2nd/3rd order via the existing standings
+  // tiebreakers instead — no extra match, no rematch.
+  if (k === 3 && standings[1].points === standings[2].points) {
     await buildSeedingPlayoff(
       tx,
       t,
@@ -775,40 +783,31 @@ async function resolveSeedingPlayoff(tx: Tx, t: Tournament, matchId: string) {
     select ${tx(MATCH_COLS as unknown as string[])} from matches
     where id = ${matchId}`;
   if (!m?.winner_id) return;
-  const loser = m.player1_id === m.winner_id ? m.player2_id : m.player1_id;
   await tx`update rounds set status = 'completed' where id = ${m.round_id}`;
 
   const { players, rounds, matches } = await loadForCompute(tx, t.id);
   const standings = computeStandings(players, rounds, matches, cfgOf(t));
-  const desired = t.knockout_size >= 4 ? 4 : 3;
-  const k = Math.min(desired, standings.length);
   const s1 = standings[0].player.id;
   const maxRound = rounds.reduce((mx, r) => Math.max(mx, r.round_number), 0);
 
-  if (k < 4) {
-    // With only three players the play-off already settled 2nd v 3rd — the
-    // winner goes straight to the Final vs 1st; no Semi-final rematch.
-    const finalRound: NewRound = {
-      id: randomUUID(),
-      round_number: maxRound + 1,
-      stage: "final",
-      name: "Final",
-      status: "active",
-    };
-    const finalMatch = blankMatch(finalRound.id, 1);
-    finalMatch.label = "Final";
-    finalMatch.player1_id = s1;
-    finalMatch.player2_id = m.winner_id;
-    finalMatch.status = "ready";
-    await insertRounds(tx, t.id, [finalRound]);
-    await insertMatches(tx, t.id, [finalMatch]);
-    return;
-  }
-
-  const seeds = [s1, m.winner_id, loser as string, standings[3].player.id];
-  const plan = buildStepladderPlan(seeds, maxRound + 1);
-  await insertRounds(tx, t.id, plan.rounds);
-  await insertMatches(tx, t.id, plan.matches);
+  // A seeding play-off is only ever created for a 3-seed ladder (see
+  // buildStepladderFromStandings), so the play-off already settled 2nd v 3rd:
+  // the winner goes straight to the Final vs 1st and the loser is eliminated —
+  // no Semi-final rematch.
+  const finalRound: NewRound = {
+    id: randomUUID(),
+    round_number: maxRound + 1,
+    stage: "final",
+    name: "Final",
+    status: "active",
+  };
+  const finalMatch = blankMatch(finalRound.id, 1);
+  finalMatch.label = "Final";
+  finalMatch.player1_id = s1;
+  finalMatch.player2_id = m.winner_id;
+  finalMatch.status = "ready";
+  await insertRounds(tx, t.id, [finalRound]);
+  await insertMatches(tx, t.id, [finalMatch]);
 }
 
 // ---------------------------------------------------------------------------
