@@ -40,8 +40,15 @@ export async function POST(req: Request) {
         ? { customer: existingCustomerId }
         : { customer_email: user.email }),
       metadata: { org_id: orgId },
+      // Honour the "no card required" trial: don't ask for a payment method up
+      // front. If none is added by the time the trial ends, cancel rather than
+      // silently attempting to bill a card we never collected.
+      payment_method_collection: "if_required",
       subscription_data: {
         trial_period_days: 14,
+        trial_settings: {
+          end_behavior: { missing_payment_method: "cancel" },
+        },
         metadata: { org_id: orgId },
       },
       line_items: [{ price: plan.price_id, quantity: 1 }],
