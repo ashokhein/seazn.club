@@ -71,6 +71,9 @@ jobs:
       - name: Bootstrap database (schema + migrations)
         run: npm run db:apply
 
+      - name: RLS guard (every org_id table isolated)
+        run: npm run check:rls
+
       - name: Start dev server
         run: |
           npm run dev > dev-server.log 2>&1 &
