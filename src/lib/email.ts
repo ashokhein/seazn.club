@@ -4,7 +4,7 @@ import { sql } from "@/lib/db";
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
 function from(): string {
-  return process.env.EMAIL_FROM || "Seazn Club <onboarding@resend.dev>";
+  return process.env.EMAIL_FROM || "Seazn Club <noreply@mail.seazn.club>";
 }
 
 function replyTo(): string | undefined {
