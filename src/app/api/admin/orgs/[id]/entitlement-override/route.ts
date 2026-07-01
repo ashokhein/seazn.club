@@ -1,5 +1,6 @@
 import { sql } from "@/lib/db";
 import { requireSuperadmin, logStaffAction } from "@/lib/admin";
+import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { handler, HttpError } from "@/lib/http";
 import { z } from "zod";
 
@@ -31,6 +32,7 @@ export async function POST(
         int_value  = excluded.int_value,
         reason     = excluded.reason`;
 
+    await invalidateOrgEntitlements(id);
     await logStaffAction(staff.id, "entitlement_override", "entitlement", id, {
       feature_key, bool_value, int_value, reason,
     });
@@ -52,6 +54,7 @@ export async function DELETE(
       delete from org_entitlement_overrides
       where org_id = ${id} and feature_key = ${feature_key}`;
 
+    await invalidateOrgEntitlements(id);
     await logStaffAction(staff.id, "entitlement_override_removed", "entitlement", id, { feature_key });
     return { ok: true };
   });
