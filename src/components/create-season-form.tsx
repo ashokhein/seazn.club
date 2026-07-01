@@ -66,7 +66,7 @@ export function CreateSeasonForm() {
                     .replace(/^-|-$/g, ""),
                 );
               }}
-              placeholder="SAFE 2028"
+              placeholder="Spring 2026"
               className="input"
             />
           </label>
@@ -75,7 +75,7 @@ export function CreateSeasonForm() {
             <input
               value={slug}
               onChange={(e) => setSlug(e.target.value)}
-              placeholder="safe2028"
+              placeholder="spring-2026"
               className="input"
             />
             <span className="mt-1 block text-xs text-slate-400">
