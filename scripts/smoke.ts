@@ -1,5 +1,11 @@
 // End-to-end smoke test against the running dev server (http://localhost:3000).
 // Run with: node --experimental-strip-types scripts/smoke.ts
+//
+// Teardown: when DATABASE_URL is set (CI, or `node --env-file=.env.local`), the
+// run's own test users + their orgs are purged afterwards (see cleanup). The DB
+// must be the same one the target server uses.
+import postgres from "postgres";
+
 const BASE = process.env.SMOKE_BASE ?? "http://localhost:3000";
 
 interface Session {
@@ -524,11 +530,53 @@ async function main() {
   );
 
   console.log(`\nCreated test tournaments: ${created.join(", ")}`);
-  console.log(`${pass} passed, ${fail} failed`);
-  process.exit(fail === 0 ? 0 : 1);
 }
 
-main().catch((e) => {
-  console.error("ERROR:", e.message);
-  process.exit(1);
-});
+/**
+ * Purge this run's test data: delete the three test users and every org they
+ * created (org delete cascades seasons/tournaments/rounds/matches/members/
+ * invites/presets). Scoped to the run's `tag` by exact email match. No-op when
+ * DATABASE_URL is unset. Never throws — teardown must not fail the run.
+ */
+async function cleanup(tag: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    console.log("cleanup skipped (DATABASE_URL not set)");
+    return;
+  }
+  const emails = [
+    `admin_${tag}@example.com`,
+    `viewer_${tag}@example.com`,
+    `member_${tag}@example.com`,
+  ];
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    const orgs = await sql`
+      delete from organizations
+      where created_by in (select id from users where email = any(${emails}))`;
+    const users = await sql`delete from users where email = any(${emails})`;
+    console.log(`cleanup: removed ${orgs.count} org(s), ${users.count} user(s)`);
+  } catch (e) {
+    console.warn("cleanup failed:", e instanceof Error ? e.message : e);
+  } finally {
+    await sql.end();
+  }
+}
+
+main()
+  .then(async () => {
+    await cleanup(tag);
+    console.log(`${pass} passed, ${fail} failed`);
+    process.exit(fail === 0 ? 0 : 1);
+  })
+  .catch(async (e) => {
+    console.error("ERROR:", e.message);
+    await cleanup(tag);
+    console.log(`${pass} passed, ${fail} failed`);
+    process.exit(1);
+  });
