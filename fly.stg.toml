@@ -1,6 +1,13 @@
 app = "seazn-club-stg"
 primary_region = "lhr"
 
+# Runtime env (non-secret). OAUTH_BASE_URL makes server-side redirect/base-URL
+# resolution deterministic behind Fly's proxy (req.url is the internal
+# 0.0.0.0:3000 binding; NEXT_PUBLIC_* build args are not in server process.env).
+[env]
+  OAUTH_BASE_URL   = "https://seazn-club-stg.fly.dev"
+  NEXT_PUBLIC_BASE_URL = "https://seazn-club-stg.fly.dev"
+
 [build]
   [build.args]
     NEXT_PUBLIC_SUPABASE_URL           = "https://hoksroegadfdfwererzu.supabase.co"

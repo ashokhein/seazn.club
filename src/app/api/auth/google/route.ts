@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import {
   GOOGLE_AUTH_URL,
   OAUTH_STATE_COOKIE,
+  baseUrl,
   googleConfigured,
   googleRedirectUri,
 } from "@/lib/oauth";
@@ -12,7 +13,7 @@ import {
 export async function GET(req: Request) {
   if (!googleConfigured()) {
     return NextResponse.redirect(
-      new URL("/login?error=google_not_configured", req.url),
+      new URL("/login?error=google_not_configured", baseUrl(req)),
     );
   }
 
