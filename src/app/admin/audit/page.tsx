@@ -11,8 +11,12 @@ export default async function AdminAuditPage() {
     select s.id, u.email as actor_email, s.action, s.target_type, s.target_id,
            s.detail, s.created_at
     from staff_audit_log s join users u on u.id = s.actor_id
-    order by s.created_at desc
+    order by s.chain_seq desc nulls last, s.created_at desc
     limit 200`;
+
+  // Tamper-evidence: re-walk the hash chain (doc 04 §6). null = intact.
+  const [{ broken }] = await sql<{ broken: string | null }[]>`
+    select verify_staff_audit_log_chain() as broken`;
 
   return (
     <div className="space-y-6">
@@ -21,6 +25,18 @@ export default async function AdminAuditPage() {
           <Link href="/admin" className="hover:text-white">Admin</Link> / Audit
         </p>
         <h1 className="text-xl font-bold text-white">Audit log</h1>
+      </div>
+
+      <div
+        className={`rounded-lg border px-3 py-2 text-sm ${
+          broken
+            ? "border-red-700 bg-red-900/30 text-red-300"
+            : "border-emerald-800 bg-emerald-900/20 text-emerald-300"
+        }`}
+      >
+        {broken
+          ? `⚠ Hash chain broken at row ${broken} — the audit log may have been tampered with.`
+          : "✓ Hash chain verified — no tampering detected."}
       </div>
 
       <div className="overflow-x-auto rounded-lg border border-slate-800">
