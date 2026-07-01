@@ -55,12 +55,16 @@ export default async function AdminDashboard() {
                   <td className="px-3 py-2 text-slate-300">{r.actor_email}</td>
                   <td className="px-3 py-2 font-mono text-purple-300">{r.action}</td>
                   <td className="px-3 py-2 text-slate-400">
-                    <Link
-                      href={`/admin/${r.target_type}s/${r.target_id}`}
-                      className="hover:text-white"
-                    >
-                      {r.target_type}/{r.target_id.slice(0, 8)}…
-                    </Link>
+                    {r.target_type === "org" || r.target_type === "user" ? (
+                      <Link
+                        href={`/admin/${r.target_type}s/${r.target_id}`}
+                        className="hover:text-white"
+                      >
+                        {r.target_type}/{r.target_id.slice(0, 8)}…
+                      </Link>
+                    ) : (
+                      <span>{r.target_type}/{r.target_id.slice(0, 8)}…</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-slate-500 text-xs">
                     {new Date(r.created_at).toLocaleString()}
