@@ -23,24 +23,26 @@ Each doc follows the same structure so they're predictable to implement against:
 
 ## Document index
 
-| # | Document | Theme | Depends on |
-|---|----------|-------|------------|
-| 00 | [Phase 0/1 build checklist](00-phase-0-1-build-checklist.md) | **Start here** — ordered must-do list to paid launch | all |
+**Status:** ✅ done · 🟡 partial (remainder tracked in [DEFERRED.md](DEFERRED.md)) · ⏸ deferred · — planning only
+
+| # | Document | Theme | Status |
+|---|----------|-------|--------|
+| 00 | [Phase 0/1 build checklist](00-phase-0-1-build-checklist.md) | **Start here** — ordered must-do list to paid launch | 🟡 |
 | 01 | [Product strategy & positioning](01-product-strategy.md) | Segments, tiers, pricing model, GTM | — |
-| 02 | [Target architecture](02-architecture.md) | System topology, runtime, services | 01 |
-| 03 | [Multi-tenancy & data model](03-multi-tenancy-data-model.md) | Tenant isolation, RLS, entitlements schema | 02 |
-| 04 | [Security & compliance](04-security-compliance.md) | AuthN/Z, SSO/SCIM, app-sec, SOC 2/GDPR | 02, 03 |
-| 05 | [Payments & billing](05-payments-billing.md) | Stripe, plans, entitlements, webhooks | 03 |
-| 06 | [Marketing site & home page](06-marketing-site.md) | Public site, SEO, pricing, public pages | 01 |
-| 07 | [Reliability, scale & operations](07-reliability-operations.md) | Envs, CI/CD, observability, DR, SLA | 02 |
-| 08 | [Feature roadmap](08-feature-roadmap.md) | Realtime, uploads, analytics, API, mobile | 02, 03 |
-| 09 | [Phased delivery plan](09-phased-plan.md) | Sequencing, milestones, staffing | all |
-| 10 | [Supabase Realtime integration](10-supabase-realtime.md) | Live scoreboards via broadcast + refetch | 02, 05, 08 |
-| 11 | [Supabase Storage for assets](11-supabase-storage.md) | Player avatars, org logos, exports | 02, 05, 08, 10 |
-| 12 | [Quality & engine correctness](12-quality-and-engine-correctness.md) | Tests, property/fuzz, engine invariants, CI gates | 02, 03, 05 |
-| 13 | [Admin console & account lifecycle](13-admin-and-account-lifecycle.md) | Support console, impersonation, ownership transfer, account delete | 03, 04, 05 |
-| 14 | [Onboarding & lifecycle email](14-onboarding-and-lifecycle-email.md) | Activation, templates, email deliverability, journeys | 01, 06 |
-| 15 | [Product-readiness backlog](15-product-readiness-backlog.md) | A11y, moderation, growth, performance, l10n, legal | 04, 06, 11, 12 |
+| 02 | [Target architecture](02-architecture.md) | System topology, runtime, services | 🟡 monolith · RLS · CSP · Redis done; Inngest/OTel deferred |
+| 03 | [Multi-tenancy & data model](03-multi-tenancy-data-model.md) | Tenant isolation, RLS, entitlements schema | ✅ (migrations 010/011 pending apply) |
+| 04 | [Security & compliance](04-security-compliance.md) | AuthN/Z, SSO/SCIM, app-sec, SOC 2/GDPR | 🟡 CSRF · headers · CSP · audit hash-chain · rate-limit done; SSO/SCIM/MFA deferred |
+| 05 | [Payments & billing](05-payments-billing.md) | Stripe, plans, entitlements, webhooks | ✅ |
+| 06 | [Marketing site & home page](06-marketing-site.md) | Public site, SEO, pricing, public pages | 🟡 |
+| 07 | [Reliability, scale & operations](07-reliability-operations.md) | Envs, CI/CD, observability, DR, SLA | 🟡 CI gates · health · staging auto-deploy done; OTel/backups/status page deferred |
+| 08 | [Feature roadmap](08-feature-roadmap.md) | Realtime, uploads, analytics, API, mobile | 🟡 realtime + uploads done |
+| 09 | [Phased delivery plan](09-phased-plan.md) | Sequencing, milestones, staffing | — |
+| 10 | [Supabase Realtime integration](10-supabase-realtime.md) | Live scoreboards via broadcast + refetch | ✅ |
+| 11 | [Supabase Storage for assets](11-supabase-storage.md) | Player avatars, org logos, exports | ✅ |
+| 12 | [Quality & engine correctness](12-quality-and-engine-correctness.md) | Tests, property/fuzz, engine invariants, CI gates | 🟡 engine-check · smoke · CI gates done; property/axe deferred |
+| 13 | [Admin console & account lifecycle](13-admin-and-account-lifecycle.md) | Support console, impersonation, ownership transfer, account delete | ✅ |
+| 14 | [Onboarding & lifecycle email](14-onboarding-and-lifecycle-email.md) | Activation, templates, email deliverability, journeys | 🟡 transactional email done; journeys need Inngest (deferred) |
+| 15 | [Product-readiness backlog](15-product-readiness-backlog.md) | A11y, moderation, growth, performance, l10n, legal | ⏸ |
 
 ## Stack baseline (today)
 
