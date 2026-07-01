@@ -1,5 +1,6 @@
 "use client";
 
+import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
 
@@ -12,9 +13,11 @@ export function LogoutButton() {
         router.push("/login");
         router.refresh();
       }}
-      className="rounded-lg border border-purple-200 px-3 py-1.5 text-sm text-purple-700 transition hover:bg-purple-50"
+      className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+      title="Sign out"
     >
-      Sign out
+      <LogOut className="h-4 w-4" strokeWidth={1.75} />
+      <span className="hidden sm:inline">Sign out</span>
     </button>
   );
 }

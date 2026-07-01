@@ -58,18 +58,18 @@ export default async function DashboardPage() {
     <li key={t.id}>
       <Link
         href={`/tournaments/${t.id}`}
-        className="flex items-center justify-between rounded-lg border border-purple-100 bg-white px-3 py-2 transition hover:border-purple-300 hover:shadow-sm"
+        className="group flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 transition hover:border-purple-300 hover:shadow-sm"
       >
-        <span>
-          <span className="block text-sm font-medium text-slate-800">
+        <span className="min-w-0">
+          <span className="block truncate text-sm font-medium text-slate-800 group-hover:text-purple-700">
             {t.name}
           </span>
-          <span className="block text-xs text-slate-500">
-            {t.sport} · {t.category} · {t.format.replace(/_/g, " ")}
+          <span className="block text-xs text-slate-400">
+            {t.sport} · {t.category}
           </span>
         </span>
         <span
-          className={`badge ${STATUS_STYLE[t.status] ?? STATUS_STYLE.setup}`}
+          className={`ml-3 shrink-0 badge ${STATUS_STYLE[t.status] ?? STATUS_STYLE.setup}`}
         >
           {t.status}
         </span>
@@ -82,19 +82,19 @@ export default async function DashboardPage() {
       <Nav />
       <BillingBanner orgId={active.id} />
       <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="mb-8 flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-6">
           <div className="min-w-0">
             <div className="flex items-center gap-3">
-              <h1 className="text-2xl font-bold tracking-tight text-purple-900">
+              <h1 className="text-xl font-semibold tracking-tight text-slate-900">
                 Tournaments
               </h1>
               <span className={`badge ${roleBadge(active.role)}`}>
                 {active.role}
               </span>
             </div>
-            <p className="text-sm text-slate-500">
+            <p className="mt-1 text-sm text-slate-500">
               {canEdit
-                ? "Group by season (optional), then spin up a tournament for any sport."
+                ? "Group by season, then spin up a tournament for any sport."
                 : "You have view-only access to this board."}
             </p>
           </div>
@@ -143,28 +143,30 @@ export default async function DashboardPage() {
             <p className="text-sm text-slate-500">No tournaments yet.</p>
           )
         ) : (
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
             {sections.map((s) => {
               const list = bySeason.get(s.id) ?? [];
               return (
-                <section key={s.id} className="card p-4">
-                  <div className="mb-3 flex items-center justify-between gap-2">
+                <section key={s.id} className="rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
                     <div className="flex items-center gap-2">
                       {s.id === NO_SEASON
                         ? <Layers className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />
-                        : <Calendar className="h-4 w-4 shrink-0 text-purple-400" strokeWidth={1.75} />
+                        : <Calendar className="h-4 w-4 shrink-0 text-purple-500" strokeWidth={1.75} />
                       }
-                      <h2 className="text-sm font-semibold text-slate-800">{s.name}</h2>
+                      <h2 className="text-sm font-semibold text-slate-700">{s.name}</h2>
                     </div>
                     {s.slug && (
-                      <span className="font-mono text-xs text-purple-400">{s.slug}</span>
+                      <span className="font-mono text-[11px] text-slate-400">{s.slug}</span>
                     )}
                   </div>
-                  {list.length === 0 ? (
-                    <p className="text-sm text-slate-500">No tournaments yet.</p>
-                  ) : (
-                    <ul className="space-y-2">{list.map(renderCard)}</ul>
-                  )}
+                  <div className="p-3">
+                    {list.length === 0 ? (
+                      <p className="px-1 py-2 text-sm text-slate-400">No tournaments yet.</p>
+                    ) : (
+                      <ul className="space-y-1.5">{list.map(renderCard)}</ul>
+                    )}
+                  </div>
                 </section>
               );
             })}
