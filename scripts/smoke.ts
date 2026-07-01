@@ -1,6 +1,6 @@
 // End-to-end smoke test against the running dev server (http://localhost:3000).
 // Run with: node --experimental-strip-types scripts/smoke.ts
-const BASE = "http://localhost:3000";
+const BASE = process.env.SMOKE_BASE ?? "http://localhost:3000";
 
 interface Session {
   cookies: Record<string, string>;
@@ -327,13 +327,28 @@ async function main() {
   const sl4Done = await playToCompletion(admin, sl4.id);
   const names4 = sl4Done.rounds.map((r) => r.name);
   check("stepladder4 completed", sl4Done.tournament.status === "completed");
-  check("stepladder4 seeding play-off triggered", names4.includes("Seeding play-off"));
+  // A 4-seed ladder must NOT run a seeding play-off: it would re-pair the
+  // play-off opponents in the Semi-final (see engine fix / doc 12 P6). The
+  // 2nd/3rd order is resolved by tiebreakers and the ladder is built directly.
+  check("stepladder4 no seeding play-off", !names4.includes("Seeding play-off"));
   check("stepladder4 has Eliminator", names4.includes("Eliminator"));
   check("stepladder4 has Semi-final", names4.includes("Semi-final"));
   check(
     "stepladder4 has a single Final (stage=final)",
     sl4Done.rounds.filter((r) => r.stage === "final").length === 1,
   );
+  // No pairing repeats across the finals run (playoff/knockout/final).
+  const finalsPairs4 = new Set<string>();
+  let sl4Rematch = false;
+  for (const m of sl4Done.matches) {
+    const r = sl4Done.rounds.find((rd) => rd.id === m.round_id);
+    if (!r || r.stage === "group") continue;
+    if (!m.player1_id || !m.player2_id) continue;
+    const key = [m.player1_id, m.player2_id].sort().join("|");
+    if (finalsPairs4.has(key)) sl4Rematch = true;
+    finalsPairs4.add(key);
+  }
+  check("stepladder4 no finals rematch", !sl4Rematch);
 
   // =====================================================================
   // Team management: invites + role enforcement
