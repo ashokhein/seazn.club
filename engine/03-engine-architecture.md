@@ -73,6 +73,9 @@ Properties the kernel guarantees (and the testkit asserts for every module):
    without event X. Modules never see void events; the kernel resolves them.
    (This replaces v1's snapshot-restore undo and removes the "3 undos" budget hack —
    organisers can void any event, subject to `finalized` lock and RBAC.)
+   Voids are **not themselves voidable** (PROMPT-02 decision): `core.void` targeting a
+   `core.void` is rejected with `INVALID_EVENT`; undoing an undo means re-recording the
+   original event. A void must target a *prior*, existing, non-void event.
 4. **Monotonic decision** — once `module.outcome(state)` is non-null, further non-void
    events are rejected except sport-declared post-decision types (e.g. `core.note`).
 

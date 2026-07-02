@@ -4,7 +4,10 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts", "test/**/*.test.ts"],
-    // Scaffold phase (PROMPT-01): suites land with PROMPT-02+.
-    passWithNoTests: true,
+    coverage: {
+      provider: "v8",
+      include: ["src/**/*.ts"],
+      exclude: ["src/**/*.test.ts", "src/**/index.ts"],
+    },
   },
 });
