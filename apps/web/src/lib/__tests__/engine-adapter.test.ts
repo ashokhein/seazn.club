@@ -9,7 +9,6 @@ import {
   standings,
   champion,
   type EngineConfig,
-  type EngineState,
   type EngineDiff,
 } from "../engine";
 import type { Match, Player, Round, Tournament } from "../types";

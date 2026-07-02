@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import {
   Building2, Sliders, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Zap, BarChart2,
-  TrendingUp, User, Mail, Download, AlertTriangle, ShieldOff,
+  TrendingUp, User, Mail, Download, ShieldOff,
   type LucideIcon,
 } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs, requireOrgRole } from "@/lib/auth";

@@ -10,7 +10,6 @@ const ASSETS_BUCKET = "assets";
  */
 export async function getSignedUploadUrl(
   storagePath: string,
-  expiresIn = 300,
 ): Promise<{ url: string; token: string }> {
   const sb = supabaseAdmin();
   const { data, error } = await sb.storage
