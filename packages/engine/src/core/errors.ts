@@ -13,6 +13,9 @@ export const EngineErrorCode = z.enum([
   "SEQ_CONFLICT",
   "STAGE_NOT_READY",
   "ELIGIBILITY",
+  // PROMPT-03 — registry resolution (spec 03 §3 registry & versioning).
+  "MODULE_NOT_FOUND",
+  "MODULE_DUPLICATE",
 ]);
 export type EngineErrorCode = z.infer<typeof EngineErrorCode>;
 

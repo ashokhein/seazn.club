@@ -72,7 +72,10 @@ Four distinct lifecycles — v1 collapsed all of them into `players.name`:
    `{ entrant_id, person_id, squad_number?, default_position_key?, is_captain, is_keeper }`.
 4. **LineupSlot** — person selected for a specific fixture:
    `{ fixture_id, entrant_id, person_id, position_key?, slot: starting|bench,
-   order_no }` (order_no = batting order in cricket, board order in team chess).
+   order_no, roles? }` (order_no = batting order in cricket, board order in team
+   chess; roles = catalog role keys assigned for this fixture — captain,
+   wicketkeeper — so the lineup validator can enforce unique/required roles;
+   added in PROMPT-03, RosterEntry keeps only the squad defaults).
 
 ### Position catalog — owned by the sport module
 

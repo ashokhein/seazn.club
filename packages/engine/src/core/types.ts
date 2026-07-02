@@ -96,6 +96,11 @@ export const LineupSlot = z.object({
   positionKey: z.string().min(1).optional(),
   slot: z.enum(["starting", "bench"]),
   orderNo: z.number().int().positive(),
+  // Role keys from the sport's PositionCatalog (captain, wicketkeeper, …).
+  // PROMPT-03 deviation: doc 02 §3 kept roles on RosterEntry only, but
+  // validateLineup (spec 02 §3 "unique roles") checks them per fixture, so
+  // the lineup carries the fixture-specific assignment.
+  roles: z.array(z.string().min(1)).optional(),
 });
 export type LineupSlot = z.infer<typeof LineupSlot>;
 
