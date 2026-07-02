@@ -4,8 +4,8 @@ import {
   recommendGroupRounds,
   roundRobinRounds,
   swissPairings,
-} from "../src/lib/pairing.ts";
-import { computeStandings, type ScoringConfig } from "../src/lib/standings.ts";
+} from "../apps/web/src/lib/pairing.ts";
+import { computeStandings, type ScoringConfig } from "../apps/web/src/lib/standings.ts";
 
 let failures = 0;
 function check(label: string, cond: boolean) {
