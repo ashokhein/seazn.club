@@ -51,6 +51,19 @@ cache + Redis rate limiting there.
 Switch to a filesystem scan (gitleaks CLI, no GitHub API) with an allowlist for publishable
 keys (Stripe `pk_`, Supabase anon), then make it block again.
 
+## React hooks lint warnings — refactor flagged components
+**Status:** downgraded to warnings in `apps/web/eslint.config.mjs`.
+
+`eslint-config-next` 16 enables React-Compiler-era rules that flag existing components:
+- `react-hooks/set-state-in-effect` (6×): `client-time`, `cookie-consent`,
+  `new-tournament-form`, `org-team`, `slideshow-view`, `verify-email` — mostly
+  mount-time/client-only state patterns; refactor per
+  https://react.dev/learn/you-might-not-need-an-effect.
+- `react-hooks/static-components` (1×): `org-sport-presets` creates `Icon` during render.
+- `react-hooks/purity` (1×): `org-team` calls `Date.now()` during render.
+
+Fix the components, then raise the three rules back to `error`.
+
 ## Other larger tracks still open (docs 06–15)
 - Observability: OpenTelemetry traces, structured-log sink, status page (doc 07).
 - Backups/PITR + tested restore drills, runbooks, SLAs (doc 07).

@@ -6,11 +6,9 @@ import { useRouter } from "next/navigation";
 export function AdminOrgActions({
   orgId,
   currentStatus,
-  currentPlan,
 }: {
   orgId: string;
   currentStatus: string;
-  currentPlan: string;
 }) {
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);

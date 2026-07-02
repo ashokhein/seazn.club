@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getCurrentUser, getUserOrgs, getActiveOrgId } from "@/lib/auth";
+import { getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { Nav } from "@/components/nav";
 import {
@@ -23,7 +23,6 @@ export default async function AccountSettingsPage({ searchParams }: PageProps) {
   const { email_change } = await searchParams;
 
   const orgs = await getUserOrgs(user.id);
-  const activeId = await getActiveOrgId();
 
   // Load members for each org where user is owner (for transfer-owner UI)
   const orgMembersMap = new Map<string, OrgMember[]>();
