@@ -1,3 +1,4 @@
+import path from "node:path";
 import { withSentryConfig } from "@sentry/nextjs";
 
 const securityHeaders = [
@@ -17,6 +18,9 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  // Monorepo: trace from the workspace root so hoisted node_modules land in
+  // .next/standalone (Next docs: config/output caveats).
+  outputFileTracingRoot: path.join(import.meta.dirname, "../.."),
   async headers() {
     return [
       {

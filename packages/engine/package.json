@@ -1,0 +1,30 @@
+{
+  "name": "@seazn/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure tournament engine for seazn.club — zero effectful deps (design corpus: engine/).",
+  "exports": {
+    "./core": "./src/core/index.ts",
+    "./sport": "./src/sport/index.ts",
+    "./sports/*": "./src/sports/*/index.ts",
+    "./competition": "./src/competition/index.ts",
+    "./scheduling": "./src/scheduling/index.ts",
+    "./testkit": "./src/testkit/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "peerDependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "fast-check": "^3",
+    "typescript": "^5",
+    "vitest": "^4.1.9",
+    "zod": "^4.4.3"
+  }
+}

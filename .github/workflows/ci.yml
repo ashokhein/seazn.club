@@ -24,9 +24,12 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
+      - run: npm run typecheck --workspace apps/web
+      - run: npm run typecheck --workspace packages/engine
       - run: npm run engine:check
-      - run: npm test
+      - run: npm run engine:boundary
+      - run: npm test --workspace apps/web
+      - run: npm test --workspace packages/engine
 
   # -------------------------------------------------------------------------
   # Security gate (doc 07 §4): secret scan + dependency audit. Secret leaks

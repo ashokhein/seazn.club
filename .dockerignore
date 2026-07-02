@@ -2,9 +2,13 @@
 .gitignore
 .github
 node_modules
+**/node_modules
 .next
+**/.next
 .env*
+**/.env*
 *.local
 development/
+engine/
 *.md
 !README.md
