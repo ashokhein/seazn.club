@@ -106,10 +106,23 @@ interface SportModule<Cfg, Ev, State> {
   outcome(state: State): MatchOutcome | null;                    // null = still live
   summary(state: State): ScoreSummary;                           // display-ready
 
-  standingsDelta(outcome: MatchOutcome, cfg: Cfg, ctx: StageCtx): [StandingsDelta, StandingsDelta];
+  // `state` param added in PROMPT-03: ledger metrics (gf/ga, NRR integers…)
+  // live in the folded state, not the outcome. Pair is [home, away].
+  standingsDelta(outcome: MatchOutcome, cfg: Cfg, ctx: StageCtx, state: State): [StandingsDelta, StandingsDelta];
   metrics: MetricSpec[];            // ledger fields this sport maintains (gd, nrr, set_ratio…)
   defaultTiebreakers: TiebreakerKey[];   // sport's official cascade (doc 05 §4)
   supportsDraws(cfg: Cfg, stage: StageKind): boolean;   // knockout football: no; test cricket: yes
+
+  declaredPointsSets(cfg: Cfg): readonly number[];  // allowed Σ points per fixture (§9.3 conservation)
+  fidelityTiers: FidelityTier[];        // granularity ladder declaration (doc 14 §2)
+  officialLabel: { scorer: string };    // sport-aware scorer label (doc 13 §1)
+  postDecisionTypes?: readonly string[];   // sport events still legal after decision (§2 guarantee 4)
+
+  // Testkit hooks (PROMPT-03): deterministic valid-event generator (rng-injected,
+  // not a fast-check Arbitrary, to keep zero runtime deps) and the opt-in
+  // dual-fidelity coarsener (§9.6).
+  arbitraryEvent?(state: State, rng: Rng): ModuleEvent<Ev> | null;
+  coarsen?(events: readonly EventEnvelope<Ev | CoreEv>[]): ModuleEvent<Ev>[];
 }
 ```
 
@@ -181,5 +194,6 @@ All within `withTenant(orgId, …)` (RLS pattern retained from v1).
 
 `EngineError{ code, message, data }` — codes: `INVALID_EVENT`, `WRONG_PHASE`,
 `ALREADY_DECIDED`, `LINEUP_INVALID`, `CONFIG_INVALID`, `SEQ_CONFLICT`,
-`STAGE_NOT_READY`, `ELIGIBILITY` … The API maps codes → HTTP (409/422/402) centrally;
+`STAGE_NOT_READY`, `ELIGIBILITY`, `MODULE_NOT_FOUND`, `MODULE_DUPLICATE` (registry,
+PROMPT-03) … The API maps codes → HTTP (409/422/402) centrally;
 messages are human-readable and surfaced verbatim in the UI.

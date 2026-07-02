@@ -37,6 +37,9 @@ describe("EngineError", () => {
       "SEQ_CONFLICT",
       "STAGE_NOT_READY",
       "ELIGIBILITY",
+      // PROMPT-03 registry additions
+      "MODULE_NOT_FOUND",
+      "MODULE_DUPLICATE",
     ]);
   });
 });
