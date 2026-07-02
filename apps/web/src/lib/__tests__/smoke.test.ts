@@ -4,16 +4,12 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { z } from "zod";
 import {
   createTournamentSchema,
   loginSchema,
-  signupSchema,
   createOrgSchema,
   createInviteSchema,
   recordResultSchema,
-  setCheckInSchema,
-  addPlayersSchema,
   checkoutSchema,
 } from "@/lib/types";
 import { computeStandings } from "@/lib/standings";

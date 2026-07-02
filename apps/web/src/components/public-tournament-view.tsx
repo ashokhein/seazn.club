@@ -9,7 +9,7 @@ import {
   sortedGroupRounds,
   sortedKoRounds,
 } from "@/lib/format";
-import type { Match, Player, StandingRow, TournamentState } from "@/lib/types";
+import type { Match, Player, TournamentState } from "@/lib/types";
 
 const STATUS_STYLE: Record<string, string> = {
   setup: "bg-slate-100 text-slate-600",

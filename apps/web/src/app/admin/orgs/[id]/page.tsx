@@ -87,7 +87,6 @@ export default async function AdminOrgPage({
           <AdminOrgActions
             orgId={id}
             currentStatus={org.status}
-            currentPlan={sub?.plan_key ?? "community"}
           />
         </div>
       </div>
