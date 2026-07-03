@@ -31,14 +31,18 @@ over end), bowler constraints (no consecutive overs, `maxOversPerBowler`), all-o
 
 ## 3. Match state machine (white-ball, 1 innings/side)
 ```
-pre → toss(core.start payload: {tossWinner, elected}) → innings1 → break → innings2(target = i1.runs+1)
+pre → cricket.toss {wonBy, elected} → core.start → innings1 → break → innings2(target = i1.runs+1)
   chase resolved live: runs > target−1 ⇒ win by (10−wickets) wickets
                        all out / balls out below target−1 ⇒ win by (target−1−runs) runs
                        exactly target−1 at close ⇒ TIE → superover? → outcome
 interruption/revise events may shrink oversPerSide or set a DLS target at any point
-abandon below cfg.minOversForResult ⇒ no_result
+abandon below cfg.minOversForResult ⇒ no_result (or DLS par decision, method 'dls')
 ```
-Two-innings (test) adds: follow-on decision, declarations, innings sequencing, **draw**
+**Impl note (PROMPT-05):** the toss is a dedicated `cricket.toss {wonBy, elected}` event
+recorded in the `pre` phase, *not* a `core.start` payload — the kernel's `core.start`
+schema is `strictObject({})` (spec 03 §2) and carries no sport data. Two-innings (test)
+adds: follow-on decision (`cricket.followon`), declarations (`cricket.innings.declare`),
+time-expiry **draw** (`cricket.match.close`), innings sequencing, **draw**
 on time expiry, innings-victory margins.
 
 ### Super over
