@@ -53,14 +53,19 @@ Bracket size `S = nextPowerOfTwo(entrants)`. Standard fold placement: seed posit
 fixtures auto-decide as `award`). Feeds: fixture (r,i) winner → (r+1, ⌊i/2⌋) slot `i mod 2`.
 Optional 3rd-place playoff from semifinal losers. Cross-pool seeding template for
 group→KO: A1–B2, B1–A2 pattern generalised: winners face runners-up of another pool,
-same-pool rematch deferred to latest possible round.
+same-pool rematch deferred to latest possible round. (PROMPT-09: implemented as a
+rank-interleave of pool finishers fed into the fold — exact for two pools; for k>2 pools
+it defers same-pool rematches only as far as the fold allows, full latest-round deferral
+is a later refinement.)
 
 ### 2.4 Double elimination
 Winners bracket = SE bracket; each WB round's losers drop into the losers bracket at the
 canonical slot (LB alternates "minor" rounds absorbing WB losers and "major" rounds).
 Grand final: WB champion vs LB champion; **bracket reset** optional (LB champ must win
 twice) via config. Feeds encoded the same `winner_to/loser_to` way — the engine's fixture
-wiring is uniform across SE/DE/stepladder.
+wiring is uniform across SE/DE/stepladder. (PROMPT-09: the reset decider is generated as a
+`conditional` grand-final fixture fed by GF1's winner/loser; the persistence adapter voids
+it when the WB champion wins GF1, and void counts as settled for stage completion.)
 
 ### 2.5 Stepladder (v1 compatibility)
 Rank R4 v R3 → winner v R2 → winner v R1 (final). Generalised to size k.
