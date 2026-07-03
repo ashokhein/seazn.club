@@ -20,8 +20,10 @@ metrics the sport contributes.
 { halfMinutes: 45, halves: 2,
   extraTime: { enabled: boolean, halfMinutes: 15 },   // knockout only
   shootout: boolean,                                   // knockout only
-  points: { win: 3, draw: 1, loss: 0 },
+  points: { win: 3, draw: 1, loss: 0,
+            shootoutWin?, shootoutLoss? },             // §1.4 optional group-stage SO split
   awardScore: { goals: 3 },                            // forfeit award, "3–0"
+  abandonPolicy: 'replay' | 'award',                   // §8; 'replay' ⇒ no outcome, fixture flagged
   fairPlay: boolean }                                  // track cards for FIFA fair-play TB
 ```
 Variants: `11-a-side`, `youth {halfMinutes: 30..40}`, `small-sided {halfMinutes: 20, halves: 2}`.
@@ -88,7 +90,10 @@ ball { over, ballInOver, striker, nonStriker, bowler,
        wicket?: { kind: bowled|caught|lbw|runout|stumped|hitwicket|retired|obstructed|timedout,
                   out: personId, fielder?, bowlerCredited: boolean },
        boundary?: 4|6, freeHit?: boolean }
+toss { wonBy, elected: bat|bowl }         // pre phase; sets who bats first (see sports/cricket.md §3)
 innings.declare {} · innings.close {}     // all-out and balls-exhausted close automatically
+match.close {}                            // two-innings time expiry ⇒ draw
+followon {}                               // enforce follow-on between 2nd and 3rd innings (2-innings)
 interruption { kind: rain|light|other, oversLostEstimate? }
 revise { oversPerSide?, target? }         // umpire/DLS revision applied as an event
 superover.ball { ... }                    // same ball grammar, separate mini-innings
@@ -101,9 +106,15 @@ runs and over-end swap.
 **Design note — two scoring fidelities.** Ball-by-ball is heavy for casual organisers.
 Module accepts *either* granularity:
 - `cricket.ball` events (full scorecard, Pro-tier live experience), or
-- `innings.summary {runs, wickets, legalBalls}` coarse events (community tier).
+- `innings.summary {runs, wickets, legalBalls, declared?, boundaries?, partial?}` coarse
+  events (community tier). `partial: true` = an in-progress snapshot that grows an open
+  innings (progressive coarse scoring + mid-innings DLS); `boundaries?` feeds the
+  boundary-count super-over tiebreak at coarse fidelity.
 Both fold to the same `InningsTotals` shape all downstream math (result, NRR, DLS) reads.
 This is the single most important cricket design decision — do not skip it.
+Tier-2 (doc 14 §1): `cricket.player.line {innings, person, batting?, bowling?}` post-match
+scorecard lines, validated for sum-consistency against `InningsTotals` (mismatched cards
+rejected with a field-level diff).
 
 ### 2.3 Result determination (single-innings-per-side)
 Team B chasing: B > A runs ⇒ B wins (`by W wickets`); B all out / balls out with B < A ⇒

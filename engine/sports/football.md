@@ -59,10 +59,12 @@ small-sided `{7v7, lineup.size: 7}` — lineup size is Cfg, catalog adapts (`lin
 parameterised). Never a separate module.
 
 ## 8. Abandonment/forfeit policy
-`core.forfeit` → `award` with cfg.awardScore (3-0). `core.abandon` → cfg:
-`replay` (fixture flagged `cancelled`, regenerated as new fixture) | `award` | `stand`
-(result stands if ≥ cfg.minMinutesForResult). League withdrawal: 05 §5 policies apply
-(expunge <50% played, else award remaining).
+`core.forfeit` → `award` with cfg.awardScore (3-0). `core.abandon` → `cfg.abandonPolicy`:
+`replay` (default — no outcome, fixture flagged for regeneration, `finalize` refused while
+undecided) | `award` (decide for the current leader; level score ⇒ `no_result`). The
+`stand` policy (result stands if ≥ cfg.minMinutesForResult) is reserved for a later prompt
+— not yet in the module Cfg. League withdrawal: 05 §5 policies apply (expunge <50% played,
+else award remaining).
 
 ## 9. Edge cases checklist
 - Own goal in shootout: not a thing — reject `ownGoal` in SHOOTOUT phase.
