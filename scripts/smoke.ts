@@ -530,6 +530,196 @@ async function main() {
   );
 
   console.log(`\nCreated test tournaments: ${created.join(", ")}`);
+
+  // --- Platform API /api/v1 (PROMPT-11) ---
+  await v1Suite(admin, org2.id, org2.slug);
+}
+
+// v1 responses: { ok, data | error: {code, message, …}, requestId }.
+interface V1Res {
+  status: number;
+  headers: Headers;
+  json: {
+    ok: boolean;
+    data?: unknown;
+    error?: { code?: string; message?: string; current_seq?: number };
+    requestId?: string;
+  };
+}
+async function v1(
+  s: Session,
+  path: string,
+  method = "GET",
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Promise<V1Res> {
+  const res = await fetch(BASE + path, {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+      ...(Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {}),
+      ...headers,
+    },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const json = (await res.json().catch(() => ({ ok: false }))) as V1Res["json"];
+  return { status: res.status, headers: res.headers, json };
+}
+const v1data = <T>(r: V1Res): T => r.json.data as T;
+
+/**
+ * Exercise the whole /api/v1 lifecycle over real HTTP (PROMPT-11 §7):
+ * auth'd CRUD, generate, scoring append + concurrency + void, public reads,
+ * API-key auth and the 402 entitlement gate.
+ */
+async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<void> {
+  // The division needs the sport catalog; seed the generic sport directly when
+  // we have DB access (CI runs sync:sports, so this is a local-run fallback).
+  const dbUrl = process.env.DATABASE_URL;
+  const db = dbUrl
+    ? postgres(dbUrl, {
+        ssl: process.env.DATABASE_SSL === "disable" ? false : /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl) ? false : "require",
+        prepare: !dbUrl.includes(":6543"),
+        max: 1,
+      })
+    : null;
+  const genericConfig = {
+    resultMode: "score",
+    allowDraws: true,
+    points: { w: 3, d: 1, l: 0 },
+    progressScore: false,
+  };
+  if (db) {
+    await db`insert into sports (key, name, module_version, position_catalog)
+             values ('generic', 'Generic', '1.0.0', ${db.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
+             on conflict (key) do nothing`;
+    await db`insert into sport_variants (sport_key, key, name, config, is_system)
+             values ('generic', 'score', 'Score', ${db.json(genericConfig)}, true)
+             on conflict do nothing`;
+  }
+
+  // CRUD happy path: competition → division → entrants (bulk) → stage → generate.
+  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `V1 Cup ${tag}`,
+    visibility: "public",
+  });
+  check("v1 create competition → 201 + envelope", comp.status === 201 && comp.json.ok === true && !!comp.json.requestId);
+  const compId = v1data<{ id: string; slug: string }>(comp).id;
+  const compSlug = v1data<{ id: string; slug: string }>(comp).slug;
+
+  const list = await v1(admin, "/api/v1/competitions?limit=1");
+  check("v1 list paginates", list.status === 200 && Array.isArray(v1data<{ items: unknown[] }>(list).items));
+
+  const div = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
+    name: "Open",
+    sport_key: "generic",
+    variant_key: "score",
+    // The 'score' preset is partial; the module schema requires the rest.
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  });
+  check("v1 create division pins module version", div.status === 201 && !!v1data<{ module_version: string }>(div).module_version);
+  const divId = v1data<{ id: string; slug: string }>(div).id;
+  const divSlug = v1data<{ id: string; slug: string }>(div).slug;
+
+  const entrants = await v1(admin, `/api/v1/divisions/${divId}/entrants`, "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })));
+  check("v1 bulk entrants registered", entrants.status === 201 && v1data<unknown[]>(entrants).length === 4);
+
+  const stage = await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", {
+    seq: 1, kind: "league", name: "League",
+  });
+  const stageId = v1data<{ id: string }>(stage).id;
+
+  const gen1 = await v1(admin, `/api/v1/stages/${stageId}/generate`, "POST");
+  const gen2 = await v1(admin, `/api/v1/stages/${stageId}/generate`, "POST");
+  check("v1 generate creates 6 RR fixtures", v1data<{ created: number }>(gen1).created === 6);
+  check("v1 generate is idempotent", v1data<{ created: number; existing: number }>(gen2).created === 0);
+  const fixtures = v1data<{ fixtures: { id: string }[] }>(gen1).fixtures;
+
+  // Scoring: append, optimistic-concurrency 409 (parallel scorers), void.
+  const fx = fixtures[0].id;
+  const started = await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
+    expected_seq: 0, type: "core.start", payload: {},
+  });
+  check("v1 scoring append → 201 with seq", started.status === 201 && v1data<{ seq: number }>(started).seq === 1);
+
+  const race = await Promise.all([
+    v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", { expected_seq: 1, type: "core.note", payload: { text: "a" } }),
+    v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", { expected_seq: 1, type: "core.note", payload: { text: "b" } }),
+  ]);
+  const won = race.filter((r) => r.status === 201);
+  const lost = race.filter((r) => r.status === 409);
+  check("v1 parallel scorers: one 201, one 409", won.length === 1 && lost.length === 1);
+  check("v1 409 carries current_seq", lost[0]?.json.error?.current_seq === 2);
+  check("v1 409 code is SEQ_CONFLICT", lost[0]?.json.error?.code === "SEQ_CONFLICT");
+
+  // Losing scorer resyncs from its seq and replays.
+  const resync = await v1(admin, `/api/v1/fixtures/${fx}/events?since_seq=1`);
+  check("v1 events since_seq resyncs", resync.status === 200 && v1data<unknown[]>(resync).length === 1);
+
+  // Undo: void the note through the same path.
+  const events = v1data<{ id: string; seq: number }[]>(await v1(admin, `/api/v1/fixtures/${fx}/events`));
+  const note = events.find((e) => e.seq === 2);
+  const voided = await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
+    expected_seq: 2, type: "core.void", payload: { event_id: note?.id },
+  });
+  check("v1 undo via core.void", voided.status === 201 && v1data<{ seq: number }>(voided).seq === 3);
+
+  // Decide every fixture, read authed standings, then the public dashboard.
+  for (const f of fixtures) {
+    const state = await v1(admin, `/api/v1/fixtures/${f.id}/state`);
+    const seq = v1data<{ last_seq: number }>(state).last_seq;
+    await v1(admin, `/api/v1/fixtures/${f.id}/events`, "POST", {
+      expected_seq: seq, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+    });
+  }
+  const standings = await v1(admin, `/api/v1/stages/${stageId}/standings`);
+  check("v1 standings ranked", v1data<{ rows: unknown[] }>(standings).rows.length === 4);
+
+  const anon = newSession();
+  const pubStandings = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}/divisions/${divSlug}/standings`);
+  check("v1 public standings (no auth)", pubStandings.status === 200 && pubStandings.json.ok === true);
+  check("v1 public reads are cacheable", (pubStandings.headers.get("cache-control") ?? "").includes("s-maxage"));
+  const pubComp = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}`);
+  check("v1 public competition lists divisions", v1data<{ divisions: unknown[] }>(pubComp).divisions.length === 1);
+
+  // Entitlement gate: community org → 402; Pro override → key works via Bearer.
+  const denied = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
+  check("v1 API keys 402-gated on api.access", denied.status === 402 && denied.json.error?.code === "PAYMENT_REQUIRED");
+
+  if (db) {
+    await db`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+             values (${orgId}, 'api.access', true)
+             on conflict (org_id, feature_key) do update set bool_value = true`;
+    const minted = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
+    const secret = v1data<{ id: string; secret: string }>(minted).secret;
+    check("v1 API key minted once (sk_live_)", minted.status === 201 && secret.startsWith("sk_live_"));
+
+    const keyed = await v1(newSession(), "/api/v1/competitions", "GET", undefined, {
+      Authorization: `Bearer ${secret}`,
+    });
+    check("v1 Bearer key authenticates reads", keyed.status === 200 && keyed.json.ok === true);
+    const keyedWrite = await v1(newSession(), "/api/v1/competitions", "POST", { name: "Nope" }, {
+      Authorization: `Bearer ${secret}`,
+    });
+    check("v1 read-scoped key cannot write", keyedWrite.status === 403);
+
+    const keyId = v1data<{ id: string }>(minted).id;
+    await v1(admin, `/api/v1/orgs/${orgId}/api-keys/${keyId}`, "DELETE");
+    const revoked = await v1(newSession(), "/api/v1/competitions", "GET", undefined, {
+      Authorization: `Bearer ${secret}`,
+    });
+    check("v1 revoked key stops authenticating", revoked.status === 401);
+    await db.end();
+  } else {
+    console.log("v1 API-key positive path skipped (DATABASE_URL not set)");
+  }
+
+  // Spec is served and matches the implemented surface.
+  const spec = await fetch(BASE + "/api/v1/openapi.json").then((r) => r.json()) as {
+    openapi: string; paths: Record<string, unknown>;
+  };
+  check("v1 openapi served", spec.openapi === "3.1.0" && !!spec.paths["/api/v1/fixtures/{id}/events"]);
 }
 
 /**

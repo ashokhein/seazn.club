@@ -76,7 +76,18 @@ export async function verifyStateConsistency(sampleSize = 20): Promise<Consisten
   const mismatches: ConsistencyReport["mismatches"] = [];
   for (const { fixture_id, org_id } of sample) {
     await withTenant(org_id, async (tx) => {
-      const folded = await foldFixture(tx, fixture_id);
+      // A drift detector must report, not crash: a ledger that no longer folds
+      // (tampered/corrupt rows) is itself the finding.
+      let folded: FoldedFixture | null;
+      try {
+        folded = await foldFixture(tx, fixture_id);
+      } catch (err) {
+        mismatches.push({
+          fixtureId: fixture_id,
+          reason: `refold failed: ${err instanceof Error ? err.message : String(err)}`,
+        });
+        return;
+      }
       const [stored] = await tx<{ last_seq: number; state: unknown }[]>`
         select last_seq, state from match_states where fixture_id = ${fixture_id}
       `;

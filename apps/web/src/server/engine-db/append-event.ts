@@ -37,6 +37,7 @@ interface FixtureRow {
   home_entrant_id: string | null;
   away_entrant_id: string | null;
   status: string;
+  outcome: unknown;
 }
 interface DivisionRow {
   config: unknown;
@@ -63,6 +64,9 @@ function nextStatus(current: string, type: string, outcome: MatchOutcome | null)
   if (type === "core.forfeit") return "forfeited";
   if (outcome !== null) return "decided";
   if (current === "scheduled" && type === "core.start") return "in_play";
+  // Undo of the deciding event (doc 08 §4): the fold no longer yields an
+  // outcome, so a decided fixture drops back to in_play.
+  if (current === "decided" && type === "core.void") return "in_play";
   return current;
 }
 
@@ -90,7 +94,7 @@ export async function appendEvent(
     await tx`select pg_advisory_xact_lock(hashtext(${"fixture:" + fixtureId}))`;
 
     const [fixture] = await tx<FixtureRow[]>`
-      select id, division_id, home_entrant_id, away_entrant_id, status
+      select id, division_id, home_entrant_id, away_entrant_id, status, outcome
       from fixtures where id = ${fixtureId}
     `;
     if (!fixture) {
@@ -185,7 +189,9 @@ export async function appendEvent(
     `;
 
     const status = nextStatus(fixture.status, candidate.type, outcome);
-    if (status !== fixture.status || outcome !== null) {
+    // Also rewrite when a void erased a previously-stored outcome — otherwise
+    // fixtures.outcome would go stale against the fold (doc 08 §4 undo).
+    if (status !== fixture.status || outcome !== null || fixture.outcome !== null) {
       await tx`
         update fixtures set
           status = ${status},

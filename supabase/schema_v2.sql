@@ -211,6 +211,15 @@ create table if not exists fixtures (
   outcome           jsonb,                     -- MatchOutcome, written when decided
   created_at        timestamptz not null default now()
 );
+-- Generator identity (doc 08 §3 "generate # fixtures (idempotent, returns
+-- diff)"): the pure scheduling layer emits stable fixture ids ('rr-r1-c2',
+-- 'wb-r0-g1', …); persisting them lets regeneration upsert instead of
+-- duplicate, and lets winner/loser feeds be wired by key. Null for manually
+-- created fixtures.
+alter table fixtures add column if not exists ext_key text;
+create unique index if not exists fixtures_stage_ext_key_idx
+  on fixtures(stage_id, ext_key) where ext_key is not null;
+
 create index if not exists fixtures_stage_idx    on fixtures(stage_id, round_no, seq_in_round);
 create index if not exists fixtures_division_idx on fixtures(division_id, scheduled_at);
 -- DEVIATION: doc 07 sketched one statement with two table refs — illegal.
@@ -290,6 +299,18 @@ create table if not exists division_events (    -- structural ledger, hash-chain
 -- =============================================================================
 -- API keys (doc 08)
 -- =============================================================================
+-- Entitlement gate for the platform API (doc 08 §2): Pro only. Idempotent
+-- seed alongside the existing plan matrix (schema.sql seeds the rest); guarded
+-- so this file still applies standalone (without schema.sql's billing tables).
+do $$ begin
+  if exists (select from pg_tables where schemaname = 'public' and tablename = 'plan_entitlements') then
+    insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
+      ('community', 'api.access', false, null),
+      ('pro',       'api.access', true,  null)
+    on conflict (plan_key, feature_key) do nothing;
+  end if;
+end $$;
+
 create table if not exists api_keys (
   id           uuid primary key default gen_random_uuid(),
   org_id       uuid not null references organizations(id) on delete cascade,
@@ -505,11 +526,23 @@ create or replace view public_competitions_v as
   from competitions
   where visibility = 'public';
 
+-- Divisions of public competitions (doc 08 §3 public competition detail).
+create or replace view public_divisions_v as
+  select d.id, d.competition_id, d.name, d.slug, d.sport_key, d.variant_key,
+         d.status, d.created_at
+  from divisions d
+  join competitions c on c.id = d.competition_id
+  where c.visibility = 'public';
+
+-- `summary` (render-agnostic score lines from the fold cache) rides along for
+-- the live public fixture endpoint — it never contains person data.
 create or replace view public_fixtures_v as
   select f.id, f.division_id, f.stage_id, f.pool_id, f.round_no, f.seq_in_round,
          f.home_entrant_id, f.away_entrant_id, f.scheduled_at, f.venue, f.court_label,
-         f.status, f.outcome, f.created_at
+         f.status, f.outcome, f.created_at,
+         m.summary, m.last_seq
   from fixtures f
+  left join match_states m on m.fixture_id = f.id
   join divisions d    on d.id = f.division_id
   join competitions c on c.id = d.competition_id
   where c.visibility = 'public';
@@ -551,4 +584,5 @@ grant usage on schema public to app_user;
 grant select, insert, update, delete on all tables in schema public to app_user;
 grant usage, select on all sequences in schema public to app_user;
 grant app_user to postgres;
-grant select on public_competitions_v, public_fixtures_v, public_standings_v, public_entrants_v to app_user;
+grant select on public_competitions_v, public_divisions_v, public_fixtures_v,
+                public_standings_v, public_entrants_v to app_user;
