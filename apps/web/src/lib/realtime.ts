@@ -58,6 +58,44 @@ export async function publishTournamentUpdate(
 }
 
 /**
+ * Broadcast a state_changed event on `fixture:{id}` after a v2 scoring write
+ * (doc 08 §4 — publish after commit). Same transport as tournaments; fire-and-
+ * forget, never throws.
+ */
+export async function publishFixtureUpdate(
+  fixtureId: string,
+  reason: "event" | "finalize" | "schedule",
+): Promise<void> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return;
+  try {
+    const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      body: JSON.stringify({
+        messages: [
+          {
+            topic: `fixture:${fixtureId}`,
+            event: "state_changed",
+            payload: { v: Date.now(), reason, at: new Date().toISOString() },
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[realtime] fixture broadcast failed (${res.status}) for ${fixtureId}`);
+    }
+  } catch (err) {
+    console.warn("[realtime] fixture broadcast error:", err);
+  }
+}
+
+/**
  * Mint a short-lived JWT for Supabase Realtime subscriber auth.
  * Signed with SUPABASE_JWT_SECRET (same secret Supabase uses for its own JWTs).
  */

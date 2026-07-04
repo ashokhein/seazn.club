@@ -79,9 +79,15 @@ async function seed(visibility: "private" | "public" = "private"): Promise<Seed>
   return { orgId, competitionId, divisionId, stageId, fixtureId, home, away };
 }
 
-// One shared postgres client for the file; close it once, after every suite.
+// One shared postgres client for the file; close it once, after every suite —
+// and uncache it, so a later DB test file in the same worker (isolate:false)
+// lazily opens a fresh connection instead of hitting an ended one.
 afterAll(async () => {
-  if (HAS_DB) await sql.end();
+  if (!HAS_DB) return;
+  const globalForDb = globalThis as { _sql?: { end(): Promise<void> } };
+  const client = globalForDb._sql;
+  globalForDb._sql = undefined;
+  await client?.end();
 });
 
 describe.skipIf(!HAS_DB)("engine-db persistence adapter", () => {

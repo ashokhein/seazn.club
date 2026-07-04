@@ -28,6 +28,11 @@ jobs:
       - run: npm run typecheck --workspace packages/engine
       - run: npm run engine:check
       - run: npm run engine:boundary
+      - name: OpenAPI spec drift gate (PROMPT-11)
+        run: |
+          npm run openapi:gen
+          git diff --exit-code openapi/v1.json || {
+            echo "openapi/v1.json is stale — run 'npm run openapi:gen' and commit."; exit 1; }
       - run: npm test --workspace apps/web
       - run: npm test --workspace packages/engine
 
@@ -107,8 +112,8 @@ jobs:
       - name: Sync sport catalog from the engine registry
         run: npm run sync:sports
 
-      - name: Engine-db integration tests (real Postgres)
-        run: npm test --workspace apps/web -- run src/server/engine-db
+      - name: Engine-db + service-layer integration tests (real Postgres)
+        run: npm test --workspace apps/web -- run src/server
 
       - name: Start dev server
         run: |
