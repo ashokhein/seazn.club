@@ -18,6 +18,11 @@ import {
   type SwissStanding,
   type Colour,
 } from "@seazn/engine/scheduling";
+import {
+  resolveQualification,
+  type QualificationSpec,
+  type StandingsRow,
+} from "@seazn/engine/competition";
 import { completeStageIfReady, recomputeStandings, type CompleteResult } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateStages } from "@/server/api-v1/schemas";
@@ -114,6 +119,7 @@ interface GenFixture {
   homeFrom?: { extKey: string; side: "winner" | "loser" };
   awayFrom?: { extKey: string; side: "winner" | "loser" };
   award?: string; // bye: auto-advancing entrant
+  poolId?: string; // group stages: which pool this fixture belongs to
 }
 
 interface ActiveEntrant {
@@ -209,10 +215,54 @@ async function swissGen(
   }));
 }
 
+// Distribute seed-ordered entrants into `count` pools by seeded snake
+// (doc 05 §1: assignment seeded_snake) — 1..N, then N..1, repeating.
+export function snakeDistribute<T>(ordered: readonly T[], count: number): T[][] {
+  const pools: T[][] = Array.from({ length: count }, () => []);
+  for (const [i, entrant] of ordered.entries()) {
+    const lap = Math.floor(i / count);
+    const pos = i % count;
+    const pool = lap % 2 === 0 ? pos : count - 1 - pos;
+    pools[pool].push(entrant);
+  }
+  return pools;
+}
+
+const POOL_KEYS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+function poolCount(cfg: Record<string, unknown>): number {
+  const pools = cfg.pools as { count?: unknown } | undefined;
+  const count = typeof pools?.count === "number" ? pools.count : 1;
+  if (!Number.isInteger(count) || count < 1 || count > POOL_KEYS.length) {
+    throw new EngineError("CONFIG_INVALID", `invalid pool count ${String(count)}`, { count });
+  }
+  return count;
+}
+
+function roundRobinGen(
+  entrants: ActiveEntrant[],
+  legs: 1 | 2,
+  extPrefix = "",
+  poolId?: string,
+): GenFixture[] {
+  const ids = entrants.map((e) => e.id);
+  const seeds = new Map(entrants.filter((e) => e.seed != null).map((e) => [e.id, e.seed as number]));
+  const schedule = generateRoundRobin({ entrants: ids, seeds, config: { legs } });
+  return schedule.fixtures.map((f) => ({
+    extKey: extPrefix + f.id,
+    roundNo: f.roundNo,
+    seqInRound: f.court,
+    home: f.home,
+    away: f.away,
+    ...(poolId ? { poolId } : {}),
+  }));
+}
+
 function generate(
   kind: string,
   cfg: Record<string, unknown>,
   entrants: ActiveEntrant[],
+  poolIds: Map<string, string>, // pool key ('A'…) → pools.id
 ): GenFixture[] {
   const ids = entrants.map((e) => e.id);
   const seeds = new Map(entrants.filter((e) => e.seed != null).map((e) => [e.id, e.seed as number]));
@@ -220,14 +270,16 @@ function generate(
     case "league":
     case "group": {
       const legs = cfg.legs === 2 ? 2 : 1;
-      const schedule = generateRoundRobin({ entrants: ids, seeds, config: { legs } });
-      return schedule.fixtures.map((f) => ({
-        extKey: f.id,
-        roundNo: f.roundNo,
-        seqInRound: f.court,
-        home: f.home,
-        away: f.away,
-      }));
+      const count = kind === "group" ? poolCount(cfg) : 1;
+      if (count === 1) return roundRobinGen(entrants, legs);
+      // Seeded-snake pools, each playing its own round robin (doc 05 §1).
+      const ordered = [...entrants].sort(
+        (a, b) => (a.seed ?? Number.MAX_SAFE_INTEGER) - (b.seed ?? Number.MAX_SAFE_INTEGER),
+      );
+      return snakeDistribute(ordered, count).flatMap((poolEntrants, i) => {
+        const key = POOL_KEYS[i];
+        return roundRobinGen(poolEntrants, legs, `p${key}-`, poolIds.get(key));
+      });
     }
     case "knockout": {
       const bracket = generateSingleElim({ entrants: ids, seeds, thirdPlace: cfg.thirdPlace === true });
@@ -265,15 +317,48 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     if (!stage) throw new HttpError(404, "stage not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
 
-    const entrants = await tx<ActiveEntrant[]>`
+    const active = await tx<ActiveEntrant[]>`
       select id, seed from entrants
       where division_id = ${stage.division_id} and status in ('registered', 'confirmed')
       order by seed nulls last, created_at, id`;
+
+    // A seeded stage (qualification resolved at the previous stage's completion,
+    // stored as config.qualified) draws from that ordered list — its order IS
+    // the seeding. Otherwise: every active division entrant.
+    const qualified = Array.isArray(stage.config.qualified)
+      ? (stage.config.qualified as string[])
+      : null;
+    let entrants: ActiveEntrant[];
+    if (qualified) {
+      const activeIds = new Set(active.map((e) => e.id));
+      entrants = qualified
+        .filter((id) => activeIds.has(id))
+        .map((id, i) => ({ id, seed: i + 1 }));
+    } else {
+      entrants = active;
+    }
     if (entrants.length < 2) {
       throw new EngineError("STAGE_NOT_READY", "need at least 2 active entrants to generate", {
         stageId,
         entrants: entrants.length,
       });
+    }
+
+    // Group stages with pools: materialise the pools rows first (idempotent),
+    // so generated fixtures can reference them.
+    const poolIds = new Map<string, string>();
+    if (stage.kind === "group" && poolCount(stage.config) > 1) {
+      const existing = await tx<{ id: string; key: string }[]>`
+        select id, key from pools where stage_id = ${stageId}`;
+      for (const pool of existing) poolIds.set(pool.key, pool.id);
+      for (let i = 0; i < poolCount(stage.config); i++) {
+        const key = POOL_KEYS[i];
+        if (poolIds.has(key)) continue;
+        const [row] = await tx<{ id: string }[]>`
+          insert into pools (stage_id, key, name)
+          values (${stageId}, ${key}, ${"Pool " + key}) returning id`;
+        poolIds.set(key, row.id);
+      }
     }
 
     const existing = await tx<
@@ -285,7 +370,7 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     const gen =
       stage.kind === "swiss"
         ? await swissGen(tx, stageId, stage.config, entrants, existing)
-        : generate(stage.kind, stage.config, entrants);
+        : generate(stage.kind, stage.config, entrants, poolIds);
 
     const byKey = new Map<string, string>(); // ext_key → fixture uuid
     for (const f of existing) if (f.ext_key) byKey.set(f.ext_key, f.id);
@@ -295,9 +380,9 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
       if (byKey.has(g.extKey)) continue;
       const award = g.award !== undefined;
       const [row] = await tx<{ id: string }[]>`
-        insert into fixtures (stage_id, division_id, round_no, seq_in_round,
+        insert into fixtures (stage_id, division_id, pool_id, round_no, seq_in_round,
                               home_entrant_id, away_entrant_id, ext_key, status, outcome)
-        values (${stageId}, ${stage.division_id}, ${g.roundNo}, ${g.seqInRound},
+        values (${stageId}, ${stage.division_id}, ${g.poolId ?? null}, ${g.roundNo}, ${g.seqInRound},
                 ${g.home}, ${g.away}, ${g.extKey},
                 ${award ? "forfeited" : "scheduled"},
                 ${award ? tx.json({ kind: "award", winner: g.award } as never) : null})
@@ -367,13 +452,111 @@ export async function fillSlot(
   }
 }
 
-/** Guarded progression (doc 08 §3): no-op unless the completion predicate holds. */
-export async function completeStage(auth: AuthCtx, stageId: string): Promise<CompleteResult> {
+const TABLE_KINDS = new Set(["league", "group", "swiss"]);
+
+export interface SeededStage {
+  stage_id: string;
+  entrants: string[];
+}
+
+export interface CompleteStageResult extends CompleteResult {
+  /** Set when completion resolved the next stage's qualification spec. */
+  qualified?: SeededStage;
+}
+
+/**
+ * Guarded progression (doc 08 §3): no-op unless the completion predicate
+ * holds. On completion, if the next stage declares a qualification spec
+ * (doc 05 §3), resolve it against this stage's ranked tables into an ordered
+ * seed list, snapshotted as the next stage's `config.qualified` — which its
+ * /generate then consumes. Idempotent: an already-seeded stage is not re-seeded.
+ */
+export async function completeStage(auth: AuthCtx, stageId: string): Promise<CompleteStageResult> {
   await withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx`select 1 from stages where id = ${stageId}`;
     if (!stage) throw new HttpError(404, "stage not found");
   });
-  return completeStageIfReady(auth.orgId, stageId);
+  const result = await completeStageIfReady(auth.orgId, stageId);
+  if (!result.completed) return result;
+  const qualified = await seedNextStage(auth, stageId);
+  return qualified ? { ...result, qualified } : result;
+}
+
+// Resolve the next pending stage's qualification against the completed stage's
+// standings snapshots. Pool names in specs are the pools.key letters ('A'…);
+// a single-table stage is the unnamed pool '' / `overall`.
+async function seedNextStage(auth: AuthCtx, completedStageId: string): Promise<SeededStage | null> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [current] = await tx<{ division_id: string; seq: number; kind: string }[]>`
+      select division_id, seq, kind from stages where id = ${completedStageId}`;
+    if (!current) return null;
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + current.division_id}))`;
+
+    const [next] = await tx<StageRow[]>`
+      select ${tx(STAGE_COLS)} from stages
+      where division_id = ${current.division_id} and seq > ${current.seq}
+      order by seq limit 1`;
+    if (!next || !next.qualification) return null;
+    if (Array.isArray(next.config.qualified)) {
+      // Already seeded (idempotent re-complete).
+      return { stage_id: next.id, entrants: next.config.qualified as string[] };
+    }
+    if (!TABLE_KINDS.has(current.kind)) {
+      throw new EngineError(
+        "STAGE_NOT_READY",
+        "qualification from a bracket stage is not supported yet — use a table stage as the source",
+        { stageId: completedStageId, kind: current.kind },
+      );
+    }
+
+    const spec = next.qualification as unknown;
+    const isSpec =
+      typeof spec === "object" && spec !== null &&
+      ("take" in spec || "topN" in spec || "bestOfRank" in spec);
+    if (!isSpec) {
+      throw new EngineError("CONFIG_INVALID", "unrecognised qualification spec", {
+        stageId: next.id,
+      });
+    }
+
+    // Ranked tables from the completion snapshots; translate pool uuids back
+    // to their spec-facing keys.
+    const poolRows = await tx<{ id: string; key: string }[]>`
+      select id, key from pools where stage_id = ${completedStageId}`;
+    const keyOf = new Map(poolRows.map((p) => [p.id, p.key]));
+    const snapshots = await tx<{ pool_id: string | null; rows: StandingsRow[] }[]>`
+      select pool_id, rows from standings_snapshots where stage_id = ${completedStageId}`;
+    if (snapshots.length === 0) {
+      throw new EngineError("STAGE_NOT_READY", "completed stage has no standings snapshots", {
+        stageId: completedStageId,
+      });
+    }
+    const pools = snapshots.map((s) => ({
+      pool: s.pool_id ? (keyOf.get(s.pool_id) ?? s.pool_id) : "",
+      rows: s.rows,
+    }));
+    const overall = pools.find((p) => p.pool === "")?.rows;
+    const entrants = resolveQualification(spec as QualificationSpec, {
+      pools,
+      ...(overall ? { overall } : {}),
+    });
+
+    await tx`
+      update stages set config = ${tx.json({ ...next.config, qualified: entrants } as never)}
+      where id = ${next.id}`;
+
+    // Structural ledger + division watermark (same pattern as stage_completed).
+    const [{ seq: last }] = await tx<{ seq: number }[]>`
+      select coalesce(max(seq), 0)::int as seq from division_events
+      where division_id = ${current.division_id}`;
+    await tx`
+      insert into division_events (division_id, seq, type, payload)
+      values (${current.division_id}, ${last + 1}, 'stage_seeded',
+              ${tx.json({ stageId: next.id, from: completedStageId, entrants } as never)})`;
+    await tx`update divisions set seq = ${last + 1} where id = ${current.division_id}`;
+
+    return { stage_id: next.id, entrants };
+  });
 }
 
 export interface StandingsOut {

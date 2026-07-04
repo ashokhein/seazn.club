@@ -219,6 +219,86 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     expect(finalRow.away_entrant_id).not.toBeNull();
   });
 
+  it("group pools → knockout: snake pools, per-pool standings, qualification seeds the KO", async () => {
+    const { auth } = await seedOrg();
+    const competition = await createCompetition(auth, { name: "Worlds", visibility: "private", branding: {} });
+    const division = await createDivision(auth, competition.id, {
+      name: "Open", sport_key: "generic", variant_key: "score", config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    });
+    const entrants = await createEntrants(
+      auth,
+      division.id,
+      Array.from({ length: 8 }, (_, i) => ({
+        kind: "individual" as const,
+        display_name: `E${i + 1}`,
+        seed: i + 1,
+        members: [],
+      })),
+    );
+
+    // Stage graph: 2-pool group, then a knockout taking A1,B2,B1,A2 (doc 05 §2.3
+    // cross-pool template: winners meet runners-up of the other pool).
+    const stages = await createStages(auth, division.id, [
+      { seq: 1, kind: "group", name: "Groups", config: { pools: { count: 2 } } },
+      {
+        seq: 2, kind: "knockout", name: "KO", config: {},
+        qualification: { take: [
+          { pool: "A", rank: 1 }, { pool: "B", rank: 2 },
+          { pool: "B", rank: 1 }, { pool: "A", rank: 2 },
+        ] },
+      },
+    ]);
+    const [groups, knockout] = stages;
+
+    // 8 entrants / 2 pools → 4 each → two 6-fixture round robins.
+    const generated = await generateStageFixtures(auth, groups.id);
+    expect(generated.created).toBe(12);
+    const pools = await sql<{ id: string; key: string }[]>`
+      select id, key from pools where stage_id = ${groups.id} order by key`;
+    expect(pools.map((p) => p.key)).toEqual(["A", "B"]);
+    const byPool = new Map(pools.map((p) => [p.id, 0]));
+    for (const f of generated.fixtures) {
+      expect(f.pool_id).not.toBeNull();
+      byPool.set(f.pool_id as string, (byPool.get(f.pool_id as string) ?? 0) + 1);
+    }
+    expect([...byPool.values()]).toEqual([6, 6]);
+    // Snake distribution: seeds 1,4,5,8 → pool A; 2,3,6,7 → pool B.
+    const poolA = await sql<{ home: string | null; away: string | null }[]>`
+      select home_entrant_id as home, away_entrant_id as away
+      from fixtures where stage_id = ${groups.id} and pool_id = ${pools[0].id}`;
+    const aMembers = new Set(poolA.flatMap((f) => [f.home, f.away]));
+    const seedOf = new Map(entrants.map((e) => [e.id, e.seed]));
+    expect([...aMembers].map((id) => seedOf.get(id as string)).sort()).toEqual([1, 4, 5, 8]);
+
+    // Decide everything (home wins), complete → KO gets seeded.
+    for (const fixture of generated.fixtures) await decide(auth, fixture.id, 1, 0);
+    const completion = await completeStage(auth, groups.id);
+    expect(completion.completed).toBe(true);
+    expect(completion.qualified?.stage_id).toBe(knockout.id);
+    expect(completion.qualified?.entrants).toHaveLength(4);
+    // Re-complete is idempotent: same seeded list, no duplicate seeding.
+    const again = await completeStage(auth, groups.id);
+    expect(again.qualified?.entrants).toEqual(completion.qualified?.entrants);
+
+    // KO generates from the qualified order (its order IS the seeding).
+    const ko = await generateStageFixtures(auth, knockout.id);
+    expect(ko.created).toBe(3); // 2 semis + final
+    const semis = ko.fixtures.filter((f) => f.round_no === 1);
+    const q = completion.qualified!.entrants;
+    const pairs = semis.map((f) => new Set([f.home_entrant_id, f.away_entrant_id]));
+    // Seed fold: qualified[0] meets qualified[3], qualified[1] meets qualified[2].
+    expect(pairs).toContainEqual(new Set([q[0], q[3]]));
+    expect(pairs).toContainEqual(new Set([q[1], q[2]]));
+
+    // Play the KO through; the final fills from the semi winners.
+    for (const semi of semis) await decide(auth, semi.id, 1, 0);
+    const [final] = await sql<{ home_entrant_id: string | null; away_entrant_id: string | null }[]>`
+      select home_entrant_id, away_entrant_id from fixtures
+      where stage_id = ${knockout.id} and round_no = 2`;
+    expect(final.home_entrant_id).not.toBeNull();
+    expect(final.away_entrant_id).not.toBeNull();
+  });
+
   it("API keys are 402-gated on api.access and mint sk_live_ secrets once", async () => {
     const { auth } = await seedOrg();
     // Community default: no api.access → 402.

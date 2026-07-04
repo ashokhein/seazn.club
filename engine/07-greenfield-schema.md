@@ -308,3 +308,14 @@ Corrections made there (a PostgreSQL expression can't appear in a PRIMARY KEY, e
 - **`plan_entitlements` seed `api.access`** — community `false`, pro `true`
   (doc 08 §2: the platform API is Pro-gated). Guarded so `schema_v2.sql` still
   applies standalone.
+- **Qualification seeding (doc 05 §3)** — `POST /stages/{id}/complete` resolves
+  the *next* stage's `qualification` spec against the completed stage's
+  standings snapshots (pool uuids translated back to their `pools.key`
+  letters), snapshots the ordered result as the next stage's
+  `config.qualified`, and records a `stage_seeded` division event. That stage's
+  `/generate` then seeds from the list (order = seeds 1..k). Idempotent;
+  bracket stages as a qualification *source* are not yet supported.
+- **Pools (doc 05 §1)** — group stages with `config.pools.count = N` generate
+  `pools` rows (`A`, `B`, …), distribute active entrants by seeded snake, and
+  run one round robin per pool (`ext_key` prefix `p{key}-`); standings snapshot
+  per pool. `assignment: manual|random_seeded` not yet implemented.

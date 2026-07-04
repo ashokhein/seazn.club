@@ -358,4 +358,6 @@ export const GenerateResult = z.object({
 export const CompleteResult = z.object({
   completed: z.boolean(),
   events: z.array(z.record(z.string(), z.unknown())),
+  /** Set when completion resolved the next stage's qualification spec. */
+  qualified: z.object({ stage_id: Uuid, entrants: z.array(Uuid) }).optional(),
 });
