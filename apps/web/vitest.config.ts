@@ -6,6 +6,9 @@ export default defineConfig({
     environment: "node",
     pool: "threads",
     isolate: false,
+    // @seazn/engine ships TS source (workspace symlink) — inline it so vitest
+    // transforms it instead of treating it as an opaque external dep.
+    server: { deps: { inline: [/@seazn\/engine/] } },
     coverage: {
       provider: "v8",
       include: [
@@ -17,6 +20,10 @@ export default defineConfig({
     },
   },
   resolve: {
-    alias: { "@": path.resolve(__dirname, "src") },
+    alias: {
+      "@": path.resolve(__dirname, "src"),
+      // `server-only` is a Next build-time marker, absent under vitest.
+      "server-only": path.resolve(__dirname, "vitest.stubs/server-only.ts"),
+    },
   },
 });

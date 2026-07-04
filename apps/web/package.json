@@ -14,6 +14,7 @@
     "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
+    "@seazn/engine": "*",
     "@sentry/nextjs": "^10.62.0",
     "@supabase/supabase-js": "^2.110.0",
     "bcryptjs": "^3.0.3",

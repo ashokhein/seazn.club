@@ -23,7 +23,9 @@ const migrations = readdirSync(new URL("migrations/", dir))
   .sort()
   .map((f) => `migrations/${f}`);
 
-const files = ["schema.sql", ...migrations];
+// schema.sql (v1) + migrations, then schema_v2.sql (greenfield engine v2 tables,
+// created alongside v1 — dropped only at the PROMPT-15 cutover).
+const files = ["schema.sql", ...migrations, "schema_v2.sql"];
 
 try {
   for (const f of files) {

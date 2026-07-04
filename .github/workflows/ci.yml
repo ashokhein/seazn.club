@@ -104,6 +104,12 @@ jobs:
       - name: RLS guard (every org_id table isolated)
         run: npm run check:rls
 
+      - name: Sync sport catalog from the engine registry
+        run: npm run sync:sports
+
+      - name: Engine-db integration tests (real Postgres)
+        run: npm test --workspace apps/web -- run src/server/engine-db
+
       - name: Start dev server
         run: |
           npm run dev > dev-server.log 2>&1 &
