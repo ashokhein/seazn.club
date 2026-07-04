@@ -7,6 +7,7 @@
   "exports": {
     "./core": "./src/core/index.ts",
     "./sport": "./src/sport/index.ts",
+    "./sports": "./src/sports/index.ts",
     "./sports/*": "./src/sports/*/index.ts",
     "./competition": "./src/competition/index.ts",
     "./scheduling": "./src/scheduling/index.ts",

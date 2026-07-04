@@ -19,6 +19,7 @@
     "engine:check": "node --experimental-strip-types scripts/engine-check.ts",
     "engine:boundary": "node --experimental-strip-types scripts/engine-boundary.ts",
     "db:apply": "node --experimental-strip-types scripts/apply-db.ts",
+    "sync:sports": "node --experimental-strip-types scripts/sync-sports.ts",
     "check:rls": "node --experimental-strip-types scripts/check-rls.ts"
   }
 }

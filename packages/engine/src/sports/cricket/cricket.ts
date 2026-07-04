@@ -1263,7 +1263,9 @@ function generateBall(state: CricketState, rng: Rng): CricketBallEv {
 function generateSoBall(state: CricketState, rng: Rng): CricketBallEv {
   const so = state.superOver as NonNullable<CricketState["superOver"]>;
   let index = so.innings.length - 1;
-  let innings = so.innings[index];
+  // Explicit `| undefined` so this compiles under consumers that don't enable
+  // noUncheckedIndexedAccess (apps/web); a no-op under the engine's own config.
+  let innings: InningsState | undefined = so.innings[index];
   if (innings === undefined || innings.closed) {
     index += 1;
     innings = undefined;
