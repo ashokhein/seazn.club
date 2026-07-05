@@ -10,6 +10,7 @@ import type { SportRegistry } from "../sport/registry.ts";
 import { football } from "./football/index.ts";
 import { cricket } from "./cricket/index.ts";
 import { boardgame } from "./boardgame/index.ts";
+import { carrom } from "./carrom/index.ts";
 import { generic } from "./generic/index.ts";
 import { volleyball } from "./setbased/volleyball.ts";
 import { badminton } from "./setbased/badminton.ts";
@@ -20,6 +21,7 @@ export const builtinModules: readonly AnySportModule[] = [
   football,
   cricket,
   boardgame,
+  carrom,
   generic,
   volleyball,
   badminton,

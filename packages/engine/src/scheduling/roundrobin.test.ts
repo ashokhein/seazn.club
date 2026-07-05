@@ -93,7 +93,9 @@ describe("generateRoundRobin — invariants (spec 05 §6)", () => {
     );
   });
 
-  it("uniqueness: every pair meets exactly once per leg, ≤1 fixture per entrant per round", () => {
+  // Heavy property test: sits near vitest's 5s default under full-suite
+  // worker contention — budget it explicitly (chaos.test.ts precedent).
+  it("uniqueness: every pair meets exactly once per leg, ≤1 fixture per entrant per round", { timeout: 20_000 }, () => {
     fc.assert(
       fc.property(nArb, legsArb, (n, legs) => {
         const schedule = generateRoundRobin({ entrants: field(n), config: { legs } });

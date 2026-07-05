@@ -28,6 +28,7 @@ export type TiebreakerKey =
   | "for"
   | "nrr"
   | "set_ratio"
+  | "board_ratio"
   | "point_ratio"
   | "buchholz"
   | "buchholz_cut1"

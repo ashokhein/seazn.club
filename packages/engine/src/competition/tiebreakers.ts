@@ -287,6 +287,14 @@ const COMPARATORS: Partial<Record<TiebreakerKey, Comparator>> = {
       metricOf(b, ["sets_won"]),
       metricOf(b, ["sets_lost"]),
     ),
+  // Carrom boards won/lost (carrom.md §4) — same cross-multiplied form.
+  board_ratio: (a, b) =>
+    compareRatio(
+      metricOf(a, ["boards_won"]),
+      metricOf(a, ["boards_lost"]),
+      metricOf(b, ["boards_won"]),
+      metricOf(b, ["boards_lost"]),
+    ),
   point_ratio: (a, b) =>
     compareRatio(
       metricOf(a, ["points_won"]),
@@ -610,6 +618,9 @@ export function validateCascade(
         break;
       case "set_ratio":
         if (!has("sets_won") || !has("sets_lost")) reject(key, "sets won/lost");
+        break;
+      case "board_ratio":
+        if (!has("boards_won") || !has("boards_lost")) reject(key, "boards won/lost");
         break;
       case "point_ratio":
         if (!has("points_won") || !has("points_lost")) reject(key, "points won/lost");

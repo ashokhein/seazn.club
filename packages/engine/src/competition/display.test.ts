@@ -61,6 +61,7 @@ describe("DERIVED_METRICS", () => {
     expect(DERIVED_METRICS.map((m) => m.key)).toEqual([
       "nrr",
       "set_ratio",
+      "board_ratio",
       "point_ratio",
       "buchholz_cut1",
       "buchholz",
