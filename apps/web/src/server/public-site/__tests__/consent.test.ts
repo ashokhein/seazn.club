@@ -60,8 +60,18 @@ interface PublicScene {
   bob: string; // no consent
 }
 
-async function seedPublicScene(): Promise<PublicScene> {
+async function seedPublicScene(
+  opts: { playerProfiles?: boolean } = {},
+): Promise<PublicScene> {
   const { auth, orgId } = await seedOrg();
+  // Consent is the variable under test here; grant the Pro read feature
+  // (doc 10 §1 dashboard.player_profiles, PROMPT-13) unless a test is
+  // explicitly probing the entitlement split.
+  if (opts.playerProfiles !== false) {
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, bool_value, reason)
+      values (${orgId}, 'dashboard.player_profiles', true, 'test')`;
+  }
   const alice = await seedPerson(orgId, "Alice Wonder", {
     public_name: true,
     public_photo: true,
@@ -148,6 +158,11 @@ describe.skipIf(!HAS_DB)("public read model — consent matrix (doc 06 §4.7)", 
 describe.skipIf(!HAS_DB)("public read model — visibility (doc 09 §1)", () => {
   it("public + unlisted are served (with visibility flag); private never appears", async () => {
     const { auth, orgId } = await seedOrg();
+    // Three active competitions exceed the community quota (PROMPT-13);
+    // visibility, not quotas, is under test — lift the limit for this org.
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+      values (${orgId}, 'competitions.max_active', null, 'test')`;
     await createCompetition(auth, { name: "Open", visibility: "public", branding: {} });
     await createCompetition(auth, { name: "Hidden Link", visibility: "unlisted", branding: {} });
     await createCompetition(auth, { name: "Secret", visibility: "private", branding: {} });
@@ -168,10 +183,28 @@ describe.skipIf(!HAS_DB)("entitlement split (doc 09 §4, doc 10)", () => {
 
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value, reason)
-      values (${scene.orgId}, 'branding', true, 'test')`;
+      values (${scene.orgId}, 'dashboard.branding', true, 'test')`;
     const [after] = await sql<{ branding: Record<string, unknown> }[]>`
       select branding from public_competitions_v where id = ${scene.competitionId}`;
     expect(after.branding).toEqual({ logo: "logos/x.png", banner: "banners/x.png" });
+  });
+
+  it("nulls photos + player-card links without dashboard.player_profiles (PROMPT-13)", async () => {
+    const scene = await seedPublicScene({ playerProfiles: false });
+    const [entrant] = await sql<{ members: Record<string, unknown>[] }[]>`
+      select members from public_entrants_v where division_id = ${scene.divisionId}`;
+    // Even fully-consented Alice: consent makes it publishable, the
+    // entitlement makes it published — community gets neither photo nor link.
+    for (const member of entrant.members) {
+      expect(member["photo"]).toBeNull();
+      expect(member["person_id"]).toBeNull();
+    }
+    // Names still follow consent alone (initials never need a plan).
+    expect(entrant.members.map((m) => m["name"]).sort()).toEqual(["Alice Wonder", "B.B."]);
+    // Player cards 404: the view has no rows for this org.
+    const players = await sql<{ id: string }[]>`
+      select id from public_players_v where org_id = ${scene.orgId}`;
+    expect(players).toHaveLength(0);
   });
 
   it("community orgs hold at most one public competition (dashboard.public.max)", async () => {
