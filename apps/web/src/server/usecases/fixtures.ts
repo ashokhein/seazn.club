@@ -64,9 +64,23 @@ export async function putLineup(
   input: PutLineup,
 ): Promise<LineupOut> {
   return withTenant(auth.orgId, async (tx) => {
-    const [fixture] = await tx<{ home_entrant_id: string | null; away_entrant_id: string | null; status: string }[]>`
-      select home_entrant_id, away_entrant_id, status from fixtures where id = ${fixtureId}`;
+    const [fixture] = await tx<
+      {
+        home_entrant_id: string | null;
+        away_entrant_id: string | null;
+        status: string;
+        scorer_can_enter_lineups: boolean;
+      }[]
+    >`
+      select f.home_entrant_id, f.away_entrant_id, f.status, d.scorer_can_enter_lineups
+      from fixtures f join divisions d on d.id = f.division_id
+      where f.id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
+    // Doc 13 §2: lineup entry is config-gated for scorers (courtside reality
+    // default: allowed). Coverage was proven at the door.
+    if (auth.role === "scorer" && !fixture.scorer_can_enter_lineups) {
+      throw new HttpError(403, "Lineup entry is restricted to organisers in this division");
+    }
     if (fixture.home_entrant_id !== entrantId && fixture.away_entrant_id !== entrantId) {
       throw new HttpError(422, "entrant is not a side of this fixture");
     }

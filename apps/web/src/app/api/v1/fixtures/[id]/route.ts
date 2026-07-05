@@ -1,5 +1,5 @@
 import { v1, parseBody } from "@/server/api-v1/http";
-import { requireResourceAuth } from "@/server/api-v1/auth";
+import { requireResourceAuth, requireFixtureActor } from "@/server/api-v1/auth";
 import { PatchFixture } from "@/server/api-v1/schemas";
 import { getFixture, patchFixture } from "@/server/usecases/fixtures";
 
@@ -8,7 +8,7 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function GET(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
-    const auth = await requireResourceAuth(req, "fixture", id, "read");
+    const auth = await requireFixtureActor(req, id, "read");
     return getFixture(auth, id);
   });
 }

@@ -14,6 +14,7 @@ import { withTenant } from "@/lib/db";
 import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
+import { InviteScorer } from "@/components/v2/invite-scorer";
 import { StandingsTable } from "@/components/public-site/standings-table";
 import { tieBreakLabel, type StandingsRow } from "@seazn/engine/competition";
 import type { MetricSpecLike } from "@/lib/public-site";
@@ -102,6 +103,13 @@ export default async function DivisionPage({
             </span>
             {frozen && <span className="badge bg-sky-100 text-sky-700">read-only</span>}
             <div className="flex-1" />
+            {editable && (
+              <InviteScorer
+                orgId={auth.orgId}
+                divisionId={id}
+                officialLabel={sportModule.officialLabel.scorer}
+              />
+            )}
             <LaunchActions divisionId={id} status={division.status} canEdit={editable} />
           </div>
         </div>

@@ -84,3 +84,38 @@ export async function assertCompetitionNotFrozen(
     throw new PaymentRequiredError("competitions.max_active");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Member seats (doc 13 §5 + doc 10 §2.4): after a downgrade an org can hold
+// more owner/admin/viewer members than members.max allows. Nothing is
+// deleted — over-quota members become effectively read-only (the freeze
+// rule), owners exempt (an org must keep a working owner; the owner frees
+// seats by demoting/removing). Same lazy selector as competitions, with
+// membership age as the activity signal.
+// ---------------------------------------------------------------------------
+
+/** user_ids of members whose WRITE access is frozen by members.max. */
+export async function frozenMemberIds(orgId: string): Promise<Set<string>> {
+  const limit = await getLimit(orgId, "members.max");
+  if (limit === null) return new Set();
+  const rows = await withTenant(orgId, (tx) =>
+    tx<{ user_id: string; role: string; created_at: string }[]>`
+      select user_id, role, created_at from org_members
+      where org_id = ${orgId} and role <> 'scorer'`,
+  );
+  if (rows.length <= limit) return new Set();
+  const owners = rows.filter((r) => r.role === "owner");
+  const rest = rows.filter((r) => r.role !== "owner");
+  // Owners always stay active but still occupy seats.
+  const restLimit = Math.max(limit - owners.length, 0);
+  return selectFrozen(
+    rest.map((r) => ({ id: r.user_id, lastActiveAt: r.created_at })),
+    restLimit,
+  );
+}
+
+/** 402 when this member's seat is frozen (doc 10 §2.4) — call on write auth. */
+export async function assertMemberNotFrozen(orgId: string, userId: string): Promise<void> {
+  const frozen = await frozenMemberIds(orgId);
+  if (frozen.has(userId)) throw new PaymentRequiredError("members.max");
+}
