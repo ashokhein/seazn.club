@@ -2,8 +2,7 @@ export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { needsOnboarding } from "@/lib/activation";
-import { listOrgSportPresets } from "@/lib/sport-presets";
-import { getActiveOrgId } from "@/lib/auth";
+import { sql } from "@/lib/db";
 import { Nav } from "@/components/nav";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
 
@@ -14,10 +13,9 @@ export default async function OnboardingPage() {
   const already = !(await needsOnboarding(user.id));
   if (already) redirect("/dashboard");
 
-  const orgId = await getActiveOrgId();
-  if (!orgId) redirect("/dashboard");
-
-  const presets = await listOrgSportPresets(orgId);
+  // Engine v2 sport catalog (seeded from the module registry by sync:sports).
+  const sports = await sql<{ key: string; name: string }[]>`
+    select key, name from sports order by name`;
 
   return (
     <>
@@ -29,11 +27,11 @@ export default async function OnboardingPage() {
             Welcome to Seazn Club
           </h1>
           <p className="mt-2 text-slate-500">
-            Pick the sport your club runs most — we'll pre-fill your first
-            tournament so you can get started in seconds.
+            Create a competition, add a division for your sport, register
+            entrants — and you&apos;re scoring within minutes.
           </p>
         </div>
-        <OnboardingWizard presets={presets} />
+        <OnboardingWizard sports={sports} />
       </main>
     </>
   );

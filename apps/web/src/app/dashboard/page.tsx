@@ -1,114 +1,62 @@
 export const dynamic = "force-dynamic";
+// Organiser home — competitions on the v2 engine (PROMPT-15 task 1).
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { Trophy, Calendar, Layers } from "lucide-react";
-import {
-  getActiveOrgId,
-  getCurrentUser,
-  getUserOrgs,
-} from "@/lib/auth";
-import { sql } from "@/lib/db";
+import { Trophy } from "lucide-react";
 import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
-import { CreateSeasonForm } from "@/components/create-season-form";
-import type { Season, Tournament } from "@/lib/types";
+import { requirePageAuth } from "@/server/page-auth";
+import { listCompetitions } from "@/server/usecases/competitions";
 
 const STATUS_STYLE: Record<string, string> = {
-  setup: "bg-slate-100 text-slate-600",
-  group: "bg-sky-100 text-sky-700",
-  knockout: "bg-amber-100 text-amber-700",
-  final: "bg-amber-100 text-amber-700",
+  draft: "bg-slate-100 text-slate-600",
+  published: "bg-sky-100 text-sky-700",
+  live: "bg-amber-100 text-amber-700",
   completed: "bg-emerald-100 text-emerald-700",
+  archived: "bg-slate-100 text-slate-400",
 };
 
-const NO_SEASON = "__none__";
+const VISIBILITY_STYLE: Record<string, string> = {
+  public: "bg-emerald-50 text-emerald-600",
+  unlisted: "bg-sky-50 text-sky-600",
+  private: "bg-slate-50 text-slate-500",
+};
 
 export default async function DashboardPage() {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
-  const orgs = await getUserOrgs(user.id);
-  if (orgs.length === 0) redirect("/orgs/new");
-
-  const activeId = await getActiveOrgId();
-  const active = orgs.find((o) => o.id === activeId) ?? orgs[0];
-  const canEdit = active.role === "owner" || active.role === "admin";
-
-  const seasons = await sql<Season[]>`
-    select id, org_id, name, slug, created_at from seasons
-    where org_id = ${active.id} order by created_at asc`;
-  const tournaments = await sql<Tournament[]>`
-    select * from tournaments where org_id = ${active.id}
-    order by created_at desc`;
-
-  const bySeason = new Map<string, Tournament[]>();
-  for (const t of tournaments) {
-    const key = t.season_id ?? NO_SEASON;
-    if (!bySeason.has(key)) bySeason.set(key, []);
-    bySeason.get(key)!.push(t);
-  }
-
-  const sections: { id: string; name: string; slug: string | null }[] = [
-    ...seasons.map((s) => ({ id: s.id, name: s.name, slug: s.slug })),
-  ];
-  if (bySeason.has(NO_SEASON))
-    sections.push({ id: NO_SEASON, name: "No season", slug: null });
-
-  const renderCard = (t: Tournament) => (
-    <li key={t.id}>
-      <Link
-        href={`/tournaments/${t.id}`}
-        className="group flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3.5 py-2.5 transition hover:border-purple-300 hover:shadow-sm"
-      >
-        <span className="min-w-0">
-          <span className="block truncate text-sm font-medium text-slate-800 group-hover:text-purple-700">
-            {t.name}
-          </span>
-          <span className="block text-xs text-slate-400">
-            {t.sport} · {t.category}
-          </span>
-        </span>
-        <span
-          className={`ml-3 shrink-0 badge ${STATUS_STYLE[t.status] ?? STATUS_STYLE.setup}`}
-        >
-          {t.status}
-        </span>
-      </Link>
-    </li>
-  );
+  const { auth, org, canEdit } = await requirePageAuth();
+  const { items: competitions } = await listCompetitions(auth, { cursor: null, limit: 100 });
 
   return (
     <>
       <Nav />
-      <BillingBanner orgId={active.id} />
+      <BillingBanner orgId={org.id} />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-6">
           <div className="min-w-0">
             <div className="flex items-center gap-3">
               <h1 className="text-xl font-semibold tracking-tight text-slate-900">
-                Tournaments
+                Competitions
               </h1>
-              <span className={`badge ${roleBadge(active.role)}`}>
-                {active.role}
-              </span>
+              <span className={`badge ${roleBadge(org.role)}`}>{org.role}</span>
             </div>
             <p className="mt-1 text-sm text-slate-500">
               {canEdit
-                ? "Group by season, then spin up a tournament for any sport."
+                ? "A competition holds one or more divisions — each with its own sport, entrants and format."
                 : "You have view-only access to this board."}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {canEdit && <CreateSeasonForm />}
+            <Link href="/people" className="btn btn-ghost">
+              People
+            </Link>
             {canEdit && (
-              <Link href="/tournaments/new" className="btn btn-primary">
-                + New Tournament
+              <Link href="/competitions/new" className="btn btn-primary">
+                + New Competition
               </Link>
             )}
           </div>
         </div>
 
-        {tournaments.length === 0 && seasons.length === 0 ? (
+        {competitions.length === 0 ? (
           canEdit ? (
             <div className="mt-12 flex flex-col items-center gap-6 text-center">
               <div className="grid h-16 w-16 place-items-center rounded-2xl bg-purple-100">
@@ -116,61 +64,55 @@ export default async function DashboardPage() {
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-slate-800">
-                  No tournaments yet
+                  No competitions yet
                 </h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Create your first tournament in under a minute. Pick a sport,
-                  add players, and you&apos;re live.
+                  Create your first competition, add a division for your sport,
+                  register entrants and you&apos;re live.
                 </p>
               </div>
-              <div className="flex flex-wrap justify-center gap-3">
-                <Link href="/tournaments/new" className="btn btn-primary">
-                  + New Tournament
-                </Link>
-                <Link
-                  href="/settings"
-                  className="btn btn-ghost border border-purple-200 text-purple-700"
-                >
-                  Customize sport presets
-                </Link>
-              </div>
-              <p className="text-xs text-slate-400">
-                Pro tip: you can also create a season first to group multiple
-                tournaments together.
-              </p>
+              <Link href="/competitions/new" className="btn btn-primary">
+                + New Competition
+              </Link>
             </div>
           ) : (
-            <p className="text-sm text-slate-500">No tournaments yet.</p>
+            <p className="text-sm text-slate-500">No competitions yet.</p>
           )
         ) : (
-          <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {sections.map((s) => {
-              const list = bySeason.get(s.id) ?? [];
-              return (
-                <section key={s.id} className="rounded-xl border border-slate-200 bg-white shadow-sm">
-                  <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-3">
-                    <div className="flex items-center gap-2">
-                      {s.id === NO_SEASON
-                        ? <Layers className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />
-                        : <Calendar className="h-4 w-4 shrink-0 text-purple-500" strokeWidth={1.75} />
-                      }
-                      <h2 className="text-sm font-semibold text-slate-700">{s.name}</h2>
-                    </div>
-                    {s.slug && (
-                      <span className="font-mono text-[11px] text-slate-400">{s.slug}</span>
+          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {competitions.map((c) => (
+              <li key={c.id}>
+                <Link
+                  href={`/competitions/${c.id}`}
+                  className="group block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-purple-300 hover:shadow"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="block truncate text-sm font-semibold text-slate-800 group-hover:text-purple-700">
+                      {c.name}
+                    </span>
+                    <span className={`badge shrink-0 ${STATUS_STYLE[c.status] ?? STATUS_STYLE.draft}`}>
+                      {c.frozen ? "frozen" : c.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-xs text-slate-500">
+                    {c.description ?? "—"}
+                  </p>
+                  <div className="mt-3 flex items-center gap-2 text-[11px]">
+                    <span className={`badge ${VISIBILITY_STYLE[c.visibility] ?? VISIBILITY_STYLE.private}`}>
+                      {c.visibility}
+                    </span>
+                    <span className="font-mono text-slate-400">{c.slug}</span>
+                    {c.starts_on && (
+                      <span className="text-slate-400">
+                        {c.starts_on}
+                        {c.ends_on ? ` → ${c.ends_on}` : ""}
+                      </span>
                     )}
                   </div>
-                  <div className="p-3">
-                    {list.length === 0 ? (
-                      <p className="px-1 py-2 text-sm text-slate-400">No tournaments yet.</p>
-                    ) : (
-                      <ul className="space-y-1.5">{list.map(renderCard)}</ul>
-                    )}
-                  </div>
-                </section>
-              );
-            })}
-          </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
         )}
       </main>
     </>

@@ -66,12 +66,21 @@ export function proxy(request: NextRequest) {
       // any cross-origin request that somehow carries credentials.
       // Absent Origin (same-origin fetch in some browsers/curl) → allow through.
       if (origin) {
-        // Prefer X-Forwarded-Host (Fly.io / reverse proxy). Fall back to Host
-        // header, stripping port so "localhost:3000" → "localhost".
-        const appHost =
+        // Prefer X-Forwarded-Host (Fly.io / reverse proxy; Next dev also sets
+        // it — WITH a port, e.g. "localhost:3000"). Fall back to Host. Strip
+        // the port from either so we compare bare hostnames.
+        const rawHost =
           request.headers.get("x-forwarded-host")?.split(",")[0].trim() ??
-          request.headers.get("host")?.split(":")[0] ??
+          request.headers.get("host") ??
           request.nextUrl.hostname;
+        // URL parsing handles IPv6 hosts like "[::1]:3000" correctly.
+        const appHost = (() => {
+          try {
+            return new URL(`http://${rawHost}`).hostname;
+          } catch {
+            return rawHost.split(":")[0];
+          }
+        })();
         try {
           const originHostname = new URL(origin).hostname;
           if (originHostname !== appHost) {

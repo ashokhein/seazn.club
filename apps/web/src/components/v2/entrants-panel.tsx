@@ -1,0 +1,791 @@
+"use client";
+
+// Entrant & roster management (PROMPT-15 task 1): persons picker, CSV import,
+// position/role assignment from the module catalog, withdraw/seed.
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { UpgradeGate } from "@/components/upgrade-gate";
+
+interface PositionGroup {
+  key: string;
+  name: string;
+}
+interface RoleSpec {
+  key: string;
+  name?: string;
+}
+interface EntrantRow {
+  id: string;
+  kind: string;
+  display_name: string;
+  seed: number | null;
+  status: string;
+}
+interface Member {
+  person_id: string;
+  full_name: string;
+  squad_number: number | null;
+  default_position_key: string | null;
+  is_captain: boolean;
+  roles: string[];
+}
+interface Person {
+  id: string;
+  full_name: string;
+  dob: string | null;
+  gender: string | null;
+}
+
+interface Props {
+  divisionId: string;
+  entrants: EntrantRow[];
+  canEdit: boolean;
+  positionGroups: PositionGroup[];
+  roles: RoleSpec[];
+  eligibility: Record<string, unknown>[];
+}
+
+// Load the whole org persons directory once (cursor-paged) — org rosters are
+// small; the picker filters locally.
+async function loadAllPersons(): Promise<Person[]> {
+  const all: Person[] = [];
+  let cursor: string | null = null;
+  for (let i = 0; i < 20; i++) {
+    const url: string = cursor
+      ? `/api/v1/persons?limit=100&cursor=${encodeURIComponent(cursor)}`
+      : "/api/v1/persons?limit=100";
+    const page: { items: Person[]; nextCursor: string | null } = await apiV1(url);
+    all.push(...page.items);
+    if (!page.nextCursor) break;
+    cursor = page.nextCursor;
+  }
+  return all;
+}
+
+export function EntrantsPanel({
+  divisionId,
+  entrants,
+  canEdit,
+  positionGroups,
+  roles,
+  eligibility,
+}: Props) {
+  const router = useRouter();
+  const [persons, setPersons] = useState<Person[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    loadAllPersons().then(setPersons).catch(() => setPersons([]));
+  }, []);
+
+  const fail = useCallback((err: unknown) => {
+    if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
+      setPaywallFeature(String(err.extra.feature_key ?? ""));
+    } else {
+      setError(err instanceof Error ? err.message : "Failed");
+    }
+  }, []);
+
+  async function run(fn: () => Promise<unknown>) {
+    setError(null);
+    setPaywallFeature(null);
+    setBusy(true);
+    try {
+      await fn();
+      router.refresh();
+    } catch (err) {
+      fail(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="space-y-6">
+      {eligibility.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span className="font-medium">Eligibility:</span>
+          {eligibility.map((rule, i) => (
+            <span key={i} className="rounded-full bg-white/70 px-2 py-0.5">
+              {eligibilityLabel(rule)}
+            </span>
+          ))}
+          <span className="text-amber-600">
+            Checked at roster add — organisers can override with a reason.
+          </span>
+        </div>
+      )}
+
+      {canEdit && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <AddEntrantForm
+            persons={persons}
+            busy={busy}
+            onSubmit={(payload) =>
+              run(() =>
+                apiV1(`/api/v1/divisions/${divisionId}/entrants`, {
+                  method: "POST",
+                  json: payload,
+                }),
+              )
+            }
+          />
+          <CsvImport
+            busy={busy}
+            onImport={async (rows) =>
+              run(async () => {
+                // Create missing persons first (matched by exact name against
+                // the directory), then register entrants in one bulk call.
+                const byName = new Map(persons.map((p) => [p.full_name.toLowerCase(), p]));
+                const ensurePerson = async (row: CsvRow): Promise<string> => {
+                  const existing = byName.get(row.name.toLowerCase());
+                  if (existing) return existing.id;
+                  const created = await apiV1<Person>("/api/v1/persons", {
+                    method: "POST",
+                    json: {
+                      full_name: row.name,
+                      dob: row.dob || null,
+                      gender: row.gender || null,
+                    },
+                  });
+                  byName.set(created.full_name.toLowerCase(), created);
+                  setPersons((prev) => [...prev, created]);
+                  return created.id;
+                };
+
+                const teamMode = rows.some((r) => r.team);
+                if (teamMode) {
+                  const teams = new Map<string, CsvRow[]>();
+                  for (const row of rows) {
+                    const key = row.team || row.name;
+                    if (!teams.has(key)) teams.set(key, []);
+                    teams.get(key)!.push(row);
+                  }
+                  const entrantsPayload = [];
+                  for (const [team, teamRows] of teams) {
+                    const members = [];
+                    for (const row of teamRows) {
+                      members.push({
+                        person_id: await ensurePerson(row),
+                        squad_number: row.squad_number ?? null,
+                        is_captain: false,
+                        roles: [],
+                      });
+                    }
+                    entrantsPayload.push({
+                      kind: "team",
+                      display_name: team,
+                      members,
+                    });
+                  }
+                  await apiV1(`/api/v1/divisions/${divisionId}/entrants`, {
+                    method: "POST",
+                    json: entrantsPayload,
+                  });
+                } else {
+                  const entrantsPayload = [];
+                  for (const row of rows) {
+                    entrantsPayload.push({
+                      kind: "individual",
+                      display_name: row.name,
+                      seed: row.seed ?? null,
+                      members: [
+                        { person_id: await ensurePerson(row), is_captain: false, roles: [] },
+                      ],
+                    });
+                  }
+                  await apiV1(`/api/v1/divisions/${divisionId}/entrants`, {
+                    method: "POST",
+                    json: entrantsPayload,
+                  });
+                }
+              })
+            }
+          />
+        </div>
+      )}
+
+      {paywallFeature && <UpgradeGate feature={paywallFeature} />}
+      {error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      )}
+
+      <section className="card overflow-hidden">
+        <table className="table">
+          <thead>
+            <tr>
+              <th className="px-4 py-2 text-left">Entrant</th>
+              <th className="px-4 py-2 text-left">Kind</th>
+              <th className="px-4 py-2 text-left">Seed</th>
+              <th className="px-4 py-2 text-left">Status</th>
+              {canEdit && <th className="px-4 py-2 text-right">Actions</th>}
+            </tr>
+          </thead>
+          <tbody>
+            {entrants.length === 0 && (
+              <tr>
+                <td colSpan={canEdit ? 5 : 4} className="px-4 py-6 text-center text-sm text-slate-400">
+                  No entrants registered yet.
+                </td>
+              </tr>
+            )}
+            {entrants.map((e) => (
+              <EntrantTableRow
+                key={e.id}
+                entrant={e}
+                canEdit={canEdit}
+                busy={busy}
+                persons={persons}
+                positionGroups={positionGroups}
+                roles={roles}
+                onPatch={(patch) =>
+                  run(() =>
+                    apiV1(`/api/v1/entrants/${e.id}`, { method: "PATCH", json: patch }),
+                  )
+                }
+              />
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </div>
+  );
+}
+
+function eligibilityLabel(rule: Record<string, unknown>): string {
+  switch (rule.kind) {
+    case "age": {
+      const max = rule.maxAgeAt;
+      const cutoff = rule.cutoff as { month?: number; day?: number } | undefined;
+      return `U${Number(max) + 1} (cutoff ${cutoff?.day ?? 1}/${cutoff?.month ?? 1})`;
+    }
+    case "gender":
+      return `Gender: ${(rule.allowed as string[]).join(", ")}`;
+    case "custom":
+      return String(rule.note ?? "custom rule");
+    default:
+      return String(rule.kind ?? "rule");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Add one entrant
+// ---------------------------------------------------------------------------
+
+function AddEntrantForm({
+  persons,
+  busy,
+  onSubmit,
+}: {
+  persons: Person[];
+  busy: boolean;
+  onSubmit: (payload: Record<string, unknown>) => void;
+}) {
+  const [name, setName] = useState("");
+  const [kind, setKind] = useState("individual");
+  const [seed, setSeed] = useState("");
+  const [memberIds, setMemberIds] = useState<string[]>([]);
+  const [filter, setFilter] = useState("");
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return persons.slice(0, 8);
+    return persons.filter((p) => p.full_name.toLowerCase().includes(q)).slice(0, 8);
+  }, [persons, filter]);
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    onSubmit({
+      kind,
+      display_name: name,
+      seed: seed ? Number(seed) : null,
+      members: memberIds.map((id) => ({ person_id: id, is_captain: false, roles: [] })),
+    });
+    setName("");
+    setSeed("");
+    setMemberIds([]);
+  }
+
+  return (
+    <form onSubmit={submit} className="card space-y-3 p-4">
+      <h3 className="text-sm font-semibold text-slate-700">Add entrant</h3>
+      <div className="grid grid-cols-2 gap-3">
+        <label className="block">
+          <span className="label">Name</span>
+          <input
+            required
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="input"
+            placeholder="Riverside CC"
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2">
+          <label className="block">
+            <span className="label">Kind</span>
+            <select value={kind} onChange={(e) => setKind(e.target.value)} className="select">
+              <option value="individual">individual</option>
+              <option value="team">team</option>
+              <option value="pair">pair</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="label">Seed</span>
+            <input
+              type="number"
+              min={1}
+              value={seed}
+              onChange={(e) => setSeed(e.target.value)}
+              className="input"
+            />
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <span className="label">Members (persons directory)</span>
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          className="input"
+          placeholder="Search people…"
+        />
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {filtered.map((p) => {
+            const selected = memberIds.includes(p.id);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                onClick={() =>
+                  setMemberIds(
+                    selected ? memberIds.filter((id) => id !== p.id) : [...memberIds, p.id],
+                  )
+                }
+                className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                  selected
+                    ? "border-purple-500 bg-purple-50 text-purple-700"
+                    : "border-slate-200 text-slate-500 hover:border-purple-200"
+                }`}
+              >
+                {p.full_name}
+              </button>
+            );
+          })}
+          {persons.length === 0 && (
+            <span className="text-xs text-slate-400">
+              No people yet — add them under People, or import a CSV.
+            </span>
+          )}
+        </div>
+        {memberIds.length > 0 && (
+          <p className="mt-1 text-xs text-slate-400">{memberIds.length} selected</p>
+        )}
+      </div>
+
+      <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary">
+        {busy ? "Saving…" : "Add entrant"}
+      </button>
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CSV import
+// ---------------------------------------------------------------------------
+
+interface CsvRow {
+  name: string;
+  dob?: string;
+  gender?: string;
+  team?: string;
+  seed?: number;
+  squad_number?: number;
+}
+
+function parseCsv(text: string): CsvRow[] {
+  const lines = text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  if (lines.length === 0) return [];
+  const first = lines[0].toLowerCase();
+  const hasHeader = first.includes("name");
+  const headers = hasHeader ? first.split(",").map((h) => h.trim()) : ["name"];
+  const rows: CsvRow[] = [];
+  for (const line of lines.slice(hasHeader ? 1 : 0)) {
+    const cells = line.split(",").map((c) => c.trim());
+    const get = (key: string) => {
+      const i = headers.indexOf(key);
+      return i >= 0 ? cells[i] : undefined;
+    };
+    const name = hasHeader ? get("name") : cells[0];
+    if (!name) continue;
+    const row: CsvRow = { name };
+    const dob = get("dob");
+    if (dob) row.dob = dob;
+    const gender = get("gender");
+    if (gender && ["m", "f", "x"].includes(gender.toLowerCase())) {
+      row.gender = gender.toLowerCase();
+    }
+    const team = get("team");
+    if (team) row.team = team;
+    const seed = get("seed");
+    if (seed && Number.isInteger(Number(seed))) row.seed = Number(seed);
+    const squad = get("squad_number") ?? get("number");
+    if (squad && Number.isInteger(Number(squad))) row.squad_number = Number(squad);
+    rows.push(row);
+  }
+  return rows;
+}
+
+function CsvImport({
+  busy,
+  onImport,
+}: {
+  busy: boolean;
+  onImport: (rows: CsvRow[]) => void;
+}) {
+  const [text, setText] = useState("");
+  const rows = useMemo(() => parseCsv(text), [text]);
+
+  return (
+    <div className="card space-y-3 p-4">
+      <h3 className="text-sm font-semibold text-slate-700">CSV import</h3>
+      <p className="text-xs text-slate-400">
+        Columns: <span className="font-mono">name</span> (required),{" "}
+        <span className="font-mono">dob</span>, <span className="font-mono">gender</span>,{" "}
+        <span className="font-mono">seed</span>, <span className="font-mono">team</span>,{" "}
+        <span className="font-mono">squad_number</span>. A <span className="font-mono">team</span>{" "}
+        column groups people into team entrants; otherwise each row is an individual.
+      </p>
+      <textarea
+        rows={5}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder={"name,dob,team\nA. Sharma,2011-04-02,Riverside U16\nB. Khan,2010-11-19,Riverside U16"}
+        className="textarea font-mono text-xs"
+      />
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-slate-400">
+          {rows.length > 0 ? `${rows.length} row(s) parsed` : "Paste CSV above"}
+        </span>
+        <button
+          type="button"
+          disabled={busy || rows.length === 0}
+          onClick={() => {
+            onImport(rows);
+            setText("");
+          }}
+          className="btn btn-ghost"
+        >
+          {busy ? "Importing…" : "Import"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Entrant row (+ expandable roster editor)
+// ---------------------------------------------------------------------------
+
+function EntrantTableRow({
+  entrant,
+  canEdit,
+  busy,
+  persons,
+  positionGroups,
+  roles,
+  onPatch,
+}: {
+  entrant: EntrantRow;
+  canEdit: boolean;
+  busy: boolean;
+  persons: Person[];
+  positionGroups: PositionGroup[];
+  roles: RoleSpec[];
+  onPatch: (patch: Record<string, unknown>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [members, setMembers] = useState<Member[] | null>(null);
+
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && members === null) {
+      try {
+        const full = await apiV1<{ members: Member[] }>(`/api/v1/entrants/${entrant.id}`);
+        setMembers(full.members);
+      } catch {
+        setMembers([]);
+      }
+    }
+  }
+
+  const withdrawn = entrant.status === "withdrawn" || entrant.status === "disqualified";
+
+  return (
+    <>
+      <tr className={withdrawn ? "opacity-50" : ""}>
+        <td className="px-4 py-2">
+          <button
+            type="button"
+            onClick={toggle}
+            className="text-left text-sm font-medium text-slate-800 hover:text-purple-700"
+          >
+            {entrant.display_name}
+            <span className="ml-1.5 text-xs text-slate-400">{open ? "▾" : "▸"}</span>
+          </button>
+        </td>
+        <td className="px-4 py-2 text-sm text-slate-500">{entrant.kind}</td>
+        <td className="px-4 py-2 text-sm text-slate-500">
+          {canEdit ? (
+            <input
+              type="number"
+              min={1}
+              defaultValue={entrant.seed ?? ""}
+              onBlur={(e) => {
+                const v = e.target.value ? Number(e.target.value) : null;
+                if (v !== entrant.seed) onPatch({ seed: v });
+              }}
+              className="input w-16 px-2 py-1 text-xs"
+              aria-label={`Seed for ${entrant.display_name}`}
+            />
+          ) : (
+            (entrant.seed ?? "—")
+          )}
+        </td>
+        <td className="px-4 py-2">
+          <span className={`badge ${entrantStatusStyle(entrant.status)}`}>{entrant.status}</span>
+        </td>
+        {canEdit && (
+          <td className="px-4 py-2 text-right">
+            {withdrawn ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onPatch({ status: "registered" })}
+                className="btn btn-ghost px-2 py-1 text-xs"
+              >
+                Reinstate
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => onPatch({ status: "withdrawn" })}
+                className="btn btn-danger px-2 py-1 text-xs"
+              >
+                Withdraw
+              </button>
+            )}
+          </td>
+        )}
+      </tr>
+      {open && (
+        <tr>
+          <td colSpan={canEdit ? 5 : 4} className="bg-slate-50 px-4 py-3">
+            {members === null ? (
+              <p className="text-xs text-slate-400">Loading roster…</p>
+            ) : (
+              <RosterEditor
+                members={members}
+                persons={persons}
+                positionGroups={positionGroups}
+                roles={roles}
+                canEdit={canEdit}
+                busy={busy}
+                onSave={(next) =>
+                  onPatch({
+                    members: next.map((m) => ({
+                      person_id: m.person_id,
+                      squad_number: m.squad_number,
+                      default_position_key: m.default_position_key,
+                      is_captain: m.is_captain,
+                      roles: m.roles,
+                    })),
+                  })
+                }
+              />
+            )}
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function entrantStatusStyle(status: string): string {
+  if (status === "confirmed") return "bg-emerald-100 text-emerald-700";
+  if (status === "withdrawn") return "bg-slate-100 text-slate-500";
+  if (status === "disqualified") return "bg-red-100 text-red-600";
+  return "bg-sky-100 text-sky-700";
+}
+
+function RosterEditor({
+  members: initial,
+  persons,
+  positionGroups,
+  roles,
+  canEdit,
+  busy,
+  onSave,
+}: {
+  members: Member[];
+  persons: Person[];
+  positionGroups: PositionGroup[];
+  roles: RoleSpec[];
+  canEdit: boolean;
+  busy: boolean;
+  onSave: (members: Member[]) => void;
+}) {
+  const [members, setMembers] = useState(initial);
+  const [filter, setFilter] = useState("");
+  const [dirty, setDirty] = useState(false);
+
+  function update(i: number, patch: Partial<Member>) {
+    setMembers((prev) => prev.map((m, j) => (j === i ? { ...m, ...patch } : m)));
+    setDirty(true);
+  }
+
+  const memberIds = new Set(members.map((m) => m.person_id));
+  const candidates = persons
+    .filter((p) => !memberIds.has(p.id))
+    .filter((p) => !filter || p.full_name.toLowerCase().includes(filter.toLowerCase()))
+    .slice(0, 6);
+
+  return (
+    <div className="space-y-3">
+      {members.length === 0 && (
+        <p className="text-xs text-slate-400">No people on this roster.</p>
+      )}
+      {members.map((m, i) => (
+        <div key={m.person_id} className="flex flex-wrap items-center gap-2 text-xs">
+          <span className="w-40 truncate font-medium text-slate-700">{m.full_name}</span>
+          <input
+            type="number"
+            min={0}
+            placeholder="No."
+            disabled={!canEdit}
+            value={m.squad_number ?? ""}
+            onChange={(e) =>
+              update(i, { squad_number: e.target.value ? Number(e.target.value) : null })
+            }
+            className="input w-16 px-2 py-1 text-xs"
+            aria-label={`Squad number for ${m.full_name}`}
+          />
+          {positionGroups.length > 0 && (
+            <select
+              disabled={!canEdit}
+              value={m.default_position_key ?? ""}
+              onChange={(e) => update(i, { default_position_key: e.target.value || null })}
+              className="select w-36 px-2 py-1 text-xs"
+              aria-label={`Position for ${m.full_name}`}
+            >
+              <option value="">position…</option>
+              {positionGroups.map((g) => (
+                <option key={g.key} value={g.key}>
+                  {g.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <label className="flex items-center gap-1 text-slate-500">
+            <input
+              type="checkbox"
+              disabled={!canEdit}
+              checked={m.is_captain}
+              onChange={(e) => {
+                // Captain is unique — setting it clears the others.
+                setMembers((prev) =>
+                  prev.map((mm, j) => ({
+                    ...mm,
+                    is_captain: j === i ? e.target.checked : false,
+                  })),
+                );
+                setDirty(true);
+              }}
+            />
+            captain
+          </label>
+          {roles.map((r) => (
+            <label key={r.key} className="flex items-center gap-1 text-slate-500">
+              <input
+                type="checkbox"
+                disabled={!canEdit}
+                checked={m.roles.includes(r.key)}
+                onChange={(e) =>
+                  update(i, {
+                    roles: e.target.checked
+                      ? [...m.roles, r.key]
+                      : m.roles.filter((k) => k !== r.key),
+                  })
+                }
+              />
+              {r.name ?? r.key}
+            </label>
+          ))}
+          {canEdit && (
+            <button
+              type="button"
+              onClick={() => {
+                setMembers((prev) => prev.filter((_, j) => j !== i));
+                setDirty(true);
+              }}
+              className="text-red-500 hover:underline"
+            >
+              remove
+            </button>
+          )}
+        </div>
+      ))}
+
+      {canEdit && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2">
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Add person…"
+            className="input w-44 px-2 py-1 text-xs"
+          />
+          {candidates.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => {
+                setMembers((prev) => [
+                  ...prev,
+                  {
+                    person_id: p.id,
+                    full_name: p.full_name,
+                    squad_number: null,
+                    default_position_key: null,
+                    is_captain: false,
+                    roles: [],
+                  },
+                ]);
+                setDirty(true);
+              }}
+              className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:border-purple-300"
+            >
+              + {p.full_name}
+            </button>
+          ))}
+          <div className="flex-1" />
+          <button
+            type="button"
+            disabled={busy || !dirty}
+            onClick={() => onSave(members)}
+            className="btn btn-primary px-3 py-1 text-xs"
+          >
+            Save roster
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

@@ -2,22 +2,20 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
-  Building2, Sliders, Users, CreditCard, UserCircle,
+  Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Zap, BarChart2,
   TrendingUp, User, Mail, Download, ShieldOff,
   type LucideIcon,
 } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs, requireOrgRole } from "@/lib/auth";
 import { sql } from "@/lib/db";
-import { listOrgSportPresets } from "@/lib/sport-presets";
-import { hasFeature } from "@/lib/entitlements";
+import { getLimit, hasFeature } from "@/lib/entitlements";
 import { EDITOR_ROLES, ORG_ROLES, type OrgMember, type Subscription } from "@/lib/types";
 import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
 import { OrgTeam } from "@/components/org-team";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { OrgRename } from "@/components/org-rename";
-import { OrgSportPresets } from "@/components/org-sport-presets";
 import { OrgLogo } from "@/components/org-logo";
 import { UpgradeButton, ManageBillingButton } from "@/components/billing-actions";
 import {
@@ -117,11 +115,10 @@ function UsageRow({
   );
 }
 
-type Tab = "organization" | "sport-presets" | "team" | "billing" | "account";
+type Tab = "organization" | "team" | "billing" | "account";
 
 const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: "organization",  label: "Organisation",   icon: Building2    },
-  { tab: "sport-presets", label: "Sport presets",  icon: Sliders      },
   { tab: "team",          label: "Team",           icon: Users        },
   { tab: "billing",       label: "Plan & billing", icon: CreditCard   },
   { tab: "account",       label: "Account",        icon: UserCircle   },
@@ -146,22 +143,29 @@ export default async function SettingsPage({
   const tab: Tab = (NAV_ITEMS.some((n) => n.tab === rawTab) ? rawTab : "organization") as Tab;
 
   // Per-tab lazy data loading
-  const [sportPresets, canBrand] = await Promise.all([
-    tab === "sport-presets" ? listOrgSportPresets(active.id) : Promise.resolve([]),
-    tab === "organization"  ? hasFeature(active.id, "branding") : Promise.resolve(false),
-  ]);
+  const canBrand =
+    tab === "organization" ? await hasFeature(active.id, "branding") : false;
 
-  // Billing tab data
+  // Billing tab data (doc 10 §1 entitlement keys)
   let sub: Subscription | undefined;
-  let seasonsCount = 0;
+  let activeCompetitions = 0;
+  let competitionsLimit: number | null = null;
+  let divisionsLimit: number | null = null;
+  let entrantsLimit: number | null = null;
   if (tab === "billing") {
     const { role } = await requireOrgRole(active.id, ORG_ROLES);
     void role; // only needed to confirm membership
     const [subRow] = await sql<Subscription[]>`select * from subscriptions where org_id = ${active.id}`;
     sub = subRow;
     const [{ cnt }] = await sql<{ cnt: number }[]>`
-      select count(*)::int as cnt from seasons where org_id = ${active.id}`;
-    seasonsCount = cnt;
+      select count(*)::int as cnt from competitions
+      where org_id = ${active.id} and status in ('draft', 'published', 'live')`;
+    activeCompetitions = cnt;
+    [competitionsLimit, divisionsLimit, entrantsLimit] = await Promise.all([
+      getLimit(active.id, "competitions.max_active"),
+      getLimit(active.id, "divisions.per_competition.max"),
+      getLimit(active.id, "entrants.per_division.max"),
+    ]);
   }
 
   // Account tab data
@@ -296,23 +300,6 @@ export default async function SettingsPage({
               </section>
             )}
 
-            {/* ── SPORT PRESETS ── */}
-            {tab === "sport-presets" && (
-              <section className="card p-6">
-                <SectionHeader
-                  icon={Sliders}
-                  action={canEdit ? <span className="text-[11px] text-slate-400">Editors only</span> : undefined}
-                >
-                  Sport presets
-                </SectionHeader>
-                <OrgSportPresets
-                  orgId={active.id}
-                  initialPresets={sportPresets}
-                  canEdit={canEdit}
-                />
-              </section>
-            )}
-
             {/* ── TEAM ── */}
             {tab === "team" && (
               <section className="card p-6">
@@ -358,9 +345,9 @@ export default async function SettingsPage({
                 <section className="card p-5">
                   <SectionHeader icon={BarChart2}>Usage</SectionHeader>
                   <div className="space-y-3">
-                    <UsageRow label="Seasons" current={seasonsCount} limit={isPro ? null : 5} />
-                    <UsageRow label="Tournaments per season" current={null} limit={isPro ? null : 10} note="counted per season" />
-                    <UsageRow label="Players per tournament" current={null} limit={isPro ? null : 32} />
+                    <UsageRow label="Active competitions" current={activeCompetitions} limit={competitionsLimit} />
+                    <UsageRow label="Divisions per competition" current={null} limit={divisionsLimit} />
+                    <UsageRow label="Entrants per division" current={null} limit={entrantsLimit} />
                   </div>
                 </section>
 
@@ -373,13 +360,13 @@ export default async function SettingsPage({
                         <p className="mb-1 font-semibold text-slate-700">Community</p>
                         <p className="text-2xl font-bold text-slate-800">Free</p>
                         <ul className="mt-3 space-y-1 text-slate-500">
-                          <li>✓ All formats</li>
-                          <li>✓ 5 seasons</li>
-                          <li>✓ 10 tournaments/season</li>
-                          <li>✓ 32 players/tournament</li>
+                          <li>✓ Core formats</li>
+                          <li>✓ 2 active competitions</li>
+                          <li>✓ 1 division/competition</li>
+                          <li>✓ 16 entrants/division</li>
                           <li className="text-slate-300">✗ Branding</li>
-                          <li className="text-slate-300">✗ Exports</li>
-                          <li className="text-slate-300">✗ Realtime scoreboard</li>
+                          <li className="text-slate-300">✗ Ball-by-ball scoring</li>
+                          <li className="text-slate-300">✗ Platform API</li>
                         </ul>
                       </div>
                       <div className="rounded-xl border-2 border-purple-500 bg-purple-50 p-4">
@@ -388,13 +375,13 @@ export default async function SettingsPage({
                           $20<span className="text-base font-normal text-slate-500">/mo</span>
                         </p>
                         <ul className="mt-3 space-y-1 text-slate-700">
-                          <li>✓ All formats</li>
-                          <li>✓ Unlimited seasons</li>
-                          <li>✓ Unlimited tournaments</li>
-                          <li>✓ 256 players/tournament</li>
+                          <li>✓ All formats incl. double elim</li>
+                          <li>✓ Unlimited competitions</li>
+                          <li>✓ Unlimited divisions</li>
+                          <li>✓ 256 entrants/division</li>
                           <li>✓ Custom branding</li>
-                          <li>✓ CSV / PDF exports</li>
-                          <li>✓ Realtime scoreboard</li>
+                          <li>✓ Ball-by-ball / rally scoring</li>
+                          <li>✓ Platform API + keys</li>
                         </ul>
                       </div>
                     </div>

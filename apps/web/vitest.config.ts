@@ -11,11 +11,10 @@ export default defineConfig({
     server: { deps: { inline: [/@seazn\/engine/] } },
     coverage: {
       provider: "v8",
-      include: [
-        "src/lib/pairing.ts",
-        "src/lib/standings.ts",
-        "src/lib/engine.ts",
-      ],
+      // The v1 engine (pairing/standings/engine) was deleted at the PROMPT-15
+      // cutover; engine math coverage lives in packages/engine. What remains
+      // here is the pure migration mapping.
+      include: ["src/server/migration/v1-map.ts"],
       thresholds: { lines: 95, functions: 95, branches: 90 },
     },
   },

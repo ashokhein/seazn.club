@@ -482,6 +482,13 @@ create policy sport_variants_tenant on sport_variants for all to app_user
   using (org_id is null or org_id = current_org_id())
   with check (org_id = current_org_id());
 
+-- sports: global catalog, read-only for tenants (writes come from the
+-- superuser sync script). RLS intentionally stays OFF here, but hosted
+-- consoles (Supabase's "enable RLS" lint) may flip it on — the explicit read
+-- policy keeps the catalog visible to app_user either way.
+drop policy if exists sports_read on sports;
+create policy sports_read on sports for select to app_user using (true);
+
 -- Every other tenant table: the plain migration-010 direct policy.
 do $$
 declare tbl text;

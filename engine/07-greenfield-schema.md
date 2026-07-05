@@ -326,3 +326,20 @@ Corrections made there (a PostgreSQL expression can't appear in a PRIMARY KEY, e
   `pools` rows (`A`, `B`, …), distribute active entrants by seeded snake, and
   run one round robin per pool (`ext_key` prefix `p{key}-`); standings snapshot
   per pool. `assignment: manual|random_seeded` not yet implemented.
+
+## Additions (PROMPT-15, cutover)
+
+- **`v1_migration_map`** (kind, v1_id → v2_id, org_id) — idempotency ledger for
+  `scripts/migrate-v1-to-v2.ts`; superuser-only (exempted in check-rls).
+- **`v1_slug_redirects`** (public_slug → target_path) — old `/t/{slug}` public
+  URLs 301-redirect onto the v2 dashboard paths (note 5).
+- **`audit_log_v1`** — the v1 `audit_log` renamed read-only by migration
+  `013_v1_cutover.sql`, which then drops `match_events`, `matches`, `rounds`,
+  `players`, `tournaments`, `seasons`, `org_sport_presets` (guarded: it aborts
+  if v1 rows exist without a migration map).
+- **Note 5 interpretation** — a *season* becomes the competition and its member
+  tournaments become divisions; a seasonless tournament becomes its own
+  competition(1)+division(1). All migrated divisions land on sport `generic`
+  (no v1 sport maps to a real module without changing standings semantics —
+  spec 04 §8 states generic ≈ v1); the old per-sport presets survive as
+  org-scoped `generic` variants keyed by the old sport key.
