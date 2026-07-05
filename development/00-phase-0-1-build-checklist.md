@@ -187,7 +187,7 @@ deliverable email live; marketing + legal pages published; a11y/perf gates green
 - [x] `PATCH /api/tournaments/[id]/public` — toggle is_public; generates slug on first make-public. ✓
 - [x] `/t/[slug]` — public read-only page: standings + bracket, polls 10s, no auth required. ✓ `src/app/t/[slug]/page.tsx`
 - [x] `src/components/public-tournament-view.tsx` — client standings + bracket, no edit controls. ✓
-- [x] "Powered by S.A.F.E Tournaments" badge on Community public pages; hidden on Pro+ (`branding` entitlement check). ✓
+- [x] "Powered by Seazn Club" badge on Community public pages; hidden on Pro+ (`branding` entitlement check). ✓
 - [x] SEO metadata on public tournament pages. ✓
 - [x] Add "Share" button in `LiveTournament` UI to toggle `is_public` and copy link. ✓ `SharePanel` in `live-tournament.tsx`
 

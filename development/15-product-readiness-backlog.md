@@ -56,7 +56,7 @@ illegal/abusive imagery, and brand risk.
 ## 4. Growth loops & lifecycle (beyond onboarding email)
 
 ### Scope
-- **Public-page flywheel (doc 06):** "Powered by S.A.F.E" + "Create your own" CTA on free
+- **Public-page flywheel (doc 06):** "Powered by Seazn Club" + "Create your own" CTA on free
   public pages; entitlement removes branding on paid.
 - **Invites/referrals:** incentivize inviting teammates/other organizers (e.g. extended
   trial or credit) — measure viral coefficient.
@@ -139,7 +139,7 @@ Cross-refs doc 04/06 — ensure these exist before public GA:
 - Security/trust page (compliance status, doc 04).
 
 ## 10. Branding & naming (pre-launch)
-- Confirm product name/trademark availability ("S.A.F.E"), domain, logo, OG imagery.
+- Confirm product name/trademark availability ("Seazn Club"), domain, logo, OG imagery.
 - Consistent brand kit shared between marketing and app (doc 06 design system).
 
 ## 11. Prioritization summary

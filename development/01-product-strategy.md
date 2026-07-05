@@ -89,7 +89,7 @@ Rejected for v1 (do not build):
 
 - **Self-serve (Community → Pro/Business):** product-led. Public tournament pages are the
   acquisition flywheel — every shared event markets the product. Add a tasteful
-  "Powered by S.A.F.E" on free public pages (`public_pages` entitlement controls removal).
+  "Powered by Seazn Club" on free public pages (`public_pages` entitlement controls removal).
 - **Sales-assisted (Enterprise):** "Book a demo" CTA, outbound to federations / school
   athletic associations / corporate event teams. Lighthouse logos → case studies.
 - **Content/SEO:** format explainers ("how Swiss pairing works"), sport-specific guides,

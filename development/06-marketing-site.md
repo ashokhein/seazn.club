@@ -64,7 +64,7 @@ src/app/
 
 - Read-only, shareable, **cacheable** view of a tournament: bracket, standings, schedule,
   results, optional live updates (realtime entitlement).
-- **Branding/entitlement-aware:** Free shows tasteful "Powered by S.A.F.E"; paid removes it;
+- **Branding/entitlement-aware:** Free shows tasteful "Powered by Seazn Club"; paid removes it;
   Business+ supports custom domain; Enterprise white-label (doc 01 `public_pages`).
 - **SEO:** SSR/ISR, Open Graph image (auto-generated bracket/score card via `@vercel/og` or
   worker), structured data (`SportsEvent` schema.org), unique titles/descriptions.

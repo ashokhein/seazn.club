@@ -22,7 +22,7 @@ Vercel, not Redis pub/sub for fan-out.
 
 Supabase Realtime offers two relevant mechanisms:
 
-| Mechanism | How it works | Fit for S.A.F.E |
+| Mechanism | How it works | Fit for Seazn Club |
 |-----------|--------------|-----------------|
 | **`postgres_changes`** | WAL replication pushes row INSERT/UPDATE/DELETE to subscribers | Zero server publish code, but sends **row payloads** to the client and requires RLS aligned with Supabase's JWT roles. Harder with custom cookie auth. |
 | **`broadcast`** | Explicit messages on a named channel; server publishes after writes | **Recommended.** Server controls what is sent; client refetches authoritative state via existing `/state` API. Minimal payload = no stale partial state. |
