@@ -112,6 +112,7 @@ Ordered. Each prompt is self-contained: context, task, files, acceptance criteri
 | [PROMPT-18](prompts/PROMPT-18-scorer-role.md) | Scorer role, scoped scoring console, seat quotas | 10, 11, 13 |
 | [PROMPT-19](prompts/PROMPT-19-discovery-showcase.md) | Discovery: homepage showcase + /discover directory (consent-gated) | 12 |
 | [PROMPT-20](prompts/PROMPT-20-tier1-features.md) | Tier-1 features: registration & entry fees (Stripe Connect), offline scoring PWA, player accounts | 15 |
+| [PROMPT-21](prompts/PROMPT-21-device-links.md) | Day-of device links: account-less courtside scoring via signed fixture-scoped URLs | 13 §7, 18 |
 
 ## Ground rules for whoever implements
 
