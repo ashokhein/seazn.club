@@ -8,8 +8,8 @@ import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { EDITOR_ROLES } from "@/lib/types";
 import { AuthError, HttpError } from "@/lib/errors";
 
-const COOKIE_NAME = "safe_session";
-const ORG_COOKIE = "safe_org";
+const COOKIE_NAME = "seazn_session";
+const ORG_COOKIE = "seazn_org";
 const SESSION_DAYS = 30;
 
 function secretKey(): Uint8Array {

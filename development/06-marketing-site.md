@@ -96,11 +96,53 @@ src/app/
 
 ## 10. Design system
 
-- Reuse Tailwind v4 `@apply` utilities (`.btn`, `.card`, `.input`, `.badge`) for brand
-  consistency between marketing and app.
+**Locked (2026-07):** Keep **Tailwind CSS v4** as the styling layer, but the UI should
+**look and behave like [shadcn/ui](https://ui.shadcn.com/)** — neutral surfaces, subtle
+borders, compact density, Radix-grade accessibility. We do **not** adopt a separate CSS
+framework; shadcn components are copied into the repo and themed with our tokens.
+
+### Stack
+
+- **Tailwind v4** — `@import "tailwindcss"` + `@theme inline` in `globals.css` (already in
+  place). No `tailwind.config.js`.
+- **shadcn/ui** — init with the **New York** style when the UI redesign starts
+  (`npx shadcn@latest init` in `apps/web`). Components live in `components/ui/`; we own
+  the code.
+- **Radix UI** — primitives via shadcn (Dialog, DropdownMenu, Select, Tabs, …).
+- **`cn()` + CVA** — class merging and variant props on shared components.
+- **Lucide** — icon set (already a dependency).
+
+### Visual direction
+
+Match shadcn defaults unless brand requires otherwise:
+
+- White/neutral cards with `border` + light shadow, not heavy purple gradients.
+- Primary actions: solid `primary` button; secondary: `outline` / `ghost`.
+- Form controls: consistent height, focus ring, label + error text pattern.
+- Tables: clean header row, row hover, aligned numerics for standings.
+- Dialogs/sheets replace the custom `Modal` + `.modal-overlay` utilities.
+
+Map Seazn brand onto shadcn CSS variables (`--primary`, `--ring`, `--muted`, …) in
+`globals.css`. Org-level Pro branding (logo, banner, sponsor row) layers on top — it does
+not replace the app shell design system.
+
+### Migration (when redesign starts)
+
+1. Init shadcn + base theme tokens in `apps/web`.
+2. Add core primitives: `button`, `input`, `label`, `card`, `dialog`, `table`, `select`,
+   `tabs`, `dropdown-menu`, `badge`, `sonner`.
+3. Migrate screens incrementally (auth → shell → admin → live → public dashboard →
+   marketing). Retire `.btn` / `.card` / `.input` globals only when nothing references
+   them.
+4. **Engine docs stay UX-only** — page structure and flows live in `engine/` (e.g. doc 09,
+   12); visual styling lives here.
+
+### Quality bar
+
 - Accessibility: WCAG 2.1 AA — semantic landmarks, focus states, color contrast, keyboard
-  nav, reduced-motion for animated hero.
-- Responsive/mobile-first; dark mode `LATER`.
+  nav, reduced-motion for animated hero. shadcn/Radix covers most focus-trap and ARIA
+  patterns; verify custom tournament views separately.
+- Responsive/mobile-first; dark mode `LATER` (`next-themes` + shadcn `.dark` tokens).
 
 ## 11. Acceptance criteria
 

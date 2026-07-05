@@ -140,7 +140,7 @@ Cross-refs doc 04/06 — ensure these exist before public GA:
 
 ## 10. Branding & naming (pre-launch)
 - Confirm product name/trademark availability ("Seazn Club"), domain, logo, OG imagery.
-- Consistent brand kit shared between marketing and app (doc 06 design system).
+- Consistent brand kit shared between marketing and app (doc 06 §10 — Tailwind + shadcn/ui).
 
 ## 11. Prioritization summary
 

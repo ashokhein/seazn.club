@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-/** Optional season/series container such as SAFE2026 or Local001. */
+/** Optional season/series container such as Summer2026 or Local001. */
 export const seasonSchema = z.object({
   id: z.string().uuid(),
   org_id: z.string().uuid(),

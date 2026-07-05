@@ -141,10 +141,10 @@ async function main() {
   const ver = (await call(admin, "/api/auth/verify-email", "POST", {
     token: areg.verify_token,
   })) as { has_org: boolean; org_id: string; redirect: string };
-  check("admin signed up + verified", !!admin.cookies["safe_session"]);
+  check("admin signed up + verified", !!admin.cookies["seazn_session"]);
   // A default org is auto-provisioned on first sign-in (no forced form).
   check("default org auto-provisioned", !!ver.org_id && ver.has_org === true);
-  check("active org cookie set", admin.cookies["safe_org"] === ver.org_id);
+  check("active org cookie set", admin.cookies["seazn_org"] === ver.org_id);
   // A brand-new account (no onboarding completed) lands on the first-run wizard.
   check("verify redirects new user to onboarding", ver.redirect === "/onboarding");
   const org = { id: ver.org_id };
@@ -392,7 +392,7 @@ async function main() {
     password: "viewerpass",
   })) as { needs_verification: boolean; verify_token?: string };
   check("signup requires verification", vreg.needs_verification === true);
-  check("no session before verifying", !viewer.cookies["safe_session"]);
+  check("no session before verifying", !viewer.cookies["seazn_session"]);
   await expectFail("login blocked before verification", () =>
     call(newSession(), "/api/auth/login", "POST", {
       email: viewerEmail,
@@ -402,7 +402,7 @@ async function main() {
   await call(viewer, "/api/auth/verify-email", "POST", {
     token: vreg.verify_token,
   });
-  check("session created after verifying", !!viewer.cookies["safe_session"]);
+  check("session created after verifying", !!viewer.cookies["seazn_session"]);
 
   const accept = (await call(
     viewer,
@@ -410,7 +410,7 @@ async function main() {
     "POST",
   )) as { role: string };
   check("viewer joined as viewer", accept.role === "viewer");
-  check("viewer active org set", viewer.cookies["safe_org"] === org.id);
+  check("viewer active org set", viewer.cookies["seazn_org"] === org.id);
 
   // Viewer can read state (public) but cannot create or record.
   await call(viewer, `/api/tournaments/${tv.id}/state`);
@@ -486,7 +486,7 @@ async function main() {
   })) as { id: string; slug: string };
   check("can create additional org", !!org2.id);
   check("org slug auto-generated", /^org-[0-9a-f]+$/.test(org2.slug));
-  check("creating org switches active", admin.cookies["safe_org"] === org2.id);
+  check("creating org switches active", admin.cookies["seazn_org"] === org2.id);
   const myOrgs = (await call(admin, "/api/orgs")) as { id: string }[];
   check("admin now belongs to 2 orgs", myOrgs.length === 2);
   // Rename the active org; slug stays immutable.

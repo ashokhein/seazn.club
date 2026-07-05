@@ -1,5 +1,5 @@
 -- =============================================================================
--- S.A.F.E Tournament Platform — Supabase / PostgreSQL schema (v3)
+-- Seazn Club Tournament Platform — Supabase / PostgreSQL schema (v3)
 -- =============================================================================
 -- How to use:
 --   1. Open your Supabase project -> SQL Editor -> New query.
@@ -145,7 +145,7 @@ create table password_resets (
 create index password_resets_user_idx on password_resets(user_id);
 
 -- ---------------------------------------------------------------------------
--- Seasons / series (optional container within an org, e.g. SAFE2026).
+-- Seasons / series (optional container within an org, e.g. Summer2026).
 -- ---------------------------------------------------------------------------
 create table seasons (
   id          uuid primary key default gen_random_uuid(),

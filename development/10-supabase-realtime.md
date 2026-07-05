@@ -15,7 +15,7 @@ Vercel, not Redis pub/sub for fan-out.
   (`postgres` npm package) inside `sql.begin()` transactions. No Supabase client SDK.
 - **Reads:** `GET /api/tournaments/[id]/state` → `loadState()` returns full `TournamentState`.
 - **Live UI:** `LiveTournament` polls every **5 seconds** (`setInterval(refresh, 5000)`).
-- **Auth:** Custom JWT in httpOnly cookie `safe_session` — **not** Supabase Auth.
+- **Auth:** Custom JWT in httpOnly cookie `seazn_session` — **not** Supabase Auth.
 - **Env today:** `DATABASE_URL` only. No `NEXT_PUBLIC_SUPABASE_*` keys.
 
 ## 3. Why broadcast (not postgres_changes)
@@ -216,7 +216,7 @@ We do **not** use Supabase Auth for login. Subscribers authenticate to Realtime 
 GET /api/tournaments/[id]/realtime-token
 ```
 
-**Auth:** existing `safe_session` cookie (or public access rules for public tournaments —
+**Auth:** existing `seazn_session` cookie (or public access rules for public tournaments —
 doc 06).
 
 **Response:**

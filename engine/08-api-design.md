@@ -20,7 +20,7 @@ Old `/api/**` BFF routes are deleted at cutover (PROMPT-15). Rules:
 
 | Mode | Who | How |
 |------|-----|-----|
-| Session cookie | our web UI | existing `safe_session` JWT |
+| Session cookie | our web UI | existing `seazn_session` JWT |
 | **API key** | Pro orgs' integrations | `Authorization: Bearer sk_live_…`; sha256 lookup in `api_keys`; scopes `read`/`write`; entitlement `api.access`; rate limit per key |
 | None | public reads | only `visibility='public'` resources, via the consent-filtered views (doc 07 note 4) |
 

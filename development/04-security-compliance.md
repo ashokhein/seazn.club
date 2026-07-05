@@ -8,8 +8,8 @@ authorization, hardened application security, auditability, and a compliance roa
 
 ## 2. Current state
 
-- AuthN: bcrypt passwords + `jose` JWT in httpOnly cookie `safe_session`; Google OAuth
-  (manual). Email verification gates password signups. Active org in `safe_org` cookie.
+- AuthN: bcrypt passwords + `jose` JWT in httpOnly cookie `seazn_session`; Google OAuth
+  (manual). Email verification gates password signups. Active org in `seazn_org` cookie.
 - AuthZ: org-scoped RBAC (`owner`/`admin`/`viewer`) via `requireOrgRole`,
   `requireTournamentEditor`.
 - `audit_log` exists (human-readable). Single `AUTH_SECRET`. No MFA, SSO, rate limiting,

@@ -30,7 +30,7 @@ export async function GET(req: Request) {
   // Preserve a post-login destination (e.g. an invite link) across the redirect.
   const next = new URL(req.url).searchParams.get("next");
   if (next && next.startsWith("/") && !next.startsWith("//")) {
-    jar.set("safe_oauth_next", next, {
+    jar.set("seazn_oauth_next", next, {
       httpOnly: true,
       sameSite: "lax",
       secure: process.env.NODE_ENV === "production",

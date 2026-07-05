@@ -46,13 +46,13 @@ Each doc follows the same structure so they're predictable to implement against:
 
 ## Stack baseline (today)
 
-These are the technologies the docs build on; see [the project skill](../.cursor/skills/safe2026/SKILL.md).
+These are the technologies the docs build on.
 
 - **App:** Next.js 15 App Router, React 19, TypeScript
-- **Styling:** Tailwind CSS v4 (`src/app/globals.css` `@apply` utilities)
+- **Styling:** Tailwind CSS v4 + shadcn/ui look ([doc 06 §10](06-marketing-site.md))
 - **DB:** PostgreSQL (Supabase) via the `postgres` npm package — no Supabase client SDK
 - **Validation:** Zod (`src/lib/types.ts`)
-- **Auth:** bcrypt + `jose` JWT in httpOnly cookie `safe_session`; active org in `safe_org`
+- **Auth:** bcrypt + `jose` JWT in httpOnly cookie `seazn_session`; active org in `seazn_org`
 - **Email:** Resend (`src/lib/email.ts`)
 
 ## Conventions these docs assume

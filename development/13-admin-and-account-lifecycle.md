@@ -16,7 +16,7 @@ Both are **trust and operability** features. Without them you debug in productio
 
 ## 2. Current state
 
-- **Auth:** custom JWT in `safe_session`; active org in `safe_org`. RBAC `owner/admin/viewer`
+- **Auth:** custom JWT in `seazn_session`; active org in `seazn_org`. RBAC `owner/admin/viewer`
   (`org_members`).
 - **Org creation:** `ensureActiveOrg()` auto-creates "My organization"; additional orgs via
   `/orgs/new`. Slug auto-generated, immutable; name editable via `PATCH /api/orgs/[id]`.
@@ -123,7 +123,7 @@ CREATE TABLE staff_audit (
   + leave flows.
 
 ### 4.6 Leave org
-- `POST /api/orgs/[id]/leave` for non-last-owner members; clears `safe_org` if it was active;
+- `POST /api/orgs/[id]/leave` for non-last-owner members; clears `seazn_org` if it was active;
   redirect to another org or org creation. Owners must transfer first if they're the last owner.
 
 ### 4.7 Remove member

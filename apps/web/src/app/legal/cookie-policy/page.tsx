@@ -34,13 +34,13 @@ export default function CookiePolicyPage() {
                 </thead>
                 <tbody>
                   <tr>
-                    <td className="font-mono">safe_session</td>
+                    <td className="font-mono">seazn_session</td>
                     <td>Keeps you logged in</td>
                     <td>30 days</td>
                     <td>Essential</td>
                   </tr>
                   <tr>
-                    <td className="font-mono">safe_org</td>
+                    <td className="font-mono">seazn_org</td>
                     <td>Remembers your active organisation</td>
                     <td>30 days</td>
                     <td>Functional</td>

@@ -66,8 +66,8 @@ export async function GET(req: Request) {
 
   // 5. Honor a saved destination (invite link); otherwise ensure the user has
   //    an org (auto-provisioned if none) and land on the dashboard.
-  const next = jar.get("safe_oauth_next")?.value;
-  jar.delete("safe_oauth_next");
+  const next = jar.get("seazn_oauth_next")?.value;
+  jar.delete("seazn_oauth_next");
   const landing = await postAuthLanding(userId, next);
   return NextResponse.redirect(new URL(landing.redirect, baseUrl(req)));
 }

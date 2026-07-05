@@ -44,7 +44,7 @@
       "sessionCookie": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "safe_session"
+        "name": "seazn_session"
       },
       "apiKey": {
         "type": "http",

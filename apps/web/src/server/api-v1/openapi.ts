@@ -216,7 +216,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     ],
     components: {
       securitySchemes: {
-        sessionCookie: { type: "apiKey", in: "cookie", name: "safe_session" },
+        sessionCookie: { type: "apiKey", in: "cookie", name: "seazn_session" },
         apiKey: {
           type: "http",
           scheme: "bearer",
