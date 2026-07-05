@@ -342,21 +342,14 @@ function groupBySort(cls: StandingsRow[], cmp: Comparator, ctx: RankContext): St
   return groups;
 }
 
-// Refine using only scalar/ratio comparator keys (no h2h/direct/lots) — the
-// engine inside an h2h mini-table and the residual driver.
-function refinePlain(
-  rows: StandingsRow[],
-  keys: readonly TiebreakerKey[],
-  ctx: RankContext,
-): StandingsRow[][] {
-  let classes: StandingsRow[][] = [rows];
-  for (const key of keys) {
-    const cmp = COMPARATORS[key];
-    if (cmp === undefined) continue;
-    classes = classes.flatMap((cls) => (cls.length > 1 ? groupBySort(cls, cmp, ctx) : [cls]));
-    if (classes.every((cls) => cls.length === 1)) break;
+// Record on every row of a just-split tie group which cascade rule separated
+// it (doc 09 §2 tie-explanation popover). Later, finer splits overwrite — the
+// snapshot keeps the finest rule that applied to each row.
+function markTieBreak(cls: readonly StandingsRow[], key: string): void {
+  const ids = cls.map((row) => row.entrantId);
+  for (const row of cls) {
+    row.tieBreak = { key, with: ids.filter((id) => id !== row.entrantId) };
   }
-  return classes;
 }
 
 // spec 05 §4.2 — head-to-head partition refinement over a maximal run of h2h_*
@@ -376,10 +369,28 @@ function h2hBlock(
     cls.map((row) => row.entrantId),
     among,
   );
-  const plainKeys = block.map(h2hToPlain);
-  const miniClasses = refinePlain(miniRows, plainKeys, ctx);
-
   const byId = new Map(cls.map((row) => [row.entrantId, row]));
+
+  // Refine the mini-table one block key at a time so each split can be
+  // attributed to the h2h key that caused it (tie-explanation trace).
+  let miniClasses: StandingsRow[][] = [miniRows];
+  for (const key of block) {
+    const cmp = COMPARATORS[h2hToPlain(key)];
+    if (cmp === undefined) continue;
+    miniClasses = miniClasses.flatMap((mini) => {
+      if (mini.length <= 1) return [mini];
+      const groups = groupBySort(mini, cmp, ctx);
+      if (groups.length > 1) {
+        markTieBreak(
+          mini.map((row) => byId.get(row.entrantId) as StandingsRow),
+          key,
+        );
+      }
+      return groups;
+    });
+    if (miniClasses.every((mini) => mini.length === 1)) break;
+  }
+
   const ordered = miniClasses.map((mini) =>
     mini.map((row) => byId.get(row.entrantId) as StandingsRow),
   );
@@ -432,6 +443,9 @@ function refine(
   let i = 0;
   while (i < cascade.length) {
     const key = cascade[i] as TiebreakerKey;
+    // The cascade's first key is the primary ordering — a split there is not a
+    // "tie" worth explaining. Every later key that splits a class is.
+    const explain = i > 0;
     if (key === "lots") {
       i++;
       continue; // resolved after the cascade (rankStandings)
@@ -442,14 +456,26 @@ function refine(
         block.push(cascade[i] as TiebreakerKey);
         i++;
       }
+      // h2hBlock writes its own per-key trace; suppress none — an h2h block at
+      // cascade head still explains genuine ties within the mini-table.
       current = current.flatMap((cls) => (cls.length > 1 ? h2hBlock(cls, block, ctx) : [cls]));
     } else if (key === "direct") {
-      current = current.flatMap((cls) => (cls.length > 1 ? directRefine(cls, ctx) : [cls]));
+      current = current.flatMap((cls) => {
+        if (cls.length <= 1) return [cls];
+        const groups = directRefine(cls, ctx);
+        if (explain && groups.length > 1) markTieBreak(cls, key);
+        return groups;
+      });
       i++;
     } else {
       const cmp = COMPARATORS[key];
       if (cmp !== undefined) {
-        current = current.flatMap((cls) => (cls.length > 1 ? groupBySort(cls, cmp, ctx) : [cls]));
+        current = current.flatMap((cls) => {
+          if (cls.length <= 1) return [cls];
+          const groups = groupBySort(cls, cmp, ctx);
+          if (explain && groups.length > 1) markTieBreak(cls, key);
+          return groups;
+        });
       }
       i++;
     }
@@ -502,6 +528,7 @@ export function rankStandings(rows: readonly StandingsRow[], ctx: RankContext): 
       const ids = cls.map((row) => row.entrantId).sort();
       const drawn = shuffle(lotSeed(rngSeed, ids), ids);
       const byId = new Map(cls.map((row) => [row.entrantId, row]));
+      markTieBreak(cls, "lots");
       for (const id of drawn) {
         const row = byId.get(id) as StandingsRow;
         row.rankLocked = true;
@@ -509,6 +536,7 @@ export function rankStandings(rows: readonly StandingsRow[], ctx: RankContext): 
       }
       lotsGroups.push(ids);
     } else {
+      markTieBreak(cls, "seed");
       for (const row of [...cls].sort(bySeedThenId(ctx))) order.push(row);
     }
   }
@@ -516,6 +544,25 @@ export function rankStandings(rows: readonly StandingsRow[], ctx: RankContext): 
   order.forEach((row, index) => {
     row.rank = index + 1;
   });
+
+  // Swiss cascade metrics exist only at rank time (they need the assembled
+  // ledger) — materialise the ones the cascade uses into row.metrics, in
+  // DISPLAY points (buchholz half-points → points, SB quarter-points →
+  // points), so the standings snapshot can render Buchholz/SB columns
+  // (doc 09 §2) without re-assembling the ledger. Ordering never reads these.
+  if (ctx.swiss) {
+    for (const row of order) {
+      if (ctx.cascade.includes("buchholz")) {
+        row.metrics["buchholz"] = buchholz(ctx.swiss, row.entrantId) / 2;
+      }
+      if (ctx.cascade.includes("buchholz_cut1")) {
+        row.metrics["buchholz_cut1"] = buchholzCut1(ctx.swiss, row.entrantId) / 2;
+      }
+      if (ctx.cascade.includes("sberger")) {
+        row.metrics["sberger"] = sonnebornBerger(ctx.swiss, row.entrantId) / 4;
+      }
+    }
+  }
   return { rows: order, lotsGroups };
 }
 

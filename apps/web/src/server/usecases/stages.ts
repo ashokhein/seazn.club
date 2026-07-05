@@ -4,6 +4,7 @@ import "server-only";
 // generator's stable ids), guarded completion, standings reads.
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
+import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { HttpError } from "@/lib/errors";
 import { EngineError } from "@seazn/engine/core";
 import {
@@ -310,8 +311,21 @@ export interface GenerateOutcome {
  * missing and reports the diff. Feed wiring (winner_to/loser_to) and bye
  * awards are applied after insert, under the division advisory lock.
  */
+// Fixture-shape changes (generation, stage completion) must refresh the public
+// dashboard's ISR pages just like scoring writes do (doc 09 §3).
+async function fireStageRevalidate(orgId: string, stageId: string): Promise<void> {
+  const row = await withTenant(orgId, async (tx) => {
+    const [r] = await tx<{ division_id: string; competition_id: string }[]>`
+      select s.division_id, d.competition_id
+      from stages s join divisions d on d.id = s.division_id
+      where s.id = ${stageId}`;
+    return r ?? null;
+  });
+  if (row) fireDivisionRevalidate(row.division_id, row.competition_id);
+}
+
 export async function generateStageFixtures(auth: AuthCtx, stageId: string): Promise<GenerateOutcome> {
-  return withTenant(auth.orgId, async (tx) => {
+  const outcome = await withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx<StageRow[]>`
       select ${tx(STAGE_COLS)} from stages where id = ${stageId}`;
     if (!stage) throw new HttpError(404, "stage not found");
@@ -434,6 +448,8 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
       where stage_id = ${stageId} order by round_no, seq_in_round`;
     return { created, existing: gen.length - created, fixtures };
   });
+  void fireStageRevalidate(auth.orgId, stageId);
+  return outcome;
 }
 
 /** Fill one side of a fixture (slot 1=home, 2=away) if still open. */
@@ -479,6 +495,7 @@ export async function completeStage(auth: AuthCtx, stageId: string): Promise<Com
   const result = await completeStageIfReady(auth.orgId, stageId);
   if (!result.completed) return result;
   const qualified = await seedNextStage(auth, stageId);
+  void fireStageRevalidate(auth.orgId, stageId);
   return qualified ? { ...result, qualified } : result;
 }
 

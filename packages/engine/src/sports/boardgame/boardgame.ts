@@ -342,9 +342,12 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
   },
 
   metrics: [
+    // doc 09 §2: chess shows Score, Buchholz Cut-1, SB (cascade-derived
+    // columns, engine competition/display.ts) — colour tallies are pairing
+    // metadata, not table columns.
     { key: "wins", label: "Wins", direction: "desc" },
-    { key: "white", label: "Games as White", direction: "desc" },
-    { key: "black", label: "Games as Black", direction: "desc" },
+    { key: "white", label: "Games as White", direction: "desc", display: false },
+    { key: "black", label: "Games as Black", direction: "desc", display: false },
   ],
   defaultTiebreakers: BOARDGAME_TIEBREAKERS,
 

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Privacy Policy — Seazn Club",
@@ -55,7 +56,7 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">5. Sub-processors</h2>
-            <p>We share data with trusted sub-processors to operate the service. See our <a href="/legal/sub-processors" className="text-purple-600 underline">sub-processors list</a> for details.</p>
+            <p>We share data with trusted sub-processors to operate the service. See our <Link href="/legal/sub-processors" className="text-purple-600 underline">sub-processors list</Link> for details.</p>
           </section>
 
           <section>
@@ -70,7 +71,7 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">8. Cookies</h2>
-            <p>We use essential session cookies only. No tracking or advertising cookies. See our <a href="/legal/cookie-policy" className="text-purple-600 underline">Cookie Policy</a>.</p>
+            <p>We use essential session cookies only. No tracking or advertising cookies. See our <Link href="/legal/cookie-policy" className="text-purple-600 underline">Cookie Policy</Link>.</p>
           </section>
 
           <section>

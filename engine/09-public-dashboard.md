@@ -58,6 +58,27 @@ noindex), `private` (404). QR poster generator per competition (qrcode dep alrea
   with standings snapshot), sitemap for `public` competitions.
 - Zero auth = CDN-cacheable; CSP already handled by proxy.
 
+## 3.1 Implementation notes (PROMPT-12, `apps/web/src/app/(public)/…`)
+
+- **Tie explanations** come from a `tieBreak {key, with}` trace the ranking pass
+  (`rankStandings`) now writes onto each snapshot row — the finest cascade rule
+  that separated the row from the entrants it was tied with. Swiss cascade
+  metrics (Buchholz/Cut-1/SB) are materialised into `row.metrics` at rank time
+  so the table can render them from the snapshot alone.
+- **Standings columns**: module `MetricSpec[]` (new optional `display: false`
+  hides ledger-only operands like NRR inputs or card counts) + cascade-derived
+  columns (NRR, set/point ratio, Buchholz…) whose labels/formulas live in
+  `@seazn/engine/competition` `display.ts` — still zero per-sport UI code.
+- **ISR**: `revalidate = 30` pages over `unstable_cache` loaders tagged
+  `division:{id}` / `competition:{id}` (this Next version's pre-cacheComponents
+  model); scoring writes and stage generate/complete fire `revalidateTag`
+  alongside the realtime publish and Redis invalidation.
+- **Description** renders as plain text (pre-line), not markdown — no md
+  renderer shipped yet.
+- **Live page depth**: the scoreboard renders the sport module's ScoreSummary
+  (headline + per-side lines) generically; over-by-over / DLS / timeline
+  widgets are doc 14 fidelity work, not built here.
+
 ## 4. Entitlement split (detail in doc 10)
 
 | Capability | Community | Pro |

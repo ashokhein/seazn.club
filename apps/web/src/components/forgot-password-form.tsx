@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/client";
+import Link from "next/link";
 
 export function ForgotPasswordForm() {
   const [email, setEmail] = useState("");
@@ -33,9 +34,9 @@ export function ForgotPasswordForm() {
         <p className="mt-2 text-sm text-slate-500">
           If an account with that email exists, we sent a reset link. It expires in 1 hour.
         </p>
-        <a href="/login" className="btn btn-ghost mt-4 inline-block">
+        <Link href="/login" className="btn btn-ghost mt-4 inline-block">
           Back to sign in
-        </a>
+        </Link>
       </div>
     );
   }
@@ -67,9 +68,9 @@ export function ForgotPasswordForm() {
         </button>
       </form>
       <p className="mt-4 text-center text-sm text-slate-500">
-        <a href="/login" className="text-purple-700 hover:underline">
+        <Link href="/login" className="text-purple-700 hover:underline">
           Back to sign in
-        </a>
+        </Link>
       </p>
     </div>
   );

@@ -285,7 +285,7 @@ export function LiveTournament({
           {canExport ? (
             <button onClick={exportCsv} className="btn btn-ghost">⬇ CSV</button>
           ) : (
-            <a href="/settings/billing" className="btn btn-ghost text-xs text-slate-400" title="Upgrade to Pro to export CSV">⬇ CSV ✦</a>
+            <Link href="/settings/billing" className="btn btn-ghost text-xs text-slate-400" title="Upgrade to Pro to export CSV">⬇ CSV ✦</Link>
           )}
           {canEdit && (
             <button onClick={() => setShowAudit(true)} className="btn btn-ghost">

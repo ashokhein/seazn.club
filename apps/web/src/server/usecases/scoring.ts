@@ -10,6 +10,7 @@ import { rateLimit } from "@/lib/rate-limit";
 import { appendEvent } from "@/server/engine-db";
 import { recomputeStandings } from "@/server/engine-db";
 import { publishFixtureUpdate } from "@/lib/realtime";
+import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AppendEventRequest } from "@/server/api-v1/schemas";
 import { fillSlot } from "./stages";
@@ -125,14 +126,21 @@ export async function finalizeFixture(
   });
 }
 
-// Public dashboards cache under pub:v1:* (doc 08 §6) — a scoring write is
-// exactly what invalidates them.
+// Public dashboards cache in two layers, both invalidated by exactly this
+// write: Redis pub:v1:* (the /api/v1/public endpoints, doc 08 §6) and Next's
+// ISR tag cache (the (public) pages, doc 09 §3 — same write that publishes
+// realtime fires the tag).
 async function invalidatePublicCache(orgId: string, fixtureId: string): Promise<void> {
-  const divisionId = await withTenant(orgId, async (tx) => {
-    const [row] = await tx<{ division_id: string }[]>`
-      select division_id from fixtures where id = ${fixtureId}`;
-    return row?.division_id ?? null;
+  const row = await withTenant(orgId, async (tx) => {
+    const [r] = await tx<{ division_id: string; competition_id: string }[]>`
+      select f.division_id, d.competition_id
+      from fixtures f join divisions d on d.id = f.division_id
+      where f.id = ${fixtureId}`;
+    return r ?? null;
   });
   await cacheDelPattern(`pub:v1:fixture:${fixtureId}`);
-  if (divisionId) await cacheDelPattern(`pub:v1:div:${divisionId}:*`);
+  if (row) {
+    await cacheDelPattern(`pub:v1:div:${row.division_id}:*`);
+    fireDivisionRevalidate(row.division_id, row.competition_id);
+  }
 }

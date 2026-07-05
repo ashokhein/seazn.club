@@ -392,11 +392,14 @@ export interface SetBasedPreset {
 }
 
 function makeMetrics(unit: { one: string; many: string }): MetricSpec[] {
+  // doc 09 §2: the public table shows sets won/lost plus the cascade-derived
+  // set/point ratios (engine competition/display.ts); raw point tallies are
+  // ledger-only ratio operands.
   return [
     { key: "sets_won", label: `${unit.many} won`, direction: "desc" },
     { key: "sets_lost", label: `${unit.many} lost`, direction: "asc" },
-    { key: "points_won", label: "Points won", direction: "desc" },
-    { key: "points_lost", label: "Points lost", direction: "asc" },
+    { key: "points_won", label: "Points won", direction: "desc", display: false },
+    { key: "points_lost", label: "Points lost", direction: "asc", display: false },
   ];
 }
 

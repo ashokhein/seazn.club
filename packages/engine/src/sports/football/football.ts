@@ -673,12 +673,14 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
   },
 
   metrics: [
-    { key: "gf", label: "Goals for", direction: "desc" },
-    { key: "ga", label: "Goals against", direction: "asc" },
-    { key: "gd", label: "Goal difference", direction: "desc" },
-    { key: "yellow", label: "Yellow cards", direction: "asc" },
-    { key: "red", label: "Red cards", direction: "asc" },
-    { key: "fair_play", label: "Fair play points", direction: "desc" },
+    // doc 09 §2: the public table shows P W D L GF GA GD Pts — card counts and
+    // fair-play stay ledger-only (display: false).
+    { key: "gf", label: "GF", direction: "desc" },
+    { key: "ga", label: "GA", direction: "asc" },
+    { key: "gd", label: "GD", direction: "desc" },
+    { key: "yellow", label: "Yellow cards", direction: "asc", display: false },
+    { key: "red", label: "Red cards", direction: "asc", display: false },
+    { key: "fair_play", label: "Fair play points", direction: "desc", display: false },
   ],
   // Module default = fifa2026 (spec 04 §1.6); `classic` selectable by the
   // organiser via FOOTBALL_TIEBREAKERS.

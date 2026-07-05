@@ -99,6 +99,29 @@ export async function publishFixtureUpdate(
  * Mint a short-lived JWT for Supabase Realtime subscriber auth.
  * Signed with SUPABASE_JWT_SECRET (same secret Supabase uses for its own JWTs).
  */
+/**
+ * Mint a subscriber JWT for a PUBLIC fixture channel (doc 09 §4). No user —
+ * spectators are anonymous; entitlement (org `realtime` feature) is checked by
+ * the route before minting. Short TTL: a spectator page re-requests freely.
+ */
+export async function mintPublicFixtureToken(
+  fixtureId: string,
+  ttlSeconds = 3600,
+): Promise<string> {
+  const secret = process.env.SUPABASE_JWT_SECRET;
+  if (!secret) throw new Error("SUPABASE_JWT_SECRET not set");
+  return new SignJWT({
+    role: "authenticated",
+    sub: `public:${fixtureId}`,
+    fixture_id: fixtureId,
+  })
+    .setProtectedHeader({ alg: "HS256", typ: "JWT" })
+    .setIssuedAt()
+    .setExpirationTime(`${ttlSeconds}s`)
+    .setAudience("authenticated")
+    .sign(new TextEncoder().encode(secret));
+}
+
 export async function mintRealtimeToken(
   userId: string,
   tournamentId: string,

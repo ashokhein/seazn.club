@@ -7,6 +7,7 @@ import { hasFeature } from "@/lib/entitlements";
 import { Nav } from "@/components/nav";
 import { NewTournamentForm } from "@/components/new-tournament-form";
 import type { Season } from "@/lib/types";
+import Link from "next/link";
 
 export default async function NewTournamentPage({
   searchParams,
@@ -42,9 +43,9 @@ export default async function NewTournamentPage({
         <p className="mb-6 text-sm text-slate-500">
           Pick a sport preset from your organization defaults, add players or
           teams, and optionally override scoring or timing for this event only.{" "}
-          <a href="/settings" className="text-purple-600 underline">
+          <Link href="/settings" className="text-purple-600 underline">
             Customize presets in Settings
-          </a>
+          </Link>
           .
         </p>
         <NewTournamentForm
