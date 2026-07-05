@@ -37,7 +37,8 @@ export interface BoardFixture {
   seq_in_round: number;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
-  scheduled_at: string | null;
+  /** ISO string over the wire, Date when it crosses straight from an RSC. */
+  scheduled_at: string | Date | null;
   venue: string | null;
   court_label: string | null;
   status: string;
@@ -592,7 +593,11 @@ export function ScheduleBoard({
               <ul className="space-y-1">
                 {scheduled
                   .filter((f) => dayKey(f.scheduled_at as string) === d)
-                  .sort((a, b) => (a.scheduled_at as string).localeCompare(b.scheduled_at as string))
+                  .sort(
+                    (a, b) =>
+                      new Date(a.scheduled_at as string).getTime() -
+                      new Date(b.scheduled_at as string).getTime(),
+                  )
                   .map((f) => (
                     <li key={f.id} className="flex items-center gap-2 text-xs text-slate-600">
                       <span className="w-10 text-slate-400">
