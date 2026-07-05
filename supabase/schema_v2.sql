@@ -500,12 +500,30 @@ begin
 end $$;
 
 -- =============================================================================
--- Public read model (doc 06 §4.7, doc 07 note 4). Views are owned by the
--- migration superuser, so they bypass RLS and can serve unauthenticated public
--- dashboard reads across all orgs — but they expose ONLY visibility='public'
--- data, and person data is consent-filtered: initials when name consent is
--- absent, no DOB ever, photos only when consented.
+-- Public read model (doc 06 §4.7, doc 07 note 4, doc 09). Views are owned by
+-- the migration superuser, so they bypass RLS and can serve unauthenticated
+-- public dashboard reads across all orgs — but they expose ONLY
+-- visibility in ('public','unlisted') data (doc 09 §1: unlisted = link-only,
+-- rendered with noindex; private = 404 — the views simply never return it),
+-- and person data is consent-filtered: initials when name consent is absent,
+-- no DOB ever, photos only when consented.
 -- =============================================================================
+
+-- Entitlement check usable inside the public views (doc 10 §2 rule 3: public
+-- read features are enforced at the view layer, never client-side). Mirrors
+-- lib/entitlements.ts resolution: org override → plan entitlement → deny.
+create or replace function org_has_feature(p_org_id uuid, p_feature_key text)
+  returns boolean language sql stable as $$
+    select coalesce(
+      (select bool_value from org_entitlement_overrides
+        where org_id = p_org_id and feature_key = p_feature_key),
+      (select pe.bool_value from plan_entitlements pe
+        where pe.feature_key = p_feature_key
+          and pe.plan_key = coalesce(
+            (select s.plan_key from subscriptions s where s.org_id = p_org_id),
+            'community')),
+      false)
+  $$;
 
 -- Consent-safe display name: full name only with explicit public_name consent,
 -- otherwise initials ('John Smith' → 'J.S.'). Never leaks the full name.
@@ -521,18 +539,26 @@ create or replace function public_person_name(full_name text, consent jsonb) ret
     end
   $$;
 
+-- Branding is a Pro read feature (doc 10 §1) — nulled here, server-side, for
+-- non-entitled orgs. `visibility` rides along so pages can render unlisted
+-- competitions with a noindex meta and keep them out of the sitemap.
 create or replace view public_competitions_v as
-  select id, org_id, name, slug, description, starts_on, ends_on, branding, status, created_at
+  select id, org_id, name, slug, description, starts_on, ends_on,
+         case when org_has_feature(org_id, 'branding') then branding
+              else '{}'::jsonb end as branding,
+         status, created_at, visibility
   from competitions
-  where visibility = 'public';
+  where visibility in ('public','unlisted');
 
 -- Divisions of public competitions (doc 08 §3 public competition detail).
+-- module_version lets the dashboard resolve the pinned SportModule for
+-- MetricSpec-driven standings columns (doc 09 §2 — zero per-sport UI code).
 create or replace view public_divisions_v as
   select d.id, d.competition_id, d.name, d.slug, d.sport_key, d.variant_key,
-         d.status, d.created_at
+         d.status, d.created_at, d.module_version, d.tiebreakers
   from divisions d
   join competitions c on c.id = d.competition_id
-  where c.visibility = 'public';
+  where c.visibility in ('public','unlisted');
 
 -- `summary` (render-agnostic score lines from the fold cache) rides along for
 -- the live public fixture endpoint — it never contains person data.
@@ -545,7 +571,23 @@ create or replace view public_fixtures_v as
   left join match_states m on m.fixture_id = f.id
   join divisions d    on d.id = f.division_id
   join competitions c on c.id = d.competition_id
-  where c.visibility = 'public';
+  where c.visibility in ('public','unlisted');
+
+-- Stage skeleton (kind drives table vs bracket vs ladder rendering, doc 09 §2).
+create or replace view public_stages_v as
+  select st.id, st.division_id, st.seq, st.kind, st.name, st.status
+  from stages st
+  join divisions d    on d.id = st.division_id
+  join competitions c on c.id = d.competition_id
+  where c.visibility in ('public','unlisted');
+
+create or replace view public_pools_v as
+  select p.id, p.stage_id, p.key, p.name
+  from pools p
+  join stages st      on st.id = p.stage_id
+  join divisions d    on d.id = st.division_id
+  join competitions c on c.id = d.competition_id
+  where c.visibility in ('public','unlisted');
 
 create or replace view public_standings_v as
   select s.stage_id, s.pool_id, s.rows, s.updated_at, d.id as division_id
@@ -553,17 +595,24 @@ create or replace view public_standings_v as
   join stages st      on st.id = s.stage_id
   join divisions d    on d.id = st.division_id
   join competitions c on c.id = d.competition_id
-  where c.visibility = 'public';
+  where c.visibility in ('public','unlisted');
 
 -- Entrants with consent-filtered member data (individual/pair entrants expose
 -- people; teams expose only the team display). No DOB; photos only if consented.
+-- `person_id` is exposed ONLY with public_name consent: it is the link target
+-- for the player card, and the card 404s without that consent (doc 06 §4.7) —
+-- so a roster row without consent gets initials and no link.
 create or replace view public_entrants_v as
   select e.id, e.division_id, e.kind, e.display_name, e.seed, e.status,
          coalesce(
            (select jsonb_agg(jsonb_build_object(
               'name',  public_person_name(p.full_name, p.consent),
               'photo', case when coalesce((p.consent->>'public_photo')::boolean, false)
-                            then p.photo_path else null end)
+                            then p.photo_path else null end,
+              'person_id', case when coalesce((p.consent->>'public_name')::boolean, false)
+                                then p.id else null end,
+              'squad_number', em.squad_number,
+              'position', em.default_position_key)
               order by em.squad_number nulls last, p.full_name)
             from entrant_members em
             join persons p on p.id = em.person_id
@@ -572,8 +621,26 @@ create or replace view public_entrants_v as
   from entrants e
   join divisions d    on d.id = e.division_id
   join competitions c on c.id = d.competition_id
-  where c.visibility = 'public'
+  where c.visibility in ('public','unlisted')
     and e.status in ('registered','confirmed');
+
+-- Player card source (doc 09 §2): only persons who (a) gave public_name
+-- consent AND (b) are rostered in an entrant of a publicly visible
+-- competition. Everyone else simply does not exist here — the card 404s.
+create or replace view public_players_v as
+  select p.id, p.org_id, p.full_name as name,
+         case when coalesce((p.consent->>'public_photo')::boolean, false)
+              then p.photo_path else null end as photo
+  from persons p
+  where coalesce((p.consent->>'public_name')::boolean, false)
+    and exists (
+      select 1 from entrant_members em
+      join entrants e     on e.id = em.entrant_id
+      join divisions d    on d.id = e.division_id
+      join competitions c on c.id = d.competition_id
+      where em.person_id = p.id
+        and c.visibility in ('public','unlisted')
+        and e.status in ('registered','confirmed'));
 
 -- =============================================================================
 -- Grants — re-grant across all tables/sequences so the v2 tables (created after
@@ -585,4 +652,12 @@ grant select, insert, update, delete on all tables in schema public to app_user;
 grant usage, select on all sequences in schema public to app_user;
 grant app_user to postgres;
 grant select on public_competitions_v, public_divisions_v, public_fixtures_v,
-                public_standings_v, public_entrants_v to app_user;
+                public_standings_v, public_entrants_v, public_players_v,
+                public_stages_v, public_pools_v to app_user;
+
+-- Doc 10 §1 public-dashboard quota (PROMPT-12 item 7; full matrix lands with
+-- PROMPT-13): Community may hold 1 public competition at a time, Pro unlimited.
+insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
+  ('community', 'dashboard.public.max', null, 1),
+  ('pro',       'dashboard.public.max', null, null)
+on conflict (plan_key, feature_key) do nothing;

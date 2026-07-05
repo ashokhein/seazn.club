@@ -86,6 +86,10 @@ export const MetricSpec = z.object({
   label: z.string().min(1), // 'Goal difference'
   direction: z.enum(["desc", "asc"]), // desc = higher is better
   decimals: z.number().int().nonnegative().optional(), // display precision
+  // false = internal ledger field (NRR operands, card counts) — the standings
+  // UI hides it (doc 09 §2: sport-correct tables with zero per-sport UI code).
+  // Absent/true = shown as a column, in declaration order.
+  display: z.boolean().optional(),
 });
 export type MetricSpec = z.infer<typeof MetricSpec>;
 

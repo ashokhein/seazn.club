@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Terms of Service — Seazn Club",
@@ -38,7 +39,7 @@ export default function TermsPage() {
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">4. Subscriptions and billing</h2>
             <ul className="list-disc space-y-1 pl-5">
-              <li>The Community plan is free with limits described on the <a href="/pricing" className="text-purple-600 underline">pricing page</a>.</li>
+              <li>The Community plan is free with limits described on the <Link href="/pricing" className="text-purple-600 underline">pricing page</Link>.</li>
               <li>Pro subscriptions are billed monthly in advance. Prices are in USD.</li>
               <li>Trials are 14 days and automatically convert to a paid subscription unless cancelled before the trial ends.</li>
               <li>Refunds are not provided for partial billing periods. Contact support for exceptional cases.</li>
@@ -59,7 +60,7 @@ export default function TermsPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">6. Your data</h2>
-            <p>You retain ownership of data you upload. By using the service you grant us a limited licence to store and process that data to provide the service. See our <a href="/legal/privacy" className="text-purple-600 underline">Privacy Policy</a> for details.</p>
+            <p>You retain ownership of data you upload. By using the service you grant us a limited licence to store and process that data to provide the service. See our <Link href="/legal/privacy" className="text-purple-600 underline">Privacy Policy</Link> for details.</p>
           </section>
 
           <section>

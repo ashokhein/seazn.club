@@ -1656,12 +1656,15 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
   },
 
   metrics: [
-    { key: "runs_for", label: "Runs for", direction: "desc" },
-    { key: "balls_faced_eff", label: "Balls faced (eff.)", direction: "asc" },
-    { key: "runs_against", label: "Runs against", direction: "asc" },
-    { key: "balls_bowled_eff", label: "Balls bowled (eff.)", direction: "desc" },
-    { key: "ties", label: "Ties", direction: "desc" },
-    { key: "no_results", label: "No results", direction: "desc" },
+    // doc 09 §2: cricket shows P W L T/NR Pts NRR. The four NRR operands are
+    // ledger-only; NRR itself is a cascade-derived display column (engine
+    // competition/display.ts).
+    { key: "runs_for", label: "Runs for", direction: "desc", display: false },
+    { key: "balls_faced_eff", label: "Balls faced (eff.)", direction: "asc", display: false },
+    { key: "runs_against", label: "Runs against", direction: "asc", display: false },
+    { key: "balls_bowled_eff", label: "Balls bowled (eff.)", direction: "desc", display: false },
+    { key: "ties", label: "T", direction: "desc" },
+    { key: "no_results", label: "NR", direction: "desc" },
   ],
   // spec §2.6 — ICC-style cascade; `nrr` is resolved from the integer ledger
   // by the competition engine at rank time (cross-multiplication).

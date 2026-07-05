@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
+import Link from "next/link";
 
 /**
  * Email/password + Google sign-in. A `next` (e.g. an invite link) is carried
@@ -151,12 +152,12 @@ export function AuthForm({ next }: { next?: string }) {
             autoComplete={mode === "login" ? "current-password" : "new-password"}
           />
           {mode === "login" && (
-            <a
+            <Link
               href="/forgot-password"
               className="mt-1 block text-right text-xs text-purple-600 hover:underline"
             >
               Forgot password?
-            </a>
+            </Link>
           )}
         </div>
 

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
 import { recommendGroupRounds } from "@/lib/pairing";
 import { supportsProgressScore } from "@/lib/scoring";
+import Link from "next/link";
 import type {
   ResultMode,
   Season,
@@ -238,9 +239,9 @@ export function NewTournamentForm({
     return (
       <p className="card p-6 text-sm text-slate-600">
         No sport presets found. Add presets in{" "}
-        <a href="/settings" className="text-purple-600 underline">
+        <Link href="/settings" className="text-purple-600 underline">
           Settings
-        </a>
+        </Link>
         .
       </p>
     );

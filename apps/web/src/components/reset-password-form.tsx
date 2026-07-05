@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
+import Link from "next/link";
 
 export function ResetPasswordForm({ token }: { token: string | null }) {
   const router = useRouter();
@@ -17,9 +18,9 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
         <p className="text-sm text-red-600">
           This reset link is missing a token. Please request a new one.
         </p>
-        <a href="/forgot-password" className="btn btn-primary mt-4 inline-block">
+        <Link href="/forgot-password" className="btn btn-primary mt-4 inline-block">
           Request new link
-        </a>
+        </Link>
       </div>
     );
   }

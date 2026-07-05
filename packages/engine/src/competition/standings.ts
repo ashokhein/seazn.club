@@ -23,6 +23,11 @@ export interface StandingsRow {
   metrics: Record<string, number>;
   rank?: number;
   rankLocked?: boolean;
+  // Which cascade rule separated this row from the entrants it was tied with
+  // (spec 05 §4, doc 09 §2 tie-explanation popover). Written by the ranking
+  // pass for every row that needed a tiebreaker beyond the cascade's primary
+  // key; the finest rule that applied wins. Rides into standings_snapshots.
+  tieBreak?: { key: string; with: EntrantId[] };
 }
 
 // The two deltas a decided fixture contributes, in [home, away] order (the pair

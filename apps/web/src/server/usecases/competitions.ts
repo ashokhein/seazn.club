@@ -3,7 +3,8 @@ import "server-only";
 // Server Components call — the only writer. Auth happens in the route (an
 // AuthCtx proves it); tenancy is enforced by withTenant + RLS.
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { page, type ListQuery, type Page } from "@/server/api-v1/http";
 import type { CreateCompetition, PatchCompetition } from "@/server/api-v1/schemas";
@@ -55,11 +56,28 @@ export async function listCompetitions(
   });
 }
 
+// Doc 10 §1: `dashboard.public.max` — Community holds 1 public competition at
+// a time. Enforced here, at the write (doc 10 §2 rule 1), not in the UI.
+async function assertPublicQuota(auth: AuthCtx, excludeId?: string): Promise<void> {
+  const count = await withTenant(auth.orgId, async (tx) => {
+    const rows = excludeId
+      ? await tx<{ n: string }[]>`
+          select count(*) as n from competitions
+          where visibility = 'public' and id <> ${excludeId}`
+      : await tx<{ n: string }[]>`
+          select count(*) as n from competitions where visibility = 'public'`;
+    return Number(rows[0]?.n ?? 0);
+  });
+  const { ok } = await withinLimit(auth.orgId, "dashboard.public.max", count + 1);
+  if (!ok) throw new PaymentRequiredError("dashboard.public.max");
+}
+
 export async function createCompetition(
   auth: AuthCtx,
   input: CreateCompetition,
 ): Promise<CompetitionRow> {
   const slug = input.slug ?? slugify(input.name);
+  if (input.visibility === "public") await assertPublicQuota(auth);
   return withTenant(auth.orgId, async (tx) => {
     const [existing] = await tx`select 1 from competitions where slug = ${slug}`;
     if (existing) throw new HttpError(409, `slug '${slug}' is already in use`);
@@ -88,6 +106,7 @@ export async function patchCompetition(
   id: string,
   patch: PatchCompetition,
 ): Promise<CompetitionRow> {
+  if (patch.visibility === "public") await assertPublicQuota(auth, id);
   return withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {
       const [taken] = await tx`

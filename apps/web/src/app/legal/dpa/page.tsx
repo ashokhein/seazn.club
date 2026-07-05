@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
+import Link from "next/link";
 
 export const metadata: Metadata = {
   title: "Data Processing Agreement — Seazn Club",
@@ -56,7 +57,7 @@ export default function DpaPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">5. Sub-processors</h2>
-            <p>We use sub-processors to operate the service. See our <a href="/legal/sub-processors" className="text-purple-600 underline">sub-processor list</a>. We will notify Controllers of changes with reasonable notice.</p>
+            <p>We use sub-processors to operate the service. See our <Link href="/legal/sub-processors" className="text-purple-600 underline">sub-processor list</Link>. We will notify Controllers of changes with reasonable notice.</p>
           </section>
 
           <section>

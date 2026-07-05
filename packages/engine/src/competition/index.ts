@@ -4,3 +4,4 @@ export * from "./stage.ts";
 export * from "./standings.ts";
 export * from "./tiebreakers.ts";
 export * from "./qualification.ts";
+export * from "./display.ts";
