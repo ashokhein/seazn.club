@@ -376,6 +376,8 @@ function h2hBlock(
   let miniClasses: StandingsRow[][] = [miniRows];
   for (const key of block) {
     const cmp = COMPARATORS[h2hToPlain(key)];
+    // h2hToPlain maps onto points/diff/for, all registered — defensive only.
+    /* v8 ignore next */
     if (cmp === undefined) continue;
     miniClasses = miniClasses.flatMap((mini) => {
       if (mini.length <= 1) return [mini];

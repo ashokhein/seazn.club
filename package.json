@@ -16,6 +16,8 @@
     "test:watch": "npm run test:watch --workspace apps/web",
     "test:coverage": "npm run test:coverage --workspace apps/web",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
+    "sim": "npm run sim --workspace packages/engine",
+    "sim:replay": "npm run sim:replay --workspace packages/engine --",
     "engine:check": "node --experimental-strip-types scripts/engine-check.ts",
     "engine:boundary": "node --experimental-strip-types scripts/engine-boundary.ts",
     "db:apply": "node --experimental-strip-types scripts/apply-db.ts",
