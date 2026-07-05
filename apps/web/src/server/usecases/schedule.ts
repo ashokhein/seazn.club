@@ -1,0 +1,740 @@
+import "server-only";
+// Scheduling console use-cases (doc 12, PROMPT-17): schedule-settings PUT,
+// the pure auto pass (propose only), transactional apply, single-fixture move,
+// full-board validation, publish, and the division start action. The engine
+// stays pure — this module converts DB rows ↔ engine inputs (epoch ms) and
+// owns every persist.
+import type postgres from "postgres";
+import { withTenant } from "@/lib/db";
+import { HttpError } from "@/lib/errors";
+import { requireFeature } from "@/lib/entitlements";
+import { cacheDelPattern } from "@/lib/cache";
+import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
+import { publishDivisionUpdate } from "@/lib/realtime";
+import { EngineError } from "@seazn/engine/core";
+import {
+  slotFixtures,
+  validateAssignments,
+  type Assignment,
+  type Conflict,
+  type OrderDependency,
+  type SchedulableFixture,
+  type SlotConfig,
+} from "@seazn/engine/scheduling";
+import { appendDivisionEvent } from "@/server/engine-db";
+import type { AuthCtx } from "@/server/api-v1/auth";
+import {
+  ScheduleConfig,
+  type ApplyScheduleRequest,
+  type PutScheduleSettings,
+  type ScheduleConflict,
+} from "@/server/api-v1/schemas";
+import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { generateStageFixtures } from "./stages";
+
+type Tx = postgres.TransactionSql;
+
+const MS_PER_MIN = 60_000;
+const ms = (v: string | Date): number => new Date(v).getTime();
+const iso = (t: number): string => new Date(t).toISOString();
+
+// Every schedule write invalidates both public cache layers (the same pattern
+// as scoring, doc 09 §3 / doc 12 §2) and refreshes any open boards.
+function afterScheduleWrite(
+  divisionId: string,
+  competitionId: string,
+  reason: "schedule" | "publish" | "start",
+): void {
+  fireDivisionRevalidate(divisionId, competitionId);
+  void cacheDelPattern(`pub:v1:div:${divisionId}:*`);
+  void publishDivisionUpdate(divisionId, reason);
+}
+
+// A fixture the auto pass / board may still move; everything else on the
+// timetable is a fixed obstacle (doc 12 §6: decided fixtures are immutable —
+// rain-rescheduling touches remaining fixtures only).
+const MOVABLE_STATUS = "scheduled";
+// Statuses that still occupy a court (cancelled/abandoned ones do not).
+const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
+
+// ---------------------------------------------------------------------------
+// Settings
+// ---------------------------------------------------------------------------
+
+export interface ScheduleSettingsOut {
+  division_id: string;
+  config: ScheduleConfig;
+  tz: string;
+  updated_at: string;
+}
+
+/** Does a config use the Pro constraint solver (doc 12 §5)? Community keeps
+ *  quick-start + basic auto: one court, no rest/blackout/session constraints. */
+function usesConstraints(config: ScheduleConfig): boolean {
+  return (
+    config.perEntrantMinRest > 0 ||
+    config.blackouts.length > 0 ||
+    config.sessionWindows.length > 0 ||
+    config.courts.length > 1
+  );
+}
+
+export async function putScheduleSettings(
+  auth: AuthCtx,
+  divisionId: string,
+  input: PutScheduleSettings,
+): Promise<ScheduleSettingsOut> {
+  if (usesConstraints(input.config)) {
+    await requireFeature(auth.orgId, "scheduling.constraints");
+  }
+  return withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    const [row] = await tx<{ division_id: string; config: unknown; tz: string; updated_at: string }[]>`
+      insert into schedule_settings (division_id, config, tz, updated_at)
+      values (${divisionId}, ${tx.json(input.config as never)}, ${input.tz}, now())
+      on conflict (division_id) do update
+        set config = excluded.config, tz = excluded.tz, updated_at = now()
+      returning division_id, config, tz, updated_at`;
+    return { ...row, config: ScheduleConfig.parse(row.config) };
+  });
+}
+
+export async function getScheduleSettings(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<ScheduleSettingsOut> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    return loadSettings(tx, divisionId);
+  });
+}
+
+// Settings row or the parsed defaults — the board and quick-start work
+// without an explicit PUT (single court, no constraints).
+async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSettingsOut> {
+  const [row] = await tx<{ division_id: string; config: unknown; tz: string; updated_at: string }[]>`
+    select division_id, config, tz, updated_at from schedule_settings
+    where division_id = ${divisionId}`;
+  if (row) return { ...row, config: ScheduleConfig.parse(row.config) };
+  return {
+    division_id: divisionId,
+    config: ScheduleConfig.parse({}),
+    tz: "UTC",
+    updated_at: new Date(0).toISOString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Engine input assembly
+// ---------------------------------------------------------------------------
+
+interface FixtureLite {
+  id: string;
+  stage_id: string;
+  division_id: string;
+  round_no: number;
+  home_entrant_id: string | null;
+  away_entrant_id: string | null;
+  scheduled_at: string | Date | null;
+  court_label: string | null;
+  status: string;
+  schedule_locked: boolean;
+  winner_to_fixture: string | null;
+  loser_to_fixture: string | null;
+}
+
+const FIXTURE_LITE_COLS = [
+  "id", "stage_id", "division_id", "round_no", "home_entrant_id", "away_entrant_id",
+  "scheduled_at", "court_label", "status", "schedule_locked",
+  "winner_to_fixture", "loser_to_fixture",
+] as const;
+
+async function divisionFixtures(tx: Tx, divisionId: string): Promise<FixtureLite[]> {
+  return tx<FixtureLite[]>`
+    select ${tx(FIXTURE_LITE_COLS)} from fixtures
+    where division_id = ${divisionId} and status in ${tx(OCCUPYING)}
+    order by round_no, seq_in_round, id`;
+}
+
+// person ids per entrant, for cross-division overlap warnings (doc 06 §4.3).
+async function peopleByEntrant(tx: Tx, entrantIds: string[]): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  if (entrantIds.length === 0) return map;
+  const rows = await tx<{ entrant_id: string; person_id: string }[]>`
+    select entrant_id, person_id from entrant_members where entrant_id in ${tx(entrantIds)}`;
+  for (const r of rows) {
+    (map.get(r.entrant_id) ?? map.set(r.entrant_id, []).get(r.entrant_id)!).push(r.person_id);
+  }
+  return map;
+}
+
+function peopleOf(f: FixtureLite, people: Map<string, string[]>): string[] {
+  return [
+    ...(f.home_entrant_id ? (people.get(f.home_entrant_id) ?? []) : []),
+    ...(f.away_entrant_id ? (people.get(f.away_entrant_id) ?? []) : []),
+  ];
+}
+
+function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, string[]>): Assignment {
+  const start = ms(f.scheduled_at as string | Date);
+  return {
+    fixtureId: f.id,
+    court: f.court_label ?? "",
+    startAt: start,
+    endAt: start + matchMinutes * MS_PER_MIN,
+    entrants: [f.home_entrant_id, f.away_entrant_id].filter((e): e is string => e !== null),
+    people: peopleOf(f, people),
+  };
+}
+
+// Direct-feed dependencies (doc 12 §2 warn.order): the source fixture's
+// winner/loser feeds the target, so the target must not start earlier.
+function feedDependencies(fixtures: readonly FixtureLite[]): OrderDependency[] {
+  const ids = new Set(fixtures.map((f) => f.id));
+  const deps: OrderDependency[] = [];
+  for (const f of fixtures) {
+    for (const target of [f.winner_to_fixture, f.loser_to_fixture]) {
+      if (target !== null && ids.has(target)) {
+        deps.push({ fixtureId: target, dependsOn: f.id, direct: true });
+      }
+    }
+  }
+  return deps;
+}
+
+// Sibling divisions' timetables (doc 06 §4.3): fixed court occupancy for the
+// pass, and the source of cross-division person-overlap warnings. Durations
+// use each sibling's own matchMinutes when it has settings.
+async function siblingAssignments(
+  tx: Tx,
+  divisionId: string,
+  competitionId: string,
+  fallbackMatchMinutes: number,
+): Promise<Assignment[]> {
+  const rows = await tx<FixtureLite[]>`
+    select ${tx(FIXTURE_LITE_COLS)} from fixtures
+    where division_id in (select id from divisions
+                          where competition_id = ${competitionId} and id <> ${divisionId})
+      and scheduled_at is not null and court_label is not null
+      and status in ${tx(OCCUPYING)}`;
+  if (rows.length === 0) return [];
+  const settings = await tx<{ division_id: string; config: unknown }[]>`
+    select division_id, config from schedule_settings
+    where division_id in ${tx([...new Set(rows.map((r) => r.division_id))])}`;
+  const minutes = new Map(
+    settings.map((s) => [s.division_id, ScheduleConfig.parse(s.config).matchMinutes]),
+  );
+  const entrantIds = [
+    ...new Set(rows.flatMap((r) => [r.home_entrant_id, r.away_entrant_id])),
+  ].filter((e): e is string => e !== null);
+  const people = await peopleByEntrant(tx, entrantIds);
+  return rows.map((r) =>
+    toAssignment(r, minutes.get(r.division_id) ?? fallbackMatchMinutes, people),
+  );
+}
+
+function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
+  const c = settings.config;
+  return {
+    startAt: c.startAt ? ms(c.startAt) : now,
+    matchMinutes: c.matchMinutes,
+    gapMinutes: c.gapMinutes,
+    courts: [...c.courts],
+    perEntrantMinRest: c.perEntrantMinRest,
+    blackouts: c.blackouts.map((b) => ({
+      ...(b.court !== undefined ? { court: b.court } : {}),
+      from: ms(b.from),
+      to: ms(b.to),
+    })),
+    sessionWindows: c.sessionWindows.map((w) => ({ from: ms(w.from), to: ms(w.to) })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Conflict taxonomy (doc 12 §2) — engine reasons → API codes
+// ---------------------------------------------------------------------------
+
+const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> = {
+  court: "conflict.court",
+  rest: "warn.rest",
+  person_overlap: "warn.person_overlap",
+  order: "warn.order",
+  blackout: "warn.blackout",
+  no_slot: "warn.no_slot",
+};
+
+function mapConflicts(conflicts: readonly Conflict[]): ScheduleConflict[] {
+  return conflicts.map((c) => ({
+    fixture_id: c.fixtureId,
+    code: REASON_CODE[c.reason],
+    // conflict.court blocks (physically impossible); warn.order blocks for
+    // direct feeds; everything else is a badge (doc 12 §2).
+    blocking: c.reason === "court" || (c.reason === "order" && c.direct === true),
+    ...(c.detail !== undefined ? { detail: c.detail } : {}),
+  }));
+}
+
+function assertNoBlocking(conflicts: ScheduleConflict[]): void {
+  const blocking = conflicts.filter((c) => c.blocking);
+  if (blocking.length > 0) {
+    throw new EngineError("SCHEDULE_CONFLICT", "schedule change hits a blocking conflict", {
+      conflicts: blocking,
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Auto pass (propose only — doc 12 §4: nothing persisted)
+// ---------------------------------------------------------------------------
+
+export interface AutoScheduleOut {
+  assignments: { fixture_id: string; scheduled_at: string; ends_at: string; court_label: string }[];
+  conflicts: ScheduleConflict[];
+}
+
+export async function autoSchedule(
+  auth: AuthCtx,
+  stageId: string,
+  onlyUnlocked: boolean,
+): Promise<AutoScheduleOut> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [stage] = await tx<{ division_id: string; competition_id: string }[]>`
+      select s.division_id, d.competition_id
+      from stages s join divisions d on d.id = s.division_id
+      where s.id = ${stageId}`;
+    if (!stage) throw new HttpError(404, "stage not found");
+
+    const settings = await loadSettings(tx, stage.division_id);
+    const all = await divisionFixtures(tx, stage.division_id);
+    const entrantIds = [
+      ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+    ].filter((e): e is string => e !== null);
+    const people = await peopleByEntrant(tx, entrantIds);
+
+    // Movable: this stage's undecided fixtures. Fixed obstacles: everything
+    // already on the timetable elsewhere in the division (other stages,
+    // decided fixtures) plus sibling divisions.
+    const movable = all.filter((f) => f.stage_id === stageId && f.status === MOVABLE_STATUS);
+    const obstacles = all
+      .filter((f) => !movable.includes(f))
+      .filter((f) => f.scheduled_at !== null && f.court_label !== null)
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+    const siblings = await siblingAssignments(
+      tx,
+      stage.division_id,
+      stage.competition_id,
+      settings.config.matchMinutes,
+    );
+
+    const schedulable: SchedulableFixture[] = movable.map((f) => ({
+      id: f.id,
+      roundNo: f.round_no,
+      ...(f.home_entrant_id !== null ? { home: f.home_entrant_id } : {}),
+      ...(f.away_entrant_id !== null ? { away: f.away_entrant_id } : {}),
+      people: peopleOf(f, people),
+      // Re-flow remaining (doc 12 §2): pinned cards are fixed obstacles.
+      ...(onlyUnlocked && f.schedule_locked && f.scheduled_at !== null && f.court_label !== null
+        ? { locked: { court: f.court_label, startAt: ms(f.scheduled_at) } }
+        : {}),
+    }));
+
+    const result = slotFixtures({
+      fixtures: schedulable,
+      config: toSlotConfig(settings, roundToMinute(Date.now())),
+      existing: [...obstacles, ...siblings],
+    });
+    return {
+      assignments: result.assignments.map((a) => ({
+        fixture_id: a.fixtureId,
+        scheduled_at: iso(a.startAt),
+        ends_at: iso(a.endAt),
+        court_label: a.court,
+      })),
+      conflicts: mapConflicts(result.conflicts),
+    };
+  });
+}
+
+const roundToMinute = (t: number): number => Math.ceil(t / MS_PER_MIN) * MS_PER_MIN;
+
+// ---------------------------------------------------------------------------
+// Apply (transactional persist — doc 12 §4)
+// ---------------------------------------------------------------------------
+
+export interface ApplyScheduleOut {
+  applied: number;
+  conflicts: ScheduleConflict[];
+}
+
+export async function applySchedule(
+  auth: AuthCtx,
+  stageId: string,
+  input: ApplyScheduleRequest,
+): Promise<ApplyScheduleOut> {
+  // Manual assignment sets and pin changes are board editing — Pro (doc 12 §5;
+  // Community keeps the basic auto flow).
+  if (input.source === "manual" || input.assignments.some((a) => a.schedule_locked !== undefined)) {
+    await requireFeature(auth.orgId, "scheduling.board");
+  }
+  const out = await withTenant(auth.orgId, async (tx) => {
+    const [stage] = await tx<{ division_id: string; competition_id: string }[]>`
+      select s.division_id, d.competition_id
+      from stages s join divisions d on d.id = s.division_id
+      where s.id = ${stageId}`;
+    if (!stage) throw new HttpError(404, "stage not found");
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
+    await assertCompetitionNotFrozen(auth.orgId, stage.competition_id, tx);
+
+    const settings = await loadSettings(tx, stage.division_id);
+    const all = await divisionFixtures(tx, stage.division_id);
+    const byId = new Map(all.map((f) => [f.id, f]));
+    for (const a of input.assignments) {
+      const f = byId.get(a.fixture_id);
+      if (!f || f.stage_id !== stageId) {
+        throw new HttpError(422, `fixture ${a.fixture_id} is not part of this stage`);
+      }
+      if (f.status !== MOVABLE_STATUS) {
+        throw new HttpError(422, `fixture ${a.fixture_id} is ${f.status} — decided fixtures are immutable`);
+      }
+    }
+
+    const entrantIds = [
+      ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+    ].filter((e): e is string => e !== null);
+    const people = await peopleByEntrant(tx, entrantIds);
+
+    const proposed: Assignment[] = input.assignments.map((a) => {
+      const f = byId.get(a.fixture_id) as FixtureLite;
+      const start = ms(a.scheduled_at);
+      return {
+        fixtureId: a.fixture_id,
+        court: a.court_label,
+        startAt: start,
+        endAt: start + settings.config.matchMinutes * MS_PER_MIN,
+        entrants: [f.home_entrant_id, f.away_entrant_id].filter((e): e is string => e !== null),
+        people: peopleOf(f, people),
+      };
+    });
+    const listed = new Set(input.assignments.map((a) => a.fixture_id));
+    const untouched = all
+      .filter((f) => !listed.has(f.id) && f.scheduled_at !== null && f.court_label !== null)
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+    const siblings = await siblingAssignments(
+      tx,
+      stage.division_id,
+      stage.competition_id,
+      settings.config.matchMinutes,
+    );
+
+    const conflicts = mapConflicts(
+      validateAssignments(
+        proposed,
+        toSlotConfig(settings, 0),
+        [...untouched, ...siblings],
+        feedDependencies(all),
+      ),
+    );
+    assertNoBlocking(conflicts);
+
+    const moves: { fixture: string; from: unknown; to: unknown }[] = [];
+    for (const a of input.assignments) {
+      const f = byId.get(a.fixture_id) as FixtureLite;
+      await tx`
+        update fixtures set
+          scheduled_at = ${a.scheduled_at},
+          court_label = ${a.court_label},
+          venue = coalesce(${a.venue ?? null}, venue),
+          schedule_source = ${input.source},
+          schedule_locked = ${a.schedule_locked ?? f.schedule_locked}
+        where id = ${a.fixture_id}`;
+      moves.push({
+        fixture: a.fixture_id,
+        from: {
+          at: f.scheduled_at !== null ? iso(ms(f.scheduled_at)) : null,
+          court: f.court_label,
+        },
+        to: { at: a.scheduled_at, court: a.court_label },
+      });
+    }
+    // One auditable ledger entry per apply (doc 12 §2 family: schedule_edited/…).
+    const seq = await appendDivisionEvent(tx, stage.division_id, "schedule_applied", {
+      stageId,
+      source: input.source,
+      moves,
+    });
+    await tx`update divisions set seq = ${seq} where id = ${stage.division_id}`;
+    return { divisionId: stage.division_id, competitionId: stage.competition_id, applied: input.assignments.length, conflicts };
+  });
+  afterScheduleWrite(out.divisionId, out.competitionId, "schedule");
+  return { applied: out.applied, conflicts: out.conflicts };
+}
+
+// ---------------------------------------------------------------------------
+// Single move (fixture PATCH, doc 12 §4) — used by the drag-and-drop board
+// ---------------------------------------------------------------------------
+
+export interface MoveInput {
+  scheduled_at?: string | null;
+  court_label?: string | null;
+  venue?: string | null;
+  schedule_locked?: boolean;
+}
+
+/**
+ * Schedule-aware single-fixture move: blocks on conflict.court / direct
+ * warn.order (409 with the conflicts), otherwise persists and appends
+ * `schedule_edited {fixture, from, to}` (doc 12 §2).
+ */
+export async function moveFixture(
+  auth: AuthCtx,
+  fixtureId: string,
+  patch: MoveInput,
+): Promise<void> {
+  if (patch.schedule_locked !== undefined) {
+    await requireFeature(auth.orgId, "scheduling.board");
+  }
+  const out = await withTenant(auth.orgId, async (tx) => {
+    const [fixture] = await tx<
+      (FixtureLite & { competition_id: string })[]
+    >`
+      select f.id, f.stage_id, f.division_id, f.round_no, f.home_entrant_id,
+             f.away_entrant_id, f.scheduled_at, f.court_label, f.status,
+             f.schedule_locked, f.winner_to_fixture, f.loser_to_fixture,
+             d.competition_id
+      from fixtures f join divisions d on d.id = f.division_id
+      where f.id = ${fixtureId}`;
+    if (!fixture) throw new HttpError(404, "fixture not found");
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + fixture.division_id}))`;
+    await assertCompetitionNotFrozen(auth.orgId, fixture.competition_id, tx);
+
+    const movesTimetable = patch.scheduled_at !== undefined || patch.court_label !== undefined;
+    if (movesTimetable && fixture.status !== MOVABLE_STATUS) {
+      throw new HttpError(422, `fixture is ${fixture.status} — decided fixtures are immutable`);
+    }
+
+    const settings = await loadSettings(tx, fixture.division_id);
+    const nextAt = patch.scheduled_at !== undefined ? patch.scheduled_at : (fixture.scheduled_at !== null ? iso(ms(fixture.scheduled_at)) : null);
+    const nextCourt = patch.court_label !== undefined ? patch.court_label : fixture.court_label;
+
+    let conflicts: ScheduleConflict[] = [];
+    if (movesTimetable && nextAt !== null && nextCourt !== null) {
+      const all = await divisionFixtures(tx, fixture.division_id);
+      const entrantIds = [
+        ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+      ].filter((e): e is string => e !== null);
+      const people = await peopleByEntrant(tx, entrantIds);
+      const start = ms(nextAt);
+      const proposed: Assignment = {
+        fixtureId: fixture.id,
+        court: nextCourt,
+        startAt: start,
+        endAt: start + settings.config.matchMinutes * MS_PER_MIN,
+        entrants: [fixture.home_entrant_id, fixture.away_entrant_id].filter(
+          (e): e is string => e !== null,
+        ),
+        people: peopleOf(fixture, people),
+      };
+      const others = all
+        .filter((f) => f.id !== fixture.id && f.scheduled_at !== null && f.court_label !== null)
+        .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+      const siblings = await siblingAssignments(
+        tx,
+        fixture.division_id,
+        fixture.competition_id,
+        settings.config.matchMinutes,
+      );
+      conflicts = mapConflicts(
+        validateAssignments(
+          [proposed],
+          toSlotConfig(settings, 0),
+          [...others, ...siblings],
+          feedDependencies(all),
+        ),
+      );
+      assertNoBlocking(conflicts);
+    }
+
+    const values: Record<string, unknown> = {};
+    if (patch.scheduled_at !== undefined) values.scheduled_at = patch.scheduled_at;
+    if (patch.court_label !== undefined) values.court_label = patch.court_label;
+    if (patch.venue !== undefined) values.venue = patch.venue;
+    if (patch.schedule_locked !== undefined) values.schedule_locked = patch.schedule_locked;
+    if (movesTimetable) values.schedule_source = "manual";
+    if (Object.keys(values).length > 0) {
+      await tx`
+        update fixtures set ${tx(values as never, ...(Object.keys(values) as never[]))}
+        where id = ${fixture.id}`;
+    }
+
+    if (movesTimetable || patch.schedule_locked !== undefined) {
+      const seq = await appendDivisionEvent(tx, fixture.division_id, "schedule_edited", {
+        fixture: fixture.id,
+        from: {
+          at: fixture.scheduled_at !== null ? iso(ms(fixture.scheduled_at)) : null,
+          court: fixture.court_label,
+          locked: fixture.schedule_locked,
+        },
+        to: {
+          at: nextAt,
+          court: nextCourt,
+          locked: patch.schedule_locked ?? fixture.schedule_locked,
+        },
+      });
+      await tx`update divisions set seq = ${seq} where id = ${fixture.division_id}`;
+    }
+    return { divisionId: fixture.division_id, competitionId: fixture.competition_id };
+  });
+  afterScheduleWrite(out.divisionId, out.competitionId, "schedule");
+}
+
+// ---------------------------------------------------------------------------
+// Validate (full board report — doc 12 §4)
+// ---------------------------------------------------------------------------
+
+export async function validateSchedule(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<{ conflicts: ScheduleConflict[] }> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    const settings = await loadSettings(tx, divisionId);
+    const all = await divisionFixtures(tx, divisionId);
+    const entrantIds = [
+      ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+    ].filter((e): e is string => e !== null);
+    const people = await peopleByEntrant(tx, entrantIds);
+    const assignments = all
+      .filter((f) => f.scheduled_at !== null && f.court_label !== null)
+      .map((f) => toAssignment(f, settings.config.matchMinutes, people));
+    const siblings = await siblingAssignments(
+      tx,
+      divisionId,
+      division.competition_id,
+      settings.config.matchMinutes,
+    );
+    return {
+      conflicts: mapConflicts(
+        validateAssignments(assignments, toSlotConfig(settings, 0), siblings, feedDependencies(all)),
+      ),
+    };
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Publish & start (doc 12 §1 state machine)
+// ---------------------------------------------------------------------------
+
+export interface PublishScheduleOut {
+  division_id: string;
+  status: string;
+  published: boolean;
+}
+
+export async function publishSchedule(auth: AuthCtx, divisionId: string): Promise<PublishScheduleOut> {
+  const out = await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ status: string; competition_id: string }[]>`
+      select status, competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
+    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    if (division.status === "completed") {
+      throw new HttpError(422, "a completed division cannot publish a schedule");
+    }
+    const status = division.status === "setup" ? "scheduled" : division.status;
+    if (status !== division.status) {
+      await tx`update divisions set status = ${status} where id = ${divisionId}`;
+    }
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from fixtures
+      where division_id = ${divisionId} and scheduled_at is not null`;
+    const seq = await appendDivisionEvent(tx, divisionId, "schedule_published", {
+      fixturesScheduled: n,
+    });
+    await tx`update divisions set seq = ${seq} where id = ${divisionId}`;
+    return { competitionId: division.competition_id, status };
+  });
+  afterScheduleWrite(divisionId, out.competitionId, "publish");
+  return { division_id: divisionId, status: out.status, published: true };
+}
+
+export interface StartDivisionOut {
+  division_id: string;
+  status: string;
+  started: boolean;
+  generated: number;
+}
+
+/**
+ * The "start tournament" action (doc 12 §1 — both modes end here). Quick-start
+ * from setup generates the first stage's fixtures when none exist and, when
+ * `roundMinutes` is configured, slots rolling times (round r at startAt +
+ * (r−1)·roundMinutes). Scoring opens only after this (division_started).
+ */
+export async function startDivision(auth: AuthCtx, divisionId: string): Promise<StartDivisionOut> {
+  const pre = await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ status: string; competition_id: string }[]>`
+      select status, competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    if (division.status === "completed") throw new HttpError(422, "division is completed");
+    const [firstStage] = await tx<{ id: string; n: number }[]>`
+      select s.id, (select count(*)::int from fixtures f where f.stage_id = s.id) as n
+      from stages s where s.division_id = ${divisionId}
+      order by s.seq limit 1`;
+    if (!firstStage) throw new HttpError(422, "division has no stages to start");
+    return { ...division, firstStage };
+  });
+  if (pre.status === "active") {
+    return { division_id: divisionId, status: "active", started: false, generated: 0 };
+  }
+
+  // Quick-start: generate outside the status transaction (the generator takes
+  // its own division lock).
+  let generated = 0;
+  if (pre.firstStage.n === 0) {
+    const outcome = await generateStageFixtures(auth, pre.firstStage.id);
+    generated = outcome.created;
+  }
+
+  const out = await withTenant(auth.orgId, async (tx) => {
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
+    const [division] = await tx<{ status: string }[]>`
+      select status from divisions where id = ${divisionId}`;
+    if (!division || division.status === "active") return { started: false };
+
+    // Rolling quick-start times (doc 12 §1.A) — only for a straight
+    // setup→active start; a published timetable is left untouched.
+    const settings = await loadSettings(tx, divisionId);
+    if (division.status === "setup" && settings.config.roundMinutes) {
+      const startAt = settings.config.startAt
+        ? ms(settings.config.startAt)
+        : roundToMinute(Date.now());
+      const step = settings.config.roundMinutes * MS_PER_MIN;
+      const rounds = await tx<{ round_no: number }[]>`
+        select distinct round_no from fixtures
+        where stage_id = ${pre.firstStage.id} and scheduled_at is null
+        order by round_no`;
+      for (const [i, r] of rounds.entries()) {
+        await tx`
+          update fixtures set scheduled_at = ${iso(startAt + i * step)}, schedule_source = 'auto'
+          where stage_id = ${pre.firstStage.id} and round_no = ${r.round_no}
+            and scheduled_at is null`;
+      }
+    }
+
+    await tx`update divisions set status = 'active' where id = ${divisionId}`;
+    const seq = await appendDivisionEvent(tx, divisionId, "division_started", {
+      from: division.status,
+    });
+    await tx`update divisions set seq = ${seq} where id = ${divisionId}`;
+    return { started: true };
+  });
+  afterScheduleWrite(divisionId, pre.competition_id, "start");
+  return { division_id: divisionId, status: "active", started: out.started, generated };
+}

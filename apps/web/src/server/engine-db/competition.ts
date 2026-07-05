@@ -204,8 +204,9 @@ export async function recomputeStandings(
 }
 
 // Append a division_event under the division lock, assigning a gapless per-
-// division seq (doc 07 note 3). Returns the new seq.
-async function appendDivisionEvent(
+// division seq (doc 07 note 3). Returns the new seq. Callers that treat the
+// event as the division watermark also bump divisions.seq (doc 07).
+export async function appendDivisionEvent(
   tx: Tx,
   divisionId: string,
   type: string,

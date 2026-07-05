@@ -7,6 +7,7 @@ import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { PatchFixture, PutLineup } from "@/server/api-v1/schemas";
 import { FIXTURE_COLS, type FixtureRow } from "./stages";
+import { moveFixture } from "./schedule";
 
 export async function getFixture(auth: AuthCtx, id: string): Promise<FixtureRow> {
   return withTenant(auth.orgId, async (tx) => {
@@ -30,15 +31,20 @@ export async function listDivisionFixtures(auth: AuthCtx, divisionId: string): P
 }
 
 export async function patchFixture(auth: AuthCtx, id: string, patch: PatchFixture): Promise<FixtureRow> {
+  // Schedule-touching fields go through the scheduling console's move path
+  // (doc 12 §4): conflict validation (court clashes / direct-feed order
+  // violations block), schedule_edited ledger event, board realtime refresh.
+  const { officials, ...move } = patch;
+  if (Object.keys(move).length > 0) {
+    await moveFixture(auth, id, move);
+  }
   return withTenant(auth.orgId, async (tx) => {
-    const cols = Object.keys(patch);
-    const values = {
-      ...patch,
-      ...(patch.officials ? { officials: tx.json(patch.officials as never) } : {}),
-    };
+    if (officials) {
+      await tx`
+        update fixtures set officials = ${tx.json(officials as never)} where id = ${id}`;
+    }
     const [row] = await tx<FixtureRow[]>`
-      update fixtures set ${tx(values as never, ...(cols as never[]))}
-      where id = ${id} returning ${tx(FIXTURE_COLS)}`;
+      select ${tx(FIXTURE_COLS)} from fixtures where id = ${id}`;
     if (!row) throw new HttpError(404, "fixture not found");
     return row;
   });

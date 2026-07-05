@@ -69,9 +69,17 @@ export const ROUTES: RouteSpec[] = [
   { path: "/stages/{id}/generate", method: "post", summary: "Generate fixtures (idempotent, returns diff)", tag: "stages", response: S.GenerateResult, errors: [422] },
   { path: "/stages/{id}/complete", method: "post", summary: "Guarded stage completion / progression", tag: "stages", response: S.CompleteResult, errors: [422] },
   { path: "/stages/{id}/standings", method: "get", summary: "Standings snapshot", tag: "stages", query: { pool_id: { schema: { type: "string", format: "uuid" } } } },
+  // Scheduling console (doc 12 §4, PROMPT-17)
+  { path: "/divisions/{id}/schedule-settings", method: "get", summary: "Get scheduling settings (defaults when unset)", tag: "scheduling", response: S.ScheduleSettings },
+  { path: "/divisions/{id}/schedule-settings", method: "put", summary: "Upsert scheduling settings (constraint fields are Pro)", tag: "scheduling", request: S.PutScheduleSettings, response: S.ScheduleSettings, errors: [402] },
+  { path: "/stages/{id}/schedule/auto", method: "post", summary: "Run the pure calendar pass — propose only, nothing persisted", tag: "scheduling", request: S.AutoScheduleRequest, response: S.AutoScheduleResult },
+  { path: "/stages/{id}/schedule/apply", method: "post", summary: "Persist an assignment set; blocking conflicts → 409", tag: "scheduling", request: S.ApplyScheduleRequest, response: S.ApplyScheduleResult, errors: [402, 409, 422] },
+  { path: "/divisions/{id}/schedule/validate", method: "post", summary: "Full board conflict report (doc 12 §2 taxonomy)", tag: "scheduling", response: S.ValidateScheduleResult },
+  { path: "/divisions/{id}/publish-schedule", method: "post", summary: "Publish the timetable (division → scheduled)", tag: "scheduling", response: S.PublishScheduleResult, errors: [422] },
+  { path: "/divisions/{id}/start", method: "post", summary: "Start the tournament (quick-start generates fixtures)", tag: "scheduling", response: S.StartDivisionResult, errors: [422] },
   // Fixtures & scoring
   { path: "/fixtures/{id}", method: "get", summary: "Get a fixture", tag: "fixtures", response: S.Fixture },
-  { path: "/fixtures/{id}", method: "patch", summary: "Schedule, venue, officials", tag: "fixtures", request: S.PatchFixture, response: S.Fixture },
+  { path: "/fixtures/{id}", method: "patch", summary: "Schedule move, venue, officials, pin/lock — blocking conflicts → 409", tag: "fixtures", request: S.PatchFixture, response: S.Fixture, errors: [402, 409, 422] },
   { path: "/fixtures/{id}/lineups/{entrantId}", method: "get", summary: "Get a side's lineup", tag: "fixtures" },
   { path: "/fixtures/{id}/lineups/{entrantId}", method: "put", summary: "Replace a side's lineup", tag: "fixtures", request: S.PutLineup, errors: [422] },
   { path: "/fixtures/{id}/events", method: "post", summary: "Append a score event (THE scoring endpoint)", tag: "scoring", request: S.AppendEventRequest, response: S.AppendEventResponse, status: 201, errors: [409, 422, 429] },

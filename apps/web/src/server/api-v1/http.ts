@@ -16,6 +16,7 @@ import { featureReason } from "@/lib/feature-copy";
 // signal (409); everything the engine rejects as semantically invalid is 422.
 const ENGINE_HTTP: Record<EngineErrorCode, number> = {
   SEQ_CONFLICT: 409,
+  SCHEDULE_CONFLICT: 409,
   INVALID_EVENT: 422,
   WRONG_PHASE: 422,
   ALREADY_DECIDED: 422,
@@ -98,11 +99,21 @@ export async function v1<T>(fn: () => Promise<T | Reply<T>>): Promise<NextRespon
       const status = ENGINE_HTTP[err.code] ?? 422;
       if (status >= 500) Sentry.captureException(err);
       // 409 contract (doc 08 §4): the client resyncs from current_seq.
-      const extra =
+      let extra: Record<string, unknown> | undefined;
+      if (
         err.code === "SEQ_CONFLICT" &&
         typeof (err.data as { actualSeq?: unknown } | undefined)?.actualSeq === "number"
-          ? { current_seq: (err.data as { actualSeq: number }).actualSeq }
-          : undefined;
+      ) {
+        extra = { current_seq: (err.data as { actualSeq: number }).actualSeq };
+      }
+      // Blocking schedule conflicts (doc 12 §2): the client renders them as
+      // badges on the offending cards, so the 409 carries the list.
+      if (
+        err.code === "SCHEDULE_CONFLICT" &&
+        Array.isArray((err.data as { conflicts?: unknown } | undefined)?.conflicts)
+      ) {
+        extra = { conflicts: (err.data as { conflicts: unknown[] }).conflicts };
+      }
       return errorResponse(requestId, status, err.code, err.message, extra);
     }
     if (err instanceof PaymentRequiredError) {

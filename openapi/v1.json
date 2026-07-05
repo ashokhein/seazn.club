@@ -1775,6 +1775,7 @@
                             "type": "string",
                             "enum": [
                               "setup",
+                              "scheduled",
                               "active",
                               "completed"
                             ]
@@ -2104,6 +2105,7 @@
                           "type": "string",
                           "enum": [
                             "setup",
+                            "scheduled",
                             "active",
                             "completed"
                           ]
@@ -2451,6 +2453,7 @@
                           "type": "string",
                           "enum": [
                             "setup",
+                            "scheduled",
                             "active",
                             "completed"
                           ]
@@ -2681,6 +2684,7 @@
                     "type": "string",
                     "enum": [
                       "setup",
+                      "scheduled",
                       "active",
                       "completed"
                     ]
@@ -2757,6 +2761,7 @@
                           "type": "string",
                           "enum": [
                             "setup",
+                            "scheduled",
                             "active",
                             "completed"
                           ]
@@ -7321,6 +7326,17 @@
                                   }
                                 ]
                               },
+                              "schedule_source": {
+                                "type": "string",
+                                "enum": [
+                                  "none",
+                                  "auto",
+                                  "manual"
+                                ]
+                              },
+                              "schedule_locked": {
+                                "type": "boolean"
+                              },
                               "created_at": {
                                 "type": "string"
                               }
@@ -7340,6 +7356,8 @@
                               "officials",
                               "status",
                               "outcome",
+                              "schedule_source",
+                              "schedule_locked",
                               "created_at"
                             ],
                             "additionalProperties": false
@@ -8019,6 +8037,2324 @@
         ]
       }
     },
+    "/api/v1/divisions/{id}/schedule-settings": {
+      "get": {
+        "summary": "Get scheduling settings (defaults when unset)",
+        "tags": [
+          "scheduling"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "division_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "config": {
+                          "type": "object",
+                          "properties": {
+                            "startAt": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "matchMinutes": {
+                              "default": 30,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1440
+                            },
+                            "gapMinutes": {
+                              "default": 0,
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1440
+                            },
+                            "courts": {
+                              "default": [
+                                "Court 1"
+                              ],
+                              "minItems": 1,
+                              "maxItems": 50,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              }
+                            },
+                            "perEntrantMinRest": {
+                              "default": 0,
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1440
+                            },
+                            "blackouts": {
+                              "default": [],
+                              "maxItems": 200,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "court": {
+                                    "type": "string",
+                                    "maxLength": 100
+                                  },
+                                  "from": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  },
+                                  "to": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "sessionWindows": {
+                              "default": [],
+                              "maxItems": 200,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "from": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  },
+                                  "to": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "roundMinutes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 1440
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "matchMinutes",
+                            "gapMinutes",
+                            "courts",
+                            "perEntrantMinRest",
+                            "blackouts",
+                            "sessionWindows"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "tz": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "division_id",
+                        "config",
+                        "tz",
+                        "updated_at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "put": {
+        "summary": "Upsert scheduling settings (constraint fields are Pro)",
+        "tags": [
+          "scheduling"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "config": {
+                    "type": "object",
+                    "properties": {
+                      "startAt": {
+                        "anyOf": [
+                          {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "matchMinutes": {
+                        "default": 30,
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1440
+                      },
+                      "gapMinutes": {
+                        "default": 0,
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1440
+                      },
+                      "courts": {
+                        "default": [
+                          "Court 1"
+                        ],
+                        "minItems": 1,
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        }
+                      },
+                      "perEntrantMinRest": {
+                        "default": 0,
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 1440
+                      },
+                      "blackouts": {
+                        "default": [],
+                        "maxItems": 200,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "court": {
+                              "type": "string",
+                              "maxLength": 100
+                            },
+                            "from": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            "to": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "to"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "sessionWindows": {
+                        "default": [],
+                        "maxItems": 200,
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "from": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            },
+                            "to": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                            }
+                          },
+                          "required": [
+                            "from",
+                            "to"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "roundMinutes": {
+                        "anyOf": [
+                          {
+                            "type": "integer",
+                            "minimum": 1,
+                            "maximum": 1440
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "matchMinutes",
+                      "gapMinutes",
+                      "courts",
+                      "perEntrantMinRest",
+                      "blackouts",
+                      "sessionWindows"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "tz": {
+                    "default": "UTC",
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64
+                  }
+                },
+                "required": [
+                  "config",
+                  "tz"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "division_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "config": {
+                          "type": "object",
+                          "properties": {
+                            "startAt": {
+                              "anyOf": [
+                                {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "matchMinutes": {
+                              "default": 30,
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 1440
+                            },
+                            "gapMinutes": {
+                              "default": 0,
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1440
+                            },
+                            "courts": {
+                              "default": [
+                                "Court 1"
+                              ],
+                              "minItems": 1,
+                              "maxItems": 50,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 100
+                              }
+                            },
+                            "perEntrantMinRest": {
+                              "default": 0,
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 1440
+                            },
+                            "blackouts": {
+                              "default": [],
+                              "maxItems": 200,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "court": {
+                                    "type": "string",
+                                    "maxLength": 100
+                                  },
+                                  "from": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  },
+                                  "to": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "sessionWindows": {
+                              "default": [],
+                              "maxItems": 200,
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "from": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  },
+                                  "to": {
+                                    "type": "string",
+                                    "format": "date-time",
+                                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                                  }
+                                },
+                                "required": [
+                                  "from",
+                                  "to"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "roundMinutes": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 1,
+                                  "maximum": 1440
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "matchMinutes",
+                            "gapMinutes",
+                            "courts",
+                            "perEntrantMinRest",
+                            "blackouts",
+                            "sessionWindows"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "tz": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "division_id",
+                        "config",
+                        "tz",
+                        "updated_at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Plan upgrade required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/stages/{id}/schedule/auto": {
+      "post": {
+        "summary": "Run the pure calendar pass — propose only, nothing persisted",
+        "tags": [
+          "scheduling"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "only_unlocked": {
+                    "default": true,
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "only_unlocked"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "assignments": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fixture_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "scheduled_at": {
+                                "type": "string"
+                              },
+                              "ends_at": {
+                                "type": "string"
+                              },
+                              "court_label": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fixture_id",
+                              "scheduled_at",
+                              "ends_at",
+                              "court_label"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "conflicts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fixture_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "conflict.court",
+                                  "warn.rest",
+                                  "warn.person_overlap",
+                                  "warn.order",
+                                  "warn.blackout",
+                                  "warn.no_slot"
+                                ]
+                              },
+                              "blocking": {
+                                "type": "boolean"
+                              },
+                              "detail": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fixture_id",
+                              "code",
+                              "blocking"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "assignments",
+                        "conflicts"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/stages/{id}/schedule/apply": {
+      "post": {
+        "summary": "Persist an assignment set; blocking conflicts → 409",
+        "tags": [
+          "scheduling"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "assignments": {
+                    "minItems": 1,
+                    "maxItems": 500,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "fixture_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "scheduled_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                        },
+                        "court_label": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 100
+                        },
+                        "venue": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "maxLength": 200
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "schedule_locked": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "fixture_id",
+                        "scheduled_at",
+                        "court_label"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "source": {
+                    "default": "auto",
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "manual"
+                    ]
+                  }
+                },
+                "required": [
+                  "assignments",
+                  "source"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "applied": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "conflicts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fixture_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "conflict.court",
+                                  "warn.rest",
+                                  "warn.person_overlap",
+                                  "warn.order",
+                                  "warn.blackout",
+                                  "warn.no_slot"
+                                ]
+                              },
+                              "blocking": {
+                                "type": "boolean"
+                              },
+                              "detail": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fixture_id",
+                              "code",
+                              "blocking"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "applied",
+                        "conflicts"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Plan upgrade required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/divisions/{id}/schedule/validate": {
+      "post": {
+        "summary": "Full board conflict report (doc 12 §2 taxonomy)",
+        "tags": [
+          "scheduling"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "conflicts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "fixture_id": {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              "code": {
+                                "type": "string",
+                                "enum": [
+                                  "conflict.court",
+                                  "warn.rest",
+                                  "warn.person_overlap",
+                                  "warn.order",
+                                  "warn.blackout",
+                                  "warn.no_slot"
+                                ]
+                              },
+                              "blocking": {
+                                "type": "boolean"
+                              },
+                              "detail": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "fixture_id",
+                              "code",
+                              "blocking"
+                            ],
+                            "additionalProperties": false
+                          }
+                        }
+                      },
+                      "required": [
+                        "conflicts"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/divisions/{id}/publish-schedule": {
+      "post": {
+        "summary": "Publish the timetable (division → scheduled)",
+        "tags": [
+          "scheduling"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "division_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "setup",
+                            "scheduled",
+                            "active",
+                            "completed"
+                          ]
+                        },
+                        "published": {
+                          "type": "boolean"
+                        }
+                      },
+                      "required": [
+                        "division_id",
+                        "status",
+                        "published"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/divisions/{id}/start": {
+      "post": {
+        "summary": "Start the tournament (quick-start generates fixtures)",
+        "tags": [
+          "scheduling"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "division_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "setup",
+                            "scheduled",
+                            "active",
+                            "completed"
+                          ]
+                        },
+                        "started": {
+                          "type": "boolean"
+                        },
+                        "generated": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        }
+                      },
+                      "required": [
+                        "division_id",
+                        "status",
+                        "started",
+                        "generated"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
     "/api/v1/fixtures/{id}": {
       "get": {
         "summary": "Get a fixture",
@@ -8170,6 +10506,17 @@
                             }
                           ]
                         },
+                        "schedule_source": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "auto",
+                            "manual"
+                          ]
+                        },
+                        "schedule_locked": {
+                          "type": "boolean"
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -8189,6 +10536,8 @@
                         "officials",
                         "status",
                         "outcome",
+                        "schedule_source",
+                        "schedule_locked",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -8345,7 +10694,7 @@
         ]
       },
       "patch": {
-        "summary": "Schedule, venue, officials",
+        "summary": "Schedule move, venue, officials, pin/lock — blocking conflicts → 409",
         "tags": [
           "fixtures"
         ],
@@ -8410,6 +10759,9 @@
                       },
                       "additionalProperties": {}
                     }
+                  },
+                  "schedule_locked": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -8551,6 +10903,17 @@
                             }
                           ]
                         },
+                        "schedule_source": {
+                          "type": "string",
+                          "enum": [
+                            "none",
+                            "auto",
+                            "manual"
+                          ]
+                        },
+                        "schedule_locked": {
+                          "type": "boolean"
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -8570,6 +10933,8 @@
                         "officials",
                         "status",
                         "outcome",
+                        "schedule_source",
+                        "schedule_locked",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -8671,8 +11036,140 @@
               }
             }
           },
+          "402": {
+            "description": "Plan upgrade required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
             "content": {
               "application/json": {
                 "schema": {

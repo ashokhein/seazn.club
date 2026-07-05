@@ -131,11 +131,24 @@ create table if not exists divisions (
   module_version text not null,                -- PINNED engine module version
   eligibility    jsonb not null default '[]',
   tiebreakers    jsonb,                         -- override cascade; null = sport default
-  status         text not null default 'setup' check (status in ('setup','active','completed')),
+  status         text not null default 'setup' check (status in ('setup','scheduled','active','completed')),
   seq            int not null default 0,        -- division_events watermark
   created_at     timestamptz not null default now(),
   unique (competition_id, slug)
 );
+-- Doc 12 §1 state machine: 'scheduled' (published timetable, not yet started)
+-- sits between setup and active. Re-assert on DBs created before PROMPT-17.
+do $$ begin
+  if exists (
+    select 1 from pg_constraint c
+    where c.conname = 'divisions_status_check'
+      and pg_get_constraintdef(c.oid) not like '%scheduled%'
+  ) then
+    alter table divisions drop constraint divisions_status_check;
+    alter table divisions add constraint divisions_status_check
+      check (status in ('setup','scheduled','active','completed'));
+  end if;
+end $$;
 
 create table if not exists stages (
   id            uuid primary key default gen_random_uuid(),
@@ -220,6 +233,18 @@ alter table fixtures add column if not exists ext_key text;
 create unique index if not exists fixtures_stage_ext_key_idx
   on fixtures(stage_id, ext_key) where ext_key is not null;
 
+-- Scheduling provenance (doc 12 §3, PROMPT-17): where the assignment came
+-- from ('manual' = hand-placed/pinned) and whether it is locked against
+-- re-running the auto pass.
+alter table fixtures add column if not exists schedule_source text not null default 'none';
+alter table fixtures add column if not exists schedule_locked boolean not null default false;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'fixtures_schedule_source_check') then
+    alter table fixtures add constraint fixtures_schedule_source_check
+      check (schedule_source in ('none','auto','manual'));
+  end if;
+end $$;
+
 create index if not exists fixtures_stage_idx    on fixtures(stage_id, round_no, seq_in_round);
 create index if not exists fixtures_division_idx on fixtures(division_id, scheduled_at);
 -- DEVIATION: doc 07 sketched one statement with two table refs — illegal.
@@ -281,6 +306,17 @@ create table if not exists standings_snapshots (
   pool_scope           uuid generated always as
                        (coalesce(pool_id, '00000000-0000-0000-0000-000000000000'::uuid)) stored,
   primary key (stage_id, pool_scope)
+);
+
+-- Per-division scheduling settings (doc 12 §3, PROMPT-17). config carries
+-- startAt, matchMinutes, gapMinutes, courts[], perEntrantMinRest, blackouts[],
+-- sessionWindows[]; tz is the venue-local zone (doc 12 §6 — DST boundaries).
+create table if not exists schedule_settings (
+  division_id uuid primary key references divisions(id) on delete cascade,
+  org_id      uuid not null,
+  config      jsonb not null default '{}',
+  tz          text not null default 'UTC',
+  updated_at  timestamptz not null default now()
 );
 
 create table if not exists division_events (    -- structural ledger, hash-chained per division
@@ -362,7 +398,8 @@ declare
     array['match_states',       'fixtures',     'fixture_id'],
     array['standings_snapshots','stages',       'stage_id'],
     array['division_events',    'divisions',    'division_id'],
-    array['player_profiles',    'persons',      'person_id']
+    array['player_profiles',    'persons',      'person_id'],
+    array['schedule_settings',  'divisions',    'division_id']
   ];
 begin
   foreach spec slice 1 in array specs loop
@@ -468,7 +505,7 @@ begin
     'sport_variants','persons','player_profiles','teams','competitions',
     'divisions','stages','pools','entrants','entrant_members','fixtures',
     'lineups','score_events','match_states','standings_snapshots',
-    'division_events','api_keys'
+    'division_events','api_keys','schedule_settings'
   ] loop
     execute format('alter table %I enable row level security', tbl);
     execute format('alter table %I force  row level security', tbl);
@@ -496,7 +533,8 @@ begin
   foreach tbl in array array[
     'persons','player_profiles','teams','competitions','divisions','stages',
     'pools','entrants','entrant_members','fixtures','lineups','score_events',
-    'match_states','standings_snapshots','division_events','api_keys'
+    'match_states','standings_snapshots','division_events','api_keys',
+    'schedule_settings'
   ] loop
     execute format('drop policy if exists %I on %I', tbl || '_tenant', tbl);
     execute format(
@@ -570,9 +608,18 @@ create or replace view public_divisions_v as
 
 -- `summary` (render-agnostic score lines from the fold cache) rides along for
 -- the live public fixture endpoint — it never contains person data.
+-- Timetable fields are PUBLISH-GATED (doc 12 §1/PROMPT-17): while a division
+-- is still in setup (plan-first draft, timetable not yet published) the
+-- public read model nulls scheduled_at/venue/court_label, so the schedule tab
+-- and .ics show nothing an organiser has not published. publish-schedule
+-- moves the division to 'scheduled' (quick-start moves straight to 'active'),
+-- which lights the fields up.
 create or replace view public_fixtures_v as
   select f.id, f.division_id, f.stage_id, f.pool_id, f.round_no, f.seq_in_round,
-         f.home_entrant_id, f.away_entrant_id, f.scheduled_at, f.venue, f.court_label,
+         f.home_entrant_id, f.away_entrant_id,
+         case when d.status = 'setup' then null else f.scheduled_at end as scheduled_at,
+         case when d.status = 'setup' then null else f.venue end        as venue,
+         case when d.status = 'setup' then null else f.court_label end as court_label,
          f.status, f.outcome, f.created_at,
          m.summary, m.last_seq
   from fixtures f
@@ -677,4 +724,16 @@ grant select on public_competitions_v, public_divisions_v, public_fixtures_v,
 insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
   ('community', 'dashboard.public.max', null, 1),
   ('pro',       'dashboard.public.max', null, null)
+on conflict (plan_key, feature_key) do nothing;
+
+-- Doc 12 §5 scheduling matrix (PROMPT-17; scheduling.constraints seeded by
+-- 012): board editing is Pro (Community renders it view-only), the
+-- competition-wide multi-division board is Pro.
+insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
+  ('community', 'scheduling.board',          false, null),
+  ('pro',       'scheduling.board',          true,  null),
+  ('business',  'scheduling.board',          true,  null),
+  ('community', 'scheduling.multi_division', false, null),
+  ('pro',       'scheduling.multi_division', true,  null),
+  ('business',  'scheduling.multi_division', true,  null)
 on conflict (plan_key, feature_key) do nothing;

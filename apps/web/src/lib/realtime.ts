@@ -40,6 +40,44 @@ export async function publishFixtureUpdate(
 }
 
 /**
+ * Broadcast a schedule_changed event on `division:{id}` after a schedule
+ * write (doc 12 §2/§6 — two organisers on one board see each other's moves,
+ * last-write-wins per fixture). Fire-and-forget, never throws.
+ */
+export async function publishDivisionUpdate(
+  divisionId: string,
+  reason: "schedule" | "publish" | "start",
+): Promise<void> {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return;
+  try {
+    const res = await fetch(`${url}/realtime/v1/api/broadcast`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${key}`,
+        apikey: key,
+      },
+      body: JSON.stringify({
+        messages: [
+          {
+            topic: `division:${divisionId}`,
+            event: "schedule_changed",
+            payload: { v: Date.now(), reason, at: new Date().toISOString() },
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      console.warn(`[realtime] division broadcast failed (${res.status}) for ${divisionId}`);
+    }
+  } catch (err) {
+    console.warn("[realtime] division broadcast error:", err);
+  }
+}
+
+/**
  * Mint a short-lived JWT for Supabase Realtime subscriber auth.
  * Signed with SUPABASE_JWT_SECRET (same secret Supabase uses for its own JWTs).
  */

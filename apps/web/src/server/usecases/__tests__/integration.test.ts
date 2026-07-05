@@ -11,6 +11,7 @@ import { createCompetition, deleteCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures, completeStage, getStandings } from "../stages";
+import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { createApiKey } from "../api-keys";
 import { publicStandings } from "../public";
@@ -109,6 +110,13 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     expect(again.created).toBe(0);
     expect(again.existing).toBe(6);
 
+    // Scoring opens only after the explicit start (doc 12 §1, PROMPT-17).
+    await expect(decide(auth, first.fixtures[0].id, 2, 0)).rejects.toSatisfy((err: unknown) =>
+      EngineError.is(err, "WRONG_PHASE"),
+    );
+    const started = await startDivision(auth, division.id);
+    expect(started.status).toBe("active");
+
     // Decide every fixture (home wins) → standings + guarded completion.
     for (const fixture of first.fixtures) {
       await decide(auth, fixture.id, 2, 0);
@@ -140,6 +148,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     ]);
     const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
     const { fixtures } = await generateStageFixtures(auth, stage.id);
+    await startDivision(auth, division.id);
     const fixtureId = fixtures[0].id;
 
     const started = await scoreEvent(auth, fixtureId, {
@@ -198,6 +207,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     ]);
     const [stage] = await createStages(auth, division.id, { seq: 1, kind: "knockout", name: "KO", config: {} });
     const generated = await generateStageFixtures(auth, stage.id);
+    await startDivision(auth, division.id);
 
     const semis = generated.fixtures.filter((f) => f.round_no === 1);
     const final = generated.fixtures.find((f) => f.round_no === 2);
@@ -270,6 +280,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     const seedOf = new Map(entrants.map((e) => [e.id, e.seed]));
     expect([...aMembers].map((id) => seedOf.get(id as string)).sort()).toEqual([1, 4, 5, 8]);
 
+    await startDivision(auth, division.id);
     // Decide everything (home wins), complete → KO gets seeded.
     for (const fixture of generated.fixtures) await decide(auth, fixture.id, 1, 0);
     const completion = await completeStage(auth, groups.id);
@@ -337,6 +348,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     ]);
     const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
     const { fixtures } = await generateStageFixtures(auth, stage.id);
+    await startDivision(auth, division.id);
     await decide(auth, fixtures[0].id, 1, 0);
     await expect(deleteCompetition(auth, competition.id)).rejects.toMatchObject({ status: 409 });
   });

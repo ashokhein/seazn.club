@@ -32,6 +32,8 @@ const FEATURE_REASONS: Record<string, string> = {
   webhooks: "Webhooks need the Business plan.",
   exports: "CSV/PDF exports are a Pro feature.",
   "scheduling.constraints": "The scheduling constraints solver is a Pro feature.",
+  "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
+  "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",
   "officials.assignment": "Officials assignment is a Pro feature.",
 };
 

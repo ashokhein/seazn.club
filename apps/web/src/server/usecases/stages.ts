@@ -51,7 +51,7 @@ const STAGE_COLS = ["id", "division_id", "seq", "kind", "name", "config", "quali
 export const FIXTURE_COLS = [
   "id", "stage_id", "division_id", "pool_id", "round_no", "seq_in_round",
   "home_entrant_id", "away_entrant_id", "scheduled_at", "venue", "court_label",
-  "officials", "status", "outcome", "created_at",
+  "officials", "status", "outcome", "schedule_source", "schedule_locked", "created_at",
 ] as const;
 
 export interface FixtureRow {
@@ -69,6 +69,8 @@ export interface FixtureRow {
   officials: unknown[];
   status: string;
   outcome: unknown;
+  schedule_source: "none" | "auto" | "manual";
+  schedule_locked: boolean;
   created_at: string;
 }
 

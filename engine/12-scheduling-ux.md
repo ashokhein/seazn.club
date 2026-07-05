@@ -78,11 +78,17 @@ create table schedule_settings (          -- per division (or competition-level 
 from groups) schedule with TBD entrants — cards render feed labels; rest/overlap warnings
 recompute automatically when entrants resolve.
 
+Publish-gating (PROMPT-17): `divisions.status` gains the `scheduled` state (§1
+machine), and `public_fixtures_v` nulls `scheduled_at/venue/court_label` while a
+division is still in `setup` — so the public schedule tab, `/api/v1/public/...
+/schedule` and the `.ics` feed reflect the published timetable only, from the
+same view. Quick-start divisions jump straight to `active`, unaffected.
+
 ## 4. Engine/API surface (extends doc 08 §3)
 
 ```
-PUT   /api/v1/divisions/{id}/schedule-settings
-POST  /api/v1/stages/{id}/schedule/auto        # run/re-run pure pass; body {onlyUnlocked: true}
+GET/PUT /api/v1/divisions/{id}/schedule-settings
+POST  /api/v1/stages/{id}/schedule/auto        # run/re-run pure pass; body {only_unlocked: true}
                                                # → {assignments, conflicts[]}; nothing persisted
 POST  /api/v1/stages/{id}/schedule/apply       # persist an assignment set (from auto or editor)
 PATCH /api/v1/fixtures/{id}                    # single move: {scheduled_at, court_label, schedule_locked}
@@ -92,6 +98,21 @@ POST  /api/v1/divisions/{id}/start             # the "start tournament" action (
 ```
 Auto pass runs `@seazn/engine` `scheduling/calendar.ts` — the engine stays pure; persist
 is a separate step (propose → review → apply, same pattern as fixture generation).
+
+PROMPT-17 implementation notes (deviations from the sketches above):
+- Body field is `only_unlocked` (house snake_case JSON), not `onlyUnlocked`.
+- Blocking writes (conflict.court, direct-feed warn.order) are rejected with
+  `409 SCHEDULE_CONFLICT` carrying the conflict list; warnings ride along in
+  200 responses and render as badges.
+- A bulk apply appends ONE `schedule_applied {source, moves[]}` division event
+  (each move still records `{fixture, from, to}`); single PATCH moves append
+  `schedule_edited {fixture, from, to}` as specified.
+- Session-window violations are reported under the `warn.blackout` code with
+  detail "outside session windows" — the complement of the windows is treated
+  as blackout time, keeping the §2 taxonomy closed.
+- `warn.order` is emitted for direct winner/loser feeds (which block);
+  non-direct (transitive) order warnings are a later refinement.
+- `schedule_settings` also carries `tz` (§6 DST note) and `updated_at`.
 
 ## 5. Entitlements (extends doc 10)
 
