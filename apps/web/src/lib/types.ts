@@ -77,6 +77,9 @@ export interface InvitePreview {
 export const loginSchema = z.object({
   email: z.string().email().max(120),
   password: z.string().min(6).max(100),
+  /** Post-auth redirect carried through invite links; validated server-side
+   *  by safeNextPath. Without this key .strict() 400s every invite signup. */
+  next: z.string().max(500).optional(),
 }).strict();
 
 export const signupSchema = loginSchema;
