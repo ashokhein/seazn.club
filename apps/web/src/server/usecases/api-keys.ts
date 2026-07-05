@@ -37,6 +37,9 @@ export async function createApiKey(
 ): Promise<ApiKeyRow & { secret: string }> {
   requireSession(auth);
   await requireFeature(auth.orgId, "api.access"); // 402 for non-Pro orgs
+  // Doc 10 §1 Pro→Business ladder: write scopes (and webhooks, when they
+  // land) need `api.write` — Business only.
+  if (input.scopes.includes("write")) await requireFeature(auth.orgId, "api.write");
   const secret = mintApiKeySecret();
   const row = await withTenant(auth.orgId, async (tx) => {
     const [created] = await tx<ApiKeyRow[]>`

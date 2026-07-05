@@ -5,7 +5,9 @@ import "server-only";
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
-import { HttpError } from "@/lib/errors";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { EngineError } from "@seazn/engine/core";
 import {
   generateRoundRobin,
@@ -86,9 +88,23 @@ export async function createStages(
   input: CreateStages,
 ): Promise<StageRow[]> {
   const inputs: StageInput[] = Array.isArray(input) ? input : [input];
+  // Doc 10 §1: `formats.double_elim` is Pro — gate before any insert.
+  if (inputs.some((s) => s.kind === "double_elim")) {
+    await requireFeature(auth.orgId, "formats.double_elim");
+  }
   return withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
+    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+
+    // Doc 10 §1: `stages.per_division.max` (2/4/∞) — the batch must fit,
+    // counted in the same tx as the inserts (doc 10 §2 rule 1).
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from stages where division_id = ${divisionId}`;
+    const quota = await withinLimit(auth.orgId, "stages.per_division.max", n + inputs.length);
+    if (!quota.ok) throw new PaymentRequiredError("stages.per_division.max");
+
     const rows: StageRow[] = [];
     for (const s of inputs) {
       const [dupe] = await tx`

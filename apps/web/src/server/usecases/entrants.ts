@@ -4,10 +4,12 @@ import "server-only";
 // person the tenant can't see doesn't exist.
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { z } from "zod";
 import type { CreateEntrant, PatchEntrant, EntrantMemberInput } from "@/server/api-v1/schemas";
+import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 
 type Tx = postgres.TransactionSql;
 type MemberInput = z.infer<typeof EntrantMemberInput>;
@@ -79,9 +81,17 @@ export async function createEntrants(
   inputs: CreateEntrant[],
 ): Promise<EntrantRow[]> {
   return withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ status: string }[]>`
-      select status from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ status: string; competition_id: string }[]>`
+      select status, competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
+    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+
+    // Doc 10 §1: `entrants.per_division.max` (16/64/256) — the whole batch
+    // must fit; count in the same tx as the inserts (doc 10 §2 rule 1).
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from entrants where division_id = ${divisionId}`;
+    const quota = await withinLimit(auth.orgId, "entrants.per_division.max", n + inputs.length);
+    if (!quota.ok) throw new PaymentRequiredError("entrants.per_division.max");
 
     const rows: EntrantRow[] = [];
     for (const input of inputs) {

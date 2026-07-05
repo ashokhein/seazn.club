@@ -310,6 +310,14 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
       values (${auth.orgId}, 'api.access', true)
       on conflict (org_id, feature_key) do update set bool_value = true`;
+    // Write scopes are the Business rung (doc 10 §1 api.write, PROMPT-13).
+    await expect(
+      createApiKey(auth, { name: "ci", scopes: ["read", "write"] }),
+    ).rejects.toMatchObject({ featureKey: "api.write" });
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+      values (${auth.orgId}, 'api.write', true)
+      on conflict (org_id, feature_key) do update set bool_value = true`;
     const key = await createApiKey(auth, { name: "ci", scopes: ["read", "write"] });
     expect(key.secret.startsWith("sk_live_")).toBe(true);
     const [stored] = await sql<{ key_hash: string }[]>`

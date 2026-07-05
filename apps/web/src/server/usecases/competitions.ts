@@ -8,6 +8,11 @@ import { withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { page, type ListQuery, type Page } from "@/server/api-v1/http";
 import type { CreateCompetition, PatchCompetition } from "@/server/api-v1/schemas";
+import {
+  ACTIVE_COMPETITION_STATUSES,
+  assertCompetitionNotFrozen,
+  frozenCompetitionIds,
+} from "./entitlement-freeze";
 
 export interface CompetitionRow {
   id: string;
@@ -21,6 +26,8 @@ export interface CompetitionRow {
   branding: unknown;
   status: string;
   created_at: string;
+  /** doc 10 §2.4 — over-quota after a downgrade: read-only, never deleted. */
+  frozen?: boolean;
 }
 
 const COLS = [
@@ -52,8 +59,22 @@ export async function listCompetitions(
       : await tx<CompetitionRow[]>`
           select ${tx(COLS)} from competitions
           order by created_at desc, id desc limit ${query.limit + 1}`;
-    return page(rows, query.limit);
+    const frozen = await frozenCompetitionIds(auth.orgId, tx);
+    return page(rows.map((r) => ({ ...r, frozen: frozen.has(r.id) })), query.limit);
   });
+}
+
+// Doc 10 §1: `competitions.max_active` — draft/published/live competitions
+// count; completed/archived don't. Enforced at the write (doc 10 §2 rule 1).
+async function assertActiveQuota(auth: AuthCtx): Promise<void> {
+  const count = await withTenant(auth.orgId, async (tx) => {
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from competitions
+      where status in ${tx([...ACTIVE_COMPETITION_STATUSES])}`;
+    return n;
+  });
+  const { ok } = await withinLimit(auth.orgId, "competitions.max_active", count + 1);
+  if (!ok) throw new PaymentRequiredError("competitions.max_active");
 }
 
 // Doc 10 §1: `dashboard.public.max` — Community holds 1 public competition at
@@ -77,6 +98,7 @@ export async function createCompetition(
   input: CreateCompetition,
 ): Promise<CompetitionRow> {
   const slug = input.slug ?? slugify(input.name);
+  await assertActiveQuota(auth);
   if (input.visibility === "public") await assertPublicQuota(auth);
   return withTenant(auth.orgId, async (tx) => {
     const [existing] = await tx`select 1 from competitions where slug = ${slug}`;
@@ -97,8 +119,20 @@ export async function getCompetition(auth: AuthCtx, id: string): Promise<Competi
     const [row] = await tx<CompetitionRow[]>`
       select ${tx(COLS)} from competitions where id = ${id}`;
     if (!row) throw new HttpError(404, "competition not found");
-    return row;
+    const frozen = await frozenCompetitionIds(auth.orgId, tx);
+    return { ...row, frozen: frozen.has(row.id) };
   });
+}
+
+// A frozen competition is read-only — but retiring it (status → completed/
+// archived) must stay possible, or the org could never get back under quota.
+function isRetirePatch(patch: PatchCompetition): boolean {
+  const keys = Object.keys(patch);
+  return (
+    keys.length === 1 &&
+    keys[0] === "status" &&
+    (patch.status === "completed" || patch.status === "archived")
+  );
 }
 
 export async function patchCompetition(
@@ -106,6 +140,7 @@ export async function patchCompetition(
   id: string,
   patch: PatchCompetition,
 ): Promise<CompetitionRow> {
+  if (!isRetirePatch(patch)) await assertCompetitionNotFrozen(auth.orgId, id);
   if (patch.visibility === "public") await assertPublicQuota(auth, id);
   return withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {

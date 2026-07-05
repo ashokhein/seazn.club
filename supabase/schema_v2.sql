@@ -539,12 +539,13 @@ create or replace function public_person_name(full_name text, consent jsonb) ret
     end
   $$;
 
--- Branding is a Pro read feature (doc 10 §1) — nulled here, server-side, for
--- non-entitled orgs. `visibility` rides along so pages can render unlisted
--- competitions with a noindex meta and keep them out of the sitemap.
+-- Branding is a Pro read feature (doc 10 §1, key `dashboard.branding` since
+-- PROMPT-13) — nulled here, server-side, for non-entitled orgs. `visibility`
+-- rides along so pages can render unlisted competitions with a noindex meta
+-- and keep them out of the sitemap.
 create or replace view public_competitions_v as
   select id, org_id, name, slug, description, starts_on, ends_on,
-         case when org_has_feature(org_id, 'branding') then branding
+         case when org_has_feature(org_id, 'dashboard.branding') then branding
               else '{}'::jsonb end as branding,
          status, created_at, visibility
   from competitions
@@ -602,14 +603,19 @@ create or replace view public_standings_v as
 -- `person_id` is exposed ONLY with public_name consent: it is the link target
 -- for the player card, and the card 404s without that consent (doc 06 §4.7) —
 -- so a roster row without consent gets initials and no link.
+-- Photos and player-card links are additionally Pro read features
+-- (doc 10 §1 `dashboard.player_profiles`, PROMPT-13): consent makes them
+-- publishable, the entitlement makes them published.
 create or replace view public_entrants_v as
   select e.id, e.division_id, e.kind, e.display_name, e.seed, e.status,
          coalesce(
            (select jsonb_agg(jsonb_build_object(
               'name',  public_person_name(p.full_name, p.consent),
               'photo', case when coalesce((p.consent->>'public_photo')::boolean, false)
+                             and org_has_feature(c.org_id, 'dashboard.player_profiles')
                             then p.photo_path else null end,
               'person_id', case when coalesce((p.consent->>'public_name')::boolean, false)
+                                 and org_has_feature(c.org_id, 'dashboard.player_profiles')
                                 then p.id else null end,
               'squad_number', em.squad_number,
               'position', em.default_position_key)
@@ -626,13 +632,16 @@ create or replace view public_entrants_v as
 
 -- Player card source (doc 09 §2): only persons who (a) gave public_name
 -- consent AND (b) are rostered in an entrant of a publicly visible
--- competition. Everyone else simply does not exist here — the card 404s.
+-- competition AND (c) whose org holds `dashboard.player_profiles`
+-- (doc 10 §1, PROMPT-13). Everyone else simply does not exist here — the
+-- card 404s.
 create or replace view public_players_v as
   select p.id, p.org_id, p.full_name as name,
          case when coalesce((p.consent->>'public_photo')::boolean, false)
               then p.photo_path else null end as photo
   from persons p
   where coalesce((p.consent->>'public_name')::boolean, false)
+    and org_has_feature(p.org_id, 'dashboard.player_profiles')
     and exists (
       select 1 from entrant_members em
       join entrants e     on e.id = em.entrant_id
@@ -655,8 +664,9 @@ grant select on public_competitions_v, public_divisions_v, public_fixtures_v,
                 public_standings_v, public_entrants_v, public_players_v,
                 public_stages_v, public_pools_v to app_user;
 
--- Doc 10 §1 public-dashboard quota (PROMPT-12 item 7; full matrix lands with
--- PROMPT-13): Community may hold 1 public competition at a time, Pro unlimited.
+-- Doc 10 §1 public-dashboard quota (PROMPT-12 item 7; the full v2 matrix is
+-- seeded by migrations/012_entitlements_v2.sql, which apply-db runs BEFORE
+-- this file): Community may hold 1 public competition at a time, Pro unlimited.
 insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
   ('community', 'dashboard.public.max', null, 1),
   ('pro',       'dashboard.public.max', null, null)

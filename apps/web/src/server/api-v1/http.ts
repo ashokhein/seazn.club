@@ -9,6 +9,7 @@ import { ZodError, type ZodType } from "zod";
 import * as Sentry from "@sentry/nextjs";
 import { EngineError, type EngineErrorCode } from "@seazn/engine/core";
 import { AuthError, HttpError, PaymentRequiredError } from "@/lib/errors";
+import { featureReason } from "@/lib/feature-copy";
 
 // EngineError.code → HTTP status (doc 08 §1, spec 03 §7). Central map — the
 // only place engine codes meet HTTP. SEQ_CONFLICT is the optimistic-concurrency
@@ -105,8 +106,13 @@ export async function v1<T>(fn: () => Promise<T | Reply<T>>): Promise<NextRespon
       return errorResponse(requestId, status, err.code, err.message, extra);
     }
     if (err instanceof PaymentRequiredError) {
+      // Upgrade-moment contract (doc 10 §3): feature_key drives the contextual
+      // paywall (<UpgradeGate>), reason is the human sentence. `feature` kept
+      // for pre-PROMPT-13 clients.
       return errorResponse(requestId, 402, "PAYMENT_REQUIRED", err.message, {
         feature: err.featureKey,
+        feature_key: err.featureKey,
+        reason: featureReason(err.featureKey),
       });
     }
     if (err instanceof AuthError) {
