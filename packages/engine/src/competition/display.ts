@@ -23,6 +23,7 @@ export interface DerivedMetricSpec {
 export const DERIVED_METRICS: readonly DerivedMetricSpec[] = [
   { key: "nrr", label: "NRR", decimals: 3 },
   { key: "set_ratio", label: "Ratio", decimals: 2 },
+  { key: "board_ratio", label: "Board ratio", decimals: 2 },
   { key: "point_ratio", label: "Pts ratio", decimals: 2 },
   { key: "buchholz_cut1", label: "Buchholz Cut-1", decimals: 1 },
   { key: "buchholz", label: "Buchholz", decimals: 1 },
@@ -54,6 +55,8 @@ export function derivedMetricText(row: StandingsRow, key: TiebreakerKey): string
     }
     case "set_ratio":
       return ratioText(metric(row, "sets_won"), metric(row, "sets_lost"), 2);
+    case "board_ratio":
+      return ratioText(metric(row, "boards_won"), metric(row, "boards_lost"), 2);
     case "point_ratio":
       return ratioText(metric(row, "points_won"), metric(row, "points_lost"), 2);
     case "buchholz":
@@ -88,6 +91,7 @@ const TIE_BREAK_LABELS: Record<string, string> = {
   fair_play: "fair play",
   nrr: "net run rate",
   set_ratio: "set ratio",
+  board_ratio: "board ratio",
   point_ratio: "point ratio",
   h2h_points: "head-to-head",
   h2h_diff: "head-to-head difference",
