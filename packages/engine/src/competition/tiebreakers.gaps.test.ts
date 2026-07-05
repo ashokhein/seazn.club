@@ -129,6 +129,7 @@ describe("validateCascade rejections (spec 05 §4.1)", () => {
     ["fair_play", ["fair_play"]],
     ["NRR ledger", ["nrr"]],
     ["sets won/lost", ["set_ratio"]],
+    ["boards won/lost", ["board_ratio"]],
     ["points won/lost", ["point_ratio"]],
   ];
 
@@ -151,6 +152,9 @@ describe("validateCascade rejections (spec 05 §4.1)", () => {
     ).not.toThrow();
     expect(() =>
       validateCascade(["set_ratio"], { metrics: ["sets_won", "sets_lost"].map(metric) }),
+    ).not.toThrow();
+    expect(() =>
+      validateCascade(["board_ratio"], { metrics: ["boards_won", "boards_lost"].map(metric) }),
     ).not.toThrow();
     expect(() =>
       validateCascade(["point_ratio"], { metrics: ["points_won", "points_lost"].map(metric) }),
