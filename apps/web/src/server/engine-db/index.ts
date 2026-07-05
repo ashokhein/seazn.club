@@ -7,6 +7,7 @@ export { rebuildState, verifyStateConsistency, type ConsistencyReport } from "./
 export {
   recomputeStandings,
   completeStageIfReady,
+  appendDivisionEvent,
   type CompleteResult,
 } from "./competition";
 export { resolveModule } from "./registry";

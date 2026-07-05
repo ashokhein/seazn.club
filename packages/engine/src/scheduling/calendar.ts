@@ -15,6 +15,13 @@ export interface Blackout {
   to: number; // exclusive
 }
 
+// A playable window (doc 12 §2): matches must sit fully inside one. The
+// complement of the union of windows behaves as a global blackout.
+export interface SessionWindow {
+  from: number;
+  to: number; // exclusive
+}
+
 export interface SlotConfig {
   startAt: number; // earliest slot (injected)
   matchMinutes: number;
@@ -22,6 +29,7 @@ export interface SlotConfig {
   courts: string[]; // court/venue labels, tried in order
   perEntrantMinRest: number; // minutes an entrant must rest between its matches
   blackouts?: readonly Blackout[];
+  sessionWindows?: readonly SessionWindow[]; // when set, matches only inside these
   horizonMinutes?: number; // how far past startAt to search before reporting no_slot
 }
 
@@ -47,13 +55,24 @@ export type ConflictReason =
   | "no_slot" // no court/time within the horizon satisfies the hard constraints
   | "court" // two matches share a court+time (blocks — physically impossible)
   | "rest" // an entrant is below perEntrantMinRest (warn)
-  | "blackout" // inside a blackout window (warn)
-  | "person_overlap"; // a person plays in two overlapping matches (warn — doc 06 §4.3)
+  | "blackout" // inside a blackout window / outside every session window (warn)
+  | "person_overlap" // a person plays in two overlapping matches (warn — doc 06 §4.3)
+  | "order"; // scheduled before a fixture that feeds it (doc 12 §2; blocks when direct)
 
 export interface Conflict {
   fixtureId: string;
   reason: ConflictReason;
   detail?: string;
+  /** `order` only: true when the dependency is a direct feed (blocks, doc 12 §2). */
+  direct?: boolean;
+}
+
+/** Bracket dependency for order validation: `fixtureId` must not start before
+ *  `dependsOn` ends. `direct` = winner/loser feed (blocks); otherwise warns. */
+export interface OrderDependency {
+  fixtureId: string;
+  dependsOn: string;
+  direct?: boolean;
 }
 
 export interface SlotInput {
@@ -69,6 +88,43 @@ export interface SlotResult {
 
 const entrantsOf = (f: SchedulableFixture): EntrantId[] =>
   [f.home, f.away].filter((e): e is EntrantId => e !== undefined);
+
+// Session windows reduce to blackouts: the complement of their union over
+// [lo, hi] is unplayable time. Keeps every downstream check (slotting,
+// validation, candidate scan) window-aware without a second interval system.
+function sessionGaps(
+  windows: readonly SessionWindow[],
+  lo: number,
+  hi: number,
+): Blackout[] {
+  const merged = [...windows]
+    .sort((a, b) => a.from - b.from)
+    .reduce<SessionWindow[]>((acc, w) => {
+      const last = acc[acc.length - 1];
+      if (last && w.from <= last.to) last.to = Math.max(last.to, w.to);
+      else acc.push({ ...w });
+      return acc;
+    }, []);
+  const gaps: Blackout[] = [];
+  let cursor = lo;
+  for (const w of merged) {
+    if (w.from > cursor) gaps.push({ from: cursor, to: w.from });
+    cursor = Math.max(cursor, w.to);
+  }
+  if (cursor < hi) gaps.push({ from: cursor, to: hi });
+  return gaps;
+}
+
+// Effective blackout list: configured blackouts plus session-window complement.
+function effectiveBlackouts(
+  config: Pick<SlotConfig, "blackouts" | "sessionWindows">,
+  lo: number,
+  hi: number,
+): readonly Blackout[] {
+  const blackouts = config.blackouts ?? [];
+  if (!config.sessionWindows || config.sessionWindows.length === 0) return blackouts;
+  return [...blackouts, ...sessionGaps(config.sessionWindows, lo, hi)];
+}
 
 const overlaps = (aStart: number, aEnd: number, bStart: number, bEnd: number): boolean =>
   aStart < bEnd && bStart < aEnd;
@@ -130,7 +186,14 @@ export function slotFixtures(input: SlotInput): SlotResult {
   const gapMs = config.gapMinutes * MS_PER_MIN;
   const restMs = config.perEntrantMinRest * MS_PER_MIN;
   const horizon = config.startAt + (config.horizonMinutes ?? 365 * 24 * 60) * MS_PER_MIN;
-  const blackouts = config.blackouts ?? [];
+  // Session-gap range must span every time the pass can touch, including
+  // pinned slots outside [startAt, horizon].
+  const pinned = input.fixtures
+    .map((f) => f.locked?.startAt)
+    .filter((t): t is number => t !== undefined);
+  const lo = Math.min(config.startAt, ...pinned) - durMs;
+  const hi = Math.max(horizon, ...pinned.map((t) => t + durMs)) + durMs;
+  const blackouts = effectiveBlackouts(config, lo, hi);
 
   const bookings: Assignment[] = [...(input.existing ?? [])]; // court occupancy (incl. siblings)
   const placed: Assignment[] = [];
@@ -210,18 +273,23 @@ export function slotFixtures(input: SlotInput): SlotResult {
 }
 
 // Full conflict report over a fixed board (the drag-and-drop validate pass, doc
-// 12 §2/§4): court double-bookings (block), rest and blackout violations, and
-// per-person overlaps (warn). Pure — the same inputs always give the same report.
+// 12 §2/§4): court double-bookings (block), rest / blackout / session-window
+// violations, per-person overlaps, and feed-order violations against the given
+// bracket dependencies (block when direct). Pure — the same inputs always give
+// the same report.
 export function validateAssignments(
   assignments: readonly Assignment[],
-  config: Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts">,
+  config: Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows">,
   existing: readonly Assignment[] = [],
+  dependencies: readonly OrderDependency[] = [],
 ): Conflict[] {
   const restMs = config.perEntrantMinRest * MS_PER_MIN;
   const gapMs = config.gapMinutes * MS_PER_MIN;
   const blackouts = config.blackouts ?? [];
+  const windows = config.sessionWindows ?? [];
   const conflicts: Conflict[] = [];
   const board = [...existing, ...assignments];
+  const byId = new Map(board.map((a) => [a.fixtureId, a]));
 
   for (const a of assignments) {
     // Court clash / blackout — check against everything else on the board.
@@ -235,6 +303,10 @@ export function validateAssignments(
         conflicts.push({ fixtureId: a.fixtureId, reason: "blackout", detail: "inside a blackout window" });
         break;
       }
+    }
+    // Session windows: the match must sit fully inside one (doc 12 §2).
+    if (windows.length > 0 && !windows.some((w) => a.startAt >= w.from && a.endAt <= w.to)) {
+      conflicts.push({ fixtureId: a.fixtureId, reason: "blackout", detail: "outside session windows" });
     }
     // Rest & person overlap — against other matches sharing an entrant/person.
     for (const other of board) {
@@ -256,6 +328,24 @@ export function validateAssignments(
           conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `person ${p} overlap` });
         }
       }
+    }
+  }
+
+  // Feed order (doc 12 §2 warn.order): a fixture may not start before a
+  // fixture that feeds it has finished. Direct feeds block; the API layer maps
+  // `direct` to blocking. Dependencies whose source is not on the board are
+  // fine — an unscheduled feeder constrains nothing yet.
+  for (const dep of dependencies) {
+    const target = byId.get(dep.fixtureId);
+    const source = byId.get(dep.dependsOn);
+    if (!target || !source) continue;
+    if (target.startAt < source.endAt) {
+      conflicts.push({
+        fixtureId: dep.fixtureId,
+        reason: "order",
+        detail: `starts before feeder ${dep.dependsOn} ends`,
+        direct: dep.direct === true,
+      });
     }
   }
   return conflicts;

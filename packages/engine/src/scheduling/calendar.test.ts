@@ -119,6 +119,42 @@ describe("slotFixtures — greedy placement (spec 05 §2.6)", () => {
   });
 });
 
+describe("slotFixtures — session windows (doc 12 §2, PROMPT-17)", () => {
+  it("schedules only inside session windows", () => {
+    const fixtures: SchedulableFixture[] = [
+      { id: "f1", roundNo: 1, home: "A", away: "B" },
+      { id: "f2", roundNo: 1, home: "C", away: "D" },
+      { id: "f3", roundNo: 2, home: "A", away: "C" },
+    ];
+    const windows = [
+      { from: 10 * MIN, to: 45 * MIN }, // fits exactly one 30-min match
+      { from: 120 * MIN, to: 300 * MIN },
+    ];
+    const { assignments, conflicts } = slotFixtures({
+      fixtures,
+      config: baseConfig({ sessionWindows: windows }),
+    });
+    expect(conflicts).toHaveLength(0);
+    for (const a of assignments) {
+      expect(windows.some((w) => a.startAt >= w.from && a.endAt <= w.to)).toBe(true);
+    }
+  });
+
+  it("reports a locked slot outside every session window as a blackout", () => {
+    const fixtures: SchedulableFixture[] = [
+      { id: "pin", roundNo: 1, home: "A", away: "B", locked: { court: "C1", startAt: 50 * MIN } },
+    ];
+    const { assignments, conflicts } = slotFixtures({
+      fixtures,
+      config: baseConfig({ sessionWindows: [{ from: 0, to: 45 * MIN }] }),
+    });
+    expect(assignments).toHaveLength(1); // pin honoured, not moved
+    expect(conflicts).toEqual([
+      expect.objectContaining({ fixtureId: "pin", reason: "blackout" }),
+    ]);
+  });
+});
+
 describe("validateAssignments — board conflict report (doc 12 §2/§4)", () => {
   it("flags a court double-booking", () => {
     const a: Assignment[] = [
@@ -145,6 +181,66 @@ describe("validateAssignments — board conflict report (doc 12 §2/§4)", () =>
     ];
     const conflicts = validateAssignments(a, { perEntrantMinRest: 60, gapMinutes: 0 });
     expect(conflicts.some((c) => c.reason === "rest")).toBe(true);
+  });
+
+  it("flags an assignment outside every session window", () => {
+    const a: Assignment[] = [
+      { fixtureId: "x", court: "C1", startAt: 50 * MIN, endAt: 80 * MIN, entrants: ["A"], people: [] },
+    ];
+    const conflicts = validateAssignments(a, {
+      perEntrantMinRest: 0,
+      gapMinutes: 0,
+      sessionWindows: [{ from: 0, to: 45 * MIN }],
+    });
+    expect(conflicts).toEqual([
+      expect.objectContaining({ fixtureId: "x", reason: "blackout", detail: "outside session windows" }),
+    ]);
+  });
+
+  it("flags a fixture scheduled before its feeder ends; direct feeds are marked", () => {
+    const a: Assignment[] = [
+      { fixtureId: "semi", court: "C1", startAt: 60 * MIN, endAt: 90 * MIN, entrants: [], people: [] },
+      { fixtureId: "final", court: "C2", startAt: 0, endAt: 30 * MIN, entrants: [], people: [] },
+    ];
+    const conflicts = validateAssignments(a, { perEntrantMinRest: 0, gapMinutes: 0 }, [], [
+      { fixtureId: "final", dependsOn: "semi", direct: true },
+    ]);
+    expect(conflicts).toEqual([
+      expect.objectContaining({ fixtureId: "final", reason: "order", direct: true }),
+    ]);
+  });
+
+  it("order check ignores dependencies whose feeder is not on the board", () => {
+    const a: Assignment[] = [
+      { fixtureId: "final", court: "C1", startAt: 0, endAt: 30 * MIN, entrants: [], people: [] },
+    ];
+    const conflicts = validateAssignments(a, { perEntrantMinRest: 0, gapMinutes: 0 }, [], [
+      { fixtureId: "final", dependsOn: "semi", direct: true },
+    ]);
+    expect(conflicts).toHaveLength(0);
+  });
+
+  it("finds every seeded conflict class in one report (PROMPT-17 acceptance)", () => {
+    // One board seeding all five classes: court, rest, blackout (window +
+    // session), person_overlap, order.
+    const a: Assignment[] = [
+      { fixtureId: "c1", court: "C1", startAt: 0, endAt: 30 * MIN, entrants: ["A"], people: [] },
+      { fixtureId: "c2", court: "C1", startAt: 10 * MIN, endAt: 40 * MIN, entrants: ["B"], people: [] }, // court clash
+      { fixtureId: "r1", court: "C2", startAt: 35 * MIN, endAt: 65 * MIN, entrants: ["A"], people: [] }, // A rest < 60
+      { fixtureId: "b1", court: "C3", startAt: 200 * MIN, endAt: 230 * MIN, entrants: ["C"], people: [] }, // blackout
+      { fixtureId: "p1", court: "C4", startAt: 0, endAt: 30 * MIN, entrants: ["D"], people: ["kid"] },
+      { fixtureId: "p2", court: "C5", startAt: 0, endAt: 30 * MIN, entrants: ["E"], people: ["kid"] }, // person overlap
+      { fixtureId: "o1", court: "C6", startAt: 500 * MIN, endAt: 530 * MIN, entrants: [], people: [] },
+      { fixtureId: "o2", court: "C7", startAt: 400 * MIN, endAt: 430 * MIN, entrants: [], people: [] }, // before feeder o1
+    ];
+    const conflicts = validateAssignments(
+      a,
+      { perEntrantMinRest: 60, gapMinutes: 0, blackouts: [{ from: 195 * MIN, to: 240 * MIN }] },
+      [],
+      [{ fixtureId: "o2", dependsOn: "o1", direct: true }],
+    );
+    const reasons = new Set(conflicts.map((c) => c.reason));
+    expect(reasons).toEqual(new Set(["court", "rest", "blackout", "person_overlap", "order"]));
   });
 });
 
@@ -231,6 +327,57 @@ describe("slotFixtures — invariants (spec 05 §6)", () => {
         const assigned = new Set(assignments.map((a) => a.fixtureId));
         const noSlot = new Set(conflicts.filter((c) => c.reason === "no_slot").map((c) => c.fixtureId));
         for (const f of fixtures) expect(assigned.has(f.id) || noSlot.has(f.id)).toBe(true);
+      }),
+    );
+  });
+
+  it("re-run with all outputs locked = zero moves (PROMPT-17 acceptance)", () => {
+    fc.assert(
+      fc.property(fixtureArb, fc.integer({ min: 1, max: 3 }), (raw, courtCount) => {
+        const fixtures = dedupeIds(raw).filter((f) => f.home !== f.away);
+        const courts = Array.from({ length: courtCount }, (_, i) => `C${i}`);
+        const cfg = baseConfig({ courts, perEntrantMinRest: 30 });
+        const first = slotFixtures({ fixtures, config: cfg });
+        const bySlot = new Map(first.assignments.map((a) => [a.fixtureId, a]));
+        // Lock every placed fixture at its own output slot and re-run.
+        const locked = fixtures
+          .filter((f) => bySlot.has(f.id))
+          .map((f) => {
+            const a = bySlot.get(f.id) as Assignment;
+            return { ...f, locked: { court: a.court, startAt: a.startAt } };
+          });
+        const second = slotFixtures({ fixtures: locked, config: cfg });
+        const secondBySlot = new Map(second.assignments.map((a) => [a.fixtureId, a]));
+        expect(secondBySlot.size).toBe(bySlot.size);
+        for (const [id, a] of bySlot) {
+          const b = secondBySlot.get(id) as Assignment;
+          expect({ court: b.court, startAt: b.startAt, endAt: b.endAt }).toEqual({
+            court: a.court,
+            startAt: a.startAt,
+            endAt: a.endAt,
+          });
+        }
+        // A mutually consistent board re-locked must not report court clashes.
+        expect(second.conflicts.filter((c) => c.reason === "court")).toHaveLength(0);
+      }),
+    );
+  });
+
+  it("every assignment sits fully inside a session window when windows are set", () => {
+    fc.assert(
+      fc.property(fixtureArb, (raw) => {
+        const fixtures = dedupeIds(raw);
+        const windows = [
+          { from: 0, to: 90 * MIN },
+          { from: 240 * MIN, to: 480 * MIN },
+        ];
+        const { assignments } = slotFixtures({
+          fixtures,
+          config: baseConfig({ courts: ["C0", "C1"], sessionWindows: windows }),
+        });
+        for (const a of assignments) {
+          expect(windows.some((w) => a.startAt >= w.from && a.endAt <= w.to)).toBe(true);
+        }
       }),
     );
   });

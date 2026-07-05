@@ -8,6 +8,7 @@ import { withTenant } from "@/lib/db";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import { rateLimit } from "@/lib/rate-limit";
 import { requireFeature } from "@/lib/entitlements";
+import { EngineError } from "@seazn/engine/core";
 import { appendEvent, resolveModule } from "@/server/engine-db";
 import { recomputeStandings } from "@/server/engine-db";
 import { publishFixtureUpdate } from "@/lib/realtime";
@@ -97,9 +98,16 @@ async function assertEntitledToScore(
 ): Promise<void> {
   const ctx = await withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<
-      { sport_key: string; module_version: string; config: unknown; competition_id: string }[]
+      {
+        sport_key: string;
+        module_version: string;
+        config: unknown;
+        competition_id: string;
+        division_status: string;
+      }[]
     >`
-      select d.sport_key, d.module_version, d.config, d.competition_id
+      select d.sport_key, d.module_version, d.config, d.competition_id,
+             d.status as division_status
       from fixtures f join divisions d on d.id = f.division_id
       where f.id = ${fixtureId}`;
     if (!row) return null;
@@ -107,6 +115,14 @@ async function assertEntitledToScore(
     return row;
   });
   if (!ctx) return;
+
+  // Doc 12 §1: scoring opens only after the explicit start action
+  // (division_started). A published-but-unstarted timetable stays read-only.
+  if (ctx.division_status === "setup" || ctx.division_status === "scheduled") {
+    throw new EngineError("WRONG_PHASE", "division has not started — scoring is closed", {
+      divisionStatus: ctx.division_status,
+    });
+  }
 
   const sportModule = resolveModule(ctx.sport_key, ctx.module_version);
   const feature = requiredFeatureForEvent(sportModule, input.type);

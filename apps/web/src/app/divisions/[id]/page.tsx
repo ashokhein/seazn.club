@@ -13,6 +13,7 @@ import { resolveModule } from "@/server/engine-db";
 import { withTenant } from "@/lib/db";
 import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
+import { LaunchActions } from "@/components/v2/launch-actions";
 import { StandingsTable } from "@/components/public-site/standings-table";
 import { tieBreakLabel, type StandingsRow } from "@seazn/engine/competition";
 import type { MetricSpecLike } from "@/lib/public-site";
@@ -100,6 +101,8 @@ export default async function DivisionPage({
               {division.status}
             </span>
             {frozen && <span className="badge bg-sky-100 text-sky-700">read-only</span>}
+            <div className="flex-1" />
+            <LaunchActions divisionId={id} status={division.status} canEdit={editable} />
           </div>
         </div>
 
@@ -182,6 +185,7 @@ export default async function DivisionPage({
 
 function divisionStatusStyle(status: string): string {
   if (status === "active") return "bg-amber-100 text-amber-700";
+  if (status === "scheduled") return "bg-sky-100 text-sky-700";
   if (status === "completed") return "bg-emerald-100 text-emerald-700";
   return "bg-slate-100 text-slate-600";
 }

@@ -18,7 +18,8 @@ export const Slug = z
 
 export const Visibility = z.enum(["private", "unlisted", "public"]);
 export const CompetitionStatus = z.enum(["draft", "published", "live", "completed", "archived"]);
-export const DivisionStatus = z.enum(["setup", "active", "completed"]);
+// Doc 12 §1: 'scheduled' = timetable published, scoring not yet open.
+export const DivisionStatus = z.enum(["setup", "scheduled", "active", "completed"]);
 export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder"]);
 export const EntrantKind = z.enum(["team", "individual", "pair"]);
 export const EntrantStatus = z.enum(["registered", "confirmed", "withdrawn", "disqualified"]);
@@ -245,6 +246,8 @@ export const PatchFixture = z
     venue: z.string().max(200).nullable(),
     court_label: z.string().max(100).nullable(),
     officials: z.array(z.record(z.string(), z.unknown())),
+    /** Pin/lock (doc 12 §2): locked assignments survive re-running auto. */
+    schedule_locked: z.boolean(),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -265,6 +268,8 @@ export const Fixture = z.object({
   officials: z.array(z.unknown()),
   status: z.enum(["scheduled", "in_play", "decided", "finalized", "abandoned", "forfeited", "cancelled"]),
   outcome: z.unknown().nullable(),
+  schedule_source: z.enum(["none", "auto", "manual"]),
+  schedule_locked: z.boolean(),
   created_at: z.string(),
 });
 
@@ -362,4 +367,123 @@ export const CompleteResult = z.object({
   events: z.array(z.record(z.string(), z.unknown())),
   /** Set when completion resolved the next stage's qualification spec. */
   qualified: z.object({ stage_id: Uuid, entrants: z.array(Uuid) }).optional(),
+});
+
+// ---------------------------------------------------------------------------
+// Scheduling console (doc 12, PROMPT-17)
+// ---------------------------------------------------------------------------
+
+const IsoDateTime = z.iso.datetime({ offset: true });
+
+/** Doc 12 §3 schedule_settings.config — the calendar pass inputs (05 §2.6). */
+export const ScheduleConfig = z.object({
+  startAt: IsoDateTime.nullish(),
+  matchMinutes: z.number().int().min(1).max(24 * 60).default(30),
+  gapMinutes: z.number().int().min(0).max(24 * 60).default(0),
+  courts: z.array(z.string().min(1).max(100)).min(1).max(50).default(["Court 1"]),
+  perEntrantMinRest: z.number().int().min(0).max(24 * 60).default(0),
+  blackouts: z
+    .array(z.object({ court: z.string().max(100).optional(), from: IsoDateTime, to: IsoDateTime }))
+    .max(200)
+    .default([]),
+  sessionWindows: z
+    .array(z.object({ from: IsoDateTime, to: IsoDateTime }))
+    .max(200)
+    .default([]),
+  /** Quick-start rolling times (doc 12 §1.A): round r starts at startAt + (r−1)·roundMinutes. */
+  roundMinutes: z.number().int().min(1).max(24 * 60).nullish(),
+});
+export type ScheduleConfig = z.infer<typeof ScheduleConfig>;
+
+export const PutScheduleSettings = z.object({
+  config: ScheduleConfig,
+  /** Venue-local timezone (doc 12 §6 — DST boundaries in sessionWindows). */
+  tz: z.string().min(1).max(64).default("UTC"),
+});
+export type PutScheduleSettings = z.infer<typeof PutScheduleSettings>;
+
+export const ScheduleSettings = z.object({
+  division_id: Uuid,
+  config: ScheduleConfig,
+  tz: z.string(),
+  updated_at: z.string(),
+});
+
+/** Doc 12 §2 conflict taxonomy. `blocking` = conflict.court, or warn.order on
+ *  a direct feed; blocked writes are rejected, warnings persist as badges. */
+export const ScheduleConflict = z.object({
+  fixture_id: Uuid,
+  code: z.enum([
+    "conflict.court",
+    "warn.rest",
+    "warn.person_overlap",
+    "warn.order",
+    "warn.blackout",
+    "warn.no_slot",
+  ]),
+  blocking: z.boolean(),
+  detail: z.string().optional(),
+});
+export type ScheduleConflict = z.infer<typeof ScheduleConflict>;
+
+export const ScheduleAssignment = z.object({
+  fixture_id: Uuid,
+  scheduled_at: z.string(),
+  ends_at: z.string(),
+  court_label: z.string(),
+});
+export type ScheduleAssignment = z.infer<typeof ScheduleAssignment>;
+
+/** POST /stages/{id}/schedule/auto — propose only, nothing persisted (doc 12 §4). */
+export const AutoScheduleRequest = z.object({
+  /** true (default) = re-flow unlocked fixtures only, locked ones are fixed
+   *  obstacles ("re-flow remaining", doc 12 §2); false = fresh full pass. */
+  only_unlocked: z.boolean().default(true),
+});
+export type AutoScheduleRequest = z.infer<typeof AutoScheduleRequest>;
+
+export const AutoScheduleResult = z.object({
+  assignments: z.array(ScheduleAssignment),
+  conflicts: z.array(ScheduleConflict),
+});
+
+/** POST /stages/{id}/schedule/apply — persist an assignment set. */
+export const ApplyScheduleRequest = z.object({
+  assignments: z
+    .array(
+      z.object({
+        fixture_id: Uuid,
+        scheduled_at: IsoDateTime,
+        court_label: z.string().min(1).max(100),
+        venue: z.string().max(200).nullish(),
+        schedule_locked: z.boolean().optional(),
+      }),
+    )
+    .min(1)
+    .max(500),
+  source: z.enum(["auto", "manual"]).default("auto"),
+});
+export type ApplyScheduleRequest = z.infer<typeof ApplyScheduleRequest>;
+
+export const ApplyScheduleResult = z.object({
+  applied: z.number().int(),
+  conflicts: z.array(ScheduleConflict),
+});
+
+export const ValidateScheduleResult = z.object({
+  conflicts: z.array(ScheduleConflict),
+});
+
+export const PublishScheduleResult = z.object({
+  division_id: Uuid,
+  status: DivisionStatus,
+  published: z.boolean(),
+});
+
+export const StartDivisionResult = z.object({
+  division_id: Uuid,
+  status: DivisionStatus,
+  started: z.boolean(),
+  /** Fixtures generated by quick-start (0 when they already existed). */
+  generated: z.number().int(),
 });

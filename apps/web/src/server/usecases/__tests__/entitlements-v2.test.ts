@@ -16,6 +16,7 @@ import { createCompetition, patchCompetition, listCompetitions, getCompetition }
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
+import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { createApiKey } from "../api-keys";
 
@@ -94,6 +95,8 @@ async function makeFixture(auth: AuthCtx, competitionId: string, sport: string, 
     seq: 1, kind: "league", name: "L", config: {},
   } as never);
   const { fixtures } = await generateStageFixtures(auth, stage.id);
+  // Scoring opens only after start (doc 12 §1, PROMPT-17).
+  await startDivision(auth, division.id);
   return { division, entrants, fixtureId: fixtures[0].id };
 }
 

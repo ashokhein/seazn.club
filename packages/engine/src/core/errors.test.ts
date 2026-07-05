@@ -36,6 +36,8 @@ describe("EngineError", () => {
       "CONFIG_INVALID",
       "SEQ_CONFLICT",
       "STAGE_NOT_READY",
+      // PROMPT-17 scheduling console (doc 12 §2 blocking conflicts)
+      "SCHEDULE_CONFLICT",
       "ELIGIBILITY",
       // PROMPT-03 registry additions
       "MODULE_NOT_FOUND",

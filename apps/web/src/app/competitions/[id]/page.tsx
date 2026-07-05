@@ -41,6 +41,9 @@ export default async function CompetitionPage({
               {competition.name}
             </h1>
           </div>
+          <Link href={`/competitions/${competition.id}/schedule`} className="btn btn-ghost">
+            Schedule board
+          </Link>
           {publicPath && (
             <Link href={publicPath} className="btn btn-ghost" target="_blank">
               View public page ↗

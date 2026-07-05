@@ -300,8 +300,19 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   check("v1 generate is idempotent", v1data<{ created: number; existing: number }>(gen2).created === 0);
   const fixtures = v1data<{ fixtures: { id: string }[] }>(gen1).fixtures;
 
-  // Scoring: append, optimistic-concurrency 409 (parallel scorers), void.
+  // Scheduling console (doc 12, PROMPT-17): scoring is closed until the
+  // explicit start; auto pass proposes without persisting; start opens scoring.
   const fx = fixtures[0].id;
+  const early = await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
+    expected_seq: 0, type: "core.start", payload: {},
+  });
+  check("v1 scoring before start → 422 WRONG_PHASE", early.status === 422 && early.json.error?.code === "WRONG_PHASE");
+  const auto = await v1(admin, `/api/v1/stages/${stageId}/schedule/auto`, "POST", {});
+  check("v1 schedule/auto proposes all fixtures", v1data<{ assignments: unknown[] }>(auto).assignments.length === 6);
+  const startRes = await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
+  check("v1 division start → active", v1data<{ status: string }>(startRes).status === "active");
+
+  // Scoring: append, optimistic-concurrency 409 (parallel scorers), void.
   const started = await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
     expected_seq: 0, type: "core.start", payload: {},
   });

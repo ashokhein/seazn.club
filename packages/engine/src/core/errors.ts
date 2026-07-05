@@ -12,6 +12,9 @@ export const EngineErrorCode = z.enum([
   "CONFIG_INVALID",
   "SEQ_CONFLICT",
   "STAGE_NOT_READY",
+  // PROMPT-17 — a schedule write hit a blocking conflict (doc 12 §2:
+  // conflict.court, or warn.order on a direct feed). data.conflicts lists them.
+  "SCHEDULE_CONFLICT",
   "ELIGIBILITY",
   // PROMPT-03 — registry resolution (spec 03 §3 registry & versioning).
   "MODULE_NOT_FOUND",
