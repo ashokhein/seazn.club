@@ -11,12 +11,20 @@ export type User = z.infer<typeof userSchema>;
 
 // ---- organizations / teams ---------------------------------------------------
 
-/** Access levels within an organization, from most to least privileged. */
-export const ORG_ROLES = ["owner", "admin", "viewer"] as const;
+/** Access levels within an organization, from most to least privileged.
+ *  `scorer` (doc 13) is scoring-only: no org-wide read, assigned scope only. */
+export const ORG_ROLES = ["owner", "admin", "viewer", "scorer"] as const;
 export type OrgRole = (typeof ORG_ROLES)[number];
 
 /** Roles allowed to edit (create tournaments, record results, manage members). */
 export const EDITOR_ROLES = ["owner", "admin"] as const;
+
+/** Roles with org-wide read access (doc 13 §2 — scorers see assigned scope only). */
+export const READ_ROLES = ["owner", "admin", "viewer"] as const;
+
+/** Scorer assignment scopes (doc 13 §3): fixture ⊂ division ⊂ competition. */
+export const SCORER_SCOPE_TYPES = ["competition", "division", "fixture"] as const;
+export type ScorerScopeType = (typeof SCORER_SCOPE_TYPES)[number];
 
 export interface Organization {
   id: string;
@@ -47,6 +55,7 @@ export interface OrgInvite {
   id: string;
   org_id: string;
   role: OrgRole;
+  default_scope: { type: ScorerScopeType; id: string } | null;
   token: string;
   expires_at: string | null;
   max_uses: number;
@@ -68,6 +77,9 @@ export interface InvitePreview {
 export const loginSchema = z.object({
   email: z.string().email().max(120),
   password: z.string().min(6).max(100),
+  /** Post-auth redirect carried through invite links; validated server-side
+   *  by safeNextPath. Without this key .strict() 400s every invite signup. */
+  next: z.string().max(500).optional(),
 }).strict();
 
 export const signupSchema = loginSchema;
@@ -84,9 +96,14 @@ export const renameOrgSchema = z.object({
 }).strict();
 
 export const createInviteSchema = z.object({
-  role: z.enum(["admin", "viewer"]),
+  role: z.enum(["admin", "viewer", "scorer"]),
   max_uses: z.number().int().min(0).max(1000).default(1),
   expires_in_days: z.number().int().min(1).max(365).nullable().optional(),
+  /** Scorer invites only (doc 13 §4): accept creates this assignment too. */
+  default_scope: z
+    .object({ type: z.enum(SCORER_SCOPE_TYPES), id: z.string().uuid() })
+    .nullable()
+    .optional(),
 }).strict();
 
 export const setRoleSchema = z.object({

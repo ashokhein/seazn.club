@@ -15,6 +15,7 @@ const ROLE_BADGE: Record<OrgRole, string> = {
   owner: "bg-amber-100 text-amber-700",
   admin: "bg-purple-100 text-purple-700",
   viewer: "bg-slate-100 text-slate-600",
+  scorer: "bg-emerald-100 text-emerald-700",
 };
 
 /** Members + invite-link management for an organization (settings panel). */
@@ -33,7 +34,7 @@ export function OrgTeam({
   const [members, setMembers] = useState<OrgMember[] | null>(null);
   const [invites, setInvites] = useState<OrgInvite[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [inviteRole, setInviteRole] = useState<"admin" | "viewer">("viewer");
+  const [inviteRole, setInviteRole] = useState<"admin" | "viewer" | "scorer">("viewer");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
@@ -178,12 +179,13 @@ export function OrgTeam({
               <select
                 value={inviteRole}
                 onChange={(e) =>
-                  setInviteRole(e.target.value as "admin" | "viewer")
+                  setInviteRole(e.target.value as "admin" | "viewer" | "scorer")
                 }
                 className="input mt-1 py-1.5"
               >
                 <option value="viewer">Viewer (read-only)</option>
                 <option value="admin">Admin (can manage)</option>
+                <option value="scorer">Scorer (assigned matches only)</option>
               </select>
             </label>
             <button

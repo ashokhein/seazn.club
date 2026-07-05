@@ -14,8 +14,11 @@ export function JoinInvite({ token }: { token: string }) {
     setError(null);
     setBusy(true);
     try {
-      await api(`/api/invites/${token}/accept`, { method: "POST" });
-      router.push("/dashboard");
+      const out = await api<{ landing?: string }>(`/api/invites/${token}/accept`, {
+        method: "POST",
+      });
+      // Scorers land on their console, not the org dashboard (doc 13 §4).
+      router.push(out.landing ?? "/dashboard");
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to join");

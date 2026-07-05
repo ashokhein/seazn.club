@@ -32,6 +32,11 @@ entitlement keys always say `scorer`.
 | Finalize fixture | ✓ | ✓ | ✗ | config: `scorerCanFinalize` per division (default true) |
 | Reopen finalized / edit schedule / lineups | ✓ | ✓ | ✗ | ✗ (lineups: config `scorerCanEnterLineups`, default true — courtside reality) |
 
+PROMPT-18 note: the two scorer capability flags are stored as DIVISION COLUMNS
+(`divisions.scorer_can_finalize` / `scorer_can_enter_lineups`), not keys inside
+`divisions.config` — that config is the sport-module-validated snapshot and the
+module schemas strip foreign keys.
+
 ## 3. Scoped assignment
 
 A scorer sees and scores **only what they're assigned**:
@@ -67,8 +72,8 @@ create table scorer_assignments (
   stays real. No anonymous scoring.
 - Post-login landing for scorer-only members: straight to "My matches", not the org
   dashboard.
-- Day-of shortcut (later, flagged): pre-authorized device link — signed URL scoped to
-  one fixture, expires end-of-day. Reserved, not v2.0.
+- Day-of shortcut: pre-authorized device link — signed URL scoped to one fixture,
+  expires end-of-day. Normative design in §7; scheduled as PROMPT-21.
 
 ## 5. Plan quotas (normative — supersedes doc 10 `seats.scorekeepers` row)
 
@@ -87,12 +92,11 @@ Notes:
   downgrade (over-quota members become read-only viewers, owner picks who stays active).
 - **`orgs.max_owned` is a user-level quota** — the first user-scoped entitlement.
   Enforced at org creation against the creating user's best owned-org plan.
-  ⚠ **Billing model decision required at implementation:** today each org has its own
-  subscription. "Pro = 5 orgs" implies one Pro subscription entitles its owner to create
-  up to 5 orgs. Options: (a) subscription stays per-org, `orgs.max_owned` just lifts the
-  creation cap and each extra org needs its own plan; (b) one Pro subscription covers all
-  ≤5 owned orgs (multi-org billing — Stripe quantity or flat). **(b) matches the stated
-  intent; requires subscription→user pivot for that check. Confirm before PROMPT-18.**
+  ⚠ **Billing model decision — RESOLVED (PROMPT-18): option (a).** Subscriptions stay
+  per-org; `orgs.max_owned` only caps CREATION, judged against the creating user's best
+  owned-org plan (a user owning nothing may always create their first org). Each extra
+  org needs its own plan for Pro features. Option (b) (one subscription covering ≤5
+  owned orgs) remains a future billing pivot if multi-org demand shows up.
 
 ## 6. Interactions with the rest of the design
 
@@ -107,3 +111,47 @@ Notes:
   displayed on fixtures from `fixtures.officials` (which can reference the assignment).
 - **RLS:** scorer uses the same `withTenant` path; scope enforcement is app-layer
   (use-case), RLS still bounds to org.
+
+## 7. Day-of device links (normative — PROMPT-21)
+
+The courtside shortcut for one-off volunteers: an organiser taps "Hand this
+device over" on a fixture, gets a QR / signed URL, and whoever holds the phone
+can score **that fixture only** — no account, no signup friction.
+
+```sql
+create table device_links (
+  id          uuid primary key default gen_random_uuid(),
+  org_id      uuid not null references organizations(id) on delete cascade,
+  fixture_id  uuid not null references fixtures(id) on delete cascade,
+  token_hash  text not null unique,          -- sha256, secret shown once (api_keys pattern)
+  label       text,                          -- 'Court 3 phone'
+  issued_by   uuid not null references users(id) on delete cascade,
+  expires_at  timestamptz not null,          -- end of the fixture's local day
+  revoked_at  timestamptz,
+  created_at  timestamptz not null default now()
+);
+```
+
+Rules:
+
+- **Attribution (the question that parked this):** events append with
+  `recorded_by = issued_by` — the issuing organiser vouches for the device and
+  owns the audit responsibility — plus `score_events.device_link_id` so the
+  ledger distinguishes hand-recorded from device-link events. No synthetic
+  users; the hash chain canonical string is unchanged (new column rides
+  outside it, existing chains stay valid).
+- **Capabilities ⊂ scorer:** append + void-own-link-events pre-finalize only.
+  No finalize, no lineups, no reads beyond the fixture state — strictly less
+  than an account scorer; finalizing needs a human with a name.
+- **Lifecycle:** expires at end-of-day in the venue's timezone
+  (schedule_settings.tz, else org default); revocable from the fixture
+  console; issuing a new link for a fixture revokes prior active ones (one
+  live device per fixture). All 401 on expiry/revocation — the pad shows
+  "link expired, ask the organiser".
+- **Transport:** `/score/{token}` page (no session) → stripped scoring pad;
+  token never stored in localStorage beyond the tab; server rate-limits per
+  link like the per-fixture scoring limit (doc 08 §6).
+- **Entitlement:** `scoring.device_links` — Pro/Business only (Community keeps
+  the one account scorer seat as the taste of delegation, doc 13 §5).
+- **Realtime:** device link holders get the fixture realtime token (same
+  officials bypass as scorers, §6).

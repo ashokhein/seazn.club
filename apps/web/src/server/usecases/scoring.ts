@@ -5,6 +5,7 @@ import "server-only";
 // realtime publish and public-cache invalidation. undo = core.void through the
 // same door.
 import { withTenant } from "@/lib/db";
+import { HttpError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import { rateLimit } from "@/lib/rate-limit";
 import { requireFeature } from "@/lib/entitlements";
@@ -104,10 +105,13 @@ async function assertEntitledToScore(
         config: unknown;
         competition_id: string;
         division_status: string;
+        fixture_status: string;
+        scorer_can_finalize: boolean;
       }[]
     >`
       select d.sport_key, d.module_version, d.config, d.competition_id,
-             d.status as division_status
+             d.status as division_status, f.status as fixture_status,
+             d.scorer_can_finalize
       from fixtures f join divisions d on d.id = f.division_id
       where f.id = ${fixtureId}`;
     if (!row) return null;
@@ -122,6 +126,19 @@ async function assertEntitledToScore(
     throw new EngineError("WRONG_PHASE", "division has not started — scoring is closed", {
       divisionStatus: ctx.division_status,
     });
+  }
+
+  // Scorer capabilities (doc 13 §2): coverage was proven at the door
+  // (requireFixtureActor → requireScorable); here the per-division config
+  // gates apply. Finalize is config-gated; undo is own-fixture PRE-finalize
+  // only — a finalized ledger is an editor's to reopen.
+  if (auth.role === "scorer") {
+    if (input.type === "core.finalize" && !ctx.scorer_can_finalize) {
+      throw new HttpError(403, "Finalizing is restricted to organisers in this division");
+    }
+    if (input.type === "core.void" && ctx.fixture_status === "finalized") {
+      throw new HttpError(403, "This fixture is finalized — ask an organiser to reopen it");
+    }
   }
 
   const sportModule = resolveModule(ctx.sport_key, ctx.module_version);
