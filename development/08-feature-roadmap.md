@@ -70,7 +70,7 @@ doc 01; enforcement via doc 05.
 - Native apps only if push + app-store presence justify it.
 
 ### 3.10 White-label — Enterprise
-- Custom domain, logo, colors, remove all S.A.F.E branding, optional custom email sender.
+- Custom domain, logo, colors, remove all Seazn Club branding, optional custom email sender.
 
 ### 3.11 Internationalization (i18n)
 - Externalize strings; locale routing; date/number formatting (extend `ClientTime`); RTL

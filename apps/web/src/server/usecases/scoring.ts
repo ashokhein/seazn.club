@@ -7,12 +7,15 @@ import "server-only";
 import { withTenant } from "@/lib/db";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import { rateLimit } from "@/lib/rate-limit";
-import { appendEvent } from "@/server/engine-db";
+import { requireFeature } from "@/lib/entitlements";
+import { appendEvent, resolveModule } from "@/server/engine-db";
 import { recomputeStandings } from "@/server/engine-db";
 import { publishFixtureUpdate } from "@/lib/realtime";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AppendEventRequest } from "@/server/api-v1/schemas";
+import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { requiredFeatureForEvent } from "./fidelity";
 import { fillSlot } from "./stages";
 
 export interface ScoreOutcome {
@@ -47,6 +50,8 @@ export async function scoreEvent(
     if (replay) return replay; // retried request: same answer, no double write
   }
 
+  await assertEntitledToScore(auth, fixtureId, input);
+
   const result = await appendEvent(auth.orgId, fixtureId, input.expected_seq, {
     type: input.type,
     payload: input.payload,
@@ -74,6 +79,45 @@ export async function scoreEvent(
   void publishFixtureUpdate(fixtureId, "event");
   void invalidatePublicCache(auth.orgId, fixtureId);
   return out;
+}
+
+// Entitlement gates at THE scoring door (doc 10 §2 rules 2 & 4):
+//  - fidelity: the event-type → feature map derives from the pinned module's
+//    own fidelityTiers declaration (doc 14 §4) — Tier 0/1 always passes, so a
+//    downgraded org keeps coarse scoring;
+//  - cricket.dls: a `cricket.revise` WITHOUT a manual target under a
+//    dls-enabled config makes the fold compute a DLS target — Pro only. A
+//    manual umpire target is always allowed;
+//  - freeze: fixtures of an over-quota (frozen) competition are read-only.
+// Unknown fixtures fall through — appendEvent owns that error.
+async function assertEntitledToScore(
+  auth: AuthCtx,
+  fixtureId: string,
+  input: AppendEventRequest,
+): Promise<void> {
+  const ctx = await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<
+      { sport_key: string; module_version: string; config: unknown; competition_id: string }[]
+    >`
+      select d.sport_key, d.module_version, d.config, d.competition_id
+      from fixtures f join divisions d on d.id = f.division_id
+      where f.id = ${fixtureId}`;
+    if (!row) return null;
+    await assertCompetitionNotFrozen(auth.orgId, row.competition_id, tx);
+    return row;
+  });
+  if (!ctx) return;
+
+  const sportModule = resolveModule(ctx.sport_key, ctx.module_version);
+  const feature = requiredFeatureForEvent(sportModule, input.type);
+  if (feature) await requireFeature(auth.orgId, feature);
+
+  if (input.type === "cricket.revise") {
+    const manualTarget = (input.payload as { target?: unknown } | null)?.target !== undefined;
+    const dlsEnabled =
+      (ctx.config as { dls?: { enabled?: boolean } } | null)?.dls?.enabled === true;
+    if (dlsEnabled && !manualTarget) await requireFeature(auth.orgId, "cricket.dls");
+  }
 }
 
 // A decided fixture feeds brackets (winner_to/loser_to slots) and refreshes

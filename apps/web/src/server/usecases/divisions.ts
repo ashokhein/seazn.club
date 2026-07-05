@@ -3,11 +3,13 @@ import "server-only";
 // variant config and PINS the sport module version (doc 02 §4) so a running
 // division always replays under the rules it started with.
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { withinLimit } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
 import { resolveModule } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateDivision, PatchDivision } from "@/server/api-v1/schemas";
+import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { slugify } from "./competitions";
 
 export interface DivisionRow {
@@ -49,6 +51,14 @@ export async function createDivision(
   return withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx`select 1 from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
+    await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
+
+    // Doc 10 §1: `divisions.per_competition.max` (Community's real bite: 1).
+    // Count in the same tx as the insert (doc 10 §2 rule 1).
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from divisions where competition_id = ${competitionId}`;
+    const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1);
+    if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
 
     // Sport catalog carries the latest shipped module version; the division
     // pins it now and forever (doc 02 §4).

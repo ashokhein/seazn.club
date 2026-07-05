@@ -1,6 +1,6 @@
-# S.A.F.E Tournaments — Development & Productization Docs
+# Seazn Club — Development & Productization Docs
 
-This folder holds the **detailed technical design docs** for turning S.A.F.E Tournaments
+This folder holds the **detailed technical design docs** for turning Seazn Club
 from its current app state into an enterprise-grade SaaS product. Each document is a
 self-contained design that an engineer (or agent) can pick up and implement later.
 

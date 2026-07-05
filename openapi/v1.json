@@ -179,6 +179,9 @@
                               },
                               "created_at": {
                                 "type": "string"
+                              },
+                              "frozen": {
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -544,6 +547,9 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "frozen": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -866,6 +872,9 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "frozen": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -1226,6 +1235,9 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "frozen": {
+                          "type": "boolean"
                         }
                       },
                       "required": [

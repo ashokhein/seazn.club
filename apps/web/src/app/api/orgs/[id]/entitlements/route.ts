@@ -45,6 +45,18 @@ export async function GET(
     const [{ seasons_count }] = await sql<{ seasons_count: number }[]>`
       select count(*)::int as seasons_count from seasons where org_id = ${orgId}`;
 
+    // v2 usage (PROMPT-13): what the UI compares against the v2 quota keys.
+    // Statuses counted mirror competitions.max_active enforcement.
+    const [v2] = await sql<
+      { competitions_active_count: number; dashboards_public_count: number }[]
+    >`
+      select
+        count(*) filter (where status in ('draft','published','live'))::int
+          as competitions_active_count,
+        count(*) filter (where visibility = 'public')::int
+          as dashboards_public_count
+      from competitions where org_id = ${orgId}`;
+
     const entitlements = Object.fromEntries(
       rows.map((r) =>
         r.bool_value !== null
@@ -58,7 +70,11 @@ export async function GET(
       status,
       trial_end: sub?.trial_end ?? null,
       current_period_end: sub?.current_period_end ?? null,
-      usage: { seasons_count },
+      usage: {
+        seasons_count,
+        competitions_active_count: v2?.competitions_active_count ?? 0,
+        dashboards_public_count: v2?.dashboards_public_count ?? 0,
+      },
       entitlements,
     };
   });

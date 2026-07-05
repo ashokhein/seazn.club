@@ -66,6 +66,8 @@ export const Competition = z.object({
   branding: z.record(z.string(), z.unknown()),
   status: CompetitionStatus,
   created_at: z.string(),
+  /** doc 10 §2.4 — true when over-quota after a downgrade (read-only). */
+  frozen: z.boolean().optional(),
 });
 
 // ---------------------------------------------------------------------------

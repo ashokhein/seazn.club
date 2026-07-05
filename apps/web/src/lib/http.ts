@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
-import { AuthError, HttpError } from "@/lib/errors";
+import { AuthError, HttpError, PaymentRequiredError } from "@/lib/errors";
+import { featureReason } from "@/lib/feature-copy";
 import * as Sentry from "@sentry/nextjs";
 
 export { HttpError, PaymentRequiredError } from "@/lib/errors";
@@ -20,6 +21,19 @@ export function handler<T>(fn: () => Promise<T>) {
         return NextResponse.json(
           { ok: false, error: err.message },
           { status: 401 },
+        );
+      }
+      if (err instanceof PaymentRequiredError) {
+        // Upgrade-moment contract (doc 10 §3): feature_key + human reason
+        // let the client render a contextual paywall (<UpgradeGate>).
+        return NextResponse.json(
+          {
+            ok: false,
+            error: err.message,
+            feature_key: err.featureKey,
+            reason: featureReason(err.featureKey),
+          },
+          { status: 402 },
         );
       }
       if (err instanceof HttpError) {
