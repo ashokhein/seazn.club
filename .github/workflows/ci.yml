@@ -34,7 +34,17 @@ jobs:
           git diff --exit-code openapi/v1.json || {
             echo "openapi/v1.json is stale — run 'npm run openapi:gen' and commit."; exit 1; }
       - run: npm test --workspace apps/web
-      - run: npm test --workspace packages/engine
+      # Engine suite includes the PROMPT-14 simulation harness (SIM_RUNS
+      # defaults to 200 divisions per sport×format when CI=true) and the
+      # coverage gate (≥90% lines; 100% on core/ and tiebreakers.ts).
+      - run: npm run test:coverage --workspace packages/engine
+      - name: Simulation failure artifacts (repro with `npm run sim:replay -- <seedToken>`)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-failures
+          path: packages/engine/sim-failures/
+          if-no-files-found: ignore
 
   # -------------------------------------------------------------------------
   # Security gate (doc 07 §4): secret scan + dependency audit. Secret leaks

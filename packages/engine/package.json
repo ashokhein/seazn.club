@@ -16,6 +16,9 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "sim": "vitest run src/testkit/simulation.test.ts src/testkit/chaos.test.ts",
+    "sim:replay": "node --experimental-strip-types scripts/sim-replay.ts",
     "typecheck": "tsc --noEmit"
   },
   "peerDependencies": {

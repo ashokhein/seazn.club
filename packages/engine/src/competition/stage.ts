@@ -265,9 +265,15 @@ export function bracketRanks(
     }
   }
 
-  // The deciding game: the latest-round decided final.
+  // The deciding game: the latest-round settled final that produced a winner.
+  // A voided final (DE bracket reset skipped because the WB champion won GF1,
+  // spec 05 §2.4) is settled for completion but decides nothing — without the
+  // winner filter it would shadow GF1 and leave the champion undefined.
   const decidedFinals = fixtures
-    .filter((fixture) => fixture.isFinal === true && SETTLED.has(fixture.status))
+    .filter(
+      (fixture) =>
+        fixture.isFinal === true && SETTLED.has(fixture.status) && fixture.winner !== undefined,
+    )
     .sort((a, b) => b.round - a.round);
   const grandFinal = decidedFinals[0];
 
