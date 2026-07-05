@@ -54,15 +54,39 @@ keys (Stripe `pk_`, Supabase anon), then make it block again.
 ## React hooks lint warnings — refactor flagged components
 **Status:** downgraded to warnings in `apps/web/eslint.config.mjs`.
 
-`eslint-config-next` 16 enables React-Compiler-era rules that flag existing components:
-- `react-hooks/set-state-in-effect` (6×): `client-time`, `cookie-consent`,
-  `new-tournament-form`, `org-team`, `slideshow-view`, `verify-email` — mostly
-  mount-time/client-only state patterns; refactor per
+`eslint-config-next` 16 enables React-Compiler-era rules that flag existing components
+(several offenders were deleted at the PROMPT-15 cutover; remaining):
+- `react-hooks/set-state-in-effect`: `client-time`, `cookie-consent`, `org-team`,
+  `verify-email`, `v2/pads/cricket-pad` — mount-time/state-sync patterns; refactor per
   https://react.dev/learn/you-might-not-need-an-effect.
-- `react-hooks/static-components` (1×): `org-sport-presets` creates `Icon` during render.
 - `react-hooks/purity` (1×): `org-team` calls `Date.now()` during render.
 
-Fix the components, then raise the three rules back to `error`.
+Fix the components, then raise the rules back to `error`.
+
+## Engine v1 cutover (PROMPT-15) — remainders
+**Status:** code cutover complete; v1 engine/UI/routes deleted, migration tooling shipped.
+
+- **Per-org `ENGINE_V2` flag / staged rollout — consciously dropped.** The flag only makes
+  sense while v1 and v2 UIs coexist in one build; keeping v1 alive for it would contradict
+  the acceptance bar ("v1 code deleted, bundle free of old engine"). The staged-rollout
+  role is covered by `scripts/migrate-v1-to-v2.ts` per-org batching (`--org=<uuid>`) +
+  `--dry-run`, rehearsed on staging before the single cutover deploy.
+- **Production cutover runbook** (do in order): ① restore a prod snapshot into staging;
+  ② `npm run db:apply`-equivalent state (schema_v2 + 012 applied); ③ run
+  `migrate-v1-to-v2.ts --dry-run`, then real run — verification must print `✓ verified`
+  (0 mismatches) for every org; ④ manual checklist: open one real historical tournament in
+  the v2 UI (standings, fixtures, winners) and its old `/t/{slug}` URL (must 301);
+  ⑤ apply `supabase/migrations/013_v1_cutover.sql` (archives `audit_log → audit_log_v1`,
+  drops v1 tables); ⑥ deploy; ⑦ smoke (`npm run test:smoke`) against staging, then repeat
+  on prod.
+- **Eligibility enforcement at roster add** (doc 06 §2.2) — the division builder stores
+  `EligibilityRule[]` and the entrants panel displays them, but the service layer does not
+  yet block/override on DOB/gender; lands with the compliance panel.
+- **Scheduling console** (auto-scheduler, drag-and-drop board) — PROMPT-17.
+- **Scorer role & scoped console** — PROMPT-18; the fixture console currently requires an
+  editor role.
+- **Organiser realtime** — the fixture console resyncs on action/409; live push (the
+  public dashboard already has it) can be wired to `fixture:{id}` later.
 
 ## Other larger tracks still open (docs 06–15)
 - Observability: OpenTelemetry traces, structured-log sink, status page (doc 07).

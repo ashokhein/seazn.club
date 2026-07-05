@@ -19,6 +19,9 @@ const SUPERUSER_ONLY = new Set([
   "billing_events",
   "impersonation_sessions",
   "activation_events",
+  // v1→v2 migration bookkeeping (scripts/migrate-v1-to-v2.ts) — written and
+  // read only by superuser tooling, never by app_user.
+  "v1_migration_map",
 ]);
 
 const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);

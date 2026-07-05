@@ -17,6 +17,18 @@ export async function getFixture(auth: AuthCtx, id: string): Promise<FixtureRow>
   });
 }
 
+/** All fixtures of a division in play order — the organiser console read. */
+export async function listDivisionFixtures(auth: AuthCtx, divisionId: string): Promise<FixtureRow[]> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    return tx<FixtureRow[]>`
+      select ${tx(FIXTURE_COLS)} from fixtures
+      where division_id = ${divisionId}
+      order by stage_id, round_no, seq_in_round`;
+  });
+}
+
 export async function patchFixture(auth: AuthCtx, id: string, patch: PatchFixture): Promise<FixtureRow> {
   return withTenant(auth.orgId, async (tx) => {
     const cols = Object.keys(patch);

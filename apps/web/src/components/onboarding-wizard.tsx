@@ -2,18 +2,24 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import type { SportPreset } from "@/lib/types";
 
-const FORMAT_LABELS: Record<string, string> = {
-  swiss_knockout: "Swiss → Knockout",
-  round_robin: "Round Robin",
-  knockout: "Knockout",
-  progress_stepladder: "Stepladder",
+interface SportOption {
+  key: string;
+  name: string;
+}
+
+const SPORT_EMOJI: Record<string, string> = {
+  football: "⚽",
+  cricket: "🏏",
+  volleyball: "🏐",
+  badminton: "🏸",
+  tabletennis: "🏓",
+  boardgame: "♟️",
+  generic: "🏅",
 };
 
-export function OnboardingWizard({ presets }: { presets: SportPreset[] }) {
+export function OnboardingWizard({ sports }: { sports: SportOption[] }) {
   const router = useRouter();
-  const [selected, setSelected] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
 
   async function skip() {
@@ -23,33 +29,24 @@ export function OnboardingWizard({ presets }: { presets: SportPreset[] }) {
   }
 
   function proceed() {
-    if (!selected) return;
-    // Mark done server-side via the create-tournament flow itself is sufficient;
-    // we also call /api/onboarding/complete so wizard doesn't reappear on refresh.
+    // Mark done server-side so the wizard doesn't reappear on refresh.
     fetch("/api/onboarding/complete", { method: "POST" }).catch(() => {});
-    router.push(`/tournaments/new?preset=${selected}`);
+    router.push("/competitions/new");
   }
 
   return (
     <div>
       <div className="grid gap-3 sm:grid-cols-2">
-        {presets.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            onClick={() => setSelected(p.id === selected ? null : p.id)}
-            className={[
-              "card cursor-pointer rounded-xl border-2 p-4 text-left transition",
-              selected === p.id
-                ? "border-purple-500 bg-purple-50 shadow-md"
-                : "border-transparent hover:border-purple-200",
-            ].join(" ")}
-          >
-            <p className="font-semibold text-slate-800">{p.sport_name}</p>
-            <p className="mt-1 text-xs text-slate-500">
-              {FORMAT_LABELS[p.format] ?? p.format} · {p.entity_label}
-            </p>
-          </button>
+        {sports.map((s) => (
+          <div key={s.key} className="card flex items-center gap-3 p-4">
+            <span className="text-2xl">{SPORT_EMOJI[s.key] ?? "🏅"}</span>
+            <div>
+              <p className="font-semibold text-slate-800">{s.name}</p>
+              <p className="mt-0.5 text-xs text-slate-500">
+                Scoring rules, formats and standings built in.
+              </p>
+            </div>
+          </div>
         ))}
       </div>
 
@@ -62,13 +59,8 @@ export function OnboardingWizard({ presets }: { presets: SportPreset[] }) {
         >
           Skip for now
         </button>
-        <button
-          type="button"
-          onClick={proceed}
-          disabled={!selected}
-          className="btn btn-primary disabled:opacity-40"
-        >
-          Create my first tournament →
+        <button type="button" onClick={proceed} className="btn btn-primary">
+          Create my first competition →
         </button>
       </div>
     </div>

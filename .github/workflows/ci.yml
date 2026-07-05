@@ -26,7 +26,6 @@ jobs:
       - run: npm ci
       - run: npm run typecheck --workspace apps/web
       - run: npm run typecheck --workspace packages/engine
-      - run: npm run engine:check
       - run: npm run engine:boundary
       - name: OpenAPI spec drift gate (PROMPT-11)
         run: |
@@ -74,7 +73,7 @@ jobs:
 
   # -------------------------------------------------------------------------
   # Integration gate: real Postgres container -> real HTTP -> real DB.
-  # Exercises the tournament.ts -> engine delegation end to end.
+  # Exercises the /api/v1 service layer + engine-db adapter end to end.
   # -------------------------------------------------------------------------
   smoke:
     name: Smoke (Postgres container)

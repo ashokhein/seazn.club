@@ -5,8 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { sql } from "@/lib/db";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
-import { EDITOR_ROLES } from "@/lib/types";
-import { AuthError, HttpError } from "@/lib/errors";
+import { AuthError } from "@/lib/errors";
 
 const COOKIE_NAME = "seazn_session";
 const ORG_COOKIE = "seazn_org";
@@ -173,8 +172,6 @@ export async function createOrgForUser(
       insert into subscriptions (org_id, plan_key, status)
       values (${o.id}, 'community', 'active')
       on conflict (org_id) do nothing`;
-    const { seedDefaultSportPresets } = await import("@/lib/sport-presets");
-    await seedDefaultSportPresets(tx, o.id);
     return o;
   });
 }
@@ -244,25 +241,6 @@ export async function requireOrgRole(
   if (!role) throw new AuthError("You are not a member of this organization");
   if (!roles.includes(role)) throw new AuthError("Insufficient permissions");
   return { user, role };
-}
-
-/**
- * Require the current user to be an editor (owner/admin) of the organization
- * that owns the given tournament. Returns the user and orgId for downstream use.
- */
-export async function requireTournamentEditor(
-  tournamentId: string,
-): Promise<{ user: User; orgId: string }> {
-  const user = await requireUser();
-  const rows = await sql<{ org_id: string }[]>`
-    select org_id from tournaments where id = ${tournamentId} limit 1`;
-  if (!rows[0]) throw new HttpError(404, "Tournament not found");
-  const orgId = rows[0].org_id;
-  const role = await getOrgRole(orgId, user.id);
-  if (!role || !EDITOR_ROLES.includes(role as (typeof EDITOR_ROLES)[number])) {
-    throw new AuthError("You don't have edit access to this tournament");
-  }
-  return { user, orgId };
 }
 
 export { AuthError } from "@/lib/errors";

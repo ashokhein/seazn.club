@@ -5,10 +5,14 @@ for Engine v2: a sport-aware, plugin-based tournament engine with a separate ver
 a rich participant/position model, division/grade support (U16, U18, T20, …), a public
 open dashboard, and an expanded Pro entitlement surface.
 
-> **Status: design only. Nothing here is implemented.** The `prompts/` folder contains
-> self-contained implementation prompts — feed them to an agent (or engineer) one at a
-> time, in order, when development starts. Greenfield rules apply: every existing schema
-> and design in `supabase/` and `development/` may be erased and rewritten.
+> **Status: implemented through PROMPT-15 (v1 cutover complete).** PROMPT-01…14 delivered
+> `packages/engine`, the greenfield schema (`supabase/schema_v2.sql`), `/api/v1`, the public
+> dashboard, entitlements v2 and the simulation harness; PROMPT-15 rebuilt the organiser UI
+> on v2, shipped `scripts/migrate-v1-to-v2.ts` (+ migration `013_v1_cutover.sql`) and
+> **deleted the v1 engine** (`src/lib/{engine,tournament,pairing,standings,format}.ts`, the
+> old `/api` tournament BFF routes and `/t/{slug}` pages — the latter now 301-redirect via
+> `v1_slug_redirects`). PROMPT-16…20 remain open. Where implementation deviated, the doc
+> carries a "Deviations" note (see 07) — docs and code do not drift.
 
 ## Why a rewrite
 
@@ -83,6 +87,8 @@ checklists:
 
 Ordered. Each prompt is self-contained: context, task, files, acceptance criteria.
 
+**Status:** 00–15 ✅ implemented · 16–20 open.
+
 | Prompt | Delivers | Depends on |
 |--------|----------|-----------|
 | [PROMPT-00](prompts/PROMPT-00-conventions.md) | Conventions preamble injected into every other prompt | — |
@@ -115,4 +121,8 @@ Ordered. Each prompt is self-contained: context, task, files, acceptance criteri
    `05-formats-progression-tiebreakers.md` as a code comment.
 3. **Types first** — Zod schema + inferred type before behaviour.
 4. **A sport module lands only with its conformance suite passing** (PROMPT-03 kit).
-5. **The old engine keeps running until PROMPT-15**; v2 is built alongside, then cut over.
+5. ~~The old engine keeps running until PROMPT-15~~ — done: PROMPT-15 cut over and deleted
+   v1. Historical v1 data migrates via `scripts/migrate-v1-to-v2.ts` (dry-run first; see
+   the script header for the staging-rehearsal runbook), then
+   `supabase/migrations/013_v1_cutover.sql` archives `audit_log → audit_log_v1` and drops
+   the v1 tables.

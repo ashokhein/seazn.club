@@ -8,6 +8,13 @@ self-contained design that an engineer (or agent) can pick up and implement late
 > database or writing migrations for existing data. Schemas shown here are **greenfield
 > designs** for new capabilities (billing, entitlements, SSO, etc.) to be built when the
 > corresponding feature is scheduled.
+>
+> **Engine v2 (2026-07):** the tournament engine described by the `engine/` corpus is
+> implemented and **cut over** (PROMPT-15): organiser UI runs on `/api/v1` + the service
+> layer, v1 engine/routes are deleted, historical data migrates via
+> `scripts/migrate-v1-to-v2.ts` + migration `013_v1_cutover.sql`, and old `/t/{slug}`
+> URLs 301-redirect. References below to `tournaments`/`seasons`/`src/lib/engine.ts`
+> describe the pre-cutover app and are historical.
 
 ## How to read these docs
 
@@ -39,7 +46,7 @@ Each doc follows the same structure so they're predictable to implement against:
 | 09 | [Phased delivery plan](09-phased-plan.md) | Sequencing, milestones, staffing | — |
 | 10 | [Supabase Realtime integration](10-supabase-realtime.md) | Live scoreboards via broadcast + refetch | ✅ |
 | 11 | [Supabase Storage for assets](11-supabase-storage.md) | Player avatars, org logos, exports | ✅ |
-| 12 | [Quality & engine correctness](12-quality-and-engine-correctness.md) | Tests, property/fuzz, engine invariants, CI gates | 🟡 engine-check · smoke · CI gates done; property/axe deferred |
+| 12 | [Quality & engine correctness](12-quality-and-engine-correctness.md) | Tests, property/fuzz, engine invariants, CI gates | 🟡 smoke · CI gates · property/simulation harness (engine v2, PROMPT-14) done; axe deferred; v1 engine-check retired at cutover |
 | 13 | [Admin console & account lifecycle](13-admin-and-account-lifecycle.md) | Support console, impersonation, ownership transfer, account delete | ✅ |
 | 14 | [Onboarding & lifecycle email](14-onboarding-and-lifecycle-email.md) | Activation, templates, email deliverability, journeys | 🟡 transactional email done; journeys need Inngest (deferred) |
 | 15 | [Product-readiness backlog](15-product-readiness-backlog.md) | A11y, moderation, growth, performance, l10n, legal | ⏸ |

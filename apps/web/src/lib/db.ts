@@ -44,6 +44,17 @@ function getClient(): Sql {
     max: 5,
     idle_timeout: 20,
     connect_timeout: 15,
+    types: {
+      // Plain `date` columns (starts_on, ends_on, dob) stay 'YYYY-MM-DD'
+      // strings — the API contracts declare them as strings and React can't
+      // render Date objects. timestamptz keeps the default Date parsing.
+      date: {
+        to: 1082,
+        from: [1082],
+        serialize: (v: string) => v,
+        parse: (v: string) => v,
+      },
+    },
   });
   if (process.env.NODE_ENV !== "production") globalForDb._sql = client;
   return client;

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { LayoutDashboard, Settings } from "lucide-react";
+import { LayoutDashboard, Settings, Users } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { LogoutButton } from "@/components/logout-button";
 
@@ -58,6 +58,13 @@ export async function Nav() {
               >
                 <LayoutDashboard className="h-4 w-4" strokeWidth={1.75} />
                 <span className="hidden sm:inline">Dashboard</span>
+              </Link>
+              <Link
+                href="/people"
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+              >
+                <Users className="h-4 w-4" strokeWidth={1.75} />
+                <span className="hidden sm:inline">People</span>
               </Link>
               <Link
                 href="/settings"

@@ -3,8 +3,8 @@
 **Run any tournament, for any sport, in any format** — from a 4-player club night to a
 multi-season regional league.
 
-Seazn Club is a multi-tenant tournament management SaaS. Organisers create seasons and
-competitions, enter live results, and share public standings and schedules. The product
+Seazn Club is a multi-tenant tournament management SaaS. Organisers create competitions
+and divisions, enter live results, and share public standings and schedules. The product
 differentiator is a **sport-aware tournament engine** with per-sport scoring fidelity
 (cricket innings, football shootouts, volleyball sets, chess Swiss pairing) rather than
 generic win/loss brackets.
@@ -17,7 +17,7 @@ generic win/loss brackets.
 |------|---------|
 | [`apps/web/`](apps/web/) | Next.js app — UI, API routes, billing, auth, public dashboard |
 | [`packages/engine/`](packages/engine/) | Pure TypeScript tournament engine (`@seazn/engine`) |
-| [`engine/`](engine/) | Engine v2 **design corpus** — domain model, sport specs, implementation prompts |
+| [`engine/`](engine/) | Engine v2 **design corpus** (implemented through PROMPT-15) — domain model, sport specs, implementation prompts |
 | [`development/`](development/) | Product & platform **design docs** — billing, security, realtime, phased plan |
 | [`supabase/`](supabase/) | PostgreSQL schema + ordered migrations |
 | [`openapi/`](openapi/) | Generated OpenAPI spec for `/api/v1` |
@@ -160,8 +160,8 @@ npm run start      # serve production build
 | `npm run dev` | Start the web app in development |
 | `npm test` | Vitest in `apps/web` + `packages/engine` |
 | `npm run test:smoke` | End-to-end HTTP smoke test (needs running server + DB) |
-| `npm run engine:check` | Legacy engine invariant assertions |
 | `npm run engine:boundary` | Enforce zero-I/O boundary on `@seazn/engine` |
+| `node --experimental-strip-types scripts/migrate-v1-to-v2.ts --dry-run` | v1→v2 data migration (idempotent; see script header) |
 | `npm run db:apply` | Apply `schema.sql`, migrations, and `schema_v2.sql` |
 | `npm run sync:sports` | Sync sport catalog from engine registry to DB |
 | `npm run openapi:gen` | Regenerate `openapi/v1.json` |
