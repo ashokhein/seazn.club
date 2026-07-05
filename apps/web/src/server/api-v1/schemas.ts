@@ -480,6 +480,33 @@ export const PublishScheduleResult = z.object({
   published: z.boolean(),
 });
 
+// ---------------------------------------------------------------------------
+// Scorer console (doc 13, PROMPT-18)
+// ---------------------------------------------------------------------------
+
+/** GET /me/assigned-fixtures — the "My matches" read (doc 13 §3/§6). */
+export const AssignedFixture = z.object({
+  id: Uuid,
+  org_id: Uuid,
+  org_name: z.string(),
+  competition_id: Uuid,
+  competition_name: z.string(),
+  division_id: Uuid,
+  division_name: z.string(),
+  division_status: z.string(),
+  sport_key: z.string(),
+  module_version: z.string(),
+  round_no: z.number().int(),
+  home_entrant_id: Uuid.nullable(),
+  away_entrant_id: Uuid.nullable(),
+  home_name: z.string().nullable(),
+  away_name: z.string().nullable(),
+  scheduled_at: z.string().nullable(),
+  venue: z.string().nullable(),
+  court_label: z.string().nullable(),
+  status: z.string(),
+});
+
 export const StartDivisionResult = z.object({
   division_id: Uuid,
   status: DivisionStatus,

@@ -136,6 +136,10 @@ create table if not exists divisions (
   created_at     timestamptz not null default now(),
   unique (competition_id, slug)
 );
+-- Scorer capabilities (doc 13 §2, PROMPT-18) — columns, not config keys: the
+-- config snapshot is sport-module-validated and would strip foreign keys.
+alter table divisions add column if not exists scorer_can_finalize      boolean not null default true;
+alter table divisions add column if not exists scorer_can_enter_lineups boolean not null default true;
 -- Doc 12 §1 state machine: 'scheduled' (published timetable, not yet started)
 -- sits between setup and active. Re-assert on DBs created before PROMPT-17.
 do $$ begin

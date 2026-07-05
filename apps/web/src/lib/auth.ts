@@ -5,7 +5,7 @@ import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { sql } from "@/lib/db";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
-import { AuthError } from "@/lib/errors";
+import { AuthError, PaymentRequiredError } from "@/lib/errors";
 
 const COOKIE_NAME = "seazn_session";
 const ORG_COOKIE = "seazn_org";
@@ -154,11 +154,34 @@ async function generateOrgSlug(): Promise<string> {
   return `org-${Date.now().toString(36)}`;
 }
 
+/**
+ * `orgs.max_owned` (doc 13 §5, billing decision (a)): subscriptions stay
+ * per-org; the quota only caps CREATION, judged against the creating user's
+ * best owned-org plan. A user who owns nothing may always create their first.
+ */
+async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
+  const owned = await sql<{ plan_key: string }[]>`
+    select coalesce(s.plan_key, 'community') as plan_key
+    from org_members m
+    left join subscriptions s on s.org_id = m.org_id
+    where m.user_id = ${userId} and m.role = 'owner'`;
+  if (owned.length === 0) return;
+  const limits = await sql<{ int_value: number | null }[]>`
+    select int_value from plan_entitlements
+    where feature_key = 'orgs.max_owned'
+      and plan_key in ${sql([...new Set(owned.map((o) => o.plan_key))])}`;
+  // Best plan wins; a NULL int_value = unlimited; no rows = community default 1.
+  if (limits.some((l) => l.int_value === null) && limits.length > 0) return;
+  const limit = limits.length > 0 ? Math.max(...limits.map((l) => l.int_value as number)) : 1;
+  if (owned.length + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
+}
+
 /** Create an organization owned by the user, with an auto-generated slug. */
 export async function createOrgForUser(
   userId: string,
   name: string,
 ): Promise<Organization> {
+  await assertMayOwnAnotherOrg(userId);
   const slug = await generateOrgSlug();
   return sql.begin(async (tx) => {
     const [o] = await tx<Organization[]>`
@@ -220,6 +243,16 @@ export async function postAuthLanding(
       return { redirect: safe, orgId: target.id, hasOrg: true };
     }
     return { redirect: safe, orgId: null, hasOrg: false };
+  }
+  // Scorer-only members land on their console, never the org dashboard
+  // (doc 13 §4) — checked before auto-provisioning would give them an org.
+  {
+    const { isScorerOnly } = await import("@/server/usecases/scorers");
+    if (await isScorerOnly(userId)) {
+      const orgs = await getUserOrgs(userId);
+      await setActiveOrgId(orgs[0].id);
+      return { redirect: "/my-matches", orgId: orgs[0].id, hasOrg: true };
+    }
   }
   const orgId = await ensureActiveOrg(userId);
   // New users (onboarding_completed_at null) go to the first-run wizard.

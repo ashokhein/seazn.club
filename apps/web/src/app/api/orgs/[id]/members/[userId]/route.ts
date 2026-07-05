@@ -19,10 +19,11 @@ export async function DELETE(
       if (!target[0]) throw new HttpError(404, "Member not found");
 
       if (target[0].role === "owner") {
+        // Aggregates cannot carry FOR UPDATE (latent bug — Postgres rejects
+        // it); the member row lock above serialises the check enough.
         const [{ count }] = await tx<{ count: number }[]>`
           select count(*)::int as count from org_members
-          where org_id = ${id} and role = 'owner' and user_id <> ${userId}
-          for update`;
+          where org_id = ${id} and role = 'owner' and user_id <> ${userId}`;
         if (count === 0)
           throw new HttpError(409, "An organization must keep at least one owner");
       }

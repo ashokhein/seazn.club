@@ -32,6 +32,11 @@ entitlement keys always say `scorer`.
 | Finalize fixture | ✓ | ✓ | ✗ | config: `scorerCanFinalize` per division (default true) |
 | Reopen finalized / edit schedule / lineups | ✓ | ✓ | ✗ | ✗ (lineups: config `scorerCanEnterLineups`, default true — courtside reality) |
 
+PROMPT-18 note: the two scorer capability flags are stored as DIVISION COLUMNS
+(`divisions.scorer_can_finalize` / `scorer_can_enter_lineups`), not keys inside
+`divisions.config` — that config is the sport-module-validated snapshot and the
+module schemas strip foreign keys.
+
 ## 3. Scoped assignment
 
 A scorer sees and scores **only what they're assigned**:
@@ -87,12 +92,11 @@ Notes:
   downgrade (over-quota members become read-only viewers, owner picks who stays active).
 - **`orgs.max_owned` is a user-level quota** — the first user-scoped entitlement.
   Enforced at org creation against the creating user's best owned-org plan.
-  ⚠ **Billing model decision required at implementation:** today each org has its own
-  subscription. "Pro = 5 orgs" implies one Pro subscription entitles its owner to create
-  up to 5 orgs. Options: (a) subscription stays per-org, `orgs.max_owned` just lifts the
-  creation cap and each extra org needs its own plan; (b) one Pro subscription covers all
-  ≤5 owned orgs (multi-org billing — Stripe quantity or flat). **(b) matches the stated
-  intent; requires subscription→user pivot for that check. Confirm before PROMPT-18.**
+  ⚠ **Billing model decision — RESOLVED (PROMPT-18): option (a).** Subscriptions stay
+  per-org; `orgs.max_owned` only caps CREATION, judged against the creating user's best
+  owned-org plan (a user owning nothing may always create their first org). Each extra
+  org needs its own plan for Pro features. Option (b) (one subscription covering ≤5
+  owned orgs) remains a future billing pivot if multi-org demand shows up.
 
 ## 6. Interactions with the rest of the design
 

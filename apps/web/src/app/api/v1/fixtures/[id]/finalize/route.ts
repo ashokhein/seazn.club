@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { v1, parseBody } from "@/server/api-v1/http";
-import { requireResourceAuth } from "@/server/api-v1/auth";
+import { requireFixtureActor } from "@/server/api-v1/auth";
 import { finalizeFixture } from "@/server/usecases/scoring";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -12,7 +12,7 @@ export async function POST(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
     const body = await parseBody(req, Body);
-    const auth = await requireResourceAuth(req, "fixture", id, "write");
+    const auth = await requireFixtureActor(req, id, "score");
     return finalizeFixture(auth, id, body.expected_seq);
   });
 }

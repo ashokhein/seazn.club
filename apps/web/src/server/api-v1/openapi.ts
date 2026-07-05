@@ -86,6 +86,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/fixtures/{id}/events", method: "get", summary: "Read the ledger after ?since_seq=", tag: "scoring", response: z.array(S.ScoreEvent), query: { since_seq: { schema: { type: "integer", minimum: 0, default: 0 } } } },
   { path: "/fixtures/{id}/state", method: "get", summary: "Live state (ETag = ledger seq)", tag: "scoring", response: S.FixtureState },
   { path: "/fixtures/{id}/finalize", method: "post", summary: "Lock the ledger (core.finalize)", tag: "scoring", request: z.object({ expected_seq: z.number().int().min(0) }), response: S.AppendEventResponse, errors: [409, 422] },
+  // Scorer console (doc 13 §6, PROMPT-18)
+  { path: "/me/assigned-fixtures", method: "get", summary: "Fixtures covered by the caller's scorer assignments (session only)", tag: "scorers", response: z.array(S.AssignedFixture), query: { date: { schema: { type: "string", format: "date" }, description: "Narrow to one day (YYYY-MM-DD)" } } },
   // API keys
   { path: "/orgs/{id}/api-keys", method: "get", summary: "List API keys", tag: "api-keys", response: z.array(S.ApiKey) },
   { path: "/orgs/{id}/api-keys", method: "post", summary: "Create an API key (secret shown once)", tag: "api-keys", request: S.CreateApiKey, response: S.CreatedApiKey, status: 201, errors: [402] },

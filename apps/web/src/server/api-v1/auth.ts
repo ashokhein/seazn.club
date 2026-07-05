@@ -4,11 +4,11 @@ import "server-only";
 // same AuthCtx so use-cases don't care which door the caller came through.
 import { createHash, randomBytes } from "node:crypto";
 import { sql } from "@/lib/db";
-import { requireOrgRole, requireUser, resolveActiveOrg } from "@/lib/auth";
+import { getOrgRole, requireUser, resolveActiveOrg } from "@/lib/auth";
 import { AuthError, HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { rateLimit } from "@/lib/rate-limit";
-import { EDITOR_ROLES, ORG_ROLES, type OrgRole } from "@/lib/types";
+import { EDITOR_ROLES, READ_ROLES, type OrgRole } from "@/lib/types";
 
 export type Scope = "read" | "write";
 
@@ -67,14 +67,55 @@ function bearerToken(req: Request): string | null {
 /**
  * Authenticate a request against an org: API key when a Bearer sk_live_ token
  * is present, else the session cookie. `write` needs an editor role
- * (owner/admin) or a write-scoped key; `read` any member / read scope.
+ * (owner/admin) or a write-scoped key; `read` an org-wide read role (doc 13
+ * §2: scorers get NO org-wide access — their door is requireFixtureActor).
+ * A member with an insufficient role is 403, not 401 — they are authenticated.
  */
 export async function requireOrgAuth(req: Request, orgId: string, scope: Scope): Promise<AuthCtx> {
   const token = bearerToken(req);
   if (token) return apiKeyAuth(token, orgId, scope);
-  const roles = scope === "write" ? EDITOR_ROLES : ORG_ROLES;
-  const { user, role } = await requireOrgRole(orgId, roles);
+  const user = await requireUser();
+  const role = await getOrgRole(orgId, user.id);
+  if (!role) throw new AuthError("You are not a member of this organization");
+  const roles: readonly OrgRole[] = scope === "write" ? EDITOR_ROLES : READ_ROLES;
+  if (!roles.includes(role)) throw new HttpError(403, "Insufficient permissions");
+  // Downgrade freeze (doc 10 §2.4): an over-quota admin seat is read-only
+  // until the owner frees seats. Owners are exempt.
+  if (scope === "write" && role === "admin") {
+    const { assertMemberNotFrozen } = await import("@/server/usecases/entitlement-freeze");
+    await assertMemberNotFrozen(orgId, user.id);
+  }
   return { orgId, via: "session", userId: user.id, role, keyId: null };
+}
+
+/**
+ * Fixture-scoped authentication for the scoring surface (doc 13 §2/§3):
+ * editors and write-scoped API keys pass outright; a scorer passes iff a
+ * covering assignment exists (fixture ⊂ division ⊂ competition); a viewer
+ * passes for `read` only. The capability config gates (finalize, lineups,
+ * void-pre-finalize) stay in the use-cases, which re-check via
+ * requireScorable.
+ */
+export async function requireFixtureActor(
+  req: Request,
+  fixtureId: string,
+  intent: "read" | "score",
+): Promise<AuthCtx> {
+  const orgId = await resourceOrg("fixture", fixtureId);
+  const token = bearerToken(req);
+  if (token) return apiKeyAuth(token, orgId, intent === "read" ? "read" : "write");
+  const user = await requireUser();
+  const role = await getOrgRole(orgId, user.id);
+  if (!role) throw new AuthError("You are not a member of this organization");
+  const ctx: AuthCtx = { orgId, via: "session", userId: user.id, role, keyId: null };
+  if (role === "owner" || role === "admin") return ctx;
+  if (role === "viewer" && intent === "read") return ctx;
+  if (role === "scorer") {
+    const { requireScorable } = await import("@/server/usecases/scorers");
+    await requireScorable(ctx, fixtureId); // 403 without a covering assignment
+    return ctx;
+  }
+  throw new HttpError(403, "Insufficient permissions");
 }
 
 /**
@@ -87,8 +128,8 @@ export async function requireAuth(req: Request, scope: Scope): Promise<AuthCtx> 
   const user = await requireUser();
   const org = await resolveActiveOrg(user);
   if (!org) throw new AuthError("No organization for this account");
-  const roles: readonly OrgRole[] = scope === "write" ? EDITOR_ROLES : ORG_ROLES;
-  if (!roles.includes(org.role)) throw new AuthError("Insufficient permissions");
+  const roles: readonly OrgRole[] = scope === "write" ? EDITOR_ROLES : READ_ROLES;
+  if (!roles.includes(org.role)) throw new HttpError(403, "Insufficient permissions");
   return { orgId: org.id, via: "session", userId: user.id, role: org.role, keyId: null };
 }
 

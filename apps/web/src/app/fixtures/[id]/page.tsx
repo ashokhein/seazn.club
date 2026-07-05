@@ -21,7 +21,8 @@ export default async function FixturePage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { auth, canEdit } = await requireResourcePageAuth("fixture", id);
+  const { auth, canScore } = await requireResourcePageAuth("fixture", id);
+  const isScorer = auth.role === "scorer";
   const fixture = await getFixture(auth, id);
   const [division, state, events] = await Promise.all([
     getDivision(auth, fixture.division_id),
@@ -51,24 +52,36 @@ export default async function FixturePage({
 
   return (
     <>
-      <Nav />
+      {/* Scorers get the stripped courtside view (doc 13 §3): no org nav. */}
+      {!isScorer && <Nav />}
       <main className="mx-auto max-w-5xl px-4 py-8">
-        <p className="mb-4 text-xs text-slate-400">
-          <Link href="/dashboard" className="hover:text-purple-600">
-            Competitions
-          </Link>{" "}
-          /{" "}
-          <Link href={`/competitions/${competition.id}`} className="hover:text-purple-600">
-            {competition.name}
-          </Link>{" "}
-          /{" "}
-          <Link
-            href={`/divisions/${division.id}?tab=fixtures`}
-            className="hover:text-purple-600"
-          >
-            {division.name}
-          </Link>
-        </p>
+        {isScorer ? (
+          <p className="mb-4 text-xs text-slate-400">
+            <Link href="/my-matches" className="hover:text-purple-600">
+              ← My matches
+            </Link>
+            <span className="ml-2">
+              {competition.name} · {division.name}
+            </span>
+          </p>
+        ) : (
+          <p className="mb-4 text-xs text-slate-400">
+            <Link href="/dashboard" className="hover:text-purple-600">
+              Competitions
+            </Link>{" "}
+            /{" "}
+            <Link href={`/competitions/${competition.id}`} className="hover:text-purple-600">
+              {competition.name}
+            </Link>{" "}
+            /{" "}
+            <Link
+              href={`/divisions/${division.id}?tab=fixtures`}
+              className="hover:text-purple-600"
+            >
+              {division.name}
+            </Link>
+          </p>
+        )}
 
         <FixtureConsole
           fixture={{
@@ -105,7 +118,7 @@ export default async function FixturePage({
             recorded_at: e.recorded_at,
             voids_event_id: e.voids_event_id,
           }))}
-          canEdit={canEdit && !(competition.frozen ?? false)}
+          canEdit={canScore && !(competition.frozen ?? false)}
         />
       </main>
     </>
