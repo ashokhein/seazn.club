@@ -4,14 +4,15 @@
 // entrant counts, and results played so standings/fixtures/brackets populate.
 //
 // Usage (dev server must be running on SEED_BASE, default localhost:3000):
-//   node --env-file=apps/web/.env.local --experimental-strip-types scripts/seed-demo.ts --phase=setup
-//   node --env-file=apps/web/.env.local --experimental-strip-types scripts/seed-demo.ts --phase=seed
+//   npm run seed:demo:setup -- --account=pro         (or --account=community)
+//   npm run seed:demo -- --account=pro
 //
-// --phase=setup signs up a fresh smoke account (writes .seed-demo-state.json,
-// gitignored) and — when DATABASE_URL is set — grants the org the entitlement
-// overrides the plan needs (5 active competitions, many divisions, double
-// elim). --phase=seed is resume-safe: rerunning skips competitions/divisions
-// that already exist, so tweak PLAN below and rerun to add more.
+// Two account flavours: --account=pro gets a real pro subscription row (set
+// via DATABASE_URL) and the full 5-competition plan; --account=community
+// stays inside the free caps (2 competitions × 1 division) and shows the
+// gated/paywalled experience. Accounts land in .seed-demo-state.json
+// (gitignored). --phase=seed is resume-safe: rerunning skips competitions/
+// divisions that already exist, so tweak the PLANs below and rerun.
 import { writeFileSync, readFileSync } from "node:fs";
 
 const BASE = process.env.SEED_BASE ?? "http://localhost:3000";
@@ -176,7 +177,8 @@ interface DivPlan {
 }
 const GENERIC_CFG = { resultMode: "score", allowDraws: false, points: { w: 3, d: 1, l: 0 }, progressScore: false };
 
-const PLAN: { name: string; divisions: DivPlan[] }[] = [
+// Pro account: the full spread — every format, mixed kinds, 5 competitions.
+const PLAN_PRO: { name: string; divisions: DivPlan[] }[] = [
   { name: "Spring Football League", divisions: [
     { name: "Premier Division", sport: "football", variant: "11-a-side", kind: "team", n: 6 + rnd(3), template: "league", ratio: 1 },
     { name: "U16 Cup", sport: "football", variant: "youth", kind: "team", n: 8, template: "league_ko", q: 4, ratio: 1 },
@@ -205,20 +207,49 @@ const PLAN: { name: string; divisions: DivPlan[] }[] = [
   ]},
 ];
 
+// Community account: stays INSIDE the free caps (2 active competitions,
+// 1 division each, ≤16 entrants, ≤2 stages, no double elim) — shows the real
+// free experience including the Pro badges on gated controls.
+const PLAN_COMMUNITY: { name: string; divisions: DivPlan[] }[] = [
+  { name: "Friday Night Football", divisions: [
+    { name: "League", sport: "football", variant: "small-sided", kind: "team", n: 6, template: "league", ratio: 0.7 },
+  ]},
+  { name: "Office Table Tennis", divisions: [
+    { name: "Singles Championship", sport: "tabletennis", variant: "bo5", kind: "individual", n: 8, template: "league_ko", q: 4, ratio: 1 },
+  ]},
+];
+
+function loadState(): Record<string, { email: string }> {
+  try {
+    return JSON.parse(readFileSync(STATE, "utf8"));
+  } catch {
+    return {};
+  }
+}
+
 async function main() {
   const phase = process.argv.find((a) => a.startsWith("--phase="))?.split("=")[1] ?? "seed";
+  const account = (process.argv.find((a) => a.startsWith("--account="))?.split("=")[1] ?? "pro") as
+    | "community"
+    | "pro";
+  const PLAN = account === "community" ? PLAN_COMMUNITY : PLAN_PRO;
 
   if (phase === "setup") {
-    const email = `smoke-demo-${1000 + rnd(9000)}@example.com`;
+    const email = `smoke-${account}-${1000 + rnd(9000)}@example.com`;
     const reg = await call("/api/auth/signup", "POST", { email, password: PASSWORD });
     await call("/api/auth/verify-email", "POST", { token: reg.verify_token });
     await call("/api/onboarding/complete", "POST");
     await call("/api/tour", "POST");
-    writeFileSync(STATE, JSON.stringify({ email }));
-    console.log(`account: ${email} / ${PASSWORD}`);
+    writeFileSync(STATE, JSON.stringify({ ...loadState(), [account]: { email } }));
+    console.log(`${account} account: ${email} / ${PASSWORD}`);
 
-    // The plan exceeds Community caps — grant overrides when we can reach the DB.
-    if (process.env.DATABASE_URL) {
+    // Pro account gets a real pro subscription row — entitlements resolve from
+    // plan_entitlements exactly like a paying org (no piecemeal overrides).
+    if (account === "pro") {
+      if (!process.env.DATABASE_URL) {
+        console.log("DATABASE_URL not set — set the org's subscription to 'pro' manually before seeding");
+        return;
+      }
       const { default: postgres } = await import("postgres");
       const sql = postgres(process.env.DATABASE_URL, {
         ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : "require",
@@ -229,23 +260,18 @@ async function main() {
         with org as (
           select m.org_id from org_members m join users u on u.id = m.user_id
           where u.email = ${email} limit 1)
-        insert into org_entitlement_overrides (org_id, feature_key, bool_value, int_value)
-        select org_id, k, b, i from org, (values
-          ('competitions.max_active', null::boolean, 99),
-          ('divisions.per_competition.max', null::boolean, 99),
-          ('formats.double_elim', true, null::int)
-        ) as v(k, b, i)
-        on conflict (org_id, feature_key) do update
-          set bool_value = excluded.bool_value, int_value = excluded.int_value`;
+        insert into subscriptions (org_id, plan_key, status)
+        select org_id, 'pro', 'active' from org
+        on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
       await sql.end();
-      console.log("entitlement overrides applied");
-    } else {
-      console.log("DATABASE_URL not set — apply entitlement overrides manually before seeding");
+      console.log("subscription set to pro/active");
     }
     return;
   }
 
-  const { email } = JSON.parse(readFileSync(STATE, "utf8"));
+  const state = loadState();
+  const email = state[account]?.email;
+  if (!email) throw new Error(`no ${account} account in ${STATE} — run --phase=setup --account=${account} first`);
   await call("/api/auth/login", "POST", { email, password: PASSWORD });
 
   for (const comp of PLAN) {
