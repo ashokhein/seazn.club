@@ -126,6 +126,80 @@ export async function publicEntrants(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Discovery directory (doc 15 §4, PROMPT-19). One SELECT on public_discovery_v
+// — the view already applies consent (no person data), opt-in, block, org
+// status and the quality floor. Redis 30 s in front; the route adds
+// s-maxage=60. Anonymous homepage traffic never touches hot tenant paths.
+// ---------------------------------------------------------------------------
+
+export interface DiscoveryEntry {
+  id: string;
+  name: string;
+  slug: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  status: string;
+  city: string | null;
+  country: string | null;
+  tagline: string | null;
+  hero_image_path: string | null;
+  featured: boolean;
+  org_name: string;
+  org_slug: string;
+  sports: string[] | null;
+  entrant_count: number;
+  in_play_count: number;
+  next_fixture_at: string | null;
+}
+
+export interface DiscoveryQuery {
+  sport?: string;
+  country?: string;
+  status?: "live" | "upcoming";
+  q?: string;
+  offset?: number;
+  limit?: number;
+}
+
+const DISCOVERY_MAX_LIMIT = 48;
+
+/** Doc 15 §3 default ordering: featured row first, then in-play, then start-
+ *  date proximity; ties by entrant count. Offset paging (rank order is not
+ *  keyset-able); the route wraps the offset in the opaque cursor. */
+export async function discoveryList(
+  query: DiscoveryQuery,
+): Promise<{ items: DiscoveryEntry[]; nextOffset: number | null }> {
+  const limit = Math.min(Math.max(query.limit ?? 24, 1), DISCOVERY_MAX_LIMIT);
+  const offset = Math.max(query.offset ?? 0, 0);
+  const key =
+    `pub:v1:discovery:${query.sport ?? ""}:${query.country ?? ""}:` +
+    `${query.status ?? ""}:${query.q ?? ""}:${offset}:${limit}`;
+  return cached(key, async () => {
+    const rows = await sql<DiscoveryEntry[]>`
+      select * from public_discovery_v
+      where true
+        ${query.sport ? sql`and ${query.sport} = any(sports)` : sql``}
+        ${query.country ? sql`and lower(country) = lower(${query.country})` : sql``}
+        ${query.q ? sql`and (name ilike ${"%" + query.q + "%"} or org_name ilike ${"%" + query.q + "%"})` : sql``}
+        ${
+          query.status === "live"
+            ? sql`and in_play_count > 0`
+            : query.status === "upcoming"
+              ? sql`and in_play_count = 0
+                    and (starts_on >= current_date or next_fixture_at is not null)`
+              : sql``
+        }
+      order by featured desc,
+               (in_play_count > 0) desc,
+               abs(extract(epoch from (coalesce(starts_on, current_date + 3650)::timestamp - now()))) asc,
+               entrant_count desc, id
+      limit ${limit + 1} offset ${offset}`;
+    const items = rows.slice(0, limit);
+    return { items, nextOffset: rows.length > limit ? offset + limit : null };
+  });
+}
+
 /** Live public fixture summary (the score widget). */
 export async function publicFixture(fixtureId: string): Promise<unknown> {
   if (!/^[0-9a-f-]{36}$/i.test(fixtureId)) throw new HttpError(404, "fixture not found");

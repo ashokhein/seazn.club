@@ -13,7 +13,11 @@ import { EngineError } from "@seazn/engine/core";
 import { appendEvent, resolveModule } from "@/server/engine-db";
 import { recomputeStandings } from "@/server/engine-db";
 import { publishFixtureUpdate } from "@/lib/realtime";
-import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
+import {
+  fireDivisionRevalidate,
+  fireDiscoveryRevalidate,
+  invalidateDiscoveryCache,
+} from "@/server/public-site/revalidate";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AppendEventRequest } from "@/server/api-v1/schemas";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
@@ -57,7 +61,10 @@ export async function scoreEvent(
   const result = await appendEvent(auth.orgId, fixtureId, input.expected_seq, {
     type: input.type,
     payload: input.payload,
+    // Device links: recorded_by = issued_by (auth.userId carries the issuer,
+    // doc 13 §7) + the device_link_id rider so the ledger distinguishes them.
     recordedBy: auth.userId,
+    deviceLinkId: auth.deviceLinkId ?? null,
     ...(input.type === "core.void" &&
     typeof (input.payload as { event_id?: unknown })?.event_id === "string"
       ? { voids: (input.payload as { event_id: string }).event_id }
@@ -78,8 +85,12 @@ export async function scoreEvent(
 
   if (cacheKey) await cacheSet(cacheKey, out, IDEM_TTL_SECONDS);
   // After commit (doc 08 §4): realtime + public cache, both fire-and-forget.
+  // Discovery surfaces refresh on decided/void/start writes only — and only
+  // when the competition is discoverable (doc 15 §2, checked inside).
+  const movesDiscovery =
+    result.outcome !== null || input.type === "core.void" || input.type === "core.start";
   void publishFixtureUpdate(fixtureId, "event");
-  void invalidatePublicCache(auth.orgId, fixtureId);
+  void invalidatePublicCache(auth.orgId, fixtureId, movesDiscovery);
   return out;
 }
 
@@ -126,6 +137,31 @@ async function assertEntitledToScore(
     throw new EngineError("WRONG_PHASE", "division has not started — scoring is closed", {
       divisionStatus: ctx.division_status,
     });
+  }
+
+  // Device-link capabilities (doc 13 §7): strictly ⊂ scorer. Append + void
+  // OWN-LINK events pre-finalize; finalizing needs a human with a name.
+  if (auth.via === "device_link") {
+    if (input.type === "core.finalize") {
+      throw new HttpError(403, "Finalizing needs an organiser or scorer account");
+    }
+    if (input.type === "core.void") {
+      if (ctx.fixture_status === "finalized") {
+        throw new HttpError(403, "This fixture is finalized — ask the organiser");
+      }
+      const eventId = (input.payload as { event_id?: unknown } | null)?.event_id;
+      const isUuid =
+        typeof eventId === "string" &&
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(eventId);
+      const [target] = isUuid
+        ? await withTenant(auth.orgId, (tx) => tx<{ device_link_id: string | null }[]>`
+            select device_link_id from score_events
+            where id = ${eventId} and fixture_id = ${fixtureId}`)
+        : [];
+      if (!target || target.device_link_id !== auth.deviceLinkId) {
+        throw new HttpError(403, "A device link can only undo its own events");
+      }
+    }
   }
 
   // Scorer capabilities (doc 13 §2): coverage was proven at the door
@@ -207,11 +243,19 @@ export async function finalizeFixture(
 // write: Redis pub:v1:* (the /api/v1/public endpoints, doc 08 §6) and Next's
 // ISR tag cache (the (public) pages, doc 09 §3 — same write that publishes
 // realtime fires the tag).
-async function invalidatePublicCache(orgId: string, fixtureId: string): Promise<void> {
+async function invalidatePublicCache(
+  orgId: string,
+  fixtureId: string,
+  movesDiscovery = false,
+): Promise<void> {
   const row = await withTenant(orgId, async (tx) => {
-    const [r] = await tx<{ division_id: string; competition_id: string }[]>`
-      select f.division_id, d.competition_id
-      from fixtures f join divisions d on d.id = f.division_id
+    const [r] = await tx<
+      { division_id: string; competition_id: string; discoverable: boolean }[]
+    >`
+      select f.division_id, d.competition_id, c.discoverable
+      from fixtures f
+      join divisions d on d.id = f.division_id
+      join competitions c on c.id = d.competition_id
       where f.id = ${fixtureId}`;
     return r ?? null;
   });
@@ -219,5 +263,11 @@ async function invalidatePublicCache(orgId: string, fixtureId: string): Promise<
   if (row) {
     await cacheDelPattern(`pub:v1:div:${row.division_id}:*`);
     fireDivisionRevalidate(row.division_id, row.competition_id);
+    // Cheap by design (doc 15 §2 / PROMPT-19 item 4): the `discovery` tag
+    // fires only for discoverable competitions.
+    if (movesDiscovery && row.discoverable) {
+      await invalidateDiscoveryCache();
+      fireDiscoveryRevalidate();
+    }
   }
 }

@@ -19,15 +19,17 @@ export async function GET() {
       from org_members m join organizations o on o.id = m.org_id
       where m.user_id = ${user.id}`;
 
-    const tournaments = await sql<{ id: string; name: string; sport: string; created_at: string }[]>`
-      select id, name, sport, created_at from tournaments
+    // v1 `tournaments` died at the PROMPT-15 cutover; competitions carry the
+    // created_by association now.
+    const competitions = await sql<{ id: string; name: string; created_at: string }[]>`
+      select id, name, created_at from competitions
       where created_by = ${user.id} order by created_at desc`;
 
     const export_data = {
       exported_at: new Date().toISOString(),
       profile,
       organizations: orgs,
-      tournaments_created: tournaments,
+      competitions_created: competitions,
     };
 
     return new NextResponse(JSON.stringify(export_data, null, 2), {

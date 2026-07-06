@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { listPublicSitemapEntries } from "@/server/public-site/data";
+import { listDiscoverySports } from "@/server/public-site/discovery";
 
 const BASE = "https://seazn.club";
 
@@ -7,6 +8,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
   const staticEntries: MetadataRoute.Sitemap = [
     { url: BASE, lastModified: now, changeFrequency: "weekly", priority: 1 },
+    { url: `${BASE}/discover`, lastModified: now, changeFrequency: "hourly", priority: 0.9 },
     { url: `${BASE}/pricing`, lastModified: now, changeFrequency: "monthly", priority: 0.9 },
     { url: `${BASE}/use-cases/clubs`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
     { url: `${BASE}/use-cases/events`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
@@ -42,5 +44,20 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     // no DB (build sandbox) — static entries only
   }
 
-  return [...staticEntries, ...publicEntries];
+  // Per-sport discovery landings (doc 15 §2): only sports that currently have
+  // discoverable competitions — no empty SEO shells.
+  let sportEntries: MetadataRoute.Sitemap = [];
+  try {
+    const sports = await listDiscoverySports();
+    sportEntries = sports.map((s) => ({
+      url: `${BASE}/discover/${s.key}`,
+      lastModified: now,
+      changeFrequency: "hourly" as const,
+      priority: 0.8,
+    }));
+  } catch {
+    // no DB (build sandbox)
+  }
+
+  return [...staticEntries, ...sportEntries, ...publicEntries];
 }

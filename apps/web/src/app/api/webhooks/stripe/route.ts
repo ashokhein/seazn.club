@@ -4,12 +4,19 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { handleRegistrationCheckoutCompleted } from "@/server/usecases/registrations";
+import { syncConnectAccount } from "@/server/usecases/stripe-connect";
 
 // ---------------------------------------------------------------------------
 // Event handlers
 // ---------------------------------------------------------------------------
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
+  // Entry-fee checkouts (PROMPT-20a) share the endpoint; kind disambiguates.
+  if (session.metadata?.kind === "registration") {
+    await handleRegistrationCheckoutCompleted(session);
+    return;
+  }
   const orgId = session.metadata?.org_id;
   if (!orgId) return;
 
@@ -113,6 +120,11 @@ export async function POST(req: Request) {
         break;
       case "invoice.payment_succeeded":
         await handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice);
+        break;
+      case "account.updated":
+        // Connect Express onboarding progress (PROMPT-20a): mirror the
+        // charges_enabled flag that gates entry-fee checkout.
+        await syncConnectAccount(event.data.object as Stripe.Account);
         break;
       // Unhandled events are silently ACKed
     }

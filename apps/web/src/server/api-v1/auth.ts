@@ -14,14 +14,19 @@ export type Scope = "read" | "write";
 
 export interface AuthCtx {
   orgId: string;
-  via: "session" | "api_key";
-  /** Session actor; null for API keys (recorded_by stays null on their events). */
+  via: "session" | "api_key" | "device_link";
+  /** Session actor; null for API keys (recorded_by stays null on their
+   *  events). For device links: the ISSUING organiser (doc 13 §7 attribution
+   *  — recorded_by = issued_by, the issuer vouches for the device). */
   userId: string | null;
   role: OrgRole | null;
   keyId: string | null;
+  /** Set only for via='device_link' — rides onto score_events.device_link_id. */
+  deviceLinkId?: string;
 }
 
 const KEY_PREFIX = "sk_live_";
+const DEVICE_LINK_PREFIX = "dl_";
 
 export function hashApiKey(secret: string): string {
   return createHash("sha256").update(secret, "utf8").digest("hex");
@@ -64,6 +69,22 @@ function bearerToken(req: Request): string | null {
   return token.startsWith(KEY_PREFIX) ? token : null;
 }
 
+function deviceLinkToken(req: Request): string | null {
+  const header = req.headers.get("authorization");
+  if (!header?.startsWith("Bearer ")) return null;
+  const token = header.slice("Bearer ".length).trim();
+  return token.startsWith(DEVICE_LINK_PREFIX) ? token : null;
+}
+
+/** dl_ tokens open exactly ONE door — the fixture-scoped scoring surface via
+ *  requireFixtureActor. Every other auth path rejects them outright with 403
+ *  (doc 13 §7: "everything else — finalize, lineups, any other resource"). */
+function rejectDeviceLink(req: Request): void {
+  if (deviceLinkToken(req)) {
+    throw new HttpError(403, "Device links can only access their fixture's scoring surface");
+  }
+}
+
 /**
  * Authenticate a request against an org: API key when a Bearer sk_live_ token
  * is present, else the session cookie. `write` needs an editor role
@@ -72,6 +93,7 @@ function bearerToken(req: Request): string | null {
  * A member with an insufficient role is 403, not 401 — they are authenticated.
  */
 export async function requireOrgAuth(req: Request, orgId: string, scope: Scope): Promise<AuthCtx> {
+  rejectDeviceLink(req);
   const token = bearerToken(req);
   if (token) return apiKeyAuth(token, orgId, scope);
   const user = await requireUser();
@@ -101,6 +123,30 @@ export async function requireFixtureActor(
   fixtureId: string,
   intent: "read" | "score",
 ): Promise<AuthCtx> {
+  // Device links (doc 13 §7): THE one door a dl_ token opens, and only for
+  // its own fixture. Capability limits (no finalize, void-own-only) apply in
+  // the scoring use-case; per-link rate limiting at the door.
+  const dlToken = deviceLinkToken(req);
+  if (dlToken) {
+    const { resolveDeviceLinkToken } = await import("@/server/usecases/device-links");
+    const link = await resolveDeviceLinkToken(dlToken);
+    assertUuid(fixtureId, "fixture");
+    if (link.fixture_id !== fixtureId) {
+      throw new HttpError(403, "This device link is for a different fixture");
+    }
+    // Scoring cadence per link (doc 08 §6): same 10/s budget as a scorer.
+    if (intent === "score") {
+      await rateLimit(`dlv1:${link.id}`, { max: 10, windowSeconds: 1 });
+    }
+    return {
+      orgId: link.org_id,
+      via: "device_link",
+      userId: link.issued_by, // attribution: recorded_by = issued_by
+      role: null,
+      keyId: null,
+      deviceLinkId: link.id,
+    };
+  }
   const orgId = await resourceOrg("fixture", fixtureId);
   const token = bearerToken(req);
   if (token) return apiKeyAuth(token, orgId, intent === "read" ? "read" : "write");
@@ -123,6 +169,7 @@ export async function requireFixtureActor(
  * an API key pins its own org; a session uses the active-org cookie.
  */
 export async function requireAuth(req: Request, scope: Scope): Promise<AuthCtx> {
+  rejectDeviceLink(req);
   const token = bearerToken(req);
   if (token) return apiKeyAuth(token, null, scope);
   const user = await requireUser();
@@ -142,6 +189,7 @@ const ORG_TABLES = {
   entrant: "entrants",
   person: "persons",
   fixture: "fixtures",
+  registration: "registrations",
 } as const;
 export type ResourceKind = keyof typeof ORG_TABLES;
 

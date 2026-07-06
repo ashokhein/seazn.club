@@ -6,6 +6,7 @@ import { requireResourcePageAuth } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
+import { hasFeature } from "@/lib/entitlements";
 import { sql } from "@/lib/db";
 
 export default async function CompetitionPage({
@@ -15,10 +16,11 @@ export default async function CompetitionPage({
 }) {
   const { id } = await params;
   const { auth, org, canEdit } = await requireResourcePageAuth("competition", id);
-  const [competition, divisions, [orgRow]] = await Promise.all([
+  const [competition, divisions, [orgRow], discoveryBranding] = await Promise.all([
     getCompetition(auth, id),
     listDivisions(auth, id),
     sql<{ slug: string }[]>`select slug from organizations where id = ${auth.orgId}`,
+    hasFeature(auth.orgId, "discovery.branding"),
   ]);
   const publicPath =
     competition.visibility !== "private" && orgRow
@@ -105,8 +107,11 @@ export default async function CompetitionPage({
                 visibility: competition.visibility,
                 status: competition.status,
                 frozen: competition.frozen ?? false,
+                discoverable: competition.discoverable,
+                discovery: (competition.discovery ?? {}) as Record<string, string | null>,
               }}
               canEdit={canEdit}
+              discoveryBranding={discoveryBranding}
             />
           </aside>
         </div>

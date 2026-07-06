@@ -131,7 +131,7 @@ export async function v1<T>(fn: () => Promise<T | Reply<T>>): Promise<NextRespon
     }
     if (err instanceof HttpError) {
       if (err.status >= 500) Sentry.captureException(err);
-      return errorResponse(requestId, err.status, statusCode(err.status), err.message);
+      return errorResponse(requestId, err.status, err.code ?? statusCode(err.status), err.message);
     }
     Sentry.captureException(err);
     const message = err instanceof Error ? err.message : "Server error";

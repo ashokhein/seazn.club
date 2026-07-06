@@ -2,6 +2,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { AdminOrgActions } from "@/components/admin-org-actions";
+import { AdminDiscoveryActions } from "@/components/admin-discovery-actions";
+import { hasFeature } from "@/lib/entitlements";
 
 export default async function AdminOrgPage({
   params,
@@ -30,9 +32,16 @@ export default async function AdminOrgPage({
     from org_members m join users u on u.id = m.user_id
     where m.org_id = ${id} order by m.created_at asc`;
 
-  const tournaments = await sql<{ id: string; name: string; sport: string; status: string; created_at: string }[]>`
-    select id, name, sport, status, created_at from tournaments where org_id = ${id}
-    order by created_at desc limit 20`;
+  // Discovery curation (doc 15 §3): public competitions of this org with
+  // their showcase state — featured (Pro-eligible) and abuse block.
+  const competitions = await sql<{
+    id: string; name: string; visibility: string; discoverable: boolean;
+    discovery_blocked: boolean; discovery_featured: boolean;
+  }[]>`
+    select id, name, visibility, discoverable, discovery_blocked, discovery_featured
+    from competitions where org_id = ${id}
+    order by created_at desc limit 50`;
+  const featureEligible = await hasFeature(id, "discovery.featured");
 
   const overrides = await sql<{ feature_key: string; bool_value: boolean | null; int_value: number | null; reason: string | null }[]>`
     select feature_key, bool_value, int_value, reason
@@ -77,7 +86,7 @@ export default async function AdminOrgPage({
         <div className="rounded-lg bg-slate-800 p-4 space-y-2">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Usage</h2>
           <p className="text-sm text-slate-300">{members.length} members</p>
-          <p className="text-sm text-slate-300">{tournaments.length}+ tournaments</p>
+          <p className="text-sm text-slate-300">{competitions.length}+ competitions</p>
           <p className="text-sm text-slate-300">Created {new Date(org.created_at).toLocaleDateString()}</p>
         </div>
 
@@ -123,6 +132,45 @@ export default async function AdminOrgPage({
           </table>
         </div>
       </section>
+
+      {/* Discovery curation (doc 15 §3) */}
+      {competitions.length > 0 && (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-slate-400">Discovery showcase</h2>
+          <div className="rounded-lg border border-slate-800 overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-800 text-xs text-slate-400">
+                <tr>
+                  <th className="px-3 py-2 text-left">Competition</th>
+                  <th className="px-3 py-2 text-left">State</th>
+                  <th className="px-3 py-2 text-left">Curation</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-800">
+                {competitions.map((c) => (
+                  <tr key={c.id} className="hover:bg-slate-800/50">
+                    <td className="px-3 py-2 text-slate-300">{c.name}</td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className="text-slate-400">{c.visibility}</span>
+                      {c.discoverable && <span className="ml-2 text-emerald-400">discoverable</span>}
+                      {c.discovery_featured && <span className="ml-2 text-amber-400">featured</span>}
+                      {c.discovery_blocked && <span className="ml-2 text-red-400">blocked</span>}
+                    </td>
+                    <td className="px-3 py-2">
+                      <AdminDiscoveryActions
+                        competitionId={c.id}
+                        featured={c.discovery_featured}
+                        blocked={c.discovery_blocked}
+                        featureEligible={featureEligible}
+                      />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {/* Entitlement overrides */}
       {overrides.length > 0 && (

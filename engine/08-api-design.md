@@ -22,6 +22,7 @@ Old `/api/**` BFF routes are deleted at cutover (PROMPT-15). Rules:
 |------|-----|-----|
 | Session cookie | our web UI | existing `seazn_session` JWT |
 | **API key** | Pro orgs' integrations | `Authorization: Bearer sk_live_…`; sha256 lookup in `api_keys`; scopes `read`/`write`; entitlement `api.access`; rate limit per key |
+| **Device link** | day-of courtside volunteers (doc 13 §7) | `Authorization: Bearer dl_…`; sha256 lookup in `device_links`; accepted ONLY by its fixture's scoring surface (append, void-own pre-finalize, state/events, realtime token — everything else 403); expired/revoked → 401 `LINK_EXPIRED`/`LINK_REVOKED`; per-link rate limit at scoring cadence (§6); entitlement `scoring.device_links` gates the MINT, not the use |
 | None | public reads | only `visibility='public'` resources, via the consent-filtered views (doc 07 note 4) |
 
 ## 3. Resource map
@@ -48,12 +49,25 @@ GET             /api/v1/stages/{id}/standings
 POST            /api/v1/fixtures/{id}/finalize
 GET/POST/DELETE /api/v1/orgs/{id}/api-keys
 
+# Registration & entry fees (doc 16 §1.1, PROMPT-20a)
+GET/PUT /api/v1/divisions/{id}/registration-settings   # fees are Pro (registration.paid)
+GET     /api/v1/divisions/{id}/registrations           # + /export (CSV, Pro `exports`)
+POST    /api/v1/registrations/{id}/confirm|waitlist|withdraw|refund
+GET/POST /api/v1/orgs/{id}/connect                     # Stripe Connect Express onboarding
+
 # Public (no auth, cacheable, consent-filtered)
 GET /api/v1/public/orgs/{orgSlug}/competitions/{slug}                 # description, divisions
 GET /api/v1/public/.../divisions/{slug}/schedule
 GET /api/v1/public/.../divisions/{slug}/standings
 GET /api/v1/public/.../divisions/{slug}/entrants
 GET /api/v1/public/fixtures/{id}                                      # live summary
+
+# Public registration (PROMPT-20a; the access token minted at submit is the
+# registrant's credential — no account)
+GET  /api/v1/public/.../competitions/{slug}/registration              # open divisions
+POST /api/v1/public/.../competitions/{slug}/register                  # → checkout_url when fee due
+GET  /api/v1/public/registrations/{id}?token=                         # + /ics; ?reconcile=1 post-checkout
+POST /api/v1/public/registrations/{id}/withdraw|checkout              # token in body
 ```
 
 ## 4. The scoring endpoint (hot path)

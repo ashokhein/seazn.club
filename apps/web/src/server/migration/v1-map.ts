@@ -4,7 +4,7 @@
 // tables' rows, not app types (the v1 app code is deleted at cutover).
 
 // ---------------------------------------------------------------------------
-// v1 row shapes (supabase/schema.sql before 013)
+// v1 row shapes (the v1 baseline, db/migration/V001–V028, before V113)
 // ---------------------------------------------------------------------------
 
 export interface V1Tournament {

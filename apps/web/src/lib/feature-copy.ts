@@ -35,6 +35,16 @@ const FEATURE_REASONS: Record<string, string> = {
   "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
   "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",
   "officials.assignment": "Officials assignment is a Pro feature.",
+  "scoring.device_links":
+    "Hand-this-device-over scoring links are a Pro feature — your scorer seat still works.",
+  // Registration & entry fees (doc 16 §1.1)
+  "registration.enabled": "Online registration is not available on this plan.",
+  "registration.paid":
+    "Charging entry fees is a Pro feature — free-event registration still works on every plan.",
+  // Discovery showcase (doc 15 §5)
+  "discovery.listed": "Showcasing on seazn.club is not available on this plan.",
+  "discovery.featured": "The featured showcase row is a Pro perk.",
+  "discovery.branding": "Card tagline and hero image on seazn.club are a Pro feature.",
 };
 
 /** Human, contextual sentence for a 402 / paywall. Never throws. */

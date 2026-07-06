@@ -76,6 +76,10 @@ export async function verifyStateConsistency(sampleSize = 20): Promise<Consisten
   const mismatches: ConsistencyReport["mismatches"] = [];
   for (const { fixture_id, org_id } of sample) {
     await withTenant(org_id, async (tx) => {
+      // Serialise against in-flight appends (same lock as appendEvent):
+      // without it the ledger read and the match_states read can straddle a
+      // concurrent commit and report a false last_seq drift.
+      await tx`select pg_advisory_xact_lock(hashtext(${"fixture:" + fixture_id}))`;
       // A drift detector must report, not crash: a ledger that no longer folds
       // (tampered/corrupt rows) is itself the finding.
       let folded: FoldedFixture | null;

@@ -16,6 +16,8 @@ export const REVALIDATE_SLOW = 300; // entrant / player pages
 export const divisionTag = (divisionId: string) => `division:${divisionId}`;
 export const competitionTag = (competitionId: string) => `competition:${competitionId}`;
 export const orgTag = (orgSlug: string) => `org-public:${orgSlug}`;
+/** One shared tag for every discovery surface (doc 15, PROMPT-19). */
+export const DISCOVERY_TAG = "discovery";
 
 export type Visibility = "public" | "unlisted";
 

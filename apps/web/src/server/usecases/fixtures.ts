@@ -9,7 +9,16 @@ import type { PatchFixture, PutLineup } from "@/server/api-v1/schemas";
 import { FIXTURE_COLS, type FixtureRow } from "./stages";
 import { moveFixture } from "./schedule";
 
+/** Doc 13 §7: a device link reads fixture state/events ONLY — every other
+ *  fixture surface (detail, lineups, schedule) is 403 for dl_ tokens. */
+function rejectDeviceLink(auth: AuthCtx): void {
+  if (auth.via === "device_link") {
+    throw new HttpError(403, "Device links can only access their fixture's scoring surface");
+  }
+}
+
 export async function getFixture(auth: AuthCtx, id: string): Promise<FixtureRow> {
+  rejectDeviceLink(auth);
   return withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<FixtureRow[]>`
       select ${tx(FIXTURE_COLS)} from fixtures where id = ${id}`;
@@ -63,6 +72,7 @@ export async function putLineup(
   entrantId: string,
   input: PutLineup,
 ): Promise<LineupOut> {
+  rejectDeviceLink(auth); // doc 13 §7: no lineups via device link
   return withTenant(auth.orgId, async (tx) => {
     const [fixture] = await tx<
       {
@@ -112,6 +122,7 @@ export async function putLineup(
 
 /** Read an entrant's lineup for a fixture. */
 export async function getLineup(auth: AuthCtx, fixtureId: string, entrantId: string): Promise<LineupOut> {
+  rejectDeviceLink(auth); // doc 13 §7: no reads beyond fixture state/events
   return withTenant(auth.orgId, async (tx) => {
     const [fixture] = await tx`select 1 from fixtures where id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
@@ -140,6 +151,8 @@ export interface EventOut {
   recorded_at: string;
   recorded_by: string | null;
   voids_event_id: string | null;
+  /** Doc 13 §7 attribution rider — lets the pad offer undo-own only. */
+  device_link_id: string | null;
 }
 
 /** Ledger read: events after `sinceSeq` (the 409-recovery resync, doc 08 §4). */
@@ -148,7 +161,7 @@ export async function listEvents(auth: AuthCtx, fixtureId: string, sinceSeq: num
     const [fixture] = await tx`select 1 from fixtures where id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
     return tx<EventOut[]>`
-      select id, seq, type, payload, recorded_at, recorded_by, voids_event_id
+      select id, seq, type, payload, recorded_at, recorded_by, voids_event_id, device_link_id
       from score_events
       where fixture_id = ${fixtureId} and seq > ${sinceSeq}
       order by seq`;

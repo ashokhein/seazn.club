@@ -1,0 +1,11 @@
+# Flyway project config. Connection settings come from scripts/flyway.sh,
+# which translates DATABASE_URL (postgres://) into JDBC flags — run
+# `npm run db:apply` (migrate) / `npm run db:info`, not raw flyway.
+
+[flyway]
+locations = ["filesystem:db/migration"]
+validateMigrationNaming = true
+# Pre-Flyway databases (the remote dev Supabase, anything bootstrapped by the
+# old scripts/apply-db.ts) already contain every migration up to V240 — a
+# one-time `npm run db:baseline` marks them as applied without re-running.
+baselineVersion = "240"

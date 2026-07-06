@@ -16,16 +16,28 @@ interface CompetitionLite {
   visibility: string;
   status: string;
   frozen: boolean;
+  discoverable: boolean;
+  discovery: Record<string, string | null>;
 }
 
 const STATUSES = ["draft", "published", "live", "completed", "archived"];
 
+// Doc 15 §1 — the exact consent copy for "Showcase on seazn.club".
+const SHOWCASE_CONSENT_COPY =
+  "By turning this on, this competition's name, your organisation's name, its sport(s), " +
+  "dates, location (if given), live scores and standings may appear on seazn.club's home, " +
+  "discovery and sport pages, and in marketing/social material. Requires public visibility — " +
+  "it switches off automatically if visibility drops. You can opt out any time; past " +
+  "marketing use is permitted, no new use after opt-out.";
+
 export function CompetitionSettings({
   competition,
   canEdit,
+  discoveryBranding,
 }: {
   competition: CompetitionLite;
   canEdit: boolean;
+  discoveryBranding: boolean;
 }) {
   const router = useRouter();
   const [form, setForm] = useState({
@@ -35,6 +47,11 @@ export function CompetitionSettings({
     ends_on: competition.ends_on ?? "",
     visibility: competition.visibility,
     status: competition.status,
+    discoverable: competition.discoverable,
+    city: competition.discovery.city ?? "",
+    country: competition.discovery.country ?? "",
+    tagline: competition.discovery.tagline ?? "",
+    hero_image_path: competition.discovery.hero_image_path ?? "",
   });
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
@@ -59,6 +76,21 @@ export function CompetitionSettings({
           ends_on: form.ends_on || null,
           visibility: form.visibility,
           status: form.status,
+          // Hard-coupled server-side too (doc 15 §1): a non-public visibility
+          // always sends discoverable=false so the intent is unambiguous.
+          discoverable: form.visibility === "public" ? form.discoverable : false,
+          discovery: {
+            city: form.city.trim() || null,
+            country: form.country.trim() || null,
+            // Branding-gated fields never ride for non-entitled orgs (the
+            // server 402s them anyway — doc 10 §2 rule: never UI-only).
+            ...(discoveryBranding
+              ? {
+                  tagline: form.tagline.trim() || null,
+                  hero_image_path: form.hero_image_path.trim() || null,
+                }
+              : {}),
+          },
         },
       });
       setSaved(true);
@@ -158,6 +190,77 @@ export function CompetitionSettings({
           </select>
         </label>
       </div>
+
+      {/* Showcase on seazn.club (doc 15 §1): explicit opt-in, public only. */}
+      <fieldset className="space-y-3 rounded-lg border border-purple-100 bg-purple-50/50 p-3">
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            disabled={readOnly || form.visibility !== "public"}
+            checked={form.discoverable && form.visibility === "public"}
+            onChange={(e) => setForm({ ...form, discoverable: e.target.checked })}
+            className="mt-0.5"
+          />
+          <span>
+            <span className="text-sm font-semibold text-slate-700">Showcase on seazn.club</span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+              {SHOWCASE_CONSENT_COPY}
+            </span>
+          </span>
+        </label>
+        {form.visibility !== "public" && (
+          <p className="text-xs text-amber-600">
+            Set visibility to <b>public</b> to enable showcasing.
+          </p>
+        )}
+        {form.discoverable && form.visibility === "public" && (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block">
+                <span className="label">City (optional)</span>
+                <input
+                  disabled={readOnly}
+                  value={form.city}
+                  onChange={(e) => setForm({ ...form, city: e.target.value })}
+                  className="input"
+                />
+              </label>
+              <label className="block">
+                <span className="label">Country (optional)</span>
+                <input
+                  disabled={readOnly}
+                  value={form.country}
+                  onChange={(e) => setForm({ ...form, country: e.target.value })}
+                  className="input"
+                />
+              </label>
+            </div>
+            <label className="block">
+              <span className="label">
+                Tagline {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
+              </span>
+              <input
+                disabled={readOnly || !discoveryBranding}
+                value={form.tagline}
+                onChange={(e) => setForm({ ...form, tagline: e.target.value })}
+                placeholder={discoveryBranding ? "One line on your cards" : "Upgrade for card branding"}
+                className="input"
+              />
+            </label>
+            <label className="block">
+              <span className="label">
+                Hero image URL {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
+              </span>
+              <input
+                disabled={readOnly || !discoveryBranding}
+                value={form.hero_image_path}
+                onChange={(e) => setForm({ ...form, hero_image_path: e.target.value })}
+                className="input"
+              />
+            </label>
+          </>
+        )}
+      </fieldset>
 
       <p className="text-xs text-slate-400">
         Slug: <span className="font-mono">{competition.slug}</span>

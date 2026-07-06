@@ -14,6 +14,7 @@ import {
   type SideInfo,
   type LineupSlotIn,
 } from "@/components/v2/fixture-console";
+import { DeviceLinkPanel } from "@/components/v2/device-link-panel";
 
 export default async function FixturePage({
   params,
@@ -120,6 +121,20 @@ export default async function FixturePage({
           }))}
           canEdit={canScore && !(competition.frozen ?? false)}
         />
+
+        {/* Day-of device link (doc 13 §7): editors only — scorers never mint. */}
+        {!isScorer &&
+          canScore &&
+          !(competition.frozen ?? false) &&
+          fixture.status !== "finalized" &&
+          fixture.status !== "cancelled" && (
+            <div className="mt-6">
+              <DeviceLinkPanel
+                fixtureId={fixture.id}
+                scorerLabel={sportModule.officialLabel.scorer}
+              />
+            </div>
+          )}
       </main>
     </>
   );

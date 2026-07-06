@@ -6,7 +6,7 @@ a rich participant/position model, division/grade support (U16, U18, T20, …), 
 open dashboard, and an expanded Pro entitlement surface.
 
 > **Status: implemented through PROMPT-15 (v1 cutover complete).** PROMPT-01…14 delivered
-> `packages/engine`, the greenfield schema (`supabase/schema_v2.sql`), `/api/v1`, the public
+> `packages/engine`, the greenfield schema (`db/migration/V201+`, ex `schema_v2.sql`), `/api/v1`, the public
 > dashboard, entitlements v2 and the simulation harness; PROMPT-15 rebuilt the organiser UI
 > on v2, shipped `scripts/migrate-v1-to-v2.ts` (+ migration `013_v1_cutover.sql`) and
 > **deleted the v1 engine** (`src/lib/{engine,tournament,pairing,standings,format}.ts`, the
@@ -56,7 +56,7 @@ persists events and derived snapshots, never business rules.
 | 04 | [04-sport-scoring-specs.md](04-sport-scoring-specs.md) | Deep per-sport scoring specs + algorithms: football, cricket, volleyball, chess, badminton, table tennis, basketball, generic |
 | 05 | [05-formats-progression-tiebreakers.md](05-formats-progression-tiebreakers.md) | Format engines (RR, Swiss, KO, double-elim, group+KO, stepladder, league), scheduling algorithms, tiebreaker cascade design |
 | 06 | [06-divisions-and-eligibility.md](06-divisions-and-eligibility.md) | Age groups (U16/U18), format variants (T20/ODI), grades, gender, eligibility engine |
-| 07 | [07-greenfield-schema.md](07-greenfield-schema.md) | Complete new PostgreSQL schema (replaces `supabase/schema.sql`) |
+| 07 | [07-greenfield-schema.md](07-greenfield-schema.md) | Complete new PostgreSQL schema (replaces the v1 baseline, now `db/migration/V001–V028`) |
 | 08 | [08-api-design.md](08-api-design.md) | Separate versioned API (`/api/v1`), public read API, API keys, OpenAPI, webhooks |
 | 09 | [09-public-dashboard.md](09-public-dashboard.md) | Open dashboard: season/tournament description, schedules, player info, standings |
 | 10 | [10-pro-entitlements.md](10-pro-entitlements.md) | Expanded plan matrix; which v2 features are Pro/Business |
@@ -125,5 +125,5 @@ Ordered. Each prompt is self-contained: context, task, files, acceptance criteri
 5. ~~The old engine keeps running until PROMPT-15~~ — done: PROMPT-15 cut over and deleted
    v1. Historical v1 data migrates via `scripts/migrate-v1-to-v2.ts` (dry-run first; see
    the script header for the staging-rehearsal runbook), then
-   `supabase/migrations/013_v1_cutover.sql` archives `audit_log → audit_log_v1` and drops
+   `db/migration/V113__v1_cutover.sql` archives `audit_log → audit_log_v1` and drops
    the v1 tables.

@@ -6,26 +6,28 @@ import { MarketingFooter } from "@/components/marketing-footer";
 export const metadata: Metadata = {
   title: "Pricing — Seazn Club",
   description:
-    "Free forever for small clubs. Pro at $20/month for unlimited seasons, tournaments, and players. 14-day trial, no card required.",
+    "Free forever for small clubs. Pro at $20/month for unlimited competitions, online registration with entry fees, and realtime scoreboards. 14-day trial, no card required.",
 };
 
 const FREE = [
-  "5 seasons",
-  "10 tournaments per season",
-  "32 players per tournament",
-  "All 4 tournament formats",
-  "Live standings & results",
-  "Print-ready brackets",
-  "Slideshow / projector view",
-  "Multi-member orgs",
-  "Invite links",
+  "2 active competitions",
+  "1 division per competition",
+  "16 entrants per division",
+  "League, groups + knockout & swiss formats",
+  "Free-event online registration",
+  "Live standings & public dashboard",
+  "1 scorer seat + 3 team members",
+  "Listed on the seazn.club showcase",
 ];
 
 const PRO = [
-  "Unlimited seasons",
-  "Unlimited tournaments",
-  "Up to 256 players per tournament",
-  "Everything in Community",
+  "Unlimited active competitions",
+  "10 divisions per competition, 64 entrants each",
+  "Online registration with entry fees — paid out to your club",
+  "Realtime scoreboards & live push updates",
+  "Ball-by-ball & rally-by-rally scoring, player stats",
+  "Custom branding, CSV/PDF exports, API keys",
+  "Hand-over device links for courtside volunteers",
   "Priority support",
 ];
 
@@ -36,7 +38,11 @@ const FAQS = [
   },
   {
     q: "What happens when my Pro trial ends?",
-    a: "Your org drops back to Community limits automatically. Your data is preserved — no tournaments are deleted. You can upgrade again any time.",
+    a: "Your org drops back to Community limits automatically. Your data is preserved — no competitions are deleted. You can upgrade again any time.",
+  },
+  {
+    q: "Can I charge entry fees?",
+    a: "Yes — on Pro. Connect your club's Stripe account from the registration console and fees from online registration are paid out directly to the club, minus a small platform fee. Free-event registration works on every plan.",
   },
   {
     q: "Can I have multiple organizations?",
@@ -131,14 +137,18 @@ export default function PricingPage() {
               </thead>
               <tbody className="text-sm">
                 {[
-                  ["Seasons", "5", "Unlimited"],
-                  ["Tournaments per season", "10", "Unlimited"],
-                  ["Players per tournament", "32", "256"],
-                  ["Tournament formats", "All 4", "All 4"],
-                  ["Live standings", "✓", "✓"],
-                  ["Print / slideshow", "✓", "✓"],
-                  ["Multi-member orgs", "✓", "✓"],
-                  ["Invite links", "✓", "✓"],
+                  ["Active competitions", "2", "Unlimited"],
+                  ["Divisions per competition", "1", "10"],
+                  ["Entrants per division", "16", "64"],
+                  ["Formats", "League · groups · KO · swiss", "+ double elimination"],
+                  ["Online registration", "Free events", "+ entry fees via Stripe"],
+                  ["Public dashboards", "1", "Unlimited"],
+                  ["Realtime scoreboard", "—", "✓"],
+                  ["Ball-by-ball / rally scoring", "—", "✓"],
+                  ["Custom branding", "—", "✓"],
+                  ["CSV / PDF exports", "—", "✓"],
+                  ["API access & device links", "—", "✓"],
+                  ["Team members", "3 + 1 scorer", "10 + 1 scorer"],
                   ["Priority support", "—", "✓"],
                 ].map(([feature, free, pro]) => (
                   <tr key={feature}>
