@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { PlanBadge } from "@/components/plan-badge";
 
 interface FormField {
   key: string;
@@ -68,10 +69,13 @@ export function RegistrationsPanel({
   orgId,
   divisionId,
   canEdit,
+  paidAllowed = true,
 }: {
   orgId: string;
   divisionId: string;
   canEdit: boolean;
+  /** registration.paid entitlement — false shows the plan badge on the fee field. */
+  paidAllowed?: boolean;
 }) {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [regs, setRegs] = useState<Registration[]>([]);
@@ -227,7 +231,10 @@ export function RegistrationsPanel({
 
           <div className="grid grid-cols-2 gap-2">
             <label className="block text-xs text-slate-500">
-              Entry fee (cents; 0 = free)
+              <span className="flex items-center gap-1.5">
+                Entry fee (cents; 0 = free)
+                {!paidAllowed && <PlanBadge feature="registration.paid" />}
+              </span>
               <input
                 type="number"
                 min={0}

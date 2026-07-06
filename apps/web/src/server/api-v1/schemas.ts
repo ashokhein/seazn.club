@@ -367,7 +367,7 @@ export const ApiKey = z.object({
 });
 
 export const CreatedApiKey = ApiKey.extend({
-  /** The sk_live_ secret — returned exactly once, at creation. */
+  /** The sc_ secret — returned exactly once, at creation. */
   secret: z.string(),
 });
 

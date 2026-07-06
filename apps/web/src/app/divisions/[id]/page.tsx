@@ -103,6 +103,9 @@ export default async function DivisionPage({
             </span>
             {frozen && <span className="badge bg-sky-100 text-sky-700">read-only</span>}
             <div className="flex-1" />
+            <Link href={`/divisions/${id}/slideshow`} target="_blank" className="btn btn-ghost">
+              Slideshow ↗
+            </Link>
             <Link href={`/divisions/${id}/registrations`} className="btn btn-ghost">
               Registrations
             </Link>

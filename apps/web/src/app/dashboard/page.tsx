@@ -49,7 +49,7 @@ export default async function DashboardPage() {
               People
             </Link>
             {canEdit && (
-              <Link href="/competitions/new" className="btn btn-primary">
+              <Link href="/competitions/new" data-tour="new-competition" className="btn btn-primary">
                 + New Competition
               </Link>
             )}

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Check, KeyRound } from "lucide-react";
+import { PlanBadge } from "@/components/plan-badge";
 
 interface ApiKeyRow {
   id: string;
@@ -37,7 +38,7 @@ function fmt(iso: string | null): string {
   });
 }
 
-/** Manage the org's platform API keys (Pro). The sk_live_ secret is shown
+/** Manage the org's platform API keys (Pro). The sc_ secret is shown
  *  exactly once, right after minting — it can never be retrieved again. */
 export function ApiKeysPanel({
   orgId,
@@ -175,7 +176,10 @@ export function ApiKeysPanel({
           />
           Allow writes
           {!canWriteScope && (
-            <span className="text-xs text-slate-400">(read-only on Pro — writes need Business)</span>
+            <>
+              <PlanBadge feature="api.write" />
+              <span className="text-xs text-slate-400">(read-only on Pro)</span>
+            </>
           )}
         </label>
       </div>
@@ -186,7 +190,7 @@ export function ApiKeysPanel({
       ) : active.length === 0 ? (
         <p className="text-sm text-slate-400">
           No API keys yet. Create one to call the platform API with{" "}
-          <code className="font-mono text-xs">Authorization: Bearer sk_live_…</code>
+          <code className="font-mono text-xs">Authorization: Bearer sc_…</code>
         </p>
       ) : (
         <ul className="divide-y divide-slate-100">

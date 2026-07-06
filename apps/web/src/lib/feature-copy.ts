@@ -51,3 +51,15 @@ const FEATURE_REASONS: Record<string, string> = {
 export function featureReason(featureKey: string): string {
   return FEATURE_REASONS[featureKey] ?? "This feature needs a plan upgrade.";
 }
+
+// Cheapest plan that unlocks each feature (mirrors the plan_entitlements
+// seeds, V112 + V240). Everything not listed here unlocks on Pro — only the
+// Business-tier exceptions need rows.
+const BUSINESS_FEATURES = new Set(["api.write", "webhooks", "scorers.max"]);
+
+export type PaidPlan = "pro" | "business";
+
+/** Cheapest plan that unlocks a feature key. Never throws. */
+export function featurePlan(featureKey: string): PaidPlan {
+  return BUSINESS_FEATURES.has(featureKey) ? "business" : "pro";
+}

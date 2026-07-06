@@ -1,9 +1,9 @@
 "use client";
 
-// Division builder (PROMPT-15 task 1): sport → variant → eligibility template
-// → stage graph. Creates the division, then its stages, then lands on the
-// division console. Config overrides are validated server-side by the pinned
-// module's configSchema — invalid JSON never reaches the DB.
+// Division builder (PROMPT-15 task 1): sport → variant → match rules →
+// eligibility template → stage graph. Creates the division, then its stages,
+// then lands on the division console. Match-rule fields build the config
+// override object, validated server-side by the pinned module's configSchema.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
@@ -69,6 +69,15 @@ const STAGE_TEMPLATES: {
     ],
   },
   {
+    key: "group_stepladder",
+    label: "Group + Stepladder",
+    help: "Round robin, then a stepladder final — lowest seed climbs.",
+    build: (q) => [
+      { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
+      { kind: "stepladder", name: "Stepladder finals", config: {}, qualification: { topN: q } },
+    ],
+  },
+  {
     key: "swiss",
     label: "Swiss",
     help: "Score-group pairings, fixed rounds.",
@@ -98,6 +107,126 @@ const GENDERS = [
   { key: "x", label: "Mixed / other" },
 ];
 
+// ---------------------------------------------------------------------------
+// Match rules — curated per-sport fields that build the config override
+// object (previously a raw-JSON textarea). Blank = keep the variant default;
+// the pinned module's configSchema still validates server-side.
+// ---------------------------------------------------------------------------
+
+interface RuleField {
+  key: string;
+  label: string;
+  help?: string;
+  /** number input, or a Default/On/Off select for booleans, or an option list. */
+  kind: "number" | "bool" | "select";
+  min?: number;
+  max?: number;
+  options?: { value: string; label: string }[];
+  /** Maps the entered value onto the override object (top-level key). */
+  build: (value: string) => Record<string, unknown>;
+}
+
+const SETBASED_RULES: RuleField[] = [
+  {
+    key: "bestOf",
+    label: "Best of (sets)",
+    kind: "select",
+    options: [1, 3, 5, 7].map((n) => ({ value: String(n), label: `Best of ${n}` })),
+    build: (v) => ({ bestOf: Number(v) }),
+  },
+  {
+    key: "setTo",
+    label: "Points to win a set",
+    kind: "number",
+    min: 1,
+    max: 100,
+    build: (v) => ({ setTo: Number(v) }),
+  },
+  {
+    key: "finalSetTo",
+    label: "Points in the deciding set",
+    kind: "number",
+    min: 1,
+    max: 100,
+    build: (v) => ({ finalSetTo: Number(v) }),
+  },
+];
+
+const SPORT_RULES: Record<string, RuleField[]> = {
+  football: [
+    {
+      key: "halfMinutes",
+      label: "Half length (minutes)",
+      kind: "number",
+      min: 5,
+      max: 60,
+      build: (v) => ({ halfMinutes: Number(v) }),
+    },
+    {
+      key: "extraTime",
+      label: "Extra time",
+      help: "Knockout fixtures only.",
+      kind: "bool",
+      build: (v) => ({ extraTime: { enabled: v === "on", halfMinutes: 15 } }),
+    },
+    {
+      key: "shootout",
+      label: "Penalty shootout",
+      help: "Knockout fixtures only.",
+      kind: "bool",
+      build: (v) => ({ shootout: v === "on" }),
+    },
+  ],
+  cricket: [
+    {
+      key: "overs",
+      label: "Overs per innings",
+      kind: "number",
+      min: 1,
+      max: 100,
+      build: (v) => ({ ballsPerInnings: Number(v) * 6 }),
+    },
+    {
+      key: "maxOversPerBowler",
+      label: "Max overs per bowler",
+      kind: "number",
+      min: 1,
+      max: 50,
+      build: (v) => ({ maxOversPerBowler: Number(v) }),
+    },
+    {
+      key: "superOver",
+      label: "Super over on a tie",
+      help: "Knockout fixtures only.",
+      kind: "bool",
+      build: (v) => ({ superOver: v === "on" }),
+    },
+    {
+      key: "dls",
+      label: "DLS revised targets",
+      help: "Pro feature — a manual umpire target works on every plan.",
+      kind: "bool",
+      build: (v) => ({ dls: { enabled: v === "on", edition: "standard" } }),
+    },
+  ],
+  volleyball: SETBASED_RULES,
+  badminton: SETBASED_RULES,
+  tabletennis: SETBASED_RULES,
+  boardgame: [
+    {
+      key: "variant",
+      label: "Clock family",
+      kind: "select",
+      options: [
+        { value: "classical", label: "Classical" },
+        { value: "rapid", label: "Rapid" },
+        { value: "blitz", label: "Blitz" },
+      ],
+      build: (v) => ({ variant: v }),
+    },
+  ],
+};
+
 export function DivisionBuilder({
   competitionId,
   sports,
@@ -110,8 +239,8 @@ export function DivisionBuilder({
   const [sportKey, setSportKey] = useState(sports[0]?.key ?? "");
   const sport = useMemo(() => sports.find((s) => s.key === sportKey), [sports, sportKey]);
   const [variantKey, setVariantKey] = useState(sport?.variants[0]?.key ?? "");
-  const [overridesText, setOverridesText] = useState("");
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  // Match-rule values keyed by RuleField.key; "" = keep the variant default.
+  const [ruleValues, setRuleValues] = useState<Record<string, string>>({});
 
   // Eligibility template (doc 06 §2): age cutoff + gender + note.
   const [maxAge, setMaxAge] = useState("");
@@ -134,6 +263,7 @@ export function DivisionBuilder({
     setSportKey(key);
     const next = sports.find((s) => s.key === key);
     setVariantKey(next?.variants[0]?.key ?? "");
+    setRuleValues({}); // rules are sport-specific
   }
 
   function buildEligibility(): Record<string, unknown>[] {
@@ -170,14 +300,12 @@ export function DivisionBuilder({
     setError(null);
     setPaywallFeature(null);
 
+    // Only rules the user actually set become overrides; the rest stay on
+    // the variant's defaults.
     let overrides: Record<string, unknown> = {};
-    if (overridesText.trim()) {
-      try {
-        overrides = JSON.parse(overridesText) as Record<string, unknown>;
-      } catch {
-        setError("Config overrides must be valid JSON.");
-        return;
-      }
+    for (const field of SPORT_RULES[sportKey] ?? []) {
+      const value = ruleValues[field.key];
+      if (value) overrides = { ...overrides, ...field.build(value) };
     }
 
     setBusy(true);
@@ -212,7 +340,8 @@ export function DivisionBuilder({
   }
 
   const templateInfo = STAGE_TEMPLATES.find((t) => t.key === template);
-  const hasSecondStage = template === "league_ko" || template === "groups_ko";
+  const hasSecondStage =
+    template === "league_ko" || template === "groups_ko" || template === "group_stepladder";
 
   return (
     <form onSubmit={submit} className="space-y-6">
@@ -257,24 +386,60 @@ export function DivisionBuilder({
             </select>
           </label>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowAdvanced(!showAdvanced)}
-          className="text-xs font-medium text-purple-600 hover:underline"
-        >
-          {showAdvanced ? "Hide" : "Show"} advanced config overrides
-        </button>
-        {showAdvanced && (
-          <label className="block">
-            <span className="label">Config overrides (JSON, merged over the variant)</span>
-            <textarea
-              rows={4}
-              value={overridesText}
-              onChange={(e) => setOverridesText(e.target.value)}
-              placeholder='{"maxOversPerBowler": 4}'
-              className="textarea font-mono text-xs"
-            />
-          </label>
+        {(SPORT_RULES[sportKey] ?? []).length > 0 && (
+          <div className="border-t border-slate-100 pt-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Match rules
+            </h3>
+            <p className="mt-0.5 text-xs text-slate-400">
+              Leave a field on its default to use the variant&apos;s standard rules.
+            </p>
+            <div className="mt-3 grid gap-4 sm:grid-cols-3">
+              {(SPORT_RULES[sportKey] ?? []).map((field) => (
+                <label key={field.key} className="block">
+                  <span className="label">{field.label}</span>
+                  {field.kind === "number" ? (
+                    <input
+                      type="number"
+                      min={field.min}
+                      max={field.max}
+                      value={ruleValues[field.key] ?? ""}
+                      onChange={(e) =>
+                        setRuleValues({ ...ruleValues, [field.key]: e.target.value })
+                      }
+                      placeholder="Default"
+                      className="input"
+                    />
+                  ) : (
+                    <select
+                      value={ruleValues[field.key] ?? ""}
+                      onChange={(e) =>
+                        setRuleValues({ ...ruleValues, [field.key]: e.target.value })
+                      }
+                      className="select"
+                    >
+                      <option value="">Default</option>
+                      {field.kind === "bool" ? (
+                        <>
+                          <option value="on">On</option>
+                          <option value="off">Off</option>
+                        </>
+                      ) : (
+                        (field.options ?? []).map((o) => (
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                  )}
+                  {field.help && (
+                    <span className="mt-0.5 block text-[11px] text-slate-400">{field.help}</span>
+                  )}
+                </label>
+              ))}
+            </div>
+          </div>
         )}
       </section>
 
@@ -378,7 +543,15 @@ export function DivisionBuilder({
                 type="radio"
                 name="template"
                 checked={template === t.key}
-                onChange={() => setTemplate(t.key)}
+                onChange={() => {
+                  setTemplate(t.key);
+                  // Keep the qualifier valid for the template's option list.
+                  if (t.key === "group_stepladder" && ![3, 4, 5, 6].includes(qualified)) {
+                    setQualified(4);
+                  } else if (t.key !== "group_stepladder" && ![2, 4, 8, 16].includes(qualified)) {
+                    setQualified(4);
+                  }
+                }}
                 className="sr-only"
               />
               <span className="block font-medium">{t.label}</span>
@@ -387,7 +560,10 @@ export function DivisionBuilder({
           ))}
         </div>
         <div className="grid gap-4 sm:grid-cols-3">
-          {(template === "league" || template === "league_ko" || template === "groups_ko") && (
+          {(template === "league" ||
+            template === "league_ko" ||
+            template === "groups_ko" ||
+            template === "group_stepladder") && (
             <label className="block">
               <span className="label">Legs</span>
               <select
@@ -434,7 +610,7 @@ export function DivisionBuilder({
                 onChange={(e) => setQualified(Number(e.target.value))}
                 className="select"
               >
-                {[2, 4, 8, 16].map((n) => (
+                {(template === "group_stepladder" ? [3, 4, 5, 6] : [2, 4, 8, 16]).map((n) => (
                   <option key={n} value={n}>
                     Top {n}
                   </option>

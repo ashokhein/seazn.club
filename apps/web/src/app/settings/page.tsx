@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Zap, BarChart2,
-  TrendingUp, User, Mail, Download, ShieldOff, KeyRound,
+  TrendingUp, User, Mail, Download, ShieldOff, KeyRound, Compass,
   type LucideIcon,
 } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs, requireOrgRole } from "@/lib/auth";
@@ -25,6 +25,8 @@ import {
   DeleteAccountButton,
 } from "@/components/account-actions";
 import { ApiKeysPanel } from "@/components/api-keys";
+import { TourReplayButton } from "@/components/tour-replay";
+import { PlanBadge } from "@/components/plan-badge";
 
 function SectionHeader({ icon: Icon, children, action }: {
   icon: LucideIcon;
@@ -276,7 +278,7 @@ export default async function SettingsPage({
                 </div>
 
                 {canEdit && (
-                  <div className="mt-5 border-t border-slate-100 pt-5">
+                  <div className="mt-5 border-t border-slate-100 pt-5" data-tour="org-rename">
                     <SubSection icon={Pencil} label="Rename" />
                     <OrgRename orgId={active.id} initialName={active.name} />
                   </div>
@@ -295,10 +297,11 @@ export default async function SettingsPage({
                         }
                       />
                     ) : (
-                      <p className="text-sm text-slate-400">
+                      <p className="flex items-center gap-2 text-sm text-slate-400">
+                        <PlanBadge feature="branding" />
                         Org logo requires{" "}
                         <Link href="/settings?tab=billing" className="text-purple-600 underline">
-                          Pro plan ✦
+                          an upgrade
                         </Link>
                       </p>
                     )}
@@ -309,6 +312,13 @@ export default async function SettingsPage({
                   <SubSection icon={ArrowLeftRight} label="Switch organisation" />
                   <OrgSwitcher orgs={orgs} activeId={active.id} />
                 </div>
+
+                {canEdit && (
+                  <div className="mt-5 border-t border-slate-100 pt-5">
+                    <SubSection icon={Compass} label="Product tour" />
+                    <TourReplayButton />
+                  </div>
+                )}
               </section>
             )}
 
@@ -417,10 +427,11 @@ export default async function SettingsPage({
                 ) : hasApiAccess ? (
                   <ApiKeysPanel orgId={active.id} canWriteScope={hasApiWrite} />
                 ) : (
-                  <p className="text-sm text-slate-400">
+                  <p className="flex items-center gap-2 text-sm text-slate-400">
+                    <PlanBadge feature="api.access" />
                     Platform API keys require{" "}
                     <Link href="/settings?tab=billing" className="text-purple-600 underline">
-                      Pro plan ✦
+                      an upgrade
                     </Link>
                   </p>
                 )}

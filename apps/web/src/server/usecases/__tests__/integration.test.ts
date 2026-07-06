@@ -310,7 +310,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     expect(final.away_entrant_id).not.toBeNull();
   });
 
-  it("API keys are 402-gated on api.access and mint sk_live_ secrets once", async () => {
+  it("API keys are 402-gated on api.access and mint sc_ secrets once", async () => {
     const { auth } = await seedOrg();
     // Community default: no api.access → 402.
     await expect(createApiKey(auth, { name: "ci", scopes: ["read"] })).rejects.toBeInstanceOf(
@@ -330,10 +330,10 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
       values (${auth.orgId}, 'api.write', true)
       on conflict (org_id, feature_key) do update set bool_value = true`;
     const key = await createApiKey(auth, { name: "ci", scopes: ["read", "write"] });
-    expect(key.secret.startsWith("sk_live_")).toBe(true);
+    expect(key.secret.startsWith("sc_")).toBe(true);
     const [stored] = await sql<{ key_hash: string }[]>`
       select key_hash from api_keys where id = ${key.id}`;
-    expect(stored.key_hash).not.toContain(key.secret.slice(8)); // only the hash at rest
+    expect(stored.key_hash).not.toContain(key.secret.slice(3)); // only the hash at rest
   });
 
   it("refuses to delete a competition with recorded play", async () => {

@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { Nav } from "@/components/nav";
 import { requireResourcePageAuth } from "@/server/page-auth";
+import { hasFeature } from "@/lib/entitlements";
 import { getDivision } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
 import { RegistrationsPanel } from "@/components/v2/registrations-panel";
@@ -16,6 +17,7 @@ export default async function DivisionRegistrationsPage({
   const { auth, canEdit } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
   const competition = await getCompetition(auth, division.competition_id);
+  const paidAllowed = await hasFeature(auth.orgId, "registration.paid");
 
   return (
     <>
@@ -43,6 +45,7 @@ export default async function DivisionRegistrationsPage({
           orgId={auth.orgId}
           divisionId={id}
           canEdit={canEdit && !(competition.frozen ?? false)}
+          paidAllowed={paidAllowed}
         />
       </main>
     </>

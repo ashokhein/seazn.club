@@ -253,7 +253,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
         apiKey: {
           type: "http",
           scheme: "bearer",
-          description: "Pro API key: `Authorization: Bearer sk_live_…` (entitlement api.access)",
+          description: "Pro API key: `Authorization: Bearer sc_…` (entitlement api.access)",
         },
         deviceLink: {
           type: "http",
