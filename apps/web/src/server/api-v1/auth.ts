@@ -193,6 +193,8 @@ const ORG_TABLES = {
   person: "persons",
   fixture: "fixtures",
   registration: "registrations",
+  club: "clubs",
+  import: "imports",
 } as const;
 export type ResourceKind = keyof typeof ORG_TABLES;
 

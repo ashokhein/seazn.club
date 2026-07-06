@@ -66,6 +66,7 @@ export const ROUTES: RouteSpec[] = [
   // Stages
   { path: "/divisions/{id}/stages", method: "get", summary: "List stages", tag: "stages", response: z.array(S.Stage) },
   { path: "/divisions/{id}/stages", method: "post", summary: "Define the stage graph", tag: "stages", request: S.CreateStages, response: z.union([S.Stage, z.array(S.Stage)]), status: 201, errors: [409] },
+  { path: "/stages/{id}", method: "delete", summary: "Delete a stage — last-in-graph only, refused once fixtures are played", tag: "stages", errors: [422] },
   { path: "/stages/{id}/generate", method: "post", summary: "Generate fixtures (idempotent, returns diff)", tag: "stages", response: S.GenerateResult, errors: [422] },
   { path: "/stages/{id}/complete", method: "post", summary: "Guarded stage completion / progression", tag: "stages", response: S.CompleteResult, errors: [422] },
   { path: "/stages/{id}/standings", method: "get", summary: "Standings snapshot", tag: "stages", query: { pool_id: { schema: { type: "string", format: "uuid" } } } },
@@ -121,6 +122,17 @@ export const ROUTES: RouteSpec[] = [
   { path: "/public/registrations/{id}/withdraw", method: "post", summary: "Registrant self-withdraw (token)", tag: "public", public: true, request: S.PublicRegistrationToken, response: S.PublicRegistrationStatus },
   { path: "/public/registrations/{id}/checkout", method: "post", summary: "(Re)open Stripe Checkout for a pending paid registration", tag: "public", public: true, request: S.PublicRegistrationToken, errors: [422, 503] },
   { path: "/public/registrations/{id}/ics", method: "get", summary: "Confirmation .ics for the competition dates (?token=)", tag: "public", public: true, errors: [401] },
+  // Clubs & bulk import (Jul3/01, PROMPT-21)
+  { path: "/clubs", method: "get", summary: "List clubs", tag: "clubs", response: z.array(S.Club) },
+  { path: "/clubs", method: "post", summary: "Create a club (Pro `clubs.hierarchy`)", tag: "clubs", request: S.CreateClub, response: S.Club, status: 201, errors: [402, 409] },
+  { path: "/clubs/{id}", method: "get", summary: "Club detail: teams across divisions", tag: "clubs", response: S.ClubDetail },
+  { path: "/clubs/{id}", method: "patch", summary: "Update a club", tag: "clubs", request: S.PatchClub, response: S.Club, errors: [402] },
+  { path: "/clubs/{id}", method: "delete", summary: "Delete a club (teams survive, badges fall back)", tag: "clubs", errors: [402] },
+  { path: "/clubs/logos", method: "post", summary: "Bulk logo assign: multipart `files` + `mapping` JSON + `assign_remaining` (Jul3/01 §5; Pro `logos.bulk` for >1 file)", tag: "clubs", response: z.array(S.LogoAssignment), errors: [402, 422] },
+  { path: "/imports", method: "post", summary: "Upload a participants spreadsheet (multipart `file`) → dry-run { importId, plan }; writes nothing (Jul3/01 §6)", tag: "clubs", response: S.ImportPreview, status: 201, errors: [402, 413, 422] },
+  { path: "/imports/{id}", method: "get", summary: "Re-preview a stored import against current state", tag: "clubs", response: S.ImportPreview },
+  { path: "/imports/{id}/commit", method: "post", summary: "Execute the plan in one transaction (Idempotency-Key header)", tag: "clubs", response: S.ImportCommitResult, status: 201, errors: [402, 422] },
+  { path: "/participants/export", method: "get", summary: "Participants CSV/XLSX: club + division columns, empty-spot rows intact (Pro `exports`)", tag: "clubs", errors: [402], query: { format: { schema: { type: "string", enum: ["csv", "xlsx"] } }, club_id: { schema: { type: "string" } }, division_id: { schema: { type: "string" } } } },
 ];
 
 // ---------------------------------------------------------------------------

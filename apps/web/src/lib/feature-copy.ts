@@ -31,6 +31,10 @@ const FEATURE_REASONS: Record<string, string> = {
   "api.write": "Write access via the API needs the Business plan.",
   webhooks: "Webhooks need the Business plan.",
   exports: "CSV/PDF exports are a Pro feature.",
+  // Clubs & bulk import (Jul3/01 §7)
+  "import.bulk": "Files over 20 rows need a Pro plan — split the file or upgrade.",
+  "logos.bulk": "Multi-file logo upload is a Pro feature — you can still set logos one at a time.",
+  "clubs.hierarchy": "Club hierarchies (parent clubs, group-by-club) are a Pro feature.",
   "scheduling.constraints": "The scheduling constraints solver is a Pro feature.",
   "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
   "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",

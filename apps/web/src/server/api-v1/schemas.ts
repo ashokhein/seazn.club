@@ -734,3 +734,94 @@ export const CreateConnectOnboarding = z.object({
 export type CreateConnectOnboarding = z.infer<typeof CreateConnectOnboarding>;
 
 export const ConnectOnboardingLink = z.object({ url: z.string() });
+
+// Clubs & bulk import (Jul3/01, PROMPT-21) ------------------------------------
+
+export const Club = z.object({
+  id: z.string(),
+  name: z.string(),
+  short_name: z.string().nullable(),
+  logo_path: z.string().nullable(),
+  colors: z.record(z.string(), z.string()).nullable(),
+  external_ref: z.string().nullable(),
+  created_at: z.string(),
+});
+
+export const CreateClub = z.object({
+  name: z.string().min(1).max(200),
+  short_name: z.string().min(1).max(40).optional(),
+  colors: z.record(z.string(), z.string()).optional(),
+  external_ref: z.string().min(1).max(100).optional(),
+});
+export type CreateClub = z.infer<typeof CreateClub>;
+
+export const PatchClub = z.object({
+  name: z.string().min(1).max(200).optional(),
+  short_name: z.string().min(1).max(40).nullable().optional(),
+  colors: z.record(z.string(), z.string()).nullable().optional(),
+  external_ref: z.string().min(1).max(100).nullable().optional(),
+  logo_path: z.string().nullable().optional(),
+});
+export type PatchClub = z.infer<typeof PatchClub>;
+
+export const ClubDetail = Club.extend({
+  teams: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      short_name: z.string().nullable(),
+      logo_path: z.string().nullable(),
+      entries: z.array(
+        z.object({
+          division_id: z.string(),
+          entrant_id: z.string(),
+          division_name: z.string(),
+          competition_id: z.string(),
+        }),
+      ),
+    }),
+  ),
+});
+
+export const LogoAssignment = z.object({
+  filename: z.string(),
+  clubId: z.string().nullable(),
+  clubName: z.string().nullable(),
+  matchedBy: z.enum(["filename", "manual", "order"]).nullable(),
+  logoPath: z.string().nullable(),
+});
+
+// The plan itself is the engine's ImportPlan (typed there); the API documents
+// it loosely — clients treat it as display data.
+export const ImportPreview = z.object({
+  importId: z.string(),
+  filename: z.string(),
+  status: z.enum(["planned", "committed"]),
+  rowCount: z.number().int(),
+  mapping: z.record(z.string(), z.string()).optional(),
+  plan: z.object({
+    ops: z.array(z.record(z.string(), z.unknown())),
+    stats: z.object({
+      clubs: z.number().int(),
+      teams: z.number().int(),
+      persons: z.number().int(),
+      entrants: z.number().int(),
+      rosters: z.number().int(),
+    }),
+    issues: z.array(
+      z.object({
+        rowNo: z.number().int(),
+        column: z.string().optional(),
+        severity: z.enum(["error", "warn"]),
+        code: z.string(),
+        message: z.string(),
+      }),
+    ),
+  }),
+});
+
+export const ImportCommitResult = z.object({
+  importId: z.string(),
+  stats: ImportPreview.shape.plan.shape.stats,
+  divisionIds: z.array(z.string()),
+});
