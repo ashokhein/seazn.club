@@ -311,8 +311,12 @@ async function main() {
         return gen;
       })();
       let note = `${first.played}/${first.total}`;
-      // Second stage only when the first fully decided.
+      // Second stage only when the first fully decided. Completing stage 1
+      // FIRST is what resolves qualification (topN/take) into the next
+      // stage's config.qualified — generating without it would bracket every
+      // division entrant instead of the qualifiers.
       if (stages[1] && first.played === first.total) {
+        await call(`/api/v1/stages/${stages[0].id}/complete`, "POST");
         const second = await playStage(stages[1].id, d.sport, d.variant, 0.6 + Math.random() * 0.4);
         note += ` + ${stages[1].kind} ${second.played}/${second.total}`;
       }
