@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Zap, BarChart2,
-  TrendingUp, User, Mail, Download, ShieldOff,
+  TrendingUp, User, Mail, Download, ShieldOff, KeyRound,
   type LucideIcon,
 } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs, requireOrgRole } from "@/lib/auth";
@@ -24,6 +24,7 @@ import {
   TransferOwnerForm,
   DeleteAccountButton,
 } from "@/components/account-actions";
+import { ApiKeysPanel } from "@/components/api-keys";
 
 function SectionHeader({ icon: Icon, children, action }: {
   icon: LucideIcon;
@@ -115,12 +116,13 @@ function UsageRow({
   );
 }
 
-type Tab = "organization" | "team" | "billing" | "account";
+type Tab = "organization" | "team" | "billing" | "api" | "account";
 
 const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon }[] = [
   { tab: "organization",  label: "Organisation",   icon: Building2    },
   { tab: "team",          label: "Team",           icon: Users        },
   { tab: "billing",       label: "Plan & billing", icon: CreditCard   },
+  { tab: "api",           label: "Platform API",   icon: KeyRound     },
   { tab: "account",       label: "Account",        icon: UserCircle   },
 ];
 
@@ -145,6 +147,16 @@ export default async function SettingsPage({
   // Per-tab lazy data loading
   const canBrand =
     tab === "organization" ? await hasFeature(active.id, "branding") : false;
+
+  // Platform API tab (doc 10 §1): api.access = Pro, api.write = Business.
+  let hasApiAccess = false;
+  let hasApiWrite = false;
+  if (tab === "api") {
+    [hasApiAccess, hasApiWrite] = await Promise.all([
+      hasFeature(active.id, "api.access"),
+      hasFeature(active.id, "api.write"),
+    ]);
+  }
 
   // Billing tab data (doc 10 §1 entitlement keys)
   let sub: Subscription | undefined;
@@ -392,6 +404,27 @@ export default async function SettingsPage({
                   </section>
                 )}
               </div>
+            )}
+
+            {/* ── PLATFORM API ── */}
+            {tab === "api" && (
+              <section className="card p-6">
+                <SectionHeader icon={KeyRound}>Platform API</SectionHeader>
+                {!canEdit ? (
+                  <p className="text-sm text-slate-400">
+                    Only owners and admins can manage API keys.
+                  </p>
+                ) : hasApiAccess ? (
+                  <ApiKeysPanel orgId={active.id} canWriteScope={hasApiWrite} />
+                ) : (
+                  <p className="text-sm text-slate-400">
+                    Platform API keys require{" "}
+                    <Link href="/settings?tab=billing" className="text-purple-600 underline">
+                      Pro plan ✦
+                    </Link>
+                  </p>
+                )}
+              </section>
             )}
 
             {/* ── ACCOUNT ── */}
