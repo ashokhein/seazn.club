@@ -149,6 +149,7 @@ export default async function DivisionPage({
 
         {tab === "fixtures" && (
           <StagesPanel
+            divisionId={id}
             stages={stages}
             fixtures={fixtures}
             entrantNames={entrantNames}

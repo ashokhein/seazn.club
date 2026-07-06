@@ -343,6 +343,33 @@ async function fireStageRevalidate(orgId: string, stageId: string): Promise<void
 }
 
 export async function generateStageFixtures(auth: AuthCtx, stageId: string): Promise<GenerateOutcome> {
+  // A qualification stage must draw from the previous stage's final table
+  // (config.qualified), never from the whole entrant list. If it isn't seeded
+  // yet: seed it now when the previous stage is complete (stage added after
+  // the fact), otherwise refuse — generating early would bracket everyone.
+  {
+    const pre = await withTenant(auth.orgId, async (tx) => {
+      const [stage] = await tx<StageRow[]>`
+        select ${tx(STAGE_COLS)} from stages where id = ${stageId}`;
+      if (!stage) throw new HttpError(404, "stage not found");
+      if (!stage.qualification || Array.isArray(stage.config.qualified)) return null;
+      const [prev] = await tx<{ id: string; status: string }[]>`
+        select id, status from stages
+        where division_id = ${stage.division_id} and seq < ${stage.seq}
+        order by seq desc limit 1`;
+      return prev ?? null;
+    });
+    if (pre) {
+      if (pre.status !== "complete") {
+        throw new EngineError(
+          "STAGE_NOT_READY",
+          "this stage draws its entrants from the previous stage's final table — complete the previous stage first",
+          { stageId, previousStageId: pre.id },
+        );
+      }
+      await seedNextStage(auth, pre.id);
+    }
+  }
   const outcome = await withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx<StageRow[]>`
       select ${tx(STAGE_COLS)} from stages where id = ${stageId}`;
@@ -496,14 +523,18 @@ export interface SeededStage {
 export interface CompleteStageResult extends CompleteResult {
   /** Set when completion resolved the next stage's qualification spec. */
   qualified?: SeededStage;
+  /** Fixtures auto-generated for the seeded next stage. */
+  next_stage_fixtures?: number;
 }
 
 /**
  * Guarded progression (doc 08 §3): no-op unless the completion predicate
  * holds. On completion, if the next stage declares a qualification spec
  * (doc 05 §3), resolve it against this stage's ranked tables into an ordered
- * seed list, snapshotted as the next stage's `config.qualified` — which its
- * /generate then consumes. Idempotent: an already-seeded stage is not re-seeded.
+ * seed list, snapshotted as the next stage's `config.qualified` — and then
+ * generate that stage's fixtures so the bracket appears immediately (the
+ * organiser shouldn't have to know a second Generate click is needed).
+ * Idempotent: an already-seeded stage is not re-seeded.
  */
 export async function completeStage(auth: AuthCtx, stageId: string): Promise<CompleteStageResult> {
   await withTenant(auth.orgId, async (tx) => {
@@ -514,7 +545,15 @@ export async function completeStage(auth: AuthCtx, stageId: string): Promise<Com
   if (!result.completed) return result;
   const qualified = await seedNextStage(auth, stageId);
   void fireStageRevalidate(auth.orgId, stageId);
-  return qualified ? { ...result, qualified } : result;
+  if (!qualified) return result;
+  // Best-effort: completion stands even if generation trips (e.g. paywall).
+  let generated: number | undefined;
+  try {
+    generated = (await generateStageFixtures(auth, qualified.stage_id)).created;
+  } catch {
+    generated = undefined;
+  }
+  return { ...result, qualified, ...(generated !== undefined ? { next_stage_fixtures: generated } : {}) };
 }
 
 // Resolve the next pending stage's qualification against the completed stage's

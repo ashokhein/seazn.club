@@ -34,6 +34,7 @@ interface FixtureRow {
 }
 
 interface Props {
+  divisionId: string;
   stages: StageRow[];
   fixtures: FixtureRow[];
   entrantNames: Record<string, string>;
@@ -50,7 +51,7 @@ const FIXTURE_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-slate-100 text-slate-400",
 };
 
-export function StagesPanel({ stages, fixtures, entrantNames, canEdit }: Props) {
+export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdit }: Props) {
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
@@ -74,14 +75,17 @@ export function StagesPanel({ stages, fixtures, entrantNames, canEdit }: Props) 
             : "Nothing new to generate — fixtures are up to date.",
         );
       } else {
-        const out = await apiV1<{ completed: boolean }>(
-          `/api/v1/stages/${stageId}/complete`,
-          { method: "POST", json: {} },
-        );
+        const out = await apiV1<{
+          completed: boolean;
+          qualified?: { entrants: string[] };
+          next_stage_fixtures?: number;
+        }>(`/api/v1/stages/${stageId}/complete`, { method: "POST", json: {} });
         setNotice(
-          out.completed
-            ? "Stage completed — next stage seeded from the final table."
-            : "Stage is not ready to complete (undecided fixtures remain).",
+          !out.completed
+            ? "Stage is not ready to complete (undecided fixtures remain)."
+            : out.next_stage_fixtures !== undefined
+              ? `Stage completed — top ${out.qualified?.entrants.length ?? ""} advance; ${out.next_stage_fixtures} fixture(s) generated for the next stage.`
+              : "Stage completed.",
         );
       }
       router.refresh();
@@ -181,7 +185,131 @@ export function StagesPanel({ stages, fixtures, entrantNames, canEdit }: Props) 
           </section>
         );
       })}
+
+      {canEdit && (
+        <AddStageForm
+          divisionId={divisionId}
+          nextSeq={Math.max(0, ...stages.map((s) => s.seq)) + 1}
+          onDone={(msg) => {
+            setNotice(msg);
+            router.refresh();
+          }}
+          onError={setError}
+        />
+      )}
     </div>
+  );
+}
+
+// Follow-up stage (e.g. finals after a league). Qualification resolves from
+// the previous stage's final table; if that stage is already complete the
+// server seeds + generates on the spot.
+const ADD_KINDS = [
+  { key: "knockout", label: "Knockout" },
+  { key: "stepladder", label: "Stepladder" },
+  { key: "double_elim", label: "Double elimination" },
+] as const;
+
+function AddStageForm({
+  divisionId,
+  nextSeq,
+  onDone,
+  onError,
+}: {
+  divisionId: string;
+  nextSeq: number;
+  onDone: (msg: string) => void;
+  onError: (msg: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("Finals");
+  const [kind, setKind] = useState<string>("knockout");
+  const [topN, setTopN] = useState(4);
+  const [busy, setBusy] = useState(false);
+
+  async function add() {
+    setBusy(true);
+    onError("");
+    try {
+      const stage = await apiV1<{ id: string }>(`/api/v1/divisions/${divisionId}/stages`, {
+        method: "POST",
+        json: {
+          seq: nextSeq,
+          kind,
+          name: name.trim() || "Finals",
+          config: {},
+          qualification: { topN },
+        },
+      });
+      try {
+        const gen = await apiV1<{ created: number }>(`/api/v1/stages/${stage.id}/generate`, {
+          method: "POST",
+          json: {},
+        });
+        onDone(`Stage added — ${gen.created} fixture(s) generated for the top ${topN}.`);
+      } catch (err) {
+        // Previous stage not complete yet — the stage exists; completion will
+        // seed + generate it.
+        if (err instanceof ApiV1Error && err.code === "STAGE_NOT_READY") {
+          onDone("Stage added — fixtures will generate when the previous stage completes.");
+        } else {
+          throw err;
+        }
+      }
+      setOpen(false);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost text-xs">
+        + Add stage
+      </button>
+    );
+  }
+
+  return (
+    <section className="card flex flex-wrap items-end gap-3 p-4">
+      <label className="block">
+        <span className="label">Stage name</span>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={200}
+          className="input w-40"
+        />
+      </label>
+      <label className="block">
+        <span className="label">Format</span>
+        <select value={kind} onChange={(e) => setKind(e.target.value)} className="select">
+          {ADD_KINDS.map((k) => (
+            <option key={k.key} value={k.key}>
+              {k.label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="block">
+        <span className="label">Qualify from table</span>
+        <select value={topN} onChange={(e) => setTopN(Number(e.target.value))} className="select">
+          {[2, 3, 4, 6, 8].map((n) => (
+            <option key={n} value={n}>
+              Top {n}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" disabled={busy} onClick={add} className="btn btn-primary text-xs">
+        {busy ? "Adding…" : "Add stage"}
+      </button>
+      <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost text-xs">
+        Cancel
+      </button>
+    </section>
   );
 }
 

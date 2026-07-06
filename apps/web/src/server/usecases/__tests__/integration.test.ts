@@ -281,19 +281,29 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     expect([...aMembers].map((id) => seedOf.get(id as string)).sort()).toEqual([1, 4, 5, 8]);
 
     await startDivision(auth, division.id);
+    // Generating the KO before the group stage completes must refuse — it
+    // would otherwise bracket every division entrant, not the qualifiers.
+    await expect(generateStageFixtures(auth, knockout.id)).rejects.toMatchObject({
+      code: "STAGE_NOT_READY",
+    });
     // Decide everything (home wins), complete → KO gets seeded.
     for (const fixture of generated.fixtures) await decide(auth, fixture.id, 1, 0);
     const completion = await completeStage(auth, groups.id);
     expect(completion.completed).toBe(true);
     expect(completion.qualified?.stage_id).toBe(knockout.id);
     expect(completion.qualified?.entrants).toHaveLength(4);
-    // Re-complete is idempotent: same seeded list, no duplicate seeding.
+    // Completion auto-generates the seeded stage: 2 semis + final.
+    expect(completion.next_stage_fixtures).toBe(3);
+    // Re-complete is idempotent: same seeded list, no duplicate fixtures.
     const again = await completeStage(auth, groups.id);
     expect(again.qualified?.entrants).toEqual(completion.qualified?.entrants);
+    expect(again.next_stage_fixtures).toBe(0);
 
-    // KO generates from the qualified order (its order IS the seeding).
+    // Explicit re-generate is a no-op; fixtures came from the qualified order
+    // (its order IS the seeding).
     const ko = await generateStageFixtures(auth, knockout.id);
-    expect(ko.created).toBe(3); // 2 semis + final
+    expect(ko.created).toBe(0);
+    expect(ko.fixtures).toHaveLength(3);
     const semis = ko.fixtures.filter((f) => f.round_no === 1);
     const q = completion.qualified!.entrants;
     const pairs = semis.map((f) => new Set([f.home_entrant_id, f.away_entrant_id]));
