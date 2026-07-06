@@ -123,104 +123,173 @@ export function Slideshow({
   }, [router, backHref, slides.length]);
 
   const slide = slides[Math.min(index, Math.max(slides.length - 1, 0))];
+  const liveCount = slides.reduce(
+    (n, s) =>
+      s.kind === "fixtures" ? n + s.items.filter((i) => i.status === "in_play").length : n,
+    0,
+  );
+
+  const medal = ["bg-amber-300 text-amber-950", "bg-slate-300 text-slate-900", "bg-orange-400/80 text-orange-950"];
 
   return (
-    <div className="flex min-h-screen flex-col bg-slate-950 text-slate-100">
+    <div className="relative flex min-h-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
+      {/* Ambient backdrop — slow drifting glows, made for a TV left on all day */}
+      <div aria-hidden className="pointer-events-none absolute inset-0">
+        <div className="animate-blob absolute -left-48 -top-48 h-[36rem] w-[36rem] rounded-full bg-purple-600/20 blur-3xl" />
+        <div className="animate-blob absolute -bottom-56 -right-40 h-[42rem] w-[42rem] rounded-full bg-fuchsia-600/10 blur-3xl [animation-delay:-7s]" />
+        <div className="animate-blob absolute left-1/2 top-1/3 h-96 w-96 -translate-x-1/2 rounded-full bg-indigo-600/10 blur-3xl [animation-delay:-3.5s]" />
+      </div>
+
       {/* Header */}
-      <header className="flex items-center justify-between px-10 py-6">
-        <h1 className="truncate text-2xl font-bold tracking-tight">{title}</h1>
-        <div className="flex items-center gap-4 text-slate-400">
-          {clock && <span className="text-2xl font-medium tabular-nums">{clock}</span>}
+      <header className="relative flex items-center justify-between px-10 py-6">
+        <div className="flex min-w-0 items-center gap-4">
+          <h1 className="truncate text-2xl font-bold tracking-tight">{title}</h1>
+          {liveCount > 0 && (
+            <span className="flex shrink-0 items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-sm font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+              <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-400" />
+              LIVE
+            </span>
+          )}
         </div>
+        {clock && (
+          <span className="text-2xl font-medium tabular-nums text-slate-400">{clock}</span>
+        )}
       </header>
 
-      {/* Slide */}
-      <main className="flex flex-1 flex-col justify-center px-10 pb-10">
+      {/* Slide — keyed on index so each rotation re-runs the entrance animation */}
+      <main className="relative flex flex-1 flex-col justify-center px-10 pb-10">
         {!slide ? (
-          <p className="text-center text-2xl text-slate-500">
-            Nothing to show yet — generate fixtures to get started.
-          </p>
+          <div className="text-center">
+            <p className="animate-trophy mb-4 text-6xl">🏟️</p>
+            <p className="text-2xl text-slate-400">Nothing to show yet</p>
+            <p className="mt-2 text-lg text-slate-600">
+              Generate fixtures and this board comes alive.
+            </p>
+          </div>
         ) : (
-          <div>
-            <p className="mb-1 text-lg font-semibold uppercase tracking-widest text-purple-400">
+          <div key={index} className="animate-slide-in mx-auto w-full max-w-5xl">
+            <p className="mb-1 text-center text-lg font-semibold uppercase tracking-widest text-purple-400">
               {slide.division}
             </p>
-            <h2 className="mb-6 text-4xl font-bold">
+            <h2 className="mb-8 text-center text-5xl font-black tracking-tight">
               {slide.kind === "standings" ? slide.caption : slide.title}
             </h2>
 
             {slide.kind === "standings" ? (
-              <table className="w-full max-w-4xl text-xl">
-                <thead>
-                  <tr className="text-left text-base uppercase tracking-wider text-slate-500">
-                    <th className="w-12 pb-2">#</th>
-                    <th className="pb-2">Entrant</th>
-                    <th className="w-14 pb-2 text-right">P</th>
-                    <th className="w-14 pb-2 text-right">W</th>
-                    <th className="w-14 pb-2 text-right">D</th>
-                    <th className="w-14 pb-2 text-right">L</th>
-                    <th className="w-20 pb-2 text-right">Pts</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {slide.rows.slice(0, 10).map((r) => (
-                    <tr key={r.rank + r.name} className="border-t border-slate-800">
-                      <td className="py-2.5 text-slate-500">{r.rank}</td>
-                      <td className="py-2.5 font-medium">{r.name}</td>
-                      <td className="py-2.5 text-right text-slate-300">{r.played}</td>
-                      <td className="py-2.5 text-right text-slate-300">{r.won}</td>
-                      <td className="py-2.5 text-right text-slate-300">{r.drawn}</td>
-                      <td className="py-2.5 text-right text-slate-300">{r.lost}</td>
-                      <td className="py-2.5 text-right text-2xl font-bold text-purple-300">
-                        {r.points}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ) : (
-              <ul className="max-w-4xl space-y-3 text-2xl">
-                {slide.items.map((f, i) => (
-                  <li
-                    key={i}
-                    className="flex items-center justify-between gap-6 rounded-xl bg-slate-900 px-6 py-4"
-                  >
-                    <span className="min-w-0 flex-1 truncate text-right">{f.home}</span>
-                    <span className="shrink-0 font-bold text-purple-300">
-                      {f.line ?? "vs"}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate">{f.away}</span>
-                    <span
-                      className={`shrink-0 rounded-full px-3 py-1 text-sm font-medium ${
-                        f.status === "in_play"
-                          ? "bg-amber-400/20 text-amber-300"
-                          : "bg-slate-800 text-slate-400"
+              <div>
+                <div className="grid grid-cols-[3.5rem_1fr_repeat(4,3.5rem)_5.5rem] gap-x-4 px-6 pb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
+                  <span>#</span>
+                  <span>Entrant</span>
+                  <span className="text-right">P</span>
+                  <span className="text-right">W</span>
+                  <span className="text-right">D</span>
+                  <span className="text-right">L</span>
+                  <span className="text-right">Pts</span>
+                </div>
+                <div className="space-y-1.5">
+                  {slide.rows.slice(0, 10).map((r, i) => (
+                    <div
+                      key={r.rank + r.name}
+                      className={`grid grid-cols-[3.5rem_1fr_repeat(4,3.5rem)_5.5rem] items-center gap-x-4 rounded-xl px-6 py-3 text-2xl ring-1 ring-inset ${
+                        i === 0
+                          ? "bg-gradient-to-r from-amber-400/15 via-white/[0.04] to-transparent ring-amber-400/20"
+                          : "bg-white/[0.04] ring-white/5"
                       }`}
                     >
-                      {STATUS_LABEL[f.status] ?? f.status}
-                    </span>
-                  </li>
-                ))}
+                      <span>
+                        {i < 3 ? (
+                          <span
+                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-lg font-bold ${medal[i]}`}
+                          >
+                            {r.rank}
+                          </span>
+                        ) : (
+                          <span className="pl-3 text-xl text-slate-500">{r.rank}</span>
+                        )}
+                      </span>
+                      <span className="flex min-w-0 items-center gap-3 truncate font-semibold">
+                        {r.name}
+                        {i === 0 && <span className="animate-trophy shrink-0 text-xl">🏆</span>}
+                      </span>
+                      <span className="text-right text-xl text-slate-400">{r.played}</span>
+                      <span className="text-right text-xl text-slate-400">{r.won}</span>
+                      <span className="text-right text-xl text-slate-400">{r.drawn}</span>
+                      <span className="text-right text-xl text-slate-400">{r.lost}</span>
+                      <span className="text-right text-3xl font-black text-purple-300">
+                        {r.points}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <ul className="space-y-3">
+                {slide.items.map((f, i) => {
+                  const live = f.status === "in_play";
+                  return (
+                    <li
+                      key={i}
+                      className={`grid grid-cols-[1fr_auto_1fr_auto] items-center gap-6 rounded-2xl px-8 py-5 ring-1 ring-inset ${
+                        live
+                          ? "bg-emerald-400/[0.06] ring-emerald-400/30"
+                          : "bg-white/[0.04] ring-white/5"
+                      }`}
+                    >
+                      <span className="min-w-0 truncate text-right text-2xl font-semibold">
+                        {f.home}
+                      </span>
+                      <span
+                        className={`shrink-0 rounded-xl px-4 py-1.5 text-center text-3xl font-black tabular-nums ${
+                          f.line ? "bg-white/5 text-purple-300" : "text-lg font-semibold text-slate-500"
+                        }`}
+                      >
+                        {f.line ?? "vs"}
+                      </span>
+                      <span className="min-w-0 truncate text-2xl font-semibold">{f.away}</span>
+                      <span
+                        className={`flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
+                          live
+                            ? "bg-emerald-400/15 text-emerald-300"
+                            : "bg-white/5 text-slate-400"
+                        }`}
+                      >
+                        {live && (
+                          <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-400" />
+                        )}
+                        {STATUS_LABEL[f.status] ?? f.status}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
         )}
       </main>
 
-      {/* Progress dots */}
+      {/* Footer — per-slide progress bar + jump dots */}
       {slides.length > 1 && (
-        <footer className="flex items-center justify-center gap-2 pb-6">
-          {slides.map((_, i) => (
-            <button
-              key={i}
-              type="button"
-              aria-label={`Slide ${i + 1}`}
-              onClick={() => setIndex(i)}
-              className={`h-2 rounded-full transition-all ${
-                i === index ? "w-6 bg-purple-400" : "w-2 bg-slate-700"
-              }`}
+        <footer className="relative pb-6">
+          <div className="mx-auto mb-4 h-1 max-w-lg overflow-hidden rounded-full bg-white/10">
+            <div
+              key={index}
+              className="animate-slide-progress h-full rounded-full bg-gradient-to-r from-purple-400 to-fuchsia-400"
+              style={{ animationDuration: `${SLIDE_MS}ms` }}
             />
-          ))}
+          </div>
+          <div className="flex items-center justify-center gap-2">
+            {slides.map((_, i) => (
+              <button
+                key={i}
+                type="button"
+                aria-label={`Slide ${i + 1}`}
+                onClick={() => setIndex(i)}
+                className={`h-2 rounded-full transition-all ${
+                  i === index ? "w-6 bg-purple-400" : "w-2 bg-slate-700 hover:bg-slate-500"
+                }`}
+              />
+            ))}
+          </div>
         </footer>
       )}
     </div>

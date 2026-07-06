@@ -57,9 +57,16 @@ export default async function DivisionHomePage({ params }: Props) {
   const poolName = new Map(pools.map((p) => [p.id, p.name]));
   const stageById = new Map(stages.map((s) => [s.id, s]));
 
+  // Live stage first: the knockout that's underway reads before the finished
+  // league table it qualified from.
+  const stagesByRelevance = [...stages].sort(
+    (a, b) =>
+      (a.status === "complete" ? 1 : 0) - (b.status === "complete" ? 1 : 0) || a.seq - b.seq,
+  );
+
   const standingsPanel = (
     <div className="space-y-8">
-      {stages.map((stage) => {
+      {stagesByRelevance.map((stage) => {
         if (BRACKET_KINDS.has(stage.kind)) {
           const stageFixtures = fixtures.filter((f) => f.stage_id === stage.id);
           if (stageFixtures.length === 0) return null;
@@ -159,14 +166,23 @@ export default async function DivisionHomePage({ params }: Props) {
           {competition.name}
         </Link>
       </nav>
-      <h1 className="mb-1 text-2xl font-semibold">{division.name}</h1>
-      <p className="mb-6 flex flex-wrap gap-2 text-xs text-zinc-500">
-        <span>{division.sport_name ?? division.sport_key}</span>
-        <span className="rounded bg-zinc-100 px-1.5 py-0.5 uppercase">
+      <h1 className="mb-2 text-3xl font-bold tracking-tight">{division.name}</h1>
+      <p className="mb-6 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+        <span className="font-medium text-zinc-600">
+          {division.sport_name ?? division.sport_key}
+        </span>
+        <span className="rounded-full bg-purple-50 px-2 py-0.5 uppercase text-purple-700">
           {division.variant_key}
         </span>
         {stages.map((s) => (
-          <span key={s.id}>
+          <span
+            key={s.id}
+            className={`rounded-full px-2 py-0.5 ${
+              s.status === "complete"
+                ? "bg-emerald-50 text-emerald-700"
+                : "bg-zinc-100 text-zinc-600"
+            }`}
+          >
             {stageById.get(s.id)?.name}
             {s.status === "complete" ? " ✓" : ""}
           </span>

@@ -58,13 +58,16 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
   const [busy, setBusy] = useState<string | null>(null); // stage id in flight
   const [notice, setNotice] = useState<string | null>(null);
 
-  async function act(stageId: string, action: "generate" | "complete") {
+  async function act(stageId: string, action: "generate" | "complete" | "delete") {
     setError(null);
     setPaywallFeature(null);
     setNotice(null);
     setBusy(stageId);
     try {
-      if (action === "generate") {
+      if (action === "delete") {
+        await apiV1(`/api/v1/stages/${stageId}`, { method: "DELETE" });
+        setNotice("Stage deleted.");
+      } else if (action === "generate") {
         const out = await apiV1<{ created: number; existing: number }>(
           `/api/v1/stages/${stageId}/generate`,
           { method: "POST", json: {} },
@@ -79,13 +82,16 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
           completed: boolean;
           qualified?: { entrants: string[] };
           next_stage_fixtures?: number;
+          division_completed?: boolean;
         }>(`/api/v1/stages/${stageId}/complete`, { method: "POST", json: {} });
         setNotice(
           !out.completed
             ? "Stage is not ready to complete (undecided fixtures remain)."
-            : out.next_stage_fixtures !== undefined
-              ? `Stage completed — top ${out.qualified?.entrants.length ?? ""} advance; ${out.next_stage_fixtures} fixture(s) generated for the next stage.`
-              : "Stage completed.",
+            : out.division_completed
+              ? "Stage completed — that was the last stage, the division is finished. 🏆"
+              : out.next_stage_fixtures !== undefined
+                ? `Stage completed — top ${out.qualified?.entrants.length ?? ""} advance; ${out.next_stage_fixtures} fixture(s) generated for the next stage.`
+                : "Stage completed.",
         );
       }
       router.refresh();
@@ -119,11 +125,28 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
 
-      {stages.map((stage) => {
+      {/* Active work first: completed stages sink to the bottom, so once the
+          league wraps up the semis/final card is what the organiser lands on. */}
+      {[...stages]
+        .sort(
+          (a, b) =>
+            (a.status === "complete" ? 1 : 0) - (b.status === "complete" ? 1 : 0) ||
+            a.seq - b.seq,
+        )
+        .map((stage) => {
         const stageFixtures = fixtures.filter((f) => f.stage_id === stage.id);
         const rounds = [...new Set(stageFixtures.map((f) => f.round_no))].sort((a, b) => a - b);
+        // Mirrors the server guard: last stage only, nothing played yet.
+        const deletable =
+          stage.seq === Math.max(...stages.map((s) => s.seq)) &&
+          !stageFixtures.some((f) => ["in_play", "decided", "finalized"].includes(f.status));
+        const maxRound = rounds[rounds.length - 1] ?? 0;
+        // Bracket stages: one card per named round (Quarter-finals, Semi-finals,
+        // Final / Rung N) instead of one long card with anonymous round breaks.
+        const splitRounds = BRACKET_KINDS.has(stage.kind) && rounds.length > 0;
         return (
-          <section key={stage.id} className="card overflow-hidden">
+          <div key={stage.id} className="space-y-6">
+          <section className="card overflow-hidden">
             <header className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-3">
               <h3 className="text-sm font-semibold text-slate-800">
                 {stage.seq}. {stage.name}
@@ -153,13 +176,31 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
                   )}
                 </>
               )}
+              {canEdit && deletable && stages.length > 1 && (
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() => {
+                    if (
+                      window.confirm(
+                        `Delete stage "${stage.name}"? Its ${stageFixtures.length} fixture(s) and pools are removed too. This cannot be undone.`,
+                      )
+                    ) {
+                      void act(stage.id, "delete");
+                    }
+                  }}
+                  className="btn btn-danger px-3 py-1.5 text-xs"
+                >
+                  Delete
+                </button>
+              )}
             </header>
 
             {stageFixtures.length === 0 ? (
               <p className="px-4 py-4 text-sm text-slate-400">
                 No fixtures yet{canEdit ? " — generate them when entrants are registered." : "."}
               </p>
-            ) : (
+            ) : splitRounds ? null : (
               <div className="divide-y divide-slate-100">
                 {rounds.map((round) => (
                   <div key={round}>
@@ -183,6 +224,30 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
               </div>
             )}
           </section>
+
+          {splitRounds &&
+            rounds.map((round) => (
+              <section key={round} className="card overflow-hidden">
+                <header className="border-b border-slate-100 bg-slate-50 px-4 py-2">
+                  <h4 className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                    {stage.name} — {bracketRoundLabel(stage.kind, round, maxRound)}
+                  </h4>
+                </header>
+                <ul className="divide-y divide-slate-50">
+                  {stageFixtures
+                    .filter((f) => f.round_no === round)
+                    .map((f) => (
+                      <FixtureLine
+                        key={f.id}
+                        fixture={f}
+                        entrantNames={entrantNames}
+                        canEdit={canEdit}
+                      />
+                    ))}
+                </ul>
+              </section>
+            ))}
+          </div>
         );
       })}
 
@@ -311,6 +376,21 @@ function AddStageForm({
       </button>
     </section>
   );
+}
+
+const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
+
+// Named bracket rounds, by distance from the last round. Double-elim round
+// numbers encode WB/LB/GF lanes, so plain "Round N" stays honest there.
+function bracketRoundLabel(kind: string, roundNo: number, maxRound: number): string {
+  if (kind === "stepladder") return `Rung ${roundNo}`;
+  if (kind === "knockout") {
+    const fromEnd = maxRound - roundNo;
+    if (fromEnd === 0) return "Final";
+    if (fromEnd === 1) return "Semi-finals";
+    if (fromEnd === 2) return "Quarter-finals";
+  }
+  return `Round ${roundNo}`;
 }
 
 function stageStatusStyle(status: string): string {

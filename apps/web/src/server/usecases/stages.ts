@@ -119,8 +119,63 @@ export async function createStages(
         returning ${tx(STAGE_COLS)}`;
       rows.push(row);
     }
+    // Adding a stage to a completed division (e.g. finals after the league
+    // wrapped the graph) reopens it — 'completed' must mean "nothing left".
+    await tx`
+      update divisions set status = 'active'
+      where id = ${divisionId} and status = 'completed'`;
     return rows;
   });
+}
+
+/**
+ * Delete a stage (organiser added it by mistake). Only the last stage of the
+ * graph is deletable — removing a middle stage would orphan the qualification
+ * chain — and never one with played fixtures (in_play / decided / finalized).
+ * Bye/walkover awards ('forfeited') don't block: every fresh knockout with a
+ * non-power-of-two field holds them. Pools, fixtures, snapshots go via
+ * ON DELETE CASCADE.
+ */
+export async function deleteStage(auth: AuthCtx, stageId: string): Promise<{ deleted: true }> {
+  const divisionId = await withTenant(auth.orgId, async (tx) => {
+    const [stage] = await tx<
+      { id: string; division_id: string; seq: number; kind: string; name: string; competition_id: string }[]
+    >`
+      select s.id, s.division_id, s.seq, s.kind, s.name, d.competition_id
+      from stages s join divisions d on d.id = s.division_id
+      where s.id = ${stageId}`;
+    if (!stage) throw new HttpError(404, "stage not found");
+    await assertCompetitionNotFrozen(auth.orgId, stage.competition_id, tx);
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
+
+    const [later] = await tx`
+      select 1 from stages where division_id = ${stage.division_id} and seq > ${stage.seq} limit 1`;
+    if (later) {
+      throw new HttpError(409, "only the last stage can be deleted — remove later stages first");
+    }
+    const [played] = await tx`
+      select 1 from fixtures
+      where stage_id = ${stageId} and status in ('in_play', 'decided', 'finalized') limit 1`;
+    if (played) {
+      throw new HttpError(409, "stage has played fixtures and cannot be deleted");
+    }
+
+    await tx`delete from stages where id = ${stageId}`;
+
+    // Structural ledger + division watermark (same pattern as stage_seeded).
+    const [{ seq: last }] = await tx<{ seq: number }[]>`
+      select coalesce(max(seq), 0)::int as seq from division_events
+      where division_id = ${stage.division_id}`;
+    await tx`
+      insert into division_events (division_id, seq, type, payload)
+      values (${stage.division_id}, ${last + 1}, 'stage_deleted',
+              ${tx.json({ stageId, kind: stage.kind, name: stage.name, seq: stage.seq } as never)})`;
+    await tx`update divisions set seq = ${last + 1} where id = ${stage.division_id}`;
+
+    return { divisionId: stage.division_id, competitionId: stage.competition_id };
+  });
+  fireDivisionRevalidate(divisionId.divisionId, divisionId.competitionId);
+  return { deleted: true };
 }
 
 // ---------------------------------------------------------------------------
@@ -525,6 +580,8 @@ export interface CompleteStageResult extends CompleteResult {
   qualified?: SeededStage;
   /** Fixtures auto-generated for the seeded next stage. */
   next_stage_fixtures?: number;
+  /** True when this was the last stage — the division is now completed. */
+  division_completed?: boolean;
 }
 
 /**
@@ -545,7 +602,35 @@ export async function completeStage(auth: AuthCtx, stageId: string): Promise<Com
   if (!result.completed) return result;
   const qualified = await seedNextStage(auth, stageId);
   void fireStageRevalidate(auth.orgId, stageId);
-  if (!qualified) return result;
+  if (!qualified) {
+    // No stage follows: the division itself is done (doc 02 lifecycle
+    // setup → active → completed). Idempotent — re-completing is a no-op.
+    const divisionCompleted = await withTenant(auth.orgId, async (tx) => {
+      const [stage] = await tx<{ division_id: string }[]>`
+        select division_id from stages where id = ${stageId}`;
+      if (!stage) return false;
+      await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
+      const [remaining] = await tx`
+        select 1 from stages
+        where division_id = ${stage.division_id} and status <> 'complete' limit 1`;
+      if (remaining) return false;
+      const [row] = await tx<{ id: string }[]>`
+        update divisions set status = 'completed'
+        where id = ${stage.division_id} and status <> 'completed'
+        returning id`;
+      if (!row) return false;
+      const [{ seq: last }] = await tx<{ seq: number }[]>`
+        select coalesce(max(seq), 0)::int as seq from division_events
+        where division_id = ${stage.division_id}`;
+      await tx`
+        insert into division_events (division_id, seq, type, payload)
+        values (${stage.division_id}, ${last + 1}, 'division_completed',
+                ${tx.json({ lastStageId: stageId } as never)})`;
+      await tx`update divisions set seq = ${last + 1} where id = ${stage.division_id}`;
+      return true;
+    });
+    return divisionCompleted ? { ...result, division_completed: true } : result;
+  }
   // Best-effort: completion stands even if generation trips (e.g. paywall).
   let generated: number | undefined;
   try {

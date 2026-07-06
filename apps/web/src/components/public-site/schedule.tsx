@@ -37,7 +37,7 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
           id="entrant-filter"
           value={entrant}
           onChange={(e) => setEntrant(e.target.value)}
-          className="rounded border border-zinc-300 bg-white px-2 py-1 text-sm"
+          className="rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
         >
           <option value="">All entrants</option>
           {options.map(([id, name]) => (
@@ -48,7 +48,7 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
         </select>
         <a
           href={`${divisionPath}/calendar.ics${entrant ? `?entrant=${entrant}` : ""}`}
-          className="text-sm text-blue-700 underline underline-offset-2"
+          className="text-sm font-medium text-purple-700 underline underline-offset-2 hover:text-purple-900"
         >
           Subscribe (.ics)
         </a>
@@ -58,26 +58,31 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
         .sort(([a], [b]) => a - b)
         .map(([roundNo, list]) => (
           <section key={roundNo} className="mb-6">
-            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-700/70">
               Round {roundNo}
             </h3>
-            <ul className="divide-y divide-zinc-100 rounded border border-zinc-200 bg-white">
+            <ul className="divide-y divide-purple-50 overflow-hidden rounded-xl border border-purple-100 bg-white shadow-sm">
               {list.map((f) => (
                 <li key={f.id}>
                   <Link
                     href={`${divisionPath}/fixtures/${f.id}`}
-                    className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm hover:bg-zinc-50"
+                    className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm transition hover:bg-purple-50/60"
                   >
-                    <span>
+                    <span className="font-medium">
                       {f.home_entrant_id ? (entrantNames[f.home_entrant_id] ?? "?") : "TBD"}
-                      <span className="text-zinc-400"> vs </span>
+                      <span className="font-normal text-zinc-400"> vs </span>
                       {f.away_entrant_id ? (entrantNames[f.away_entrant_id] ?? "?") : "TBD"}
                     </span>
                     <span className="text-xs text-zinc-500">
                       {f.status === "in_play" ? (
-                        <span className="font-medium text-red-600">LIVE</span>
+                        <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
+                          <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                          LIVE
+                        </span>
                       ) : f.summary?.headline ? (
-                        <span className="tabular-nums">{f.summary.headline}</span>
+                        <span className="rounded-full bg-purple-50 px-2 py-0.5 font-semibold tabular-nums text-purple-700">
+                          {f.summary.headline}
+                        </span>
                       ) : (
                         <>
                           {f.scheduled_at

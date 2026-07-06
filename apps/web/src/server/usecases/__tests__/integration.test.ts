@@ -10,7 +10,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, deleteCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
-import { createStages, generateStageFixtures, completeStage, getStandings } from "../stages";
+import { createStages, deleteStage, listStages, generateStageFixtures, completeStage, getStandings } from "../stages";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { createApiKey } from "../api-keys";
@@ -126,6 +126,20 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
 
     const completion = await completeStage(auth, stage.id);
     expect(completion.completed).toBe(true);
+    // Last stage of the graph → the division itself completes.
+    expect(completion.division_completed).toBe(true);
+    const [{ status: divisionStatus }] = await sql<{ status: string }[]>`
+      select status from divisions where id = ${division.id}`;
+    expect(divisionStatus).toBe("completed");
+    // Adding a follow-up stage reopens it.
+    const [finals] = await createStages(auth, division.id, {
+      seq: 2, kind: "knockout", name: "Finals", config: {}, qualification: { topN: 2 },
+    });
+    const [{ status: reopened }] = await sql<{ status: string }[]>`
+      select status from divisions where id = ${division.id}`;
+    expect(reopened).toBe("active");
+    const gen = await generateStageFixtures(auth, finals.id);
+    expect(gen.created).toBe(1); // top-2 → single final
 
     // Public read model sees the (public) standings without auth.
     const org = await sql<{ slug: string }[]>`
@@ -361,5 +375,36 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     await startDivision(auth, division.id);
     await decide(auth, fixtures[0].id, 1, 0);
     await expect(deleteCompetition(auth, competition.id)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("deleteStage: last stage only, refused once fixtures are played", async () => {
+    const { auth } = await seedOrg();
+    const competition = await createCompetition(auth, { name: "Prune", visibility: "private", branding: {} });
+    const division = await createDivision(auth, competition.id, {
+      name: "Open", sport_key: "generic", variant_key: "score", config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    });
+    await createEntrants(auth, division.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+      { kind: "individual", display_name: "C", seed: 3, members: [] },
+      { kind: "individual", display_name: "D", seed: 4, members: [] },
+    ]);
+    const [league, finals] = await createStages(auth, division.id, [
+      { seq: 1, kind: "league", name: "League", config: {} },
+      { seq: 2, kind: "knockout", name: "Finals", config: {}, qualification: { topN: 2 } },
+    ]);
+
+    // Not the last stage → refused; the graph would lose its middle.
+    await expect(deleteStage(auth, league.id)).rejects.toMatchObject({ status: 409 });
+
+    // Last stage, nothing played → gone (cascade removes its fixtures/pools).
+    await deleteStage(auth, finals.id);
+    expect((await listStages(auth, division.id)).map((s) => s.id)).toEqual([league.id]);
+
+    // Played fixtures pin the stage.
+    const { fixtures } = await generateStageFixtures(auth, league.id);
+    await startDivision(auth, division.id);
+    await decide(auth, fixtures[0].id, 2, 0);
+    await expect(deleteStage(auth, league.id)).rejects.toMatchObject({ status: 409 });
   });
 });

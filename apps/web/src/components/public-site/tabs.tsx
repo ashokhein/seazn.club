@@ -13,7 +13,7 @@ export function Tabs({ labels, children }: Props) {
   const [active, setActive] = useState(0);
   return (
     <div>
-      <div role="tablist" className="mb-4 flex gap-1 border-b border-zinc-200">
+      <div role="tablist" className="mb-6 flex gap-1 border-b border-purple-100 sm:gap-4">
         {labels.map((label, i) => (
           <button
             key={label}
@@ -22,8 +22,8 @@ export function Tabs({ labels, children }: Props) {
             onClick={() => setActive(i)}
             className={
               i === active
-                ? "border-b-2 border-zinc-900 px-3 py-2 text-sm font-medium text-zinc-900"
-                : "px-3 py-2 text-sm text-zinc-500 hover:text-zinc-800"
+                ? "-mb-px border-b-2 border-purple-600 px-3 pb-2.5 pt-1.5 text-sm font-semibold text-purple-700"
+                : "-mb-px border-b-2 border-transparent px-3 pb-2.5 pt-1.5 text-sm font-medium text-zinc-500 transition hover:border-purple-200 hover:text-zinc-800"
             }
           >
             {label}

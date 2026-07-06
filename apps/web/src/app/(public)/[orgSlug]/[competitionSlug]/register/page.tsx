@@ -31,7 +31,10 @@ export default async function RegisterPage({ params }: Props) {
         </Link>{" "}
         / Register
       </p>
-      <h1 className="mt-1 text-2xl font-semibold">Register</h1>
+      <h1 className="mt-1 text-3xl font-bold tracking-tight">Register</h1>
+      <p className="mt-1 text-sm text-zinc-500">
+        Pick a division, fill in your details — takes under a minute.
+      </p>
       {info.divisions.length === 0 ? (
         <p className="mt-4 text-sm text-zinc-500">
           Registration is not open for this competition.

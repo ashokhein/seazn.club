@@ -89,10 +89,18 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames }: Props)
     return () => clearInterval(id);
   }, [live, subscribed, refresh]);
 
+  const inPlay = data.status === "in_play";
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4">
-      {data.status === "in_play" ? (
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-red-600">
+    <div
+      className={`rounded-2xl border p-5 shadow-sm ${
+        inPlay
+          ? "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white"
+          : "border-purple-100 bg-white"
+      }`}
+    >
+      {inPlay ? (
+        <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+          <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-500" />
           Live{subscribed ? " · realtime" : ""}
         </p>
       ) : (
@@ -100,22 +108,28 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames }: Props)
           {data.status.replace("_", " ")}
         </p>
       )}
-      <p className="text-2xl font-semibold tabular-nums">
+      <p className="text-4xl font-black tabular-nums tracking-tight text-zinc-900">
         {data.summary?.headline ?? "Not started"}
       </p>
       {data.summary?.perSide ? (
-        <ul className="mt-2 space-y-1 text-sm text-zinc-700">
+        <ul className="mt-3 space-y-1.5 text-sm text-zinc-700">
           {data.summary.perSide.map((side) => (
-            <li key={side.entrantId} className="tabular-nums">
-              <span className="font-medium">{entrantNames[side.entrantId] ?? "—"}</span>{" "}
-              {side.line}
+            <li key={side.entrantId} className="flex items-center gap-2 tabular-nums">
+              <span className="font-medium">{entrantNames[side.entrantId] ?? "—"}</span>
+              <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">
+                {side.line}
+              </span>
             </li>
           ))}
         </ul>
       ) : null}
       {data.outcome?.winner ? (
-        <p className="mt-2 text-sm text-zinc-600">
-          Winner: <strong>{entrantNames[data.outcome.winner] ?? data.outcome.winner}</strong>
+        <p className="mt-3 flex items-center gap-1.5 text-sm text-zinc-600">
+          <span className="animate-trophy">🏆</span>
+          Winner:{" "}
+          <strong className="text-zinc-900">
+            {entrantNames[data.outcome.winner] ?? data.outcome.winner}
+          </strong>
         </p>
       ) : null}
     </div>

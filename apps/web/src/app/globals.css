@@ -87,6 +87,15 @@ body {
 .animate-trophy {
   animation: trophy-pop 0.8s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
+.animate-slide-progress {
+  animation: slide-progress linear both;
+}
+.animate-blob {
+  animation: float-blob 14s ease-in-out infinite;
+}
+.animate-live-pulse {
+  animation: live-pulse 2s ease-in-out infinite;
+}
 
 @layer components {
   .card {
