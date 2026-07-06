@@ -1,14 +1,17 @@
 "use client";
 
-// Full-screen noticeboard slideshow: rotates slides every 9 s, silently
-// re-fetches server data every 45 s (router.refresh), Escape returns to the
-// console. Dark, large-type, made for a TV across the hall.
-import { useEffect, useState } from "react";
+// Full-screen noticeboard slideshow: rotates slides every 9 s. Data refresh
+// is entitlement-split (doc 09 §4 pattern, same as live-score): Pro orgs
+// subscribe to `division:{id}` realtime broadcasts and refresh on push;
+// everyone else (and any subscription failure) falls back to 45 s polling.
+// Escape returns to the console. Dark, large-type, made for a TV.
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Slide } from "@/server/slideshow-data";
 
 const SLIDE_MS = 9000;
-const REFRESH_MS = 45000;
+const POLL_MS = 45_000;
+const SUBSCRIBED_POLL_MS = 5 * 60_000; // safety net once push is live
 
 const STATUS_LABEL: Record<string, string> = {
   scheduled: "Scheduled",
@@ -24,14 +27,21 @@ export function Slideshow({
   title,
   slides,
   backHref,
+  divisionIds = [],
+  realtime = false,
 }: {
   title: string;
   slides: Slide[];
   backHref: string;
+  /** Divisions on show — realtime subscription topics. */
+  divisionIds?: string[];
+  /** Org `realtime` entitlement, resolved server-side. */
+  realtime?: boolean;
 }) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
   const [clock, setClock] = useState<string | null>(null);
+  const [subscribed, setSubscribed] = useState(false);
 
   useEffect(() => {
     if (slides.length < 2) return;
@@ -39,10 +49,59 @@ export function Slideshow({
     return () => clearInterval(t);
   }, [slides.length]);
 
+  // Realtime push (Pro): refresh on any division's score/schedule broadcast.
+  // Any failure leaves `subscribed` false and the poll below takes over.
+  // Keyed on the joined ids — router.refresh() hands us a fresh array each
+  // time and identity-keying would tear down the sockets on every refresh.
+  const divisionKey = divisionIds.join(",");
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const t = setInterval(() => router.refresh(), REFRESH_MS);
+    const ids = divisionKey ? divisionKey.split(",") : [];
+    if (!realtime || ids.length === 0) return;
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
+    let cancelled = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const channels: any[] = [];
+    const onPush = () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => router.refresh(), 1000);
+    };
+    (async () => {
+      try {
+        const { supabaseBrowser } = await import("@/lib/supabase-browser");
+        const sb = supabaseBrowser();
+        for (const id of ids) {
+          if (cancelled) return;
+          channels.push(
+            sb
+              .channel(`division:${id}`)
+              .on("broadcast", { event: "state_changed" }, onPush)
+              .on("broadcast", { event: "schedule_changed" }, onPush)
+              .subscribe((status: string) => {
+                if (!cancelled && status === "SUBSCRIBED") setSubscribed(true);
+              }),
+          );
+        }
+      } catch {
+        // env missing / websocket refused → polling
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      setSubscribed(false);
+      for (const ch of channels) void ch.unsubscribe?.();
+    };
+  }, [realtime, divisionKey, router]);
+
+  // Polling — primary refresh on Community, slow safety net once push is live.
+  useEffect(() => {
+    const t = setInterval(
+      () => router.refresh(),
+      subscribed ? SUBSCRIBED_POLL_MS : POLL_MS,
+    );
     return () => clearInterval(t);
-  }, [router]);
+  }, [router, subscribed]);
 
   useEffect(() => {
     const tick = () =>

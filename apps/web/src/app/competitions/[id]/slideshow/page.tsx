@@ -5,6 +5,7 @@ import { requireResourcePageAuth } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { buildDivisionSlides, type Slide } from "@/server/slideshow-data";
+import { hasFeature } from "@/lib/entitlements";
 import { Slideshow } from "@/components/v2/slideshow";
 
 export default async function CompetitionSlideshowPage({
@@ -30,12 +31,15 @@ export default async function CompetitionSlideshowPage({
   for (const d of ordered) {
     slides.push(...(await buildDivisionSlides(auth, d.id, d.name)));
   }
+  const realtime = await hasFeature(auth.orgId, "realtime");
 
   return (
     <Slideshow
       title={competition.name}
       slides={slides}
       backHref={`/competitions/${id}`}
+      divisionIds={ordered.map((d) => d.id)}
+      realtime={realtime}
     />
   );
 }
