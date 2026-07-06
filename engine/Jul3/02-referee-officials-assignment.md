@@ -133,10 +133,12 @@ taxonomy: `conflict.official_overlap`, `conflict.team_ref_self` block; `warn.poo
 
 ## 5. Entitlements (extends doc 10)
 
-Promote the existing `officials.assignment` (Pro) to cover manual + auto. New sub-keys:
-`officials.auto` (constraint solver + phased/sourcing) = Pro; `officials.roles_multi`
-(judge + referee both) = Pro; manual single-role assignment available Community (matches
-"basic scheduling" tier). Hidden-names is a public-read toggle, all plans.
+New sub-keys: `officials.auto` (constraint solver + phased/sourcing) = Pro;
+`officials.roles_multi` (judge + referee both) = Pro; manual single-role assignment
+available Community (matches "basic scheduling" tier). Hidden-names is a public-read
+toggle, all plans. (Implementation note: the legacy `officials.assignment` stub is left
+as-is rather than "promoted" — gating manual single-role on it would contradict the
+Community-manual rule in the same paragraph, so the two new sub-keys are the only gates.)
 
 ## 6. Edge cases
 

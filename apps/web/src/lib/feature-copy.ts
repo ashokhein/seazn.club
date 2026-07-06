@@ -39,6 +39,8 @@ const FEATURE_REASONS: Record<string, string> = {
   "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
   "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",
   "officials.assignment": "Officials assignment is a Pro feature.",
+  "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro feature — manual assignment still works.",
+  "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
   "scoring.device_links":
     "Hand-this-device-over scoring links are a Pro feature — your scorer seat still works.",
   // Registration & entry fees (doc 16 §1.1)

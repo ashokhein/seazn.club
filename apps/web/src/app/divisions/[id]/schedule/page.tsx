@@ -13,6 +13,8 @@ import { getScheduleSettings } from "@/server/usecases/schedule";
 import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
+import { OfficialsPanel } from "@/components/v2/officials-panel";
+import { listOfficials } from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
@@ -24,7 +26,7 @@ export default async function DivisionSchedulePage({
   const { id } = await params;
   const { auth, canEdit } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
-  const [competition, stages, fixtures, entrants, settings, boardEditable, constraints] =
+  const [competition, stages, fixtures, entrants, settings, boardEditable, constraints, officials] =
     await Promise.all([
       getCompetition(auth, division.competition_id),
       listStages(auth, id),
@@ -33,6 +35,7 @@ export default async function DivisionSchedulePage({
       getScheduleSettings(auth, id),
       hasFeature(auth.orgId, "scheduling.board"),
       hasFeature(auth.orgId, "scheduling.constraints"),
+      listOfficials(auth),
     ]);
 
   // Feed wiring for TBD card labels ("Winner of R1 #2" — doc 12 §2).
@@ -84,6 +87,33 @@ export default async function DivisionSchedulePage({
           settings={{ division_id: id, config: settings.config, tz: settings.tz }}
           canEdit={editable}
           constraintsAllowed={constraints}
+        />
+
+        <OfficialsPanel
+          divisionId={id}
+          officials={officials.map((o) => ({
+            id: o.id,
+            display_name: o.display_name,
+            role_keys: o.role_keys,
+            entrant_id: o.entrant_id,
+            max_per_day: o.max_per_day,
+          }))}
+          fixtures={fixtures.map((f) => {
+            const names = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
+            const home = f.home_entrant_id ? names[f.home_entrant_id] ?? "TBD" : "TBD";
+            const away = f.away_entrant_id ? names[f.away_entrant_id] ?? "TBD" : "TBD";
+            return {
+              id: f.id,
+              label: `${home} vs ${away}`,
+              scheduled_at: f.scheduled_at,
+              officials: (f.officials ?? []) as {
+                official_id: string; name: string; role: string; locked: boolean;
+              }[],
+            };
+          })}
+          stages={stages.map((s) => ({ id: s.id, name: s.name, seq: s.seq }))}
+          hideNames={division.officials_hide_names}
+          canEdit={canEdit && !frozen}
         />
       </main>
     </>

@@ -11,6 +11,7 @@
     "./sports/*": "./src/sports/*/index.ts",
     "./competition": "./src/competition/index.ts",
     "./import": "./src/import/index.ts",
+    "./officials": "./src/officials/index.ts",
     "./scheduling": "./src/scheduling/index.ts",
     "./testkit": "./src/testkit/index.ts"
   },

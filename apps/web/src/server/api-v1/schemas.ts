@@ -110,6 +110,8 @@ export const PatchDivision = z
     eligibility: z.array(z.record(z.string(), z.unknown())),
     tiebreakers: z.array(z.string()).nullable(),
     status: DivisionStatus,
+    /** Hide official names on all public reads (Jul3/02, 25 Jun). */
+    officials_hide_names: z.boolean(),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -127,6 +129,7 @@ export const Division = z.object({
   eligibility: z.array(z.unknown()),
   tiebreakers: z.array(z.string()).nullable(),
   status: DivisionStatus,
+  officials_hide_names: z.boolean(),
   created_at: z.string(),
 });
 
@@ -824,4 +827,104 @@ export const ImportCommitResult = z.object({
   importId: z.string(),
   stats: ImportPreview.shape.plan.shape.stats,
   divisionIds: z.array(z.string()),
+});
+
+// Referee & officials assignment (Jul3/02, PROMPT-22) -------------------------
+
+export const Official = z.object({
+  id: z.string(),
+  person_id: z.string().nullable(),
+  entrant_id: z.string().nullable(),
+  display_name: z.string(),
+  role_keys: z.array(z.string()),
+  home_pool_id: z.string().nullable(),
+  max_per_day: z.number().int().nullable(),
+  created_at: z.string(),
+});
+
+export const CreateOfficial = z.object({
+  display_name: z.string().min(1).max(200),
+  person_id: Uuid.optional(),
+  entrant_id: Uuid.optional(),
+  role_keys: z.array(z.string().min(1)).min(1).default(["referee"]),
+  home_pool_id: Uuid.nullable().optional(),
+  max_per_day: z.number().int().positive().nullable().optional(),
+});
+
+export const PatchOfficial = CreateOfficial.partial();
+
+const AssignPolicyBody = z.object({
+  roles: z.array(z.string().min(1)).min(1),
+  poolLock: z.boolean().default(false),
+  blockStay: z.boolean().default(false),
+  fairness: z.enum(["tournament", "per_day"]).default("tournament"),
+  teamRefKeepDivision: z.boolean().default(false),
+  restMinMinutes: z.number().int().nonnegative().default(0),
+  blockGapMinutes: z.number().int().positive().default(30),
+});
+
+export const AutoAssignOfficials = z.object({
+  policy: AssignPolicyBody,
+  rng_seed: z.string().default("officials"),
+});
+
+export const OfficialsProposal = z.object({
+  assignments: z.array(
+    z.object({
+      fixtureId: z.string(),
+      officialId: z.string(),
+      roleKey: z.string(),
+      locked: z.boolean().optional(),
+    }),
+  ),
+  conflicts: z.array(
+    z.object({
+      kind: z.string(),
+      severity: z.enum(["block", "warn"]),
+      fixtureId: z.string().optional(),
+      officialId: z.string().optional(),
+      roleKey: z.string().optional(),
+      detail: z.string().optional(),
+    }),
+  ),
+});
+
+export const ApplyOfficials = z.object({
+  assignments: z.array(
+    z.object({
+      fixture_id: Uuid,
+      official_id: Uuid,
+      role_key: z.string().min(1),
+      locked: z.boolean().default(false),
+    }),
+  ),
+});
+
+export const PatchFixtureOfficials = z.object({
+  set: z.array(
+    z.object({
+      official_id: Uuid,
+      role_key: z.string().min(1),
+      locked: z.boolean().default(false),
+    }),
+  ),
+});
+
+export const SourceOfficials = z.object({
+  sources: z
+    .array(
+      z.discriminatedUnion("kind", [
+        z.object({
+          kind: z.literal("rank"),
+          fromStage: z.string(),
+          take: z.array(z.object({ poolId: z.string().optional(), rank: z.number().int().positive() })),
+        }),
+        z.object({
+          kind: z.literal("result"),
+          fromFixture: z.string(),
+          side: z.enum(["winner", "loser"]),
+        }),
+      ]),
+    )
+    .min(1),
 });

@@ -195,6 +195,7 @@ const ORG_TABLES = {
   registration: "registrations",
   club: "clubs",
   import: "imports",
+  official: "officials",
 } as const;
 export type ResourceKind = keyof typeof ORG_TABLES;
 

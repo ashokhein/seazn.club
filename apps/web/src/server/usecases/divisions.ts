@@ -24,12 +24,14 @@ export interface DivisionRow {
   eligibility: unknown[];
   tiebreakers: string[] | null;
   status: string;
+  officials_hide_names: boolean;
   created_at: string;
 }
 
 const COLS = [
   "id", "competition_id", "name", "slug", "sport_key", "variant_key", "config",
-  "module_version", "eligibility", "tiebreakers", "status", "created_at",
+  "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
+  "created_at",
 ] as const;
 
 export async function listDivisions(auth: AuthCtx, competitionId: string): Promise<DivisionRow[]> {
