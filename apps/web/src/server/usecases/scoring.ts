@@ -4,7 +4,7 @@ import "server-only";
 // per-fixture rate limiting, bracket slot progression, standings recompute,
 // realtime publish and public-cache invalidation. undo = core.void through the
 // same door.
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import { rateLimit } from "@/lib/rate-limit";
@@ -12,7 +12,7 @@ import { requireFeature } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
 import { appendEvent, resolveModule } from "@/server/engine-db";
 import { recomputeStandings } from "@/server/engine-db";
-import { publishFixtureUpdate } from "@/lib/realtime";
+import { publishDivisionUpdate, publishFixtureUpdate } from "@/lib/realtime";
 import {
   fireDivisionRevalidate,
   fireDiscoveryRevalidate,
@@ -90,6 +90,11 @@ export async function scoreEvent(
   const movesDiscovery =
     result.outcome !== null || input.type === "core.void" || input.type === "core.start";
   void publishFixtureUpdate(fixtureId, "event");
+  // Division-wide state_changed so multi-fixture listeners (slideshow) get
+  // one channel per division instead of one per fixture.
+  void sql<{ division_id: string }[]>`select division_id from fixtures where id = ${fixtureId}`
+    .then(([row]) => row && publishDivisionUpdate(row.division_id, "score"))
+    .catch(() => null);
   void invalidatePublicCache(auth.orgId, fixtureId, movesDiscovery);
   return out;
 }

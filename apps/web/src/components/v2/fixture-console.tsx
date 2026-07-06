@@ -7,6 +7,7 @@
 import { useCallback, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { describeEvent, EVENT_TONE_STYLE } from "@/lib/event-copy";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { LineupEditor } from "@/components/v2/lineup-editor";
 import { GenericPad } from "@/components/v2/pads/generic-pad";
@@ -169,6 +170,9 @@ export function FixtureConsole({
   const started = live.status !== "scheduled";
 
   const sides = { home, away };
+  const entrantNames: Record<string, string> = {};
+  if (home) entrantNames[home.id] = home.name;
+  if (away) entrantNames[away.id] = away.name;
   const lastVoidable = [...events]
     .reverse()
     .find((e) => e.type !== "core.void" && !events.some((v) => v.voids_event_id === e.id));
@@ -301,7 +305,7 @@ export function FixtureConsole({
       <section className="card overflow-hidden">
         <header className="border-b border-slate-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-700">
-            Event log <span className="font-normal text-slate-400">({events.length})</span>
+            Activity <span className="font-normal text-slate-400">({events.length})</span>
           </h2>
         </header>
         {events.length === 0 ? (
@@ -310,16 +314,20 @@ export function FixtureConsole({
           <ul className="max-h-96 divide-y divide-slate-50 overflow-y-auto">
             {[...events].reverse().map((e) => {
               const voided = events.some((v) => v.voids_event_id === e.id);
+              const desc = describeEvent(e.type, e.payload, entrantNames);
               return (
                 <li
                   key={e.id}
+                  title={`${e.type} ${JSON.stringify(e.payload)}`}
                   className={`flex items-center gap-3 px-4 py-2 text-xs ${voided ? "line-through opacity-40" : ""}`}
                 >
-                  <span className="w-8 shrink-0 font-mono text-slate-400">#{e.seq}</span>
-                  <span className="w-44 shrink-0 font-medium text-slate-700">{e.type}</span>
-                  <span className="min-w-0 flex-1 truncate font-mono text-slate-400">
-                    {e.type === "core.void" ? "" : JSON.stringify(e.payload)}
+                  <span className="w-8 shrink-0 font-mono text-slate-300">#{e.seq}</span>
+                  <span
+                    className={`badge w-24 shrink-0 justify-center capitalize ${EVENT_TONE_STYLE[desc.tone]}`}
+                  >
+                    {desc.label}
                   </span>
+                  <span className="min-w-0 flex-1 truncate text-slate-700">{desc.text}</span>
                   <span className="shrink-0 text-slate-400">
                     {new Date(e.recorded_at).toLocaleTimeString()}
                   </span>

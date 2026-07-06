@@ -1,6 +1,6 @@
 import "server-only";
 // /api/v1 authentication (doc 08 §2): session cookie (our UI) or API key
-// (Pro integrations — `Authorization: Bearer sk_live_…`). Both resolve to the
+// (Pro integrations — `Authorization: Bearer sc_…`). Both resolve to the
 // same AuthCtx so use-cases don't care which door the caller came through.
 import { createHash, randomBytes } from "node:crypto";
 import { sql } from "@/lib/db";
@@ -25,7 +25,10 @@ export interface AuthCtx {
   deviceLinkId?: string;
 }
 
-const KEY_PREFIX = "sk_live_";
+const KEY_PREFIX = "sc_";
+// Keys minted before the sc_ rename; still accepted (hash lookup is
+// prefix-agnostic), just no longer minted.
+const LEGACY_KEY_PREFIX = "sk_live_";
 const DEVICE_LINK_PREFIX = "dl_";
 
 export function hashApiKey(secret: string): string {
@@ -66,7 +69,7 @@ function bearerToken(req: Request): string | null {
   const header = req.headers.get("authorization");
   if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice("Bearer ".length).trim();
-  return token.startsWith(KEY_PREFIX) ? token : null;
+  return token.startsWith(KEY_PREFIX) || token.startsWith(LEGACY_KEY_PREFIX) ? token : null;
 }
 
 function deviceLinkToken(req: Request): string | null {
@@ -86,7 +89,7 @@ function rejectDeviceLink(req: Request): void {
 }
 
 /**
- * Authenticate a request against an org: API key when a Bearer sk_live_ token
+ * Authenticate a request against an org: API key when a Bearer sc_ token
  * is present, else the session cookie. `write` needs an editor role
  * (owner/admin) or a write-scoped key; `read` an org-wide read role (doc 13
  * §2: scorers get NO org-wide access — their door is requireFixtureActor).

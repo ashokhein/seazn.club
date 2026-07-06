@@ -40,13 +40,15 @@ export async function publishFixtureUpdate(
 }
 
 /**
- * Broadcast a schedule_changed event on `division:{id}` after a schedule
- * write (doc 12 §2/§6 — two organisers on one board see each other's moves,
- * last-write-wins per fixture). Fire-and-forget, never throws.
+ * Broadcast on `division:{id}`: schedule_changed after a schedule write
+ * (doc 12 §2/§6 — two organisers on one board see each other's moves),
+ * state_changed after a scoring write (reason "score") so division-wide
+ * listeners like the slideshow refresh without one channel per fixture.
+ * Fire-and-forget, never throws.
  */
 export async function publishDivisionUpdate(
   divisionId: string,
-  reason: "schedule" | "publish" | "start",
+  reason: "schedule" | "publish" | "start" | "score",
 ): Promise<void> {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -63,7 +65,7 @@ export async function publishDivisionUpdate(
         messages: [
           {
             topic: `division:${divisionId}`,
-            event: "schedule_changed",
+            event: reason === "score" ? "state_changed" : "schedule_changed",
             payload: { v: Date.now(), reason, at: new Date().toISOString() },
           },
         ],

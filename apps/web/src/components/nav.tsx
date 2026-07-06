@@ -1,7 +1,10 @@
 import Link from "next/link";
 import { LayoutDashboard, Settings, Users } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
+import { needsTour } from "@/lib/activation";
+import { EDITOR_ROLES } from "@/lib/types";
 import { LogoutButton } from "@/components/logout-button";
+import { ProductTour } from "@/components/product-tour";
 
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 
@@ -14,7 +17,12 @@ function orgLogoUrl(org: { logo_storage_path: string | null; logo_url: string | 
 
 export async function Nav() {
   const user = await getCurrentUser();
-  let activeOrg: { name: string; logo_storage_path: string | null; logo_url: string | null } | null = null;
+  let activeOrg: {
+    name: string;
+    role: string;
+    logo_storage_path: string | null;
+    logo_url: string | null;
+  } | null = null;
   if (user) {
     const orgs = await getUserOrgs(user.id);
     if (orgs.length > 0) {
@@ -23,6 +31,10 @@ export async function Nav() {
     }
   }
   const logoUrl = activeOrg ? orgLogoUrl(activeOrg) : null;
+  // Tour targets editor flows (rename org, create competition) — viewers skip it.
+  const canTour =
+    !!user && !!activeOrg && (EDITOR_ROLES as readonly string[]).includes(activeOrg.role);
+  const tourPending = canTour && (await needsTour(user!.id));
 
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
@@ -39,7 +51,10 @@ export async function Nav() {
           )}
         </Link>
         {user && activeOrg && (
-          <span className="hidden items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 sm:flex">
+          <span
+            data-tour="org-chip"
+            className="hidden items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 sm:flex"
+          >
             <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />
             {activeOrg.name}
           </span>
@@ -83,6 +98,7 @@ export async function Nav() {
           <Link href="/login" className="btn btn-primary">Sign in</Link>
         )}
       </div>
+      {canTour && <ProductTour autoStart={tourPending} />}
     </header>
   );
 }

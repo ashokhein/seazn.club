@@ -11,7 +11,7 @@ export default async function NewCompetitionPage() {
   return (
     <>
       <Nav />
-      <main className="mx-auto max-w-2xl px-4 py-8">
+      <main className="mx-auto max-w-2xl px-4 py-8" data-tour="competition-wizard">
         <h1 className="mb-6 text-xl font-semibold tracking-tight text-slate-900">
           New competition
         </h1>

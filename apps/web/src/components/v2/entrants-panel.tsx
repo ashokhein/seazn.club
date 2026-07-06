@@ -2,7 +2,7 @@
 
 // Entrant & roster management (PROMPT-15 task 1): persons picker, CSV import,
 // position/role assignment from the module catalog, withdraw/seed.
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -120,22 +120,21 @@ export function EntrantsPanel({
       )}
 
       {canEdit && (
-        <div className="grid gap-4 lg:grid-cols-2">
-          <AddEntrantForm
-            persons={persons}
-            busy={busy}
-            onSubmit={(payload) =>
-              run(() =>
-                apiV1(`/api/v1/divisions/${divisionId}/entrants`, {
-                  method: "POST",
-                  json: payload,
-                }),
-              )
-            }
-          />
-          <CsvImport
-            busy={busy}
-            onImport={async (rows) =>
+        <AddEntrantForm
+          persons={persons}
+          busy={busy}
+          onSubmit={(payload) =>
+            run(() =>
+              apiV1(`/api/v1/divisions/${divisionId}/entrants`, {
+                method: "POST",
+                json: payload,
+              }),
+            )
+          }
+          importControls={
+            <CsvImport
+              busy={busy}
+              onImport={async (rows) =>
               run(async () => {
                 // Create missing persons first (matched by exact name against
                 // the directory), then register entrants in one bulk call.
@@ -204,8 +203,9 @@ export function EntrantsPanel({
                 }
               })
             }
-          />
-        </div>
+            />
+          }
+        />
       )}
 
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
@@ -279,10 +279,13 @@ function AddEntrantForm({
   persons,
   busy,
   onSubmit,
+  importControls,
 }: {
   persons: Person[];
   busy: boolean;
   onSubmit: (payload: Record<string, unknown>) => void;
+  /** Inline CSV-import controls rendered in the footer row. */
+  importControls?: React.ReactNode;
 }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState("individual");
@@ -386,9 +389,12 @@ function AddEntrantForm({
         )}
       </div>
 
-      <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary">
-        {busy ? "Saving…" : "Add entrant"}
-      </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary">
+          {busy ? "Saving…" : "Add entrant"}
+        </button>
+        {importControls}
+      </div>
     </form>
   );
 }
@@ -449,42 +455,47 @@ function CsvImport({
   busy: boolean;
   onImport: (rows: CsvRow[]) => void;
 }) {
-  const [text, setText] = useState("");
-  const rows = useMemo(() => parseCsv(text), [text]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    const rows = parseCsv(await file.text());
+    if (rows.length === 0) {
+      setError("No entrants found in that file — check it matches the sample format.");
+      return;
+    }
+    setError(null);
+    onImport(rows);
+  }
 
   return (
-    <div className="card space-y-3 p-4">
-      <h3 className="text-sm font-semibold text-slate-700">CSV import</h3>
-      <p className="text-xs text-slate-400">
-        Columns: <span className="font-mono">name</span> (required),{" "}
-        <span className="font-mono">dob</span>, <span className="font-mono">gender</span>,{" "}
-        <span className="font-mono">seed</span>, <span className="font-mono">team</span>,{" "}
-        <span className="font-mono">squad_number</span>. A <span className="font-mono">team</span>{" "}
-        column groups people into team entrants; otherwise each row is an individual.
-      </p>
-      <textarea
-        rows={5}
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder={"name,dob,team\nA. Sharma,2011-04-02,Riverside U16\nB. Khan,2010-11-19,Riverside U16"}
-        className="textarea font-mono text-xs"
+    <div className="flex flex-wrap items-center gap-3">
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".csv,text/csv"
+        onChange={onFile}
+        className="hidden"
       />
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-slate-400">
-          {rows.length > 0 ? `${rows.length} row(s) parsed` : "Paste CSV above"}
-        </span>
-        <button
-          type="button"
-          disabled={busy || rows.length === 0}
-          onClick={() => {
-            onImport(rows);
-            setText("");
-          }}
-          className="btn btn-ghost"
-        >
-          {busy ? "Importing…" : "Import"}
-        </button>
-      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => fileRef.current?.click()}
+        className="btn btn-ghost"
+      >
+        {busy ? "Importing…" : "Import CSV"}
+      </button>
+      <a
+        href="/entrants-sample.csv"
+        download
+        className="text-xs text-purple-600 underline hover:text-purple-800"
+      >
+        Sample CSV
+      </a>
+      {error && <span className="text-xs text-red-600">{error}</span>}
     </div>
   );
 }

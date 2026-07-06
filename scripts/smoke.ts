@@ -376,7 +376,7 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
              on conflict (org_id, feature_key) do update set bool_value = true`;
     const minted = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
     const secret = v1data<{ id: string; secret: string }>(minted).secret;
-    check("v1 API key minted once (sk_live_)", minted.status === 201 && secret.startsWith("sk_live_"));
+    check("v1 API key minted once (sc_)", minted.status === 201 && secret.startsWith("sc_"));
 
     const keyed = await v1(newSession(), "/api/v1/competitions", "GET", undefined, {
       Authorization: `Bearer ${secret}`,

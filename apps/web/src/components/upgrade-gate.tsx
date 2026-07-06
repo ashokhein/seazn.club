@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { featureReason } from "@/lib/feature-copy";
+import { PlanBadge } from "@/components/plan-badge";
 
 interface Props {
   /** Entitlement feature key, e.g. "scoring.ball_by_ball" (doc 10 §1). */
@@ -33,6 +34,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
         className="inline-flex items-center gap-1.5 rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
       >
         <LockIcon />
+        <PlanBadge feature={feature} />
         {reason} <span className="font-semibold underline">Upgrade →</span>
       </Link>
     );
@@ -45,6 +47,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
     >
       <p className="flex items-center gap-2 font-medium">
         <LockIcon />
+        <PlanBadge feature={feature} />
         {reason}
       </p>
       <p className="mt-2">

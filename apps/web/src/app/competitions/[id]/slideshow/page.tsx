@@ -1,0 +1,45 @@
+export const dynamic = "force-dynamic";
+// Competition-wide noticeboard slideshow — rotates through every division
+// that has something to show (active divisions first).
+import { requireResourcePageAuth } from "@/server/page-auth";
+import { getCompetition } from "@/server/usecases/competitions";
+import { listDivisions } from "@/server/usecases/divisions";
+import { buildDivisionSlides, type Slide } from "@/server/slideshow-data";
+import { hasFeature } from "@/lib/entitlements";
+import { Slideshow } from "@/components/v2/slideshow";
+
+export default async function CompetitionSlideshowPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  const { id } = await params;
+  const { auth } = await requireResourcePageAuth("competition", id);
+  const [competition, divisions] = await Promise.all([
+    getCompetition(auth, id),
+    listDivisions(auth, id),
+  ]);
+
+  // Active divisions lead; the rest follow so a finished division's final
+  // table still cycles through.
+  const ordered = [...divisions].sort(
+    (a, b) => Number(b.status === "active") - Number(a.status === "active"),
+  );
+  // Sequential on purpose: parallel decks × parallel queries inside each deck
+  // can exhaust the small pg pool through the Supabase pooler.
+  const slides: Slide[] = [];
+  for (const d of ordered) {
+    slides.push(...(await buildDivisionSlides(auth, d.id, d.name)));
+  }
+  const realtime = await hasFeature(auth.orgId, "realtime");
+
+  return (
+    <Slideshow
+      title={competition.name}
+      slides={slides}
+      backHref={`/competitions/${id}`}
+      divisionIds={ordered.map((d) => d.id)}
+      realtime={realtime}
+    />
+  );
+}

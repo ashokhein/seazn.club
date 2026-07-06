@@ -14,7 +14,7 @@ export async function GET(req: Request, { params }: Ctx) {
   });
 }
 
-/** Mint a key: the sk_live_ secret appears in this response only (doc 08 §2). */
+/** Mint a key: the sc_ secret appears in this response only (doc 08 §2). */
 export async function POST(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;

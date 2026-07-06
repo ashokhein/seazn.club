@@ -17,6 +17,8 @@
     "test:coverage": "npm run test:coverage --workspace apps/web",
     "test:smoke": "node --experimental-strip-types scripts/smoke.ts",
     "test:smoke:sports": "node --experimental-strip-types scripts/smoke-sports.ts",
+    "seed:demo:setup": "node --env-file=apps/web/.env.local --experimental-strip-types scripts/seed-demo.ts --phase=setup",
+    "seed:demo": "node --env-file=apps/web/.env.local --experimental-strip-types scripts/seed-demo.ts --phase=seed",
     "sim": "npm run sim --workspace packages/engine",
     "sim:replay": "npm run sim:replay --workspace packages/engine --",
     "engine:boundary": "node --experimental-strip-types scripts/engine-boundary.ts",

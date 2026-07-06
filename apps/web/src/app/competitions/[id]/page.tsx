@@ -1,12 +1,11 @@
 export const dynamic = "force-dynamic";
-// Competition overview: settings + division list (PROMPT-15 task 1).
+// Competition overview: division list; settings live on their own page.
 import Link from "next/link";
+import { Settings } from "lucide-react";
 import { Nav } from "@/components/nav";
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
-import { CompetitionSettings } from "@/components/v2/competition-settings";
-import { hasFeature } from "@/lib/entitlements";
 import { sql } from "@/lib/db";
 
 export default async function CompetitionPage({
@@ -16,11 +15,10 @@ export default async function CompetitionPage({
 }) {
   const { id } = await params;
   const { auth, org, canEdit } = await requireResourcePageAuth("competition", id);
-  const [competition, divisions, [orgRow], discoveryBranding] = await Promise.all([
+  const [competition, divisions, [orgRow]] = await Promise.all([
     getCompetition(auth, id),
     listDivisions(auth, id),
     sql<{ slug: string }[]>`select slug from organizations where id = ${auth.orgId}`,
-    hasFeature(auth.orgId, "discovery.branding"),
   ]);
   const publicPath =
     competition.visibility !== "private" && orgRow
@@ -43,17 +41,32 @@ export default async function CompetitionPage({
               {competition.name}
             </h1>
           </div>
-          <Link href={`/competitions/${competition.id}/schedule`} className="btn btn-ghost">
-            Schedule board
-          </Link>
-          {publicPath && (
-            <Link href={publicPath} className="btn btn-ghost" target="_blank">
-              View public page ↗
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href={`/competitions/${competition.id}/slideshow`}
+              target="_blank"
+              className="btn btn-ghost"
+            >
+              Slideshow ↗
             </Link>
-          )}
+            <Link href={`/competitions/${competition.id}/schedule`} className="btn btn-ghost">
+              Schedule board
+            </Link>
+            {publicPath && (
+              <Link href={publicPath} className="btn btn-ghost" target="_blank">
+                View public page ↗
+              </Link>
+            )}
+            <Link
+              href={`/competitions/${competition.id}/settings`}
+              className="btn btn-ghost flex items-center gap-1.5"
+            >
+              <Settings className="h-4 w-4" strokeWidth={1.75} />
+              Settings
+            </Link>
+          </div>
         </div>
 
-        <div className="grid gap-6 lg:grid-cols-[1fr_340px]">
           <section>
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-700">Divisions</h2>
@@ -94,27 +107,6 @@ export default async function CompetitionPage({
               </ul>
             )}
           </section>
-
-          <aside>
-            <CompetitionSettings
-              competition={{
-                id: competition.id,
-                name: competition.name,
-                slug: competition.slug,
-                description: competition.description,
-                starts_on: competition.starts_on,
-                ends_on: competition.ends_on,
-                visibility: competition.visibility,
-                status: competition.status,
-                frozen: competition.frozen ?? false,
-                discoverable: competition.discoverable,
-                discovery: (competition.discovery ?? {}) as Record<string, string | null>,
-              }}
-              canEdit={canEdit}
-              discoveryBranding={discoveryBranding}
-            />
-          </aside>
-        </div>
       </main>
     </>
   );
