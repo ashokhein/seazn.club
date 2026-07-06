@@ -1,6 +1,6 @@
 # 07 — Greenfield PostgreSQL Schema (v4)
 
-Replaces `supabase/schema.sql` tournament tables entirely (greenfield license). Retained
+Replaces the v1 baseline tournament tables entirely (greenfield license; DDL lives in `db/migration/`, Flyway). Retained
 unchanged: `users`, `organizations`, `org_members`, `org_invites`, auth/email tables,
 billing tables (`plans`, `subscriptions`, `plan_entitlements`, `org_entitlement_overrides`,
 `billing_events`), `rate_limit_buckets`, storage columns, staff/admin tables. Dropped:
@@ -267,7 +267,7 @@ create table api_keys (
    match results → synthetic `generic.result` score_events; old audit_log preserved
    read-only in an `audit_log_v1` archive table.
 
-## Deviations (implemented in `supabase/schema_v2.sql`, PROMPT-10)
+## Deviations (implemented in `db/migration/V201–V240`, ex `schema_v2.sql`, PROMPT-10)
 
 The DDL sketches above are illustrative; the normative schema is `schema_v2.sql`.
 Corrections made there (a PostgreSQL expression can't appear in a PRIMARY KEY, etc.):

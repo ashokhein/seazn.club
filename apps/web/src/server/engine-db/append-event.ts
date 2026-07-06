@@ -17,6 +17,9 @@ export interface AppendInput {
   type: string;
   payload: unknown;
   recordedBy?: string | null;
+  /** Device-link attribution (doc 13 §7): set when the event arrived via a
+   *  dl_ token. Rides OUTSIDE the hash-chain canonical. */
+  deviceLinkId?: string | null;
   voids?: string;
   id?: string;
   recordedAt?: string;
@@ -174,10 +177,10 @@ export async function appendEvent(
     const outcome = sportModule.outcome(state);
 
     await tx`
-      insert into score_events (id, fixture_id, seq, type, payload, recorded_by, recorded_at, voids_event_id)
+      insert into score_events (id, fixture_id, seq, type, payload, recorded_by, recorded_at, voids_event_id, device_link_id)
       values (${candidate.id}, ${fixtureId}, ${candidate.seq}, ${candidate.type},
               ${tx.json(candidate.payload as never)}, ${candidate.recordedBy},
-              ${candidate.recordedAt}, ${candidate.voids ?? null})
+              ${candidate.recordedAt}, ${candidate.voids ?? null}, ${input.deviceLinkId ?? null})
     `;
 
     await tx`

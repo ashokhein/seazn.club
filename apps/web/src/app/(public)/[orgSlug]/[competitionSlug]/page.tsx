@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getPublicCompetition } from "@/server/public-site/data";
+import { publicRegistrationInfo } from "@/server/usecases/registrations";
 
 export const revalidate = 30;
 
@@ -37,6 +38,9 @@ export default async function CompetitionHomePage({ params }: Props) {
   if (!data) notFound();
   const { org, competition, divisions, liveNow } = data;
   const branding = (competition.branding ?? {}) as Branding;
+  // Register CTA (doc 16 §1.1): shown while any division accepts submissions.
+  const registration = await publicRegistrationInfo(orgSlug, competitionSlug).catch(() => null);
+  const registrationOpen = registration?.divisions.some((d) => d.open) ?? false;
 
   return (
     <div>
@@ -53,7 +57,7 @@ export default async function CompetitionHomePage({ params }: Props) {
           // eslint-disable-next-line @next/next/no-img-element
           <img src={branding.logo} alt="" className="h-14 w-14 rounded object-contain" />
         ) : null}
-        <div>
+        <div className="min-w-0 flex-1">
           <h1 className="text-2xl font-semibold">{competition.name}</h1>
           <p className="mt-1 text-sm text-zinc-500">
             {competition.starts_on
@@ -72,6 +76,14 @@ export default async function CompetitionHomePage({ params }: Props) {
               : null}
           </p>
         </div>
+        {registrationOpen ? (
+          <Link
+            href={`/${org.slug}/${competition.slug}/register`}
+            className="shrink-0 rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
+          >
+            Register
+          </Link>
+        ) : null}
       </div>
 
       {liveNow.length > 0 ? (

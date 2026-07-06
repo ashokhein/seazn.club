@@ -19,11 +19,28 @@ export async function GET(req: Request, { params }: Ctx) {
   return v1(async () => {
     await publicRateLimit(req);
     const { id } = await params;
-    const eligible = (await fixtureRealtimeEligible(id)) || (await isFixtureOfficial(id));
+    const eligible =
+      (await fixtureRealtimeEligible(id)) ||
+      (await isFixtureOfficial(id)) ||
+      (await isFixtureDeviceLink(req, id));
     if (!eligible) throw new HttpError(403, "realtime not available for this competition");
     const token = await mintPublicFixtureToken(id);
     return reply(200, { token, channel: `fixture:${id}` });
   });
+}
+
+/** Doc 13 §7: a valid device link for THIS fixture gets the realtime token —
+ *  same officials bypass as scorers; the holder is producing the data. */
+async function isFixtureDeviceLink(req: Request, fixtureId: string): Promise<boolean> {
+  const header = req.headers.get("authorization");
+  if (!header?.startsWith("Bearer dl_")) return false;
+  try {
+    const { resolveDeviceLinkToken } = await import("@/server/usecases/device-links");
+    const link = await resolveDeviceLinkToken(header.slice("Bearer ".length).trim());
+    return link.fixture_id === fixtureId;
+  } catch {
+    return false;
+  }
 }
 
 async function isFixtureOfficial(fixtureId: string): Promise<boolean> {

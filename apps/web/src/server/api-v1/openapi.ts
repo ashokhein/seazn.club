@@ -86,6 +86,10 @@ export const ROUTES: RouteSpec[] = [
   { path: "/fixtures/{id}/events", method: "get", summary: "Read the ledger after ?since_seq=", tag: "scoring", response: z.array(S.ScoreEvent), query: { since_seq: { schema: { type: "integer", minimum: 0, default: 0 } } } },
   { path: "/fixtures/{id}/state", method: "get", summary: "Live state (ETag = ledger seq)", tag: "scoring", response: S.FixtureState },
   { path: "/fixtures/{id}/finalize", method: "post", summary: "Lock the ledger (core.finalize)", tag: "scoring", request: z.object({ expected_seq: z.number().int().min(0) }), response: S.AppendEventResponse, errors: [409, 422] },
+  // Device links (doc 13 §7, PROMPT-21)
+  { path: "/fixtures/{id}/device-links", method: "post", summary: "Mint a day-of device link (editor session only; secret shown once; revokes prior active links; expiry = end of the fixture's local day)", tag: "device-links", request: S.CreateDeviceLink, response: S.CreatedDeviceLink, status: 201, errors: [402, 422, 429] },
+  { path: "/fixtures/{id}/device-links", method: "get", summary: "The fixture's active device link, if any (never the secret)", tag: "device-links", response: S.DeviceLink.nullable() },
+  { path: "/fixtures/{id}/device-links/{linkId}", method: "delete", summary: "Revoke a device link (immediate 401 for the holder)", tag: "device-links", response: S.DeviceLink },
   // Scorer console (doc 13 §6, PROMPT-18)
   { path: "/me/assigned-fixtures", method: "get", summary: "Fixtures covered by the caller's scorer assignments (session only)", tag: "scorers", response: z.array(S.AssignedFixture), query: { date: { schema: { type: "string", format: "date" }, description: "Narrow to one day (YYYY-MM-DD)" } } },
   // API keys
@@ -99,6 +103,24 @@ export const ROUTES: RouteSpec[] = [
   { path: "/public/orgs/{orgSlug}/competitions/{slug}/divisions/{divisionSlug}/entrants", method: "get", summary: "Public entrants (consent-filtered)", tag: "public", public: true },
   { path: "/public/fixtures/{id}", method: "get", summary: "Public live fixture summary", tag: "public", public: true },
   { path: "/public/fixtures/{id}/realtime-token", method: "get", summary: "Realtime subscriber token (403 unless the org has the realtime entitlement)", tag: "public", public: true },
+  { path: "/public/discovery", method: "get", summary: "Discovery directory (doc 15 §4): opted-in public competitions, cursor-paginated", tag: "public", public: true, query: { sport: { schema: { type: "string" } }, country: { schema: { type: "string" } }, status: { schema: { type: "string", enum: ["live", "upcoming"] } }, q: { schema: { type: "string" } }, cursor: { schema: { type: "string" } }, limit: { schema: { type: "integer", minimum: 1, maximum: 48 } } } },
+  // Registration & entry fees (doc 16 §1.1, PROMPT-20a)
+  { path: "/divisions/{id}/registration-settings", method: "get", summary: "Division registration settings (defaults when unset)", tag: "registration", response: S.RegistrationSettings },
+  { path: "/divisions/{id}/registration-settings", method: "put", summary: "Upsert registration settings (entry fees are Pro)", tag: "registration", request: S.PutRegistrationSettings, response: S.RegistrationSettings, errors: [402, 422] },
+  { path: "/divisions/{id}/registrations", method: "get", summary: "Organiser registration list (?status=)", tag: "registration", response: z.array(S.Registration), query: { status: { schema: { type: "string", enum: ["pending", "paid", "confirmed", "waitlisted", "withdrawn"] } } } },
+  { path: "/divisions/{id}/registrations/export", method: "get", summary: "CSV export of registrations (Pro `exports`)", tag: "registration", errors: [402] },
+  { path: "/registrations/{id}/confirm", method: "post", summary: "Approve: materialise the entrant (idempotent)", tag: "registration", response: S.Registration, errors: [422] },
+  { path: "/registrations/{id}/waitlist", method: "post", summary: "Move a pending registration to the waitlist", tag: "registration", response: S.Registration, errors: [422] },
+  { path: "/registrations/{id}/withdraw", method: "post", summary: "Withdraw: frees the spot, auto-promotes, auto-refunds pre-lock", tag: "registration", response: S.Registration },
+  { path: "/registrations/{id}/refund", method: "post", summary: "Manual refund (post-lock discretion; partial allowed; audited)", tag: "registration", request: S.RefundRegistration, response: S.Registration, errors: [422] },
+  { path: "/orgs/{id}/connect", method: "get", summary: "Stripe Connect status (?refresh=1 re-reads from Stripe)", tag: "registration", response: S.ConnectStatus, query: { refresh: { schema: { type: "string", enum: ["1"] } } } },
+  { path: "/orgs/{id}/connect", method: "post", summary: "Create the Express account + onboarding link (Pro)", tag: "registration", request: S.CreateConnectOnboarding, response: S.ConnectOnboardingLink, errors: [402] },
+  { path: "/public/orgs/{orgSlug}/competitions/{slug}/registration", method: "get", summary: "Public register panel: open divisions, fees, remaining capacity", tag: "public", public: true, response: S.PublicRegistrationInfo },
+  { path: "/public/orgs/{orgSlug}/competitions/{slug}/register", method: "post", summary: "Submit a registration (fee → Stripe Checkout URL)", tag: "public", public: true, request: S.PublicRegisterRequest, response: S.PublicRegisterResponse, status: 201, errors: [422, 429, 503] },
+  { path: "/public/registrations/{id}", method: "get", summary: "Registrant status view (?token=; ?reconcile=1 after checkout)", tag: "public", public: true, response: S.PublicRegistrationStatus, errors: [401] },
+  { path: "/public/registrations/{id}/withdraw", method: "post", summary: "Registrant self-withdraw (token)", tag: "public", public: true, request: S.PublicRegistrationToken, response: S.PublicRegistrationStatus },
+  { path: "/public/registrations/{id}/checkout", method: "post", summary: "(Re)open Stripe Checkout for a pending paid registration", tag: "public", public: true, request: S.PublicRegistrationToken, errors: [422, 503] },
+  { path: "/public/registrations/{id}/ics", method: "get", summary: "Confirmation .ics for the competition dates (?token=)", tag: "public", public: true, errors: [401] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -222,7 +244,8 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     tags: [
       { name: "competitions" }, { name: "divisions" }, { name: "entrants" },
       { name: "persons" }, { name: "stages" }, { name: "fixtures" },
-      { name: "scoring" }, { name: "api-keys" }, { name: "public" },
+      { name: "scoring" }, { name: "scheduling" }, { name: "scorers" },
+      { name: "device-links" }, { name: "api-keys" }, { name: "registration" }, { name: "public" },
     ],
     components: {
       securitySchemes: {
@@ -231,6 +254,15 @@ export function buildOpenApiDocument(): Record<string, unknown> {
           type: "http",
           scheme: "bearer",
           description: "Pro API key: `Authorization: Bearer sk_live_…` (entitlement api.access)",
+        },
+        deviceLink: {
+          type: "http",
+          scheme: "bearer",
+          description:
+            "Day-of device link (doc 13 §7): `Authorization: Bearer dl_…` — " +
+            "accepted ONLY by its fixture's scoring surface (append events, " +
+            "void own events pre-finalize, read state/events, realtime " +
+            "token). Expired/revoked → 401 LINK_EXPIRED / LINK_REVOKED.",
         },
       },
     },

@@ -11,7 +11,8 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   // existing top-level app routes
   "admin", "api", "dashboard", "engine", "forgot-password", "join", "legal",
   "login", "onboarding", "orgs", "pricing", "reset-password", "settings",
-  "t", "tournaments", "use-cases", "verify-email",
+  "t", "tournaments", "use-cases", "verify-email", "score", "my-matches",
+  "competitions", "divisions", "fixtures", "people",
   // metadata / static
   "favicon.ico", "robots.txt", "sitemap.xml", "icons", "images", "_next",
   // future-proofing platform names

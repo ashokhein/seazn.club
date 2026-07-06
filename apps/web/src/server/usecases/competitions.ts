@@ -4,10 +4,11 @@ import "server-only";
 // AuthCtx proves it); tenancy is enforced by withTenant + RLS.
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { withinLimit } from "@/lib/entitlements";
+import { requireFeature, withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { page, type ListQuery, type Page } from "@/server/api-v1/http";
 import type { CreateCompetition, PatchCompetition } from "@/server/api-v1/schemas";
+import { fireDiscoveryRevalidate, invalidateDiscoveryCache } from "@/server/public-site/revalidate";
 import {
   ACTIVE_COMPETITION_STATUSES,
   assertCompetitionNotFrozen,
@@ -26,13 +27,16 @@ export interface CompetitionRow {
   branding: unknown;
   status: string;
   created_at: string;
+  /** Doc 15 §1 — opt-in showcase consent + organiser-entered presentation. */
+  discoverable: boolean;
+  discovery: unknown;
   /** doc 10 §2.4 — over-quota after a downgrade: read-only, never deleted. */
   frozen?: boolean;
 }
 
 const COLS = [
   "id", "org_id", "name", "slug", "description", "starts_on", "ends_on",
-  "visibility", "branding", "status", "created_at",
+  "visibility", "branding", "status", "created_at", "discoverable", "discovery",
 ] as const;
 
 export function slugify(name: string): string {
@@ -142,21 +146,71 @@ export async function patchCompetition(
 ): Promise<CompetitionRow> {
   if (!isRetirePatch(patch)) await assertCompetitionNotFrozen(auth.orgId, id);
   if (patch.visibility === "public") await assertPublicQuota(auth, id);
-  return withTenant(auth.orgId, async (tx) => {
+  // Doc 15 §5: listing is free on every tier, but the gate stays server-side
+  // so a plan without the key (or a staff override) can switch it off.
+  if (patch.discoverable === true) await requireFeature(auth.orgId, "discovery.listed");
+  // Presentation depth is the paid layer (doc 15 §1): tagline/hero → 402.
+  if (patch.discovery?.tagline || patch.discovery?.hero_image_path) {
+    await requireFeature(auth.orgId, "discovery.branding");
+  }
+  const { row, discoveryTouched } = await withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {
       const [taken] = await tx`
         select 1 from competitions where slug = ${patch.slug} and id <> ${id}`;
       if (taken) throw new HttpError(409, `slug '${patch.slug}' is already in use`);
     }
-    // postgres.js dynamic column helper: only the provided keys are updated.
-    const cols = Object.keys(patch) as (keyof PatchCompetition)[];
-    const values = { ...patch, ...(patch.branding ? { branding: tx.json(patch.branding as never) } : {}) };
+    const [before] = await tx<{ visibility: string; discoverable: boolean }[]>`
+      select visibility, discoverable from competitions where id = ${id}`;
+    if (!before) throw new HttpError(404, "competition not found");
+
+    const effective = { ...patch };
+    const nextVisibility = patch.visibility ?? before.visibility;
+    // Hard coupling (doc 15 §1): never leak a non-public competition to
+    // discovery. Turning it on needs `public`; dropping visibility
+    // auto-disables it in the SAME tx.
+    if (effective.discoverable === true && nextVisibility !== "public") {
+      throw new HttpError(422, "Only public competitions can be showcased on seazn.club");
+    }
+    if (nextVisibility !== "public" && before.discoverable && effective.discoverable !== false) {
+      effective.discoverable = false;
+    }
+
+    const cols = Object.keys(effective) as (keyof PatchCompetition)[];
+    const values = {
+      ...effective,
+      ...(effective.branding ? { branding: tx.json(effective.branding as never) } : {}),
+      ...(effective.discovery ? { discovery: tx.json(effective.discovery as never) } : {}),
+    };
     const [row] = await tx<CompetitionRow[]>`
       update competitions set ${tx(values as never, ...(cols as never[]))}
       where id = ${id} returning ${tx(COLS)}`;
     if (!row) throw new HttpError(404, "competition not found");
-    return row;
+
+    // Opt-in/out is org-level content consent — recorded as a division-
+    // independent competition event in the same tx (doc 15 §1 "audited
+    // who/when"; competition_events is append-only by grants).
+    if (before.discoverable !== row.discoverable) {
+      await tx`
+        insert into competition_events (competition_id, org_id, type, payload, actor_id)
+        values (${id}, ${auth.orgId},
+                ${row.discoverable ? "discovery.opt_in" : "discovery.opt_out"},
+                ${tx.json({ auto: effective.discoverable !== patch.discoverable } as never)},
+                ${auth.userId})`;
+    }
+
+    const discoveryTouched =
+      before.discoverable !== row.discoverable ||
+      (row.discoverable &&
+        Boolean(patch.discovery ?? patch.name ?? patch.starts_on ?? patch.ends_on ?? patch.status));
+    return { row, discoveryTouched };
   });
+  // Toggle-off is immediate (doc 15 §1): drop the Redis window and fire the
+  // `discovery` ISR tag. Outside the tx — invalidation never rolls back a write.
+  if (discoveryTouched) {
+    await invalidateDiscoveryCache();
+    fireDiscoveryRevalidate();
+  }
+  return row;
 }
 
 export async function deleteCompetition(auth: AuthCtx, id: string): Promise<void> {

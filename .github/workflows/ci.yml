@@ -112,8 +112,19 @@ jobs:
           cache: npm
       - run: npm ci
 
-      - name: Bootstrap database (schema + migrations)
+      # Flyway CLI is downloaded by scripts/flyway.sh on first use; cache it
+      # per pinned version so CI doesn't re-download every run.
+      - name: Cache Flyway CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/seazn-flyway
+          key: flyway-cli-10.22.0-linux-x64
+
+      - name: Bootstrap database (Flyway migrate)
         run: npm run db:apply
+
+      - name: Flyway migration history
+        run: npm run db:info
 
       - name: RLS guard (every org_id table isolated)
         run: npm run check:rls

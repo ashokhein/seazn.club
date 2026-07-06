@@ -27,7 +27,7 @@
 // stored v1 winner/draw ("refolded outcomes == stored winners").
 //
 // The DESTRUCTIVE step (drop v1 tables, archive audit_log → audit_log_v1) is
-// NOT here — it is supabase/migrations/013_v1_cutover.sql, applied only after
+// NOT here — it is db/migration/V113__v1_cutover.sql, applied only after
 // this script's report is clean on a staging rehearsal (PROMPT-15 task 5).
 import postgres from "postgres";
 import { randomUUID } from "node:crypto";

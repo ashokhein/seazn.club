@@ -8,6 +8,7 @@ import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, ManageBillingButton } from "@/components/billing-actions";
 import { ORG_ROLES, type Subscription } from "@/lib/types";
+import { getLimit } from "@/lib/entitlements";
 
 function fmt(iso: string | null) {
   if (!iso) return null;
@@ -61,8 +62,24 @@ export default async function BillingPage({
   const isPro = planKey === "pro";
   const hasStripeCustomer = !!sub?.stripe_customer_id;
 
-  const [{ seasons_count }] = await sql<{ seasons_count: number }[]>`
-    select count(*)::int as seasons_count from seasons where org_id = ${orgId}`;
+  // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
+  // PROMPT-15 cutover; overrides are honoured via getLimit.
+  const [counts] = await sql<
+    { competitions_active: number; dashboards_public: number; members: number }[]
+  >`
+    select
+      (select count(*)::int from competitions
+        where org_id = ${orgId} and status in ('draft','published','live'))
+        as competitions_active,
+      (select count(*)::int from competitions
+        where org_id = ${orgId} and visibility = 'public') as dashboards_public,
+      (select count(*)::int from org_members m
+        where m.org_id = ${orgId} and m.role != 'scorer') as members`;
+  const [competitionsLimit, dashboardsLimit, membersLimit] = await Promise.all([
+    getLimit(orgId, "competitions.max_active"),
+    getLimit(orgId, "dashboard.public.max"),
+    getLimit(orgId, "members.max"),
+  ]);
 
   const trialDays = daysUntil(sub?.trial_end ?? null);
 
@@ -130,20 +147,20 @@ export default async function BillingPage({
           </h2>
           <div className="space-y-3">
             <UsageRow
-              label="Seasons"
-              current={seasons_count}
-              limit={isPro ? null : 5}
+              label="Active competitions"
+              current={counts?.competitions_active ?? 0}
+              limit={competitionsLimit}
             />
             <UsageRow
-              label="Tournaments per season"
-              current={null}
-              limit={isPro ? null : 10}
-              note="counted per season"
+              label="Public dashboards"
+              current={counts?.dashboards_public ?? 0}
+              limit={dashboardsLimit}
             />
             <UsageRow
-              label="Players per tournament"
-              current={null}
-              limit={isPro ? null : 32}
+              label="Team members"
+              current={counts?.members ?? 0}
+              limit={membersLimit}
+              note="scorer seats not counted"
             />
           </div>
         </section>
@@ -161,12 +178,12 @@ export default async function BillingPage({
                   Free
                 </p>
                 <ul className="mt-3 space-y-1 text-slate-500">
-                  <li>✓ All formats</li>
-                  <li>✓ 5 seasons</li>
-                  <li>✓ 10 tournaments/season</li>
-                  <li>✓ 32 players/tournament</li>
-                  <li className="text-slate-300">✗ Branding</li>
-                  <li className="text-slate-300">✗ Exports</li>
+                  <li>✓ 2 active competitions</li>
+                  <li>✓ 16 entrants per division</li>
+                  <li>✓ 1 public dashboard</li>
+                  <li>✓ Free-event registration</li>
+                  <li className="text-slate-300">✗ Entry fees (Stripe payouts)</li>
+                  <li className="text-slate-300">✗ Branding & exports</li>
                   <li className="text-slate-300">✗ Realtime scoreboard</li>
                 </ul>
               </div>
@@ -177,10 +194,10 @@ export default async function BillingPage({
                   <span className="text-base font-normal text-slate-500">/mo</span>
                 </p>
                 <ul className="mt-3 space-y-1 text-slate-700">
-                  <li>✓ All formats</li>
-                  <li>✓ Unlimited seasons</li>
-                  <li>✓ Unlimited tournaments</li>
-                  <li>✓ 256 players/tournament</li>
+                  <li>✓ Unlimited competitions</li>
+                  <li>✓ Multi-division, 64 entrants each</li>
+                  <li>✓ Online registration + entry fees</li>
+                  <li>✓ Ball-by-ball & rally scoring</li>
                   <li>✓ Custom branding</li>
                   <li>✓ CSV / PDF exports</li>
                   <li>✓ Realtime scoreboard</li>

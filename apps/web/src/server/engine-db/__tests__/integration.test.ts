@@ -190,6 +190,11 @@ describe.skipIf(!HAS_DB)("engine-db persistence adapter", () => {
       select verify_score_events_chain(${s.fixtureId}) as bad
     `;
     expect(tamperedBad).not.toBeNull();
+
+    // Clean up the deliberately-corrupt ledger: on a persistent test DB a
+    // later verifyStateConsistency sample (this run or the next) would
+    // otherwise flag it as a genuine refold failure.
+    await sql`delete from fixtures where id = ${s.fixtureId}`;
   });
 
   it("recomputeStandings folds a decided fixture into a ranked table", async () => {

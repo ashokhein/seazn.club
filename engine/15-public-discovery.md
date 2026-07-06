@@ -73,6 +73,15 @@ AND NOT discovery_blocked AND org.status='active'`, joined to minimal live info
 endpoint takes anonymous homepage traffic — it must never touch hot tenant paths.
 Homepage/discover pages are Server Components on this view only.
 
+Implementation notes (PROMPT-19):
+- The §3 ranking (featured → in-play → start-date proximity → entrant count) is not
+  keyset-able, so the endpoint's opaque cursor wraps an OFFSET — fine for a directory
+  this size, and the whole read sits behind Redis + CDN anyway.
+- The opt-in/out audit event lands in a new `competition_events` table
+  (competition-scoped, org-RLS'd, append-only by grants) — the "division-independent
+  competition event" of §1; no such ledger existed before this prompt.
+- Quality floor's "org is email-verified" = at least one owner with a verified email.
+
 ## 5. Entitlement summary (doc 10 delta)
 
 | feature_key | Community | Pro |

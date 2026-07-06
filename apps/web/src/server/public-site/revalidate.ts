@@ -4,7 +4,10 @@ import "server-only";
 // failed revalidation must never roll back a scoring write, and unit tests
 // call use-cases outside a request scope where revalidateTag would throw.
 import { revalidateTag } from "next/cache";
-import { divisionTag, competitionTag } from "./data";
+import { cacheDelPattern } from "@/lib/cache";
+import { divisionTag, competitionTag, DISCOVERY_TAG } from "./data";
+
+export { DISCOVERY_TAG };
 
 export function fireDivisionRevalidate(divisionId: string, competitionId?: string): void {
   try {
@@ -15,4 +18,20 @@ export function fireDivisionRevalidate(divisionId: string, competitionId?: strin
   } catch {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
+}
+
+/** Fire the shared discovery ISR tag (doc 15, PROMPT-19): home strips,
+ *  /discover and the per-sport pages — on opt-in/out, staff curation and
+ *  fixture-decided writes of discoverable competitions. */
+export function fireDiscoveryRevalidate(): void {
+  try {
+    revalidateTag(DISCOVERY_TAG, "max");
+  } catch {
+    // outside a Next request scope (tests, scripts) — nothing to invalidate
+  }
+}
+
+/** Redis layer in front of GET /api/v1/public/discovery (doc 15 §4). */
+export async function invalidateDiscoveryCache(): Promise<void> {
+  await cacheDelPattern("pub:v1:discovery:*");
 }

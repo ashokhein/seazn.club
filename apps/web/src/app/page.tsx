@@ -5,11 +5,13 @@ import { getCurrentUser } from "@/lib/auth";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
 import { CookieConsent } from "@/components/cookie-consent";
+import { getDiscoveryLive, getDiscoveryThisWeek } from "@/server/public-site/discovery";
+import { LiveNowStrip, ThisWeekSection } from "@/components/discovery-cards";
 
 export const metadata: Metadata = {
   title: "Seazn Club — Run multi-sport community tournaments",
   description:
-    "Swiss, Knockout, Round-Robin, Stepladder — run any format for any sport in minutes. Free for community clubs. Pro for unlimited seasons and players.",
+    "Leagues, groups, knockouts, swiss — run any format for any sport in minutes, with online registration and entry fees built in. Free for community clubs.",
   openGraph: {
     title: "Seazn Club",
     description: "Run multi-sport community tournaments from setup to trophy in minutes.",
@@ -25,7 +27,7 @@ const FEATURES = [
   {
     icon: "⚡",
     title: "Any format",
-    body: "Swiss, Knockout, Round Robin, Stepladder — all four in one app. Mix formats across sports for the same org.",
+    body: "Leagues, groups + knockout, swiss, double elimination, stepladders — mix formats across sports and divisions in one competition.",
   },
   {
     icon: "🏅",
@@ -33,14 +35,14 @@ const FEATURES = [
     body: "Standings update the moment a result is recorded. Share the live view with players on any device.",
   },
   {
-    icon: "📅",
-    title: "Seasons & series",
-    body: "Group tournaments into seasons. Track cumulative performance across the full year, not just one event.",
+    icon: "📝",
+    title: "Registration & entry fees",
+    body: "Players sign up from your public page — capacity, waitlists and age-group eligibility handled. Charge entry fees straight to your club with Stripe.",
   },
   {
     icon: "👥",
     title: "Multi-role teams",
-    body: "Invite admins and viewers. Owners control everything; admins run the day; viewers watch.",
+    body: "Owners, admins, viewers — plus scorer seats and hand-over device links for courtside volunteers.",
   },
   {
     icon: "🖨️",
@@ -57,6 +59,14 @@ const FEATURES = [
 export default async function HomePage() {
   const user = await getCurrentUser().catch(() => null);
   if (user) redirect("/dashboard");
+
+  // Discovery showcase (doc 15 §2): opt-in competitions only, via
+  // public_discovery_v. Both sections collapse to nothing when empty — no
+  // fake content, no layout shift. DB may be unreachable at build: fail soft.
+  const [liveNow, thisWeek] = await Promise.all([
+    getDiscoveryLive().catch(() => []),
+    getDiscoveryThisWeek().catch(() => []),
+  ]);
 
   return (
     <>
@@ -98,6 +108,12 @@ export default async function HomePage() {
             Free forever for small clubs · Upgrade when you need more
           </p>
         </section>
+
+        {/* Live discoverable fixtures (collapses when empty) */}
+        <LiveNowStrip fixtures={liveNow} />
+
+        {/* Upcoming discoverable competitions (collapses when empty) */}
+        <ThisWeekSection entries={thisWeek} />
 
         {/* Sports ticker */}
         <section className="border-y border-purple-100 bg-purple-50 py-4">
@@ -192,11 +208,11 @@ export default async function HomePage() {
               </p>
               <p className="mb-3 text-3xl font-bold text-slate-900">Free</p>
               <ul className="space-y-2 text-sm text-slate-600">
-                <li>✓ Up to 5 seasons</li>
-                <li>✓ 10 tournaments per season</li>
-                <li>✓ 32 players per tournament</li>
-                <li>✓ All 4 formats</li>
-                <li>✓ Live standings & print</li>
+                <li>✓ 2 active competitions</li>
+                <li>✓ 16 entrants per division</li>
+                <li>✓ Free-event registration</li>
+                <li>✓ League, groups, knockout & swiss</li>
+                <li>✓ Live standings & public page</li>
               </ul>
             </div>
             <div className="card border-purple-400 bg-purple-50 p-6 text-left">
@@ -207,10 +223,10 @@ export default async function HomePage() {
                 $20<span className="text-base font-normal text-slate-500">/mo</span>
               </p>
               <ul className="space-y-2 text-sm text-slate-600">
-                <li>✓ Unlimited seasons</li>
-                <li>✓ Unlimited tournaments</li>
-                <li>✓ Up to 256 players</li>
-                <li>✓ Everything in Community</li>
+                <li>✓ Unlimited competitions</li>
+                <li>✓ Entry fees paid to your club</li>
+                <li>✓ Realtime scoreboards</li>
+                <li>✓ Ball-by-ball & rally scoring</li>
                 <li>✓ 14-day free trial</li>
               </ul>
             </div>

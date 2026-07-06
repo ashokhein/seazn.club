@@ -144,10 +144,14 @@ Rules:
   No finalize, no lineups, no reads beyond the fixture state — strictly less
   than an account scorer; finalizing needs a human with a name.
 - **Lifecycle:** expires at end-of-day in the venue's timezone
-  (schedule_settings.tz, else org default); revocable from the fixture
-  console; issuing a new link for a fixture revokes prior active ones (one
-  live device per fixture). All 401 on expiry/revocation — the pad shows
-  "link expired, ask the organiser".
+  (schedule_settings.tz of the fixture's division, else UTC — PROMPT-21: no
+  org-level tz exists); revocable from the fixture console; issuing a new
+  link for a fixture revokes prior active ones (one live device per fixture).
+  All 401 on expiry/revocation with distinct codes (`LINK_EXPIRED` /
+  `LINK_REVOKED`) — the pad shows "link expired, ask the organiser".
+  PROMPT-21 addition: `GET /fixtures/{id}/device-links` returns the active
+  link's metadata (never the secret) so the organiser console can offer
+  revoke after a page reload.
 - **Transport:** `/score/{token}` page (no session) → stripped scoring pad;
   token never stored in localStorage beyond the tab; server rate-limits per
   link like the per-fixture scoring limit (doc 08 §6).

@@ -19,6 +19,20 @@ fantasy, video streaming.
 - Entitlement: registration free tier = free events only; paid registration (fees) = Pro
   + platform fee. Eligibility rules (doc 06) validate at registration (DOB collected in
   the form with guardian-consent checkbox for minors).
+- **As built (PROMPT-20a), normative deltas:** entitlement keys are
+  `registration.enabled` (all plans) + `registration.paid` (Pro+, gated at settings
+  save so a fee can never be configured below Pro). Status machine adds `pending`
+  (holds a spot; free = awaiting organiser approve, paid = awaiting payment). Paid
+  registrations confirm + materialise on `checkout.session.completed` (destination
+  charge on the org's Connect Express account, platform keeps
+  `PLATFORM_FEE_PERCENT`, default 5%); free ones confirm on organiser approve.
+  Waitlist auto-promotion moves the oldest to `pending` — a promoted paid registrant
+  pays from their token-gated status page (no auto-charge). Refunds: full auto-refund
+  (reverse transfer + app-fee return) on withdrawal before `refund_lock_at`; manual
+  partial/full via the organiser console after. Everything audited on
+  `competition_events` (`registration.*`). Capacity is capped by the plan's
+  `entrants.per_division.max` at settings save AND at submit. No emails yet — the
+  status-page link returned at submit is the registrant's receipt (comms hub, Tier 3).
 
 ### 1.2 Offline-first scoring PWA
 - Venue Wi-Fi is the #1 field failure. The event ledger is built for this: scoring pad
