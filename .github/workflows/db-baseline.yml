@@ -1,0 +1,36 @@
+name: Baseline staging DB
+
+# One-time (per database): mark a PRE-FLYWAY database as already containing
+# every migration up to db/flyway.toml's baselineVersion (V240), so the CD
+# pipeline's `flyway migrate` runs incrementally from there. Safe to re-run —
+# Flyway refuses to baseline a database that already has a history table.
+# Manual trigger only; requires the STAGING_DATABASE_URL secret.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  baseline:
+    name: flyway baseline
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: Cache Flyway CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/seazn-flyway
+          key: flyway-cli-10.22.0-linux-x64
+
+      - name: Baseline (marks V240 as applied; no SQL is executed)
+        run: bash scripts/flyway.sh baseline
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Migration history
+        run: bash scripts/flyway.sh info
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
