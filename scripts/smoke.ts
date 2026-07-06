@@ -175,7 +175,15 @@ async function main() {
   check("org has 3 members", members.length === 3);
   check("exactly one owner", members.filter((m) => m.role === "owner").length === 1);
 
-  // --- Multi-org: a user may create additional orgs; slug is auto-assigned ---
+  // --- Multi-org quota (doc 13 §5, PROMPT-18): a community owner is capped
+  // at one owned org; upgrading the owned org lifts the cap (creation is
+  // judged against the creating user's best owned-org plan).
+  await expectFail("second org blocked on community (orgs.max_owned)", () =>
+    call(admin, "/api/orgs", "POST", { name: `Blocked Org ${tag}` }),
+  );
+  await setPlan(org.id, "pro");
+
+  // --- Multi-org: a Pro owner may create additional orgs; slug is auto-assigned ---
   const org2 = (await call(admin, "/api/orgs", "POST", {
     name: `Second Org ${tag}`,
   })) as { id: string; slug: string };
@@ -403,6 +411,28 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
  * invites). Scoped to the run's `tag` by exact email match. No-op when
  * DATABASE_URL is unset. Never throws — teardown must not fail the run.
  */
+/** Flip an org's plan directly in the DB — smoke targets a disposable DB and
+ *  the billing checkout path can't run without Stripe. */
+async function setPlan(orgId: string, plan: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to change a plan in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    await sql`
+      insert into subscriptions (org_id, plan_key, status)
+      values (${orgId}, ${plan}, 'active')
+      on conflict (org_id) do update
+        set plan_key = ${plan}, status = 'active', updated_at = now()`;
+  } finally {
+    await sql.end();
+  }
+}
+
 async function cleanup(tag: string): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) {
