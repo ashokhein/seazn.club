@@ -155,8 +155,16 @@ jobs:
         run: cat dev-server.log || true
 
   # -------------------------------------------------------------------------
-  # Deploy to the staging Fly app. Only on push to main, and only once both
-  # gates above are green. PRs never deploy.
+  # CD (staging): Flyway migrate against the staging database, THEN deploy the
+  # app to Fly. Only on push to main, and only once every gate above is green;
+  # PRs never deploy. Migration-before-deploy means every migration must be
+  # backward compatible with the app version still running (expand/contract) —
+  # if the migrate step fails, the old app keeps running untouched.
+  #
+  # Requires the STAGING_DATABASE_URL secret (Supabase SESSION pooler, port
+  # 5432 — Flyway's JDBC driver doesn't get along with the transaction
+  # pooler's statement handling on 6543). One-time setup on a pre-Flyway
+  # database: run the "Baseline staging DB" workflow (db-baseline.yml).
   # -------------------------------------------------------------------------
   deploy-staging:
     name: Deploy (staging)
@@ -168,6 +176,26 @@ jobs:
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5 # scripts/flyway.sh parses DATABASE_URL with node
+        with:
+          node-version: 22
+
+      - name: Cache Flyway CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/seazn-flyway
+          key: flyway-cli-10.22.0-linux-x64
+
+      - name: Pending migrations
+        run: bash scripts/flyway.sh info
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      - name: Migrate staging database (Flyway)
+        run: bash scripts/flyway.sh migrate
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy -c fly.stg.toml --remote-only
         env:
