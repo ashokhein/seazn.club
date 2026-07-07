@@ -21,6 +21,10 @@ const nextConfig = {
   // Monorepo: trace from the workspace root so hoisted node_modules land in
   // .next/standalone (Next docs: config/output caveats).
   outputFileTracingRoot: path.join(import.meta.dirname, "../.."),
+  // pdfkit reads its AFM font-metrics files from disk at runtime (Jul3/06
+  // exports); bundling it breaks that path resolution, so load it — and
+  // exceljs, likewise native-ish — from node_modules on the server.
+  serverExternalPackages: ["pdfkit", "exceljs"],
   async headers() {
     return [
       {
