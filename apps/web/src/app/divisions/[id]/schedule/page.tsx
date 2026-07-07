@@ -130,6 +130,8 @@ export default async function DivisionSchedulePage({
               settings={{ division_id: id, config: settings.config, tz: settings.tz }}
               canEdit={editable}
               constraintsAllowed={constraints}
+              competitionStart={competition.starts_on}
+              competitionEnd={competition.ends_on}
             />
           </>
         )}

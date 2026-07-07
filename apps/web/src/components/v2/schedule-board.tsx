@@ -74,6 +74,9 @@ interface Props {
   settings: { division_id: string; config: BoardConfig; tz: string };
   canEdit: boolean;
   constraintsAllowed: boolean;
+  /** Competition run dates — drive the week view's day span. */
+  competitionStart?: string | null;
+  competitionEnd?: string | null;
 }
 
 const CONFLICT_LABEL: Record<string, string> = {
@@ -87,6 +90,13 @@ const CONFLICT_LABEL: Record<string, string> = {
 
 type Override = { scheduled_at: string | null; court_label: string | null; schedule_locked: boolean };
 
+/** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
+function addDaysKey(key: string, n: number): string {
+  const d = new Date(`${key}T12:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export function ScheduleBoard({
   divisions,
   stages,
@@ -96,6 +106,8 @@ export function ScheduleBoard({
   settings,
   canEdit,
   constraintsAllowed,
+  competitionStart,
+  competitionEnd,
 }: Props) {
   const router = useRouter();
   const single = divisions.length === 1 ? divisions[0] : null;
@@ -151,6 +163,30 @@ export function ScheduleBoard({
   }, [scheduled, cfg.startAt]);
   const [day, setDay] = useState<string>(days[0] as string);
   if (!days.includes(day)) setDay(days[0] as string); // render-time adjust
+
+  // Week view spans the competition's run dates. If those aren't set, fall back
+  // to the scheduled fixtures' range, and always show at least four days so the
+  // board is useful for dragging fixtures across days.
+  const weekDays = useMemo(() => {
+    const keys = scheduled.map((f) => dayKey(f.scheduled_at as string)).sort();
+    const candidatesStart = [
+      competitionStart ? dayKey(competitionStart) : null,
+      cfg.startAt ? dayKey(cfg.startAt) : null,
+      keys[0] ?? null,
+    ].filter((k): k is string => k !== null).sort();
+    const start = candidatesStart[0] ?? dayKey(new Date());
+    const candidatesEnd = [
+      competitionEnd ? dayKey(competitionEnd) : null,
+      keys[keys.length - 1] ?? null,
+    ].filter((k): k is string => k !== null).sort();
+    let end = candidatesEnd[candidatesEnd.length - 1] ?? start;
+    // Guarantee a minimum span of 4 days (start + 3).
+    const minEnd = addDaysKey(start, 3);
+    if (end < minEnd) end = minEnd;
+    const out: string[] = [];
+    for (let d = start; d <= end && out.length < 60; d = addDaysKey(d, 1)) out.push(d);
+    return out;
+  }, [scheduled, competitionStart, competitionEnd, cfg.startAt]);
 
   // Courts: configured list plus anything already used on the board.
   const courts = useMemo(() => {
@@ -585,14 +621,23 @@ export function ScheduleBoard({
         </div>
       ) : (
         <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
-          {days.map((d) => (
+          {weekDays.map((d) => {
+            const dayFx = scheduled.filter((f) => dayKey(f.scheduled_at as string) === d);
+            return (
             <section key={d} className="card p-3">
-              <h4 className="mb-2 text-xs font-semibold text-slate-600">
-                {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+              <h4 className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-600">
+                <span>
+                  {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
+                </span>
+                <span className="font-normal text-slate-400">{dayFx.length || ""}</span>
               </h4>
               <ul className="space-y-1">
-                {scheduled
-                  .filter((f) => dayKey(f.scheduled_at as string) === d)
+                {dayFx.length === 0 && (
+                  <li className="rounded border border-dashed border-slate-200 px-2 py-3 text-center text-[11px] text-slate-400">
+                    No fixtures
+                  </li>
+                )}
+                {dayFx
                   .sort(
                     (a, b) =>
                       new Date(a.scheduled_at as string).getTime() -
@@ -609,7 +654,8 @@ export function ScheduleBoard({
                   ))}
               </ul>
             </section>
-          ))}
+            );
+          })}
         </div>
       )}
 
