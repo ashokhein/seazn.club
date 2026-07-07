@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Zap, BarChart2,
-  TrendingUp, User, Mail, Download, ShieldOff, KeyRound, Compass,
+  TrendingUp, User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote,
   type LucideIcon,
 } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs, requireOrgRole } from "@/lib/auth";
@@ -17,6 +17,7 @@ import { OrgTeam } from "@/components/org-team";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { OrgRename } from "@/components/org-rename";
 import { OrgLogo } from "@/components/org-logo";
+import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
 import { UpgradeButton, ManageBillingButton } from "@/components/billing-actions";
 import {
   ChangeEmailForm,
@@ -305,6 +306,16 @@ export default async function SettingsPage({
                         </Link>
                       </p>
                     )}
+                  </div>
+                )}
+
+                {canEdit && (
+                  <div className="mt-5 border-t border-slate-100 pt-5">
+                    <SubSection icon={Banknote} label="Payment details" />
+                    <OrgPaymentInstructions
+                      orgId={active.id}
+                      initialValue={active.payment_instructions}
+                    />
                   </div>
                 )}
 

@@ -40,7 +40,7 @@ export default async function OrgLandingPage({ params }: Props) {
           {competitions.map((c) => (
             <li key={c.id}>
               <Link
-                href={`/${org.slug}/${c.slug}`}
+                href={`/shared/${org.slug}/${c.slug}`}
                 className="group block rounded-xl border border-purple-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md"
               >
                 <p className="flex items-center justify-between font-semibold">

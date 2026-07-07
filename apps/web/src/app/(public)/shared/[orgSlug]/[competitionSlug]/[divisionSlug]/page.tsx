@@ -53,7 +53,7 @@ export default async function DivisionHomePage({ params }: Props) {
   }
 
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
-  const basePath = `/${org.slug}/${competition.slug}/${division.slug}`;
+  const basePath = `/shared/${org.slug}/${competition.slug}/${division.slug}`;
   const poolName = new Map(pools.map((p) => [p.id, p.name]));
   const stageById = new Map(stages.map((s) => [s.id, s]));
 
@@ -64,8 +64,39 @@ export default async function DivisionHomePage({ params }: Props) {
       (a.status === "complete" ? 1 : 0) - (b.status === "complete" ? 1 : 0) || a.seq - b.seq,
   );
 
+  // Champion (v1 parity): once the decisive stage is done, crown the winner
+  // above the table. Bracket → winner of the last-round fixture; league/group
+  // → rank 1 of the final overall standings.
+  const championId: string | null = (() => {
+    const decisive = [...stages].sort((a, b) => b.seq - a.seq)[0];
+    if (!decisive || decisive.status !== "complete") return null;
+    if (BRACKET_KINDS.has(decisive.kind)) {
+      const decided = fixtures.filter((f) => f.stage_id === decisive.id && f.outcome?.winner);
+      if (decided.length === 0) return null;
+      const final = decided.reduce((a, b) => (b.round_no > a.round_no ? b : a));
+      return final.outcome?.winner ?? null;
+    }
+    const snap =
+      standings.find((s) => s.stage_id === decisive.id && !s.pool_id) ??
+      standings.find((s) => s.stage_id === decisive.id);
+    if (!snap) return null;
+    const top = (snap.rows as StandingsRow[]).find((r) => r.rank === 1);
+    return top?.entrantId ?? null;
+  })();
+
   const standingsPanel = (
     <div className="space-y-8">
+      {championId && (
+        <div className="flex items-center gap-4 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 via-amber-50/40 to-transparent p-4 shadow-sm">
+          <span className="animate-trophy text-4xl" aria-hidden>🏆</span>
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Champion</p>
+            <p className="truncate text-xl font-black tracking-tight text-zinc-900">
+              {entrantNames[championId] ?? "—"}
+            </p>
+          </div>
+        </div>
+      )}
       {stagesByRelevance.map((stage) => {
         if (BRACKET_KINDS.has(stage.kind)) {
           const stageFixtures = fixtures.filter((f) => f.stage_id === stage.id);
@@ -131,7 +162,7 @@ export default async function DivisionHomePage({ params }: Props) {
                   ) : null}
                   {m.person_id ? (
                     <Link
-                      href={`/${org.slug}/${competition.slug}/players/${m.person_id}`}
+                      href={`/shared/${org.slug}/${competition.slug}/players/${m.person_id}`}
                       className="underline underline-offset-2"
                     >
                       {m.name}
@@ -158,11 +189,11 @@ export default async function DivisionHomePage({ params }: Props) {
   return (
     <div>
       <nav className="mb-4 text-xs text-zinc-500">
-        <Link href={`/${org.slug}`} className="underline">
+        <Link href={`/shared/${org.slug}`} className="underline">
           {org.name}
         </Link>{" "}
         /{" "}
-        <Link href={`/${org.slug}/${competition.slug}`} className="underline">
+        <Link href={`/shared/${org.slug}/${competition.slug}`} className="underline">
           {competition.name}
         </Link>
       </nav>

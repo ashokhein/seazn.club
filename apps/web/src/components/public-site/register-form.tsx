@@ -109,7 +109,7 @@ export function RegisterForm({
         return;
       }
       router.push(
-        `/${orgSlug}/${competitionSlug}/register/status` +
+        `/shared/${orgSlug}/${competitionSlug}/register/status` +
           `?rid=${result.registration_id}&token=${encodeURIComponent(result.access_token)}`,
       );
     } catch (err) {
@@ -319,7 +319,7 @@ export function RegisterForm({
             {busy
               ? "…"
               : division.fee_cents > 0 && division.remaining !== 0
-                ? `Continue to payment — ${money(division.fee_cents, division.currency)}`
+                ? `Register — entry fee ${money(division.fee_cents, division.currency)}`
                 : "Submit registration"}
           </button>
         </>

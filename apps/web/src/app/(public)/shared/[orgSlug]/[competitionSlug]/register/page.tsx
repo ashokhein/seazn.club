@@ -26,7 +26,7 @@ export default async function RegisterPage({ params }: Props) {
   return (
     <div className="mx-auto max-w-2xl">
       <p className="text-xs text-zinc-400">
-        <Link href={`/${orgSlug}/${competitionSlug}`} className="hover:underline">
+        <Link href={`/shared/${orgSlug}/${competitionSlug}`} className="hover:underline">
           {info.competition.name}
         </Link>{" "}
         / Register

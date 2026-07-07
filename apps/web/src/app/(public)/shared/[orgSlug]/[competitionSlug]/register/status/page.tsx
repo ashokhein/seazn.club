@@ -23,7 +23,7 @@ type Props = {
 const STATUS_COPY: Record<string, { title: string; body: string; tone: string }> = {
   pending: {
     title: "Registration received",
-    body: "Your spot is held. If an entry fee is due you can pay below; free registrations are confirmed by the organiser.",
+    body: "Your spot is held. If an entry fee is due, follow the payment instructions below; the organiser confirms once payment is received.",
     tone: "border-amber-200 bg-amber-50 text-amber-800",
   },
   paid: {
@@ -71,7 +71,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
   return (
     <div className="mx-auto max-w-xl">
       <p className="text-xs text-zinc-400">
-        <Link href={`/${orgSlug}/${competitionSlug}`} className="hover:underline">
+        <Link href={`/shared/${orgSlug}/${competitionSlug}`} className="hover:underline">
           {view.competition_name}
         </Link>{" "}
         / Registration
@@ -103,17 +103,34 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
         ) : null}
       </dl>
 
+      {view.payment_due && (
+        <div className="mt-5 rounded-lg border border-purple-200 bg-purple-50 p-5">
+          <h2 className="text-sm font-semibold text-purple-800">How to pay your entry fee</h2>
+          {view.payment_instructions ? (
+            <p className="mt-2 whitespace-pre-line text-sm text-zinc-700">
+              {view.payment_instructions}
+            </p>
+          ) : (
+            <p className="mt-2 text-sm text-zinc-600">
+              The organiser will contact you at your registered email with payment details.
+            </p>
+          )}
+        </div>
+      )}
+
       <div className="mt-5 flex flex-wrap items-center gap-3">
         {(view.status === "confirmed" || view.status === "paid") && (
           <a href={icsHref} className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:border-zinc-500">
             Add to calendar (.ics)
           </a>
         )}
+        {/* Stripe checkout disabled — entry fees are paid offline, so no
+            online "Pay now" action (paymentDue forced false). */}
         <RegistrationActions
           registrationId={view.id}
           token={token}
           status={view.status}
-          paymentDue={view.payment_due}
+          paymentDue={false}
         />
       </div>
 

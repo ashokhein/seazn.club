@@ -20,7 +20,7 @@ export default async function PosterPage({ params }: Props) {
   if (!data) notFound();
   const { org, competition } = data;
 
-  const url = `https://seazn.club/${org.slug}/${competition.slug}`;
+  const url = `https://seazn.club/shared/${org.slug}/${competition.slug}`;
   const qr = await QRCode.toDataURL(url, { width: 480, margin: 1 });
 
   return (

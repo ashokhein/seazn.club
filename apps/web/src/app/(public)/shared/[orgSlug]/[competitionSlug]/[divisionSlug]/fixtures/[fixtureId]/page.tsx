@@ -46,7 +46,7 @@ export default async function FixturePage({ params }: Props) {
 
   const home = fixture.home_entrant_id ? (entrantNames[fixture.home_entrant_id] ?? "TBD") : "TBD";
   const away = fixture.away_entrant_id ? (entrantNames[fixture.away_entrant_id] ?? "TBD") : "TBD";
-  const basePath = `/${org.slug}/${competition.slug}/${division.slug}`;
+  const basePath = `/shared/${org.slug}/${competition.slug}/${division.slug}`;
 
   const jsonLd = sportsEventJsonLd({
     name: `${home} vs ${away} — ${division.name}, ${competition.name}`,
@@ -67,7 +67,7 @@ export default async function FixturePage({ params }: Props) {
     <div>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
       <nav className="mb-4 text-xs text-zinc-500">
-        <Link href={`/${org.slug}/${competition.slug}`} className="underline">
+        <Link href={`/shared/${org.slug}/${competition.slug}`} className="underline">
           {competition.name}
         </Link>{" "}
         /{" "}

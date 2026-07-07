@@ -41,6 +41,7 @@ import {
   getRegistrationSettings,
   publicRegistrationInfo,
   submitRegistration,
+  publicRegistrationStatus,
   handleRegistrationCheckoutCompleted,
   withdrawRegistrationPublic,
   confirmRegistration,
@@ -278,12 +279,14 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     expect(person.dob).toBe("1995-04-01");
   });
 
-  it("paid flow E2E: checkout carries the platform fee; webhook confirms; replay is a no-op", async () => {
+  it("paid flow (offline): no Stripe checkout; bank/cash instructions surfaced; dormant webhook still confirms", async () => {
     const { orgId, orgSlug, ownerId } = await seedOrg("pro");
     const owner = asOwner(orgId, ownerId);
-    const acct = "acct_" + randomUUID().slice(0, 8);
+    // Stripe Connect is disabled — entry fees are collected offline. The org's
+    // payment_instructions carry the bank/cash details shown to registrants.
+    const instructions = "Bank transfer to Riverside FC · sort 00-00-00 · acc 12345678";
     await sql`update organizations
-              set stripe_account_id = ${acct}, stripe_charges_enabled = true
+              set payment_instructions = ${instructions}
               where id = ${orgId}`;
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
@@ -294,17 +297,18 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const res = await submitRegistration(orgSlug, competition.slug, {
       ...SUBMIT_BASE, division_id: division.id,
     }, "http://test.local");
+    // Paid entry is accepted immediately as pending — no online checkout.
     expect(res.registration.status).toBe("pending");
-    expect(res.checkout_url).toBe("https://checkout.stripe.test/session");
+    expect(res.checkout_url).toBeNull();
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
 
-    // Fee math asserted at the Stripe boundary (PROMPT-20a acceptance):
-    // destination charge on the org's account, platform keeps 5% of 2000.
-    const arg = stripeMock.checkoutCreate.mock.calls[0][0];
-    expect(arg.mode).toBe("payment");
-    expect(arg.line_items[0].price_data.unit_amount).toBe(2000);
-    expect(arg.payment_intent_data.application_fee_amount).toBe(100);
-    expect(arg.payment_intent_data.transfer_data.destination).toBe(acct);
+    // The status page (registrant's receipt) exposes the offline instructions.
+    const status = await publicRegistrationStatus(res.registration.id, res.access_token);
+    expect(status.payment_due).toBe(true);
+    expect(status.payment_instructions).toBe(instructions);
 
+    // The Stripe webhook path stays wired (dormant) — if a payment ever lands,
+    // it still confirms + materialises the entrant idempotently.
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 2000));
     let [row] = await sql<RegistrationRow[]>`
       select * from registrations where id = ${res.registration.id}`;

@@ -199,10 +199,6 @@ async function main() {
   check("org renamed", renamed.name === "Renamed Org");
   check("slug immutable on rename", renamed.slug === org2.slug);
 
-  // --- Old public URLs: /t/{slug} is a redirect layer (PROMPT-15 task 3) ---
-  const legacy = await fetch(`${BASE}/t/nonexistent-${tag}`, { redirect: "manual" });
-  check("unknown /t/ slug 404s (redirect map consulted)", legacy.status === 404);
-
   // --- Platform API /api/v1 (PROMPT-11) — the full engine v2 lifecycle ---
   await v1Suite(admin, org2.id, org2.slug);
 

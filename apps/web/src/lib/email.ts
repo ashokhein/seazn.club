@@ -1,5 +1,15 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import {
+  verificationTemplate,
+  passwordResetTemplate,
+  emailChangeConfirmTemplate,
+  emailChangeNoticeTemplate,
+  accountDeletionTemplate,
+  inviteTemplate,
+  registrationTemplate,
+  type RegistrationEmailArgs,
+} from "@/lib/email-templates";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
@@ -96,48 +106,23 @@ async function send(opts: SendOptions): Promise<boolean> {
 // ---------------------------------------------------------------------------
 
 export async function sendVerificationEmail(to: string, link: string): Promise<boolean> {
-  return send({
-    to, transactional: true,
-    subject: "Verify your Seazn Club account",
-    html: verificationHtml(link),
-    text: `Verify your account: ${link}`,
-  });
+  return send({ to, transactional: true, ...verificationTemplate(link) });
 }
 
 export async function sendPasswordResetEmail(to: string, link: string): Promise<boolean> {
-  return send({
-    to, transactional: true,
-    subject: "Reset your Seazn Club password",
-    html: passwordResetHtml(link),
-    text: `Reset your password (expires in 1 hour): ${link}`,
-  });
+  return send({ to, transactional: true, ...passwordResetTemplate(link) });
 }
 
 export async function sendEmailChangeConfirmation(to: string, link: string): Promise<boolean> {
-  return send({
-    to, transactional: true,
-    subject: "Confirm your new email address — Seazn Club",
-    html: emailChangeConfirmHtml(link),
-    text: `Confirm your new email address (expires in 24 hours): ${link}`,
-  });
+  return send({ to, transactional: true, ...emailChangeConfirmTemplate(link) });
 }
 
 export async function sendEmailChangeNotice(to: string, newEmail: string): Promise<boolean> {
-  return send({
-    to, transactional: true,
-    subject: "Your Seazn Club email address is being changed",
-    html: emailChangeNoticeHtml(newEmail),
-    text: `Your account email is being changed to ${newEmail}. If this wasn't you, contact support.`,
-  });
+  return send({ to, transactional: true, ...emailChangeNoticeTemplate(newEmail) });
 }
 
 export async function sendAccountDeletionEmail(to: string): Promise<boolean> {
-  return send({
-    to, transactional: true,
-    subject: "Your Seazn Club account has been deleted",
-    html: accountDeletionHtml(),
-    text: "Your Seazn Club account has been deleted. Data will be erased within 30 days.",
-  });
+  return send({ to, transactional: true, ...accountDeletionTemplate() });
 }
 
 // ---------------------------------------------------------------------------
@@ -149,87 +134,21 @@ export async function sendInviteEmail(
   orgName: string,
   link: string,
 ): Promise<boolean> {
-  return send({
-    to,
-    subject: `You've been invited to join ${orgName} on Seazn Club`,
-    html: inviteHtml(orgName, link),
-    text: `You've been invited to join ${orgName}. Accept: ${link}`,
-  });
+  return send({ to, ...inviteTemplate(orgName, link) });
+}
+
+export interface RegistrationEmail extends RegistrationEmailArgs {
+  to: string;
+}
+
+/** Registration confirmation — carries the offline (cash/bank) payment
+ *  instructions for paid entries. */
+export async function sendRegistrationEmail(opts: RegistrationEmail): Promise<boolean> {
+  const { to, ...args } = opts;
+  return send({ to, ...registrationTemplate(args) });
 }
 
 /** True when Resend is configured. */
 export function emailConfigured(): boolean {
   return Boolean(process.env.RESEND_API_KEY);
-}
-
-// ---------------------------------------------------------------------------
-// HTML templates
-// ---------------------------------------------------------------------------
-
-function verificationHtml(link: string): string {
-  return card(
-    "Confirm your email",
-    "Thanks for signing up. Click the button below to verify your email and finish setting up your account.",
-    btn("Verify email", link),
-    `Or paste this link into your browser:<br>${link}`,
-  );
-}
-
-function passwordResetHtml(link: string): string {
-  return card(
-    "Reset your password",
-    "We received a request to reset your Seazn Club password. This link expires in 1 hour.",
-    btn("Reset password", link),
-    `If you didn't request this, ignore this email.<br>Or paste: ${link}`,
-  );
-}
-
-function emailChangeConfirmHtml(link: string): string {
-  return card(
-    "Confirm your new email address",
-    "You requested a change to your email address. Click below to confirm. This link expires in 24 hours.",
-    btn("Confirm new email", link),
-    `If you didn't request this, ignore this email.<br>Or paste: ${link}`,
-  );
-}
-
-function emailChangeNoticeHtml(newEmail: string): string {
-  return card(
-    "Your email address is being changed",
-    `Someone requested a change to the email address on your account to <strong>${newEmail}</strong>. The change will take effect once the new address is confirmed. If this wasn't you, contact support immediately.`,
-    "",
-    "",
-  );
-}
-
-function accountDeletionHtml(): string {
-  return card(
-    "Your account has been deleted",
-    "Your Seazn Club account and associated data have been scheduled for permanent deletion within 30 days. If this wasn't you, contact support immediately.",
-    "",
-    "",
-  );
-}
-
-function inviteHtml(orgName: string, link: string): string {
-  return card(
-    `You've been invited to ${orgName}`,
-    `You've been invited to join <strong>${orgName}</strong> on Seazn Club. Click below to accept.`,
-    btn("Accept invite", link),
-    `Or paste: ${link}`,
-  );
-}
-
-// Shared layout helpers
-function btn(label: string, href: string): string {
-  return `<p style="margin:24px 0"><a href="${href}" style="background:#7c3aed;color:#fff;text-decoration:none;padding:12px 20px;border-radius:10px;font-weight:600">${label}</a></p>`;
-}
-
-function card(title: string, body: string, cta: string, footer: string): string {
-  return `<div style="font-family:system-ui,Segoe UI,Helvetica,Arial,sans-serif;max-width:480px;margin:0 auto">
-  <h2 style="color:#6b21a8">${title}</h2>
-  <p style="color:#334155">${body}</p>
-  ${cta}
-  ${footer ? `<p style="color:#94a3b8;font-size:12px">${footer}</p>` : ""}
-</div>`;
 }

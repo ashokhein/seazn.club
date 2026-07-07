@@ -1,0 +1,9 @@
+// Email templates — one file per email type. Each exports a builder returning
+// { subject, html, text }; the send path in lib/email.ts stays transport-only.
+export { verificationTemplate } from "./verification";
+export { passwordResetTemplate } from "./password-reset";
+export { emailChangeConfirmTemplate } from "./email-change-confirm";
+export { emailChangeNoticeTemplate } from "./email-change-notice";
+export { accountDeletionTemplate } from "./account-deletion";
+export { inviteTemplate } from "./invite";
+export { registrationTemplate, type RegistrationEmailArgs } from "./registration";

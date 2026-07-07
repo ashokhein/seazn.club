@@ -54,6 +54,11 @@ export default async function CompetitionHomePage({ params }: Props) {
 
   return (
     <div>
+      <nav className="mb-4 text-xs text-zinc-500">
+        <Link href={`/shared/${org.slug}`} className="hover:underline">
+          ← {org.name}
+        </Link>
+      </nav>
       {/* Hero — banner photo when branded (Pro), gradient otherwise */}
       <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-purple-700 via-purple-600 to-fuchsia-600 text-white shadow-lg">
         {branding.banner ? (
@@ -92,7 +97,7 @@ export default async function CompetitionHomePage({ params }: Props) {
             </div>
             {registrationOpen ? (
               <Link
-                href={`/${org.slug}/${competition.slug}/register`}
+                href={`/shared/${org.slug}/${competition.slug}/register`}
                 className="shrink-0 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-purple-700 shadow hover:bg-purple-50"
               >
                 Register now
@@ -128,7 +133,7 @@ export default async function CompetitionHomePage({ params }: Props) {
               return (
                 <li key={f.id} className="min-w-56 shrink-0">
                   <Link
-                    href={`/${org.slug}/${competition.slug}/${division?.slug}/fixtures/${f.id}`}
+                    href={`/shared/${org.slug}/${competition.slug}/${division?.slug}/fixtures/${f.id}`}
                     className="block rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-3 text-sm shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-400 hover:shadow"
                   >
                     <p className="text-xs text-zinc-500">{division?.name}</p>
@@ -158,7 +163,7 @@ export default async function CompetitionHomePage({ params }: Props) {
             {divisions.map((d) => (
               <li key={d.id}>
                 <Link
-                  href={`/${org.slug}/${competition.slug}/${d.slug}`}
+                  href={`/shared/${org.slug}/${competition.slug}/${d.slug}`}
                   className="group block rounded-xl border border-purple-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md"
                 >
                   <p className="flex items-center justify-between font-semibold">

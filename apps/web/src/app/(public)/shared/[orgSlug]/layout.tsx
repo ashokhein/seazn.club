@@ -29,7 +29,7 @@ export default async function PublicOrgLayout({
           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-600 to-fuchsia-500 text-sm font-bold text-white">
             {org.name.slice(0, 1).toUpperCase()}
           </span>
-          <Link href={`/${org.slug}`} className="truncate font-semibold hover:text-purple-700">
+          <Link href={`/shared/${org.slug}`} className="truncate font-semibold hover:text-purple-700">
             {org.name}
           </Link>
         </div>

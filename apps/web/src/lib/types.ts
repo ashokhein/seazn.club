@@ -34,6 +34,7 @@ export interface Organization {
   created_at: string;
   logo_url: string | null;
   logo_storage_path: string | null;
+  payment_instructions: string | null;
 }
 
 /** An organization paired with the current user's role in it. */

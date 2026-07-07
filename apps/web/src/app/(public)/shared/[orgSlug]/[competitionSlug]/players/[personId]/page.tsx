@@ -33,7 +33,7 @@ export default async function PlayerCardPage({ params }: Props) {
   return (
     <div>
       <nav className="mb-4 text-xs text-zinc-500">
-        <Link href={`/${org.slug}/${competition.slug}`} className="underline">
+        <Link href={`/shared/${org.slug}/${competition.slug}`} className="underline">
           {competition.name}
         </Link>
       </nav>
@@ -72,7 +72,7 @@ export default async function PlayerCardPage({ params }: Props) {
             {memberships.map((m, i) => (
               <li key={i} className="rounded border border-zinc-200 bg-white p-3 text-sm">
                 <Link
-                  href={`/${org.slug}/${competition.slug}/${m.division_slug}`}
+                  href={`/shared/${org.slug}/${competition.slug}/${m.division_slug}`}
                   className="font-medium underline underline-offset-2"
                 >
                   {m.division_name}

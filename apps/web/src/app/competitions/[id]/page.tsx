@@ -22,7 +22,7 @@ export default async function CompetitionPage({
   ]);
   const publicPath =
     competition.visibility !== "private" && orgRow
-      ? `/${orgRow.slug}/${competition.slug}`
+      ? `/shared/${orgRow.slug}/${competition.slug}`
       : null;
 
   return (

@@ -8,6 +8,7 @@ import { z } from "zod";
 const orgPatchSchema = z.union([
   renameOrgSchema,
   z.object({ logo_storage_path: z.string().max(500).nullable() }).strict(),
+  z.object({ payment_instructions: z.string().max(2000).nullable() }).strict(),
 ]);
 
 /** Update an organization — rename or set branding logo (owners and admins). */
@@ -23,13 +24,14 @@ export async function PATCH(
     const updates: Record<string, unknown> = {};
     if ("name" in body) updates.name = body.name;
     if ("logo_storage_path" in body) updates.logo_storage_path = body.logo_storage_path;
+    if ("payment_instructions" in body) updates.payment_instructions = body.payment_instructions;
 
     if (Object.keys(updates).length === 0) throw new HttpError(400, "Nothing to update");
 
     const [org] = await sql<Organization[]>`
       update organizations set ${sql(updates)}
       where id = ${id}
-      returning id, name, slug, created_by, created_at, logo_url, logo_storage_path`;
+      returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions`;
     if (!org) throw new HttpError(404, "Organization not found");
     return org;
   });

@@ -126,12 +126,23 @@ export function OfficialsPanel({
         {officials.length === 0 ? (
           <p className="text-sm text-slate-500">No officials yet.</p>
         ) : (
-          <ul className="flex flex-wrap gap-1.5">
+          <ul className="divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
             {officials.map((o) => (
-              <li key={o.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
-                {o.display_name}
-                <span className="ml-1 text-slate-400">{o.role_keys.join("·")}</span>
-                {o.entrant_id && <span className="ml-1 text-violet-500">team-ref</span>}
+              <li key={o.id} className="flex items-center gap-3 px-3 py-2 text-sm">
+                <span className="font-medium text-slate-800">{o.display_name}</span>
+                <span className="flex flex-wrap gap-1">
+                  {o.role_keys.map((r) => (
+                    <span key={r} className="rounded bg-slate-100 px-1.5 py-0.5 text-xs text-slate-500">
+                      {r}
+                    </span>
+                  ))}
+                </span>
+                {o.entrant_id && (
+                  <span className="rounded bg-violet-50 px-1.5 py-0.5 text-xs text-violet-600">team-ref</span>
+                )}
+                {o.max_per_day != null && (
+                  <span className="ml-auto text-xs text-slate-400">max {o.max_per_day}/day</span>
+                )}
               </li>
             ))}
           </ul>
@@ -206,7 +217,7 @@ export function OfficialsPanel({
             >
               Propose
             </button>
-            {proposal && (
+            {proposal && proposal.assignments.length > 0 && (
               <button
                 type="button"
                 className="btn"
@@ -233,6 +244,13 @@ export function OfficialsPanel({
               </button>
             )}
           </div>
+          {proposal && proposal.assignments.length === 0 && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Nothing to assign yet. Officials are placed onto fixtures that have a kick-off
+              time — publish the schedule (Board tab) and add at least one official above, then
+              Propose again.
+            </p>
+          )}
           {proposal && proposal.conflicts.length > 0 && (
             <ul className="space-y-1">
               {proposal.conflicts.map((c, i) => (

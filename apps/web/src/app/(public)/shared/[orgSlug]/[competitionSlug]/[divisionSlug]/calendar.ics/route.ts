@@ -35,7 +35,7 @@ export async function GET(
       ...(f.venue
         ? { location: f.court_label ? `${f.venue} (${f.court_label})` : f.venue }
         : {}),
-      description: `${data.competition.name} · https://seazn.club/${data.org.slug}/${data.competition.slug}/${data.division.slug}/fixtures/${f.id}`,
+      description: `${data.competition.name} · https://seazn.club/shared/${data.org.slug}/${data.competition.slug}/${data.division.slug}/fixtures/${f.id}`,
     }));
 
   const name = entrantId
