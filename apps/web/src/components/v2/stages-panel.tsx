@@ -485,7 +485,7 @@ function FixtureLine({
         </Link>
         {/* Timetable chip — reflects whether the match has a kick-off time. */}
         <span
-          className={`badge ${timed ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-500"}`}
+          className={`badge ${timed ? "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200" : "bg-slate-100 text-slate-500"}`}
           title={timed ? "This match has a kick-off time" : "No kick-off time yet"}
         >
           {timed
