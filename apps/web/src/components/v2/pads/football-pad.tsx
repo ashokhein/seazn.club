@@ -117,13 +117,24 @@ function SidePad({
 }) {
   const [minute, setMinute] = useState("");
   const [person, setPerson] = useState("");
-  const [action, setAction] = useState<"goal" | "yellow" | "red" | "sub" | null>(null);
+  const [assist, setAssist] = useState("");
+  const [byNumber, setByNumber] = useState(false);
+  const [action, setAction] = useState<"goal" | "yellow" | "red" | "sub" | "motm" | null>(null);
   const [subOn, setSubOn] = useState("");
 
-  const people = side.lineup.length > 0 ? side.lineup : side.members.map((m) => ({
+  // Jul3/07 §5: pickers show "#7 — Name"; number-order sort is a toggle
+  // (19 May).
+  const roster = side.lineup.length > 0 ? side.lineup : side.members;
+  const people = roster.map((m) => ({
     person_id: m.person_id,
     full_name: m.full_name,
+    squad_number: "squad_number" in m ? (m.squad_number ?? null) : null,
   }));
+  if (byNumber) {
+    people.sort((a, b) => (a.squad_number ?? 999) - (b.squad_number ?? 999));
+  }
+  const label = (p: { full_name: string; squad_number: number | null }) =>
+    p.squad_number !== null ? `#${p.squad_number} — ${p.full_name}` : p.full_name;
 
   const min = minute ? { minute: Number(minute) } : {};
 
@@ -134,6 +145,7 @@ function SidePad({
       ok = await send("football.goal", {
         by: side.id,
         ...(person ? { scorer: person } : {}),
+        ...(assist ? { assist } : {}),
         ...min,
       });
     } else if (action === "yellow" || action === "red") {
@@ -146,6 +158,10 @@ function SidePad({
     } else if (action === "sub") {
       if (!person || !subOn) return;
       ok = await send("football.sub", { by: side.id, off: person, on: subOn, ...min });
+    } else if (action === "motm") {
+      // Jul3/07 §4: MOTM rides the ordinary scoring endpoint (core.award)
+      if (!person) return;
+      ok = await send("core.award", { person, key: "motm" });
     }
     if (ok) {
       setAction(null);
@@ -191,12 +207,29 @@ function SidePad({
         >
           ⇄ Sub
         </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setAction(action === "motm" ? null : "motm")}
+          className={`btn px-3 py-1.5 text-xs ${action === "motm" ? "btn-primary" : "btn-ghost"}`}
+        >
+          ⭐ MVP
+        </button>
       </div>
 
       {action && (
         <div className="mt-2 flex flex-wrap items-end gap-2">
           <label className="block">
-            <span className="label">{action === "sub" ? "Off" : "Player (optional)"}</span>
+            <span className="label">
+              {action === "sub" ? "Off" : action === "motm" ? "Man of the match" : "Player (optional)"}{" "}
+              <button
+                type="button"
+                className="text-[10px] text-purple-600 hover:underline"
+                onClick={() => setByNumber((v) => !v)}
+              >
+                {byNumber ? "sort by name" : "sort by number"}
+              </button>
+            </span>
             <select
               value={person}
               onChange={(e) => setPerson(e.target.value)}
@@ -205,11 +238,30 @@ function SidePad({
               <option value="">—</option>
               {people.map((p) => (
                 <option key={p.person_id} value={p.person_id}>
-                  {p.full_name}
+                  {label(p)}
                 </option>
               ))}
             </select>
           </label>
+          {action === "goal" && (
+            <label className="block">
+              <span className="label">Assist (optional)</span>
+              <select
+                value={assist}
+                onChange={(e) => setAssist(e.target.value)}
+                className="select w-36 px-2 py-1 text-xs"
+              >
+                <option value="">—</option>
+                {people
+                  .filter((p) => p.person_id !== person)
+                  .map((p) => (
+                    <option key={p.person_id} value={p.person_id}>
+                      {label(p)}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          )}
           {action === "sub" && (
             <label className="block">
               <span className="label">On</span>
@@ -221,7 +273,7 @@ function SidePad({
                 <option value="">—</option>
                 {people.map((p) => (
                   <option key={p.person_id} value={p.person_id}>
-                    {p.full_name}
+                    {label(p)}
                   </option>
                 ))}
               </select>

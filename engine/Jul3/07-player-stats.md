@@ -59,8 +59,10 @@ SportModule.playerStats?: {
 }
 ```
 
-- Football: goals, assists, points, cards. Cricket: runs, wickets, average, economy,
-  strike-rate (fine events already exist, doc 04). Set sports: points won/aces.
+- Football: goals, assists, points, cards (implemented — `football.goal` gained an
+  optional `assist` field). Cricket and set sports: rally/ball events carry no person
+  attribution yet (`SetBasedRally {wonBy}` is entrant-level), so their stat models are
+  follow-ups once the fine events name people.
 - `points = goals + assists` (16 Apr, 29 Dec) is a declared `derive` — auto, no manual sum.
 - `aggregatePlayerStats(events, roster, model) → StatRow[]` is pure + deterministic.
 

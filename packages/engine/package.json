@@ -9,6 +9,7 @@
     "./sport": "./src/sport/index.ts",
     "./sports": "./src/sports/index.ts",
     "./sports/*": "./src/sports/*/index.ts",
+    "./stats": "./src/stats/index.ts",
     "./competition": "./src/competition/index.ts",
     "./exports": "./src/exports/index.ts",
     "./history": "./src/history/index.ts",

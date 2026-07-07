@@ -117,7 +117,7 @@ Ordered. Each prompt is self-contained: context, task, files, acceptance criteri
 ## Jul3 feature wave (`Jul3/`)
 
 Second design wave (designs `Jul3/00–09`, prompts `Jul3/PROMPT-21..29` — numbering
-independent of `prompts/`). Status: PROMPT-21–26 implemented; 27–29 designed.
+independent of `prompts/`). Status: PROMPT-21–27 implemented; 28–29 designed.
 
 | Prompt | Design | Contents | Status |
 |--------|--------|----------|--------|
@@ -127,7 +127,7 @@ independent of `prompts/`). Status: PROMPT-21–26 implemented; 27–29 designed
 | [PROMPT-24](Jul3/PROMPT-24-scheduling-constraints-v2.md) | [04](Jul3/04-scheduling-constraints-v2.md) | Constraints v2 (rest, windows, cross-person clash) + AI prose → constraints | ✅ implemented |
 | [PROMPT-25](Jul3/PROMPT-25-custom-points-and-standings.md) | [05](Jul3/05-custom-points-and-standings.md) | Custom points rules, carry-over, manual rank override (`engine/competition/points`) | ✅ implemented |
 | [PROMPT-26](Jul3/PROMPT-26-exports-and-print.md) | [06](Jul3/06-exports-and-print.md) | DocModel exports: PDF/XLSX, scoresheets, branding (`engine/exports`) | ✅ implemented |
-| [PROMPT-27](Jul3/PROMPT-27-player-stats.md) | [07](Jul3/07-player-stats.md) | Player statistics engine + MOTM awards | designed |
+| [PROMPT-27](Jul3/PROMPT-27-player-stats.md) | [07](Jul3/07-player-stats.md) | Player statistics engine + MOTM awards (`engine/stats`) | ✅ implemented |
 | [PROMPT-28](Jul3/PROMPT-28-format-extensions.md) | [08](Jul3/08-format-extensions.md) | RR legs>2, americano, custom brackets, cross-stage feeds, auto-advance, ladder | designed |
 | [PROMPT-29](Jul3/PROMPT-29-new-sports-and-generic-scoring.md) | [09](Jul3/09-new-sports-and-generic-scoring.md) | Metric-driven generic sport module v2 + presets + combined ranking | designed |
 

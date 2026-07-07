@@ -163,6 +163,10 @@ export const ROUTES: RouteSpec[] = [
   // Rich exports & print templates (Jul3/06, PROMPT-26)
   { path: "/divisions/{id}/exports/{kind}", method: "get", summary: "Templated export (timetable|standings|roster|participants|scoresheet) as PDF/XLSX; page-break + landscape knobs free, branding Pro `exports.branded` (Pro `exports`)", tag: "exports", errors: [402, 404], query: { format: { schema: { type: "string", enum: ["pdf", "xlsx"] } }, pageBreaks: { schema: { type: "string", enum: ["auto", "per_pitch", "per_team", "per_division"] } }, landscape: { schema: { type: "string", enum: ["true"] } }, blank: { schema: { type: "string", enum: ["true"] } } } },
   { path: "/competitions/{id}/exports/timetable", method: "get", summary: "Competition-wide pretty timetable PDF, one division per page (Pro `exports`)", tag: "exports", errors: [402], query: { pretty: { schema: { type: "string", enum: ["true"] } } } },
+  // Player statistics (Jul3/07, PROMPT-27)
+  { path: "/divisions/{id}/stats/players", method: "get", summary: "Division leaderboard from the score-event fold, sortable by any declared metric; flags requires_detailed_scoring instead of wrong zeros (Pro `stats.player`)", tag: "stats", errors: [402], query: { metric: { schema: { type: "string" } }, sort: { schema: { type: "string", enum: ["asc", "desc"] } } } },
+  { path: "/persons/{id}/stats", method: "get", summary: "A player's card stats, keyed per division (Pro `stats.player`)", tag: "stats", errors: [402], query: { division_id: { schema: { type: "string", format: "uuid" } } } },
+  { path: "/public/orgs/{orgSlug}/competitions/{slug}/divisions/{divisionSlug}/stats", method: "get", summary: "Consent-filtered public leaderboard (minors' names gated)", tag: "public", public: true },
 ];
 
 // ---------------------------------------------------------------------------

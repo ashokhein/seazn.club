@@ -27,6 +27,7 @@ export interface MemberIn {
 export interface LineupSlotIn {
   person_id: string;
   full_name: string;
+  squad_number?: number | null;
   slot: "starting" | "bench";
   position_key: string | null;
   order_no: number | null;

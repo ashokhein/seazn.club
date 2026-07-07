@@ -38,6 +38,9 @@ export const CoreForfeit = z.strictObject({ by: EntrantId, reason: z.string().mi
 export const CoreAbandon = z.strictObject({ reason: z.string().min(1) });
 export const CoreFinalize = z.strictObject({}); // locks ledger
 export const CoreNote = z.strictObject({ text: z.string().min(1) }); // no state effect
+// Jul3/07 §4 — MOTM/MVP and friends: append-only, undoable via core.void,
+// no state effect on the match itself (a stats-layer fact).
+export const CoreAward = z.strictObject({ person: z.string().min(1), key: z.string().min(1) });
 
 export const CORE_EVENT_SCHEMAS = {
   "core.start": CoreStart,
@@ -46,6 +49,7 @@ export const CORE_EVENT_SCHEMAS = {
   "core.abandon": CoreAbandon,
   "core.finalize": CoreFinalize,
   "core.note": CoreNote,
+  "core.award": CoreAward,
 } as const;
 
 export type CoreEventType = keyof typeof CORE_EVENT_SCHEMAS;
@@ -56,7 +60,8 @@ export type CoreEv =
   | z.infer<typeof CoreForfeit>
   | z.infer<typeof CoreAbandon>
   | z.infer<typeof CoreFinalize>
-  | z.infer<typeof CoreNote>;
+  | z.infer<typeof CoreNote>
+  | z.infer<typeof CoreAward>;
 
 export function isCoreEventType(type: string): type is CoreEventType {
   return Object.hasOwn(CORE_EVENT_SCHEMAS, type);
@@ -140,7 +145,7 @@ export interface FoldableModule<Cfg = unknown, State = unknown> {
 }
 
 // Core types always accepted post-decision: annotations and the finalize lock.
-const POST_DECISION_CORE: readonly string[] = ["core.note", "core.finalize"];
+const POST_DECISION_CORE: readonly string[] = ["core.note", "core.finalize", "core.award"];
 
 // The only state-derivation function in the system (spec 03 §2). Guarantees:
 //  1. determinism — referentially transparent, same inputs → deep-equal state;

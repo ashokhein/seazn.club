@@ -15,6 +15,7 @@ import type {
 } from "../core/types.ts";
 import type { PositionCatalog } from "./catalog.ts";
 import type { DocSection } from "../exports/types.ts";
+import type { PlayerStatsModel } from "../stats/stats.ts";
 
 // Jul3/06 §3 — what a print fragment gets to work with (display labels only;
 // TBD feeds arrive pre-rendered as "Winner of QF1").
@@ -87,6 +88,11 @@ export interface SportModule<Cfg, Ev, State> extends FoldableModule<Cfg, State> 
     scoresheet?(input: ScoresheetInput, cfg: Cfg): DocSection[];
     matchReport?(input: ScoresheetInput, cfg: Cfg): DocSection[];
   };
+
+  // Jul3/07 §3 — which fine events feed which player metrics. The engine
+  // folds; scoring math stays here. Sports without person-attributed events
+  // simply omit it (leaderboards then say "requires detailed scoring").
+  playerStats?: PlayerStatsModel;
 
   init(cfg: Cfg, lineups: LineupPair): State;
   apply(state: State, ev: EventEnvelope<Ev | CoreEv>): State; // pure; throws EngineError

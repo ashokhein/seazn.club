@@ -237,9 +237,10 @@ describe("resolveVoids", () => {
 // ---------------------------------------------------------------------------
 
 describe("core event payloads", () => {
-  it("knows exactly the six core types of spec 03 §2", () => {
+  it("knows exactly the seven core types (spec 03 §2 + Jul3/07 core.award)", () => {
     expect(Object.keys(CORE_EVENT_SCHEMAS).sort()).toEqual([
       "core.abandon",
+      "core.award",
       "core.finalize",
       "core.forfeit",
       "core.note",

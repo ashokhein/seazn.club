@@ -263,6 +263,7 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
         if (state.outcome === null) wrongPhase("cannot finalize an undecided fixture");
         return { ...state, phase: "final" };
       case "core.note":
+      case "core.award":
         return state; // PGN/move upload rides here (chess.md §6) — no state effect
       default:
         invalid(`unknown event type "${ev.type}"`);
