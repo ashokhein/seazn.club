@@ -163,6 +163,10 @@ export async function parseAiConstraints(
   if (generate) {
     return AiConstraints.parse(await generate(SYSTEM, prose));
   }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    // Optional feature — fail with a clear message, not the raw SDK auth error.
+    throw new HttpError(503, "AI-assisted scheduling isn't set up on this server yet.");
+  }
   const client = new Anthropic();
   const response = await client.messages.parse({
     // Overridable without a redeploy; Opus is the default. Prose → schema-

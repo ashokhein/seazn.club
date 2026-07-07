@@ -440,18 +440,11 @@ function FixtureLine({
   const away = fixture.away_entrant_id ? (entrantNames[fixture.away_entrant_id] ?? "?") : "TBD";
   const decided = outcomeText(fixture.outcome, entrantNames);
 
-  async function saveSchedule() {
+  async function patchSchedule(json: Record<string, unknown>) {
     setBusy(true);
     setError(null);
     try {
-      await apiV1(`/api/v1/fixtures/${fixture.id}`, {
-        method: "PATCH",
-        json: {
-          scheduled_at: when ? new Date(when).toISOString() : null,
-          venue: venue.trim() || null,
-          court_label: court.trim() || null,
-        },
-      });
+      await apiV1(`/api/v1/fixtures/${fixture.id}`, { method: "PATCH", json });
       setEditing(false);
       router.refresh();
     } catch (err) {
@@ -460,6 +453,23 @@ function FixtureLine({
       setBusy(false);
     }
   }
+
+  const saveSchedule = () =>
+    patchSchedule({
+      scheduled_at: when ? new Date(when).toISOString() : null,
+      venue: venue.trim() || null,
+      court_label: court.trim() || null,
+    });
+
+  const unschedule = () => {
+    setWhen("");
+    void patchSchedule({ scheduled_at: null });
+  };
+
+  // Play state only matters once a match is under way / done; before that a
+  // plain "scheduled" DB status is noise next to the timetable chip.
+  const played = ["in_play", "decided", "finalized", "cancelled"].includes(fixture.status);
+  const timed = !!fixture.scheduled_at;
 
   return (
     <li className="px-4 py-2">
@@ -473,21 +483,23 @@ function FixtureLine({
           <span className="font-medium">{away}</span>
           {decided && <span className="ml-2 text-xs text-slate-400">{decided}</span>}
         </Link>
-        <span className="text-xs text-slate-400">
-          {fixture.scheduled_at
-            ? new Date(fixture.scheduled_at).toLocaleString(undefined, {
-                dateStyle: "medium",
-                timeStyle: "short",
-              })
-            : "unscheduled"}
-          {fixture.venue ? ` · ${fixture.venue}` : ""}
-          {fixture.court_label ? ` · ${fixture.court_label}` : ""}
+        {/* Timetable chip — reflects whether the match has a kick-off time. */}
+        <span
+          className={`badge ${timed ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-500"}`}
+          title={timed ? "This match has a kick-off time" : "No kick-off time yet"}
+        >
+          {timed
+            ? `Scheduled · ${new Date(fixture.scheduled_at as string).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
+            : "Unscheduled"}
+          {fixture.court_label ? ` · ${fixture.court_label}` : fixture.venue ? ` · ${fixture.venue}` : ""}
         </span>
-        <span className={`badge ${FIXTURE_STATUS_STYLE[fixture.status] ?? ""}`}>
-          {fixture.status.replace("_", " ")}
-        </span>
-        {/* Explicit entry to the sport-shaped scoring pad — the fixture label
-            also links here, but organisers were missing it. */}
+        {/* Play state only once it's under way / done. */}
+        {played && (
+          <span className={`badge ${FIXTURE_STATUS_STYLE[fixture.status] ?? ""}`}>
+            {fixture.status.replace("_", " ")}
+          </span>
+        )}
+        {/* Scoring pad. */}
         <Link href={`/fixtures/${fixture.id}`} className="btn btn-ghost px-3 py-1 text-xs">
           {decided ? "View" : fixture.status === "in_play" ? "Score ●" : "Score"}
         </Link>
@@ -495,9 +507,19 @@ function FixtureLine({
           <button
             type="button"
             onClick={() => setEditing(!editing)}
-            className="text-xs text-purple-600 hover:underline"
+            className="btn btn-ghost px-3 py-1 text-xs"
           >
-            {editing ? "close" : "schedule"}
+            {editing ? "Close" : timed ? "Edit time" : "Schedule"}
+          </button>
+        )}
+        {canEdit && timed && !editing && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={unschedule}
+            className="text-xs text-slate-500 hover:text-red-600 hover:underline"
+          >
+            Unschedule
           </button>
         )}
       </div>
