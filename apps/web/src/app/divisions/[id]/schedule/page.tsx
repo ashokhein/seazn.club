@@ -71,6 +71,14 @@ export default async function DivisionSchedulePage({
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">
               Schedule — {division.name}
             </h1>
+            <span className="ml-auto flex items-center gap-2 text-xs">
+              {/* Jul3/06 print templates — raw file endpoints */}
+              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/timetable?format=pdf`}>Timetable PDF</a>
+              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/scoresheet?format=pdf&pageBreaks=per_pitch`}>Scoresheets</a>
+              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/roster?format=pdf`}>Rosters</a>
+              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/standings?format=pdf&landscape=true`}>Standings PDF</a>
+              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/participants?format=xlsx`}>Participants XLSX</a>
+            </span>
           </div>
         </div>
 

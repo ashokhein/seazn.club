@@ -160,6 +160,9 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/schedule/ai-constraints", method: "post", summary: "Prose → Zod-validated SchedulingConstraints; propose-only, human applies (Pro `scheduling.ai`)", tag: "scheduling", request: S.AiConstraintsRequest, errors: [402, 422] },
   // Custom points & rank control (Jul3/05, PROMPT-25)
   { path: "/stages/{id}/standings/override", method: "post", summary: "Pin final ranks (placement games decide 3rd/4th); cascade orders the unlocked remainder; audited rank_overridden (Pro `tiebreakers.custom`)", tag: "stages", request: S.OverrideStandings, errors: [402, 422] },
+  // Rich exports & print templates (Jul3/06, PROMPT-26)
+  { path: "/divisions/{id}/exports/{kind}", method: "get", summary: "Templated export (timetable|standings|roster|participants|scoresheet) as PDF/XLSX; page-break + landscape knobs free, branding Pro `exports.branded` (Pro `exports`)", tag: "exports", errors: [402, 404], query: { format: { schema: { type: "string", enum: ["pdf", "xlsx"] } }, pageBreaks: { schema: { type: "string", enum: ["auto", "per_pitch", "per_team", "per_division"] } }, landscape: { schema: { type: "string", enum: ["true"] } }, blank: { schema: { type: "string", enum: ["true"] } } } },
+  { path: "/competitions/{id}/exports/timetable", method: "get", summary: "Competition-wide pretty timetable PDF, one division per page (Pro `exports`)", tag: "exports", errors: [402], query: { pretty: { schema: { type: "string", enum: ["true"] } } } },
 ];
 
 // ---------------------------------------------------------------------------

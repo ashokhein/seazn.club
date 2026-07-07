@@ -33,6 +33,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "api.write": "Write access via the API needs the Business plan.",
   webhooks: "Webhooks need the Business plan.",
   exports: "CSV/PDF exports are a Pro feature.",
+  "exports.branded": "Branded print templates (club colours, sponsor logos) are a Pro feature.",
   // Clubs & bulk import (Jul3/01 §7)
   "import.bulk": "Files over 20 rows need a Pro plan — split the file or upgrade.",
   "logos.bulk": "Multi-file logo upload is a Pro feature — you can still set logos one at a time.",
