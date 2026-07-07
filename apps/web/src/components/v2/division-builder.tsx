@@ -292,6 +292,8 @@ export function DivisionBuilder({
   const [scheduleStart, setScheduleStart] = useState(""); // datetime-local
   const [scheduleEnd, setScheduleEnd] = useState(""); // date
 
+  const [tab, setTab] = useState<"basics" | "eligibility" | "format" | "scheduling">("basics");
+
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -406,12 +408,81 @@ export function DivisionBuilder({
   const templateInfo = STAGE_TEMPLATES.find((t) => t.key === template);
   const venue = venueNoun(sportKey); // "pitch" / "table" / "court" / "board"
   const VenueCap = venueLabel(sportKey);
+
+  // Wizard flow: Next validates the current tab before advancing.
+  const TAB_ORDER = ["basics", "eligibility", "format", "scheduling"] as const;
+  const tabIndex = TAB_ORDER.indexOf(tab);
+  const isLastTab = tabIndex === TAB_ORDER.length - 1;
+
+  function tabError(t: (typeof TAB_ORDER)[number]): string | null {
+    if (t === "basics") {
+      if (!name.trim()) return "Enter a division name.";
+      if (!sportKey) return "Choose a sport.";
+      if (!variantKey) return "Choose a variant.";
+    }
+    if (t === "eligibility" && maxAge) {
+      const n = Number(maxAge);
+      if (!Number.isInteger(n) || n <= 0) return "Max age must be a whole number above 0.";
+    }
+    if (t === "scheduling") {
+      if (!(matchMinutes >= 1)) return "Match length must be at least 1 minute.";
+      if (!courts.some((c) => c.trim())) return `Add at least one ${venue}.`;
+    }
+    return null;
+  }
+
+  function goNext() {
+    const err = tabError(tab);
+    if (err) {
+      setError(err);
+      return;
+    }
+    setError(null);
+    setTab(TAB_ORDER[Math.min(tabIndex + 1, TAB_ORDER.length - 1)]!);
+  }
+
+  // Nav jumps: going back is free; going forward must clear the current tab.
+  function goToTab(key: (typeof TAB_ORDER)[number]) {
+    if (TAB_ORDER.indexOf(key) > tabIndex) {
+      const err = tabError(tab);
+      if (err) {
+        setError(err);
+        return;
+      }
+    }
+    setError(null);
+    setTab(key);
+  }
   const hasSecondStage =
     template === "league_ko" || template === "groups_ko" || template === "group_stepladder";
 
   return (
     <form onSubmit={submit} className="space-y-6">
-      <section className="card space-y-4 p-6">
+      <nav className="flex flex-wrap gap-1 border-b border-slate-200">
+        {(
+          [
+            ["basics", "Basics"],
+            ["eligibility", "Eligibility"],
+            ["format", "Format"],
+            ["scheduling", "Scheduling"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => goToTab(key)}
+            className={`border-b-2 px-4 py-2 text-sm font-medium transition ${
+              tab === key
+                ? "border-purple-600 text-purple-700"
+                : "border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <section className={`card space-y-4 p-6 ${tab === "basics" ? "" : "hidden"}`}>
         <h2 className="text-sm font-semibold text-slate-700">Sport & variant</h2>
         <label className="block">
           <span className="label">Division name</span>
@@ -509,7 +580,7 @@ export function DivisionBuilder({
         )}
       </section>
 
-      <section className="card space-y-4 p-6">
+      <section className={`card space-y-4 p-6 ${tab === "eligibility" ? "" : "hidden"}`}>
         <h2 className="text-sm font-semibold text-slate-700">Eligibility</h2>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="block">
@@ -593,7 +664,7 @@ export function DivisionBuilder({
         </label>
       </section>
 
-      <section className="card space-y-4 p-6">
+      <section className={`card space-y-4 p-6 ${tab === "format" ? "" : "hidden"}`}>
         <h2 className="text-sm font-semibold text-slate-700">Format (stage graph)</h2>
         <div className="grid gap-2 sm:grid-cols-3">
           {STAGE_TEMPLATES.map((t) => (
@@ -693,7 +764,7 @@ export function DivisionBuilder({
         )}
       </section>
 
-      <section className="card space-y-4 p-6">
+      <section className={`card space-y-4 p-6 ${tab === "scheduling" ? "" : "hidden"}`}>
         <div>
           <h2 className="text-sm font-semibold text-slate-700">
             Scheduling <span className="ml-1 text-xs font-normal text-slate-400">optional</span>
@@ -791,7 +862,7 @@ export function DivisionBuilder({
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => router.push(`/competitions/${competitionId}`)}
@@ -799,13 +870,30 @@ export function DivisionBuilder({
         >
           Cancel
         </button>
-        <button
-          type="submit"
-          disabled={busy || !name.trim() || !sportKey || !variantKey}
-          className="btn btn-primary"
-        >
-          {busy ? "Creating…" : "Create division"}
-        </button>
+        <div className="flex gap-2">
+          {tabIndex > 0 && (
+            <button
+              type="button"
+              onClick={() => setTab(TAB_ORDER[tabIndex - 1]!)}
+              className="btn btn-ghost"
+            >
+              Back
+            </button>
+          )}
+          {isLastTab ? (
+            <button
+              type="submit"
+              disabled={busy || !name.trim() || !sportKey || !variantKey}
+              className="btn btn-primary"
+            >
+              {busy ? "Creating…" : "Create division"}
+            </button>
+          ) : (
+            <button type="button" onClick={goNext} className="btn btn-primary">
+              Next
+            </button>
+          )}
+        </div>
       </div>
     </form>
   );
