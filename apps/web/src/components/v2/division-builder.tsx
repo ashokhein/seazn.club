@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { venueNoun, venueLabel } from "@/lib/venue";
+import { defaultMatchMinutes } from "@/lib/match-length";
 
 export interface SportOption {
   key: string;
@@ -303,7 +304,11 @@ export function DivisionBuilder({
 
   // Scheduling (optional — can also be edited later on the schedule board).
   const [courts, setCourts] = useState<string[]>(() => [`${venueLabel(sports[0]?.key)} 1`]);
-  const [matchMinutes, setMatchMinutes] = useState(30);
+  const [matchMinutes, setMatchMinutes] = useState(() =>
+    defaultMatchMinutes(sports[0]?.key, sports[0]?.variants[0]?.key),
+  );
+  // Once the organiser edits the length, stop auto-filling it from the sport.
+  const [matchMinutesTouched, setMatchMinutesTouched] = useState(false);
   const [scheduleStart, setScheduleStart] = useState(""); // datetime-local
   const [scheduleEnd, setScheduleEnd] = useState(""); // date
 
@@ -323,8 +328,10 @@ export function DivisionBuilder({
   function selectSport(key: string) {
     setSportKey(key);
     const next = sports.find((s) => s.key === key);
-    setVariantKey(next?.variants[0]?.key ?? "");
+    const firstVariant = next?.variants[0]?.key ?? "";
+    setVariantKey(firstVariant);
     setRuleValues({}); // rules are sport-specific
+    if (!matchMinutesTouched) setMatchMinutes(defaultMatchMinutes(key, firstVariant));
     // Rename the default single venue to match the sport, unless the organiser
     // has already customised the list.
     setCourts((cs) =>
@@ -555,7 +562,10 @@ export function DivisionBuilder({
             <span className="label">Variant</span>
             <select
               value={variantKey}
-              onChange={(e) => setVariantKey(e.target.value)}
+              onChange={(e) => {
+                setVariantKey(e.target.value);
+                if (!matchMinutesTouched) setMatchMinutes(defaultMatchMinutes(sportKey, e.target.value));
+              }}
               className="select"
             >
               {(sport?.variants ?? []).map((v) => (
@@ -899,9 +909,15 @@ export function DivisionBuilder({
               min={1}
               max={1440}
               value={matchMinutes}
-              onChange={(e) => setMatchMinutes(Number(e.target.value) || 30)}
+              onChange={(e) => {
+                setMatchMinutesTouched(true);
+                setMatchMinutes(Number(e.target.value) || 30);
+              }}
               className="input w-full"
             />
+            <span className="mt-0.5 block text-xs text-slate-400">
+              Pre-filled for the selected sport &amp; variant — adjust if needed.
+            </span>
           </label>
           <label className="block">
             <span className="label">Start date &amp; time</span>
