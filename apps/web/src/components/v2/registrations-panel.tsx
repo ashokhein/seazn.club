@@ -66,12 +66,10 @@ function fromLocalInput(v: string): string | null {
 }
 
 export function RegistrationsPanel({
-  orgId,
   divisionId,
   canEdit,
   paidAllowed = true,
 }: {
-  orgId: string;
   divisionId: string;
   canEdit: boolean;
   /** registration.paid entitlement — false shows the plan badge on the fee field. */
@@ -136,16 +134,6 @@ export function RegistrationsPanel({
         },
       });
       setSaved(true);
-    });
-  }
-
-  async function connect() {
-    await run(async () => {
-      const { url } = await apiV1<{ url: string }>(`/api/v1/orgs/${orgId}/connect`, {
-        method: "POST",
-        json: { return_path: window.location.pathname },
-      });
-      window.location.assign(url);
     });
   }
 
@@ -267,19 +255,15 @@ export function RegistrationsPanel({
             />
           </label>
 
-          {paidConfigured && !settings.charges_enabled && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              <p className="font-medium">Stripe payouts not connected</p>
+          {paidConfigured && (
+            <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs text-purple-800">
+              <p className="font-medium">Entry fees are collected offline</p>
               <p className="mt-1">
-                Entry fees need a connected Stripe account (the money goes to your club,
-                minus the platform fee). Public registration stays closed for paid
-                divisions until this is done.
+                Registrations are accepted immediately and marked pending. Registrants see
+                your cash / bank-transfer instructions on their confirmation page and email —
+                set these once under{" "}
+                <a href="/settings" className="underline">Settings → Payment details</a>.
               </p>
-              {canEdit && (
-                <button type="button" disabled={busy} onClick={connect} className="btn btn-primary mt-2 text-xs">
-                  Connect Stripe
-                </button>
-              )}
             </div>
           )}
 

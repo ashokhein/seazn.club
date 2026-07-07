@@ -373,7 +373,7 @@ const DEFAULT_SETTINGS: Omit<RegistrationSettingsRow, "division_id"> = {
   closes_at: null,
   capacity: null,
   fee_cents: 0,
-  currency: "usd",
+  currency: "gbp",
   refund_lock_at: null,
   form_fields: [],
   updated_at: null,

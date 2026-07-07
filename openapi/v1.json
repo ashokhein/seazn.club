@@ -17347,7 +17347,7 @@
                     "maximum": 10000000
                   },
                   "currency": {
-                    "default": "usd",
+                    "default": "gbp",
                     "type": "string",
                     "minLength": 3,
                     "maxLength": 3

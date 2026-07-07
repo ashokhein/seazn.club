@@ -69,9 +69,18 @@ export default async function DivisionHomePage({ params }: Props) {
   // → rank 1 of the final overall standings.
   const championId: string | null = (() => {
     const decisive = [...stages].sort((a, b) => b.seq - a.seq)[0];
-    if (!decisive || decisive.status !== "complete") return null;
+    if (!decisive) return null;
+    // Crown when the stage is flagged complete OR every one of its fixtures is
+    // already decided (a fully-played stage isn't always flipped to complete).
+    const stageFixtures = fixtures.filter((f) => f.stage_id === decisive.id);
+    const finished = (f: (typeof fixtures)[number]) =>
+      f.status === "decided" || f.status === "finalized" || f.outcome?.winner != null;
+    const stageDone =
+      decisive.status === "complete" ||
+      (stageFixtures.length > 0 && stageFixtures.every(finished));
+    if (!stageDone) return null;
     if (BRACKET_KINDS.has(decisive.kind)) {
-      const decided = fixtures.filter((f) => f.stage_id === decisive.id && f.outcome?.winner);
+      const decided = stageFixtures.filter((f) => f.outcome?.winner);
       if (decided.length === 0) return null;
       const final = decided.reduce((a, b) => (b.round_no > a.round_no ? b : a));
       return final.outcome?.winner ?? null;
@@ -84,19 +93,22 @@ export default async function DivisionHomePage({ params }: Props) {
     return top?.entrantId ?? null;
   })();
 
+  // Rendered at the very top of the division page (above the tabs) so the
+  // winner is visible on Schedule/Standings/Entrants alike — v1 parity.
+  const championBanner = championId ? (
+    <div className="mb-6 flex items-center gap-4 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 via-amber-50/40 to-transparent p-4 shadow-sm">
+      <span className="animate-trophy text-4xl" aria-hidden>🏆</span>
+      <div className="min-w-0">
+        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Champion</p>
+        <p className="truncate text-xl font-black tracking-tight text-zinc-900">
+          {entrantNames[championId] ?? "—"}
+        </p>
+      </div>
+    </div>
+  ) : null;
+
   const standingsPanel = (
     <div className="space-y-8">
-      {championId && (
-        <div className="flex items-center gap-4 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 via-amber-50/40 to-transparent p-4 shadow-sm">
-          <span className="animate-trophy text-4xl" aria-hidden>🏆</span>
-          <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Champion</p>
-            <p className="truncate text-xl font-black tracking-tight text-zinc-900">
-              {entrantNames[championId] ?? "—"}
-            </p>
-          </div>
-        </div>
-      )}
       {stagesByRelevance.map((stage) => {
         if (BRACKET_KINDS.has(stage.kind)) {
           const stageFixtures = fixtures.filter((f) => f.stage_id === stage.id);
@@ -219,6 +231,8 @@ export default async function DivisionHomePage({ params }: Props) {
           </span>
         ))}
       </p>
+
+      {championBanner}
 
       <Tabs labels={["Schedule", "Standings", "Entrants"]}>
         {[

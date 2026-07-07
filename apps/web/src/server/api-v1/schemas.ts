@@ -622,7 +622,7 @@ export const PutRegistrationSettings = z
     closes_at: z.iso.datetime({ offset: true }).nullish(),
     capacity: z.number().int().min(1).max(10000).nullish(),
     fee_cents: z.number().int().min(0).max(100_000_00).default(0),
-    currency: z.string().length(3).toLowerCase().default("usd"),
+    currency: z.string().length(3).toLowerCase().default("gbp"),
     refund_lock_at: z.iso.datetime({ offset: true }).nullish(),
     form_fields: z.array(RegistrationFormField).max(12).default([]),
   })

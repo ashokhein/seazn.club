@@ -96,7 +96,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
           <Row label="Entry fee">
             {new Intl.NumberFormat(undefined, {
               style: "currency",
-              currency: (view.currency ?? "usd").toUpperCase(),
+              currency: (view.currency ?? "gbp").toUpperCase(),
             }).format(view.fee_cents / 100)}
             {view.refunded_cents > 0 ? ` (refunded ${view.refunded_cents / 100})` : ""}
           </Row>
