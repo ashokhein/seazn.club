@@ -17,6 +17,17 @@ export interface SportOption {
   variants: { key: string; name: string; system: boolean }[];
 }
 
+// The most common variant to preselect per sport (else the first listed).
+const PREFERRED_VARIANT: Record<string, string> = {
+  cricket: "t20",
+};
+
+function pickVariant(sportKey: string, variants: { key: string }[]): string {
+  const pref = PREFERRED_VARIANT[sportKey.toLowerCase()];
+  if (pref && variants.some((v) => v.key === pref)) return pref;
+  return variants[0]?.key ?? "";
+}
+
 interface StageDraft {
   kind: string;
   name: string;
@@ -285,7 +296,9 @@ export function DivisionBuilder({
   const [name, setName] = useState("");
   const [sportKey, setSportKey] = useState(sports[0]?.key ?? "");
   const sport = useMemo(() => sports.find((s) => s.key === sportKey), [sports, sportKey]);
-  const [variantKey, setVariantKey] = useState(sport?.variants[0]?.key ?? "");
+  const [variantKey, setVariantKey] = useState(
+    sport ? pickVariant(sport.key, sport.variants) : "",
+  );
   // Match-rule values keyed by RuleField.key; "" = keep the variant default.
   const [ruleValues, setRuleValues] = useState<Record<string, string>>({});
 
@@ -305,7 +318,7 @@ export function DivisionBuilder({
   // Scheduling (optional — can also be edited later on the schedule board).
   const [courts, setCourts] = useState<string[]>(() => [`${venueLabel(sports[0]?.key)} 1`]);
   const [matchMinutes, setMatchMinutes] = useState(() =>
-    defaultMatchMinutes(sports[0]?.key, sports[0]?.variants[0]?.key),
+    defaultMatchMinutes(sports[0]?.key, sports[0] ? pickVariant(sports[0].key, sports[0].variants) : ""),
   );
   // Once the organiser edits the length, stop auto-filling it from the sport.
   const [matchMinutesTouched, setMatchMinutesTouched] = useState(false);
@@ -328,7 +341,7 @@ export function DivisionBuilder({
   function selectSport(key: string) {
     setSportKey(key);
     const next = sports.find((s) => s.key === key);
-    const firstVariant = next?.variants[0]?.key ?? "";
+    const firstVariant = next ? pickVariant(next.key, next.variants) : "";
     setVariantKey(firstVariant);
     setRuleValues({}); // rules are sport-specific
     if (!matchMinutesTouched) setMatchMinutes(defaultMatchMinutes(key, firstVariant));
