@@ -70,6 +70,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/stages/{id}/generate", method: "post", summary: "Generate fixtures (idempotent, returns diff)", tag: "stages", response: S.GenerateResult, errors: [422] },
   { path: "/stages/{id}/complete", method: "post", summary: "Guarded stage completion / progression", tag: "stages", response: S.CompleteResult, errors: [422] },
   { path: "/stages/{id}/standings", method: "get", summary: "Standings snapshot", tag: "stages", query: { pool_id: { schema: { type: "string", format: "uuid" } } } },
+  { path: "/stages/{id}", method: "delete", summary: "Delete a stage (last-in-graph, no played fixtures)", tag: "stages", response: z.object({ deleted: z.boolean() }), errors: [409] },
   // Scheduling console (doc 12 §4, PROMPT-17)
   { path: "/divisions/{id}/schedule-settings", method: "get", summary: "Get scheduling settings (defaults when unset)", tag: "scheduling", response: S.ScheduleSettings },
   { path: "/divisions/{id}/schedule-settings", method: "put", summary: "Upsert scheduling settings (constraint fields are Pro)", tag: "scheduling", request: S.PutScheduleSettings, response: S.ScheduleSettings, errors: [402] },
