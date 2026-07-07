@@ -9,6 +9,8 @@ import {
   inviteTemplate,
   registrationTemplate,
   type RegistrationEmailArgs,
+  paymentReminderTemplate,
+  type PaymentReminderArgs,
 } from "@/lib/email-templates";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -146,6 +148,16 @@ export interface RegistrationEmail extends RegistrationEmailArgs {
 export async function sendRegistrationEmail(opts: RegistrationEmail): Promise<boolean> {
   const { to, ...args } = opts;
   return send({ to, ...registrationTemplate(args) });
+}
+
+export interface PaymentReminderEmail extends PaymentReminderArgs {
+  to: string;
+}
+
+/** Organiser-triggered payment reminder for an unpaid offline entry fee. */
+export async function sendPaymentReminderEmail(opts: PaymentReminderEmail): Promise<boolean> {
+  const { to, ...args } = opts;
+  return send({ to, ...paymentReminderTemplate(args) });
 }
 
 /** True when Resend is configured. */

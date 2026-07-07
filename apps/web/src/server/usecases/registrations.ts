@@ -19,7 +19,7 @@ import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getLimit, requireFeature } from "@/lib/entitlements";
 import { getStripe } from "@/lib/stripe";
-import { sendRegistrationEmail } from "@/lib/email";
+import { sendRegistrationEmail, sendPaymentReminderEmail } from "@/lib/email";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type {
   PublicRegisterRequest,
@@ -1031,6 +1031,34 @@ export async function confirmRegistration(auth: AuthCtx, regId: string): Promise
   });
   fireDivisionRevalidate(row.division_id);
   return row;
+}
+
+/** Organiser: email an unpaid (offline) registrant a payment reminder. */
+export async function sendPaymentReminder(
+  auth: AuthCtx,
+  regId: string,
+): Promise<{ sent: boolean }> {
+  const reg = await withTenant(auth.orgId, (tx) => orgReg(tx, regId));
+  const settings = await loadSettings(sql, reg.division_id);
+  const fee = settings?.fee_cents ?? 0;
+  if (fee <= 0) throw new HttpError(422, "This division has no entry fee.");
+  if (reg.status !== "pending") {
+    throw new HttpError(422, "Payment reminders only apply to pending registrations.");
+  }
+  const ctx = await divisionCtx(sql, reg.division_id);
+  const sent = await sendPaymentReminderEmail({
+    to: reg.contact_email,
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    displayName: reg.display_name,
+    feeCents: fee,
+    currency: settings?.currency ?? reg.currency ?? "gbp",
+    paymentInstructions: ctx.payment_instructions,
+  });
+  await withTenant(auth.orgId, (tx) =>
+    audit(tx, ctx.competition_id, auth.orgId, "registration.payment_reminded", { registration_id: regId }, auth.userId),
+  );
+  return { sent };
 }
 
 async function orgRegAfter(tx: Tx, regId: string): Promise<RegistrationRow> {

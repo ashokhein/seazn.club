@@ -7,3 +7,4 @@ export { emailChangeNoticeTemplate } from "./email-change-notice";
 export { accountDeletionTemplate } from "./account-deletion";
 export { inviteTemplate } from "./invite";
 export { registrationTemplate, type RegistrationEmailArgs } from "./registration";
+export { paymentReminderTemplate, type PaymentReminderArgs } from "./payment-reminder";

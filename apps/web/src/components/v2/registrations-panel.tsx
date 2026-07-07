@@ -86,6 +86,7 @@ export function RegistrationsPanel({
   const [paywall, setPaywall] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   // Fee is entered in major units (pounds) but stored as integer minor units
   // (pence). A local string keeps mid-typing states like "1." / "1.5" intact.
   const [feeText, setFeeText] = useState("");
@@ -135,6 +136,20 @@ export function RegistrationsPanel({
   async function save() {
     if (!settings) return;
     setSaved(false);
+    // Sanitise questions so one incomplete row can't 400 the whole save:
+    // drop blank labels, snake_case + de-duplicate keys, keep select options.
+    const seen = new Set<string>();
+    const form_fields = settings.form_fields
+      .filter((f) => f.label.trim())
+      .map((f) => {
+        let key = (f.key || f.label).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "field";
+        while (seen.has(key)) key = `${key}_x`.slice(0, 40);
+        seen.add(key);
+        const base = { key, label: f.label.trim(), kind: f.kind, required: f.required };
+        return f.kind === "select"
+          ? { ...base, options: (f.options ?? []).filter(Boolean).length ? f.options!.filter(Boolean) : ["Option 1"] }
+          : base;
+      });
     await run(async () => {
       await apiV1(`/api/v1/divisions/${divisionId}/registration-settings`, {
         method: "PUT",
@@ -147,7 +162,7 @@ export function RegistrationsPanel({
           fee_cents: settings.fee_cents,
           currency: settings.currency,
           refund_lock_at: settings.refund_lock_at,
-          form_fields: settings.form_fields,
+          form_fields,
         },
       });
       setSaved(true);
@@ -158,6 +173,17 @@ export function RegistrationsPanel({
     if (verb === "withdraw" && !window.confirm("Withdraw this registration?")) return;
     if (verb === "refund" && !window.confirm("Refund the remaining amount?")) return;
     void run(() => apiV1(`/api/v1/registrations/${id}/${verb}`, { method: "POST", json: {} }));
+  }
+
+  function remind(id: string) {
+    setNotice(null);
+    void run(async () => {
+      const res = await apiV1<{ sent: boolean }>(`/api/v1/registrations/${id}/remind`, {
+        method: "POST",
+        json: {},
+      });
+      setNotice(res.sent ? "Payment reminder sent." : "Reminder not sent — email isn't configured.");
+    });
   }
 
   if (!settings) {
@@ -306,6 +332,7 @@ export function RegistrationsPanel({
 
         {paywall && <UpgradeGate feature={paywall} />}
         {error && <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
+        {notice && <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{notice}</p>}
       </aside>
 
       <section>
@@ -362,6 +389,11 @@ export function RegistrationsPanel({
                           Waitlist
                         </button>
                       )}
+                      {r.status === "pending" && r.amount_cents > 0 && (
+                        <button type="button" disabled={busy} onClick={() => remind(r.id)} className="btn btn-ghost text-xs" title="Email the registrant a payment reminder">
+                          Send reminder
+                        </button>
+                      )}
                       {r.status !== "withdrawn" && (
                         <button type="button" disabled={busy} onClick={() => action(r.id, "withdraw")} className="btn btn-ghost text-xs text-red-600">
                           Withdraw
@@ -402,23 +434,31 @@ function FormBuilder({
   }
 
   function add() {
-    const key = `field_${fields.length + 1}`;
-    onChange([...fields, { key, label: "", kind: "text", required: false }]);
+    // A blank label fails validation and blocks the whole save, so seed a
+    // valid default the organiser can rename.
+    const n = fields.length + 1;
+    onChange([...fields, { key: `question_${n}`, label: `Question ${n}`, kind: "text", required: false }]);
   }
 
   return (
     <section className="card space-y-3 p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">Custom form fields</h2>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Extra sign-up questions</h2>
+          <p className="text-xs text-slate-400">
+            Ask registrants anything beyond name, email and date of birth.
+          </p>
+        </div>
         {canEdit && fields.length < 12 && (
           <button type="button" onClick={add} className="btn btn-ghost text-xs">
-            + Add
+            + Add question
           </button>
         )}
       </div>
       {fields.length === 0 && (
         <p className="text-xs text-slate-400">
-          Ask registrants extra questions — shirt size, club membership number…
+          e.g. shirt size, dietary needs, emergency contact, club membership number, or a
+          &ldquo;I agree to the code of conduct&rdquo; checkbox.
         </p>
       )}
       {fields.map((f, i) => (
