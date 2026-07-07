@@ -88,6 +88,16 @@ const CONFLICT_LABEL: Record<string, string> = {
   "warn.no_slot": "no slot",
 };
 
+// Plain-English explanations shown to organisers (no codes, no UUIDs).
+const CONFLICT_HELP: Record<string, string> = {
+  "conflict.court": "Two matches would use the same court at the same time.",
+  "warn.rest": "There isn't enough rest between matches for a team or player.",
+  "warn.person_overlap": "Someone would be playing in two matches at once.",
+  "warn.order": "This match feeds a later one, so it can't start before the earlier match finishes.",
+  "warn.blackout": "This time falls inside a blackout period.",
+  "warn.no_slot": "There's no free slot for this match at that time.",
+};
+
 type Override = { scheduled_at: string | null; court_label: string | null; schedule_locked: boolean };
 
 /** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
@@ -236,11 +246,31 @@ export function ScheduleBoard({
       setPaywall(String(err.extra.feature_key ?? ""));
     } else if (err instanceof ApiV1Error && err.code === "SCHEDULE_CONFLICT") {
       const list = (err.extra.conflicts as BoardConflict[] | undefined) ?? [];
+      const titleOf = (id: string) => {
+        const f = board.find((x) => x.id === id);
+        return f ? cardTitle(f, entrantNames, feedLabels) : "another match";
+      };
+      const reasons = [
+        ...new Set(
+          list.map((c) => {
+            let msg = CONFLICT_HELP[c.code] ?? "This slot doesn't work.";
+            // The server's detail can carry a fixture id — name the match instead.
+            const uuid = c.detail?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/i)?.[0];
+            if (uuid) msg += ` (with ${titleOf(uuid)})`;
+            return msg;
+          }),
+        ),
+      ];
       setError(
-        `Blocked: ${list.map((c) => `${CONFLICT_LABEL[c.code] ?? c.code}${c.detail ? ` (${c.detail})` : ""}`).join("; ") || err.message}`,
+        reasons.length > 0
+          ? `Can't schedule here. ${reasons.join(" ")}`
+          : "Can't schedule here — it clashes with another match.",
       );
     } else {
-      setError(err instanceof Error ? err.message : "Failed");
+      // Never surface raw codes/stack text; fall back to a friendly line.
+      const raw = err instanceof Error ? err.message : "";
+      const friendly = raw && !/[{}<>]|error:|\bundefined\b|[0-9a-f]{8}-[0-9a-f]{4}/i.test(raw);
+      setError(friendly ? raw : "Something went wrong — please try again.");
     }
   }
 
