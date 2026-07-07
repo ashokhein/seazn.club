@@ -130,7 +130,7 @@ const STAGE_TEMPLATES: {
   {
     key: "triple_rr",
     label: "Triple round robin",
-    help: "Everyone plays everyone three times (Jul3/08).",
+    help: "Everyone plays everyone three times.",
     build: () => [{ kind: "league", name: "Triple RR", config: { legs: 3 }, qualification: null }],
   },
   {

@@ -10,7 +10,9 @@ test("division builder exposes the Jul3/08 format presets", async ({ page, reque
   });
   await page.goto(`/competitions/${comp.data!.id}/divisions/new`);
 
-  // The builder is tabbed — open the Format tab to reach the presets.
+  // The builder is tabbed; moving forward validates the current tab, so fill
+  // the required division name before opening the Format tab.
+  await page.getByRole("textbox").first().fill(`Formats ${TAG}`);
   await page.getByRole("button", { name: "Format", exact: true }).click();
 
   // The new presets are visible on the format picker.
