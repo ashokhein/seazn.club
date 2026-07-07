@@ -4,7 +4,7 @@
 // eligibility template → stage graph. Creates the division, then its stages,
 // then lands on the division console. Match-rule fields build the config
 // override object, validated server-side by the pinned module's configSchema.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -464,6 +464,11 @@ export function DivisionBuilder({
     setTab(TAB_ORDER[Math.min(tabIndex + 1, TAB_ORDER.length - 1)]!);
   }
 
+  // Any change to the format or its knobs invalidates a shown example.
+  useEffect(() => {
+    setPreview(null);
+  }, [template, qualified, swissRounds, poolCount, legs]);
+
   async function runPreview() {
     setPreviewError(null);
     setPreviewBusy(true);
@@ -809,7 +814,7 @@ export function DivisionBuilder({
               type="button"
               onClick={() => {
                 setPreviewOpen(true);
-                if (!preview) void runPreview();
+                void runPreview(); // always reflect the current format
               }}
               className="btn btn-ghost text-sm"
             >
