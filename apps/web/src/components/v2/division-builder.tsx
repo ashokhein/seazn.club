@@ -289,6 +289,7 @@ export function DivisionBuilder({
   const [courts, setCourts] = useState<string[]>(["Court 1"]);
   const [matchMinutes, setMatchMinutes] = useState(30);
   const [scheduleStart, setScheduleStart] = useState(""); // datetime-local
+  const [scheduleEnd, setScheduleEnd] = useState(""); // date
 
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
@@ -375,6 +376,7 @@ export function DivisionBuilder({
               courts: cleanCourts.length ? cleanCourts : ["Court 1"],
               matchMinutes,
               startAt: scheduleStart ? new Date(scheduleStart).toISOString() : null,
+              endAt: scheduleEnd ? new Date(`${scheduleEnd}T23:59:00`).toISOString() : null,
             },
           },
         });
@@ -712,6 +714,19 @@ export function DivisionBuilder({
               onChange={(e) => setScheduleStart(e.target.value)}
               className="input w-full"
             />
+          </label>
+          <label className="block">
+            <span className="label">End date</span>
+            <input
+              type="date"
+              value={scheduleEnd}
+              min={scheduleStart ? scheduleStart.slice(0, 10) : undefined}
+              onChange={(e) => setScheduleEnd(e.target.value)}
+              className="input w-full"
+            />
+            <span className="mt-0.5 block text-xs text-slate-400">
+              Sets how many days the schedule&apos;s week view spans.
+            </span>
           </label>
         </div>
 

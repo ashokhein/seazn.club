@@ -49,6 +49,7 @@ export interface BoardFixture {
 
 export interface BoardConfig {
   startAt?: string | null;
+  endAt?: string | null;
   matchMinutes: number;
   gapMinutes: number;
   courts: string[];
@@ -177,29 +178,29 @@ export function ScheduleBoard({
   // step onto days that have no fixtures yet).
   if (!day) setDay(days[0] as string);
 
-  // Week view spans the competition's run dates. If those aren't set, fall back
-  // to the scheduled fixtures' range, and always show at least four days so the
-  // board is useful for dragging fixtures across days.
+  // Week view spans the division's own schedule dates first (set at creation or
+  // on this board), then the competition dates, then the scheduled fixtures'
+  // range — always at least four days so cards can be dragged across days.
   const weekDays = useMemo(() => {
     const keys = scheduled.map((f) => dayKey(f.scheduled_at as string)).sort();
-    const candidatesStart = [
-      competitionStart ? dayKey(competitionStart) : null,
-      cfg.startAt ? dayKey(cfg.startAt) : null,
-      keys[0] ?? null,
-    ].filter((k): k is string => k !== null).sort();
-    const start = candidatesStart[0] ?? dayKey(new Date());
+    const start =
+      (cfg.startAt && dayKey(cfg.startAt)) ||
+      (competitionStart && dayKey(competitionStart)) ||
+      keys[0] ||
+      dayKey(new Date());
     const candidatesEnd = [
+      cfg.endAt ? dayKey(cfg.endAt) : null,
       competitionEnd ? dayKey(competitionEnd) : null,
       keys[keys.length - 1] ?? null,
-    ].filter((k): k is string => k !== null).sort();
+    ].filter((k): k is string => k !== null && k >= start).sort();
     let end = candidatesEnd[candidatesEnd.length - 1] ?? start;
     // Guarantee a minimum span of 4 days (start + 3).
     const minEnd = addDaysKey(start, 3);
     if (end < minEnd) end = minEnd;
     const out: string[] = [];
-    for (let d = start; d <= end && out.length < 60; d = addDaysKey(d, 1)) out.push(d);
+    for (let d = start; d <= end && out.length < 90; d = addDaysKey(d, 1)) out.push(d);
     return out;
-  }, [scheduled, competitionStart, competitionEnd, cfg.startAt]);
+  }, [scheduled, competitionStart, competitionEnd, cfg.startAt, cfg.endAt]);
 
   // Courts: configured list plus anything already used on the board.
   const courts = useMemo(() => {
@@ -1012,6 +1013,7 @@ function SettingsPanel({
 }) {
   const [open, setOpen] = useState(false);
   const [startAt, setStartAt] = useState(config.startAt ? toLocalInput(config.startAt) : "");
+  const [endAt, setEndAt] = useState(config.endAt ? dayKey(config.endAt) : "");
   const [matchMinutes, setMatchMinutes] = useState(config.matchMinutes);
   const [gapMinutes, setGapMinutes] = useState(config.gapMinutes);
   const [rest, setRest] = useState(config.perEntrantMinRest);
@@ -1038,6 +1040,7 @@ function SettingsPanel({
           config: {
             ...config,
             startAt: startAt ? new Date(startAt).toISOString() : null,
+            endAt: endAt ? new Date(`${endAt}T23:59:00`).toISOString() : null,
             matchMinutes,
             gapMinutes,
             perEntrantMinRest: rest,
@@ -1064,6 +1067,10 @@ function SettingsPanel({
         <label className="block">
           <span className="label">First match</span>
           <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="input px-2 py-1 text-xs" disabled={!canEdit} />
+        </label>
+        <label className="block">
+          <span className="label">End date</span>
+          <input type="date" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="input px-2 py-1 text-xs" disabled={!canEdit} />
         </label>
         <label className="block">
           <span className="label">Match (min)</span>

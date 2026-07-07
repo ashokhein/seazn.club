@@ -431,6 +431,8 @@ const IsoDateTime = z.iso.datetime({ offset: true });
 /** Doc 12 §3 schedule_settings.config — the calendar pass inputs (05 §2.6). */
 export const ScheduleConfig = z.object({
   startAt: IsoDateTime.nullish(),
+  /** Last day the timetable runs — drives the week view's day span. */
+  endAt: IsoDateTime.nullish(),
   matchMinutes: z.number().int().min(1).max(24 * 60).default(30),
   gapMinutes: z.number().int().min(0).max(24 * 60).default(0),
   courts: z.array(z.string().min(1).max(100)).min(1).max(50).default(["Court 1"]),
