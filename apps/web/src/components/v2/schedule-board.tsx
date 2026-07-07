@@ -706,15 +706,23 @@ function FixtureCard({
       style={color ? { borderLeftWidth: 3, borderLeftColor: color } : undefined}
     >
       <div className="flex items-center gap-1">
-        <button
-          type="button"
-          onClick={onSelect}
-          aria-pressed={selected}
-          aria-label={`${cardTitle(fixture, entrantNames, feedLabels)} — round ${fixture.round_no}${canEdit ? ". Select to move via menu" : ""}`}
-          className="min-w-0 flex-1 truncate text-left font-medium text-slate-700 hover:text-purple-700"
-        >
-          {cardTitle(fixture, entrantNames, feedLabels)}
-        </button>
+        {/* A decided fixture is done — no scheduling handle. It comes back the
+            moment the result is undone (status returns to 'scheduled'). */}
+        {movable ? (
+          <button
+            type="button"
+            onClick={onSelect}
+            aria-pressed={selected}
+            aria-label={`${cardTitle(fixture, entrantNames, feedLabels)} — round ${fixture.round_no}. Select to move via menu`}
+            className="min-w-0 flex-1 truncate text-left font-medium text-slate-700 hover:text-purple-700"
+          >
+            {cardTitle(fixture, entrantNames, feedLabels)}
+          </button>
+        ) : (
+          <span className="min-w-0 flex-1 truncate text-left font-medium text-slate-600">
+            {cardTitle(fixture, entrantNames, feedLabels)}
+          </span>
+        )}
         {canEdit && fixture.status === "scheduled" && (
           <button
             type="button"
