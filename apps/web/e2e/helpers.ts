@@ -39,7 +39,9 @@ export async function loginUi(page: Page, email: string, password = PASSWORD): P
 export async function seedScoredDivision(
   request: APIRequestContext,
   names: string[] = ["A", "B", "C", "D"],
+  opts: { decide?: boolean } = {},
 ): Promise<{ competitionId: string; divisionId: string; stageId: string }> {
+  const { decide = true } = opts;
   const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
     name: `E2E ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
     visibility: "public",
@@ -75,14 +77,31 @@ export async function seedScoredDivision(
     `/api/v1/stages/${stageId}/generate`,
     "POST",
   );
+  // For the officials path (decide:false) give every fixture a kick-off time +
+  // court — auto-assign only sees timed, undecided fixtures. Scored callers are
+  // left untouched (no schedule events) so their assertions are unchanged.
+  if (!decide) {
+    const base = Date.UTC(2026, 8, 15, 9, 0, 0); // 2026-09-15 09:00Z
+    for (let i = 0; i < gen.data!.fixtures.length; i++) {
+      const at = new Date(base + i * 90 * 60_000).toISOString();
+      await apiJson(request, `/api/v1/fixtures/${gen.data!.fixtures[i]!.id}`, "PATCH", {
+        scheduled_at: at,
+        court_label: String((i % 2) + 1),
+      });
+    }
+  }
   await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
-  for (const f of gen.data!.fixtures) {
-    const state = await apiJson<{ last_seq: number }>(request, `/api/v1/fixtures/${f.id}/state`);
-    await apiJson(request, `/api/v1/fixtures/${f.id}/events`, "POST", {
-      expected_seq: state.data!.last_seq,
-      type: "generic.result",
-      payload: { p1Score: 2, p2Score: 0 },
-    });
+  // Officials auto-assign only sees UNDECIDED timed fixtures — callers that
+  // exercise that path pass { decide: false }.
+  if (decide) {
+    for (const f of gen.data!.fixtures) {
+      const state = await apiJson<{ last_seq: number }>(request, `/api/v1/fixtures/${f.id}/state`);
+      await apiJson(request, `/api/v1/fixtures/${f.id}/events`, "POST", {
+        expected_seq: state.data!.last_seq,
+        type: "generic.result",
+        payload: { p1Score: 2, p2Score: 0 },
+      });
+    }
   }
   void entrants;
   return { competitionId, divisionId, stageId };

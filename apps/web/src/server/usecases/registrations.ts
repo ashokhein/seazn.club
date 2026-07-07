@@ -19,6 +19,7 @@ import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getLimit, requireFeature } from "@/lib/entitlements";
 import { getStripe } from "@/lib/stripe";
+import { sendRegistrationEmail, sendPaymentReminderEmail } from "@/lib/email";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type {
   PublicRegisterRequest,
@@ -193,6 +194,7 @@ export interface RegistrationRow {
   guardian_name: string | null;
   guardian_consent: boolean;
   answers: Record<string, unknown>;
+  roster: { name: string; dob?: string | null; squad_number?: number | null }[];
   amount_cents: number;
   currency: string | null;
   checkout_session_id: string | null;
@@ -207,7 +209,7 @@ export interface RegistrationRow {
 
 const REG_COLS = [
   "id", "division_id", "org_id", "status", "display_name", "contact_email",
-  "dob", "gender", "guardian_name", "guardian_consent", "answers",
+  "dob", "gender", "guardian_name", "guardian_consent", "answers", "roster",
   "amount_cents", "currency", "checkout_session_id", "payment_intent_id",
   "refunded_cents", "refunded_at", "entrant_id", "promoted_at",
   "withdrawn_at", "created_at",
@@ -265,6 +267,8 @@ interface DivisionCtx {
   starts_on: string | null;
   ends_on: string | null;
   org_slug: string;
+  org_name: string;
+  payment_instructions: string | null;
   charges_enabled: boolean;
 }
 
@@ -273,7 +277,8 @@ async function divisionCtx(db: AnySql, divisionId: string): Promise<DivisionCtx>
     select d.id, d.competition_id, d.org_id, d.eligibility,
            c.name as comp_name, c.slug as comp_slug, c.visibility as comp_visibility,
            c.starts_on, c.ends_on,
-           o.slug as org_slug, o.stripe_charges_enabled as charges_enabled
+           o.slug as org_slug, o.name as org_name, o.payment_instructions,
+           o.stripe_charges_enabled as charges_enabled
     from divisions d
     join competitions c on c.id = d.competition_id
     join organizations o on o.id = c.org_id
@@ -316,6 +321,20 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
     await tx`
       insert into entrant_members (entrant_id, person_id)
       values (${entrant.id}, ${person.id})`;
+  } else if (entrantKind === "team" && reg.roster.length > 0) {
+    // Team roster supplied at registration → a person + squad member per player.
+    for (const p of reg.roster) {
+      const name = p.name.trim();
+      if (!name) continue;
+      const [person] = await tx<{ id: string }[]>`
+        insert into persons (org_id, full_name, dob)
+        values (${reg.org_id}, ${name}, ${p.dob ?? null})
+        returning id`;
+      await tx`
+        insert into entrant_members (entrant_id, person_id, squad_number)
+        values (${entrant.id}, ${person.id}, ${p.squad_number ?? null})
+        on conflict (entrant_id, person_id) do nothing`;
+    }
   }
   await tx`
     update registrations
@@ -354,7 +373,7 @@ const DEFAULT_SETTINGS: Omit<RegistrationSettingsRow, "division_id"> = {
   closes_at: null,
   capacity: null,
   fee_cents: 0,
-  currency: "usd",
+  currency: "gbp",
   refund_lock_at: null,
   form_fields: [],
   updated_at: null,
@@ -496,12 +515,10 @@ export async function publicRegistrationInfo(
   const divisions: PublicDivisionInfo[] = rows.map((r) => {
     const remaining =
       r.capacity === null ? null : Math.max(0, r.capacity - r.active);
-    let open = windowOpen(r, now);
+    const open = windowOpen(r, now);
+    // Paid divisions stay open without Stripe — entry fees are collected
+    // offline (cash / bank transfer) while Connect is disabled.
     let reason: string | null = open ? null : "window";
-    if (open && r.fee_cents > 0 && !comp.charges_enabled) {
-      open = false;
-      reason = "payments_unavailable";
-    }
     if (open && remaining === 0) reason = "full"; // still open — joins the waitlist
     return {
       division_id: r.division_id,
@@ -579,11 +596,10 @@ export async function submitRegistration(
   const answers = validateAnswers(settings.form_fields ?? [], input.answers);
   const secret = mintRegistrationToken();
 
-  // Paid divisions need the org ready to charge before we take a submission.
+  // Stripe Connect is disabled for now: paid divisions collect the entry fee
+  // offline (cash / bank transfer). The submission is accepted immediately and
+  // the organiser's payment instructions are shown + emailed to the registrant.
   const paid = settings.fee_cents > 0;
-  if (paid && !ctx.charges_enabled) {
-    throw new HttpError(503, "Payments are not set up for this organiser yet — try again later");
-  }
 
   // postgres types begin() as UnwrapPromiseArray (db.ts note) — safe cast.
   const reg = (await sql.begin(async (tx) => {
@@ -600,16 +616,19 @@ export async function submitRegistration(
         planLimit ?? Number.POSITIVE_INFINITY,
       );
       const waitlisted = taken >= hardCap;
+      // Roster only applies to team entries; drop it for individual/pair.
+      const roster = settings.entrant_kind === "team" ? input.players : [];
       const [row] = await tx<RegistrationRow[]>`
         insert into registrations
           (division_id, status, display_name, contact_email, dob, gender,
-           guardian_name, guardian_consent, answers, amount_cents, currency,
+           guardian_name, guardian_consent, answers, roster, amount_cents, currency,
            access_token_hash)
         values
           (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"},
            ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
            ${input.gender ?? null}, ${input.guardian_name ?? null},
            ${input.guardian_consent}, ${tx.json(answers as never)},
+           ${tx.json(roster as never)},
            ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
            ${hashRegistrationToken(secret)})
         returning ${sql(REG_COLS as unknown as string[])}`;
@@ -622,11 +641,25 @@ export async function submitRegistration(
       return row;
     })) as unknown as RegistrationRow;
 
-  let checkoutUrl: string | null = null;
-  if (paid && reg.status === "pending") {
-    checkoutUrl = await createRegistrationCheckout(reg, settings, ctx, secret, origin);
-  }
-  return { registration: reg, access_token: secret, checkout_url: checkoutUrl };
+  // Confirmation email (offline flow) — includes the cash/bank instructions
+  // for paid entries. Fire-and-forget: a mail hiccup must not fail the signup.
+  const statusUrl =
+    `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
+    `?rid=${reg.id}&token=${encodeURIComponent(secret)}`;
+  void sendRegistrationEmail({
+    to: reg.contact_email,
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    displayName: reg.display_name,
+    status: reg.status,
+    feeCents: paid ? settings.fee_cents : 0,
+    currency: settings.currency,
+    paymentInstructions: paid && reg.status !== "waitlisted" ? ctx.payment_instructions : null,
+    statusUrl,
+  }).catch(() => {});
+
+  // Stripe checkout is disabled — offline payment only.
+  return { registration: reg, access_token: secret, checkout_url: null };
 }
 
 /** Destination charge on the org's Connect account; the platform keeps
@@ -644,7 +677,7 @@ async function createRegistrationCheckout(
     throw new HttpError(503, "Payments are not set up for this organiser yet");
   }
   const statusUrl =
-    `${origin}/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
+    `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
     `?rid=${reg.id}&token=${encodeURIComponent(token)}`;
   const session = await getStripe().checkout.sessions.create({
     mode: "payment",
@@ -784,6 +817,7 @@ export interface PublicStatusView {
   currency: string | null;
   refunded_cents: number;
   payment_due: boolean;
+  payment_instructions: string | null;
   created_at: string;
 }
 
@@ -819,6 +853,8 @@ export async function publicRegistrationStatus(
     currency: reg.currency,
     refunded_cents: reg.refunded_cents,
     payment_due: reg.status === "pending" && (settings?.fee_cents ?? 0) > 0,
+    payment_instructions:
+      reg.status === "pending" && (settings?.fee_cents ?? 0) > 0 ? ctx.payment_instructions : null,
     created_at: new Date(reg.created_at).toISOString(),
   };
 }
@@ -995,6 +1031,34 @@ export async function confirmRegistration(auth: AuthCtx, regId: string): Promise
   });
   fireDivisionRevalidate(row.division_id);
   return row;
+}
+
+/** Organiser: email an unpaid (offline) registrant a payment reminder. */
+export async function sendPaymentReminder(
+  auth: AuthCtx,
+  regId: string,
+): Promise<{ sent: boolean }> {
+  const reg = await withTenant(auth.orgId, (tx) => orgReg(tx, regId));
+  const settings = await loadSettings(sql, reg.division_id);
+  const fee = settings?.fee_cents ?? 0;
+  if (fee <= 0) throw new HttpError(422, "This division has no entry fee.");
+  if (reg.status !== "pending") {
+    throw new HttpError(422, "Payment reminders only apply to pending registrations.");
+  }
+  const ctx = await divisionCtx(sql, reg.division_id);
+  const sent = await sendPaymentReminderEmail({
+    to: reg.contact_email,
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    displayName: reg.display_name,
+    feeCents: fee,
+    currency: settings?.currency ?? reg.currency ?? "gbp",
+    paymentInstructions: ctx.payment_instructions,
+  });
+  await withTenant(auth.orgId, (tx) =>
+    audit(tx, ctx.competition_id, auth.orgId, "registration.payment_reminded", { registration_id: regId }, auth.userId),
+  );
+  return { sent };
 }
 
 async function orgRegAfter(tx: Tx, regId: string): Promise<RegistrationRow> {

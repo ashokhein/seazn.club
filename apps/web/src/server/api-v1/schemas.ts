@@ -431,6 +431,8 @@ const IsoDateTime = z.iso.datetime({ offset: true });
 /** Doc 12 §3 schedule_settings.config — the calendar pass inputs (05 §2.6). */
 export const ScheduleConfig = z.object({
   startAt: IsoDateTime.nullish(),
+  /** Last day the timetable runs — drives the week view's day span. */
+  endAt: IsoDateTime.nullish(),
   matchMinutes: z.number().int().min(1).max(24 * 60).default(30),
   gapMinutes: z.number().int().min(0).max(24 * 60).default(0),
   courts: z.array(z.string().min(1).max(100)).min(1).max(50).default(["Court 1"]),
@@ -622,7 +624,7 @@ export const PutRegistrationSettings = z
     closes_at: z.iso.datetime({ offset: true }).nullish(),
     capacity: z.number().int().min(1).max(10000).nullish(),
     fee_cents: z.number().int().min(0).max(100_000_00).default(0),
-    currency: z.string().length(3).toLowerCase().default("usd"),
+    currency: z.string().length(3).toLowerCase().default("gbp"),
     refund_lock_at: z.iso.datetime({ offset: true }).nullish(),
     form_fields: z.array(RegistrationFormField).max(12).default([]),
   })
@@ -716,6 +718,18 @@ export const PublicRegisterRequest = z.object({
   guardian_name: z.string().max(120).nullish(),
   guardian_consent: z.boolean().default(false),
   answers: z.record(z.string(), z.unknown()).default({}),
+  // Team registrations may include a squad roster (typed or imported). Ignored
+  // for individual/pair entrants.
+  players: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(120),
+        dob: z.iso.date().nullish(),
+        squad_number: z.number().int().min(0).max(999).nullish(),
+      }),
+    )
+    .max(50)
+    .default([]),
 });
 export type PublicRegisterRequest = z.infer<typeof PublicRegisterRequest>;
 

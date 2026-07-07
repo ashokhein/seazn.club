@@ -8,9 +8,13 @@ test.describe("navigation shell", () => {
     await expect(page.getByRole("link", { name: "+ New Competition" })).toBeVisible();
   });
 
-  test("clubs directory (Jul3/01) renders", async ({ page }) => {
-    await page.goto("/clubs");
-    await expect(page.getByRole("heading", { name: "Clubs", exact: true })).toBeVisible();
+  test("unified Directory renders People + Clubs tabs (Jul3/01)", async ({ page }) => {
+    await page.goto("/directory");
+    await expect(page.getByRole("heading", { name: "Directory", exact: true })).toBeVisible();
+    // Nav collapses People + Clubs into a single Directory item.
+    await expect(page.getByRole("link", { name: "Directory" })).toBeVisible();
+    // Clubs tab still exposes the Add club affordance.
+    await page.getByRole("link", { name: "clubs", exact: true }).click();
     await expect(page.getByRole("button", { name: "Add club" })).toBeVisible();
   });
 

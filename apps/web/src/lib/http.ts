@@ -9,7 +9,12 @@ export { HttpError, PaymentRequiredError } from "@/lib/errors";
 /** Wraps a route handler with consistent JSON error handling. */
 export function handler<T>(fn: () => Promise<T>) {
   return fn()
-    .then((data) => NextResponse.json({ ok: true, data }))
+    .then((data) =>
+      // A handler that builds its own Response (file downloads, redirects,
+      // custom content-types) is passed straight through — wrapping it in the
+      // { ok, data } envelope would corrupt the payload (e.g. GDPR export).
+      data instanceof Response ? data : NextResponse.json({ ok: true, data }),
+    )
     .catch((err: unknown) => {
       if (err instanceof ZodError) {
         return NextResponse.json(

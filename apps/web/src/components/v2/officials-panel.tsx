@@ -41,6 +41,22 @@ interface Sourced {
   pending: { reason: string }[];
 }
 
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join("");
+}
+
+const AVATAR_COLORS = ["#7c3aed", "#0891b2", "#db2777", "#ea580c", "#16a34a", "#2563eb", "#9333ea", "#c2410c"];
+function avatarColor(name: string): string {
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
+}
+
 export function OfficialsPanel({
   divisionId,
   officials,
@@ -120,25 +136,62 @@ export function OfficialsPanel({
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      {/* palette */}
+      {/* roster of officials */}
       <div className="card space-y-3 p-4">
-        <h3 className="text-sm font-semibold text-slate-900">Palette</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-900">Roster</h3>
+          {officials.length > 0 && (
+            <span className="text-xs text-slate-400">{officials.length} total</span>
+          )}
+        </div>
         {officials.length === 0 ? (
-          <p className="text-sm text-slate-500">No officials yet.</p>
+          <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-500">
+            No officials yet — add one below to start assigning them to fixtures.
+          </p>
         ) : (
-          <ul className="flex flex-wrap gap-1.5">
+          <ul className="grid gap-2 sm:grid-cols-2">
             {officials.map((o) => (
-              <li key={o.id} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-700">
-                {o.display_name}
-                <span className="ml-1 text-slate-400">{o.role_keys.join("·")}</span>
-                {o.entrant_id && <span className="ml-1 text-violet-500">team-ref</span>}
+              <li
+                key={o.id}
+                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2.5"
+              >
+                <span
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white"
+                  style={{ backgroundColor: avatarColor(o.display_name) }}
+                  aria-hidden
+                >
+                  {initials(o.display_name)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium text-slate-800">{o.display_name}</p>
+                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                    {o.role_keys.map((r) => (
+                      <span
+                        key={r}
+                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500"
+                      >
+                        {r}
+                      </span>
+                    ))}
+                    {o.entrant_id && (
+                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
+                        team-ref
+                      </span>
+                    )}
+                  </div>
+                </div>
+                {o.max_per_day != null && (
+                  <span className="shrink-0 text-[11px] text-slate-400">
+                    max {o.max_per_day}/day
+                  </span>
+                )}
               </li>
             ))}
           </ul>
         )}
         {canEdit && (
           <form
-            className="flex flex-wrap items-end gap-2"
+            className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3"
             onSubmit={(e) => {
               e.preventDefault();
               if (!name.trim()) return;
@@ -159,7 +212,7 @@ export function OfficialsPanel({
               Roles (space-separated)
               <input className="input w-40" value={roles} onChange={(e) => setRoles(e.target.value)} />
             </label>
-            <button type="submit" className="btn" disabled={busy}>Add official</button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>Add official</button>
           </form>
         )}
       </div>
@@ -206,10 +259,10 @@ export function OfficialsPanel({
             >
               Propose
             </button>
-            {proposal && (
+            {proposal && proposal.assignments.length > 0 && (
               <button
                 type="button"
-                className="btn"
+                className="btn btn-primary"
                 disabled={busy || proposal.conflicts.some((c) => c.severity === "block")}
                 onClick={() =>
                   void run(async () => {
@@ -233,6 +286,13 @@ export function OfficialsPanel({
               </button>
             )}
           </div>
+          {proposal && proposal.assignments.length === 0 && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">
+              Nothing to assign yet. Officials are placed onto fixtures that have a kick-off
+              time — publish the schedule (Board tab) and add at least one official above, then
+              Propose again.
+            </p>
+          )}
           {proposal && proposal.conflicts.length > 0 && (
             <ul className="space-y-1">
               {proposal.conflicts.map((c, i) => (
@@ -282,7 +342,7 @@ export function OfficialsPanel({
             </label>
             <button
               type="button"
-              className="btn"
+              className="btn btn-ghost"
               disabled={busy || !sourceStage}
               onClick={() =>
                 void run(async () => {

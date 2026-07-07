@@ -22,6 +22,12 @@ interface CompetitionLite {
 
 const STATUSES = ["draft", "published", "live", "completed", "archived"];
 
+const STATUS_HINT: Record<string, string> = {
+  published: "A timetable is set — publish it?",
+  live: "Matches are underway — mark it live?",
+  completed: "Every match is decided — mark it completed?",
+};
+
 // Doc 15 §1 — the exact consent copy for "Showcase on seazn.club".
 const SHOWCASE_CONSENT_COPY =
   "By turning this on, this competition's name, your organisation's name, its sport(s), " +
@@ -34,10 +40,13 @@ export function CompetitionSettings({
   competition,
   canEdit,
   discoveryBranding,
+  suggestedStatus = null,
 }: {
   competition: CompetitionLite;
   canEdit: boolean;
   discoveryBranding: boolean;
+  /** State-derived nudge, e.g. "live" once matches are underway. */
+  suggestedStatus?: string | null;
 }) {
   const router = useRouter();
   const [form, setForm] = useState({
@@ -59,6 +68,24 @@ export function CompetitionSettings({
   const [saved, setSaved] = useState(false);
 
   const readOnly = !canEdit || competition.frozen;
+  const showSuggestion = !readOnly && suggestedStatus && suggestedStatus !== form.status;
+
+  async function applyStatus(next: string) {
+    setError(null);
+    setBusy(true);
+    try {
+      await apiV1(`/api/v1/competitions/${competition.id}`, {
+        method: "PATCH",
+        json: { status: next },
+      });
+      setForm((f) => ({ ...f, status: next }));
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update status");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -188,6 +215,19 @@ export function CompetitionSettings({
               </option>
             ))}
           </select>
+          {showSuggestion && (
+            <span className="mt-1.5 flex flex-wrap items-center gap-2 rounded-md bg-purple-50 px-2.5 py-1.5 text-xs text-purple-800">
+              {STATUS_HINT[suggestedStatus!] ?? `Looks like this should be “${suggestedStatus}”.`}
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void applyStatus(suggestedStatus!)}
+                className="btn btn-primary px-2 py-0.5 text-xs"
+              >
+                Set to {suggestedStatus}
+              </button>
+            </span>
+          )}
         </label>
       </div>
 

@@ -45,8 +45,8 @@ export default async function DashboardPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/people" className="btn btn-ghost">
-              People
+            <Link href="/directory" className="btn btn-ghost">
+              Directory
             </Link>
             {canEdit && (
               <Link href="/competitions/new" data-tour="new-competition" className="btn btn-primary">

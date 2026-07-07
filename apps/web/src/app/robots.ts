@@ -6,7 +6,7 @@ export default function robots(): MetadataRoute.Robots {
       {
         userAgent: "*",
         allow: ["/", "/pricing", "/use-cases/", "/legal/"],
-        disallow: ["/dashboard", "/admin", "/api/", "/settings", "/competitions/", "/divisions/", "/fixtures/", "/people", "/orgs/"],
+        disallow: ["/dashboard", "/admin", "/api/", "/settings", "/competitions/", "/divisions/", "/fixtures/", "/directory", "/people", "/clubs", "/orgs/"],
       },
     ],
     sitemap: "https://seazn.club/sitemap.xml",

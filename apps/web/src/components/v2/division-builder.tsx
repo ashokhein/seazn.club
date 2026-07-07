@@ -4,10 +4,12 @@
 // eligibility template → stage graph. Creates the division, then its stages,
 // then lands on the division console. Match-rule fields build the config
 // override object, validated server-side by the pinned module's configSchema.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { venueNoun, venueLabel } from "@/lib/venue";
+import { defaultMatchMinutes } from "@/lib/match-length";
 
 export interface SportOption {
   key: string;
@@ -15,11 +17,37 @@ export interface SportOption {
   variants: { key: string; name: string; system: boolean }[];
 }
 
+// The most common variant to preselect per sport (else the first listed).
+const PREFERRED_VARIANT: Record<string, string> = {
+  cricket: "t20",
+};
+
+function pickVariant(sportKey: string, variants: { key: string }[]): string {
+  const pref = PREFERRED_VARIANT[sportKey.toLowerCase()];
+  if (pref && variants.some((v) => v.key === pref)) return pref;
+  return variants[0]?.key ?? "";
+}
+
 interface StageDraft {
   kind: string;
   name: string;
   config: Record<string, unknown>;
   qualification: Record<string, unknown> | null;
+}
+
+// Mirror of the server preview response (src/server/usecases/stages.ts).
+interface PreviewMatch {
+  home: string;
+  away: string;
+}
+interface PreviewSection {
+  title: string;
+  matches: PreviewMatch[];
+}
+interface PreviewPhase {
+  title: string;
+  note?: string;
+  sections: PreviewSection[];
 }
 
 // One-click stage graphs. `qualified(n)` = how many advance to stage 2.
@@ -102,7 +130,7 @@ const STAGE_TEMPLATES: {
   {
     key: "triple_rr",
     label: "Triple round robin",
-    help: "Everyone plays everyone three times (Jul3/08).",
+    help: "Everyone plays everyone three times.",
     build: () => [{ kind: "league", name: "Triple RR", config: { legs: 3 }, qualification: null }],
   },
   {
@@ -268,7 +296,9 @@ export function DivisionBuilder({
   const [name, setName] = useState("");
   const [sportKey, setSportKey] = useState(sports[0]?.key ?? "");
   const sport = useMemo(() => sports.find((s) => s.key === sportKey), [sports, sportKey]);
-  const [variantKey, setVariantKey] = useState(sport?.variants[0]?.key ?? "");
+  const [variantKey, setVariantKey] = useState(
+    sport ? pickVariant(sport.key, sport.variants) : "",
+  );
   // Match-rule values keyed by RuleField.key; "" = keep the variant default.
   const [ruleValues, setRuleValues] = useState<Record<string, string>>({});
 
@@ -285,6 +315,25 @@ export function DivisionBuilder({
   const [poolCount, setPoolCount] = useState(2);
   const [legs, setLegs] = useState(1);
 
+  // Scheduling (optional — can also be edited later on the schedule board).
+  const [courts, setCourts] = useState<string[]>(() => [`${venueLabel(sports[0]?.key)} 1`]);
+  const [matchMinutes, setMatchMinutes] = useState(() =>
+    defaultMatchMinutes(sports[0]?.key, sports[0] ? pickVariant(sports[0].key, sports[0].variants) : ""),
+  );
+  // Once the organiser edits the length, stop auto-filling it from the sport.
+  const [matchMinutesTouched, setMatchMinutesTouched] = useState(false);
+  const [scheduleStart, setScheduleStart] = useState(""); // datetime-local
+  const [scheduleEnd, setScheduleEnd] = useState(""); // date
+
+  const [tab, setTab] = useState<"basics" | "eligibility" | "format" | "scheduling">("basics");
+
+  // "Show example" fixture preview (runs the real engine draw server-side).
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewCount, setPreviewCount] = useState(8);
+  const [preview, setPreview] = useState<PreviewPhase[] | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -292,8 +341,17 @@ export function DivisionBuilder({
   function selectSport(key: string) {
     setSportKey(key);
     const next = sports.find((s) => s.key === key);
-    setVariantKey(next?.variants[0]?.key ?? "");
+    const firstVariant = next ? pickVariant(next.key, next.variants) : "";
+    setVariantKey(firstVariant);
     setRuleValues({}); // rules are sport-specific
+    if (!matchMinutesTouched) setMatchMinutes(defaultMatchMinutes(key, firstVariant));
+    // Rename the default single venue to match the sport, unless the organiser
+    // has already customised the list.
+    setCourts((cs) =>
+      cs.length === 1 && /^(Court|Pitch|Table|Board) 1$/.test(cs[0]!.trim())
+        ? [`${venueLabel(key)} 1`]
+        : cs,
+    );
   }
 
   function buildEligibility(): Record<string, unknown>[] {
@@ -325,8 +383,9 @@ export function DivisionBuilder({
     });
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit() {
+    // Guard: only the explicit Create button (on the last tab) may create.
+    if (tab !== "scheduling") return;
     setError(null);
     setPaywallFeature(null);
 
@@ -358,6 +417,26 @@ export function DivisionBuilder({
         method: "POST",
         json: stages,
       });
+
+      // Seed scheduling settings (courts / match length / start). Non-fatal:
+      // the board can set these later, so a failure here shouldn't block create.
+      const cleanCourts = courts.map((c) => c.trim()).filter(Boolean);
+      try {
+        await apiV1(`/api/v1/divisions/${division.id}/schedule-settings`, {
+          method: "PUT",
+          json: {
+            config: {
+              courts: cleanCourts.length ? cleanCourts : ["Court 1"],
+              matchMinutes,
+              startAt: scheduleStart ? new Date(scheduleStart).toISOString() : null,
+              endAt: scheduleEnd ? new Date(`${scheduleEnd}T23:59:00`).toISOString() : null,
+            },
+          },
+        });
+      } catch {
+        /* board settings are editable later — ignore */
+      }
+
       router.push(`/divisions/${division.id}`);
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
@@ -370,12 +449,104 @@ export function DivisionBuilder({
   }
 
   const templateInfo = STAGE_TEMPLATES.find((t) => t.key === template);
+  const venue = venueNoun(sportKey); // "pitch" / "table" / "court" / "board"
+  const VenueCap = venueLabel(sportKey);
+
+  // Wizard flow: Next validates the current tab before advancing.
+  const TAB_ORDER = ["basics", "eligibility", "format", "scheduling"] as const;
+  const tabIndex = TAB_ORDER.indexOf(tab);
+  const isLastTab = tabIndex === TAB_ORDER.length - 1;
+
+  function tabError(t: (typeof TAB_ORDER)[number]): string | null {
+    if (t === "basics") {
+      if (!name.trim()) return "Enter a division name.";
+      if (!sportKey) return "Choose a sport.";
+      if (!variantKey) return "Choose a variant.";
+    }
+    if (t === "eligibility" && maxAge) {
+      const n = Number(maxAge);
+      if (!Number.isInteger(n) || n <= 0) return "Max age must be a whole number above 0.";
+    }
+    if (t === "scheduling") {
+      if (!(matchMinutes >= 1)) return "Match length must be at least 1 minute.";
+      if (!courts.some((c) => c.trim())) return `Add at least one ${venue}.`;
+    }
+    return null;
+  }
+
+  function goNext() {
+    const err = tabError(tab);
+    if (err) {
+      setError(err);
+      return;
+    }
+    setError(null);
+    setTab(TAB_ORDER[Math.min(tabIndex + 1, TAB_ORDER.length - 1)]!);
+  }
+
+  // Any change to the format or its knobs invalidates a shown example.
+  useEffect(() => {
+    setPreview(null);
+  }, [template, qualified, swissRounds, poolCount, legs]);
+
+  async function runPreview() {
+    setPreviewError(null);
+    setPreviewBusy(true);
+    try {
+      const { phases } = await apiV1<{ phases: PreviewPhase[] }>("/api/v1/format-preview", {
+        method: "POST",
+        json: { count: previewCount, stages: buildStages() },
+      });
+      setPreview(phases);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "Couldn't build example");
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  // Nav jumps: going back is free; going forward must clear the current tab.
+  function goToTab(key: (typeof TAB_ORDER)[number]) {
+    if (TAB_ORDER.indexOf(key) > tabIndex) {
+      const err = tabError(tab);
+      if (err) {
+        setError(err);
+        return;
+      }
+    }
+    setError(null);
+    setTab(key);
+  }
   const hasSecondStage =
     template === "league_ko" || template === "groups_ko" || template === "group_stepladder";
 
   return (
-    <form onSubmit={submit} className="space-y-6">
-      <section className="card space-y-4 p-6">
+    <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
+      <nav className="flex flex-wrap gap-1 border-b border-slate-200">
+        {(
+          [
+            ["basics", "Basics"],
+            ["eligibility", "Eligibility"],
+            ["format", "Format"],
+            ["scheduling", "Scheduling"],
+          ] as const
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => goToTab(key)}
+            className={`border-b-2 px-4 py-2 text-sm font-medium transition ${
+              tab === key
+                ? "border-purple-600 text-purple-700"
+                : "border-transparent text-slate-500 hover:text-slate-800"
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      <section className={`card space-y-4 p-6 ${tab === "basics" ? "" : "hidden"}`}>
         <h2 className="text-sm font-semibold text-slate-700">Sport & variant</h2>
         <label className="block">
           <span className="label">Division name</span>
@@ -404,7 +575,10 @@ export function DivisionBuilder({
             <span className="label">Variant</span>
             <select
               value={variantKey}
-              onChange={(e) => setVariantKey(e.target.value)}
+              onChange={(e) => {
+                setVariantKey(e.target.value);
+                if (!matchMinutesTouched) setMatchMinutes(defaultMatchMinutes(sportKey, e.target.value));
+              }}
               className="select"
             >
               {(sport?.variants ?? []).map((v) => (
@@ -473,7 +647,7 @@ export function DivisionBuilder({
         )}
       </section>
 
-      <section className="card space-y-4 p-6">
+      <section className={`card space-y-4 p-6 ${tab === "eligibility" ? "" : "hidden"}`}>
         <h2 className="text-sm font-semibold text-slate-700">Eligibility</h2>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="block">
@@ -557,7 +731,7 @@ export function DivisionBuilder({
         </label>
       </section>
 
-      <section className="card space-y-4 p-6">
+      <section className={`card space-y-4 p-6 ${tab === "format" ? "" : "hidden"}`}>
         <h2 className="text-sm font-semibold text-slate-700">Format (stage graph)</h2>
         <div className="grid gap-2 sm:grid-cols-3">
           {STAGE_TEMPLATES.map((t) => (
@@ -655,6 +829,177 @@ export function DivisionBuilder({
             locked in until you generate.
           </p>
         )}
+
+        {/* Show example — runs the real engine draw over placeholder entrants. */}
+        <div className="border-t border-slate-100 pt-4">
+          {!previewOpen ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPreviewOpen(true);
+                void runPreview(); // always reflect the current format
+              }}
+              className="btn btn-ghost text-sm"
+            >
+              Show example fixtures
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-slate-700">Example fixtures</span>
+                <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                  Entrants
+                  <input
+                    type="number"
+                    min={2}
+                    max={64}
+                    value={previewCount}
+                    onChange={(e) => setPreviewCount(Math.min(64, Math.max(2, Number(e.target.value) || 2)))}
+                    className="input w-16 px-2 py-1 text-sm"
+                  />
+                </label>
+                <button type="button" onClick={() => void runPreview()} disabled={previewBusy} className="btn btn-primary px-3 py-1 text-xs">
+                  {previewBusy ? "…" : "Generate"}
+                </button>
+                <button type="button" onClick={() => setPreviewOpen(false)} className="btn btn-ghost px-3 py-1 text-xs">
+                  Hide
+                </button>
+                <span className="text-[11px] text-slate-400">Same draw the server produces — names are placeholders.</span>
+              </div>
+
+              {previewError && (
+                <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{previewError}</p>
+              )}
+
+              {preview?.map((phase, pi) => (
+                <div key={pi} className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-sm font-semibold text-slate-800">{phase.title}</p>
+                  {phase.note && <p className="mt-0.5 text-xs text-slate-500">{phase.note}</p>}
+                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    {phase.sections.map((sec, si) => (
+                      <div key={si}>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {sec.title}
+                        </p>
+                        <ul className="space-y-0.5">
+                          {sec.matches.map((m, mi) => (
+                            <li key={mi} className="flex items-center gap-1.5 text-xs text-slate-600">
+                              <span className="truncate font-medium text-slate-700">{m.home}</span>
+                              <span className="text-slate-400">v</span>
+                              <span className="truncate font-medium text-slate-700">{m.away}</span>
+                            </li>
+                          ))}
+                          {sec.matches.length === 0 && (
+                            <li className="text-xs text-slate-400">—</li>
+                          )}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className={`card space-y-4 p-6 ${tab === "scheduling" ? "" : "hidden"}`}>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">
+            Scheduling <span className="ml-1 text-xs font-normal text-slate-400">optional</span>
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Courts, match length and a start time for the timetable. You can change these later on
+            the schedule board.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="label">Match length (minutes)</span>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={matchMinutes}
+              onChange={(e) => {
+                setMatchMinutesTouched(true);
+                setMatchMinutes(Number(e.target.value) || 30);
+              }}
+              className="input w-full"
+            />
+            <span className="mt-0.5 block text-xs text-slate-400">
+              Pre-filled for the selected sport &amp; variant — adjust if needed.
+            </span>
+          </label>
+          <label className="block">
+            <span className="label">Start date &amp; time</span>
+            <input
+              type="datetime-local"
+              value={scheduleStart}
+              onChange={(e) => setScheduleStart(e.target.value)}
+              className="input w-full"
+            />
+          </label>
+          <label className="block">
+            <span className="label">End date</span>
+            <input
+              type="date"
+              value={scheduleEnd}
+              min={scheduleStart ? scheduleStart.slice(0, 10) : undefined}
+              onChange={(e) => setScheduleEnd(e.target.value)}
+              className="input w-full"
+            />
+            <span className="mt-0.5 block text-xs text-slate-400">
+              Sets how many days the schedule&apos;s week view spans.
+            </span>
+          </label>
+        </div>
+
+        <div>
+          <span className="label">{VenueCap}s</span>
+          <p className="mb-2 text-xs text-slate-400">
+            Name each {venue} available — matches run in parallel across them.
+          </p>
+          <ul className="space-y-2">
+            {courts.map((c, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <input
+                  value={c}
+                  onChange={(e) =>
+                    setCourts((cs) => cs.map((x, j) => (j === i ? e.target.value : x)))
+                  }
+                  placeholder={`${VenueCap} ${i + 1}`}
+                  maxLength={100}
+                  className="input flex-1"
+                />
+                {courts.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setCourts((cs) => cs.filter((_, j) => j !== i))}
+                    aria-label={`Remove ${venue} ${i + 1}`}
+                    className="rounded-md px-2 py-1 text-sm text-red-500 hover:bg-red-50"
+                  >
+                    ✕
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            onClick={() =>
+              setCourts((cs) => (cs.length < 50 ? [...cs, `${VenueCap} ${cs.length + 1}`] : cs))
+            }
+            className="btn btn-ghost mt-2 text-sm"
+          >
+            + Add {venue}
+          </button>
+          <p className="mt-1 text-xs text-slate-400">
+            {courts.filter((c) => c.trim()).length || 1} {venue}
+            {(courts.filter((c) => c.trim()).length || 1) === 1 ? "" : "s"}
+          </p>
+        </div>
       </section>
 
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
@@ -662,7 +1007,7 @@ export function DivisionBuilder({
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
 
-      <div className="flex justify-end gap-2">
+      <div className="flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => router.push(`/competitions/${competitionId}`)}
@@ -670,13 +1015,31 @@ export function DivisionBuilder({
         >
           Cancel
         </button>
-        <button
-          type="submit"
-          disabled={busy || !name.trim() || !sportKey || !variantKey}
-          className="btn btn-primary"
-        >
-          {busy ? "Creating…" : "Create division"}
-        </button>
+        <div className="flex gap-2">
+          {tabIndex > 0 && (
+            <button
+              type="button"
+              onClick={() => setTab(TAB_ORDER[tabIndex - 1]!)}
+              className="btn btn-ghost"
+            >
+              Back
+            </button>
+          )}
+          {isLastTab ? (
+            <button
+              type="button"
+              onClick={() => void submit()}
+              disabled={busy || !name.trim() || !sportKey || !variantKey}
+              className="btn btn-primary"
+            >
+              {busy ? "Creating…" : "Create division"}
+            </button>
+          ) : (
+            <button type="button" onClick={goNext} className="btn btn-primary">
+              Next
+            </button>
+          )}
+        </div>
       </div>
     </form>
   );

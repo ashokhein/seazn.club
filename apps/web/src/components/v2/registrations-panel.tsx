@@ -4,7 +4,7 @@
 // settings (window, fee, capacity, bounded form-field builder), the
 // registration list with approve / waitlist / withdraw / refund, CSV export,
 // and the Stripe Connect onboarding banner that gates entry fees.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
@@ -65,13 +65,16 @@ function fromLocalInput(v: string): string | null {
   return v ? new Date(v).toISOString() : null;
 }
 
+const CURRENCY_SYMBOLS: Record<string, string> = { gbp: "£", usd: "$", eur: "€" };
+function currencySymbol(code: string): string {
+  return CURRENCY_SYMBOLS[code?.toLowerCase()] ?? (code || "").toUpperCase();
+}
+
 export function RegistrationsPanel({
-  orgId,
   divisionId,
   canEdit,
   paidAllowed = true,
 }: {
-  orgId: string;
   divisionId: string;
   canEdit: boolean;
   /** registration.paid entitlement — false shows the plan badge on the fee field. */
@@ -83,6 +86,11 @@ export function RegistrationsPanel({
   const [paywall, setPaywall] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  // Fee is entered in major units (pounds) but stored as integer minor units
+  // (pence). A local string keeps mid-typing states like "1." / "1.5" intact.
+  const [feeText, setFeeText] = useState("");
+  const feeInited = useRef(false);
 
   const refresh = useCallback(async () => {
     const [s, r] = await Promise.all([
@@ -98,6 +106,14 @@ export function RegistrationsPanel({
       setError(err instanceof Error ? err.message : "Failed to load"),
     );
   }, [refresh]);
+
+  // Seed the pounds field once, from the loaded settings.
+  useEffect(() => {
+    if (settings && !feeInited.current) {
+      feeInited.current = true;
+      setFeeText((settings.fee_cents / 100).toString());
+    }
+  }, [settings]);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -120,6 +136,20 @@ export function RegistrationsPanel({
   async function save() {
     if (!settings) return;
     setSaved(false);
+    // Sanitise questions so one incomplete row can't 400 the whole save:
+    // drop blank labels, snake_case + de-duplicate keys, keep select options.
+    const seen = new Set<string>();
+    const form_fields = settings.form_fields
+      .filter((f) => f.label.trim())
+      .map((f) => {
+        let key = (f.key || f.label).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "field";
+        while (seen.has(key)) key = `${key}_x`.slice(0, 40);
+        seen.add(key);
+        const base = { key, label: f.label.trim(), kind: f.kind, required: f.required };
+        return f.kind === "select"
+          ? { ...base, options: (f.options ?? []).filter(Boolean).length ? f.options!.filter(Boolean) : ["Option 1"] }
+          : base;
+      });
     await run(async () => {
       await apiV1(`/api/v1/divisions/${divisionId}/registration-settings`, {
         method: "PUT",
@@ -132,20 +162,10 @@ export function RegistrationsPanel({
           fee_cents: settings.fee_cents,
           currency: settings.currency,
           refund_lock_at: settings.refund_lock_at,
-          form_fields: settings.form_fields,
+          form_fields,
         },
       });
       setSaved(true);
-    });
-  }
-
-  async function connect() {
-    await run(async () => {
-      const { url } = await apiV1<{ url: string }>(`/api/v1/orgs/${orgId}/connect`, {
-        method: "POST",
-        json: { return_path: window.location.pathname },
-      });
-      window.location.assign(url);
     });
   }
 
@@ -153,6 +173,17 @@ export function RegistrationsPanel({
     if (verb === "withdraw" && !window.confirm("Withdraw this registration?")) return;
     if (verb === "refund" && !window.confirm("Refund the remaining amount?")) return;
     void run(() => apiV1(`/api/v1/registrations/${id}/${verb}`, { method: "POST", json: {} }));
+  }
+
+  function remind(id: string) {
+    setNotice(null);
+    void run(async () => {
+      const res = await apiV1<{ sent: boolean }>(`/api/v1/registrations/${id}/remind`, {
+        method: "POST",
+        json: {},
+      });
+      setNotice(res.sent ? "Payment reminder sent." : "Reminder not sent — email isn't configured.");
+    });
   }
 
   if (!settings) {
@@ -232,17 +263,34 @@ export function RegistrationsPanel({
           <div className="grid grid-cols-2 gap-2">
             <label className="block text-xs text-slate-500">
               <span className="flex items-center gap-1.5">
-                Entry fee (cents; 0 = free)
+                Entry fee ({currencySymbol(settings.currency)}; 0 = free)
                 {!paidAllowed && <PlanBadge feature="registration.paid" />}
               </span>
-              <input
-                type="number"
-                min={0}
-                disabled={!canEdit}
-                value={settings.fee_cents}
-                onChange={(e) => set({ fee_cents: Number(e.target.value) || 0 })}
-                className="input mt-1 w-full"
-              />
+              <div className="mt-1 flex items-center">
+                <span className="rounded-l-md border border-r-0 border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-500">
+                  {currencySymbol(settings.currency)}
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  disabled={!canEdit}
+                  value={feeText}
+                  onChange={(e) => {
+                    const t = e.target.value;
+                    // Allow empty, whole, or up to 2 decimals while typing.
+                    if (!/^\d*\.?\d{0,2}$/.test(t)) return;
+                    setFeeText(t);
+                    const pounds = parseFloat(t);
+                    set({ fee_cents: Number.isFinite(pounds) ? Math.round(pounds * 100) : 0 });
+                  }}
+                  onBlur={() => {
+                    // Normalise "1.5" → "1.50", "" → "0" on leaving the field.
+                    setFeeText((settings.fee_cents / 100).toFixed(2));
+                  }}
+                  className="input w-full rounded-l-none"
+                />
+              </div>
             </label>
             <label className="block text-xs text-slate-500">
               Currency
@@ -256,30 +304,15 @@ export function RegistrationsPanel({
             </label>
           </div>
 
-          <label className="block text-xs text-slate-500">
-            Refund lock (auto-refund on withdrawal before this; your call after)
-            <input
-              type="datetime-local"
-              disabled={!canEdit}
-              value={toLocalInput(settings.refund_lock_at)}
-              onChange={(e) => set({ refund_lock_at: fromLocalInput(e.target.value) })}
-              className="input mt-1 w-full"
-            />
-          </label>
-
-          {paidConfigured && !settings.charges_enabled && (
-            <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-              <p className="font-medium">Stripe payouts not connected</p>
+          {paidConfigured && (
+            <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs text-purple-800">
+              <p className="font-medium">Entry fees are collected offline</p>
               <p className="mt-1">
-                Entry fees need a connected Stripe account (the money goes to your club,
-                minus the platform fee). Public registration stays closed for paid
-                divisions until this is done.
+                Registrations are accepted immediately and marked pending. Registrants see
+                your cash / bank-transfer instructions on their confirmation page and email —
+                set these once under{" "}
+                <a href="/settings" className="underline">Settings → Payment details</a>.
               </p>
-              {canEdit && (
-                <button type="button" disabled={busy} onClick={connect} className="btn btn-primary mt-2 text-xs">
-                  Connect Stripe
-                </button>
-              )}
             </div>
           )}
 
@@ -299,6 +332,7 @@ export function RegistrationsPanel({
 
         {paywall && <UpgradeGate feature={paywall} />}
         {error && <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
+        {notice && <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{notice}</p>}
       </aside>
 
       <section>
@@ -355,6 +389,11 @@ export function RegistrationsPanel({
                           Waitlist
                         </button>
                       )}
+                      {r.status === "pending" && r.amount_cents > 0 && (
+                        <button type="button" disabled={busy} onClick={() => remind(r.id)} className="btn btn-ghost text-xs" title="Email the registrant a payment reminder">
+                          Send reminder
+                        </button>
+                      )}
                       {r.status !== "withdrawn" && (
                         <button type="button" disabled={busy} onClick={() => action(r.id, "withdraw")} className="btn btn-ghost text-xs text-red-600">
                           Withdraw
@@ -395,23 +434,31 @@ function FormBuilder({
   }
 
   function add() {
-    const key = `field_${fields.length + 1}`;
-    onChange([...fields, { key, label: "", kind: "text", required: false }]);
+    // A blank label fails validation and blocks the whole save, so seed a
+    // valid default the organiser can rename.
+    const n = fields.length + 1;
+    onChange([...fields, { key: `question_${n}`, label: `Question ${n}`, kind: "text", required: false }]);
   }
 
   return (
     <section className="card space-y-3 p-5">
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">Custom form fields</h2>
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">Extra sign-up questions</h2>
+          <p className="text-xs text-slate-400">
+            Ask registrants anything beyond name, email and date of birth.
+          </p>
+        </div>
         {canEdit && fields.length < 12 && (
           <button type="button" onClick={add} className="btn btn-ghost text-xs">
-            + Add
+            + Add question
           </button>
         )}
       </div>
       {fields.length === 0 && (
         <p className="text-xs text-slate-400">
-          Ask registrants extra questions — shirt size, club membership number…
+          e.g. shirt size, dietary needs, emergency contact, club membership number, or a
+          &ldquo;I agree to the code of conduct&rdquo; checkbox.
         </p>
       )}
       {fields.map((f, i) => (

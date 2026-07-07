@@ -2,6 +2,8 @@ export const dynamic = "force-dynamic";
 // Drag-and-drop schedule board for one division (doc 12 §2, PROMPT-17).
 // Community renders it view-only (doc 12 §5 — scheduling.board).
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
+import { venueLabel } from "@/lib/venue";
 import { Nav } from "@/components/nav";
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getDivision } from "@/server/usecases/divisions";
@@ -62,6 +64,13 @@ export default async function DivisionSchedulePage({
       <Nav />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-4">
+          <Link
+            href={`/divisions/${id}`}
+            className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
+          >
+            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
+            Back to {division.name}
+          </Link>
           <p className="text-xs text-slate-400">
             <Link href="/dashboard" className="hover:text-purple-600">Competitions</Link>
             {" / "}
@@ -77,13 +86,13 @@ export default async function DivisionSchedulePage({
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">
               Schedule — {division.name}
             </h1>
-            <span className="ml-auto flex items-center gap-2 text-xs">
+            <span className="ml-auto flex flex-wrap items-center gap-1.5">
               {/* Jul3/06 print templates — raw file endpoints */}
-              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/timetable?format=pdf`}>Timetable PDF</a>
-              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/scoresheet?format=pdf&pageBreaks=per_pitch`}>Scoresheets</a>
-              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/roster?format=pdf`}>Rosters</a>
-              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/standings?format=pdf&landscape=true`}>Standings PDF</a>
-              <a className="text-purple-600 hover:underline" href={`/api/v1/divisions/${id}/exports/participants?format=xlsx`}>Participants XLSX</a>
+              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/timetable?format=pdf`}>Timetable PDF</a>
+              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/scoresheet?format=pdf&pageBreaks=per_pitch`}>Scoresheets</a>
+              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/roster?format=pdf`}>Rosters</a>
+              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/standings?format=pdf&landscape=true`}>Standings PDF</a>
+              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/participants?format=xlsx`}>Participants XLSX</a>
             </span>
           </div>
         </div>
@@ -122,6 +131,9 @@ export default async function DivisionSchedulePage({
               settings={{ division_id: id, config: settings.config, tz: settings.tz }}
               canEdit={editable}
               constraintsAllowed={constraints}
+              competitionStart={competition.starts_on}
+              competitionEnd={competition.ends_on}
+              venueCap={venueLabel(division.sport_key)}
             />
           </>
         )}

@@ -12,18 +12,54 @@ interface Props {
   divisionPath: string; // /{org}/{comp}/{div}
 }
 
+function dayKey(iso: string | null): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+const UNSCHEDULED = "unscheduled";
+
 export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
   const [entrant, setEntrant] = useState<string>("");
+  // Day view first (fixtures by date) — matches how a spectator reads a
+  // timetable on the day. Round view stays a click away for bracket-style flow.
+  const [view, setView] = useState<"day" | "round">("day");
   const shown = entrant
     ? fixtures.filter((f) => f.home_entrant_id === entrant || f.away_entrant_id === entrant)
     : fixtures;
 
-  const rounds = new Map<number, PublicFixture[]>();
+  // Only offer the day view when at least one fixture actually has a date.
+  const anyScheduled = fixtures.some((f) => f.scheduled_at);
+  const mode = anyScheduled ? view : "round";
+
+  const groups = new Map<string, PublicFixture[]>();
   for (const f of shown) {
-    const list = rounds.get(f.round_no) ?? [];
+    const key =
+      mode === "day" ? (dayKey(f.scheduled_at) ?? UNSCHEDULED) : String(f.round_no);
+    const list = groups.get(key) ?? [];
     list.push(f);
-    rounds.set(f.round_no, list);
+    groups.set(key, list);
   }
+
+  const orderedGroups = [...groups.entries()].sort(([a], [b]) => {
+    if (mode === "day") {
+      if (a === UNSCHEDULED) return 1;
+      if (b === UNSCHEDULED) return -1;
+      return a.localeCompare(b);
+    }
+    return Number(a) - Number(b);
+  });
+
+  const groupLabel = (key: string): string => {
+    if (mode === "round") return `Round ${key}`;
+    if (key === UNSCHEDULED) return "Time TBD";
+    return new Date(`${key}T12:00`).toLocaleDateString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+  };
 
   const options = Object.entries(entrantNames).sort(([, a], [, b]) => a.localeCompare(b));
 
@@ -46,6 +82,24 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
             </option>
           ))}
         </select>
+        {anyScheduled && (
+          <div className="inline-flex overflow-hidden rounded-lg border border-purple-200 text-sm">
+            {(["day", "round"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                className={`px-3 py-1.5 font-medium capitalize transition ${
+                  mode === v
+                    ? "bg-purple-600 text-white"
+                    : "bg-white text-purple-700 hover:bg-purple-50"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        )}
         <a
           href={`${divisionPath}/calendar.ics${entrant ? `?entrant=${entrant}` : ""}`}
           className="text-sm font-medium text-purple-700 underline underline-offset-2 hover:text-purple-900"
@@ -54,15 +108,20 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
         </a>
       </div>
 
-      {[...rounds.entries()]
-        .sort(([a], [b]) => a - b)
-        .map(([roundNo, list]) => (
-          <section key={roundNo} className="mb-6">
+      {orderedGroups.map(([key, list]) => (
+          <section key={key} className="mb-6">
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-700/70">
-              Round {roundNo}
+              {groupLabel(key)}
             </h3>
             <ul className="divide-y divide-purple-50 overflow-hidden rounded-xl border border-purple-100 bg-white shadow-sm">
-              {list.map((f) => (
+              {[...list]
+                .sort((a, b) =>
+                  mode === "day"
+                    ? (a.scheduled_at ?? "").localeCompare(b.scheduled_at ?? "") ||
+                      a.round_no - b.round_no
+                    : a.round_no - b.round_no,
+                )
+                .map((f) => (
                 <li key={f.id}>
                   <Link
                     href={`${divisionPath}/fixtures/${f.id}`}

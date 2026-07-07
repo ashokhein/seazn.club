@@ -48,7 +48,7 @@ function jsonLd(entry: DiscoveryEntry): string {
         }
       : {}),
     organizer: { "@type": "Organization", name: entry.org_name },
-    url: `https://seazn.club/${entry.org_slug}/${entry.slug}`,
+    url: `https://seazn.club/shared/${entry.org_slug}/${entry.slug}`,
   });
 }
 
@@ -69,7 +69,7 @@ export function LiveNowStrip({ fixtures }: { fixtures: DiscoveryLiveFixture[] })
           {fixtures.map((f) => (
             <Link
               key={f.id}
-              href={`/${f.org_slug}/${f.comp_slug}/${f.division_slug}/fixtures/${f.id}`}
+              href={`/shared/${f.org_slug}/${f.comp_slug}/${f.division_slug}/fixtures/${f.id}`}
               className="card block p-4 transition hover:border-purple-300 hover:shadow-md"
             >
               <p className="mb-1 flex items-center gap-2 text-xs text-slate-500">
@@ -93,7 +93,7 @@ export function DiscoveryCard({ entry, withJsonLd = false }: { entry: DiscoveryE
   const location = [entry.city, entry.country].filter(Boolean).join(", ");
   return (
     <Link
-      href={`/${entry.org_slug}/${entry.slug}`}
+      href={`/shared/${entry.org_slug}/${entry.slug}`}
       className="card relative block overflow-hidden p-5 transition hover:border-purple-300 hover:shadow-md"
     >
       {withJsonLd && (

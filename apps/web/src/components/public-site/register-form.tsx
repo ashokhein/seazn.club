@@ -39,6 +39,36 @@ function money(cents: number, currency: string): string {
   }).format(cents / 100);
 }
 
+interface Player {
+  name: string;
+  dob: string;
+  squad_number: string;
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Parse a pasted roster: one player per line, comma-separated fields in any
+ *  order — a 4-digit-led token is a DOB, a short number is a squad number,
+ *  everything else is the name. */
+function parseRoster(text: string): Player[] {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const parts = line.split(",").map((p) => p.trim()).filter(Boolean);
+      const player: Player = { name: "", dob: "", squad_number: "" };
+      for (const part of parts) {
+        if (ISO_DATE.test(part)) player.dob = part;
+        else if (/^\d{1,3}$/.test(part) && !player.squad_number) player.squad_number = part;
+        else if (!player.name) player.name = part;
+      }
+      if (!player.name) player.name = parts[0] ?? "";
+      return player;
+    })
+    .filter((p) => p.name);
+}
+
 function isMinorDob(dob: string): boolean {
   if (!dob) return false;
   const d = new Date(`${dob}T00:00:00Z`);
@@ -71,6 +101,8 @@ export function RegisterForm({
   const [guardianName, setGuardianName] = useState("");
   const [guardianConsent, setGuardianConsent] = useState(false);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
+  const [players, setPlayers] = useState<Player[]>([]);
+  const [importText, setImportText] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -102,6 +134,16 @@ export function RegisterForm({
           guardian_name: guardianName || null,
           guardian_consent: guardianConsent,
           answers,
+          players:
+            division.entrant_kind === "team"
+              ? players
+                  .filter((p) => p.name.trim())
+                  .map((p) => ({
+                    name: p.name.trim(),
+                    dob: p.dob || null,
+                    squad_number: p.squad_number ? Number(p.squad_number) : null,
+                  }))
+              : [],
         },
       });
       if (result.checkout_url) {
@@ -109,7 +151,7 @@ export function RegisterForm({
         return;
       }
       router.push(
-        `/${orgSlug}/${competitionSlug}/register/status` +
+        `/shared/${orgSlug}/${competitionSlug}/register/status` +
           `?rid=${result.registration_id}&token=${encodeURIComponent(result.access_token)}`,
       );
     } catch (err) {
@@ -307,6 +349,102 @@ export function RegisterForm({
             </div>
           )}
 
+          {division.entrant_kind === "team" && (
+            <fieldset className="space-y-3 rounded-xl border border-purple-100 bg-purple-50/30 p-4">
+              <legend className="px-1 text-sm font-medium text-zinc-700">
+                Players (optional)
+              </legend>
+              <p className="text-xs text-zinc-500">
+                Add your squad now, or leave blank and the organiser adds them later.
+              </p>
+
+              {players.length > 0 && (
+                <ul className="space-y-2">
+                  {players.map((p, i) => (
+                    <li key={i} className="flex flex-wrap items-center gap-2">
+                      <input
+                        aria-label={`Player ${i + 1} name`}
+                        placeholder="Full name"
+                        value={p.name}
+                        onChange={(e) =>
+                          setPlayers((ps) => ps.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)))
+                        }
+                        maxLength={120}
+                        className="min-w-40 flex-1 rounded-lg border border-purple-200 px-3 py-1.5 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                      />
+                      <input
+                        aria-label={`Player ${i + 1} squad number`}
+                        placeholder="#"
+                        value={p.squad_number}
+                        onChange={(e) =>
+                          setPlayers((ps) =>
+                            ps.map((x, j) =>
+                              j === i ? { ...x, squad_number: e.target.value.replace(/\D/g, "").slice(0, 3) } : x,
+                            ),
+                          )
+                        }
+                        inputMode="numeric"
+                        className="w-14 rounded-lg border border-purple-200 px-2 py-1.5 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                      />
+                      <input
+                        aria-label={`Player ${i + 1} date of birth`}
+                        type="date"
+                        value={p.dob}
+                        onChange={(e) =>
+                          setPlayers((ps) => ps.map((x, j) => (j === i ? { ...x, dob: e.target.value } : x)))
+                        }
+                        className="rounded-lg border border-purple-200 px-2 py-1.5 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setPlayers((ps) => ps.filter((_, j) => j !== i))}
+                        className="rounded-md px-2 py-1 text-sm text-red-500 hover:bg-red-50"
+                        aria-label={`Remove player ${i + 1}`}
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <button
+                type="button"
+                onClick={() => setPlayers((ps) => (ps.length < 50 ? [...ps, { name: "", dob: "", squad_number: "" }] : ps))}
+                className="rounded-lg border border-purple-300 bg-white px-3 py-1.5 text-sm font-medium text-purple-700 hover:bg-purple-50"
+              >
+                + Add player
+              </button>
+
+              <details className="text-sm">
+                <summary className="cursor-pointer text-purple-700">Import a list</summary>
+                <p className="mt-2 text-xs text-zinc-500">
+                  One player per line. Optional squad number and date of birth (YYYY-MM-DD),
+                  comma-separated — e.g. <code>Jordan Blake, 7, 2005-04-12</code>.
+                </p>
+                <textarea
+                  value={importText}
+                  onChange={(e) => setImportText(e.target.value)}
+                  rows={4}
+                  placeholder={"Jordan Blake, 7\nSam Ortiz, 10, 2004-11-30\nAlex Kim"}
+                  className="mt-2 w-full rounded-lg border border-purple-200 px-3 py-2 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const parsed = parseRoster(importText);
+                    if (parsed.length === 0) return;
+                    setPlayers((ps) => [...ps, ...parsed].slice(0, 50));
+                    setImportText("");
+                  }}
+                  className="mt-2 rounded-lg border border-purple-300 bg-white px-3 py-1.5 text-sm font-medium text-purple-700 hover:bg-purple-50"
+                >
+                  Add {parseRoster(importText).length || ""} players from list
+                </button>
+              </details>
+            </fieldset>
+          )}
+
           {error && (
             <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
           )}
@@ -319,7 +457,7 @@ export function RegisterForm({
             {busy
               ? "…"
               : division.fee_cents > 0 && division.remaining !== 0
-                ? `Continue to payment — ${money(division.fee_cents, division.currency)}`
+                ? `Register — entry fee ${money(division.fee_cents, division.currency)}`
                 : "Submit registration"}
           </button>
         </>

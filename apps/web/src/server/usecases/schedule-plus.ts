@@ -150,7 +150,8 @@ const SYSTEM = `You translate a tournament organiser's scheduling wishes into a 
 Rules:
 - "no player plays two teams/matches at once", "player in two categories" → crossPersonClash: "hard".
 - "at least one break between games", "no back to back" → noBackToBack: true. An explicit "N minutes rest" → restMin: N.
-- "team/category X not before HH:MM" or "starts later" → a startWindows entry (notBefore, 24h HH:MM).
+- "team/category X not before HH:MM" or "starts later" → a startWindows entry (targetKind "entrant"/"pool", notBefore, 24h HH:MM).
+- A blanket start time with no specific team — "matches start at 9am", "kick off at HH:MM", "everything from HH:MM" → a single startWindows entry with targetKind "division", targetName "all", notBefore in 24h HH:MM (e.g. "09:00").
 - "don't keep a team on one field", "alternate fields" → fieldFairness: "balance" (or "rotate" if they ask to rotate every game).
 - "divisions play in parallel / mixed" → parallelism: "mixed"; "one division at a time / block" → "block".
 - Only include what the organiser asked for. If the prose contains no recognisable scheduling constraint, emit the defaults with an empty startWindows array.`;
@@ -162,6 +163,10 @@ export async function parseAiConstraints(
 ): Promise<AiConstraints> {
   if (generate) {
     return AiConstraints.parse(await generate(SYSTEM, prose));
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    // Optional feature — fail with a clear message, not the raw SDK auth error.
+    throw new HttpError(503, "AI-assisted scheduling isn't set up on this server yet.");
   }
   const client = new Anthropic();
   const response = await client.messages.parse({
@@ -221,10 +226,9 @@ export async function aiConstraintsForDivision(
       } else if (w.targetKind === "pool") {
         id = pools.find((p) => fold(p.key) === fold(w.targetName) || fold(p.name) === fold(w.targetName))?.id ?? null;
       } else {
-        id =
-          fold(division.slug) === fold(w.targetName) || fold(division.name) === fold(w.targetName)
-            ? division.id
-            : null;
+        // A division-level window applies to the whole division — the name is
+        // just a hint ("all" / the division name), so always target this one.
+        id = division.id;
       }
       if (id === null) {
         unresolved.push({ kind: w.targetKind, name: w.targetName });

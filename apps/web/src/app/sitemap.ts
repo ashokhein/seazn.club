@@ -28,13 +28,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     const competitions = await listPublicSitemapEntries();
     publicEntries = competitions.flatMap((c) => [
       {
-        url: `${BASE}/${c.orgSlug}/${c.compSlug}`,
+        url: `${BASE}/shared/${c.orgSlug}/${c.compSlug}`,
         lastModified: now,
         changeFrequency: "hourly" as const,
         priority: 0.7,
       },
       ...c.divisionSlugs.map((div) => ({
-        url: `${BASE}/${c.orgSlug}/${c.compSlug}/${div}`,
+        url: `${BASE}/shared/${c.orgSlug}/${c.compSlug}/${div}`,
         lastModified: now,
         changeFrequency: "hourly" as const,
         priority: 0.6,

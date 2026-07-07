@@ -19,7 +19,9 @@ test("tabs mount: board exports + each panel", async ({ page, request }) => {
 });
 
 test("officials (PROMPT-22): propose → apply an auto-assignment", async ({ page, request }) => {
-  const { divisionId } = await seedScoredDivision(request);
+  // Officials attach to timed, UNDECIDED fixtures — keep results off so the
+  // auto-assign engine has something to place.
+  const { divisionId } = await seedScoredDivision(request, undefined, { decide: false });
   await apiJson(request, "/api/v1/officials", "POST", {
     display_name: `Ref ${TAG}`,
     role_keys: ["referee"],

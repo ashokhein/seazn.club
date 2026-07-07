@@ -6,6 +6,8 @@
 // everyone else (and any subscription failure) falls back to 45 s polling.
 // Escape returns to the console. Dark, large-type, made for a TV.
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { Slide } from "@/server/slideshow-data";
 
@@ -143,6 +145,14 @@ export function Slideshow({
       {/* Header */}
       <header className="relative flex items-center justify-between px-10 py-6">
         <div className="flex min-w-0 items-center gap-4">
+          <Link
+            href={backHref}
+            aria-label="Exit slideshow"
+            className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-sm font-medium text-slate-300 ring-1 ring-inset ring-white/15 transition hover:bg-white/20 hover:text-white"
+          >
+            <ArrowLeft className="h-4 w-4" strokeWidth={2} />
+            <span className="hidden sm:inline">Back</span>
+          </Link>
           <h1 className="truncate text-2xl font-bold tracking-tight">{title}</h1>
           {liveCount > 0 && (
             <span className="flex shrink-0 items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-sm font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-400/30">

@@ -553,6 +553,134 @@ function generate(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Example preview (division builder "Show example"). Runs the SAME `generate()`
+// the real draw uses, over synthetic seeded entrants, so the shape is identical
+// to what the server will produce — only the names are placeholders. No DB.
+// ---------------------------------------------------------------------------
+
+export interface PreviewMatch {
+  home: string;
+  away: string;
+}
+export interface PreviewSection {
+  title: string;
+  matches: PreviewMatch[];
+}
+export interface PreviewPhase {
+  title: string;
+  note?: string;
+  sections: PreviewSection[];
+}
+export interface PreviewStageInput {
+  kind: string;
+  name: string;
+  config: Record<string, unknown>;
+  qualification: unknown;
+}
+
+/** 0 → A, 25 → Z, 26 → AA … */
+function alphaLabel(i: number): string {
+  let s = "";
+  let n = i + 1;
+  while (n > 0) {
+    n--;
+    s = String.fromCharCode(65 + (n % 26)) + s;
+    n = Math.floor(n / 26);
+  }
+  return s;
+}
+
+function qualifierCount(qualification: unknown): number {
+  if (!qualification || typeof qualification !== "object") return 0;
+  const q = qualification as { topN?: unknown; take?: unknown };
+  if (typeof q.topN === "number") return q.topN;
+  if (Array.isArray(q.take)) return q.take.length;
+  return 0;
+}
+
+// Bracket-round title from the number of matches in that round.
+function roundTitle(kind: string, roundNo: number, matchCount: number): string {
+  const bracketish = kind === "knockout" || kind === "double_elim" || kind === "stepladder";
+  if (!bracketish) return `Round ${roundNo}`;
+  if (matchCount === 1) return "Final";
+  if (matchCount === 2) return "Semi-finals";
+  if (matchCount <= 4) return "Quarter-finals";
+  return `Round of ${matchCount * 2}`;
+}
+
+/** Preview a whole stage graph. Stage 1 uses A,B,C… entrants; later (qualifier)
+ *  stages use "Seed 1…q". Score-dependent formats (swiss/americano/ladder)
+ *  can't be drawn before results, so they return an explanatory note. */
+export function previewDivisionFixtures(
+  stages: PreviewStageInput[],
+  count: number,
+): PreviewPhase[] {
+  const n = Math.min(Math.max(2, Math.trunc(count) || 2), 64);
+  const poolIds = new Map(POOL_KEYS.split("").map((k) => [k, k]));
+
+  return stages.map((stage, stageIdx) => {
+    const firstStage = stageIdx === 0;
+    const entrantCount = firstStage ? n : Math.max(2, qualifierCount(stage.qualification) || 4);
+    const label = (i: number) => (firstStage ? alphaLabel(i) : `Seed ${i + 1}`);
+
+    // Formats whose pairings depend on live results — no static draw exists.
+    if (stage.kind === "swiss" || stage.kind === "americano" || stage.kind === "ladder") {
+      const note =
+        stage.kind === "ladder"
+          ? "No fixed fixtures — players challenge others within range and climb over a long window."
+          : stage.kind === "swiss"
+            ? `Round 1 is seeded; the remaining rounds pair players on equal scores from the live standings.`
+            : "Individuals rotate partners each round; pairings are drawn live from the running points.";
+      return { title: stage.name, note, sections: [] };
+    }
+
+    let gen: GenFixture[];
+    try {
+      const entrants: ActiveEntrant[] = Array.from({ length: entrantCount }, (_, i) => ({
+        id: `e${i + 1}`,
+        seed: i + 1,
+      }));
+      gen = generate(stage.kind, stage.config, entrants, poolIds);
+    } catch {
+      return { title: stage.name, note: "Preview isn't available for this format.", sections: [] };
+    }
+
+    // id → label; and extKey → short ref so feeds read "Winner of R2 #1".
+    const idLabel = new Map<string, string>();
+    for (let i = 0; i < entrantCount; i++) idLabel.set(`e${i + 1}`, label(i));
+    const refByExt = new Map(gen.map((f) => [f.extKey, `R${f.roundNo} #${f.seqInRound}`]));
+
+    const slot = (id: string | null, from?: { extKey: string; side: "winner" | "loser" }): string => {
+      if (id) return idLabel.get(id) ?? id;
+      if (from) return `${from.side === "loser" ? "Loser" : "Winner"} of ${refByExt.get(from.extKey) ?? "TBD"}`;
+      return "TBD";
+    };
+
+    // Group by pool (group stages) or by round (everything else).
+    const grouped = new Map<string, GenFixture[]>();
+    const byPool = gen.some((f) => f.poolId);
+    for (const f of gen) {
+      const key = byPool ? `pool:${f.poolId}` : `round:${f.roundNo}`;
+      (grouped.get(key) ?? grouped.set(key, []).get(key)!).push(f);
+    }
+
+    const sections: PreviewSection[] = [...grouped.entries()]
+      .sort(([a], [b]) => a.localeCompare(b, undefined, { numeric: true }))
+      .map(([key, fixtures]) => {
+        const matches = fixtures
+          .sort((a, b) => a.roundNo - b.roundNo || a.seqInRound - b.seqInRound)
+          .map((f) => ({ home: slot(f.home, f.homeFrom), away: slot(f.away, f.awayFrom) }));
+        const title = byPool
+          ? `Group ${key.slice(5)}`
+          : roundTitle(stage.kind, fixtures[0]!.roundNo, fixtures.length);
+        return { title, matches };
+      });
+
+    return { title: stage.name, sections };
+  });
+}
+
 export interface GenerateOutcome {
   created: number;
   existing: number;
