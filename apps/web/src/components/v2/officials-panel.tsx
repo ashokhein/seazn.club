@@ -139,7 +139,7 @@ export function OfficialsPanel({
       {/* roster of officials */}
       <div className="card space-y-3 p-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Officials</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Roster</h3>
           {officials.length > 0 && (
             <span className="text-xs text-slate-400">{officials.length} total</span>
           )}
