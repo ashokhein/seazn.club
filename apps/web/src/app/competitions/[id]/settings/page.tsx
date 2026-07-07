@@ -6,6 +6,19 @@ import { requireResourcePageAuth } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { hasFeature } from "@/lib/entitlements";
+import { withTenant } from "@/lib/db";
+
+/** State-derived status nudge: published → live → completed as matches progress. */
+function suggestStatus(
+  status: string,
+  agg: { total: number; underway: number; done: number; scheduled: number },
+): string | null {
+  if (agg.total === 0) return null;
+  if (status === "live" && agg.done === agg.total) return "completed";
+  if ((status === "draft" || status === "published") && agg.underway > 0) return "live";
+  if (status === "draft" && agg.scheduled > 0) return "published";
+  return null;
+}
 
 export default async function CompetitionSettingsPage({
   params,
@@ -18,6 +31,19 @@ export default async function CompetitionSettingsPage({
     getCompetition(auth, id),
     hasFeature(auth.orgId, "discovery.branding"),
   ]);
+
+  const [agg] = await withTenant(auth.orgId, (tx) =>
+    tx<{ total: number; underway: number; done: number; scheduled: number }[]>`
+      select
+        count(*)::int as total,
+        count(*) filter (where f.status in ('in_play','decided','finalized'))::int as underway,
+        count(*) filter (where f.status in ('decided','finalized','cancelled','forfeited','abandoned'))::int as done,
+        count(*) filter (where f.scheduled_at is not null)::int as scheduled
+      from fixtures f
+      join divisions d on d.id = f.division_id
+      where d.competition_id = ${id}`,
+  );
+  const suggestedStatus = suggestStatus(competition.status, agg);
 
   return (
     <>
@@ -53,6 +79,7 @@ export default async function CompetitionSettingsPage({
           }}
           canEdit={canEdit}
           discoveryBranding={discoveryBranding}
+          suggestedStatus={suggestedStatus}
         />
       </main>
     </>
