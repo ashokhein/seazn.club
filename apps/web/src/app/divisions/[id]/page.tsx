@@ -18,6 +18,7 @@ import { InviteScorer } from "@/components/v2/invite-scorer";
 import { StandingsTable } from "@/components/public-site/standings-table";
 import { StatsPanel } from "@/components/v2/stats-panel";
 import { LadderPanel } from "@/components/v2/ladder-panel";
+import { AmericanoPanel } from "@/components/v2/americano-panel";
 import { tieBreakLabel, type StandingsRow } from "@seazn/engine/competition";
 import type { MetricSpecLike } from "@/lib/public-site";
 
@@ -151,6 +152,17 @@ export default async function DivisionPage({
 
         {tab === "fixtures" && (
           <>
+            {stages
+              .filter((st) => st.kind === "americano")
+              .map((st) => (
+                <AmericanoPanel
+                  key={st.id}
+                  stageName={st.name}
+                  mode={st.config.mode === "mexicano" ? "mexicano" : "americano"}
+                  fixtures={fixtures.filter((f) => f.stage_id === st.id)}
+                  entrantNames={entrantNames}
+                />
+              ))}
             {stages
               .filter((st) => st.kind === "ladder")
               .map((st) => (

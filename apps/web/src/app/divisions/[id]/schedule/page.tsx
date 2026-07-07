@@ -20,12 +20,18 @@ import { listOfficials } from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
+const TABS = ["board", "officials", "constraints", "history"] as const;
+type Tab = (typeof TABS)[number];
+
 export default async function DivisionSchedulePage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ tab?: string }>;
 }) {
-  const { id } = await params;
+  const [{ id }, { tab: rawTab }] = await Promise.all([params, searchParams]);
+  const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "board";
   const { auth, canEdit } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
   const [competition, stages, fixtures, entrants, settings, boardEditable, constraints, officials] =
@@ -82,23 +88,45 @@ export default async function DivisionSchedulePage({
           </div>
         </div>
 
-        {!boardEditable && canEdit && !frozen && (
-          <div className="mb-4">
-            <UpgradeGate feature="scheduling.board" compact />
-          </div>
+        {/* Tabs (Jul3): the board + each panel is its own view — the page was
+            one long scroll otherwise. */}
+        <nav className="mb-6 flex gap-1 border-b border-slate-200">
+          {TABS.map((t) => (
+            <Link
+              key={t}
+              href={`/divisions/${id}/schedule?tab=${t}`}
+              className={`border-b-2 px-4 py-2 text-sm font-medium capitalize transition ${
+                tab === t
+                  ? "border-purple-600 text-purple-700"
+                  : "border-transparent text-slate-500 hover:text-slate-800"
+              }`}
+            >
+              {t}
+            </Link>
+          ))}
+        </nav>
+
+        {tab === "board" && (
+          <>
+            {!boardEditable && canEdit && !frozen && (
+              <div className="mb-4">
+                <UpgradeGate feature="scheduling.board" compact />
+              </div>
+            )}
+            <ScheduleBoard
+              divisions={[{ id: division.id, name: division.name, status: division.status, color: "#7c3aed" }]}
+              stages={stages.map((s) => ({ id: s.id, division_id: id, seq: s.seq, kind: s.kind, name: s.name, status: s.status }))}
+              fixtures={fixtures}
+              entrantNames={Object.fromEntries(entrants.map((e) => [e.id, e.display_name]))}
+              feedLabels={feedLabels(feedRows)}
+              settings={{ division_id: id, config: settings.config, tz: settings.tz }}
+              canEdit={editable}
+              constraintsAllowed={constraints}
+            />
+          </>
         )}
 
-        <ScheduleBoard
-          divisions={[{ id: division.id, name: division.name, status: division.status, color: "#7c3aed" }]}
-          stages={stages.map((s) => ({ id: s.id, division_id: id, seq: s.seq, kind: s.kind, name: s.name, status: s.status }))}
-          fixtures={fixtures}
-          entrantNames={Object.fromEntries(entrants.map((e) => [e.id, e.display_name]))}
-          feedLabels={feedLabels(feedRows)}
-          settings={{ division_id: id, config: settings.config, tz: settings.tz }}
-          canEdit={editable}
-          constraintsAllowed={constraints}
-        />
-
+        {tab === "officials" && (
         <OfficialsPanel
           divisionId={id}
           officials={officials.map((o) => ({
@@ -125,7 +153,9 @@ export default async function DivisionSchedulePage({
           hideNames={division.officials_hide_names}
           canEdit={canEdit && !frozen}
         />
+        )}
 
+        {tab === "constraints" && (
         <ConstraintsPanel
           divisionId={id}
           initialSettings={{
@@ -135,12 +165,15 @@ export default async function DivisionSchedulePage({
           }}
           canEdit={canEdit && !frozen && constraints}
         />
+        )}
 
+        {tab === "history" && (
         <HistoryPanel
           divisionId={id}
           scheduleLocked={division.schedule_locked}
           canEdit={canEdit && !frozen}
         />
+        )}
       </main>
     </>
   );
