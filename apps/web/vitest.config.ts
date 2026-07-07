@@ -6,6 +6,8 @@ export default defineConfig({
     environment: "node",
     pool: "threads",
     isolate: false,
+    // Playwright specs (e2e/) run under `playwright test`, not vitest.
+    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
     // @seazn/engine ships TS source (workspace symlink) — inline it so vitest
     // transforms it instead of treating it as an opaque external dep.
     server: { deps: { inline: [/@seazn\/engine/] } },
