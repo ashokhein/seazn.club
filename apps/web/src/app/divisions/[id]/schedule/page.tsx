@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 // Community renders it view-only (doc 12 §5 — scheduling.board).
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
+import { venueLabel } from "@/lib/venue";
 import { Nav } from "@/components/nav";
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getDivision } from "@/server/usecases/divisions";
@@ -132,6 +133,7 @@ export default async function DivisionSchedulePage({
               constraintsAllowed={constraints}
               competitionStart={competition.starts_on}
               competitionEnd={competition.ends_on}
+              venueCap={venueLabel(division.sport_key)}
             />
           </>
         )}

@@ -8,6 +8,7 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { venueNoun, venueLabel } from "@/lib/venue";
 
 export interface SportOption {
   key: string;
@@ -286,7 +287,7 @@ export function DivisionBuilder({
   const [legs, setLegs] = useState(1);
 
   // Scheduling (optional — can also be edited later on the schedule board).
-  const [courts, setCourts] = useState<string[]>(["Court 1"]);
+  const [courts, setCourts] = useState<string[]>(() => [`${venueLabel(sports[0]?.key)} 1`]);
   const [matchMinutes, setMatchMinutes] = useState(30);
   const [scheduleStart, setScheduleStart] = useState(""); // datetime-local
   const [scheduleEnd, setScheduleEnd] = useState(""); // date
@@ -300,6 +301,13 @@ export function DivisionBuilder({
     const next = sports.find((s) => s.key === key);
     setVariantKey(next?.variants[0]?.key ?? "");
     setRuleValues({}); // rules are sport-specific
+    // Rename the default single venue to match the sport, unless the organiser
+    // has already customised the list.
+    setCourts((cs) =>
+      cs.length === 1 && /^(Court|Pitch|Table|Board) 1$/.test(cs[0]!.trim())
+        ? [`${venueLabel(key)} 1`]
+        : cs,
+    );
   }
 
   function buildEligibility(): Record<string, unknown>[] {
@@ -396,6 +404,8 @@ export function DivisionBuilder({
   }
 
   const templateInfo = STAGE_TEMPLATES.find((t) => t.key === template);
+  const venue = venueNoun(sportKey); // "pitch" / "table" / "court" / "board"
+  const VenueCap = venueLabel(sportKey);
   const hasSecondStage =
     template === "league_ko" || template === "groups_ko" || template === "group_stepladder";
 
@@ -731,9 +741,9 @@ export function DivisionBuilder({
         </div>
 
         <div>
-          <span className="label">Courts / venues</span>
+          <span className="label">{VenueCap}s</span>
           <p className="mb-2 text-xs text-slate-400">
-            Name each court, pitch or table available — matches run in parallel across them.
+            Name each {venue} available — matches run in parallel across them.
           </p>
           <ul className="space-y-2">
             {courts.map((c, i) => (
@@ -743,7 +753,7 @@ export function DivisionBuilder({
                   onChange={(e) =>
                     setCourts((cs) => cs.map((x, j) => (j === i ? e.target.value : x)))
                   }
-                  placeholder={`Court ${i + 1}`}
+                  placeholder={`${VenueCap} ${i + 1}`}
                   maxLength={100}
                   className="input flex-1"
                 />
@@ -751,7 +761,7 @@ export function DivisionBuilder({
                   <button
                     type="button"
                     onClick={() => setCourts((cs) => cs.filter((_, j) => j !== i))}
-                    aria-label={`Remove court ${i + 1}`}
+                    aria-label={`Remove ${venue} ${i + 1}`}
                     className="rounded-md px-2 py-1 text-sm text-red-500 hover:bg-red-50"
                   >
                     ✕
@@ -763,14 +773,14 @@ export function DivisionBuilder({
           <button
             type="button"
             onClick={() =>
-              setCourts((cs) => (cs.length < 50 ? [...cs, `Court ${cs.length + 1}`] : cs))
+              setCourts((cs) => (cs.length < 50 ? [...cs, `${VenueCap} ${cs.length + 1}`] : cs))
             }
             className="btn btn-ghost mt-2 text-sm"
           >
-            + Add court
+            + Add {venue}
           </button>
           <p className="mt-1 text-xs text-slate-400">
-            {courts.filter((c) => c.trim()).length || 1} court
+            {courts.filter((c) => c.trim()).length || 1} {venue}
             {(courts.filter((c) => c.trim()).length || 1) === 1 ? "" : "s"}
           </p>
         </div>

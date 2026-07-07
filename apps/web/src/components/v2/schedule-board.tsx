@@ -78,6 +78,8 @@ interface Props {
   /** Competition run dates — drive the week view's day span. */
   competitionStart?: string | null;
   competitionEnd?: string | null;
+  /** Sport-appropriate playing-area word, capitalised (e.g. "Pitch"). */
+  venueCap?: string;
 }
 
 const CONFLICT_LABEL: Record<string, string> = {
@@ -119,6 +121,7 @@ export function ScheduleBoard({
   constraintsAllowed,
   competitionStart,
   competitionEnd,
+  venueCap = "Court",
 }: Props) {
   const router = useRouter();
   const single = divisions.length === 1 ? divisions[0] : null;
@@ -617,6 +620,7 @@ export function ScheduleBoard({
         <MovePanel
           fixture={selectedFixture}
           courts={courts}
+          venueCap={venueCap}
           entrantNames={entrantNames}
           feedLabels={feedLabels}
           onMove={(atIso, court) => {
@@ -823,6 +827,7 @@ export function ScheduleBoard({
         tz={settings.tz}
         canEdit={canEdit}
         constraintsAllowed={constraintsAllowed}
+        venueCap={venueCap}
         onSaved={() => {
           setNotice("Scheduling settings saved.");
           router.refresh();
@@ -934,6 +939,7 @@ function FixtureCard({
 function MovePanel({
   fixture,
   courts,
+  venueCap = "Court",
   entrantNames,
   feedLabels,
   onMove,
@@ -941,6 +947,7 @@ function MovePanel({
 }: {
   fixture: BoardFixture;
   courts: string[];
+  venueCap?: string;
   entrantNames: Record<string, string>;
   feedLabels: Record<string, FeedLabelPair>;
   onMove: (atIso: string | null, court: string | null) => void;
@@ -973,7 +980,7 @@ function MovePanel({
         />
       </label>
       <label className="block">
-        <span className="label">Court</span>
+        <span className="label">{venueCap}</span>
         <select value={court} onChange={(e) => setCourt(e.target.value)} className="input px-2 py-1 text-xs">
           {courts.map((c) => (
             <option key={c} value={c}>{c}</option>
@@ -1000,6 +1007,7 @@ function SettingsPanel({
   tz,
   canEdit,
   constraintsAllowed,
+  venueCap = "Court",
   onSaved,
   onError,
 }: {
@@ -1008,6 +1016,7 @@ function SettingsPanel({
   tz: string;
   canEdit: boolean;
   constraintsAllowed: boolean;
+  venueCap?: string;
   onSaved: () => void;
   onError: (err: unknown) => void;
 }) {
@@ -1024,7 +1033,7 @@ function SettingsPanel({
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="text-xs text-purple-600 hover:underline">
-        Scheduling settings ({config.courts.length} court{config.courts.length === 1 ? "" : "s"}, {config.matchMinutes}
+        Scheduling settings ({config.courts.length} {venueCap.toLowerCase()}{config.courts.length === 1 ? "" : "s"}, {config.matchMinutes}
         min matches{config.perEntrantMinRest > 0 ? `, ${config.perEntrantMinRest}min rest` : ""})
       </button>
     );
@@ -1085,7 +1094,7 @@ function SettingsPanel({
           <input type="number" min={0} value={rest} onChange={(e) => setRest(Number(e.target.value))} className="input w-20 px-2 py-1 text-xs" disabled={!canEdit || constrained} />
         </label>
         <label className="block">
-          <span className="label">Courts (comma-separated)</span>
+          <span className="label">{venueCap}s (comma-separated)</span>
           <input value={courtsText} onChange={(e) => setCourtsText(e.target.value)} className="input w-56 px-2 py-1 text-xs" disabled={!canEdit} />
         </label>
         <label className="block">
