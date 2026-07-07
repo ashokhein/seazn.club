@@ -102,7 +102,9 @@ function resultEvents(sport: string, variant: string, fx: { home: string; away: 
       const quota = variant === "hundred" ? 100 : variant === "odi" ? 300 : 120;
       const bpo = variant === "hundred" ? 5 : 6;
       const first = 100 + rnd(80);
-      // home bats first (no toss): homeWins ⇒ chase falls short.
+      // home wins the toss and bats; homeWins ⇒ chase falls short. Toss must
+      // precede core.start, and a progressive innings needs a real open innings.
+      events.unshift({ type: "cricket.toss", payload: { wonBy: fx.home, elected: "bat" } });
       const chase = homeWins ? first - (5 + rnd(40)) : first + 1 + rnd(20);
       // Over-by-over: a few progressive innings.summary updates (engine
       // enforces monotone growth) — the same event the over-by-over pad emits
@@ -115,11 +117,12 @@ function resultEvents(sport: string, variant: string, fx: { home: string; away: 
               runs: Math.round((total * step) / 4),
               wickets: Math.round((wkts * step) / 4),
               legalBalls: Math.round((quota * step) / 4 / bpo) * bpo,
-              partial: true, // progressive (stay open); the close event ends it
+              // progressive; the final step reaches the quota and auto-closes
+              // the innings (overs done) — the next innings opens on demand.
+              partial: step < 4,
             },
           });
         }
-        events.push({ type: "cricket.innings.close", payload: {} });
       };
       overBuild(first, 3 + rnd(7));
       overBuild(Math.max(chase, 10), homeWins ? 10 : 3 + rnd(6));
