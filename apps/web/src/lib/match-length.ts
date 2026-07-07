@@ -23,22 +23,30 @@ const SPORT_DEFAULT: Record<string, number> = {
   draughts: 45,
 };
 
-// Keyed by `${sport}:${variant}` (both lowercased).
+// Keyed by `${sport}:${variant}` (both lowercased). Variant keys match the
+// sport_variants table (e.g. cricket: t20, hundred, odi, test, pairs-6-a-side).
 const VARIANT_OVERRIDE: Record<string, number> = {
+  // Board games: game clock, not a fixed slot.
   "boardgame:blitz": 10,
   "boardgame:rapid": 25,
   "boardgame:classical": 90,
-  "chess:blitz": 10,
-  "chess:rapid": 25,
-  "chess:classical": 90,
+  // Cricket, roughly by innings length. The Hundred = 100 balls/side (~16
+  // overs) → shorter than T20's 20 overs; ODI is 50 overs → a full day.
   "cricket:t20": 180,
   "cricket:hundred": 150,
-  "cricket:t10": 90,
-  "football:sevens": 40,
-  "football:fives": 30,
-  "football:futsal": 40,
-  "padel:americano": 15,
-  "padel:mexicano": 15,
+  "cricket:odi": 420,
+  "cricket:test": 480,
+  "cricket:pairs-6-a-side": 45,
+  // Football by side size.
+  "football:11-a-side": 90,
+  "football:small-sided": 40,
+  "football:youth": 50,
+  // Badminton / table tennis by rally length.
+  "badminton:bwf": 40,
+  "badminton:short": 25,
+  "tabletennis:bo5": 20,
+  "tabletennis:bo7": 30,
+  "tabletennis:hardbat-21": 15,
 };
 
 /** Default match length in minutes for a sport (+ optional variant). 30 if unknown. */
