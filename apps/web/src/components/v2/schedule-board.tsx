@@ -113,6 +113,7 @@ export function ScheduleBoard({
   const single = divisions.length === 1 ? divisions[0] : null;
   const cfg = settings.config;
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
+  const [dragDay, setDragDay] = useState<string | null>(null); // week-view drop target
   const [conflicts, setConflicts] = useState<BoardConflict[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -162,7 +163,9 @@ export function ScheduleBoard({
     return [...set].sort();
   }, [scheduled, cfg.startAt]);
   const [day, setDay] = useState<string>(days[0] as string);
-  if (!days.includes(day)) setDay(days[0] as string); // render-time adjust
+  // Only guard against an empty value — the day may be any date (arrows can
+  // step onto days that have no fixtures yet).
+  if (!day) setDay(days[0] as string);
 
   // Week view spans the competition's run dates. If those aren't set, fall back
   // to the scheduled fixtures' range, and always show at least four days so the
@@ -269,6 +272,19 @@ export function ScheduleBoard({
       });
       fail(err);
     }
+  }
+
+  // Week-view drag between day columns: keep the kick-off time + court, just
+  // change the date. Unscheduled cards land at the config start time (or 09:00).
+  function moveToDay(fixtureId: string, targetDay: string) {
+    const f = board.find((x) => x.id === fixtureId);
+    if (!f || f.status !== "scheduled") return;
+    if (f.scheduled_at && dayKey(f.scheduled_at as string) === targetDay) return;
+    const src = f.scheduled_at ? new Date(f.scheduled_at) : cfg.startAt ? new Date(cfg.startAt) : null;
+    const hh = src ? String(src.getHours()).padStart(2, "0") : "09";
+    const mm = src ? String(src.getMinutes()).padStart(2, "0") : "00";
+    const iso = new Date(`${targetDay}T${hh}:${mm}:00`).toISOString();
+    void moveCard(fixtureId, iso, f.court_label ?? courts[0] ?? "1");
   }
 
   async function togglePin(f: BoardFixture) {
@@ -503,6 +519,29 @@ export function ScheduleBoard({
 
       {/* Day picker, view toggle, bulk tools */}
       <div className="flex flex-wrap items-center gap-2">
+        {view === "day" && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => setDay(addDaysKey(day, -1))}
+              aria-label="Previous day"
+              className="btn btn-ghost px-2 py-1 text-xs"
+            >
+              ‹
+            </button>
+            <span className="min-w-32 text-center text-sm font-semibold text-slate-800">
+              {new Date(`${day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+            </span>
+            <button
+              type="button"
+              onClick={() => setDay(addDaysKey(day, 1))}
+              aria-label="Next day"
+              className="btn btn-ghost px-2 py-1 text-xs"
+            >
+              ›
+            </button>
+          </div>
+        )}
         {days.map((d) => (
           <button
             key={d}
@@ -620,42 +659,104 @@ export function ScheduleBoard({
           </table>
         </div>
       ) : (
-        <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-4">
-          {weekDays.map((d) => {
-            const dayFx = scheduled.filter((f) => dayKey(f.scheduled_at as string) === d);
-            return (
-            <section key={d} className="card p-3">
-              <h4 className="mb-2 flex items-center justify-between text-xs font-semibold text-slate-600">
-                <span>
-                  {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "long", month: "short", day: "numeric" })}
-                </span>
-                <span className="font-normal text-slate-400">{dayFx.length || ""}</span>
-              </h4>
-              <ul className="space-y-1">
-                {dayFx.length === 0 && (
-                  <li className="rounded border border-dashed border-slate-200 px-2 py-3 text-center text-[11px] text-slate-400">
-                    No fixtures
-                  </li>
-                )}
-                {dayFx
-                  .sort(
-                    (a, b) =>
-                      new Date(a.scheduled_at as string).getTime() -
-                      new Date(b.scheduled_at as string).getTime(),
-                  )
-                  .map((f) => (
-                    <li key={f.id} className="flex items-center gap-2 text-xs text-slate-600">
-                      <span className="w-10 text-slate-400">
-                        {new Date(f.scheduled_at as string).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                      </span>
-                      <span className="truncate">{cardTitle(f, entrantNames, feedLabels)}</span>
-                      <span className="ml-auto text-slate-400">{f.court_label}</span>
-                    </li>
-                  ))}
-              </ul>
-            </section>
-            );
-          })}
+        <div>
+          {canEdit && (
+            <p className="mb-2 text-xs text-slate-400">
+              Drag a match between days to reschedule it — it keeps its kick-off time and court.
+            </p>
+          )}
+          <div className="flex gap-3 overflow-x-auto pb-2">
+            {weekDays.map((d) => {
+              const dayFx = scheduled
+                .filter((f) => dayKey(f.scheduled_at as string) === d)
+                .sort(
+                  (a, b) =>
+                    new Date(a.scheduled_at as string).getTime() -
+                    new Date(b.scheduled_at as string).getTime(),
+                );
+              const isToday = d === dayKey(new Date());
+              const dropOver = dragDay === d;
+              return (
+                <div
+                  key={d}
+                  onDragOver={canEdit ? (e) => { e.preventDefault(); setDragDay(d); } : undefined}
+                  onDragLeave={canEdit ? () => setDragDay((cur) => (cur === d ? null : cur)) : undefined}
+                  onDrop={
+                    canEdit
+                      ? (e) => {
+                          e.preventDefault();
+                          setDragDay(null);
+                          const fid = e.dataTransfer.getData("text/fixture");
+                          if (fid) moveToDay(fid, d);
+                        }
+                      : undefined
+                  }
+                  className={`flex w-52 shrink-0 flex-col rounded-xl border ${
+                    dropOver ? "border-purple-400 bg-purple-50/70" : "border-slate-200 bg-slate-50/60"
+                  }`}
+                >
+                  <div
+                    className={`flex items-center justify-between rounded-t-xl border-b px-3 py-2 ${
+                      isToday ? "border-purple-200 bg-purple-50" : "border-slate-200"
+                    }`}
+                  >
+                    <div className="leading-tight">
+                      <p className="text-xs font-semibold text-slate-700">
+                        {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "short" })}
+                      </p>
+                      <p className="text-[11px] text-slate-400">
+                        {new Date(`${d}T12:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-white px-1.5 text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
+                      {dayFx.length}
+                    </span>
+                  </div>
+                  <ul className="flex min-h-24 flex-1 flex-col gap-1.5 p-2">
+                    {dayFx.length === 0 && (
+                      <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 px-2 py-4 text-center text-[11px] text-slate-400">
+                        {canEdit ? "Drop a match here" : "No fixtures"}
+                      </li>
+                    )}
+                    {dayFx.map((f) => {
+                      const movable = canEdit && f.status === "scheduled";
+                      return (
+                        <li
+                          key={f.id}
+                          draggable={movable}
+                          onDragStart={(e) => e.dataTransfer.setData("text/fixture", f.id)}
+                          className={`rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs shadow-sm ${
+                            movable ? "cursor-grab hover:border-purple-300" : "opacity-70"
+                          }`}
+                          style={
+                            divisions.length > 1
+                              ? { borderLeftWidth: 3, borderLeftColor: colorOf[f.division_id] }
+                              : undefined
+                          }
+                        >
+                          <div className="flex items-center justify-between text-[10px] text-slate-400">
+                            <span>
+                              {new Date(f.scheduled_at as string).toLocaleTimeString(undefined, {
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                            <span>{f.court_label}</span>
+                          </div>
+                          <p className="truncate font-medium text-slate-700">
+                            {cardTitle(f, entrantNames, feedLabels)}
+                          </p>
+                          {f.status !== "scheduled" && (
+                            <span className="text-[10px] text-sky-600">{f.status}</span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 
