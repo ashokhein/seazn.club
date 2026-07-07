@@ -155,13 +155,7 @@ export default async function DivisionPage({
             {stages
               .filter((st) => st.kind === "americano")
               .map((st) => (
-                <AmericanoPanel
-                  key={st.id}
-                  stageName={st.name}
-                  mode={st.config.mode === "mexicano" ? "mexicano" : "americano"}
-                  fixtures={fixtures.filter((f) => f.stage_id === st.id)}
-                  entrantNames={entrantNames}
-                />
+                <AmericanoPanel key={st.id} stageId={st.id} canEdit={editable} />
               ))}
             {stages
               .filter((st) => st.kind === "ladder")

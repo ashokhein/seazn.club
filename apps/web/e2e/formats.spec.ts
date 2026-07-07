@@ -90,6 +90,7 @@ test("americano renders the rotation grid", async ({ page, request }) => {
     { seq: 1, kind: "americano", name: "Americano", config: { mode: "americano", courtCount: 2, rounds: 5 } },
   );
   await apiJson(request, `/api/v1/stages/${stage.data!.id}/generate`, "POST");
+  await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
 
   await page.goto(`/divisions/${divisionId}?tab=fixtures`);
   // the rotation grid: mode chip + round cards + courts (scoped to the panel)
@@ -97,4 +98,16 @@ test("americano renders the rotation grid", async ({ page, request }) => {
   await expect(grid.getByText("americano", { exact: true })).toBeVisible({ timeout: 20_000 });
   await expect(grid.getByRole("heading", { name: "Round 1" })).toBeVisible();
   await expect(grid.getByText(/Court 1/).first()).toBeVisible();
+
+  // in-grid scoring: fill the first match's two score boxes and save
+  const scoreInputs = grid.getByRole("spinbutton");
+  await scoreInputs.nth(0).fill("24");
+  await scoreInputs.nth(1).fill("18");
+  await grid.getByRole("button", { name: /save score/i }).first().click();
+
+  // the match flips to scored and the personal-points leaderboard populates
+  await expect(grid.getByText(/✓ scored/).first()).toBeVisible({ timeout: 20_000 });
+  await expect(grid.getByRole("heading", { name: "Personal points" })).toBeVisible();
+  // the scored pair's players now carry 24 points on the leaderboard
+  await expect(grid.getByRole("cell", { name: "24", exact: true }).first()).toBeVisible();
 });
