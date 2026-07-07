@@ -4,7 +4,7 @@
 // settings (window, fee, capacity, bounded form-field builder), the
 // registration list with approve / waitlist / withdraw / refund, CSV export,
 // and the Stripe Connect onboarding banner that gates entry fees.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
@@ -65,6 +65,11 @@ function fromLocalInput(v: string): string | null {
   return v ? new Date(v).toISOString() : null;
 }
 
+const CURRENCY_SYMBOLS: Record<string, string> = { gbp: "£", usd: "$", eur: "€" };
+function currencySymbol(code: string): string {
+  return CURRENCY_SYMBOLS[code?.toLowerCase()] ?? (code || "").toUpperCase();
+}
+
 export function RegistrationsPanel({
   divisionId,
   canEdit,
@@ -81,6 +86,10 @@ export function RegistrationsPanel({
   const [paywall, setPaywall] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  // Fee is entered in major units (pounds) but stored as integer minor units
+  // (pence). A local string keeps mid-typing states like "1." / "1.5" intact.
+  const [feeText, setFeeText] = useState("");
+  const feeInited = useRef(false);
 
   const refresh = useCallback(async () => {
     const [s, r] = await Promise.all([
@@ -96,6 +105,14 @@ export function RegistrationsPanel({
       setError(err instanceof Error ? err.message : "Failed to load"),
     );
   }, [refresh]);
+
+  // Seed the pounds field once, from the loaded settings.
+  useEffect(() => {
+    if (settings && !feeInited.current) {
+      feeInited.current = true;
+      setFeeText((settings.fee_cents / 100).toString());
+    }
+  }, [settings]);
 
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -220,17 +237,34 @@ export function RegistrationsPanel({
           <div className="grid grid-cols-2 gap-2">
             <label className="block text-xs text-slate-500">
               <span className="flex items-center gap-1.5">
-                Entry fee (cents; 0 = free)
+                Entry fee ({currencySymbol(settings.currency)}; 0 = free)
                 {!paidAllowed && <PlanBadge feature="registration.paid" />}
               </span>
-              <input
-                type="number"
-                min={0}
-                disabled={!canEdit}
-                value={settings.fee_cents}
-                onChange={(e) => set({ fee_cents: Number(e.target.value) || 0 })}
-                className="input mt-1 w-full"
-              />
+              <div className="mt-1 flex items-center">
+                <span className="rounded-l-md border border-r-0 border-slate-200 bg-slate-50 px-2.5 py-2 text-sm text-slate-500">
+                  {currencySymbol(settings.currency)}
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0.00"
+                  disabled={!canEdit}
+                  value={feeText}
+                  onChange={(e) => {
+                    const t = e.target.value;
+                    // Allow empty, whole, or up to 2 decimals while typing.
+                    if (!/^\d*\.?\d{0,2}$/.test(t)) return;
+                    setFeeText(t);
+                    const pounds = parseFloat(t);
+                    set({ fee_cents: Number.isFinite(pounds) ? Math.round(pounds * 100) : 0 });
+                  }}
+                  onBlur={() => {
+                    // Normalise "1.5" → "1.50", "" → "0" on leaving the field.
+                    setFeeText((settings.fee_cents / 100).toFixed(2));
+                  }}
+                  className="input w-full rounded-l-none"
+                />
+              </div>
             </label>
             <label className="block text-xs text-slate-500">
               Currency
@@ -243,17 +277,6 @@ export function RegistrationsPanel({
               />
             </label>
           </div>
-
-          <label className="block text-xs text-slate-500">
-            Refund lock (auto-refund on withdrawal before this; your call after)
-            <input
-              type="datetime-local"
-              disabled={!canEdit}
-              value={toLocalInput(settings.refund_lock_at)}
-              onChange={(e) => set({ refund_lock_at: fromLocalInput(e.target.value) })}
-              className="input mt-1 w-full"
-            />
-          </label>
 
           {paidConfigured && (
             <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs text-purple-800">
