@@ -23,6 +23,21 @@ interface StageDraft {
   qualification: Record<string, unknown> | null;
 }
 
+// Mirror of the server preview response (src/server/usecases/stages.ts).
+interface PreviewMatch {
+  home: string;
+  away: string;
+}
+interface PreviewSection {
+  title: string;
+  matches: PreviewMatch[];
+}
+interface PreviewPhase {
+  title: string;
+  note?: string;
+  sections: PreviewSection[];
+}
+
 // One-click stage graphs. `qualified(n)` = how many advance to stage 2.
 const STAGE_TEMPLATES: {
   key: string;
@@ -294,6 +309,13 @@ export function DivisionBuilder({
 
   const [tab, setTab] = useState<"basics" | "eligibility" | "format" | "scheduling">("basics");
 
+  // "Show example" fixture preview (runs the real engine draw server-side).
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewCount, setPreviewCount] = useState(8);
+  const [preview, setPreview] = useState<PreviewPhase[] | null>(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -440,6 +462,22 @@ export function DivisionBuilder({
     }
     setError(null);
     setTab(TAB_ORDER[Math.min(tabIndex + 1, TAB_ORDER.length - 1)]!);
+  }
+
+  async function runPreview() {
+    setPreviewError(null);
+    setPreviewBusy(true);
+    try {
+      const { phases } = await apiV1<{ phases: PreviewPhase[] }>("/api/v1/format-preview", {
+        method: "POST",
+        json: { count: previewCount, stages: buildStages() },
+      });
+      setPreview(phases);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : "Couldn't build example");
+    } finally {
+      setPreviewBusy(false);
+    }
   }
 
   // Nav jumps: going back is free; going forward must clear the current tab.
@@ -763,6 +801,78 @@ export function DivisionBuilder({
             locked in until you generate.
           </p>
         )}
+
+        {/* Show example — runs the real engine draw over placeholder entrants. */}
+        <div className="border-t border-slate-100 pt-4">
+          {!previewOpen ? (
+            <button
+              type="button"
+              onClick={() => {
+                setPreviewOpen(true);
+                if (!preview) void runPreview();
+              }}
+              className="btn btn-ghost text-sm"
+            >
+              Show example fixtures
+            </button>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium text-slate-700">Example fixtures</span>
+                <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                  Entrants
+                  <input
+                    type="number"
+                    min={2}
+                    max={64}
+                    value={previewCount}
+                    onChange={(e) => setPreviewCount(Math.min(64, Math.max(2, Number(e.target.value) || 2)))}
+                    className="input w-16 px-2 py-1 text-sm"
+                  />
+                </label>
+                <button type="button" onClick={() => void runPreview()} disabled={previewBusy} className="btn btn-primary px-3 py-1 text-xs">
+                  {previewBusy ? "…" : "Generate"}
+                </button>
+                <button type="button" onClick={() => setPreviewOpen(false)} className="btn btn-ghost px-3 py-1 text-xs">
+                  Hide
+                </button>
+                <span className="text-[11px] text-slate-400">Same draw the server produces — names are placeholders.</span>
+              </div>
+
+              {previewError && (
+                <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{previewError}</p>
+              )}
+
+              {preview?.map((phase, pi) => (
+                <div key={pi} className="rounded-lg border border-slate-200 p-3">
+                  <p className="text-sm font-semibold text-slate-800">{phase.title}</p>
+                  {phase.note && <p className="mt-0.5 text-xs text-slate-500">{phase.note}</p>}
+                  <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                    {phase.sections.map((sec, si) => (
+                      <div key={si}>
+                        <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {sec.title}
+                        </p>
+                        <ul className="space-y-0.5">
+                          {sec.matches.map((m, mi) => (
+                            <li key={mi} className="flex items-center gap-1.5 text-xs text-slate-600">
+                              <span className="truncate font-medium text-slate-700">{m.home}</span>
+                              <span className="text-slate-400">v</span>
+                              <span className="truncate font-medium text-slate-700">{m.away}</span>
+                            </li>
+                          ))}
+                          {sec.matches.length === 0 && (
+                            <li className="text-xs text-slate-400">—</li>
+                          )}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       <section className={`card space-y-4 p-6 ${tab === "scheduling" ? "" : "hidden"}`}>
