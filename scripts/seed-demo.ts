@@ -100,11 +100,29 @@ function resultEvents(sport: string, variant: string, fx: { home: string; away: 
     case "cricket": {
       // Innings quota per variant: t20 120 balls, hundred 100, odi 300.
       const quota = variant === "hundred" ? 100 : variant === "odi" ? 300 : 120;
+      const bpo = variant === "hundred" ? 5 : 6;
       const first = 100 + rnd(80);
       // home bats first (no toss): homeWins ⇒ chase falls short.
       const chase = homeWins ? first - (5 + rnd(40)) : first + 1 + rnd(20);
-      events.push({ type: "cricket.innings.summary", payload: { runs: first, wickets: 3 + rnd(7), legalBalls: quota } });
-      events.push({ type: "cricket.innings.summary", payload: { runs: Math.max(chase, 10), wickets: homeWins ? 10 : 3 + rnd(6), legalBalls: Math.max(quota - rnd(30), 30) } });
+      // Over-by-over: a few progressive innings.summary updates (engine
+      // enforces monotone growth) — the same event the over-by-over pad emits
+      // — then close. Stepped in quarters to keep the seed fast.
+      const overBuild = (total: number, wkts: number) => {
+        for (let step = 1; step <= 4; step++) {
+          events.push({
+            type: "cricket.innings.summary",
+            payload: {
+              runs: Math.round((total * step) / 4),
+              wickets: Math.round((wkts * step) / 4),
+              legalBalls: Math.round((quota * step) / 4 / bpo) * bpo,
+              partial: true, // progressive (stay open); the close event ends it
+            },
+          });
+        }
+        events.push({ type: "cricket.innings.close", payload: {} });
+      };
+      overBuild(first, 3 + rnd(7));
+      overBuild(Math.max(chase, 10), homeWins ? 10 : 3 + rnd(6));
       return events;
     }
     case "boardgame":

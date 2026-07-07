@@ -486,6 +486,11 @@ function FixtureLine({
         <span className={`badge ${FIXTURE_STATUS_STYLE[fixture.status] ?? ""}`}>
           {fixture.status.replace("_", " ")}
         </span>
+        {/* Explicit entry to the sport-shaped scoring pad — the fixture label
+            also links here, but organisers were missing it. */}
+        <Link href={`/fixtures/${fixture.id}`} className="btn btn-ghost px-3 py-1 text-xs">
+          {decided ? "View" : fixture.status === "in_play" ? "Score ●" : "Score"}
+        </Link>
         {canEdit && (
           <button
             type="button"
