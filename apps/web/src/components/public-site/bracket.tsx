@@ -26,22 +26,37 @@ function FixtureCard({
 }) {
   const winner = fixture.outcome?.winner;
   const side = (id: string | null) => (
-    <span className={id && id === winner ? "font-semibold" : undefined}>
+    <span
+      className={
+        id && id === winner
+          ? "flex items-center gap-1 font-semibold text-purple-800"
+          : winner
+            ? "text-zinc-400"
+            : undefined
+      }
+    >
       {sideLabel(id, entrantNames)}
+      {id && id === winner ? <span className="text-[10px]">▸</span> : null}
     </span>
   );
+  const live = fixture.status === "in_play";
   return (
     <Link
       href={href}
-      className="block rounded border border-zinc-200 bg-white p-2 text-sm shadow-sm hover:border-zinc-400"
+      className={`block rounded-lg border bg-white p-2.5 text-sm shadow-sm transition hover:-translate-y-0.5 hover:shadow ${
+        live ? "border-emerald-300 hover:border-emerald-400" : "border-purple-100 hover:border-purple-300"
+      }`}
     >
       <div className="flex flex-col gap-0.5">
         {side(fixture.home_entrant_id)}
         {side(fixture.away_entrant_id)}
       </div>
       <div className="mt-1 text-xs text-zinc-500">
-        {fixture.status === "in_play" ? (
-          <span className="font-medium text-red-600">LIVE</span>
+        {live ? (
+          <span className="flex items-center gap-1.5 font-semibold text-emerald-700">
+            <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            LIVE
+          </span>
         ) : (
           (fixture.summary?.headline ??
             (fixture.scheduled_at
@@ -66,11 +81,17 @@ export function Bracket({ kind, fixtures, entrantNames, fixtureHref }: Props) {
     rounds.set(f.round_no, list);
   }
   const ordered = [...rounds.entries()].sort(([a], [b]) => a - b);
-  const roundName = (roundNo: number, count: number): string => {
+  // Distance from the last round — stable even when byes thin out a round.
+  // Double-elim round numbers encode WB/LB/GF lanes, so keep plain numbers.
+  const maxRound = ordered.length > 0 ? ordered[ordered.length - 1][0] : 0;
+  const roundName = (roundNo: number): string => {
     if (kind === "stepladder") return `Rung ${roundNo}`;
-    if (count === 1) return "Final";
-    if (count === 2) return "Semi-finals";
-    if (count === 4) return "Quarter-finals";
+    if (kind === "knockout") {
+      const fromEnd = maxRound - roundNo;
+      if (fromEnd === 0) return "Final";
+      if (fromEnd === 1) return "Semi-finals";
+      if (fromEnd === 2) return "Quarter-finals";
+    }
     return `Round ${roundNo}`;
   };
 
@@ -79,8 +100,8 @@ export function Bracket({ kind, fixtures, entrantNames, fixtureHref }: Props) {
       <div className={kind === "stepladder" ? "flex flex-col gap-4" : "flex gap-6"}>
         {ordered.map(([roundNo, list]) => (
           <div key={roundNo} className="min-w-48">
-            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-              {roundName(roundNo, list.length)}
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-700/70">
+              {roundName(roundNo)}
             </h3>
             <div className="flex flex-col justify-around gap-3">
               {list

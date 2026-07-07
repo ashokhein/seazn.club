@@ -27,7 +27,12 @@ export default async function OrgLandingPage({ params }: Props) {
 
   return (
     <div>
-      <h1 className="mb-6 text-2xl font-semibold">{org.name}</h1>
+      <section className="mb-6 rounded-2xl bg-gradient-to-br from-purple-700 to-fuchsia-600 p-6 text-white shadow-lg sm:p-8">
+        <h1 className="text-3xl font-bold tracking-tight">{org.name}</h1>
+        <p className="mt-1 text-sm text-white/80">
+          {competitions.length} public competition{competitions.length === 1 ? "" : "s"}
+        </p>
+      </section>
       {competitions.length === 0 ? (
         <p className="text-sm text-zinc-500">No public competitions right now.</p>
       ) : (
@@ -36,9 +41,14 @@ export default async function OrgLandingPage({ params }: Props) {
             <li key={c.id}>
               <Link
                 href={`/${org.slug}/${c.slug}`}
-                className="block rounded-lg border border-zinc-200 bg-white p-4 shadow-sm hover:border-zinc-400"
+                className="group block rounded-xl border border-purple-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md"
               >
-                <p className="font-medium">{c.name}</p>
+                <p className="flex items-center justify-between font-semibold">
+                  {c.name}
+                  <span className="text-purple-300 transition group-hover:translate-x-0.5 group-hover:text-purple-500">
+                    →
+                  </span>
+                </p>
                 <p className="mt-1 text-xs text-zinc-500">
                   {c.starts_on
                     ? new Date(c.starts_on).toLocaleDateString("en-GB", {

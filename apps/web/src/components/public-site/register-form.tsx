@@ -129,12 +129,12 @@ export function RegisterForm({
             return (
               <li key={d.division_id}>
                 <label
-                  className={`flex items-center gap-3 rounded-lg border p-3 text-sm ${
+                  className={`flex items-center gap-3 rounded-xl border p-3 text-sm transition ${
                     disabled
                       ? "cursor-not-allowed border-zinc-100 bg-zinc-50 text-zinc-400"
                       : divisionId === d.division_id
-                        ? "border-zinc-800 bg-white"
-                        : "cursor-pointer border-zinc-200 bg-white hover:border-zinc-400"
+                        ? "border-purple-500 bg-purple-50/50 shadow-sm ring-1 ring-purple-500"
+                        : "cursor-pointer border-purple-100 bg-white hover:border-purple-300 hover:shadow-sm"
                   }`}
                 >
                   <input
@@ -180,7 +180,7 @@ export function RegisterForm({
                 value={displayName}
                 onChange={(e) => setDisplayName(e.target.value)}
                 maxLength={120}
-                className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
+                className="mt-1 w-full rounded-lg border border-purple-200 px-3 py-2 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
               />
             </label>
             <label className="block text-sm">
@@ -190,7 +190,7 @@ export function RegisterForm({
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
+                className="mt-1 w-full rounded-lg border border-purple-200 px-3 py-2 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
               />
             </label>
             <label className="block text-sm">
@@ -202,7 +202,7 @@ export function RegisterForm({
                 required={division.requires_dob}
                 value={dob}
                 onChange={(e) => setDob(e.target.value)}
-                className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
+                className="mt-1 w-full rounded-lg border border-purple-200 px-3 py-2 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
               />
             </label>
             <label className="block text-sm">
@@ -210,7 +210,7 @@ export function RegisterForm({
               <select
                 value={gender}
                 onChange={(e) => setGender(e.target.value)}
-                className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
+                className="mt-1 w-full rounded-lg border border-purple-200 px-3 py-2 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
               >
                 <option value="">—</option>
                 <option value="f">Female</option>
@@ -230,7 +230,7 @@ export function RegisterForm({
                   value={guardianName}
                   onChange={(e) => setGuardianName(e.target.value)}
                   maxLength={120}
-                  className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
+                  className="mt-1 w-full rounded-lg border border-purple-200 px-3 py-2 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
                 />
               </label>
               <label className="mt-2 flex items-start gap-2 text-sm text-zinc-700">
@@ -280,7 +280,7 @@ export function RegisterForm({
                           onChange={(e) =>
                             setAnswers((a) => ({ ...a, [f.key]: e.target.value }))
                           }
-                          className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
+                          className="mt-1 w-full rounded-lg border border-purple-200 px-3 py-2 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
                         >
                           <option value="">—</option>
                           {(f.options ?? []).map((o) => (
@@ -297,7 +297,7 @@ export function RegisterForm({
                             setAnswers((a) => ({ ...a, [f.key]: e.target.value }))
                           }
                           maxLength={1000}
-                          className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2"
+                          className="mt-1 w-full rounded-lg border border-purple-200 px-3 py-2 outline-none transition focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
                         />
                       )}
                     </>
@@ -314,7 +314,7 @@ export function RegisterForm({
           <button
             type="submit"
             disabled={busy}
-            className="rounded-md bg-zinc-900 px-5 py-2.5 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
+            className="rounded-lg bg-gradient-to-r from-purple-600 to-fuchsia-600 px-6 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:from-purple-700 hover:to-fuchsia-700 disabled:opacity-50"
           >
             {busy
               ? "…"
