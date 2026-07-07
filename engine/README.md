@@ -117,13 +117,13 @@ Ordered. Each prompt is self-contained: context, task, files, acceptance criteri
 ## Jul3 feature wave (`Jul3/`)
 
 Second design wave (designs `Jul3/00–09`, prompts `Jul3/PROMPT-21..29` — numbering
-independent of `prompts/`). Status: PROMPT-21–22 implemented; 23–29 designed.
+independent of `prompts/`). Status: PROMPT-21–23 implemented; 24–29 designed.
 
 | Prompt | Design | Contents | Status |
 |--------|--------|----------|--------|
 | [PROMPT-21](Jul3/PROMPT-21-clubs-and-bulk-import.md) | [01](Jul3/01-clubs-and-bulk-import.md) | Clubs (parent entity, `team_display_v` badge fallback), spreadsheet import planner (`engine/import`), bulk logos, participants export | ✅ implemented |
 | [PROMPT-22](Jul3/PROMPT-22-referee-officials-assignment.md) | [02](Jul3/02-referee-officials-assignment.md) | Officials entity + pure assignment pass (`engine/officials`) | ✅ implemented |
-| [PROMPT-23](Jul3/PROMPT-23-schedule-undo-and-locking.md) | [03](Jul3/03-schedule-undo-and-locking.md) | Schedule undo/redo, checkpoints, safe destructive ops | designed |
+| [PROMPT-23](Jul3/PROMPT-23-schedule-undo-and-locking.md) | [03](Jul3/03-schedule-undo-and-locking.md) | Schedule undo/redo, checkpoints, safe destructive ops (`engine/history`) | ✅ implemented |
 | [PROMPT-24](Jul3/PROMPT-24-scheduling-constraints-v2.md) | [04](Jul3/04-scheduling-constraints-v2.md) | Constraints v2 (rest, windows, cross-person clash) + AI prose → constraints | designed |
 | [PROMPT-25](Jul3/PROMPT-25-custom-points-and-standings.md) | [05](Jul3/05-custom-points-and-standings.md) | Custom points rules, carry-over, manual rank override | designed |
 | [PROMPT-26](Jul3/PROMPT-26-exports-and-print.md) | [06](Jul3/06-exports-and-print.md) | DocModel exports: PDF/XLSX, scoresheets, branding | designed |

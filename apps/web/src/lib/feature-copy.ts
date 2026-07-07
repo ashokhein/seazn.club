@@ -41,6 +41,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "officials.assignment": "Officials assignment is a Pro feature.",
   "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro feature — manual assignment still works.",
   "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
+  "schedule.versioning": "Extra save points and multi-site scope locks are a Pro feature — undo/redo always works.",
   "scoring.device_links":
     "Hand-this-device-over scoring links are a Pro feature — your scorer seat still works.",
   // Registration & entry fees (doc 16 §1.1)

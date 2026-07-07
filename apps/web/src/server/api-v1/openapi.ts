@@ -144,6 +144,16 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/officials/apply", method: "post", summary: "Persist a proposal transactionally; emits `officials_assigned` (Pro `officials.auto`)", tag: "officials", request: S.ApplyOfficials, errors: [402, 422] },
   { path: "/fixtures/{id}/officials", method: "patch", summary: "Manual set/move/lock — single-role manual assignment free on every plan", tag: "officials", request: S.PatchFixtureOfficials, errors: [402] },
   { path: "/stages/{id}/officials/source", method: "post", summary: "Resolve rank/result sourcing → officiating entrants; pending until the source decides (Pro `officials.auto`)", tag: "officials", request: S.SourceOfficials, errors: [402] },
+  // Schedule undo, versioning & safe destructive ops (Jul3/03, PROMPT-23)
+  { path: "/divisions/{id}/undo", method: "post", summary: "Undo the last structural edit: appends the inverse event, moves the watermark (results-guarded)", tag: "history", request: S.HistoryStep, errors: [409, 422] },
+  { path: "/divisions/{id}/redo", method: "post", summary: "Redo the next edit (Word-like linear history)", tag: "history", request: S.HistoryStep, errors: [409, 422] },
+  { path: "/divisions/{id}/history", method: "get", summary: "Ledger slice: type, actor, time, undoable/undone", tag: "history" },
+  { path: "/divisions/{id}/checkpoints", method: "get", summary: "Named save points", tag: "history" },
+  { path: "/divisions/{id}/checkpoints", method: "post", summary: "Create a save point at the current watermark (>1 is Pro `schedule.versioning`)", tag: "history", request: S.CreateCheckpoint, status: 201, errors: [402] },
+  { path: "/divisions/{id}/restore", method: "post", summary: "Undo back to a checkpoint (confirm: true; results-guarded)", tag: "history", request: S.RestoreCheckpoint, errors: [422] },
+  { path: "/divisions/{id}/locks", method: "patch", summary: "Whole-division freeze + multi-site scope locks (scopes are Pro)", tag: "history", request: S.DivisionLocks, errors: [402] },
+  { path: "/schedule/clear", method: "post", summary: "Scoped clear (stage/pools/rounds/courts; confirm: true; locked + decided survive; undoable)", tag: "history", request: S.ClearSchedule, errors: [422] },
+  { path: "/pools/{id}/clear-entrants", method: "post", summary: "Remove all teams in a pool, keep the pool (confirm: true; blocked once decided; undoable)", tag: "history", request: S.ClearPoolEntrants, errors: [422] },
 ];
 
 // ---------------------------------------------------------------------------

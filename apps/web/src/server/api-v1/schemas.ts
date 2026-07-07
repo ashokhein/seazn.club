@@ -928,3 +928,46 @@ export const SourceOfficials = z.object({
     )
     .min(1),
 });
+
+// Schedule undo & versioning (Jul3/03, PROMPT-23) -----------------------------
+
+export const HistoryStep = z.object({
+  /** Optimistic token: the division seq the client last saw (409 on stale). */
+  expected_seq: z.number().int().optional(),
+});
+
+export const CreateCheckpoint = z.object({ label: z.string().min(1).max(120) });
+
+export const RestoreCheckpoint = z.object({
+  checkpoint_id: Uuid,
+  confirm: z.literal(true),
+});
+
+export const DivisionLocks = z.object({
+  schedule_locked: z.boolean().optional(),
+  locked_scopes: z
+    .array(
+      z.object({
+        courts: z.array(z.string()).optional(),
+        venues: z.array(z.string()).optional(),
+        pool_ids: z.array(z.string()).optional(),
+      }),
+    )
+    .optional(),
+});
+
+export const ClearSchedule = z.object({
+  division_id: Uuid,
+  scope: z
+    .object({
+      stageId: z.string().optional(),
+      poolIds: z.array(z.string()).optional(),
+      rounds: z.array(z.number().int()).optional(),
+      courts: z.array(z.string()).optional(),
+      excludeLocked: z.boolean().default(true),
+    })
+    .default({ excludeLocked: true }),
+  confirm: z.literal(true),
+});
+
+export const ClearPoolEntrants = z.object({ confirm: z.literal(true) });

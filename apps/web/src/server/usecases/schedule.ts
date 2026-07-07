@@ -136,20 +136,51 @@ interface FixtureLite {
   id: string;
   stage_id: string;
   division_id: string;
+  pool_id: string | null;
   round_no: number;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
   scheduled_at: string | Date | null;
   court_label: string | null;
+  venue: string | null;
   status: string;
   schedule_locked: boolean;
   winner_to_fixture: string | null;
   loser_to_fixture: string | null;
 }
 
+// Scope locks (Jul3/03 §4, 22 Jun two-site safety): fixtures matching a
+// division's locked_scopes entry are treated exactly like pinned fixtures.
+export interface LockedScope {
+  courts?: string[];
+  venues?: string[];
+  pool_ids?: string[];
+}
+
+export function scopeLocked(
+  f: Pick<FixtureLite, "court_label" | "venue" | "pool_id">,
+  scopes: readonly LockedScope[],
+): boolean {
+  return scopes.some(
+    (s) =>
+      (s.courts !== undefined && f.court_label !== null && s.courts.includes(f.court_label)) ||
+      (s.venues !== undefined && f.venue !== null && s.venues.includes(f.venue)) ||
+      (s.pool_ids !== undefined && f.pool_id !== null && s.pool_ids.includes(f.pool_id)),
+  );
+}
+
+async function divisionLockState(
+  tx: Tx,
+  divisionId: string,
+): Promise<{ frozen: boolean; scopes: LockedScope[] }> {
+  const [row] = await tx<{ schedule_locked: boolean; locked_scopes: LockedScope[] }[]>`
+    select schedule_locked, locked_scopes from divisions where id = ${divisionId}`;
+  return { frozen: row?.schedule_locked ?? false, scopes: row?.locked_scopes ?? [] };
+}
+
 const FIXTURE_LITE_COLS = [
-  "id", "stage_id", "division_id", "round_no", "home_entrant_id", "away_entrant_id",
-  "scheduled_at", "court_label", "status", "schedule_locked",
+  "id", "stage_id", "division_id", "pool_id", "round_no", "home_entrant_id", "away_entrant_id",
+  "scheduled_at", "court_label", "venue", "status", "schedule_locked",
   "winner_to_fixture", "loser_to_fixture",
 ] as const;
 
@@ -310,6 +341,7 @@ export async function autoSchedule(
 
     const settings = await loadSettings(tx, stage.division_id);
     const all = await divisionFixtures(tx, stage.division_id);
+    const { scopes } = await divisionLockState(tx, stage.division_id);
     const entrantIds = [
       ...new Set(all.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
     ].filter((e): e is string => e !== null);
@@ -336,8 +368,12 @@ export async function autoSchedule(
       ...(f.home_entrant_id !== null ? { home: f.home_entrant_id } : {}),
       ...(f.away_entrant_id !== null ? { away: f.away_entrant_id } : {}),
       people: peopleOf(f, people),
-      // Re-flow remaining (doc 12 §2): pinned cards are fixed obstacles.
-      ...(onlyUnlocked && f.schedule_locked && f.scheduled_at !== null && f.court_label !== null
+      // Re-flow remaining (doc 12 §2): pinned cards are fixed obstacles;
+      // scope-locked fixtures (Jul3/03 §4 two-site safety) pin the same way.
+      ...(onlyUnlocked &&
+      (f.schedule_locked || scopeLocked(f, scopes)) &&
+      f.scheduled_at !== null &&
+      f.court_label !== null
         ? { locked: { court: f.court_label, startAt: ms(f.scheduled_at) } }
         : {}),
     }));
@@ -391,6 +427,10 @@ export async function applySchedule(
 
     const settings = await loadSettings(tx, stage.division_id);
     const all = await divisionFixtures(tx, stage.division_id);
+    const lockState = await divisionLockState(tx, stage.division_id);
+    if (lockState.frozen) {
+      throw new HttpError(422, "the division schedule is locked — unlock it to edit");
+    }
     const byId = new Map(all.map((f) => [f.id, f]));
     for (const a of input.assignments) {
       const f = byId.get(a.fixture_id);
@@ -399,6 +439,9 @@ export async function applySchedule(
       }
       if (f.status !== MOVABLE_STATUS) {
         throw new HttpError(422, `fixture ${a.fixture_id} is ${f.status} — decided fixtures are immutable`);
+      }
+      if (scopeLocked(f, lockState.scopes)) {
+        throw new HttpError(422, `fixture ${a.fixture_id} is inside a locked scope`);
       }
     }
 

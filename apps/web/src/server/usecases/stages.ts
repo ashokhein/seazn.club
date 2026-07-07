@@ -490,6 +490,7 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     for (const f of existing) if (f.ext_key) byKey.set(f.ext_key, f.id);
 
     let created = 0;
+    const createdIds: string[] = [];
     for (const g of gen) {
       if (byKey.has(g.extKey)) continue;
       const award = g.award !== undefined;
@@ -502,6 +503,7 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
                 ${award ? tx.json({ kind: "award", winner: g.award } as never) : null})
         returning id`;
       byKey.set(g.extKey, row.id);
+      createdIds.push(row.id);
       created += 1;
     }
 
@@ -546,6 +548,19 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     const fixtures = await tx<FixtureRow[]>`
       select ${tx(FIXTURE_COLS)} from fixtures
       where stage_id = ${stageId} order by round_no, seq_in_round`;
+    // Undoable generation (Jul3/03 §3): the ledger records which fixtures this
+    // pass created so undo can remove exactly them (results-guarded).
+    if (created > 0) {
+      const [{ seq: last }] = await tx<{ seq: number }[]>`
+        select coalesce(max(seq), 0)::int as seq from division_events
+        where division_id = ${stage.division_id}`;
+      await tx`
+        insert into division_events (division_id, seq, type, payload)
+        values (${stage.division_id}, ${last + 1}, 'fixtures_generated',
+                ${tx.json({ stage_id: stageId, fixture_ids: createdIds } as never)})`;
+      await tx`update divisions set seq = ${last + 1}, edit_watermark = null
+               where id = ${stage.division_id}`;
+    }
     return { created, existing: gen.length - created, fixtures };
   });
   void fireStageRevalidate(auth.orgId, stageId);

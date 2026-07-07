@@ -14,6 +14,7 @@ import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
 import { OfficialsPanel } from "@/components/v2/officials-panel";
+import { HistoryPanel } from "@/components/v2/history-panel";
 import { listOfficials } from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -113,6 +114,12 @@ export default async function DivisionSchedulePage({
           })}
           stages={stages.map((s) => ({ id: s.id, name: s.name, seq: s.seq }))}
           hideNames={division.officials_hide_names}
+          canEdit={canEdit && !frozen}
+        />
+
+        <HistoryPanel
+          divisionId={id}
+          scheduleLocked={division.schedule_locked}
           canEdit={canEdit && !frozen}
         />
       </main>
