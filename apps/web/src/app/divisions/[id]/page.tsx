@@ -16,10 +16,13 @@ import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
 import { InviteScorer } from "@/components/v2/invite-scorer";
 import { StandingsTable } from "@/components/public-site/standings-table";
+import { StatsPanel } from "@/components/v2/stats-panel";
+import { LadderPanel } from "@/components/v2/ladder-panel";
+import { AmericanoPanel } from "@/components/v2/americano-panel";
 import { tieBreakLabel, type StandingsRow } from "@seazn/engine/competition";
 import type { MetricSpecLike } from "@/lib/public-site";
 
-const TABS = ["entrants", "fixtures", "standings"] as const;
+const TABS = ["entrants", "fixtures", "standings", "stats"] as const;
 type Tab = (typeof TABS)[number];
 const TABLE_KINDS = new Set(["league", "group", "swiss"]);
 
@@ -148,13 +151,33 @@ export default async function DivisionPage({
         )}
 
         {tab === "fixtures" && (
-          <StagesPanel
-            divisionId={id}
-            stages={stages}
-            fixtures={fixtures}
-            entrantNames={entrantNames}
-            canEdit={editable}
-          />
+          <>
+            {stages
+              .filter((st) => st.kind === "americano")
+              .map((st) => (
+                <AmericanoPanel key={st.id} stageId={st.id} canEdit={editable} />
+              ))}
+            {stages
+              .filter((st) => st.kind === "ladder")
+              .map((st) => (
+                <div key={st.id} className="mb-6">
+                  <h2 className="mb-2 text-lg font-semibold text-slate-900">{st.name}</h2>
+                  <LadderPanel
+                    stageId={st.id}
+                    order={(st.config.ladder_order as string[] | undefined) ?? []}
+                    entrants={entrantNames}
+                    canEdit={editable}
+                  />
+                </div>
+              ))}
+            <StagesPanel
+              divisionId={id}
+              stages={stages}
+              fixtures={fixtures}
+              entrantNames={entrantNames}
+              canEdit={editable}
+            />
+          </>
         )}
 
         {tab === "standings" && (
@@ -193,6 +216,8 @@ export default async function DivisionPage({
             ))}
           </div>
         )}
+
+        {tab === "stats" && <StatsPanel divisionId={id} />}
       </main>
     </>
   );

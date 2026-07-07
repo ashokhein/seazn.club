@@ -50,3 +50,51 @@ export const volleyball = makeSetBasedModule({
   coarseEventType: "set.summary",
   rallyEntitlement: "scoring.rally_by_rally", // doc 10 / volleyball.md §3
 });
+
+// Jul3/06 §3 — the 12-Jun scoresheet: point-by-point columns per set,
+// signature lines, final result, two matches per A4 (columnsHint: 2).
+import type { ScoresheetInput } from "../../sport/module.ts";
+import type { DocSection } from "../../exports/types.ts";
+
+function pointTally(to: number): string {
+  return Array.from({ length: to }, (_, i) => String(i + 1)).join(" ");
+}
+
+volleyball.exportTemplates = {
+  scoresheet(input: ScoresheetInput, cfg): DocSection[] {
+    const c = cfg as { bestOf?: number; setTo?: number; finalSetTo?: number };
+    const bestOf = c.bestOf ?? 5;
+    const setTo = c.setTo ?? 25;
+    const finalTo = c.finalSetTo ?? 15;
+    const rows: (string | number)[][] = [];
+    for (let set = 1; set <= bestOf; set++) {
+      const to = set === bestOf ? finalTo : setTo;
+      rows.push([`Set ${set}`, input.home, pointTally(to)]);
+      rows.push(["", input.away, pointTally(to)]);
+    }
+    return [
+      {
+        heading: `${input.home} vs ${input.away}`,
+        subheading: [input.at, input.court, input.stageName]
+          .filter((x): x is string => x !== undefined)
+          .join(" · "),
+        ...(input.homeColor !== undefined || input.awayColor !== undefined
+          ? {
+              swatches: [
+                ...(input.homeColor !== undefined
+                  ? [{ label: input.home, color: input.homeColor }]
+                  : []),
+                ...(input.awayColor !== undefined
+                  ? [{ label: input.away, color: input.awayColor }]
+                  : []),
+              ],
+            }
+          : {}),
+        table: { columns: ["Set", "Team", "Points"], rows },
+        formLines: ["Final result: ________________", "Winner: ________________"],
+        signatures: ["1st referee", "Scorer", `Captain — ${input.home}`, `Captain — ${input.away}`],
+        columnsHint: 2,
+      },
+    ];
+  },
+};

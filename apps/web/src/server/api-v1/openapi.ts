@@ -122,6 +122,54 @@ export const ROUTES: RouteSpec[] = [
   { path: "/public/registrations/{id}/withdraw", method: "post", summary: "Registrant self-withdraw (token)", tag: "public", public: true, request: S.PublicRegistrationToken, response: S.PublicRegistrationStatus },
   { path: "/public/registrations/{id}/checkout", method: "post", summary: "(Re)open Stripe Checkout for a pending paid registration", tag: "public", public: true, request: S.PublicRegistrationToken, errors: [422, 503] },
   { path: "/public/registrations/{id}/ics", method: "get", summary: "Confirmation .ics for the competition dates (?token=)", tag: "public", public: true, errors: [401] },
+  // Clubs & bulk import (Jul3/01, PROMPT-21)
+  { path: "/clubs", method: "get", summary: "List clubs", tag: "clubs", response: z.array(S.Club) },
+  { path: "/clubs", method: "post", summary: "Create a club (Pro `clubs.hierarchy`)", tag: "clubs", request: S.CreateClub, response: S.Club, status: 201, errors: [402, 409] },
+  { path: "/clubs/{id}", method: "get", summary: "Club detail: teams across divisions", tag: "clubs", response: S.ClubDetail },
+  { path: "/clubs/{id}", method: "patch", summary: "Update a club", tag: "clubs", request: S.PatchClub, response: S.Club, errors: [402] },
+  { path: "/clubs/{id}", method: "delete", summary: "Delete a club (teams survive, badges fall back)", tag: "clubs", errors: [402] },
+  { path: "/clubs/logos", method: "post", summary: "Bulk logo assign: multipart `files` + `mapping` JSON + `assign_remaining` (Jul3/01 §5; Pro `logos.bulk` for >1 file)", tag: "clubs", response: z.array(S.LogoAssignment), errors: [402, 422] },
+  { path: "/imports", method: "post", summary: "Upload a participants spreadsheet (multipart `file`) → dry-run { importId, plan }; writes nothing (Jul3/01 §6)", tag: "clubs", response: S.ImportPreview, status: 201, errors: [402, 413, 422] },
+  { path: "/imports/{id}", method: "get", summary: "Re-preview a stored import against current state", tag: "clubs", response: S.ImportPreview },
+  { path: "/imports/{id}/commit", method: "post", summary: "Execute the plan in one transaction (Idempotency-Key header)", tag: "clubs", response: S.ImportCommitResult, status: 201, errors: [402, 422] },
+  { path: "/participants/export", method: "get", summary: "Participants CSV/XLSX: club + division columns, empty-spot rows intact (Pro `exports`)", tag: "clubs", errors: [402], query: { format: { schema: { type: "string", enum: ["csv", "xlsx"] } }, club_id: { schema: { type: "string" } }, division_id: { schema: { type: "string" } } } },
+  // Referee & officials assignment (Jul3/02, PROMPT-22)
+  { path: "/officials", method: "get", summary: "List officials (people or team-as-referee entrants)", tag: "officials", response: z.array(S.Official) },
+  { path: "/officials", method: "post", summary: "Create an official (multi-role is Pro `officials.roles_multi`)", tag: "officials", request: S.CreateOfficial, response: S.Official, status: 201, errors: [402] },
+  { path: "/officials/{id}", method: "get", summary: "Get an official", tag: "officials", response: S.Official },
+  { path: "/officials/{id}", method: "patch", summary: "Update an official", tag: "officials", request: S.PatchOfficial, response: S.Official, errors: [402] },
+  { path: "/officials/{id}", method: "delete", summary: "Delete an official", tag: "officials" },
+  { path: "/officials/import", method: "post", summary: "Bulk CSV/XLSX import (multipart `file`: Name, Roles, MaxPerDay)", tag: "officials", status: 201, errors: [422] },
+  { path: "/divisions/{id}/officials/auto", method: "post", summary: "Propose assignments — pure engine pass with locked rows as obstacles; writes nothing (Pro `officials.auto`)", tag: "officials", request: S.AutoAssignOfficials, response: S.OfficialsProposal, errors: [402] },
+  { path: "/divisions/{id}/officials/apply", method: "post", summary: "Persist a proposal transactionally; emits `officials_assigned` (Pro `officials.auto`)", tag: "officials", request: S.ApplyOfficials, errors: [402, 422] },
+  { path: "/fixtures/{id}/officials", method: "patch", summary: "Manual set/move/lock — single-role manual assignment free on every plan", tag: "officials", request: S.PatchFixtureOfficials, errors: [402] },
+  { path: "/stages/{id}/officials/source", method: "post", summary: "Resolve rank/result sourcing → officiating entrants; pending until the source decides (Pro `officials.auto`)", tag: "officials", request: S.SourceOfficials, errors: [402] },
+  // Schedule undo, versioning & safe destructive ops (Jul3/03, PROMPT-23)
+  { path: "/divisions/{id}/undo", method: "post", summary: "Undo the last structural edit: appends the inverse event, moves the watermark (results-guarded)", tag: "history", request: S.HistoryStep, errors: [409, 422] },
+  { path: "/divisions/{id}/redo", method: "post", summary: "Redo the next edit (Word-like linear history)", tag: "history", request: S.HistoryStep, errors: [409, 422] },
+  { path: "/divisions/{id}/history", method: "get", summary: "Ledger slice: type, actor, time, undoable/undone", tag: "history" },
+  { path: "/divisions/{id}/checkpoints", method: "get", summary: "Named save points", tag: "history" },
+  { path: "/divisions/{id}/checkpoints", method: "post", summary: "Create a save point at the current watermark (>1 is Pro `schedule.versioning`)", tag: "history", request: S.CreateCheckpoint, status: 201, errors: [402] },
+  { path: "/divisions/{id}/restore", method: "post", summary: "Undo back to a checkpoint (confirm: true; results-guarded)", tag: "history", request: S.RestoreCheckpoint, errors: [422] },
+  { path: "/divisions/{id}/locks", method: "patch", summary: "Whole-division freeze + multi-site scope locks (scopes are Pro)", tag: "history", request: S.DivisionLocks, errors: [402] },
+  { path: "/schedule/clear", method: "post", summary: "Scoped clear (stage/pools/rounds/courts; confirm: true; locked + decided survive; undoable)", tag: "history", request: S.ClearSchedule, errors: [422] },
+  { path: "/pools/{id}/clear-entrants", method: "post", summary: "Remove all teams in a pool, keep the pool (confirm: true; blocked once decided; undoable)", tag: "history", request: S.ClearPoolEntrants, errors: [422] },
+  // Scheduling constraints v2 & AI (Jul3/04, PROMPT-24)
+  { path: "/schedule/shift", method: "post", summary: "Bulk time shift: push everything in scope by ±N minutes (schedule_shifted event; undoable; all plans)", tag: "scheduling", request: S.ScheduleShift, errors: [422] },
+  { path: "/divisions/{id}/schedule/report", method: "get", summary: "Wait-time diagnostics: min/max gap per entrant + worst waits (16 Sep; all plans)", tag: "scheduling" },
+  { path: "/divisions/{id}/schedule/ai-constraints", method: "post", summary: "Prose → Zod-validated SchedulingConstraints; propose-only, human applies (Pro `scheduling.ai`)", tag: "scheduling", request: S.AiConstraintsRequest, errors: [402, 422] },
+  // Custom points & rank control (Jul3/05, PROMPT-25)
+  { path: "/stages/{id}/standings/override", method: "post", summary: "Pin final ranks (placement games decide 3rd/4th); cascade orders the unlocked remainder; audited rank_overridden (Pro `tiebreakers.custom`)", tag: "stages", request: S.OverrideStandings, errors: [402, 422] },
+  // Rich exports & print templates (Jul3/06, PROMPT-26)
+  { path: "/divisions/{id}/exports/{kind}", method: "get", summary: "Templated export (timetable|standings|roster|participants|scoresheet) as PDF/XLSX; page-break + landscape knobs free, branding Pro `exports.branded` (Pro `exports`)", tag: "exports", errors: [402, 404], query: { format: { schema: { type: "string", enum: ["pdf", "xlsx"] } }, pageBreaks: { schema: { type: "string", enum: ["auto", "per_pitch", "per_team", "per_division"] } }, landscape: { schema: { type: "string", enum: ["true"] } }, blank: { schema: { type: "string", enum: ["true"] } } } },
+  { path: "/competitions/{id}/exports/timetable", method: "get", summary: "Competition-wide pretty timetable PDF, one division per page (Pro `exports`)", tag: "exports", errors: [402], query: { pretty: { schema: { type: "string", enum: ["true"] } } } },
+  // Player statistics (Jul3/07, PROMPT-27)
+  { path: "/divisions/{id}/stats/players", method: "get", summary: "Division leaderboard from the score-event fold, sortable by any declared metric; flags requires_detailed_scoring instead of wrong zeros (Pro `stats.player`)", tag: "stats", errors: [402], query: { metric: { schema: { type: "string" } }, sort: { schema: { type: "string", enum: ["asc", "desc"] } } } },
+  { path: "/persons/{id}/stats", method: "get", summary: "A player's card stats, keyed per division (Pro `stats.player`)", tag: "stats", errors: [402], query: { division_id: { schema: { type: "string", format: "uuid" } } } },
+  { path: "/public/orgs/{orgSlug}/competitions/{slug}/divisions/{divisionSlug}/stats", method: "get", summary: "Consent-filtered public leaderboard (minors' names gated)", tag: "public", public: true },
+  // Format engine extensions (Jul3/08, PROMPT-28)
+  { path: "/stages/{id}/challenges", method: "post", summary: "Ladder challenge: creates the fixture on demand; result reorders the ladder (Pro `formats.advanced`)", tag: "stages", request: S.LadderChallenge, status: 201, errors: [402, 422] },
+  { path: "/stages/{id}/americano", method: "get", summary: "Americano rotation grid + personal-points leaderboard (Jul3/08 §3)", tag: "stages", errors: [422] },
 ];
 
 // ---------------------------------------------------------------------------

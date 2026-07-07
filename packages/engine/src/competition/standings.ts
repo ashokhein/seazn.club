@@ -23,6 +23,9 @@ export interface StandingsRow {
   metrics: Record<string, number>;
   rank?: number;
   rankLocked?: boolean;
+  /** Jul3/05 §5 (10 Jun): equal on EVERY cascade criterion — surfaced as an
+   *  alert before KO seeding instead of a silent alphabetical break. */
+  tieUnbroken?: boolean;
   // Which cascade rule separated this row from the entrants it was tied with
   // (spec 05 §4, doc 09 §2 tie-explanation popover). Written by the ranking
   // pass for every row that needed a tiebreaker beyond the cascade's primary

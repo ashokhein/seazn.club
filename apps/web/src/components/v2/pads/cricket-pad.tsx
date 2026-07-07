@@ -64,7 +64,9 @@ export function CricketPad({
   const state = (live.state ?? {}) as CricketStateView;
   const innings = state.innings ?? [];
   const open = innings.find((i) => !i.closed);
-  const [mode, setMode] = useState<"ball" | "summary">("ball");
+  // Over-by-over is the default (most organisers score coarsely: runs+wickets
+  // per over, then close the innings). Ball-by-ball is the advanced toggle.
+  const [mode, setMode] = useState<"over" | "ball" | "summary">("over");
 
   if (state.phase === "pre" || live.status === "scheduled") {
     if (!state.tossTaken) {
@@ -87,21 +89,31 @@ export function CricketPad({
         <div className="flex-1" />
         <button
           type="button"
-          onClick={() => setMode("ball")}
-          className={`rounded-full px-3 py-1 ${mode === "ball" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
+          onClick={() => setMode("over")}
+          className={`rounded-full px-3 py-1 ${mode === "over" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
         >
-          Ball-by-ball
+          Over-by-over
         </button>
         <button
           type="button"
           onClick={() => setMode("summary")}
           className={`rounded-full px-3 py-1 ${mode === "summary" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
         >
-          Innings totals
+          Innings total
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode("ball")}
+          className={`rounded-full px-3 py-1 ${mode === "ball" ? "bg-purple-100 text-purple-700" : "text-slate-400 hover:bg-slate-100"}`}
+          title="Detailed per-delivery scoring (needed for full player stats)"
+        >
+          ⋯ Ball-by-ball
         </button>
       </div>
 
-      {mode === "ball" && battingSide && fieldingSide && open ? (
+      {mode === "over" ? (
+        <OverByOverForm open={open ?? null} batting={battingSide} bpo={bpo} send={send} busy={busy} />
+      ) : mode === "ball" && battingSide && fieldingSide && open ? (
         <BallForm
           key={`${innings.length}-${open.legalBalls}`}
           innings={open}
@@ -468,6 +480,95 @@ function BallForm({
         Tap the runs off the bat to record the delivery. Wides/no-balls don&apos;t
         advance the over; the engine enforces over/ball order, batter rotation and
         bowling restrictions.
+      </p>
+    </div>
+  );
+}
+
+// Over-by-over coarse entry (the default): enter this over's runs + wickets,
+// "Add over" folds it into the innings via a progressive cricket.innings.summary
+// (the engine enforces monotone growth). A full over = bpo legal balls. Close
+// the innings from the controls below when the side is all out / overs done.
+function OverByOverForm({
+  open,
+  batting,
+  bpo,
+  send,
+  busy,
+}: {
+  open: InningsView | null;
+  batting: SideInfo | null;
+  bpo: number;
+  send: SendEvent;
+  busy: boolean;
+}) {
+  const [runs, setRuns] = useState("");
+  const [wickets, setWickets] = useState("");
+  const runsN = Number(runs || 0);
+  const wktsN = Number(wickets || 0);
+  const curRuns = open?.runs ?? 0;
+  const curWkts = open?.wickets ?? 0;
+  const curBalls = open?.legalBalls ?? 0;
+  const overNo = Math.floor(curBalls / bpo) + 1;
+
+  async function addOver() {
+    const ok = await send("cricket.innings.summary", {
+      runs: curRuns + runsN,
+      wickets: curWkts + wktsN,
+      legalBalls: curBalls + bpo,
+      partial: true, // progressive: keep the innings open (Close innings ends it)
+    });
+    if (ok) {
+      setRuns("");
+      setWickets("");
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm text-slate-600">
+        {batting ? `${batting.name} batting` : "Next innings"} — total{" "}
+        <span className="font-mono font-semibold text-slate-900">
+          {curRuns}/{curWkts}
+        </span>{" "}
+        ({oversText(curBalls, bpo)} ov)
+      </p>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="block">
+          <span className="label">Over {overNo} — runs</span>
+          <input
+            type="number"
+            min={0}
+            aria-label="Runs this over"
+            className="input w-24 px-2 py-1 text-sm"
+            value={runs}
+            onChange={(e) => setRuns(e.target.value)}
+          />
+        </label>
+        <label className="block">
+          <span className="label">Wickets</span>
+          <input
+            type="number"
+            min={0}
+            max={10}
+            aria-label="Wickets this over"
+            className="input w-20 px-2 py-1 text-sm"
+            value={wickets}
+            onChange={(e) => setWickets(e.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn btn-primary px-4 py-1.5 text-sm"
+          disabled={busy || runs === ""}
+          onClick={() => void addOver()}
+        >
+          Add over
+        </button>
+      </div>
+      <p className="text-xs text-slate-400">
+        Records a full {bpo}-ball over. Use “Close innings” below when the side is all out
+        or overs are done; the next innings opens automatically.
       </p>
     </div>
   );

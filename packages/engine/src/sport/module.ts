@@ -14,6 +14,22 @@ import type {
   StandingsDelta,
 } from "../core/types.ts";
 import type { PositionCatalog } from "./catalog.ts";
+import type { DocSection } from "../exports/types.ts";
+import type { PlayerStatsModel } from "../stats/stats.ts";
+
+// Jul3/06 §3 — what a print fragment gets to work with (display labels only;
+// TBD feeds arrive pre-rendered as "Winner of QF1").
+export interface ScoresheetInput {
+  home: string;
+  away: string;
+  homeColor?: string;
+  awayColor?: string;
+  at?: string;
+  court?: string;
+  stageName?: string;
+  /** Blank scoresheet for manual filling (Jul3/06 §7). */
+  blank?: boolean;
+}
 
 // doc 05 §4.1 — comparator keys resolved by the competition engine's
 // tiebreaker registry (lands in PROMPT-08); modules declare their official
@@ -63,6 +79,20 @@ export interface SportModule<Cfg, Ev, State> extends FoldableModule<Cfg, State> 
   eventSchema: z.ZodType<Ev>; // union of the sport's event payloads
   positions: PositionCatalog; // spec 02 §3
   variants: Record<string, Partial<Cfg>>; // named presets: t20, odi, beach, blitz…
+
+  // Jul3/06 §3 — optional print-template fragments. Sport-neutral kinds
+  // (timetable, standings, roster, participants) live in engine/exports; a
+  // sport contributes only what needs its match grammar (a volleyball
+  // scoresheet's per-set point columns, a football report's goal lines).
+  exportTemplates?: {
+    scoresheet?(input: ScoresheetInput, cfg: Cfg): DocSection[];
+    matchReport?(input: ScoresheetInput, cfg: Cfg): DocSection[];
+  };
+
+  // Jul3/07 §3 — which fine events feed which player metrics. The engine
+  // folds; scoring math stays here. Sports without person-attributed events
+  // simply omit it (leaderboards then say "requires detailed scoring").
+  playerStats?: PlayerStatsModel;
 
   init(cfg: Cfg, lineups: LineupPair): State;
   apply(state: State, ev: EventEnvelope<Ev | CoreEv>): State; // pure; throws EngineError

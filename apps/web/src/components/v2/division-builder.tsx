@@ -99,6 +99,36 @@ const STAGE_TEMPLATES: {
       { kind: "double_elim", name: "Double elimination", config: {}, qualification: null },
     ],
   },
+  {
+    key: "triple_rr",
+    label: "Triple round robin",
+    help: "Everyone plays everyone three times (Jul3/08).",
+    build: () => [{ kind: "league", name: "Triple RR", config: { legs: 3 }, qualification: null }],
+  },
+  {
+    key: "americano",
+    label: "Americano (padel)",
+    help: "Individuals rotate partners each round; personal points (Pro).",
+    build: () => [
+      { kind: "americano", name: "Americano", config: { mode: "americano", courtCount: 2, rounds: 7 }, qualification: null },
+    ],
+  },
+  {
+    key: "mexicano",
+    label: "Mexicano (padel)",
+    help: "Re-rank each round: 1+4 vs 2+3 from live points (Pro).",
+    build: () => [
+      { kind: "americano", name: "Mexicano", config: { mode: "mexicano", courtCount: 2, rounds: 7 }, qualification: null },
+    ],
+  },
+  {
+    key: "ladder",
+    label: "Ladder",
+    help: "Open standings; players challenge upward over a long window (Pro).",
+    build: () => [
+      { kind: "ladder", name: "Ladder", config: { challengeRange: 3 }, qualification: null },
+    ],
+  },
 ];
 
 const GENDERS = [

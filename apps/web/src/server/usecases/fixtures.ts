@@ -135,9 +135,13 @@ async function readLineup(
   fixtureId: string,
   entrantId: string,
 ): Promise<LineupOut> {
+  // Jul3/07 §5 (9 Sep ×4): shirt numbers ride the lineup read model so every
+  // scorer picker can render "#7 — Name".
   const slots = await tx<Record<string, unknown>[]>`
-    select l.person_id, p.full_name, l.slot, l.position_key, l.order_no, l.roles
-    from lineups l join persons p on p.id = l.person_id
+    select l.person_id, p.full_name, em.squad_number, l.slot, l.position_key, l.order_no, l.roles
+    from lineups l
+    join persons p on p.id = l.person_id
+    left join entrant_members em on em.entrant_id = l.entrant_id and em.person_id = l.person_id
     where l.fixture_id = ${fixtureId} and l.entrant_id = ${entrantId}
     order by l.order_no nulls last, p.full_name`;
   return { fixture_id: fixtureId, entrant_id: entrantId, slots };

@@ -9,7 +9,12 @@
     "./sport": "./src/sport/index.ts",
     "./sports": "./src/sports/index.ts",
     "./sports/*": "./src/sports/*/index.ts",
+    "./stats": "./src/stats/index.ts",
     "./competition": "./src/competition/index.ts",
+    "./exports": "./src/exports/index.ts",
+    "./history": "./src/history/index.ts",
+    "./import": "./src/import/index.ts",
+    "./officials": "./src/officials/index.ts",
     "./scheduling": "./src/scheduling/index.ts",
     "./testkit": "./src/testkit/index.ts"
   },

@@ -5,7 +5,9 @@
 // emit. Fixture GENERATION is PROMPT-09 — a stage here consumes an
 // already-generated fixture set (its status + results) and never builds one.
 import type { EntrantId, StageKind } from "../core/types.ts";
-import { foldResults, type FixtureResult } from "./standings.ts";
+import { foldResults, foldStandings, type FixtureResult } from "./standings.ts";
+import { applyRankLocks, type RankLock } from "./points.ts";
+import type { StandingsDelta } from "../core/types.ts";
 import type { PoolTable, StageTables } from "./qualification.ts";
 import type { TiebreakerKey } from "../sport/module.ts";
 import { buildSwissTable, rankStandings } from "./tiebreakers.ts";
@@ -54,6 +56,14 @@ export interface TableStage {
   seeds?: ReadonlyMap<EntrantId, number>;
   rngSeed?: number;
   rounds?: number; // swiss: N rounds to play
+  /** Carry-over openings (Jul3/05 §3): synthetic deltas folded before the
+   *  stage's own fixtures — prior H2H is never replayed. */
+  openingDeltas?: readonly StandingsDelta[];
+  /** Manual rank locks (Jul3/05 §4): pinned ranks; the cascade orders only
+   *  the unlocked remainder around them. */
+  rankLocks?: readonly RankLock[];
+  /** Circular-H2H mode for ≥3-way ties (Jul3/05 §5). */
+  h2hScope?: "mini_table" | "overall";
 }
 
 export interface BracketStage {
@@ -189,15 +199,26 @@ export function completeTableStage(
       .filter((fixture) => COUNTS_FOR_STANDINGS.has(fixture.status) && fixture.result !== undefined)
       .map((fixture) => fixture.result as FixtureResult);
 
-    const rows = foldResults(entrants, results);
+    const entrantSet = new Set(entrants);
+    const openings = (stage.openingDeltas ?? []).filter((d) => entrantSet.has(d.entrantId));
+    const rows =
+      openings.length > 0
+        ? foldStandings(entrants, [...openings, ...results.flat()])
+        : foldResults(entrants, results);
     const ranked = rankStandings(rows, {
       cascade: stage.cascade,
       results,
       h2hRecursive: stage.h2hRecursive === true,
       ...(stage.seeds === undefined ? {} : { seeds: stage.seeds }),
       ...(stage.rngSeed === undefined ? {} : { rngSeed: stage.rngSeed }),
+      ...(stage.h2hScope === undefined ? {} : { h2hScope: stage.h2hScope }),
       ...(stage.swiss === true ? { swiss: buildSwissTable(entrants, results) } : {}),
     });
+    // Manual override wins — it is the final structural word (Jul3/05 §8).
+    if (stage.rankLocks !== undefined && stage.rankLocks.length > 0) {
+      const poolLocks = stage.rankLocks.filter((l) => entrantSet.has(l.entrantId));
+      if (poolLocks.length > 0) ranked.rows = applyRankLocks(ranked.rows, poolLocks);
+    }
 
     for (const group of ranked.lotsGroups) {
       events.push({ type: "rank_lock_required", stageId: stage.id, group });

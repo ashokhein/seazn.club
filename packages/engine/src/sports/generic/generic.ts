@@ -208,6 +208,7 @@ export const generic: SportModule<GenericCfg, GenericEv, GenericState> = {
         return { ...state, phase: "final" };
       }
       case "core.note":
+      case "core.award":
         return state; // annotation only, no state effect (spec 03 §2)
       default:
         invalid(`unknown event type "${ev.type}"`);

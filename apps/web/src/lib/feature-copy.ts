@@ -12,6 +12,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "entrants.per_division.max": "This division is at your plan's entrant limit.",
   "stages.per_division.max": "Adding another stage needs a bigger plan.",
   "formats.double_elim": "Double-elimination brackets are a Pro format.",
+  "formats.advanced": "Americano, ladders, custom brackets, cross-stage feeds and auto-advance are Pro formats.",
   // Sport depth
   "scoring.ball_by_ball": "Ball-by-ball scoring is a Pro feature.",
   "scoring.rally_by_rally": "Rally-by-rally scoring is a Pro feature.",
@@ -20,6 +21,8 @@ const FEATURE_REASONS: Record<string, string> = {
   "stats.player": "Player stats and scorecard entry are a Pro feature.",
   "stats.club_championship": "Club championship tables are a Pro feature.",
   "tiebreakers.custom": "Custom tiebreaker order is a Pro feature.",
+  "standings.custom_points": "Bonus-point rules and forfeit points are a Pro feature — plain win/draw/loss points work on every plan.",
+  "standings.carry_over": "Carrying Phase-1 standings into Phase 2 is a Pro feature.",
   "eligibility.enforced": "Enforced eligibility locks are a Pro feature.",
   // Public & realtime
   "dashboard.public.max": "Your plan hosts one public dashboard at a time.",
@@ -31,10 +34,19 @@ const FEATURE_REASONS: Record<string, string> = {
   "api.write": "Write access via the API needs the Business plan.",
   webhooks: "Webhooks need the Business plan.",
   exports: "CSV/PDF exports are a Pro feature.",
+  "exports.branded": "Branded print templates (club colours, sponsor logos) are a Pro feature.",
+  // Clubs & bulk import (Jul3/01 §7)
+  "import.bulk": "Files over 20 rows need a Pro plan — split the file or upgrade.",
+  "logos.bulk": "Multi-file logo upload is a Pro feature — you can still set logos one at a time.",
+  "clubs.hierarchy": "Club hierarchies (parent clubs, group-by-club) are a Pro feature.",
   "scheduling.constraints": "The scheduling constraints solver is a Pro feature.",
   "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
   "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",
   "officials.assignment": "Officials assignment is a Pro feature.",
+  "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro feature — manual assignment still works.",
+  "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
+  "scheduling.ai": "AI-assisted planning (describe constraints in plain language) is a Pro feature.",
+  "schedule.versioning": "Extra save points and multi-site scope locks are a Pro feature — undo/redo always works.",
   "scoring.device_links":
     "Hand-this-device-over scoring links are a Pro feature — your scorer seat still works.",
   // Registration & entry fees (doc 16 §1.1)

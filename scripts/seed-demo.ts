@@ -78,6 +78,8 @@ const TEMPLATES: Record<string, (q: number) => StageSpec[]> = {
     { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
     { kind: "stepladder", name: "Stepladder finals", config: {}, qualification: { topN: q } },
   ],
+  // Jul3/08 formats
+  triple_rr: () => [{ kind: "league", name: "Triple RR", config: { legs: 3 }, qualification: null }],
 };
 
 // ── per-sport result events (winner side chosen by us) ─────────────────────
@@ -98,11 +100,32 @@ function resultEvents(sport: string, variant: string, fx: { home: string; away: 
     case "cricket": {
       // Innings quota per variant: t20 120 balls, hundred 100, odi 300.
       const quota = variant === "hundred" ? 100 : variant === "odi" ? 300 : 120;
+      const bpo = variant === "hundred" ? 5 : 6;
       const first = 100 + rnd(80);
-      // home bats first (no toss): homeWins ⇒ chase falls short.
+      // home wins the toss and bats; homeWins ⇒ chase falls short. Toss must
+      // precede core.start, and a progressive innings needs a real open innings.
+      events.unshift({ type: "cricket.toss", payload: { wonBy: fx.home, elected: "bat" } });
       const chase = homeWins ? first - (5 + rnd(40)) : first + 1 + rnd(20);
-      events.push({ type: "cricket.innings.summary", payload: { runs: first, wickets: 3 + rnd(7), legalBalls: quota } });
-      events.push({ type: "cricket.innings.summary", payload: { runs: Math.max(chase, 10), wickets: homeWins ? 10 : 3 + rnd(6), legalBalls: Math.max(quota - rnd(30), 30) } });
+      // Over-by-over: a few progressive innings.summary updates (engine
+      // enforces monotone growth) — the same event the over-by-over pad emits
+      // — then close. Stepped in quarters to keep the seed fast.
+      const overBuild = (total: number, wkts: number) => {
+        for (let step = 1; step <= 4; step++) {
+          events.push({
+            type: "cricket.innings.summary",
+            payload: {
+              runs: Math.round((total * step) / 4),
+              wickets: Math.round((wkts * step) / 4),
+              legalBalls: Math.round((quota * step) / 4 / bpo) * bpo,
+              // progressive; the final step reaches the quota and auto-closes
+              // the innings (overs done) — the next innings opens on demand.
+              partial: step < 4,
+            },
+          });
+        }
+      };
+      overBuild(first, 3 + rnd(7));
+      overBuild(Math.max(chase, 10), homeWins ? 10 : 3 + rnd(6));
       return events;
     }
     case "boardgame":
@@ -204,6 +227,11 @@ const PLAN_PRO: { name: string; divisions: DivPlan[] }[] = [
     { name: "Darts Double Elim", sport: "generic", variant: "score", kind: "individual", n: 8, template: "double_elim", ratio: 0.7, config: GENERIC_CFG },
     { name: "Volleyball League", sport: "volleyball", variant: "indoor", kind: "team", n: 6, template: "league_ko", q: 4, ratio: 1 },
     { name: "Beach Pairs", sport: "volleyball", variant: "beach", kind: "pair", n: 5 + rnd(3), template: "league", ratio: 0.6 },
+  ]},
+  // Jul3/08 new formats (triple RR here; americano + ladder seeded separately
+  // by seedAdvancedFormats since they need linked persons / on-demand fixtures).
+  { name: "Padel & Ladder Club", divisions: [
+    { name: "Triple Round Robin", sport: "generic", variant: "score", kind: "individual", n: 4, template: "triple_rr", ratio: 1, config: GENERIC_CFG },
   ]},
 ];
 
@@ -323,7 +351,81 @@ async function main() {
       console.log(`${comp.name} / ${d.name} (${d.sport}, ${d.kind}×${d.n}, ${d.template}): ${note}`);
     }
   }
+
+  // Jul3/08 formats that need bespoke seeding (linked persons / on-demand
+  // fixtures) — only on the Pro account, into the Padel & Ladder Club.
+  if (account === "pro") await seedAdvancedFormats();
+
   console.log("done");
+}
+
+/** Seed an americano stage (needs individual entrants backed by persons) and a
+ *  ladder stage with a couple of played challenges (reorders the ladder). Both
+ *  under the "Padel & Ladder Club" competition created by the main PLAN loop. */
+async function seedAdvancedFormats(): Promise<void> {
+  const comps = await call("/api/v1/competitions?limit=100");
+  const club = ((comps.items ?? comps) as { id: string; name: string }[]).find(
+    (c) => c.name === "Padel & Ladder Club",
+  );
+  if (!club) return;
+  const existing = await call(`/api/v1/competitions/${club.id}/divisions`);
+  const names = new Set(((existing.items ?? existing) as { name: string }[]).map((d) => d.name));
+
+  // --- Americano: 8 individuals backed by persons, one round played ---
+  if (!names.has("Americano Night")) {
+    const div = await call(`/api/v1/competitions/${club.id}/divisions`, "POST", {
+      name: "Americano Night", sport_key: "generic", variant_key: "score", config: GENERIC_CFG,
+    });
+    const players = [];
+    for (let i = 0; i < 8; i++) {
+      const p = (await call("/api/v1/persons", "POST", { full_name: person(), consent: {} })) as { id: string };
+      players.push({
+        kind: "individual", display_name: `P${i + 1}`, seed: i + 1,
+        members: [{ person_id: p.id, is_captain: false, roles: [] }],
+      });
+    }
+    await call(`/api/v1/divisions/${div.id}/entrants`, "POST", players);
+    const st = await call(`/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1, kind: "americano", name: "Americano", config: { mode: "americano", courtCount: 2, rounds: 5 },
+    });
+    const gen = await call(`/api/v1/stages/${st.id}/generate`, "POST");
+    await call(`/api/v1/divisions/${div.id}/start`, "POST");
+    let played = 0;
+    for (const f of (gen.fixtures as GenFx[]).filter((x) => (x.round_no ?? 0) === 1)) {
+      const cur = (await call(`/api/v1/fixtures/${f.id}`)) as GenFx & { status: string };
+      if (cur.home_entrant_id && cur.away_entrant_id && cur.status === "scheduled") {
+        await decideFixture(f.id, "generic", "score", { home: cur.home_entrant_id, away: cur.away_entrant_id });
+        played++;
+      }
+    }
+    console.log(`Padel & Ladder Club / Americano Night (generic, individual×8, americano): ${played}/${gen.fixtures.length} round 1`);
+  }
+
+  // --- Ladder: 6 individuals; play two in-range challenges ---
+  if (!names.has("Club Ladder")) {
+    const div = await call(`/api/v1/competitions/${club.id}/divisions`, "POST", {
+      name: "Club Ladder", sport_key: "generic", variant_key: "score", config: GENERIC_CFG,
+    });
+    const ents = (await call(`/api/v1/divisions/${div.id}/entrants`, "POST",
+      Array.from({ length: 6 }, (_, i) => ({ kind: "individual", display_name: person(), seed: i + 1 })),
+    )) as { id: string }[];
+    const st = await call(`/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1, kind: "ladder", name: "Ladder", config: { challengeRange: 2 },
+    });
+    await call(`/api/v1/divisions/${div.id}/start`, "POST").catch(() => null);
+    // #3 challenges #1 (in range 2), plays and wins → takes the top spot.
+    let challenges = 0;
+    for (const [ci, oi] of [[2, 0], [4, 2]] as const) {
+      try {
+        const ch = (await call(`/api/v1/stages/${st.id}/challenges`, "POST", {
+          challenger_id: ents[ci].id, opponent_id: ents[oi].id,
+        })) as { fixture_id: string };
+        await decideFixture(ch.fixture_id, "generic", "score", { home: ents[ci].id, away: ents[oi].id });
+        challenges++;
+      } catch { /* range/ordering may reject after the first swap */ }
+    }
+    console.log(`Padel & Ladder Club / Club Ladder (generic, individual×6, ladder): ${challenges} challenge(s) played`);
+  }
 }
 
 async function playStageAfterStart(divId: string, stageId: string, sport: string, variant: string, ratio: number) {

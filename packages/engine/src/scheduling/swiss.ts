@@ -33,6 +33,9 @@ export interface SwissHistory {
 export interface SwissConstraints {
   chess?: boolean; // enforce colour rules and read home/away as White/Black
   byeScore?: number; // documented for the caller; pairRound only names the bye entrant
+  /** Hammes preset (Jul3/08 §7, 20 Jan): pair ADJACENT ranks (1v2, 3v4, …)
+   *  instead of folding top-vs-bottom; the no-rematch backtracking is shared. */
+  pairing?: "fold" | "rank_adjacent";
 }
 
 export interface SwissPairing {
@@ -186,7 +189,8 @@ export function pairRound(
   // then nearest groups (minimal float), then rank order.
   const orderCandidates = (a: SwissStanding, others: SwissStanding[]): SwissStanding[] => {
     const sameScore = others.filter((o) => o.score === a.score);
-    const foldIdx = Math.floor(sameScore.length / 2);
+    const adjacent = constraints.pairing === "rank_adjacent";
+    const foldIdx = adjacent ? 0 : Math.floor(sameScore.length / 2);
     const globalIdx = new Map(others.map((o, i) => [o.entrantId, i]));
     return [...others].sort((x, y) => {
       const sx = x.score === a.score;

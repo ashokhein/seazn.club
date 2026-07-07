@@ -16,11 +16,13 @@
 //   |home−away| = 0.
 import type { EntrantId } from "../core/types.ts";
 
-// legs=2 mirrors leg 1 (same pairings, home/away swapped). Board indices are
-// assigned 1..(games per round) and rotated so the pivot never monopolises
-// board 1; physical court packing is calendar.ts's job (spec 05 §2.6).
+// legs=2 mirrors leg 1 (same pairings, home/away swapped); legs>2 alternate
+// the mirror per leg (Jul3/08 §2 — a triple RR gives every pairing a 2/1
+// home/away split). Board indices are assigned 1..(games per round) and
+// rotated so the pivot never monopolises board 1; physical court packing is
+// calendar.ts's job (spec 05 §2.6).
 export interface RoundRobinConfig {
-  legs?: 1 | 2;
+  legs?: number; // ≥1; capped at 8 by the config validator
 }
 
 export interface RoundRobinOptions {
@@ -131,7 +133,7 @@ export function generateRoundRobin(opts: RoundRobinOptions): RoundRobinSchedule 
         let home = col.top;
         let away = col.bottom;
         if (col.isPivot && r % 2 === 1) [home, away] = [away, home];
-        if (leg === 2) [home, away] = [away, home];
+        if (leg % 2 === 0) [home, away] = [away, home]; // even legs mirror (Jul3/08 §2)
         const court = ((realSeen + r) % k) + 1;
         realSeen++;
         const fixture: RoundRobinFixture = {
@@ -156,7 +158,7 @@ export function generateRoundRobin(opts: RoundRobinOptions): RoundRobinSchedule 
 
 // Total fixture count for a field of `n` real entrants over `legs` — the
 // completeness target n(n−1)/2·legs (spec 05 §2.1).
-export function roundRobinFixtureCount(n: number, legs: 1 | 2 = 1): number {
+export function roundRobinFixtureCount(n: number, legs = 1): number {
   if (n < 2) return 0;
   return ((n * (n - 1)) / 2) * legs;
 }

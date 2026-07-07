@@ -63,13 +63,19 @@ async function withMembers(tx: Tx, entrant: EntrantRow): Promise<EntrantWithMemb
   return { ...entrant, members };
 }
 
-export async function listEntrants(auth: AuthCtx, divisionId: string): Promise<EntrantRow[]> {
+export async function listEntrants(
+  auth: AuthCtx,
+  divisionId: string,
+  clubId?: string,
+): Promise<EntrantRow[]> {
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
+    // ?club_id= facet (Jul3/01 §6): a read-side grouping over teams.club_id.
     return tx<EntrantRow[]>`
       select ${tx(COLS)} from entrants
       where division_id = ${divisionId}
+      ${clubId ? tx`and team_id in (select id from teams where club_id = ${clubId})` : tx``}
       order by seed nulls last, created_at, id`;
   });
 }

@@ -20,7 +20,7 @@ export const Visibility = z.enum(["private", "unlisted", "public"]);
 export const CompetitionStatus = z.enum(["draft", "published", "live", "completed", "archived"]);
 // Doc 12 §1: 'scheduled' = timetable published, scoring not yet open.
 export const DivisionStatus = z.enum(["setup", "scheduled", "active", "completed"]);
-export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder"]);
+export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder", "americano", "ladder"]);
 export const EntrantKind = z.enum(["team", "individual", "pair"]);
 export const EntrantStatus = z.enum(["registered", "confirmed", "withdrawn", "disqualified"]);
 export const ApiKeyScope = z.enum(["read", "write"]);
@@ -110,6 +110,12 @@ export const PatchDivision = z
     eligibility: z.array(z.record(z.string(), z.unknown())),
     tiebreakers: z.array(z.string()).nullable(),
     status: DivisionStatus,
+    /** Hide official names on all public reads (Jul3/02, 25 Jun). */
+    officials_hide_names: z.boolean(),
+    /** Jul3/04 §4: 'flexible' = ordered fixtures, no clock. */
+    scheduling_mode: z.enum(["timed", "flexible"]),
+    /** Jul3/08 §5: progression fires without a button (Pro formats.advanced). */
+    auto_progress: z.boolean(),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -127,6 +133,9 @@ export const Division = z.object({
   eligibility: z.array(z.unknown()),
   tiebreakers: z.array(z.string()).nullable(),
   status: DivisionStatus,
+  officials_hide_names: z.boolean(),
+  scheduling_mode: z.enum(["timed", "flexible"]),
+  auto_progress: z.boolean(),
   created_at: z.string(),
 });
 
@@ -436,6 +445,28 @@ export const ScheduleConfig = z.object({
     .default([]),
   /** Quick-start rolling times (doc 12 §1.A): round r starts at startAt + (r−1)·roundMinutes. */
   roundMinutes: z.number().int().min(1).max(24 * 60).nullish(),
+  /** Constraints v2 (Jul3/04 §3; Pro `scheduling.constraints`). API times are
+   *  ISO; the engine consumes epoch ms. */
+  constraints: z
+    .object({
+      restMin: z.number().int().min(0).max(24 * 60).optional(),
+      restByGroup: z.record(z.string(), z.number().int().min(0).max(24 * 60)).optional(),
+      noBackToBack: z.boolean().default(false),
+      startWindows: z
+        .array(
+          z.object({
+            target: z.object({ kind: z.enum(["entrant", "pool", "division"]), id: z.string() }),
+            notBefore: IsoDateTime.optional(),
+            notAfter: IsoDateTime.optional(),
+          }),
+        )
+        .max(200)
+        .default([]),
+      fieldFairness: z.enum(["off", "balance", "rotate"]).default("off"),
+      parallelism: z.enum(["block", "mixed"]).default("mixed"),
+      crossPersonClash: z.enum(["warn", "hard"]).default("warn"),
+    })
+    .optional(),
 });
 export type ScheduleConfig = z.infer<typeof ScheduleConfig>;
 
@@ -459,6 +490,7 @@ export const ScheduleConflict = z.object({
   fixture_id: Uuid,
   code: z.enum([
     "conflict.court",
+    "conflict.start_window",
     "warn.rest",
     "warn.person_overlap",
     "warn.order",
@@ -734,3 +766,277 @@ export const CreateConnectOnboarding = z.object({
 export type CreateConnectOnboarding = z.infer<typeof CreateConnectOnboarding>;
 
 export const ConnectOnboardingLink = z.object({ url: z.string() });
+
+// Clubs & bulk import (Jul3/01, PROMPT-21) ------------------------------------
+
+export const Club = z.object({
+  id: z.string(),
+  name: z.string(),
+  short_name: z.string().nullable(),
+  logo_path: z.string().nullable(),
+  colors: z.record(z.string(), z.string()).nullable(),
+  external_ref: z.string().nullable(),
+  created_at: z.string(),
+});
+
+export const CreateClub = z.object({
+  name: z.string().min(1).max(200),
+  short_name: z.string().min(1).max(40).optional(),
+  colors: z.record(z.string(), z.string()).optional(),
+  external_ref: z.string().min(1).max(100).optional(),
+});
+export type CreateClub = z.infer<typeof CreateClub>;
+
+export const PatchClub = z.object({
+  name: z.string().min(1).max(200).optional(),
+  short_name: z.string().min(1).max(40).nullable().optional(),
+  colors: z.record(z.string(), z.string()).nullable().optional(),
+  external_ref: z.string().min(1).max(100).nullable().optional(),
+  logo_path: z.string().nullable().optional(),
+});
+export type PatchClub = z.infer<typeof PatchClub>;
+
+export const ClubDetail = Club.extend({
+  teams: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      short_name: z.string().nullable(),
+      logo_path: z.string().nullable(),
+      entries: z.array(
+        z.object({
+          division_id: z.string(),
+          entrant_id: z.string(),
+          division_name: z.string(),
+          competition_id: z.string(),
+        }),
+      ),
+    }),
+  ),
+});
+
+export const LogoAssignment = z.object({
+  filename: z.string(),
+  clubId: z.string().nullable(),
+  clubName: z.string().nullable(),
+  matchedBy: z.enum(["filename", "manual", "order"]).nullable(),
+  logoPath: z.string().nullable(),
+});
+
+// The plan itself is the engine's ImportPlan (typed there); the API documents
+// it loosely — clients treat it as display data.
+export const ImportPreview = z.object({
+  importId: z.string(),
+  filename: z.string(),
+  status: z.enum(["planned", "committed"]),
+  rowCount: z.number().int(),
+  mapping: z.record(z.string(), z.string()).optional(),
+  plan: z.object({
+    ops: z.array(z.record(z.string(), z.unknown())),
+    stats: z.object({
+      clubs: z.number().int(),
+      teams: z.number().int(),
+      persons: z.number().int(),
+      entrants: z.number().int(),
+      rosters: z.number().int(),
+    }),
+    issues: z.array(
+      z.object({
+        rowNo: z.number().int(),
+        column: z.string().optional(),
+        severity: z.enum(["error", "warn"]),
+        code: z.string(),
+        message: z.string(),
+      }),
+    ),
+  }),
+});
+
+export const ImportCommitResult = z.object({
+  importId: z.string(),
+  stats: ImportPreview.shape.plan.shape.stats,
+  divisionIds: z.array(z.string()),
+});
+
+// Referee & officials assignment (Jul3/02, PROMPT-22) -------------------------
+
+export const Official = z.object({
+  id: z.string(),
+  person_id: z.string().nullable(),
+  entrant_id: z.string().nullable(),
+  display_name: z.string(),
+  role_keys: z.array(z.string()),
+  home_pool_id: z.string().nullable(),
+  max_per_day: z.number().int().nullable(),
+  created_at: z.string(),
+});
+
+export const CreateOfficial = z.object({
+  display_name: z.string().min(1).max(200),
+  person_id: Uuid.optional(),
+  entrant_id: Uuid.optional(),
+  role_keys: z.array(z.string().min(1)).min(1).default(["referee"]),
+  home_pool_id: Uuid.nullable().optional(),
+  max_per_day: z.number().int().positive().nullable().optional(),
+});
+
+export const PatchOfficial = CreateOfficial.partial();
+
+const AssignPolicyBody = z.object({
+  roles: z.array(z.string().min(1)).min(1),
+  poolLock: z.boolean().default(false),
+  blockStay: z.boolean().default(false),
+  fairness: z.enum(["tournament", "per_day"]).default("tournament"),
+  teamRefKeepDivision: z.boolean().default(false),
+  restMinMinutes: z.number().int().nonnegative().default(0),
+  blockGapMinutes: z.number().int().positive().default(30),
+});
+
+export const AutoAssignOfficials = z.object({
+  policy: AssignPolicyBody,
+  rng_seed: z.string().default("officials"),
+});
+
+export const OfficialsProposal = z.object({
+  assignments: z.array(
+    z.object({
+      fixtureId: z.string(),
+      officialId: z.string(),
+      roleKey: z.string(),
+      locked: z.boolean().optional(),
+    }),
+  ),
+  conflicts: z.array(
+    z.object({
+      kind: z.string(),
+      severity: z.enum(["block", "warn"]),
+      fixtureId: z.string().optional(),
+      officialId: z.string().optional(),
+      roleKey: z.string().optional(),
+      detail: z.string().optional(),
+    }),
+  ),
+});
+
+export const ApplyOfficials = z.object({
+  assignments: z.array(
+    z.object({
+      fixture_id: Uuid,
+      official_id: Uuid,
+      role_key: z.string().min(1),
+      locked: z.boolean().default(false),
+    }),
+  ),
+});
+
+export const PatchFixtureOfficials = z.object({
+  set: z.array(
+    z.object({
+      official_id: Uuid,
+      role_key: z.string().min(1),
+      locked: z.boolean().default(false),
+    }),
+  ),
+});
+
+export const SourceOfficials = z.object({
+  sources: z
+    .array(
+      z.discriminatedUnion("kind", [
+        z.object({
+          kind: z.literal("rank"),
+          fromStage: z.string(),
+          take: z.array(z.object({ poolId: z.string().optional(), rank: z.number().int().positive() })),
+        }),
+        z.object({
+          kind: z.literal("result"),
+          fromFixture: z.string(),
+          side: z.enum(["winner", "loser"]),
+        }),
+      ]),
+    )
+    .min(1),
+});
+
+// Schedule undo & versioning (Jul3/03, PROMPT-23) -----------------------------
+
+export const HistoryStep = z.object({
+  /** Optimistic token: the division seq the client last saw (409 on stale). */
+  expected_seq: z.number().int().optional(),
+});
+
+export const CreateCheckpoint = z.object({ label: z.string().min(1).max(120) });
+
+export const RestoreCheckpoint = z.object({
+  checkpoint_id: Uuid,
+  confirm: z.literal(true),
+});
+
+export const DivisionLocks = z.object({
+  schedule_locked: z.boolean().optional(),
+  locked_scopes: z
+    .array(
+      z.object({
+        courts: z.array(z.string()).optional(),
+        venues: z.array(z.string()).optional(),
+        pool_ids: z.array(z.string()).optional(),
+      }),
+    )
+    .optional(),
+});
+
+export const ClearSchedule = z.object({
+  division_id: Uuid,
+  scope: z
+    .object({
+      stageId: z.string().optional(),
+      poolIds: z.array(z.string()).optional(),
+      rounds: z.array(z.number().int()).optional(),
+      courts: z.array(z.string()).optional(),
+      excludeLocked: z.boolean().default(true),
+    })
+    .default({ excludeLocked: true }),
+  confirm: z.literal(true),
+});
+
+export const ClearPoolEntrants = z.object({ confirm: z.literal(true) });
+
+// Scheduling constraints v2 & AI (Jul3/04, PROMPT-24) -------------------------
+
+export const ScheduleShift = z.object({
+  division_id: Uuid,
+  scope: z
+    .object({
+      stageId: z.string().optional(),
+      poolIds: z.array(z.string()).optional(),
+      courts: z.array(z.string()).optional(),
+      excludeLocked: z.boolean().default(true),
+    })
+    .default({ excludeLocked: true }),
+  delta_minutes: z.number().int().min(-1440).max(1440),
+});
+
+export const AiConstraintsRequest = z.object({ prose: z.string().min(3).max(4000) });
+
+// Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
+
+export const OverrideStandings = z.object({
+  rows: z
+    .array(
+      z.object({
+        entrant_id: Uuid,
+        rank: z.number().int().min(1),
+        reason: z.string().min(1).max(300),
+      }),
+    )
+    .min(1)
+    .max(64),
+});
+export type OverrideStandings = z.infer<typeof OverrideStandings>;
+
+// Format extensions (Jul3/08, PROMPT-28) --------------------------------------
+
+export const LadderChallenge = z.object({
+  challenger_id: Uuid,
+  opponent_id: Uuid,
+});

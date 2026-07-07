@@ -76,10 +76,31 @@ export function EntrantsPanel({
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Club facet (Jul3/01 §8): filter entrants by parent club. Hidden when the
+  // org has no clubs (or the clubs list is not readable on this plan).
+  const [clubs, setClubs] = useState<{ id: string; name: string }[]>([]);
+  const [clubFilter, setClubFilter] = useState("");
+  const [clubEntrantIds, setClubEntrantIds] = useState<Set<string> | null>(null);
 
   useEffect(() => {
     loadAllPersons().then(setPersons).catch(() => setPersons([]));
+    apiV1<{ id: string; name: string }[]>("/api/v1/clubs")
+      .then(setClubs)
+      .catch(() => setClubs([]));
   }, []);
+
+  useEffect(() => {
+    if (!clubFilter) return; // cleared in the select's onChange
+    apiV1<EntrantRow[]>(
+      `/api/v1/divisions/${divisionId}/entrants?club_id=${encodeURIComponent(clubFilter)}`,
+    )
+      .then((rows) => setClubEntrantIds(new Set(rows.map((r) => r.id))))
+      .catch(() => setClubEntrantIds(null));
+  }, [clubFilter, divisionId]);
+
+  const visibleEntrants = clubEntrantIds
+    ? entrants.filter((e) => clubEntrantIds.has(e.id))
+    : entrants;
 
   const fail = useCallback((err: unknown) => {
     if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
@@ -213,6 +234,26 @@ export function EntrantsPanel({
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
 
+      {clubs.length > 0 && (
+        <label className="flex items-center gap-2 text-sm text-slate-600">
+          <span>Club</span>
+          <select
+            className="input max-w-xs"
+            value={clubFilter}
+            onChange={(e) => {
+              setClubFilter(e.target.value);
+              if (!e.target.value) setClubEntrantIds(null);
+            }}
+            aria-label="Filter entrants by club"
+          >
+            <option value="">All clubs</option>
+            {clubs.map((c) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <section className="card overflow-hidden">
         <table className="table">
           <thead>
@@ -225,14 +266,14 @@ export function EntrantsPanel({
             </tr>
           </thead>
           <tbody>
-            {entrants.length === 0 && (
+            {visibleEntrants.length === 0 && (
               <tr>
                 <td colSpan={canEdit ? 5 : 4} className="px-4 py-6 text-center text-sm text-slate-400">
-                  No entrants registered yet.
+                  {clubFilter ? "No entrants from this club." : "No entrants registered yet."}
                 </td>
               </tr>
             )}
-            {entrants.map((e) => (
+            {visibleEntrants.map((e) => (
               <EntrantTableRow
                 key={e.id}
                 entrant={e}

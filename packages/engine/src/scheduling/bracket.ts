@@ -4,6 +4,7 @@
 // stepladder — every slot is either a concrete seeded entrant, an auto-decided
 // bye award, or a feed from another fixture's winner/loser.
 import type { EntrantId } from "../core/types.ts";
+import { EngineError } from "../core/errors.ts";
 import { seedOrder } from "./roundrobin.ts";
 
 // A slot filled by the winner or loser of an earlier fixture (spec 05 §2.3
@@ -75,6 +76,11 @@ export interface SingleElimOptions {
   thirdPlace?: boolean; // add a 3rd-place playoff between the semifinal losers
   idPrefix?: string; // fixture-id namespace (default 'se'); DE uses 'wb'
   bracketTag?: "WB"; // tag fixtures (DE winners bracket)
+  /** Jul3/08 §4 (7 Jan): organiser-chosen bye recipients for a non-power-of-2
+   *  field. The listed entrants take the bracket's bye lines (they are placed
+   *  as the top bracket seeds); everyone else fills the remaining positions in
+   *  seed order. Length must equal nextPowerOfTwo(n) − n. */
+  byeEntrants?: readonly EntrantId[];
 }
 
 interface SEResult {
@@ -90,8 +96,22 @@ interface SEResult {
 // a winner feed. Returns the game-id grid so double elimination can wire the
 // losers.
 function buildSingleElim(opts: SingleElimOptions): SEResult {
-  const ordered = seedOrder(opts.entrants, opts.seeds);
+  let ordered = seedOrder(opts.entrants, opts.seeds);
   const n = ordered.length;
+  if (opts.byeEntrants !== undefined && n >= 2) {
+    const need = nextPowerOfTwo(n) - n;
+    const byes = [...opts.byeEntrants];
+    const known = new Set(ordered);
+    if (byes.length !== need || byes.some((b) => !known.has(b)) || new Set(byes).size !== byes.length) {
+      throw new EngineError("CONFIG_INVALID", `custom byes must name exactly ${need} distinct entrants`, {
+        byes,
+      });
+    }
+    // chosen recipients occupy the bye lines (top bracket seeds); the rest
+    // keep their relative seed order
+    const byeSet = new Set(byes);
+    ordered = [...byes, ...ordered.filter((e) => !byeSet.has(e))];
+  }
   const prefix = opts.idPrefix ?? "se";
   const empty: SEResult = { fixtures: [], gameIds: [], rounds: 0, finalId: undefined, semifinalIds: [] };
   if (n < 2) return empty;

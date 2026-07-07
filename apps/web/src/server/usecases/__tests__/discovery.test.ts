@@ -221,9 +221,11 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
       expect(names).not.toContain(forbidden);
     }
 
-    const all = await discoveryList({});
+    // Scope by name: the shared local test DB accumulates discoverable
+    // competitions across runs and the page is capped at 24.
+    const all = await discoveryList({ q: competition.name });
     expect(all.items.some((i) => i.id === competition.id)).toBe(true);
-    const generic = await discoveryList({ sport: "generic" });
+    const generic = await discoveryList({ sport: "generic", q: competition.name });
     expect(generic.items.some((i) => i.id === competition.id)).toBe(true);
     const nothing = await discoveryList({ sport: "no-such-sport" });
     expect(nothing.items.some((i) => i.id === competition.id)).toBe(false);

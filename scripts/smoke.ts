@@ -205,6 +205,12 @@ async function main() {
 
   // --- Platform API /api/v1 (PROMPT-11) — the full engine v2 lifecycle ---
   await v1Suite(admin, org2.id, org2.slug);
+
+  // --- Jul3 feature wave (PROMPT-21..28) over real HTTP ---
+  // The advanced features are entitlement-gated — org2 must be Pro (and it
+  // needs headroom past competitions.max_active for the extra competitions).
+  await setPlan(org2.id, "pro");
+  await jul3Suite(admin, org2.id);
 }
 
 // v1 responses: { ok, data | error: {code, message, …}, requestId }.
@@ -403,6 +409,166 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
     openapi: string; paths: Record<string, unknown>;
   };
   check("v1 openapi served", spec.openapi === "3.1.0" && !!spec.paths["/api/v1/fixtures/{id}/events"]);
+}
+
+// Multipart POST for the file-upload endpoints (imports, logos).
+async function v1Multipart(
+  s: Session,
+  path: string,
+  form: FormData,
+): Promise<V1Res> {
+  const res = await fetch(BASE + path, {
+    method: "POST",
+    headers: { ...(Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {}) },
+    body: form,
+  });
+  const json = (await res.json().catch(() => ({ ok: false }))) as V1Res["json"];
+  return { status: res.status, headers: res.headers, json };
+}
+
+/**
+ * Exercise the Jul3 route families (PROMPT-21..28) over real HTTP so a broken
+ * route/auth/envelope fails CI even when the usecase unit passes. Runs against
+ * a Pro org (advanced features are entitlement-gated).
+ */
+async function jul3Suite(admin: Session, orgId: string): Promise<void> {
+  void orgId;
+  // Fresh competition + football division (football has the richest surface:
+  // scorers, cards, MOTM, scoresheets).
+  const comp = v1data<{ id: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", { name: `Jul3 Cup ${tag}`, visibility: "public" }),
+  );
+  const div = await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+    name: "Open", sport_key: "generic", variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  });
+  const divId = v1data<{ id: string }>(div).id;
+
+  // -- PROMPT-21: clubs + bulk import ------------------------------------
+  const club = await v1(admin, "/api/v1/clubs", "POST", { name: `Acme ${tag}`, short_name: "ACM" });
+  check("jul3 clubs create (Pro clubs.hierarchy)", club.status === 201);
+  const clubs = await v1(admin, "/api/v1/clubs");
+  check("jul3 clubs list", clubs.status === 200 && v1data<unknown[]>(clubs).length >= 1);
+
+  const csv = ["Team,Player,Division", `Acme U12,Ada One,${v1data<{ slug: string }>(div).slug}`].join("\n");
+  const form = new FormData();
+  form.append("file", new Blob([csv], { type: "text/csv" }), "import.csv");
+  const imp = await v1Multipart(admin, "/api/v1/imports", form);
+  check("jul3 import dry-run → plan", imp.status === 201 && Array.isArray(v1data<{ plan: { ops: unknown[] } }>(imp).plan.ops));
+  const importId = v1data<{ importId: string }>(imp).importId;
+  const committed = await v1(admin, `/api/v1/imports/${importId}/commit`, "POST", undefined, {
+    "Idempotency-Key": `smoke-${tag}`,
+  });
+  check("jul3 import commit", committed.status === 201 && v1data<{ stats: { teams: number } }>(committed).stats.teams === 1);
+
+  // -- PROMPT-22: officials ---------------------------------------------
+  const official = await v1(admin, "/api/v1/officials", "POST", { display_name: `Ref ${tag}`, role_keys: ["referee"] });
+  check("jul3 officials create", official.status === 201);
+  const officials = await v1(admin, "/api/v1/officials");
+  check("jul3 officials list", officials.status === 200);
+
+  // Build a scored-through division to exercise the rest.
+  const entrants = v1data<{ id: string }[]>(
+    await v1(admin, `/api/v1/divisions/${divId}/entrants`, "POST",
+      ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 }))),
+  );
+  const stageId = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  ).id;
+  const fixtures = v1data<{ fixtures: { id: string }[] }>(
+    await v1(admin, `/api/v1/stages/${stageId}/generate`, "POST"),
+  ).fixtures;
+  await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
+
+  const officialId = v1data<{ id: string }[]>(officials)[0]!.id;
+  const auto = await v1(admin, `/api/v1/divisions/${divId}/officials/auto`, "POST", {
+    policy: { roles: ["referee"] },
+  });
+  check("jul3 officials auto proposes", auto.status === 200 && Array.isArray(v1data<{ assignments: unknown[] }>(auto).assignments));
+  const patchOff = await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}/officials`, "PATCH", {
+    set: [{ official_id: officialId, role_key: "referee", locked: false }],
+  });
+  check("jul3 officials manual assign", patchOff.status === 200);
+
+  // -- PROMPT-24: bulk shift + wait report ------------------------------
+  await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}`, "PATCH", {
+    scheduled_at: "2026-07-20T09:00:00.000Z", court_label: "C1",
+  });
+  const shift = await v1(admin, "/api/v1/schedule/shift", "POST", {
+    division_id: divId, scope: { excludeLocked: true }, delta_minutes: 15,
+  });
+  check("jul3 bulk shift", shift.status === 200 && v1data<{ shifted: number }>(shift).shifted >= 1);
+  const report = await v1(admin, `/api/v1/divisions/${divId}/schedule/report`);
+  check("jul3 wait report", report.status === 200 && Array.isArray(v1data<{ perEntrant: unknown[] }>(report).perEntrant));
+
+  // -- PROMPT-23: undo/redo/history/checkpoints -------------------------
+  const undo = await v1(admin, `/api/v1/divisions/${divId}/undo`, "POST", {});
+  check("jul3 undo appends inverse", undo.status === 200 && typeof v1data<{ watermark: number }>(undo).watermark === "number");
+  const redo = await v1(admin, `/api/v1/divisions/${divId}/redo`, "POST", {});
+  check("jul3 redo", redo.status === 200);
+  const cp = await v1(admin, `/api/v1/divisions/${divId}/checkpoints`, "POST", { label: `smoke ${tag}` });
+  check("jul3 checkpoint saved", cp.status === 201);
+  const history = await v1(admin, `/api/v1/divisions/${divId}/history`);
+  check("jul3 history slice", history.status === 200 && Array.isArray(v1data<{ events: unknown[] }>(history).events));
+
+  // Decide every fixture for stats/standings/export.
+  for (const f of fixtures) {
+    const state = await v1(admin, `/api/v1/fixtures/${f.id}/state`);
+    const seq = v1data<{ last_seq: number }>(state).last_seq;
+    await v1(admin, `/api/v1/fixtures/${f.id}/events`, "POST", {
+      expected_seq: seq, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+    });
+  }
+
+  // -- PROMPT-25: manual rank override ----------------------------------
+  const override = await v1(admin, `/api/v1/stages/${stageId}/standings/override`, "POST", {
+    rows: [
+      { entrant_id: entrants[2]!.id, rank: 3, reason: "placement game" },
+      { entrant_id: entrants[3]!.id, rank: 4, reason: "placement game" },
+    ],
+  });
+  check("jul3 rank override (Pro tiebreakers.custom)", override.status === 200);
+
+  // -- PROMPT-26: exports (PDF + XLSX bytes) ----------------------------
+  const pdf = await fetch(`${BASE}/api/v1/divisions/${divId}/exports/timetable?format=pdf`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
+  const pdfBytes = Buffer.from(await pdf.arrayBuffer());
+  check("jul3 timetable PDF bytes", pdf.status === 200 && pdfBytes.subarray(0, 5).toString() === "%PDF-");
+  const xlsx = await fetch(`${BASE}/api/v1/divisions/${divId}/exports/participants?format=xlsx`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
+  check("jul3 participants XLSX bytes", xlsx.status === 200 && (await xlsx.arrayBuffer()).byteLength > 500);
+
+  // -- PROMPT-27: player stats ------------------------------------------
+  const stats = await v1(admin, `/api/v1/divisions/${divId}/stats/players`);
+  check("jul3 player stats leaderboard (Pro stats.player)", stats.status === 200 && Array.isArray(v1data<{ rows: unknown[] }>(stats).rows));
+
+  // -- PROMPT-28: format extensions (triple RR + ladder challenge) ------
+  const tripleComp = v1data<{ id: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", { name: `Triple ${tag}`, visibility: "private" }),
+  );
+  const tripleDiv = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/competitions/${tripleComp.id}/divisions`, "POST", {
+      name: "T", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  ).id;
+  await v1(admin, `/api/v1/divisions/${tripleDiv}/entrants`, "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })));
+  const tripleStage = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/divisions/${tripleDiv}/stages`, "POST", {
+      seq: 1, kind: "league", name: "Triple", config: { legs: 3 },
+    }),
+  ).id;
+  const tripleGen = await v1(admin, `/api/v1/stages/${tripleStage}/generate`, "POST");
+  check("jul3 triple RR = 18 fixtures", v1data<{ created: number }>(tripleGen).created === 18);
+
+  // Ladder challenge (formats.advanced): a stage + an in-range challenge.
+  const ladderStage = await v1(admin, `/api/v1/divisions/${tripleDiv}/stages`, "POST", {
+    seq: 2, kind: "ladder", name: "Ladder", config: { challengeRange: 2 },
+  });
+  check("jul3 ladder stage (Pro formats.advanced)", ladderStage.status === 201);
 }
 
 /**

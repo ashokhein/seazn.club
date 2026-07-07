@@ -1508,6 +1508,7 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
         if (state.outcome === null) wrongPhase("cannot finalize an undecided fixture");
         return { ...state, phase: "final" };
       case "core.note":
+      case "core.award":
         return state;
       default:
         invalid(`unknown event type "${ev.type}"`);

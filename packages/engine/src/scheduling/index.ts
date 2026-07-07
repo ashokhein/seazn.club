@@ -4,3 +4,7 @@ export * from "./roundrobin.ts";
 export * from "./swiss.ts";
 export * from "./bracket.ts";
 export * from "./calendar.ts";
+export * from "./constraints.ts";
+export * from "./report.ts";
+export * from "./americano.ts";
+export * from "./feedgraph.ts";

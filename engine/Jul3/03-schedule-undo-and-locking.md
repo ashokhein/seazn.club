@@ -34,9 +34,10 @@ alter table divisions
   add column schedule_locked boolean not null default false,   -- whole-division freeze
   add column edit_watermark  bigint;                            -- current undo position
 
-alter table fixtures
-  add column locked boolean not null default false,             -- per-fixture pin (22 Jun)
-  add column schedule_source text;                              -- 'auto'|'manual' (doc 12 §3)
+-- (Implementation note: both fixture columns already existed as
+-- fixtures.schedule_locked — the PROMPT-17 pin, already a solver obstacle —
+-- and fixtures.schedule_source; V244 adds nothing at fixture level. Scope
+-- locks live in divisions.locked_scopes jsonb.)
 
 -- named save points an organiser can restore to (16 Jun "go back to last version")
 create table division_checkpoints (

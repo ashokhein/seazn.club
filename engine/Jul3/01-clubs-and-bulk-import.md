@@ -115,11 +115,14 @@ ImportRow = z.object({
 
 // Read-only view of current org state the planner matches against (app fetches, passes in).
 ImportSnapshot = z.object({
-  clubs:    z.array(z.object({ id, name, externalRef: z.string().nullable() })),
+  clubs:    z.array(z.object({ id, name, shortName: z.string().nullable(), externalRef: z.string().nullable() })),
   teams:    z.array(z.object({ id, name, clubId: z.string().nullable() })),
   persons:  z.array(z.object({ id, fullName, dob: z.string().nullable(), externalRef: z.string().nullable() })),
   divisions:z.array(z.object({ id, slug, sportKey, positionKeys: z.array(z.string()) })),
-  entrants: z.array(z.object({ id, divisionId, teamId: z.string().nullable() })),
+  // memberPersonIds added at implementation: without existing memberships the
+  // planner cannot make re-planning a committed file a no-op (§4 idempotence).
+  entrants: z.array(z.object({ id, divisionId, teamId: z.string().nullable(),
+                               memberPersonIds: z.array(z.string()) })),
 });
 
 ImportConfig = z.object({
@@ -130,8 +133,11 @@ ImportConfig = z.object({
 
 ImportOp = z.discriminatedUnion('kind', [
   // kind ∈ club.create | club.update | team.create | team.link |
-  //        person.create | roster.add | entrant.create | entrant.member.add
+  //        person.create | entrant.create | roster.add
   //   each: { kind, ref (stable synthetic key), before?, after, sourceRows: number[] }
+  // Implementation note: roster.add subsumes the earlier roster.add /
+  // entrant.member.add pair — one op whose entrant/person targets are either
+  // an existing id or a ref minted earlier in the same plan.
 ]);
 
 ImportIssue = z.object({
@@ -167,11 +173,14 @@ code, per PROMPT-00 §3):
 - **Team** — identity `(club_id, folded name)`; clubless teams keyed on `(org_id, folded
   name)`. Miss ⇒ `team.create` (+ `team.link` to its club). Existing team with no club and
   a club now supplied ⇒ `team.link`.
-- **Person** — match within org by `external_ref`; else `(folded full_name + dob)`.
-  Ambiguous (same folded name, no dob, ≥2 candidates): `lenient` ⇒ `warn AMBIGUOUS_PERSON`
-  + `person.create` (default); `strict` ⇒ `error` (organiser resolves via the persons
-  merge endpoint, doc 08 §3). Match hit ⇒ no create; still `roster.add` if not on the
-  team's roster.
+- **Person** — identity is exactly `(folded full_name, dob-or-null)`; a no-dob row only
+  ever matches a dob-less person. (Refined at implementation: any count-based rule —
+  "match when exactly one candidate" — breaks §Idempotence, because a commit changes the
+  candidate count and the same row resolves differently on re-plan.) Same-name people the
+  row cannot address ⇒ `AMBIGUOUS_PERSON`: `strict` ⇒ `error` (organiser resolves via the
+  persons merge endpoint, doc 08 §3); `lenient` ⇒ `warn` + the deterministic action
+  (match the first dob-less candidate when one exists, else create a distinguishable
+  dob-less person). Match hit ⇒ no create; still `roster.add` if not on the team's roster.
 - **Entrant / roster** — a row with `divisionSlug` places the team into that division:
   find-or-create `entrant(kind='team', team_id)` in the division (`entrant.create`), then
   `roster.add` / `entrant.member.add` the player with `squad_number`, `position` (validated
@@ -226,7 +235,9 @@ GET  /api/v1/participants/export?format=csv|xlsx&club_id=…&division_id=…
 
 The entrants **CSV bulk import** hook doc 08 §3 already reserved
 (`POST /divisions/{id}/entrants # + bulk import (CSV)`) becomes a thin division-scoped alias
-that funnels into the same planner with `divisionSlug` pinned. The persons **merge** hook
+that funnels into the same planner pinned **by division id** (stored as
+`imports.pin_division_id`; slugs are only unique per competition, so a slug pin could
+drift to a same-slug division at commit time). The persons **merge** hook
 (doc 08 §3) is the resolution path for `strict` ambiguous-person errors.
 
 **Commit audit:** commit writes a `division_events` row (`type: 'participants_imported'`,

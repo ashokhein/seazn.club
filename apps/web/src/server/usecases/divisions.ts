@@ -4,7 +4,7 @@ import "server-only";
 // division always replays under the rules it started with.
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { withinLimit } from "@/lib/entitlements";
+import { withinLimit, requireFeature } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
 import { resolveModule } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -24,12 +24,17 @@ export interface DivisionRow {
   eligibility: unknown[];
   tiebreakers: string[] | null;
   status: string;
+  officials_hide_names: boolean;
+  scheduling_mode: string;
+  auto_progress: boolean;
+  schedule_locked: boolean;
   created_at: string;
 }
 
 const COLS = [
   "id", "competition_id", "name", "slug", "sport_key", "variant_key", "config",
-  "module_version", "eligibility", "tiebreakers", "status", "created_at",
+  "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
+  "scheduling_mode", "auto_progress", "schedule_locked", "created_at",
 ] as const;
 
 export async function listDivisions(auth: AuthCtx, competitionId: string): Promise<DivisionRow[]> {
@@ -115,6 +120,10 @@ export async function patchDivision(
   id: string,
   patch: PatchDivision,
 ): Promise<DivisionRow> {
+  // Jul3/08 §8: auto-advance is part of the advanced-formats Pro layer.
+  if (patch.auto_progress === true) {
+    await requireFeature(auth.orgId, "formats.advanced");
+  }
   return withTenant(auth.orgId, async (tx) => {
     const cols = Object.keys(patch) as (keyof PatchDivision)[];
     const values = {

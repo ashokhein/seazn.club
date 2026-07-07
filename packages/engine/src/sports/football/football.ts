@@ -62,6 +62,7 @@ const PersonId = z.string().min(1);
 export const FootballGoal = z.strictObject({
   by: EntrantId, // ownGoal: the side whose player struck it (credits opponent)
   scorer: PersonId.optional(),
+  assist: PersonId.optional(), // Jul3/07 §3 — optional everywhere (own goals etc.)
   minute: z.number().int().nonnegative().optional(), // optional everywhere: coarse scoring
   ownGoal: z.boolean().optional(),
   penalty: z.boolean().optional(), // in-play penalty kick, not a shootout kick
@@ -590,6 +591,7 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
         if (state.outcome === null) wrongPhase("cannot finalize an undecided fixture");
         return { ...state, phase: "final" };
       case "core.note":
+      case "core.award":
         return state;
       default:
         invalid(`unknown event type "${ev.type}"`);
@@ -729,6 +731,29 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
     },
   ],
   officialLabel: { scorer: "Referee" }, // doc 13 §1
+  // Jul3/07 §3 — goals/assists auto (16 Apr), points = goals + assists
+  // (hockey-style), cards. Own goals never credit the striker.
+  playerStats: {
+    metrics: [
+      {
+        key: "goals", label: "Goals", from: "football.goal", field: "scorer", agg: "count",
+        when: (p) => p.ownGoal !== true,
+      },
+      { key: "assists", label: "Assists", from: "football.goal", field: "assist", agg: "count" },
+      {
+        key: "yellow_cards", label: "Yellow cards", from: "football.card", field: "person",
+        agg: "count", when: (p) => p.color === "yellow" || p.color === "second_yellow",
+      },
+      {
+        key: "red_cards", label: "Red cards", from: "football.card", field: "person",
+        agg: "count", when: (p) => p.color === "red" || p.color === "second_yellow",
+      },
+    ],
+    derived: [
+      { key: "points", label: "Points", derive: (s) => (s.goals ?? 0) + (s.assists ?? 0) },
+    ],
+    awards: [{ key: "motm", label: "Man of the Match" }],
+  },
 
   // spec 03 §6 — deterministic valid-event generator.
   arbitraryEvent(state, rng: Rng): ModuleEvent<FootballEv> | null {
