@@ -1014,3 +1014,19 @@ export const ScheduleShift = z.object({
 });
 
 export const AiConstraintsRequest = z.object({ prose: z.string().min(3).max(4000) });
+
+// Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
+
+export const OverrideStandings = z.object({
+  rows: z
+    .array(
+      z.object({
+        entrant_id: Uuid,
+        rank: z.number().int().min(1),
+        reason: z.string().min(1).max(300),
+      }),
+    )
+    .min(1)
+    .max(64),
+});
+export type OverrideStandings = z.infer<typeof OverrideStandings>;

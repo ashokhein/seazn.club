@@ -212,6 +212,10 @@ export interface RankContext {
   // Entrant seeds for the `seed` comparator and deterministic residual-tie
   // ordering; lower number = higher seed.
   seeds?: ReadonlyMap<EntrantId, number>;
+  // Jul3/05 §5 (3 Sep): for ≥3-way ties, 'overall' skips the h2h mini-table
+  // so the cascade falls through to overall metrics (UEFA default is the
+  // mini-table).
+  h2hScope?: "mini_table" | "overall";
   // Division rngSeed for `lots` (spec 05 §4.4); combined with sorted tie-group
   // ids so the draw is reproducible and audited.
   rngSeed?: number;
@@ -371,6 +375,9 @@ function h2hBlock(
   block: readonly TiebreakerKey[],
   ctx: RankContext,
 ): StandingsRow[][] {
+  // Jul3/05 §5 circular-H2H mode: an organiser may prefer overall metrics in
+  // a ≥3-way tie — skip the mini-table and let later cascade keys decide.
+  if (ctx.h2hScope === "overall" && cls.length >= 3) return [cls];
   const ids = new Set(cls.map((row) => row.entrantId));
   const among = resultsAmong(ids, ctx.results ?? []);
   const miniRows = foldResults(
@@ -542,12 +549,20 @@ export function rankStandings(rows: readonly StandingsRow[], ctx: RankContext): 
       for (const id of drawn) {
         const row = byId.get(id) as StandingsRow;
         row.rankLocked = true;
+        // Jul3/05 §5: equal on every criterion — even with a lots decider the
+        // console should alert before KO seeding (10 Jun).
+        row.tieUnbroken = true;
         order.push(row);
       }
       lotsGroups.push(ids);
     } else {
+      // Jul3/05 §5 tie-exhaustion (10 Jun): the cascade could not separate
+      // these rows — flag them so the console alerts before KO seeding.
       markTieBreak(cls, "seed");
-      for (const row of [...cls].sort(bySeedThenId(ctx))) order.push(row);
+      for (const row of [...cls].sort(bySeedThenId(ctx))) {
+        row.tieUnbroken = true;
+        order.push(row);
+      }
     }
   }
 

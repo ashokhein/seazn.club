@@ -5,3 +5,4 @@ export * from "./standings.ts";
 export * from "./tiebreakers.ts";
 export * from "./qualification.ts";
 export * from "./display.ts";
+export * from "./points.ts";

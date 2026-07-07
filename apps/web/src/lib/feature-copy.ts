@@ -20,6 +20,8 @@ const FEATURE_REASONS: Record<string, string> = {
   "stats.player": "Player stats and scorecard entry are a Pro feature.",
   "stats.club_championship": "Club championship tables are a Pro feature.",
   "tiebreakers.custom": "Custom tiebreaker order is a Pro feature.",
+  "standings.custom_points": "Bonus-point rules and forfeit points are a Pro feature — plain win/draw/loss points work on every plan.",
+  "standings.carry_over": "Carrying Phase-1 standings into Phase 2 is a Pro feature.",
   "eligibility.enforced": "Enforced eligibility locks are a Pro feature.",
   // Public & realtime
   "dashboard.public.max": "Your plan hosts one public dashboard at a time.",

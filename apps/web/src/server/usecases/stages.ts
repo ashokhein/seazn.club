@@ -22,11 +22,15 @@ import {
   type Colour,
 } from "@seazn/engine/scheduling";
 import {
+  PointsRule,
+  carryDeltas,
   resolveQualification,
+  validatePointsRule,
   type QualificationSpec,
   type StandingsRow,
 } from "@seazn/engine/competition";
 import { completeStageIfReady, recomputeStandings, type CompleteResult } from "@/server/engine-db";
+import { resolveModule } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateStages } from "@/server/api-v1/schemas";
 import { z } from "zod";
@@ -94,10 +98,37 @@ export async function createStages(
   if (inputs.some((s) => s.kind === "double_elim")) {
     await requireFeature(auth.orgId, "formats.double_elim");
   }
+  // Jul3/05 §7: base win/draw/loss numbers are free; bonuses + forfeit points
+  // + circular-H2H + carry-over are the Pro layer.
+  for (const s of inputs) {
+    const cfg = s.config as { points?: unknown; h2h_scope?: string } | undefined;
+    if (cfg?.points !== undefined) {
+      const rule = PointsRule.parse(cfg.points);
+      if (rule.bonuses.length > 0 || rule.forfeit !== undefined) {
+        await requireFeature(auth.orgId, "standings.custom_points");
+      }
+    }
+    if (cfg?.h2h_scope === "overall") {
+      await requireFeature(auth.orgId, "tiebreakers.custom");
+    }
+    const q = s.qualification as { carry?: string } | null | undefined;
+    if (q?.carry !== undefined && q.carry !== "none") {
+      await requireFeature(auth.orgId, "standings.carry_over");
+    }
+  }
   return withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ competition_id: string }[]>`
-      select competition_id from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ competition_id: string; sport_key: string; module_version: string }[]>`
+      select competition_id, sport_key, module_version from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
+    // fail closed (Jul3/05 §8): a points rule needing metrics the sport
+    // doesn't emit never reaches play
+    for (const s of inputs) {
+      const cfg = s.config as { points?: unknown } | undefined;
+      if (cfg?.points !== undefined) {
+        const sportModule = resolveModule(division.sport_key, division.module_version);
+        validatePointsRule(PointsRule.parse(cfg.points), sportModule.metrics);
+      }
+    }
     await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
 
     // Doc 10 §1: `stages.per_division.max` (2/4/∞) — the batch must fit,
@@ -715,8 +746,24 @@ async function seedNextStage(auth: AuthCtx, completedStageId: string): Promise<S
       ...(overall ? { overall } : {}),
     });
 
+    // Carry-over (Jul3/05 §3): seed the next stage with opening deltas from
+    // the completed tables — prior points/metrics arrive as data, prior H2H
+    // is never replayed.
+    const carryMode = (spec as { carry?: "none" | "points" | "full" }).carry ?? "none";
+    let carriedDeltas: unknown[] | undefined;
+    if (carryMode !== "none") {
+      const qualifiedSet = new Set(entrants);
+      const sourceRows = pools
+        .flatMap((p) => p.rows)
+        .filter((r) => qualifiedSet.has(r.entrantId));
+      carriedDeltas = carryDeltas(sourceRows, carryMode);
+    }
     await tx`
-      update stages set config = ${tx.json({ ...next.config, qualified: entrants } as never)}
+      update stages set config = ${tx.json({
+        ...next.config,
+        qualified: entrants,
+        ...(carriedDeltas !== undefined ? { carry_deltas: carriedDeltas } : {}),
+      } as never)}
       where id = ${next.id}`;
 
     // Structural ledger + division watermark (same pattern as stage_completed).
@@ -727,7 +774,16 @@ async function seedNextStage(auth: AuthCtx, completedStageId: string): Promise<S
       insert into division_events (division_id, seq, type, payload)
       values (${current.division_id}, ${last + 1}, 'stage_seeded',
               ${tx.json({ stageId: next.id, from: completedStageId, entrants } as never)})`;
-    await tx`update divisions set seq = ${last + 1} where id = ${current.division_id}`;
+    let seq = last + 1;
+    if (carriedDeltas !== undefined) {
+      // auditable carry (Jul3/05 §3)
+      await tx`
+        insert into division_events (division_id, seq, type, payload)
+        values (${current.division_id}, ${seq + 1}, 'standings_carried',
+                ${tx.json({ stageId: next.id, from: completedStageId, mode: carryMode, entrants } as never)})`;
+      seq += 1;
+    }
+    await tx`update divisions set seq = ${seq} where id = ${current.division_id}`;
 
     return { stage_id: next.id, entrants };
   });
@@ -761,4 +817,53 @@ export async function getStandings(auth: AuthCtx, stageId: string, poolId?: stri
     computed_through_seq: 0,
     updated_at: null,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Manual rank override (Jul3/05 §4) — placement games decide final positions
+// without faking points. Stored on stages.config.rank_overrides; the fold's
+// rank pass pins them (applyRankLocks) on every recompute.
+// ---------------------------------------------------------------------------
+
+export async function overrideStandings(
+  auth: AuthCtx,
+  stageId: string,
+  input: { rows: { entrant_id: string; rank: number; reason: string }[] },
+): Promise<{ overridden: number }> {
+  await requireFeature(auth.orgId, "tiebreakers.custom");
+  const out = await withTenant(auth.orgId, async (tx) => {
+    const [stage] = await tx<{ division_id: string; config: Record<string, unknown> }[]>`
+      select division_id, config from stages where id = ${stageId}`;
+    if (!stage) throw new HttpError(404, "stage not found");
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
+    const ids = input.rows.map((r) => r.entrant_id);
+    const known = await tx<{ id: string }[]>`
+      select id from entrants where id in ${tx(ids)} and division_id = ${stage.division_id}`;
+    if (known.length !== ids.length) {
+      throw new HttpError(422, "override references an entrant outside this division");
+    }
+    const ranks = new Set(input.rows.map((r) => r.rank));
+    if (ranks.size !== input.rows.length) throw new HttpError(422, "duplicate ranks in override");
+
+    await tx`
+      update stages set config = ${tx.json({
+        ...stage.config,
+        rank_overrides: input.rows.map((r) => ({ entrant_id: r.entrant_id, rank: r.rank })),
+      } as never)}
+      where id = ${stageId}`;
+
+    // audit (actor + reason, hash-chained per the 011 pattern)
+    const [{ seq: last }] = await tx<{ seq: number }[]>`
+      select coalesce(max(seq), 0)::int as seq from division_events
+      where division_id = ${stage.division_id}`;
+    await tx`
+      insert into division_events (division_id, seq, type, payload, actor_id)
+      values (${stage.division_id}, ${last + 1}, 'rank_overridden',
+              ${tx.json({ stage_id: stageId, rows: input.rows } as never)}, ${auth.userId})`;
+    await tx`update divisions set seq = ${last + 1} where id = ${stage.division_id}`;
+    return { overridden: input.rows.length };
+  });
+  // pinned ranks land in the snapshots immediately
+  await recomputeStandings(auth.orgId, stageId);
+  return out;
 }

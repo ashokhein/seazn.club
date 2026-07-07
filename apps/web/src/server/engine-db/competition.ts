@@ -3,6 +3,8 @@ import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { EngineError, type MatchOutcome, type StageCtx } from "@seazn/engine/core";
 import {
+  PointsRule,
+  applyPointsRule,
   completeTableStage,
   isBracketStageComplete,
   isTableStageComplete,
@@ -42,7 +44,14 @@ interface StageRow {
   id: string;
   division_id: string;
   kind: string;
-  config: { rngSeed?: number; rounds?: number } | null;
+  config: {
+    rngSeed?: number;
+    rounds?: number;
+    points?: unknown; // Jul3/05 §2 PointsRule
+    carry_deltas?: unknown; // Jul3/05 §3 opening deltas
+    rank_overrides?: unknown; // Jul3/05 §4 manual rank locks
+    h2h_scope?: string; // Jul3/05 §5
+  } | null;
   status: string;
 }
 interface DivisionRow {
@@ -99,6 +108,7 @@ async function loadStageInputs(tx: Tx, stageId: string): Promise<StageInputs> {
     where f.stage_id = ${stageId}
     order by f.round_no, f.seq_in_round
   `;
+  const pointsRule = stage.config?.points ? PointsRule.parse(stage.config.points) : null;
 
   const tableFixtures: TableFixture[] = fixtures.map((f) => {
     const base: TableFixture = {
@@ -110,13 +120,17 @@ async function loadStageInputs(tx: Tx, stageId: string): Promise<StageInputs> {
     // Only decided fixtures with a folded state contribute a delta pair.
     if (f.outcome && f.state && f.home_entrant_id && f.away_entrant_id) {
       const ctx: StageCtx = { ...ctxBase, roundNo: f.round_no, ...(f.pool_id ? { poolId: f.pool_id } : {}) };
-      const [home, away] = sportModule.standingsDelta(
+      const pair = sportModule.standingsDelta(
         f.outcome as MatchOutcome,
         division.config,
         ctx,
         f.state,
       );
-      base.result = [home, away];
+      // Custom points rule (Jul3/05 §2): re-derive competition points from
+      // stage config; the sport ledger is untouched.
+      base.result = pointsRule
+        ? applyPointsRule(f.outcome as MatchOutcome, pair, pointsRule)
+        : pair;
     }
     return base;
   });
@@ -162,6 +176,18 @@ function toTableStage(inputs: StageInputs): TableStage {
     ...(inputs.stage.config?.rngSeed != null ? { rngSeed: inputs.stage.config.rngSeed } : {}),
     ...(inputs.stage.config?.rounds != null ? { rounds: inputs.stage.config.rounds } : {}),
     ...(inputs.stage.kind === "swiss" ? { swiss: true } : {}),
+    // Jul3/05: carry-over openings, manual rank locks, circular-H2H mode
+    ...(Array.isArray(inputs.stage.config?.carry_deltas)
+      ? { openingDeltas: inputs.stage.config.carry_deltas as never }
+      : {}),
+    ...(Array.isArray(inputs.stage.config?.rank_overrides)
+      ? {
+          rankLocks: (inputs.stage.config.rank_overrides as { entrant_id: string; rank: number }[]).map(
+            (o) => ({ entrantId: o.entrant_id, rank: o.rank }),
+          ),
+        }
+      : {}),
+    ...(inputs.stage.config?.h2h_scope === "overall" ? { h2hScope: "overall" as const } : {}),
   };
 }
 
