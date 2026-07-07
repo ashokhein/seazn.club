@@ -91,7 +91,8 @@ async function execute(
 ): Promise<void> {
   const p = event.payload;
   switch (event.type) {
-    case "schedule_applied": {
+    case "schedule_applied":
+    case "schedule_shifted": {
       const moves = (p.moves as { fixture: string; to: { at: string | null; court: string | null } }[]) ?? [];
       for (const m of moves) {
         await tx`update fixtures set scheduled_at = ${m.to.at}, court_label = ${m.to.court}

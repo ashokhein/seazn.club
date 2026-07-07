@@ -154,6 +154,10 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/locks", method: "patch", summary: "Whole-division freeze + multi-site scope locks (scopes are Pro)", tag: "history", request: S.DivisionLocks, errors: [402] },
   { path: "/schedule/clear", method: "post", summary: "Scoped clear (stage/pools/rounds/courts; confirm: true; locked + decided survive; undoable)", tag: "history", request: S.ClearSchedule, errors: [422] },
   { path: "/pools/{id}/clear-entrants", method: "post", summary: "Remove all teams in a pool, keep the pool (confirm: true; blocked once decided; undoable)", tag: "history", request: S.ClearPoolEntrants, errors: [422] },
+  // Scheduling constraints v2 & AI (Jul3/04, PROMPT-24)
+  { path: "/schedule/shift", method: "post", summary: "Bulk time shift: push everything in scope by ±N minutes (schedule_shifted event; undoable; all plans)", tag: "scheduling", request: S.ScheduleShift, errors: [422] },
+  { path: "/divisions/{id}/schedule/report", method: "get", summary: "Wait-time diagnostics: min/max gap per entrant + worst waits (16 Sep; all plans)", tag: "scheduling" },
+  { path: "/divisions/{id}/schedule/ai-constraints", method: "post", summary: "Prose → Zod-validated SchedulingConstraints; propose-only, human applies (Pro `scheduling.ai`)", tag: "scheduling", request: S.AiConstraintsRequest, errors: [402, 422] },
 ];
 
 // ---------------------------------------------------------------------------

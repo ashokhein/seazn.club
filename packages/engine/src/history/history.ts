@@ -64,6 +64,26 @@ export const REVERSIBLE: Record<string, ReversibleOp> = {
     },
     affected: (p) => movesOf(p).map((m) => m.fixture),
   },
+  // Bulk shift (Jul3/04 §4) — same move shape as schedule_applied.
+  schedule_shifted: {
+    apply(state, p) {
+      for (const m of movesOf(p)) {
+        const f = fixtureState(state, m.fixture);
+        f.at = m.to.at;
+        f.court = m.to.court;
+      }
+    },
+    invert(p) {
+      return {
+        type: "schedule_shifted",
+        payload: {
+          ...p,
+          moves: movesOf(p).map((m) => ({ fixture: m.fixture, from: m.to, to: m.from })),
+        },
+      };
+    },
+    affected: (p) => movesOf(p).map((m) => m.fixture),
+  },
   schedule_edited: {
     apply(state, p) {
       const m = p as unknown as Move & { fixture: string };

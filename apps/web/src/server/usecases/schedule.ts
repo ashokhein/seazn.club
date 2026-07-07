@@ -75,7 +75,9 @@ function usesConstraints(config: ScheduleConfig): boolean {
     config.perEntrantMinRest > 0 ||
     config.blackouts.length > 0 ||
     config.sessionWindows.length > 0 ||
-    config.courts.length > 1
+    config.courts.length > 1 ||
+    // constraints v2 (Jul3/04 §6): the whole family rides the same Pro key
+    config.constraints !== undefined
   );
 }
 
@@ -282,6 +284,26 @@ function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
       to: ms(b.to),
     })),
     sessionWindows: c.sessionWindows.map((w) => ({ from: ms(w.from), to: ms(w.to) })),
+    // constraints v2 (Jul3/04 §3): ISO → epoch ms for the pure pass
+    ...(c.constraints !== undefined
+      ? {
+          constraints: {
+            ...(c.constraints.restMin !== undefined ? { restMin: c.constraints.restMin } : {}),
+            ...(c.constraints.restByGroup !== undefined
+              ? { restByGroup: c.constraints.restByGroup }
+              : {}),
+            noBackToBack: c.constraints.noBackToBack,
+            startWindows: c.constraints.startWindows.map((w) => ({
+              target: w.target,
+              ...(w.notBefore !== undefined ? { notBefore: ms(w.notBefore) } : {}),
+              ...(w.notAfter !== undefined ? { notAfter: ms(w.notAfter) } : {}),
+            })),
+            fieldFairness: c.constraints.fieldFairness,
+            parallelism: c.constraints.parallelism,
+            crossPersonClash: c.constraints.crossPersonClash,
+          },
+        }
+      : {}),
   };
 }
 
@@ -296,6 +318,8 @@ const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> = {
   order: "warn.order",
   blackout: "warn.blackout",
   no_slot: "warn.no_slot",
+  // Jul3/04 §3: an unsatisfiable start window is a hard bound, not a warning
+  start_window: "conflict.start_window",
 };
 
 function mapConflicts(conflicts: readonly Conflict[]): ScheduleConflict[] {
@@ -338,6 +362,12 @@ export async function autoSchedule(
       from stages s join divisions d on d.id = s.division_id
       where s.id = ${stageId}`;
     if (!stage) throw new HttpError(404, "stage not found");
+    const [divMode] = await tx<{ scheduling_mode: string }[]>`
+      select scheduling_mode from divisions where id = ${stage.division_id}`;
+    if (divMode?.scheduling_mode === "flexible") {
+      // Jul3/04 §4: flexible divisions are ordered, never clock-slotted
+      throw new HttpError(422, "this division uses flexible scheduling — no timetable to solve");
+    }
 
     const settings = await loadSettings(tx, stage.division_id);
     const all = await divisionFixtures(tx, stage.division_id);
@@ -365,6 +395,8 @@ export async function autoSchedule(
     const schedulable: SchedulableFixture[] = movable.map((f) => ({
       id: f.id,
       roundNo: f.round_no,
+      ...(f.pool_id !== null ? { poolId: f.pool_id } : {}),
+      divisionId: f.division_id,
       ...(f.home_entrant_id !== null ? { home: f.home_entrant_id } : {}),
       ...(f.away_entrant_id !== null ? { away: f.away_entrant_id } : {}),
       people: peopleOf(f, people),

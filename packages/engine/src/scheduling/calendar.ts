@@ -6,6 +6,7 @@
 // occupancy and warns on per-person overlaps. No wall-clock reads — all times
 // are injected (the same unit throughout, e.g. epoch ms); durations are minutes.
 import type { EntrantId } from "../core/types.ts";
+import type { SchedulingConstraints } from "./constraints.ts";
 
 const MS_PER_MIN = 60_000;
 
@@ -31,6 +32,8 @@ export interface SlotConfig {
   blackouts?: readonly Blackout[];
   sessionWindows?: readonly SessionWindow[]; // when set, matches only inside these
   horizonMinutes?: number; // how far past startAt to search before reporting no_slot
+  /** Constraints v2 (Jul3/04 §3) — extends, never replaces, the base pass. */
+  constraints?: SchedulingConstraints;
 }
 
 export interface SchedulableFixture {
@@ -39,6 +42,8 @@ export interface SchedulableFixture {
   home?: EntrantId; // may be a TBD feed (undefined) — then no rest/overlap checks apply
   away?: EntrantId;
   people?: readonly string[]; // person ids, for cross-division overlap (doc 06 §4.3)
+  poolId?: string; // restByGroup / startWindows targeting (Jul3/04 §3)
+  divisionId?: string;
   locked?: { court: string; startAt: number }; // pinned assignment — honoured as-is
 }
 
@@ -57,6 +62,7 @@ export type ConflictReason =
   | "rest" // an entrant is below perEntrantMinRest (warn)
   | "blackout" // inside a blackout window / outside every session window (warn)
   | "person_overlap" // a person plays in two overlapping matches (warn — doc 06 §4.3)
+  | "start_window" // Jul3/04 §3: no feasible slot inside the target's window (hard)
   | "order"; // scheduled before a fixture that feeds it (doc 12 §2; blocks when direct)
 
 export interface Conflict {
@@ -196,9 +202,67 @@ export function slotFixtures(input: SlotInput): SlotResult {
   const blackouts = effectiveBlackouts(config, lo, hi);
 
   const bookings: Assignment[] = [...(input.existing ?? [])]; // court occupancy (incl. siblings)
+  const siblings = input.existing ?? []; // other divisions' fixed board (parallelism=block)
   const placed: Assignment[] = [];
   const conflicts: Conflict[] = [];
   const lastEnd = new Map<EntrantId, number>(); // this division's per-entrant rest tracking
+  const courtUse = new Map<EntrantId, Map<string, number>>(); // fieldFairness=balance
+  const lastCourt = new Map<EntrantId, string>(); // fieldFairness=rotate
+  const c = config.constraints;
+
+  // Jul3/04 §3: effective per-fixture rest — the strictest of the base rest,
+  // restMin, the fixture's group override, and the no-back-to-back gap.
+  const restForMs = (f: SchedulableFixture): number => {
+    let minutes = config.perEntrantMinRest;
+    if (c?.restMin !== undefined) minutes = Math.max(minutes, c.restMin);
+    const byGroup =
+      (f.poolId !== undefined ? c?.restByGroup?.[f.poolId] : undefined) ??
+      (f.divisionId !== undefined ? c?.restByGroup?.[f.divisionId] : undefined);
+    if (byGroup !== undefined) minutes = Math.max(minutes, byGroup);
+    if (c?.noBackToBack) minutes = Math.max(minutes, config.matchMinutes + config.gapMinutes);
+    return minutes * MS_PER_MIN;
+  };
+
+  // startWindows (Jul3/04 §3): hard lower/upper bounds per entrant/pool/division.
+  const windowFor = (f: SchedulableFixture): { notBefore: number; notAfter: number } => {
+    let notBefore = -Infinity;
+    let notAfter = Infinity;
+    for (const w of c?.startWindows ?? []) {
+      const hits =
+        (w.target.kind === "entrant" && entrantsOf(f).includes(w.target.id)) ||
+        (w.target.kind === "pool" && f.poolId === w.target.id) ||
+        (w.target.kind === "division" && f.divisionId === w.target.id);
+      if (!hits) continue;
+      if (w.notBefore !== undefined) notBefore = Math.max(notBefore, w.notBefore);
+      if (w.notAfter !== undefined) notAfter = Math.min(notAfter, w.notAfter);
+    }
+    return { notBefore, notAfter };
+  };
+
+  // crossPersonClash=hard (Jul3/04 §2): a person double-booking rejects the
+  // placement like a court clash instead of warning after the fact.
+  const personBlocked = (f: SchedulableFixture, start: number): Assignment | null => {
+    if (c?.crossPersonClash !== "hard") return null;
+    const people = f.people ?? [];
+    if (people.length === 0) return null;
+    const end = start + durMs;
+    for (const b of bookings) {
+      if (!b.people.some((p) => people.includes(p))) continue;
+      if (overlaps(start, end, b.startAt, b.endAt)) return b;
+    }
+    return null;
+  };
+
+  // parallelism=block (29 May): the division gets exclusive time slots — a
+  // candidate overlapping any sibling assignment is rejected.
+  const blockModeBlocked = (start: number): Assignment | null => {
+    if (c?.parallelism !== "block") return null;
+    const end = start + durMs;
+    for (const b of siblings) {
+      if (overlaps(start, end, b.startAt, b.endAt)) return b;
+    }
+    return null;
+  };
 
   const ordered = [...input.fixtures].sort((a, b) => {
     const ra = a.roundNo ?? 0;
@@ -211,6 +275,12 @@ export function slotFixtures(input: SlotInput): SlotResult {
 
   const commit = (f: SchedulableFixture, court: string, start: number): Assignment => {
     const ent = entrantsOf(f);
+    for (const e of ent) {
+      const m = courtUse.get(e) ?? new Map<string, number>();
+      m.set(court, (m.get(court) ?? 0) + 1);
+      courtUse.set(e, m);
+      lastCourt.set(e, court);
+    }
     const assignment: Assignment = {
       fixtureId: f.id,
       court,
@@ -249,21 +319,61 @@ export function slotFixtures(input: SlotInput): SlotResult {
     commit(f, lock.court, lock.startAt);
   }
 
-  // 2) Greedy placement of the rest.
+  // 2) Greedy placement of the rest (with the v2 hard constraints as
+  // placement rejections + repair-by-shifting, Jul3/04 §3).
   for (const f of free) {
     const ent = entrantsOf(f);
-    let ready = config.startAt;
-    for (const e of ent) ready = Math.max(ready, (lastEnd.get(e) ?? -Infinity) + restMs);
+    const restF = Math.max(restMs, restForMs(f));
+    const window = windowFor(f);
+    let ready = Math.max(config.startAt, window.notBefore);
+    for (const e of ent) ready = Math.max(ready, (lastEnd.get(e) ?? -Infinity) + restF);
 
     let best: { court: string; start: number } | null = null;
+    let windowBound = false;
     for (const court of config.courts) {
-      const start = earliestOnCourt(court, ready, durMs, gapMs, horizon, bookings, blackouts);
+      // repair loop: person-clash / block-parallelism rejections push the
+      // candidate later on the same court instead of silently placing
+      let lb = ready;
+      let start: number | null = null;
+      for (let i = 0; i < 64; i++) {
+        start = earliestOnCourt(court, lb, durMs, gapMs, horizon, bookings, blackouts);
+        if (start === null) break;
+        const clash = personBlocked(f, start) ?? blockModeBlocked(start);
+        if (clash === null) break;
+        lb = Math.max(clash.endAt, start + 1);
+        start = null;
+      }
       if (start === null) continue;
+      if (start > window.notAfter) {
+        windowBound = true;
+        continue;
+      }
       if (best === null || start < best.start) best = { court, start };
+      else if (start === best.start && c?.fieldFairness !== undefined && c.fieldFairness !== "off") {
+        // soft objective (Jul3/04 §3): among equal-time candidates prefer the
+        // fairer court — fewest prior uses (balance) or a different court
+        // than last time (rotate)
+        const usage = (courtLabel: string) =>
+          ent.reduce((n, e) => n + (courtUse.get(e)?.get(courtLabel) ?? 0), 0);
+        const rotated = (courtLabel: string) =>
+          ent.some((e) => lastCourt.get(e) === courtLabel) ? 1 : 0;
+        const better =
+          c.fieldFairness === "balance"
+            ? usage(court) < usage(best.court)
+            : rotated(court) < rotated(best.court);
+        if (better) best = { court, start };
+      }
     }
 
     if (best === null) {
-      conflicts.push({ fixtureId: f.id, reason: "no_slot", detail: "no court/time within horizon" });
+      // over-constrained: best-effort + a named binding constraint (Jul3/04 §7)
+      conflicts.push({
+        fixtureId: f.id,
+        reason: windowBound ? "start_window" : "no_slot",
+        detail: windowBound
+          ? "no feasible slot before the start window's notAfter bound"
+          : "no court/time within horizon",
+      });
       continue;
     }
     commit(f, best.court, best.start);

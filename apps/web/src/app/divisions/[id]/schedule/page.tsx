@@ -15,6 +15,7 @@ import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
 import { OfficialsPanel } from "@/components/v2/officials-panel";
 import { HistoryPanel } from "@/components/v2/history-panel";
+import { ConstraintsPanel } from "@/components/v2/constraints-panel";
 import { listOfficials } from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -115,6 +116,16 @@ export default async function DivisionSchedulePage({
           stages={stages.map((s) => ({ id: s.id, name: s.name, seq: s.seq }))}
           hideNames={division.officials_hide_names}
           canEdit={canEdit && !frozen}
+        />
+
+        <ConstraintsPanel
+          divisionId={id}
+          initialSettings={{
+            division_id: id,
+            config: settings.config as Record<string, unknown>,
+            tz: settings.tz,
+          }}
+          canEdit={canEdit && !frozen && constraints}
         />
 
         <HistoryPanel

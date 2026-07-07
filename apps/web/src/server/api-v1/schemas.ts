@@ -112,6 +112,8 @@ export const PatchDivision = z
     status: DivisionStatus,
     /** Hide official names on all public reads (Jul3/02, 25 Jun). */
     officials_hide_names: z.boolean(),
+    /** Jul3/04 §4: 'flexible' = ordered fixtures, no clock. */
+    scheduling_mode: z.enum(["timed", "flexible"]),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -130,6 +132,7 @@ export const Division = z.object({
   tiebreakers: z.array(z.string()).nullable(),
   status: DivisionStatus,
   officials_hide_names: z.boolean(),
+  scheduling_mode: z.enum(["timed", "flexible"]),
   created_at: z.string(),
 });
 
@@ -439,6 +442,28 @@ export const ScheduleConfig = z.object({
     .default([]),
   /** Quick-start rolling times (doc 12 §1.A): round r starts at startAt + (r−1)·roundMinutes. */
   roundMinutes: z.number().int().min(1).max(24 * 60).nullish(),
+  /** Constraints v2 (Jul3/04 §3; Pro `scheduling.constraints`). API times are
+   *  ISO; the engine consumes epoch ms. */
+  constraints: z
+    .object({
+      restMin: z.number().int().min(0).max(24 * 60).optional(),
+      restByGroup: z.record(z.string(), z.number().int().min(0).max(24 * 60)).optional(),
+      noBackToBack: z.boolean().default(false),
+      startWindows: z
+        .array(
+          z.object({
+            target: z.object({ kind: z.enum(["entrant", "pool", "division"]), id: z.string() }),
+            notBefore: IsoDateTime.optional(),
+            notAfter: IsoDateTime.optional(),
+          }),
+        )
+        .max(200)
+        .default([]),
+      fieldFairness: z.enum(["off", "balance", "rotate"]).default("off"),
+      parallelism: z.enum(["block", "mixed"]).default("mixed"),
+      crossPersonClash: z.enum(["warn", "hard"]).default("warn"),
+    })
+    .optional(),
 });
 export type ScheduleConfig = z.infer<typeof ScheduleConfig>;
 
@@ -462,6 +487,7 @@ export const ScheduleConflict = z.object({
   fixture_id: Uuid,
   code: z.enum([
     "conflict.court",
+    "conflict.start_window",
     "warn.rest",
     "warn.person_overlap",
     "warn.order",
@@ -971,3 +997,20 @@ export const ClearSchedule = z.object({
 });
 
 export const ClearPoolEntrants = z.object({ confirm: z.literal(true) });
+
+// Scheduling constraints v2 & AI (Jul3/04, PROMPT-24) -------------------------
+
+export const ScheduleShift = z.object({
+  division_id: Uuid,
+  scope: z
+    .object({
+      stageId: z.string().optional(),
+      poolIds: z.array(z.string()).optional(),
+      courts: z.array(z.string()).optional(),
+      excludeLocked: z.boolean().default(true),
+    })
+    .default({ excludeLocked: true }),
+  delta_minutes: z.number().int().min(-1440).max(1440),
+});
+
+export const AiConstraintsRequest = z.object({ prose: z.string().min(3).max(4000) });
