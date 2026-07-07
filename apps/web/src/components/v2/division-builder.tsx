@@ -341,8 +341,9 @@ export function DivisionBuilder({
     });
   }
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault();
+  async function submit() {
+    // Guard: only the explicit Create button (on the last tab) may create.
+    if (tab !== "scheduling") return;
     setError(null);
     setPaywallFeature(null);
 
@@ -457,7 +458,7 @@ export function DivisionBuilder({
     template === "league_ko" || template === "groups_ko" || template === "group_stepladder";
 
   return (
-    <form onSubmit={submit} className="space-y-6">
+    <form onSubmit={(e) => e.preventDefault()} className="space-y-6">
       <nav className="flex flex-wrap gap-1 border-b border-slate-200">
         {(
           [
@@ -882,7 +883,8 @@ export function DivisionBuilder({
           )}
           {isLastTab ? (
             <button
-              type="submit"
+              type="button"
+              onClick={() => void submit()}
               disabled={busy || !name.trim() || !sportKey || !variantKey}
               className="btn btn-primary"
             >
