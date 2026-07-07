@@ -217,6 +217,7 @@ const SUBMIT_BASE = {
   guardian_name: null,
   guardian_consent: false,
   answers: {},
+  players: [],
 };
 
 function fakeSession(regId: string, amount: number): Stripe.Checkout.Session {
@@ -277,6 +278,45 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
       join entrant_members em on em.person_id = p.id
       where em.entrant_id = ${confirmed.entrant_id as string}`;
     expect(person.dob).toBe("1995-04-01");
+  });
+
+  it("team flow: roster supplied at registration materialises into squad members on confirm", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "team", fee_cents: 0, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id, display_name: "Riverside FC",
+      players: [
+        { name: "Jordan Blake", dob: "2005-04-12", squad_number: 7 },
+        { name: "Sam Ortiz", squad_number: 10 },
+        { name: "Alex Kim" },
+      ],
+    }, "http://test.local");
+    expect(res.registration.status).toBe("pending");
+
+    const confirmed = await confirmRegistration(owner, res.registration.id);
+    expect(confirmed.entrant_id).not.toBeNull();
+
+    const members = await sql<{ full_name: string; dob: string | null; squad_number: number | null }[]>`
+      select p.full_name, p.dob, em.squad_number
+      from entrant_members em join persons p on p.id = em.person_id
+      where em.entrant_id = ${confirmed.entrant_id as string}
+      order by p.full_name`;
+    expect(members.map((m) => m.full_name)).toEqual(["Alex Kim", "Jordan Blake", "Sam Ortiz"]);
+    const jordan = members.find((m) => m.full_name === "Jordan Blake")!;
+    expect(jordan.dob).toBe("2005-04-12");
+    expect(jordan.squad_number).toBe(7);
+
+    // Re-confirm is idempotent — no duplicate members.
+    await confirmRegistration(owner, res.registration.id);
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from entrant_members where entrant_id = ${confirmed.entrant_id as string}`;
+    expect(n).toBe(3);
   });
 
   it("paid flow (offline): no Stripe checkout; bank/cash instructions surfaced; dormant webhook still confirms", async () => {

@@ -716,6 +716,18 @@ export const PublicRegisterRequest = z.object({
   guardian_name: z.string().max(120).nullish(),
   guardian_consent: z.boolean().default(false),
   answers: z.record(z.string(), z.unknown()).default({}),
+  // Team registrations may include a squad roster (typed or imported). Ignored
+  // for individual/pair entrants.
+  players: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(120),
+        dob: z.iso.date().nullish(),
+        squad_number: z.number().int().min(0).max(999).nullish(),
+      }),
+    )
+    .max(50)
+    .default([]),
 });
 export type PublicRegisterRequest = z.infer<typeof PublicRegisterRequest>;
 

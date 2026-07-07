@@ -194,6 +194,7 @@ export interface RegistrationRow {
   guardian_name: string | null;
   guardian_consent: boolean;
   answers: Record<string, unknown>;
+  roster: { name: string; dob?: string | null; squad_number?: number | null }[];
   amount_cents: number;
   currency: string | null;
   checkout_session_id: string | null;
@@ -208,7 +209,7 @@ export interface RegistrationRow {
 
 const REG_COLS = [
   "id", "division_id", "org_id", "status", "display_name", "contact_email",
-  "dob", "gender", "guardian_name", "guardian_consent", "answers",
+  "dob", "gender", "guardian_name", "guardian_consent", "answers", "roster",
   "amount_cents", "currency", "checkout_session_id", "payment_intent_id",
   "refunded_cents", "refunded_at", "entrant_id", "promoted_at",
   "withdrawn_at", "created_at",
@@ -320,6 +321,20 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
     await tx`
       insert into entrant_members (entrant_id, person_id)
       values (${entrant.id}, ${person.id})`;
+  } else if (entrantKind === "team" && reg.roster.length > 0) {
+    // Team roster supplied at registration → a person + squad member per player.
+    for (const p of reg.roster) {
+      const name = p.name.trim();
+      if (!name) continue;
+      const [person] = await tx<{ id: string }[]>`
+        insert into persons (org_id, full_name, dob)
+        values (${reg.org_id}, ${name}, ${p.dob ?? null})
+        returning id`;
+      await tx`
+        insert into entrant_members (entrant_id, person_id, squad_number)
+        values (${entrant.id}, ${person.id}, ${p.squad_number ?? null})
+        on conflict (entrant_id, person_id) do nothing`;
+    }
   }
   await tx`
     update registrations
@@ -601,16 +616,19 @@ export async function submitRegistration(
         planLimit ?? Number.POSITIVE_INFINITY,
       );
       const waitlisted = taken >= hardCap;
+      // Roster only applies to team entries; drop it for individual/pair.
+      const roster = settings.entrant_kind === "team" ? input.players : [];
       const [row] = await tx<RegistrationRow[]>`
         insert into registrations
           (division_id, status, display_name, contact_email, dob, gender,
-           guardian_name, guardian_consent, answers, amount_cents, currency,
+           guardian_name, guardian_consent, answers, roster, amount_cents, currency,
            access_token_hash)
         values
           (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"},
            ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
            ${input.gender ?? null}, ${input.guardian_name ?? null},
            ${input.guardian_consent}, ${tx.json(answers as never)},
+           ${tx.json(roster as never)},
            ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
            ${hashRegistrationToken(secret)})
         returning ${sql(REG_COLS as unknown as string[])}`;
