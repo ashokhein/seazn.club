@@ -1,9 +1,9 @@
 -- ============================================================
 -- 012 — Entitlements v2 (PROMPT-13, doc 10 §1)
 -- Seeds the full v2 feature matrix into plan_entitlements and the
--- dark Business plan. v1 keys (seasons.max, tournaments.per_season.max,
--- players.max, formats.all, branding, exports, realtime) stay until the
--- PROMPT-15 cutover removes them. Idempotent.
+-- dark Business plan. The dead v1 keys (seasons.max, tournaments.per_season.max,
+-- players.max, formats.all) are gone post-cutover; `branding`, `exports`, and
+-- `realtime` survive as they are still read by v2 app paths. Idempotent.
 -- ============================================================
 
 -- Business = third plan; ships dark (is_public=false) until pricing decided.
@@ -89,9 +89,6 @@ INSERT INTO plan_entitlements (plan_key, feature_key, bool_value, int_value) VAL
   ('community', 'api.write',                     false, null),
   ('pro',       'api.write',                     false, null),
   ('business',  'api.write',                     true,  null),
-  ('community', 'webhooks',                      false, null),
-  ('pro',       'webhooks',                      false, null),
-  ('business',  'webhooks',                      true,  null),
   ('community', 'exports',                       false, null),
   ('pro',       'exports',                       true,  null),
   ('business',  'exports',                       true,  null),
@@ -101,11 +98,7 @@ INSERT INTO plan_entitlements (plan_key, feature_key, bool_value, int_value) VAL
   ('community', 'officials.assignment',          false, null),
   ('pro',       'officials.assignment',          true,  null),
   ('business',  'officials.assignment',          true,  null),
-  -- v1 keys for the Business plan (v1 app paths resolve them until the
-  -- PROMPT-15 cutover; Business gets Pro's values = unlimited/enabled).
-  ('business',  'seasons.max',                   null, null),
-  ('business',  'tournaments.per_season.max',    null, null),
-  ('business',  'players.max',                   null, null),
-  ('business',  'formats.all',                   true,  null),
+  -- `branding` is the one surviving v1 key: still read by the logo-upload
+  -- gate and the public-site branded flag. Business inherits Pro's value.
   ('business',  'branding',                      true,  null)
 ON CONFLICT (plan_key, feature_key) DO NOTHING;
