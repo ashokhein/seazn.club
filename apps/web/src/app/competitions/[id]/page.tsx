@@ -43,7 +43,7 @@ export default async function CompetitionPage({
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link
-              href={`/competitions/${competition.id}/slideshow`}
+              href={`/slideshow/competitions/${competition.id}`}
               target="_blank"
               className="btn btn-ghost"
             >
