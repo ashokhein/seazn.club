@@ -20,6 +20,10 @@ import {
   type GeneratedBracket,
   type SwissStanding,
   type Colour,
+  validateFeedGraph,
+  generateAmericano,
+  pairMexicanoRound,
+  type AmericanoRound,
 } from "@seazn/engine/scheduling";
 import {
   PointsRule,
@@ -97,6 +101,35 @@ export async function createStages(
   // Doc 10 §1: `formats.double_elim` is Pro — gate before any insert.
   if (inputs.some((s) => s.kind === "double_elim")) {
     await requireFeature(auth.orgId, "formats.double_elim");
+  }
+  // Jul3/08 §8: new kinds + custom byes + cross-stage feeds + placements are
+  // the advanced-formats Pro layer; basic RR/KO/group+KO stays Community.
+  const advanced = inputs.some((s) => {
+    const cfg = s.config as {
+      byes?: unknown; cross_feeds?: unknown; placements?: unknown;
+    } | undefined;
+    return (
+      s.kind === "americano" || s.kind === "ladder" ||
+      cfg?.byes !== undefined || cfg?.cross_feeds !== undefined ||
+      cfg?.placements !== undefined
+    );
+  });
+  if (advanced) await requireFeature(auth.orgId, "formats.advanced");
+  // Jul3/08 §9: the cross-stage feed graph must be a DAG (fail closed).
+  {
+    const edges: { from: string; to: string }[] = [];
+    for (const s of inputs) {
+      const feeds = (s.config as { cross_feeds?: { to_stage_seq: number }[] } | undefined)
+        ?.cross_feeds;
+      for (const f of feeds ?? []) {
+        edges.push({ from: String(s.seq), to: String(f.to_stage_seq) });
+      }
+      if (s.qualification !== undefined && s.qualification !== null) {
+        // qualification always flows from an earlier stage
+        edges.push({ from: String(s.seq - 1), to: String(s.seq) });
+      }
+    }
+    validateFeedGraph(edges);
   }
   // Jul3/05 §7: base win/draw/loss numbers are free; bonuses + forfeit points
   // + circular-H2H + carry-over are the Pro layer.
@@ -215,6 +248,115 @@ export async function deleteStage(auth: AuthCtx, stageId: string): Promise<{ del
 
 // A generator fixture normalised for persistence, identity = ext_key (the pure
 // generator's stable id, spec 05 §6 — regeneration is byte-identical).
+// ---------------------------------------------------------------------------
+// Americano / Mexicano (Jul3/08 §3, 21 May): individuals rotate partners; the
+// stage creates `pair` entrants on the fly for each fixture. Americano is a
+// fixed seeded rotation generated upfront; mexicano derives each next round
+// from the current per-person points (rank-quartet pairing).
+// ---------------------------------------------------------------------------
+
+async function pairEntrantFor(
+  tx: Tx,
+  divisionId: string,
+  people: [string, string],
+): Promise<string> {
+  const sorted = [...people].sort();
+  const [hit] = await tx<{ id: string }[]>`
+    select e.id from entrants e
+    where e.division_id = ${divisionId} and e.kind = 'pair'
+      and (select array_agg(em.person_id order by em.person_id)
+           from entrant_members em where em.entrant_id = e.id) = ${sorted}::uuid[]`;
+  if (hit) return hit.id;
+  const names = await tx<{ id: string; full_name: string }[]>`
+    select id, full_name from persons where id in ${tx(sorted)}`;
+  const label = sorted
+    .map((id) => names.find((n) => n.id === id)?.full_name ?? id)
+    .join(" / ");
+  const [row] = await tx<{ id: string }[]>`
+    insert into entrants (division_id, kind, display_name)
+    values (${divisionId}, 'pair', ${label}) returning id`;
+  for (const personId of sorted) {
+    await tx`insert into entrant_members (entrant_id, person_id, is_captain)
+             values (${row!.id}, ${personId}, false)`;
+  }
+  return row!.id;
+}
+
+async function americanoGen(
+  tx: Tx,
+  divisionId: string,
+  stageId: string,
+  cfg: Record<string, unknown>,
+  entrants: ActiveEntrant[],
+): Promise<GenFixture[]> {
+  // players = the PERSONS behind the individual entrants
+  const entrantIds = entrants.map((e) => e.id);
+  if (entrantIds.length === 0) return [];
+  const memberRows = await tx<{ entrant_id: string; person_id: string }[]>`
+    select entrant_id, person_id from entrant_members
+    where entrant_id in ${tx(entrantIds)}`;
+  const personOf = new Map(memberRows.map((r) => [r.entrant_id, r.person_id]));
+  const players = entrantIds
+    .map((id) => personOf.get(id))
+    .filter((p): p is string => p !== undefined);
+  if (players.length < 4) {
+    throw new EngineError("STAGE_NOT_READY", "americano needs at least 4 individual players with linked persons", {
+      players: players.length,
+    });
+  }
+  const mode = cfg.mode === "mexicano" ? "mexicano" : "americano";
+  const courtCount =
+    typeof cfg.courtCount === "number" ? cfg.courtCount : Math.max(1, Math.floor(players.length / 4));
+  const rounds = typeof cfg.rounds === "number" ? cfg.rounds : Math.max(3, players.length - 1);
+
+  let planned: AmericanoRound[];
+  if (mode === "americano") {
+    planned = generateAmericano(players, { mode, courtCount, rounds });
+  } else {
+    // mexicano: next round only once every prior fixture decided
+    const existing = await tx<{ round_no: number; status: string }[]>`
+      select round_no, status from fixtures where stage_id = ${stageId}`;
+    const playedRounds = existing.length > 0 ? Math.max(...existing.map((f) => f.round_no)) : 0;
+    if (existing.some((f) => f.status !== "decided")) return []; // wait
+    if (playedRounds >= rounds) return [];
+    // per-person points: sum of each player's pair score across decided games
+    const scores = await tx<{ person_id: string; pts: number }[]>`
+      select em.person_id, coalesce(sum(
+        case when f.home_entrant_id = em.entrant_id
+             then (m.state->'score'->>'home')::numeric
+             else (m.state->'score'->>'away')::numeric end), 0) as pts
+      from fixtures f
+      join match_states m on m.fixture_id = f.id
+      join entrant_members em on em.entrant_id in (f.home_entrant_id, f.away_entrant_id)
+      where f.stage_id = ${stageId} and f.status = 'decided'
+      group by em.person_id`;
+    const pts = new Map(scores.map((r) => [r.person_id, Number(r.pts)]));
+    planned = [
+      pairMexicanoRound(
+        players.map((p) => ({ playerId: p, points: pts.get(p) ?? 0 })),
+        { courtCount },
+        playedRounds + 1,
+      ),
+    ];
+  }
+
+  const gen: GenFixture[] = [];
+  for (const round of planned) {
+    for (const m of round.matches) {
+      const home = await pairEntrantFor(tx, divisionId, m.team1);
+      const away = await pairEntrantFor(tx, divisionId, m.team2);
+      gen.push({
+        extKey: m.id,
+        roundNo: m.roundNo,
+        seqInRound: m.court,
+        home,
+        away,
+      });
+    }
+  }
+  return gen;
+}
+
 interface GenFixture {
   extKey: string;
   roundNo: number;
@@ -346,7 +488,7 @@ function poolCount(cfg: Record<string, unknown>): number {
 
 function roundRobinGen(
   entrants: ActiveEntrant[],
-  legs: 1 | 2,
+  legs: number,
   extPrefix = "",
   poolId?: string,
 ): GenFixture[] {
@@ -374,7 +516,9 @@ function generate(
   switch (kind) {
     case "league":
     case "group": {
-      const legs = cfg.legs === 2 ? 2 : 1;
+      // Jul3/08 §2: legs > 2 allowed (triple/quad RR), capped at 8
+      const rawLegs = typeof cfg.legs === "number" ? Math.trunc(cfg.legs) : 1;
+      const legs = Math.min(Math.max(rawLegs, 1), 8);
       const count = kind === "group" ? poolCount(cfg) : 1;
       if (count === 1) return roundRobinGen(entrants, legs);
       // Seeded-snake pools, each playing its own round robin (doc 05 §1).
@@ -387,7 +531,13 @@ function generate(
       });
     }
     case "knockout": {
-      const bracket = generateSingleElim({ entrants: ids, seeds, thirdPlace: cfg.thirdPlace === true });
+      const bracket = generateSingleElim({
+        entrants: ids,
+        seeds,
+        thirdPlace: cfg.thirdPlace === true,
+        // Jul3/08 §4 (7 Jan): organiser-chosen bye recipients
+        ...(Array.isArray(cfg.byes) ? { byeEntrants: cfg.byes as string[] } : {}),
+      });
       return bracketToGen(bracket, bracket.rounds);
     }
     case "double_elim": {
@@ -515,7 +665,11 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     const gen =
       stage.kind === "swiss"
         ? await swissGen(tx, stageId, stage.config, entrants, existing)
-        : generate(stage.kind, stage.config, entrants, poolIds);
+        : stage.kind === "americano"
+          ? await americanoGen(tx, stage.division_id, stageId, stage.config, entrants)
+          : stage.kind === "ladder"
+            ? [] // Jul3/08 §6: ladder fixtures come from challenges, on demand
+            : generate(stage.kind, stage.config, entrants, poolIds);
 
     const byKey = new Map<string, string>(); // ext_key → fixture uuid
     for (const f of existing) if (f.ext_key) byKey.set(f.ext_key, f.id);
@@ -579,6 +733,12 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     const fixtures = await tx<FixtureRow[]>`
       select ${tx(FIXTURE_COLS)} from fixtures
       where stage_id = ${stageId} order by round_no, seq_in_round`;
+    // Cross-format feeds (Jul3/08 §4): winner_to/loser_to may target another
+    // stage (CL loser → EL slot). Wire every entry whose source and target
+    // both exist; the per-decided-fixture fillSlot then follows them like any
+    // other feed.
+    await wireCrossFeeds(tx, stage.division_id);
+
     // Undoable generation (Jul3/03 §3): the ledger records which fixtures this
     // pass created so undo can remove exactly them (results-guarded).
     if (created > 0) {
@@ -598,6 +758,40 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
   return outcome;
 }
 
+interface CrossFeed {
+  from_ext_key: string;
+  side: "winner" | "loser";
+  to_stage_seq: number;
+  to_ext_key: string;
+  slot: 1 | 2;
+}
+
+async function wireCrossFeeds(tx: Tx, divisionId: string): Promise<void> {
+  const stages = await tx<{ id: string; seq: number; config: Record<string, unknown> }[]>`
+    select id, seq, config from stages where division_id = ${divisionId}`;
+  const bySeq = new Map(stages.map((s) => [s.seq, s]));
+  for (const stage of stages) {
+    const feeds = stage.config.cross_feeds as CrossFeed[] | undefined;
+    if (!Array.isArray(feeds)) continue;
+    for (const feed of feeds) {
+      const target = bySeq.get(feed.to_stage_seq);
+      if (!target) continue;
+      const [source] = await tx<{ id: string }[]>`
+        select id from fixtures where stage_id = ${stage.id} and ext_key = ${feed.from_ext_key}`;
+      const [dest] = await tx<{ id: string }[]>`
+        select id from fixtures where stage_id = ${target.id} and ext_key = ${feed.to_ext_key}`;
+      if (!source || !dest) continue; // wired once both stages generated
+      if (feed.side === "winner") {
+        await tx`update fixtures set winner_to_fixture = ${dest.id}, winner_to_slot = ${feed.slot}
+                 where id = ${source.id} and winner_to_fixture is null`;
+      } else {
+        await tx`update fixtures set loser_to_fixture = ${dest.id}, loser_to_slot = ${feed.slot}
+                 where id = ${source.id} and loser_to_fixture is null`;
+      }
+    }
+  }
+}
+
 /** Fill one side of a fixture (slot 1=home, 2=away) if still open. */
 export async function fillSlot(
   tx: Tx,
@@ -614,7 +808,7 @@ export async function fillSlot(
   }
 }
 
-const TABLE_KINDS = new Set(["league", "group", "swiss"]);
+const TABLE_KINDS = new Set(["league", "group", "swiss", "americano"]);
 
 export interface SeededStage {
   stage_id: string;
@@ -866,4 +1060,54 @@ export async function overrideStandings(
   // pinned ranks land in the snapshots immediately
   await recomputeStandings(auth.orgId, stageId);
   return out;
+}
+
+// ---------------------------------------------------------------------------
+// Ladder challenges (Jul3/08 §6): no pre-generated fixtures — players issue
+// challenges within range; the result reorders the ladder (scoring hook).
+// ---------------------------------------------------------------------------
+
+export async function issueChallenge(
+  auth: AuthCtx,
+  stageId: string,
+  input: { challenger_id: string; opponent_id: string },
+): Promise<{ fixture_id: string; ladder_order: string[] }> {
+  await requireFeature(auth.orgId, "formats.advanced");
+  return withTenant(auth.orgId, async (tx) => {
+    const [stage] = await tx<{ division_id: string; kind: string; config: Record<string, unknown> }[]>`
+      select division_id, kind, config from stages where id = ${stageId}`;
+    if (!stage) throw new HttpError(404, "stage not found");
+    if (stage.kind !== "ladder") throw new HttpError(422, "challenges only exist on ladder stages");
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
+
+    // ladder order initialises from seed order on first use
+    let order = stage.config.ladder_order as string[] | undefined;
+    if (!Array.isArray(order) || order.length === 0) {
+      const entrants = await tx<{ id: string }[]>`
+        select id from entrants
+        where division_id = ${stage.division_id} and status in ('registered','confirmed')
+        order by seed nulls last, created_at, id`;
+      order = entrants.map((e) => e.id);
+      await tx`update stages set config = ${tx.json({ ...stage.config, ladder_order: order } as never)}
+               where id = ${stageId}`;
+    }
+    const ci = order.indexOf(input.challenger_id);
+    const oi = order.indexOf(input.opponent_id);
+    if (ci < 0 || oi < 0) throw new HttpError(422, "both players must be on the ladder");
+    if (oi >= ci) throw new HttpError(422, "you can only challenge upward");
+    const range = typeof stage.config.challengeRange === "number" ? stage.config.challengeRange : 3;
+    if (ci - oi > range) {
+      throw new HttpError(422, `challenges reach at most ${range} places up the ladder`);
+    }
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from fixtures where stage_id = ${stageId}`;
+    const [fixture] = await tx<{ id: string }[]>`
+      insert into fixtures (stage_id, division_id, round_no, seq_in_round,
+                            home_entrant_id, away_entrant_id, ext_key, status)
+      values (${stageId}, ${stage.division_id}, ${n + 1}, 1,
+              ${input.challenger_id}, ${input.opponent_id}, ${"ch-" + String(n + 1)}, 'scheduled')
+      returning id`;
+    if (stage.config.ladder_order === undefined) stage.config.ladder_order = order;
+    return { fixture_id: fixture!.id, ladder_order: order };
+  });
 }

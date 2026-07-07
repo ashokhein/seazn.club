@@ -12,6 +12,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "entrants.per_division.max": "This division is at your plan's entrant limit.",
   "stages.per_division.max": "Adding another stage needs a bigger plan.",
   "formats.double_elim": "Double-elimination brackets are a Pro format.",
+  "formats.advanced": "Americano, ladders, custom brackets, cross-stage feeds and auto-advance are Pro formats.",
   // Sport depth
   "scoring.ball_by_ball": "Ball-by-ball scoring is a Pro feature.",
   "scoring.rally_by_rally": "Rally-by-rally scoring is a Pro feature.",

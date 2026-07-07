@@ -209,10 +209,14 @@ async function onDecided(auth: AuthCtx, fixtureId: string, outcome: unknown): Pr
         loser_to_fixture: string | null;
         loser_to_slot: number | null;
         kind: string;
+        ext_key: string | null;
+        stage_config: Record<string, unknown>;
+        division_id: string;
       }[]
     >`
       select f.stage_id, f.pool_id, f.winner_to_fixture, f.winner_to_slot,
-             f.loser_to_fixture, f.loser_to_slot, s.kind
+             f.loser_to_fixture, f.loser_to_slot, s.kind, f.ext_key,
+             s.config as stage_config, s.division_id
       from fixtures f join stages s on s.id = f.stage_id
       where f.id = ${fixtureId}`;
     if (!fixture) return null;
@@ -224,10 +228,76 @@ async function onDecided(auth: AuthCtx, fixtureId: string, outcome: unknown): Pr
     if (loser && fixture.loser_to_fixture && fixture.loser_to_slot) {
       await fillSlot(tx, fixture.loser_to_fixture, fixture.loser_to_slot, loser);
     }
+    // Placement games (Jul3/08 §4, 3 Jun/17 May): "winner of game X = 15th" —
+    // the decided fixture writes rank locks via the Jul3/05 mechanism, never
+    // alphabetical.
+    const placements = (fixture.stage_config as { placements?: Record<string, [number, number]> })
+      ?.placements;
+    const place = fixture.ext_key !== null ? placements?.[fixture.ext_key] : undefined;
+    if (place !== undefined && winner !== undefined && loser !== undefined) {
+      const overrides =
+        ((fixture.stage_config as { rank_overrides?: { entrant_id: string; rank: number }[] })
+          .rank_overrides ?? []).filter((r) => r.entrant_id !== winner && r.entrant_id !== loser);
+      overrides.push({ entrant_id: winner, rank: place[0] });
+      overrides.push({ entrant_id: loser, rank: place[1] });
+      await tx`
+        update stages set config = ${tx.json({ ...(fixture.stage_config as object), rank_overrides: overrides } as never)}
+        where id = ${fixture.stage_id}`;
+    }
+    // Ladder (Jul3/08 §6): the challenger taking the game takes the position.
+    if (fixture.kind === "ladder" && winner !== undefined && loser !== undefined) {
+      const cfg = fixture.stage_config as { ladder_order?: string[] };
+      const order = [...(cfg.ladder_order ?? [])];
+      const wi = order.indexOf(winner);
+      const li = order.indexOf(loser);
+      if (wi >= 0 && li >= 0 && wi > li) {
+        [order[wi], order[li]] = [order[li]!, order[wi]!];
+        await tx`
+          update stages set config = ${tx.json({ ...(fixture.stage_config as object), ladder_order: order } as never)}
+          where id = ${fixture.stage_id}`;
+      }
+    }
     return fixture;
   });
   if (context && TABLE_KINDS.has(context.kind)) {
     await recomputeStandings(auth.orgId, context.stage_id, context.pool_id ?? undefined);
+  }
+  // Auto-advance (Jul3/08 §5, 16 Sep): when the flag is on and the stage just
+  // finished, progression fires without a button.
+  if (context && o.kind !== undefined) {
+    await maybeAutoAdvance(auth, context.stage_id, context.division_id);
+  }
+}
+
+async function maybeAutoAdvance(auth: AuthCtx, stageId: string, divisionId: string): Promise<void> {
+  const ready = await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ auto_progress: boolean }[]>`
+      select auto_progress from divisions where id = ${divisionId}`;
+    if (!division?.auto_progress) return false;
+    const [stage] = await tx<{ status: string }[]>`
+      select status from stages where id = ${stageId}`;
+    if (stage?.status === "complete") return false;
+    const [{ open }] = await tx<{ open: number }[]>`
+      select count(*) filter (where status <> 'decided' and status <> 'forfeited')::int as open
+      from fixtures where stage_id = ${stageId}`;
+    return open === 0;
+  });
+  if (!ready) return;
+  const { completeStage } = await import("./stages");
+  try {
+    await completeStage(auth, stageId);
+    await withTenant(auth.orgId, async (tx) => {
+      const [{ seq: last }] = await tx<{ seq: number }[]>`
+        select coalesce(max(seq), 0)::int as seq from division_events
+        where division_id = ${divisionId}`;
+      await tx`
+        insert into division_events (division_id, seq, type, payload, actor_id)
+        values (${divisionId}, ${last + 1}, 'stage_auto_advanced',
+                ${tx.json({ stage_id: stageId } as never)}, ${auth.userId})`;
+      await tx`update divisions set seq = ${last + 1} where id = ${divisionId}`;
+    });
+  } catch {
+    // not ready (e.g. lots pending) — the organiser completes manually
   }
 }
 

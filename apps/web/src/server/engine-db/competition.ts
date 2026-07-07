@@ -20,7 +20,9 @@ import { resolveModule } from "./registry";
 
 type Tx = postgres.TransactionSql;
 
-const TABLE_KINDS = new Set(["league", "group", "swiss"]);
+// americano folds like a table stage (Jul3/08 §3): its pair fixtures feed the
+// standard standings machinery.
+const TABLE_KINDS = new Set(["league", "group", "swiss", "americano"]);
 
 // DB fixtures.status → engine FixtureStatus (spec 05 §1 vocabulary).
 function toEngineStatus(dbStatus: string): FixtureStatus {
@@ -169,7 +171,8 @@ function cascadeFor(inputs: StageInputs): readonly string[] {
 function toTableStage(inputs: StageInputs): TableStage {
   return {
     id: inputs.stage.id,
-    kind: inputs.stage.kind as TableStage["kind"],
+    // americano rides the league fold (Jul3/08 §3)
+    kind: (inputs.stage.kind === "americano" ? "league" : inputs.stage.kind) as TableStage["kind"],
     entrants: inputs.entrants,
     cascade: cascadeFor(inputs) as TableStage["cascade"],
     ...(inputs.seeds.size > 0 ? { seeds: inputs.seeds } : {}),

@@ -2080,6 +2080,9 @@
                               "flexible"
                             ]
                           },
+                          "auto_progress": {
+                            "type": "boolean"
+                          },
                           "created_at": {
                             "type": "string"
                           }
@@ -2098,6 +2101,7 @@
                           "status",
                           "officials_hide_names",
                           "scheduling_mode",
+                          "auto_progress",
                           "created_at"
                         ],
                         "additionalProperties": false
@@ -2422,6 +2426,9 @@
                             "flexible"
                           ]
                         },
+                        "auto_progress": {
+                          "type": "boolean"
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -2440,6 +2447,7 @@
                         "status",
                         "officials_hide_names",
                         "scheduling_mode",
+                        "auto_progress",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -2782,6 +2790,9 @@
                             "flexible"
                           ]
                         },
+                        "auto_progress": {
+                          "type": "boolean"
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -2800,6 +2811,7 @@
                         "status",
                         "officials_hide_names",
                         "scheduling_mode",
+                        "auto_progress",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -3024,6 +3036,9 @@
                       "timed",
                       "flexible"
                     ]
+                  },
+                  "auto_progress": {
+                    "type": "boolean"
                   }
                 },
                 "additionalProperties": false
@@ -3112,6 +3127,9 @@
                             "flexible"
                           ]
                         },
+                        "auto_progress": {
+                          "type": "boolean"
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -3130,6 +3148,7 @@
                         "status",
                         "officials_hide_names",
                         "scheduling_mode",
+                        "auto_progress",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -6799,7 +6818,9 @@
                               "swiss",
                               "knockout",
                               "double_elim",
-                              "stepladder"
+                              "stepladder",
+                              "americano",
+                              "ladder"
                             ]
                           },
                           "name": {
@@ -7037,7 +7058,9 @@
                           "swiss",
                           "knockout",
                           "double_elim",
-                          "stepladder"
+                          "stepladder",
+                          "americano",
+                          "ladder"
                         ]
                       },
                       "name": {
@@ -7096,7 +7119,9 @@
                             "swiss",
                             "knockout",
                             "double_elim",
-                            "stepladder"
+                            "stepladder",
+                            "americano",
+                            "ladder"
                           ]
                         },
                         "name": {
@@ -7185,7 +7210,9 @@
                                 "swiss",
                                 "knockout",
                                 "double_elim",
-                                "stepladder"
+                                "stepladder",
+                                "americano",
+                                "ladder"
                               ]
                             },
                             "name": {
@@ -7261,7 +7288,9 @@
                                   "swiss",
                                   "knockout",
                                   "double_elim",
-                                  "stepladder"
+                                  "stepladder",
+                                  "americano",
+                                  "ladder"
                                 ]
                               },
                               "name": {
@@ -32780,6 +32809,307 @@
           }
         },
         "security": []
+      }
+    },
+    "/api/v1/stages/{id}/challenges": {
+      "post": {
+        "summary": "Ladder challenge: creates the fixture on demand; result reorders the ladder (Pro `formats.advanced`)",
+        "tags": [
+          "stages"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "challenger_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  },
+                  "opponent_id": {
+                    "type": "string",
+                    "format": "uuid",
+                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                  }
+                },
+                "required": [
+                  "challenger_id",
+                  "opponent_id"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {},
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Plan upgrade required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
       }
     }
   }

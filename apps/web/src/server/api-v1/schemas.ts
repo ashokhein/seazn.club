@@ -20,7 +20,7 @@ export const Visibility = z.enum(["private", "unlisted", "public"]);
 export const CompetitionStatus = z.enum(["draft", "published", "live", "completed", "archived"]);
 // Doc 12 §1: 'scheduled' = timetable published, scoring not yet open.
 export const DivisionStatus = z.enum(["setup", "scheduled", "active", "completed"]);
-export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder"]);
+export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder", "americano", "ladder"]);
 export const EntrantKind = z.enum(["team", "individual", "pair"]);
 export const EntrantStatus = z.enum(["registered", "confirmed", "withdrawn", "disqualified"]);
 export const ApiKeyScope = z.enum(["read", "write"]);
@@ -114,6 +114,8 @@ export const PatchDivision = z
     officials_hide_names: z.boolean(),
     /** Jul3/04 §4: 'flexible' = ordered fixtures, no clock. */
     scheduling_mode: z.enum(["timed", "flexible"]),
+    /** Jul3/08 §5: progression fires without a button (Pro formats.advanced). */
+    auto_progress: z.boolean(),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -133,6 +135,7 @@ export const Division = z.object({
   status: DivisionStatus,
   officials_hide_names: z.boolean(),
   scheduling_mode: z.enum(["timed", "flexible"]),
+  auto_progress: z.boolean(),
   created_at: z.string(),
 });
 
@@ -1030,3 +1033,10 @@ export const OverrideStandings = z.object({
     .max(64),
 });
 export type OverrideStandings = z.infer<typeof OverrideStandings>;
+
+// Format extensions (Jul3/08, PROMPT-28) --------------------------------------
+
+export const LadderChallenge = z.object({
+  challenger_id: Uuid,
+  opponent_id: Uuid,
+});

@@ -67,9 +67,12 @@ Extend `bracket.ts` (PROMPT-09 §3):
 Progression is already a per-division aggregate that fires "stage completed → generate next"
 (doc 02 §8). Two refinements:
 - **Per-pool completion**: allow a *pool* (not the whole stage) to be marked complete and
-  release the fixtures that depend only on it. Qualification specs that reference a single
-  pool (`{from_stage, pool:'A', take:[...]}`) resolve as soon as pool A finishes — pool B
-  can lag (16 Jun exact ask). Guard: cross-pool KO waits for all its source pools.
+  release the fixtures that depend only on it. (Implementation note: satisfied through
+  cross-stage fixture feeds + the per-decided-fixture resolver — a pool final can feed a
+  dependent fixture directly, which opens the moment the pool decides while other pools
+  lag. Partial resolution of *qualification specs* mid-stage stays a follow-up; the
+  whole-stage completion guard is unchanged, so a cross-pool KO can never seed from a
+  half-finished pool set.)
 - **Auto-advance**: a division flag `auto_progress: true` fires progression automatically
   when the guard is satisfied — no organiser button (16 Sep). Emits `division_events:
   stage_auto_advanced`.

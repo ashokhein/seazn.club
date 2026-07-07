@@ -167,6 +167,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/stats/players", method: "get", summary: "Division leaderboard from the score-event fold, sortable by any declared metric; flags requires_detailed_scoring instead of wrong zeros (Pro `stats.player`)", tag: "stats", errors: [402], query: { metric: { schema: { type: "string" } }, sort: { schema: { type: "string", enum: ["asc", "desc"] } } } },
   { path: "/persons/{id}/stats", method: "get", summary: "A player's card stats, keyed per division (Pro `stats.player`)", tag: "stats", errors: [402], query: { division_id: { schema: { type: "string", format: "uuid" } } } },
   { path: "/public/orgs/{orgSlug}/competitions/{slug}/divisions/{divisionSlug}/stats", method: "get", summary: "Consent-filtered public leaderboard (minors' names gated)", tag: "public", public: true },
+  // Format engine extensions (Jul3/08, PROMPT-28)
+  { path: "/stages/{id}/challenges", method: "post", summary: "Ladder challenge: creates the fixture on demand; result reorders the ladder (Pro `formats.advanced`)", tag: "stages", request: S.LadderChallenge, status: 201, errors: [402, 422] },
 ];
 
 // ---------------------------------------------------------------------------
