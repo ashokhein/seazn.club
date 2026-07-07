@@ -165,7 +165,9 @@ export async function parseAiConstraints(
   }
   const client = new Anthropic();
   const response = await client.messages.parse({
-    model: "claude-opus-4-8",
+    // Overridable without a redeploy; Opus is the default. Prose → schema-
+    // constrained JSON works on any tier (zodOutputFormat guarantees shape).
+    model: process.env.SCHEDULING_AI_MODEL ?? "claude-opus-4-8",
     max_tokens: 2048,
     system: SYSTEM,
     messages: [{ role: "user", content: prose }],
