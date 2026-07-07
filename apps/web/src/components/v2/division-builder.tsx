@@ -285,6 +285,11 @@ export function DivisionBuilder({
   const [poolCount, setPoolCount] = useState(2);
   const [legs, setLegs] = useState(1);
 
+  // Scheduling (optional — can also be edited later on the schedule board).
+  const [courts, setCourts] = useState<string[]>(["Court 1"]);
+  const [matchMinutes, setMatchMinutes] = useState(30);
+  const [scheduleStart, setScheduleStart] = useState(""); // datetime-local
+
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -358,6 +363,25 @@ export function DivisionBuilder({
         method: "POST",
         json: stages,
       });
+
+      // Seed scheduling settings (courts / match length / start). Non-fatal:
+      // the board can set these later, so a failure here shouldn't block create.
+      const cleanCourts = courts.map((c) => c.trim()).filter(Boolean);
+      try {
+        await apiV1(`/api/v1/divisions/${division.id}/schedule-settings`, {
+          method: "PUT",
+          json: {
+            config: {
+              courts: cleanCourts.length ? cleanCourts : ["Court 1"],
+              matchMinutes,
+              startAt: scheduleStart ? new Date(scheduleStart).toISOString() : null,
+            },
+          },
+        });
+      } catch {
+        /* board settings are editable later — ignore */
+      }
+
       router.push(`/divisions/${division.id}`);
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
@@ -655,6 +679,86 @@ export function DivisionBuilder({
             locked in until you generate.
           </p>
         )}
+      </section>
+
+      <section className="card space-y-4 p-6">
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700">
+            Scheduling <span className="ml-1 text-xs font-normal text-slate-400">optional</span>
+          </h2>
+          <p className="mt-0.5 text-xs text-slate-400">
+            Courts, match length and a start time for the timetable. You can change these later on
+            the schedule board.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label className="block">
+            <span className="label">Match length (minutes)</span>
+            <input
+              type="number"
+              min={1}
+              max={1440}
+              value={matchMinutes}
+              onChange={(e) => setMatchMinutes(Number(e.target.value) || 30)}
+              className="input w-full"
+            />
+          </label>
+          <label className="block">
+            <span className="label">Start date &amp; time</span>
+            <input
+              type="datetime-local"
+              value={scheduleStart}
+              onChange={(e) => setScheduleStart(e.target.value)}
+              className="input w-full"
+            />
+          </label>
+        </div>
+
+        <div>
+          <span className="label">Courts / venues</span>
+          <p className="mb-2 text-xs text-slate-400">
+            Name each court, pitch or table available — matches run in parallel across them.
+          </p>
+          <ul className="space-y-2">
+            {courts.map((c, i) => (
+              <li key={i} className="flex items-center gap-2">
+                <input
+                  value={c}
+                  onChange={(e) =>
+                    setCourts((cs) => cs.map((x, j) => (j === i ? e.target.value : x)))
+                  }
+                  placeholder={`Court ${i + 1}`}
+                  maxLength={100}
+                  className="input flex-1"
+                />
+                {courts.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setCourts((cs) => cs.filter((_, j) => j !== i))}
+                    aria-label={`Remove court ${i + 1}`}
+                    className="rounded-md px-2 py-1 text-sm text-red-500 hover:bg-red-50"
+                  >
+                    ✕
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            onClick={() =>
+              setCourts((cs) => (cs.length < 50 ? [...cs, `Court ${cs.length + 1}`] : cs))
+            }
+            className="btn btn-ghost mt-2 text-sm"
+          >
+            + Add court
+          </button>
+          <p className="mt-1 text-xs text-slate-400">
+            {courts.filter((c) => c.trim()).length || 1} court
+            {(courts.filter((c) => c.trim()).length || 1) === 1 ? "" : "s"}
+          </p>
+        </div>
       </section>
 
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
