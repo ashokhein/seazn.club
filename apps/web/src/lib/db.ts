@@ -38,12 +38,18 @@ function getClient(): Sql {
   // statements; disable them in that case.
   const prepare = !url.includes(":6543");
 
+  // The app lives in a dedicated schema (see db/flyway.toml). Pin it on the
+  // connection startup packet so every query — including `withTenant`'s
+  // `set local role app_user` transactions — resolves unqualified names there.
+  const schema = process.env.DB_SCHEMA ?? "seazn_club";
+
   const client = postgres(url, {
     ssl,
     prepare,
     max: 5,
     idle_timeout: 20,
     connect_timeout: 15,
+    connection: { search_path: schema },
     types: {
       // Plain `date` columns (starts_on, ends_on, dob) stay 'YYYY-MM-DD'
       // strings — the API contracts declare them as strings and React can't

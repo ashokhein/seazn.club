@@ -15,7 +15,7 @@
 
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'fixtures') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'fixtures') THEN
     CREATE TABLE IF NOT EXISTS device_links (
       id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       org_id      uuid NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,

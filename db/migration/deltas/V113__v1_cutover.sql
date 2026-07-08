@@ -15,9 +15,9 @@
 -- run (or failed) — abort rather than destroy.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'tournaments')
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'tournaments')
      AND EXISTS (SELECT 1 FROM tournaments)
-     AND NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'v1_migration_map')
+     AND NOT EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'v1_migration_map')
   THEN
     RAISE EXCEPTION '013_v1_cutover: tournaments has rows but v1_migration_map is absent — run scripts/migrate-v1-to-v2.ts first';
   END IF;
@@ -37,8 +37,8 @@ CREATE TABLE IF NOT EXISTS v1_slug_redirects (
 DO $$
 DECLARE fresh_rows int;
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'audit_log') THEN
-    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'audit_log_v1') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'audit_log') THEN
+    IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'audit_log_v1') THEN
       -- Bootstrap re-run: the archive already exists and schema.sql has just
       -- re-created an EMPTY v1 audit_log. Drop the fresh shell — never the
       -- archive. Refuse if it somehow holds rows.
@@ -73,7 +73,7 @@ END $$;
 
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'audit_log_v1') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'audit_log_v1') THEN
     -- Drop the tournaments FK so the drop below cannot cascade the archive.
     EXECUTE (
       SELECT coalesce(

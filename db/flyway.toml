@@ -5,6 +5,12 @@
 [flyway]
 locations = ["filesystem:db/migration"]
 validateMigrationNaming = true
+# The application lives in a dedicated schema (not `public`) so it can be
+# rebuilt without touching Supabase-managed objects in public. The target
+# schema is passed as a CLI flag by scripts/flyway.sh (-schemas/-defaultSchema
+# from ${DB_SCHEMA:-seazn_club}); Flyway creates it, puts flyway_schema_history
+# there, drives the search_path, and exposes it to migrations as
+# ${flyway:defaultSchema}.
 # Pre-Flyway databases (the remote dev Supabase, anything bootstrapped by the
 # old scripts/apply-db.ts) already contain every migration up to V240 — a
 # one-time `npm run db:baseline` marks them as applied without re-running.

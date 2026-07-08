@@ -21,7 +21,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS organizations_stripe_account_idx
 
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'divisions') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'divisions') THEN
     -- -----------------------------------------------------------------------
     -- Per-division registration settings (doc 16 §1.1): open/close window,
     -- fee, capacity, custom form fields. One row per division; absence =

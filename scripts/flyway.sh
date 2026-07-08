@@ -48,12 +48,23 @@ eval "$(node -e '
   const local = ["localhost", "127.0.0.1"].includes(u.hostname);
   const sslEnv = process.env.DATABASE_SSL;
   const ssl = sslEnv === "disable" ? false : sslEnv === "require" ? true : !local;
-  const params = ssl ? "?sslmode=require" : "";
+  // Pin the session search_path to the target schema ONLY (public excluded) so
+  // the v1-baseline migrations unqualified `drop table … cascade` can never
+  // reach a populated public schema. Critical when seazn_club shares a database
+  // with an existing public (e.g. Supabase).
+  const schema = process.env.DB_SCHEMA || "seazn_club";
+  const qp = [ssl ? "sslmode=require" : null, `options=-c%20search_path%3D${schema}`]
+    .filter(Boolean).join("&");
+  const params = qp ? "?" + qp : "";
   const q = (s) => "'\''" + s.replace(/'\''/g, "'\''\\'\'''\''") + "'\''";
   console.log("JDBC_URL=" + q(`jdbc:postgresql://${u.hostname}:${u.port || 5432}/${db}${params}`));
   console.log("DB_USER=" + q(decodeURIComponent(u.username)));
   console.log("DB_PASS=" + q(decodeURIComponent(u.password)));
 ')"
+
+# The app lives in a dedicated schema (not public). Pass it as CLI flags so it
+# also becomes ${flyway:defaultSchema} in migrations. Override with DB_SCHEMA.
+DB_SCHEMA="${DB_SCHEMA:-seazn_club}"
 
 exec "$FLYWAY_BIN" \
   -configFiles="$REPO_ROOT/db/flyway.toml" \
@@ -61,4 +72,6 @@ exec "$FLYWAY_BIN" \
   -url="$JDBC_URL" \
   -user="$DB_USER" \
   -password="$DB_PASS" \
+  -schemas="$DB_SCHEMA" \
+  -defaultSchema="$DB_SCHEMA" \
   "$@"

@@ -35,7 +35,7 @@ create or replace function audit_row_hash(prev text, canonical text) returns tex
 
 -- audit_log chain
 create or replace function audit_log_hash_chain() returns trigger
-  language plpgsql security definer set search_path = public, pg_temp as $$
+  language plpgsql security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare
   prev text;
   canonical text;
@@ -53,7 +53,7 @@ end $$;
 
 -- staff_audit_log chain
 create or replace function staff_audit_log_hash_chain() returns trigger
-  language plpgsql security definer set search_path = public, pg_temp as $$
+  language plpgsql security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare
   prev text;
   canonical text;
@@ -113,7 +113,7 @@ end $$;
 -- Verifiers: return the id of the first row (in chain order) whose recomputed
 -- hash or prev-link doesn't match; null = chain intact.
 create or replace function verify_audit_log_chain() returns uuid
-  language plpgsql stable security definer set search_path = public, pg_temp as $$
+  language plpgsql stable security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare
   r audit_log%rowtype;
   expect_prev text := null;
@@ -133,7 +133,7 @@ begin
 end $$;
 
 create or replace function verify_staff_audit_log_chain() returns uuid
-  language plpgsql stable security definer set search_path = public, pg_temp as $$
+  language plpgsql stable security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare
   r staff_audit_log%rowtype;
   expect_prev text := null;

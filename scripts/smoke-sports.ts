@@ -97,6 +97,7 @@ function db() {
   if (!url) throw new Error("DATABASE_URL is required for smoke-sports");
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   return postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
     ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
     prepare: !url.includes(":6543"),
     max: 1,

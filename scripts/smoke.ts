@@ -252,6 +252,7 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   const dbUrl = process.env.DATABASE_URL;
   const db = dbUrl
     ? postgres(dbUrl, {
+        connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
         ssl: process.env.DATABASE_SSL === "disable" ? false : /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl) ? false : "require",
         prepare: !dbUrl.includes(":6543"),
         max: 1,
@@ -580,6 +581,7 @@ async function setPlan(orgId: string, plan: string): Promise<void> {
   if (!url) throw new Error("DATABASE_URL is required to change a plan in smoke");
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
     ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
     prepare: !url.includes(":6543"),
     max: 1,
@@ -608,6 +610,7 @@ async function cleanup(tag: string): Promise<void> {
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
     ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
     prepare: !url.includes(":6543"),
     max: 1,

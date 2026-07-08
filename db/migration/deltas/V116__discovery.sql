@@ -14,7 +14,7 @@
 
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'competitions') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'competitions') THEN
     -- Doc 15 §1: public ≠ discoverable. Opt-in defaults OFF.
     ALTER TABLE competitions ADD COLUMN IF NOT EXISTS discoverable boolean NOT NULL DEFAULT false;
     ALTER TABLE competitions ADD COLUMN IF NOT EXISTS discovery jsonb NOT NULL DEFAULT '{}';

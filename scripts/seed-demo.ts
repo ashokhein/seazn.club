@@ -280,6 +280,7 @@ async function main() {
       }
       const { default: postgres } = await import("postgres");
       const sql = postgres(process.env.DATABASE_URL, {
+        connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
         ssl: /localhost|127\.0\.0\.1/.test(process.env.DATABASE_URL) ? false : "require",
         max: 1,
         prepare: !process.env.DATABASE_URL.includes(":6543"),
