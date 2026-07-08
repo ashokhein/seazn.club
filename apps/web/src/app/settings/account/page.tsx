@@ -5,6 +5,7 @@ import { getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { Nav } from "@/components/nav";
 import {
+  DisplayNameForm,
   ChangeEmailForm,
   LeaveOrgButton,
   TransferOwnerForm,
@@ -77,11 +78,9 @@ export default async function AccountSettingsPage({ searchParams }: PageProps) {
           <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-purple-400">
             Profile
           </h2>
-          <p className="text-sm text-slate-500">
-            Display name:{" "}
-            <span className="font-medium text-slate-700">{user.display_name}</span>
-          </p>
-          <p className="text-sm text-slate-500">
+          <label className="mb-1 block text-sm text-slate-500">Display name</label>
+          <DisplayNameForm currentName={user.display_name} />
+          <p className="mt-2 text-sm text-slate-500">
             Account ID:{" "}
             <span className="font-mono text-xs text-purple-400">{user.id}</span>
           </p>

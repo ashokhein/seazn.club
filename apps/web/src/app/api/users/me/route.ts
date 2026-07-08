@@ -1,8 +1,25 @@
 import { sql } from "@/lib/db";
 import { requireUser, destroySession, invalidateUser, invalidateUserOrgs } from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
-import { deleteAccountSchema } from "@/lib/types";
+import { deleteAccountSchema, updateProfileSchema } from "@/lib/types";
 import { sendAccountDeletionEmail } from "@/lib/email";
+
+/** Update the authenticated user's profile (currently just the display name). */
+export async function PATCH(req: Request) {
+  return handler(async () => {
+    const user = await requireUser();
+    const { display_name } = updateProfileSchema.parse(await req.json());
+
+    const [row] = await sql<{ display_name: string }[]>`
+      update users set display_name = ${display_name}
+      where id = ${user.id}
+      returning display_name`;
+
+    // display_name is cached in getCurrentUser — drop the stale entry.
+    await invalidateUser(user.id);
+    return { display_name: row.display_name };
+  });
+}
 
 /**
  * Soft-delete the authenticated user's account.
