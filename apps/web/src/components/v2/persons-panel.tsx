@@ -1,7 +1,7 @@
 "use client";
 
-// Persons directory: add/edit people, consent toggles, merge duplicates.
-import { useMemo, useState } from "react";
+// Players directory: add/edit players, consent toggles, merge duplicates.
+import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 
@@ -12,9 +12,18 @@ interface Person {
   gender: string | null;
   consent: { public_name?: boolean; public_photo?: boolean };
   external_ref: string | null;
+  photo_path: string | null;
 }
 
-export function PersonsPanel({ persons, canEdit }: { persons: Person[]; canEdit: boolean }) {
+export function PersonsPanel({
+  persons,
+  storageBase,
+  canEdit,
+}: {
+  persons: Person[];
+  storageBase: string;
+  canEdit: boolean;
+}) {
   const router = useRouter();
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -45,8 +54,25 @@ export function PersonsPanel({ persons, canEdit }: { persons: Person[]; canEdit:
       {canEdit && (
         <AddPersonForm
           busy={busy}
-          onSubmit={(payload) =>
-            run(() => apiV1("/api/v1/persons", { method: "POST", json: payload }))
+          onSubmit={(payload, photo) =>
+            run(async () => {
+              const person = await apiV1<Person>("/api/v1/persons", {
+                method: "POST",
+                json: payload,
+              });
+              if (photo) {
+                const form = new FormData();
+                form.append("file", photo);
+                const res = await fetch(`/api/v1/persons/${person.id}/photo`, {
+                  method: "POST",
+                  body: form,
+                });
+                if (!res.ok) {
+                  const p = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+                  throw new Error(p.error?.message ?? "Photo upload failed");
+                }
+              }
+            })
           }
         />
       )}
@@ -56,7 +82,7 @@ export function PersonsPanel({ persons, canEdit }: { persons: Person[]; canEdit:
       )}
       {mergeSource && (
         <p className="rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-700">
-          Merging <strong>{mergeSource.full_name}</strong> into… pick the person to
+          Merging <strong>{mergeSource.full_name}</strong> into… pick the player to
           keep below.{" "}
           <button
             type="button"
@@ -71,7 +97,7 @@ export function PersonsPanel({ persons, canEdit }: { persons: Person[]; canEdit:
       <input
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
-        placeholder="Search people…"
+        placeholder="Search players…"
         className="input max-w-xs"
       />
 
@@ -91,19 +117,38 @@ export function PersonsPanel({ persons, canEdit }: { persons: Person[]; canEdit:
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={canEdit ? 6 : 5} className="px-4 py-6 text-center text-sm text-slate-400">
-                  No people found.
+                  No players found.
                 </td>
               </tr>
             )}
             {filtered.map((p) => (
               <tr key={p.id}>
                 <td className="px-4 py-2 text-sm font-medium text-slate-800">
-                  {p.full_name}
-                  {p.external_ref && (
-                    <span className="ml-2 font-mono text-xs text-slate-400">
-                      {p.external_ref}
+                  <span className="flex items-center gap-2">
+                    {p.photo_path ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={`${storageBase}/${p.photo_path}`}
+                        alt={`${p.full_name} photo`}
+                        className="h-7 w-7 rounded-full object-cover"
+                      />
+                    ) : (
+                      <span
+                        aria-hidden
+                        className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-xs text-slate-400"
+                      >
+                        {p.full_name.charAt(0).toUpperCase()}
+                      </span>
+                    )}
+                    <span>
+                      {p.full_name}
+                      {p.external_ref && (
+                        <span className="ml-2 font-mono text-xs text-slate-400">
+                          {p.external_ref}
+                        </span>
+                      )}
                     </span>
-                  )}
+                  </span>
                 </td>
                 <td className="px-4 py-2 text-sm text-slate-500">{p.dob ?? "—"}</td>
                 <td className="px-4 py-2 text-sm text-slate-500">{p.gender ?? "—"}</td>
@@ -175,28 +220,37 @@ function AddPersonForm({
   onSubmit,
 }: {
   busy: boolean;
-  onSubmit: (payload: Record<string, unknown>) => void;
+  onSubmit: (payload: Record<string, unknown>, photo: File | null) => void;
 }) {
   const [name, setName] = useState("");
   const [dob, setDob] = useState("");
   const [gender, setGender] = useState("");
   const [publicName, setPublicName] = useState(false);
+  const [publicPhoto, setPublicPhoto] = useState(false);
+  const [photo, setPhoto] = useState<File | null>(null);
+  const photoInput = useRef<HTMLInputElement>(null);
 
   return (
     <form
-      className="card flex flex-wrap items-end gap-3 p-4"
+      className="card grid w-full grid-cols-1 gap-3 p-4 sm:grid-cols-2"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit({
-          full_name: name,
-          dob: dob || null,
-          gender: gender || null,
-          consent: { public_name: publicName, public_photo: false },
-        });
+        onSubmit(
+          {
+            full_name: name,
+            dob: dob || null,
+            gender: gender || null,
+            consent: { public_name: publicName, public_photo: publicPhoto },
+          },
+          photo,
+        );
         setName("");
         setDob("");
         setGender("");
         setPublicName(false);
+        setPublicPhoto(false);
+        setPhoto(null);
+        if (photoInput.current) photoInput.current.value = "";
       }}
     >
       <label className="block">
@@ -205,7 +259,7 @@ function AddPersonForm({
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
-          className="input w-56"
+          className="input"
           placeholder="Priya Sharma"
         />
       </label>
@@ -215,23 +269,44 @@ function AddPersonForm({
       </label>
       <label className="block">
         <span className="label">Gender</span>
-        <select value={gender} onChange={(e) => setGender(e.target.value)} className="select w-28">
+        <select value={gender} onChange={(e) => setGender(e.target.value)} className="select">
           <option value="">—</option>
           <option value="m">m</option>
           <option value="f">f</option>
           <option value="x">x</option>
         </select>
       </label>
-      <label className="flex items-center gap-1.5 pb-2.5 text-xs text-slate-500">
+      <label className="block">
+        <span className="label">Photo</span>
+        <input
+          ref={photoInput}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          aria-label="Player photo"
+          className="block w-full text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
+          onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+        />
+      </label>
+      <label className="flex items-center gap-2 text-sm text-slate-600">
         <input
           type="checkbox"
           checked={publicName}
           onChange={(e) => setPublicName(e.target.checked)}
+          className="h-4 w-4 rounded border-purple-200 accent-purple-600"
         />
         consents to public name
       </label>
-      <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary">
-        {busy ? "Adding…" : "Add person"}
+      <label className="flex items-center gap-2 text-sm text-slate-600">
+        <input
+          type="checkbox"
+          checked={publicPhoto}
+          onChange={(e) => setPublicPhoto(e.target.checked)}
+          className="h-4 w-4 rounded border-purple-200 accent-purple-600"
+        />
+        consents to public photo
+      </label>
+      <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary w-full sm:col-span-2 sm:w-auto sm:justify-self-start">
+        {busy ? "Adding…" : "Add player"}
       </button>
     </form>
   );

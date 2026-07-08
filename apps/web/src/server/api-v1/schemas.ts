@@ -151,17 +151,40 @@ export const EntrantMemberInput = z.object({
   roles: z.array(z.string()).default([]),
 });
 
-export const CreateEntrant = z.object({
-  kind: EntrantKind,
-  display_name: z.string().min(1).max(200),
-  team_id: Uuid.nullish(),
-  seed: z.number().int().min(1).nullish(),
-  members: z.array(EntrantMemberInput).default([]),
-});
+export const CreateEntrant = z
+  .object({
+    kind: EntrantKind,
+    // Optional when enrolling an existing team: the server snapshots the name
+    // from teams.name at creation so a later rename never rewrites history.
+    display_name: z.string().min(1).max(200).optional(),
+    team_id: Uuid.nullish(),
+    seed: z.number().int().min(1).nullish(),
+    members: z.array(EntrantMemberInput).default([]),
+    // Copy the roster from an earlier entrant of the SAME team (season rollover,
+    // league + cup). Resolved server-side in the creation transaction.
+    copy_roster_from_entrant_id: Uuid.nullish(),
+  })
+  .refine((e) => e.display_name != null || e.team_id != null, {
+    message: "display_name is required unless team_id is provided",
+    path: ["display_name"],
+  });
 export type CreateEntrant = z.infer<typeof CreateEntrant>;
 
 /** POST /divisions/{id}/entrants — one entrant or a bulk array (doc 08 §3). */
 export const CreateEntrants = z.union([CreateEntrant, z.array(CreateEntrant).min(1).max(500)]);
+
+/** POST /clubs/{id}/teams — create a team under a club. */
+export const CreateTeam = z.object({
+  name: z.string().min(1).max(200),
+  short_name: z.string().max(60).nullish(),
+});
+export type CreateTeam = z.infer<typeof CreateTeam>;
+
+/** PUT /teams/{id}/squad — full-replace the team's persistent squad. */
+export const SetTeamSquad = z.object({
+  members: z.array(EntrantMemberInput).default([]),
+});
+export type SetTeamSquad = z.infer<typeof SetTeamSquad>;
 
 export const PatchEntrant = z
   .object({

@@ -11,7 +11,7 @@ import { listClubs } from "@/server/usecases/clubs";
 import { PersonsPanel } from "@/components/v2/persons-panel";
 import { ClubsPanel } from "@/components/v2/clubs-panel";
 
-const TABS = ["people", "clubs"] as const;
+const TABS = ["players", "clubs"] as const;
 type Tab = (typeof TABS)[number];
 
 export default async function DirectoryPage({
@@ -20,7 +20,7 @@ export default async function DirectoryPage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const { tab: rawTab } = await searchParams;
-  const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "people";
+  const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "players";
   await requirePageAuth();
 
   return (
@@ -30,7 +30,7 @@ export default async function DirectoryPage({
         <div className="mb-6">
           <h1 className="text-xl font-semibold tracking-tight text-slate-900">Directory</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Your organisation&apos;s people and clubs — reused across every competition.
+            Your organisation&apos;s players and clubs — reused across every competition.
           </p>
         </div>
 
@@ -50,19 +50,20 @@ export default async function DirectoryPage({
           ))}
         </nav>
 
-        {tab === "people" ? <PeopleTab /> : <ClubsTab />}
+        {tab === "players" ? <PlayersTab /> : <ClubsTab />}
       </main>
     </>
   );
 }
 
-async function PeopleTab() {
+async function PlayersTab() {
   const { auth, canEdit } = await requirePageAuth();
   const { items } = await listPersons(auth, { cursor: null, limit: 200 });
+  const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/assets`;
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500">
-        People rostered into entrants across competitions. Date of birth is used only for
+        Players rostered into entrants across competitions. Date of birth is used only for
         eligibility and is never shown publicly; names appear on public pages only with consent.
       </p>
       <PersonsPanel
@@ -73,7 +74,9 @@ async function PeopleTab() {
           gender: p.gender,
           consent: p.consent as { public_name?: boolean; public_photo?: boolean },
           external_ref: p.external_ref,
+          photo_path: p.photo_path,
         }))}
+        storageBase={storageBase}
         canEdit={canEdit}
       />
     </div>

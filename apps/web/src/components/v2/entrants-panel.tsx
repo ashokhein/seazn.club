@@ -18,9 +18,19 @@ interface RoleSpec {
 interface EntrantRow {
   id: string;
   kind: string;
+  team_id: string | null;
   display_name: string;
   seed: number | null;
   status: string;
+}
+interface TeamOption {
+  id: string;
+  name: string;
+  short_name: string | null;
+  club_name: string | null;
+  club_short_name: string | null;
+  logo_path: string | null;
+  latest_entrant_id: string | null;
 }
 interface Member {
   person_id: string;
@@ -35,6 +45,11 @@ interface Person {
   full_name: string;
   dob: string | null;
   gender: string | null;
+}
+interface DivisionRosterRow {
+  person_id: string;
+  entrant_id: string;
+  entrant_name: string;
 }
 
 interface Props {
@@ -81,13 +96,47 @@ export function EntrantsPanel({
   const [clubs, setClubs] = useState<{ id: string; name: string }[]>([]);
   const [clubFilter, setClubFilter] = useState("");
   const [clubEntrantIds, setClubEntrantIds] = useState<Set<string> | null>(null);
+  // Existing-team enrollment (unified Add Entrant): the org's teams, for the
+  // picker. Empty for orgs that never imported — the form then shows only the
+  // "new entrant" mode, exactly as before.
+  const [teams, setTeams] = useState<TeamOption[]>([]);
+  // Division-wide (person → team entrant) map, for the same-division
+  // double-roster warning (advisory: a person on two teams here is flagged,
+  // not blocked).
+  const [rosterIndex, setRosterIndex] = useState<DivisionRosterRow[]>([]);
+  // Bumped after every mutation to force a roster-map refetch.
+  const [rosterBump, setRosterBump] = useState(0);
 
   useEffect(() => {
     loadAllPersons().then(setPersons).catch(() => setPersons([]));
     apiV1<{ id: string; name: string }[]>("/api/v1/clubs")
       .then(setClubs)
       .catch(() => setClubs([]));
+    apiV1<TeamOption[]>("/api/v1/teams")
+      .then(setTeams)
+      .catch(() => setTeams([]));
   }, []);
+
+  const enteredTeamIds = useMemo(
+    () => new Set(entrants.map((e) => e.team_id).filter((id): id is string => id != null)),
+    [entrants],
+  );
+
+  // Refetch the roster map whenever the entrant set changes OR any mutation
+  // runs (rosterBump) — a member added/removed on one team must clear/raise the
+  // warning on the others, and entrant ids alone don't capture roster edits.
+  const entrantSig = entrants.map((e) => `${e.id}:${e.status}`).join(",");
+  useEffect(() => {
+    apiV1<DivisionRosterRow[]>(`/api/v1/divisions/${divisionId}/roster`)
+      .then(setRosterIndex)
+      .catch(() => setRosterIndex([]));
+  }, [divisionId, entrantSig, rosterBump]);
+
+  const otherTeamsFor = useCallback(
+    (personId: string, exceptEntrantId: string) =>
+      rosterIndex.filter((r) => r.person_id === personId && r.entrant_id !== exceptEntrantId),
+    [rosterIndex],
+  );
 
   useEffect(() => {
     if (!clubFilter) return; // cleared in the select's onChange
@@ -110,15 +159,18 @@ export function EntrantsPanel({
     }
   }, []);
 
-  async function run(fn: () => Promise<unknown>) {
+  async function run<T>(fn: () => Promise<T>): Promise<T | undefined> {
     setError(null);
     setPaywallFeature(null);
     setBusy(true);
     try {
-      await fn();
+      const result = await fn();
       router.refresh();
+      setRosterBump((n) => n + 1); // re-pull the division roster map
+      return result;
     } catch (err) {
       fail(err);
+      return undefined;
     } finally {
       setBusy(false);
     }
@@ -143,13 +195,15 @@ export function EntrantsPanel({
       {canEdit && (
         <AddEntrantForm
           persons={persons}
+          teams={teams}
+          enteredTeamIds={enteredTeamIds}
           busy={busy}
           onSubmit={(payload) =>
             run(() =>
-              apiV1(`/api/v1/divisions/${divisionId}/entrants`, {
-                method: "POST",
-                json: payload,
-              }),
+              apiV1<{ roster_keys_dropped?: number }>(
+                `/api/v1/divisions/${divisionId}/entrants`,
+                { method: "POST", json: payload },
+              ),
             )
           }
           importControls={
@@ -282,6 +336,7 @@ export function EntrantsPanel({
                 persons={persons}
                 positionGroups={positionGroups}
                 roles={roles}
+                otherTeamsFor={otherTeamsFor}
                 onPatch={(patch) =>
                   run(() =>
                     apiV1(`/api/v1/entrants/${e.id}`, { method: "PATCH", json: patch }),
@@ -316,17 +371,220 @@ function eligibilityLabel(rule: Record<string, unknown>): string {
 // Add one entrant
 // ---------------------------------------------------------------------------
 
+const STORAGE_BASE = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/assets`;
+
 function AddEntrantForm({
   persons,
+  teams,
+  enteredTeamIds,
   busy,
   onSubmit,
   importControls,
 }: {
   persons: Person[];
+  teams: TeamOption[];
+  enteredTeamIds: Set<string>;
   busy: boolean;
-  onSubmit: (payload: Record<string, unknown>) => void;
+  onSubmit: (
+    payload: Record<string, unknown>,
+  ) => Promise<{ roster_keys_dropped?: number } | undefined>;
   /** Inline CSV-import controls rendered in the footer row. */
   importControls?: React.ReactNode;
+}) {
+  // "Existing team" mode is only meaningful once the org has teams (they are
+  // created by import). Mirror the club-filter visibility rule: no teams → the
+  // form is exactly the old "new entrant" flow, so free orgs see no change.
+  const hasTeams = teams.length > 0;
+  const [mode, setMode] = useState<"existing" | "new">("new");
+  const [touched, setTouched] = useState(false);
+  // Teams load after first paint; default to "existing" once they arrive, but
+  // never override a mode the organiser explicitly picked.
+  useEffect(() => {
+    if (!touched) setMode(hasTeams ? "existing" : "new");
+  }, [hasTeams, touched]);
+
+  return (
+    <form className="card space-y-3 p-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold text-slate-700">Add entrant</h3>
+        {hasTeams && (
+          <div className="inline-flex rounded-lg border border-slate-200 p-0.5 text-xs">
+            {(["existing", "new"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setTouched(true);
+                  setMode(m);
+                }}
+                className={`rounded-md px-2.5 py-1 font-medium transition ${
+                  mode === m ? "bg-purple-600 text-white" : "text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {m === "existing" ? "Existing team" : "New entrant"}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {mode === "existing" ? (
+        <ExistingTeamFields
+          teams={teams}
+          enteredTeamIds={enteredTeamIds}
+          busy={busy}
+          onSubmit={onSubmit}
+        />
+      ) : (
+        <NewEntrantFields persons={persons} busy={busy} onSubmit={onSubmit} />
+      )}
+
+      <div className="flex flex-wrap items-center justify-end gap-3">{importControls}</div>
+    </form>
+  );
+}
+
+/** Mode A: enroll a team that already exists (season rollover, league + cup). */
+function ExistingTeamFields({
+  teams,
+  enteredTeamIds,
+  busy,
+  onSubmit,
+}: {
+  teams: TeamOption[];
+  enteredTeamIds: Set<string>;
+  busy: boolean;
+  onSubmit: (
+    payload: Record<string, unknown>,
+  ) => Promise<{ roster_keys_dropped?: number } | undefined>;
+}) {
+  const [filter, setFilter] = useState("");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [copyRoster, setCopyRoster] = useState(true);
+  const [note, setNote] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    const rows = q
+      ? teams.filter(
+          (t) =>
+            t.name.toLowerCase().includes(q) ||
+            (t.club_name ?? "").toLowerCase().includes(q),
+        )
+      : teams;
+    return rows.slice(0, 12);
+  }, [teams, filter]);
+
+  const selected = teams.find((t) => t.id === selectedId) ?? null;
+  const canCopy = Boolean(selected?.latest_entrant_id);
+
+  async function submit() {
+    if (!selected) return;
+    setNote(null);
+    const res = await onSubmit({
+      kind: "team",
+      team_id: selected.id,
+      // display_name is intentionally omitted — the server snapshots it from
+      // the team so a later rename never rewrites historical standings.
+      ...(copyRoster && selected.latest_entrant_id
+        ? { copy_roster_from_entrant_id: selected.latest_entrant_id }
+        : {}),
+    });
+    if (res === undefined) return; // failed — panel shows the error (incl. 409)
+    setSelectedId(null);
+    setFilter("");
+    if (res.roster_keys_dropped)
+      setNote(
+        `Enrolled. ${res.roster_keys_dropped} position/role setting${
+          res.roster_keys_dropped > 1 ? "s" : ""
+        } didn't carry over to this sport.`,
+      );
+  }
+
+  return (
+    <div className="space-y-3">
+      <input
+        value={filter}
+        onChange={(e) => setFilter(e.target.value)}
+        className="input"
+        placeholder="Search teams…"
+        aria-label="Search teams"
+      />
+      <div className="flex flex-wrap gap-1.5">
+        {teams.length === 0 && (
+          <span className="text-xs text-slate-400">No teams yet — import some first.</span>
+        )}
+        {filtered.map((t) => {
+          const entered = enteredTeamIds.has(t.id);
+          const isSelected = t.id === selectedId;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              disabled={entered}
+              onClick={() => setSelectedId(isSelected ? null : t.id)}
+              className={`flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs transition ${
+                entered
+                  ? "cursor-not-allowed border-slate-200 text-slate-300"
+                  : isSelected
+                    ? "border-purple-500 bg-purple-50 text-purple-700"
+                    : "border-slate-200 text-slate-600 hover:border-purple-200"
+              }`}
+              title={t.club_name ?? undefined}
+            >
+              {t.logo_path && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`${STORAGE_BASE}/${t.logo_path}`}
+                  alt=""
+                  className="h-4 w-4 rounded object-contain"
+                />
+              )}
+              <span>{t.name}</span>
+              {t.club_short_name && (
+                <span className="text-[10px] text-slate-400">{t.club_short_name}</span>
+              )}
+              {entered && <span className="text-[10px] text-slate-400">· Already entered</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      <label className="flex items-center gap-2 text-xs text-slate-600">
+        <input
+          type="checkbox"
+          checked={copyRoster && canCopy}
+          disabled={!canCopy}
+          onChange={(e) => setCopyRoster(e.target.checked)}
+        />
+        Copy roster from this team&apos;s most recent entrant
+        {!canCopy && selected && <span className="text-slate-400">(no earlier roster)</span>}
+      </label>
+
+      {note && <p className="text-xs text-emerald-600">{note}</p>}
+
+      <button
+        type="button"
+        onClick={submit}
+        disabled={busy || !selected}
+        className="btn btn-primary"
+      >
+        {busy ? "Enrolling…" : "Enroll team"}
+      </button>
+    </div>
+  );
+}
+
+/** Mode B: the original ad-hoc entrant (scratch pairs, one-offs) — never
+ *  creates a team, kept deliberately as an explicit choice. */
+function NewEntrantFields({
+  persons,
+  busy,
+  onSubmit,
+}: {
+  persons: Person[];
+  busy: boolean;
+  onSubmit: (payload: Record<string, unknown>) => Promise<unknown>;
 }) {
   const [name, setName] = useState("");
   const [kind, setKind] = useState("individual");
@@ -340,9 +598,8 @@ function AddEntrantForm({
     return persons.filter((p) => p.full_name.toLowerCase().includes(q)).slice(0, 8);
   }, [persons, filter]);
 
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    onSubmit({
+  async function submit() {
+    await onSubmit({
       kind,
       display_name: name,
       seed: seed ? Number(seed) : null,
@@ -354,13 +611,11 @@ function AddEntrantForm({
   }
 
   return (
-    <form onSubmit={submit} className="card space-y-3 p-4">
-      <h3 className="text-sm font-semibold text-slate-700">Add entrant</h3>
+    <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
         <label className="block">
           <span className="label">Name</span>
           <input
-            required
             value={name}
             onChange={(e) => setName(e.target.value)}
             className="input"
@@ -395,7 +650,7 @@ function AddEntrantForm({
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="input"
-          placeholder="Search people…"
+          placeholder="Search players…"
         />
         <div className="mt-2 flex flex-wrap gap-1.5">
           {filtered.map((p) => {
@@ -421,7 +676,7 @@ function AddEntrantForm({
           })}
           {persons.length === 0 && (
             <span className="text-xs text-slate-400">
-              No people yet — add them under People, or import a CSV.
+              No players yet — add them under Players, or import a CSV.
             </span>
           )}
         </div>
@@ -430,13 +685,15 @@ function AddEntrantForm({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary">
-          {busy ? "Saving…" : "Add entrant"}
-        </button>
-        {importControls}
-      </div>
-    </form>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={busy || !name.trim()}
+        className="btn btn-primary"
+      >
+        {busy ? "Saving…" : "Add entrant"}
+      </button>
+    </div>
   );
 }
 
@@ -552,6 +809,7 @@ function EntrantTableRow({
   persons,
   positionGroups,
   roles,
+  otherTeamsFor,
   onPatch,
 }: {
   entrant: EntrantRow;
@@ -560,6 +818,7 @@ function EntrantTableRow({
   persons: Person[];
   positionGroups: PositionGroup[];
   roles: RoleSpec[];
+  otherTeamsFor: (personId: string, exceptEntrantId: string) => DivisionRosterRow[];
   onPatch: (patch: Record<string, unknown>) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -651,6 +910,7 @@ function EntrantTableRow({
                 roles={roles}
                 canEdit={canEdit}
                 busy={busy}
+                conflictsFor={(personId) => otherTeamsFor(personId, entrant.id)}
                 onSave={(next) =>
                   onPatch({
                     members: next.map((m) => ({
@@ -685,6 +945,7 @@ function RosterEditor({
   roles,
   canEdit,
   busy,
+  conflictsFor,
   onSave,
 }: {
   members: Member[];
@@ -693,6 +954,8 @@ function RosterEditor({
   roles: RoleSpec[];
   canEdit: boolean;
   busy: boolean;
+  /** Other team entrants IN THIS DIVISION a person is already on. */
+  conflictsFor: (personId: string) => DivisionRosterRow[];
   onSave: (members: Member[]) => void;
 }) {
   const [members, setMembers] = useState(initial);
@@ -710,14 +973,41 @@ function RosterEditor({
     .filter((p) => !filter || p.full_name.toLowerCase().includes(filter.toLowerCase()))
     .slice(0, 6);
 
+  // Advisory: people also rostered to another team in this division. Not
+  // blocked — the organiser may knowingly double-roster (guest, correction).
+  const conflicts = members
+    .map((m) => ({ name: m.full_name, on: conflictsFor(m.person_id) }))
+    .filter((c) => c.on.length > 0);
+
   return (
     <div className="space-y-3">
+      {conflicts.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <span className="font-medium">Also on another team in this division:</span>{" "}
+          {conflicts
+            .map((c) => `${c.name} (${c.on.map((o) => o.entrant_name).join(", ")})`)
+            .join("; ")}
+          . You can still save.
+        </div>
+      )}
       {members.length === 0 && (
-        <p className="text-xs text-slate-400">No people on this roster.</p>
+        <p className="text-xs text-slate-400">No players on this roster.</p>
       )}
       {members.map((m, i) => (
         <div key={m.person_id} className="flex flex-wrap items-center gap-2 text-xs">
-          <span className="w-40 truncate font-medium text-slate-700">{m.full_name}</span>
+          <span className="w-40 truncate font-medium text-slate-700">
+            {m.full_name}
+            {conflictsFor(m.person_id).length > 0 && (
+              <span
+                className="ml-1 text-amber-600"
+                title={`Also on ${conflictsFor(m.person_id)
+                  .map((o) => o.entrant_name)
+                  .join(", ")} in this division`}
+              >
+                ⚠
+              </span>
+            )}
+          </span>
           <input
             type="number"
             min={0}
@@ -764,7 +1054,9 @@ function RosterEditor({
             />
             captain
           </label>
-          {roles.map((r) => (
+          {/* `captain` has its own dedicated checkbox above; don't render it
+              again as a generic role (some sport specs list it in roles). */}
+          {roles.filter((r) => r.key !== "captain").map((r) => (
             <label key={r.key} className="flex items-center gap-1 text-slate-500">
               <input
                 type="checkbox"
@@ -801,32 +1093,45 @@ function RosterEditor({
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Add person…"
+            placeholder="Find player…"
             className="input w-44 px-2 py-1 text-xs"
           />
-          {candidates.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => {
-                setMembers((prev) => [
-                  ...prev,
-                  {
-                    person_id: p.id,
-                    full_name: p.full_name,
-                    squad_number: null,
-                    default_position_key: null,
-                    is_captain: false,
-                    roles: [],
-                  },
-                ]);
-                setDirty(true);
-              }}
-              className="rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-500 hover:border-purple-300"
-            >
-              + {p.full_name}
-            </button>
-          ))}
+          {candidates.map((p) => {
+            const onOther = conflictsFor(p.id);
+            return (
+              <button
+                key={p.id}
+                type="button"
+                title={
+                  onOther.length > 0
+                    ? `Already on ${onOther.map((o) => o.entrant_name).join(", ")} in this division`
+                    : undefined
+                }
+                onClick={() => {
+                  setMembers((prev) => [
+                    ...prev,
+                    {
+                      person_id: p.id,
+                      full_name: p.full_name,
+                      squad_number: null,
+                      default_position_key: null,
+                      is_captain: false,
+                      roles: [],
+                    },
+                  ]);
+                  setDirty(true);
+                }}
+                className={`rounded-full border px-2 py-0.5 text-xs hover:border-purple-300 ${
+                  onOther.length > 0
+                    ? "border-amber-300 text-amber-700"
+                    : "border-slate-200 text-slate-500"
+                }`}
+              >
+                + {p.full_name}
+                {onOther.length > 0 && " ⚠"}
+              </button>
+            );
+          })}
           <div className="flex-1" />
           <button
             type="button"

@@ -20,7 +20,7 @@ export default async function ImportPage() {
           <p className="mt-1 text-sm text-slate-500">
             Bring clubs, teams and players in from one spreadsheet. Nothing is written
             until you commit the previewed plan. Divisions must{" "}
-            <Link href="/competitions" className="underline">
+            <Link href="/dashboard" className="underline">
               exist first
             </Link>{" "}
             — a Division column places each team as an entrant.

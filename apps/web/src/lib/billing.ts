@@ -2,6 +2,64 @@ import "server-only";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
+import { HttpError } from "@/lib/errors";
+import { invalidateOrgEntitlements } from "@/lib/entitlements";
+
+/**
+ * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
+ * Embedded Checkout, not a redirect). Pure — no Stripe/DB — so it's unit-tested.
+ * Honours the 14-day no-card trial: `payment_method_collection: "if_required"`
+ * + cancel when no card is added by trial end. `ui_mode: "embedded"` requires a
+ * `return_url` (not success/cancel urls); Stripe redirects there on completion,
+ * where the billing page reconciles from the session id.
+ */
+export function buildEmbeddedCheckoutParams(args: {
+  priceId: string;
+  orgId: string;
+  returnUrl: string;
+  customerId?: string;
+  customerEmail?: string;
+}): Stripe.Checkout.SessionCreateParams {
+  return {
+    // stripe-node v22 names the embedded UI mode "embedded_page".
+    ui_mode: "embedded_page",
+    mode: "subscription",
+    ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
+    metadata: { org_id: args.orgId },
+    payment_method_collection: "if_required",
+    subscription_data: {
+      trial_period_days: 14,
+      trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+      metadata: { org_id: args.orgId },
+    },
+    line_items: [{ price: args.priceId, quantity: 1 }],
+    return_url: args.returnUrl,
+    allow_promotion_codes: true,
+    tax_id_collection: { enabled: true },
+    automatic_tax: { enabled: true },
+  };
+}
+
+/**
+ * In-app downgrade to Community for orgs WITHOUT a Stripe subscription
+ * (admin-comped / dev-granted Pro). A Stripe-billed org must cancel through the
+ * customer portal instead, so paid state never desyncs. Idempotent.
+ */
+export async function downgradeToCommunity(orgId: string): Promise<void> {
+  const [sub] = await sql<{ stripe_subscription_id: string | null }[]>`
+    select stripe_subscription_id from subscriptions where org_id = ${orgId}`;
+  if (sub?.stripe_subscription_id) {
+    throw new HttpError(
+      400,
+      "This organization is billed through Stripe — cancel via Manage billing.",
+    );
+  }
+  await sql`
+    update subscriptions
+    set plan_key = 'community', status = 'active', cancel_at_period_end = false
+    where org_id = ${orgId}`;
+  await invalidateOrgEntitlements(orgId);
+}
 
 /** Map a Stripe subscription status to our subscription status enum. */
 const STATUS_MAP: Record<string, string> = {

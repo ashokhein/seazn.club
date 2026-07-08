@@ -13,11 +13,20 @@ const securityHeaders = [
     key: "Strict-Transport-Security",
     value: "max-age=31536000; includeSubDomains",
   },
+  // Isolate the browsing context: a window we open (or that opens us) can't
+  // reach back through window.opener. OAuth here is redirect-based, so this is
+  // safe. (CSP is deliberately omitted — it needs a nonce + Sentry/Supabase
+  // allowlist and is tracked as a separate, tested change.)
+  { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+  { key: "X-Permitted-Cross-Domain-Policies", value: "none" },
+  { key: "X-DNS-Prefetch-Control", value: "off" },
 ];
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  // Don't advertise the framework (removes the `X-Powered-By: Next.js` header).
+  poweredByHeader: false,
   // Monorepo: trace from the workspace root so hoisted node_modules land in
   // .next/standalone (Next docs: config/output caveats).
   outputFileTracingRoot: path.join(import.meta.dirname, "../.."),

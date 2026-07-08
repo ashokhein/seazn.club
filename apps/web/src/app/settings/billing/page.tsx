@@ -6,7 +6,7 @@ import { sql } from "@/lib/db";
 import { reconcileCheckout } from "@/lib/billing";
 import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
-import { UpgradeButton, ManageBillingButton } from "@/components/billing-actions";
+import { UpgradeButton, ManageBillingButton, DowngradeButton } from "@/components/billing-actions";
 import { ORG_ROLES, type Subscription } from "@/lib/types";
 import { getLimit } from "@/lib/entitlements";
 
@@ -61,6 +61,9 @@ export default async function BillingPage({
   const status = sub?.status ?? "active";
   const isPro = planKey === "pro";
   const hasStripeCustomer = !!sub?.stripe_customer_id;
+  // A comped/dev-granted Pro org has no Stripe subscription — it can't use the
+  // portal, so offer an in-app downgrade instead.
+  const hasStripeSubscription = !!sub?.stripe_subscription_id;
 
   // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
   // PROMPT-15 cutover; overrides are honoured via getLimit.
@@ -137,6 +140,7 @@ export default async function BillingPage({
             </div>
 
             {isOwner && isPro && hasStripeCustomer && <ManageBillingButton />}
+            {isOwner && isPro && !hasStripeSubscription && <DowngradeButton />}
           </div>
         </section>
 
