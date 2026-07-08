@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
-import { createSession, postAuthLanding } from "@/lib/auth";
+import { createSession, postAuthLanding, invalidateUser } from "@/lib/auth";
 import {
   GOOGLE_TOKEN_URL,
   GOOGLE_USERINFO_URL,
@@ -60,6 +60,8 @@ export async function GET(req: Request) {
 
   // 3. Resolve to a user: by google_sub, then by email, else create one.
   const userId = await upsertGoogleUser(profile as GoogleProfile);
+  // upsert may refresh display_name/avatar for an existing user.
+  await invalidateUser(userId);
 
   // 4. Sign in.
   await createSession(userId);

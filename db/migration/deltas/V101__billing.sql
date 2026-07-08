@@ -52,19 +52,11 @@ CREATE TABLE IF NOT EXISTS plan_entitlements (
 );
 
 INSERT INTO plan_entitlements (plan_key, feature_key, bool_value, int_value) VALUES
-  -- Community (free): 5 seasons, 10 tournaments/season, 32 players
-  ('community', 'seasons.max',                null,  5),
-  ('community', 'tournaments.per_season.max', null, 10),
-  ('community', 'players.max',                null, 32),
-  ('community', 'formats.all',                true,  null),
+  -- Community (free)
   ('community', 'branding',                   false, null),
   ('community', 'exports',                    false, null),
   ('community', 'realtime',                   false, null),
-  -- Pro ($20/mo): unlimited everything
-  ('pro', 'seasons.max',                      null, null),
-  ('pro', 'tournaments.per_season.max',       null, null),
-  ('pro', 'players.max',                      null, null),
-  ('pro', 'formats.all',                      true,  null),
+  -- Pro ($20/mo)
   ('pro', 'branding',                         true,  null),
   ('pro', 'exports',                          true,  null),
   ('pro', 'realtime',                         true,  null)

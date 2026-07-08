@@ -3,9 +3,9 @@
 -- schema.sql's grant ran) are reachable by app_user under RLS. Views are
 -- granted read to app_user; they are also readable by the superuser API path.
 -- =============================================================================
-grant usage on schema public to app_user;
-grant select, insert, update, delete on all tables in schema public to app_user;
-grant usage, select on all sequences in schema public to app_user;
+grant usage on schema ${flyway:defaultSchema} to app_user;
+grant select, insert, update, delete on all tables in schema ${flyway:defaultSchema} to app_user;
+grant usage, select on all sequences in schema ${flyway:defaultSchema} to app_user;
 -- competition_events is append-only for the app (doc 15 §1 audit): re-narrow
 -- after the blanket grant above.
 revoke update, delete on competition_events from app_user;

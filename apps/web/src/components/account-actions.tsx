@@ -4,6 +4,72 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 
 // ---------------------------------------------------------------------------
+// Display name form
+// ---------------------------------------------------------------------------
+
+export function DisplayNameForm({ currentName }: { currentName: string }) {
+  const router = useRouter();
+  const [name, setName] = useState(currentName);
+  const [status, setStatus] = useState<"idle" | "loading" | "saved" | "error">("idle");
+  const [error, setError] = useState("");
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("loading");
+    setError("");
+    try {
+      const res = await fetch("/api/users/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ display_name: name.trim() }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error ?? "Failed to update display name");
+      }
+      setStatus("saved");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+      setStatus("error");
+    }
+  }
+
+  const trimmed = name.trim();
+  const unchanged = trimmed === currentName;
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-2">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={name}
+          onChange={(e) => {
+            setName(e.target.value);
+            setStatus("idle");
+          }}
+          placeholder="Your name"
+          required
+          maxLength={80}
+          className="input flex-1"
+        />
+        <button
+          type="submit"
+          disabled={status === "loading" || !trimmed || unchanged}
+          className="btn btn-primary shrink-0"
+        >
+          {status === "loading" ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {status === "saved" && unchanged && (
+        <p className="text-sm text-emerald-600">Display name updated.</p>
+      )}
+      {status === "error" && <p className="text-sm text-red-600">{error}</p>}
+    </form>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Change email form
 // ---------------------------------------------------------------------------
 

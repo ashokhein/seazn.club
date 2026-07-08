@@ -5,7 +5,7 @@
 -- seed alongside the existing plan matrix (schema.sql seeds the rest); guarded
 -- so this file still applies standalone (without schema.sql's billing tables).
 do $$ begin
-  if exists (select from pg_tables where schemaname = 'public' and tablename = 'plan_entitlements') then
+  if exists (select from pg_tables where schemaname = '${flyway:defaultSchema}' and tablename = 'plan_entitlements') then
     insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
       ('community', 'api.access', false, null),
       ('pro',       'api.access', true,  null)

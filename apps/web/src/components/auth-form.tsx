@@ -1,48 +1,36 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
-import Link from "next/link";
 
 /**
- * Email/password + Google sign-in. A `next` (e.g. an invite link) is carried
- * through so the user returns to it after authenticating; otherwise the server
- * decides the landing page (dashboard, auto-provisioning an org if needed).
+ * Passwordless sign-in: Google, or a one-time link emailed to the address.
+ * There is no password and no separate sign-up — an unknown email creates an
+ * inert account and is sent a link. A `next` (e.g. an invite) is carried
+ * through so the user returns to it after authenticating.
  */
 export function AuthForm({ next }: { next?: string }) {
-  const router = useRouter();
-  const [mode, setMode] = useState<"login" | "signup">("login");
   const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [devLink, setDevLink] = useState<string | null>(null);
-  const [emailSent, setEmailSent] = useState(true);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (!email) {
+      setError("Enter your email to get a sign-in link.");
+      return;
+    }
     setBusy(true);
     try {
-      if (mode === "signup") {
-        const res = await api<{ email_sent?: boolean; verify_url?: string }>(
-          "/api/auth/signup",
-          { method: "POST", json: { email, password, ...(next ? { next } : {}) } },
-        );
-        // Account created but inactive until the emailed link is opened.
-        setEmailSent(res.email_sent !== false);
-        setDevLink(res.verify_url ?? null);
-        setSentTo(email);
-        return;
-      }
-      const res = await api<{ redirect: string }>("/api/auth/login", {
+      const res = await api<{ login_url?: string }>("/api/auth/magic-link", {
         method: "POST",
-        json: { email, password, ...(next ? { next } : {}) },
+        json: { email, ...(next ? { next } : {}) },
       });
-      router.push(res.redirect);
-      router.refresh();
+      setDevLink(res.login_url ?? null);
+      setSentTo(email);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -58,20 +46,9 @@ export function AuthForm({ next }: { next?: string }) {
         </div>
         <h3 className="text-lg font-semibold text-purple-900">Check your email</h3>
         <p className="mt-2 text-sm text-slate-500">
-          {emailSent ? (
-            <>
-              We sent a verification link to{" "}
-              <span className="font-medium text-purple-700">{sentTo}</span>. Open
-              it to finish creating your account.
-            </>
-          ) : (
-            <>
-              Your account for{" "}
-              <span className="font-medium text-purple-700">{sentTo}</span> is
-              ready, but the email couldn&apos;t be delivered. Use the link below
-              to verify.
-            </>
-          )}
+          We sent a sign-in link to{" "}
+          <span className="font-medium text-purple-700">{sentTo}</span>. Open it
+          to sign in — it expires in 15 minutes.
         </p>
 
         {devLink && (
@@ -79,7 +56,7 @@ export function AuthForm({ next }: { next?: string }) {
             href={devLink}
             className="btn btn-primary mt-4 inline-block w-full justify-center py-2.5"
           >
-            Verify now (dev link)
+            Sign in (dev link)
           </a>
         )}
 
@@ -87,11 +64,10 @@ export function AuthForm({ next }: { next?: string }) {
           onClick={() => {
             setSentTo(null);
             setDevLink(null);
-            setMode("login");
           }}
           className="btn btn-ghost mt-3"
         >
-          Back to sign in
+          Use a different email
         </button>
       </div>
     );
@@ -103,25 +79,6 @@ export function AuthForm({ next }: { next?: string }) {
 
   return (
     <div className="card w-full max-w-sm p-6">
-      <div className="mb-5 grid grid-cols-2 rounded-lg bg-purple-50 p-1 text-sm">
-        {(["login", "signup"] as const).map((m) => (
-          <button
-            key={m}
-            onClick={() => {
-              setMode(m);
-              setError(null);
-            }}
-            className={`rounded-md py-1.5 font-medium capitalize transition ${
-              mode === m
-                ? "bg-purple-600 text-white shadow-sm"
-                : "text-purple-700 hover:text-purple-900"
-            }`}
-          >
-            {m === "login" ? "Sign in" : "Create account"}
-          </button>
-        ))}
-      </div>
-
       <a href={googleHref} className="btn btn-ghost mb-4 w-full justify-center py-2.5">
         <GoogleMark />
         <span className="ml-2">Continue with Google</span>
@@ -142,24 +99,6 @@ export function AuthForm({ next }: { next?: string }) {
           placeholder="you@example.com"
           autoComplete="email"
         />
-        <div>
-          <Field
-            label="Password"
-            value={password}
-            onChange={setPassword}
-            type="password"
-            placeholder="••••••••"
-            autoComplete={mode === "login" ? "current-password" : "new-password"}
-          />
-          {mode === "login" && (
-            <Link
-              href="/forgot-password"
-              className="mt-1 block text-right text-xs text-purple-600 hover:underline"
-            >
-              Forgot password?
-            </Link>
-          )}
-        </div>
 
         {error && (
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">
@@ -168,9 +107,13 @@ export function AuthForm({ next }: { next?: string }) {
         )}
 
         <button disabled={busy} className="btn btn-primary w-full py-2.5">
-          {busy ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}
+          {busy ? "Please wait…" : "Email me a sign-in link"}
         </button>
       </form>
+
+      <p className="mt-4 text-center text-xs text-slate-400">
+        No password needed. New here? Entering your email creates your account.
+      </p>
     </div>
   );
 }

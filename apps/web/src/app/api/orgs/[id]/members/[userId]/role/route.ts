@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { requireOrgRole } from "@/lib/auth";
+import { requireOrgRole, invalidateUserOrgs } from "@/lib/auth";
 import { handler, HttpError, PaymentRequiredError } from "@/lib/http";
 import { getLimit } from "@/lib/entitlements";
 import { setRoleSchema } from "@/lib/types";
@@ -58,6 +58,7 @@ export async function POST(
         update org_members set role = ${role}
         where org_id = ${id} and user_id = ${userId}`;
     });
+    await invalidateUserOrgs(userId);
 
     return { ok: true };
   });

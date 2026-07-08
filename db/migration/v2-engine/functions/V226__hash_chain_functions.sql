@@ -12,7 +12,7 @@ create or replace function v2_row_hash(prev text, canonical text) returns text
 
 -- score_events chain (before insert; fires after trg_set_org — 'z' sorts last).
 create or replace function score_events_hash_chain() returns trigger
-  language plpgsql security definer set search_path = public, pg_temp as $$
+  language plpgsql security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare prev text; canonical text;
 begin
   select row_hash into prev from score_events
@@ -32,7 +32,7 @@ create trigger trg_zhash before insert on score_events
 
 -- division_events chain
 create or replace function division_events_hash_chain() returns trigger
-  language plpgsql security definer set search_path = public, pg_temp as $$
+  language plpgsql security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare prev text; canonical text;
 begin
   select row_hash into prev from division_events
@@ -52,7 +52,7 @@ create trigger trg_zhash before insert on division_events
 -- Verifiers: return the id of the first row (in seq order) whose recomputed
 -- hash or prev-link doesn't match; null = chain intact.
 create or replace function verify_score_events_chain(p_fixture uuid) returns uuid
-  language plpgsql stable security definer set search_path = public, pg_temp as $$
+  language plpgsql stable security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare r score_events%rowtype; expect_prev text := null; canonical text;
 begin
   for r in select * from score_events where fixture_id = p_fixture order by seq loop
@@ -68,7 +68,7 @@ begin
 end $$;
 
 create or replace function verify_division_events_chain(p_division uuid) returns uuid
-  language plpgsql stable security definer set search_path = public, pg_temp as $$
+  language plpgsql stable security definer set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
 declare r division_events%rowtype; expect_prev text := null; canonical text;
 begin
   for r in select * from division_events where division_id = p_division order by seq loop

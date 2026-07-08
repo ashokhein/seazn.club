@@ -36,17 +36,27 @@ export default async function DivisionSchedulePage({
   const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "board";
   const { auth, canEdit } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
-  const [competition, stages, fixtures, entrants, settings, boardEditable, constraints, officials] =
-    await Promise.all([
-      getCompetition(auth, division.competition_id),
-      listStages(auth, id),
-      listDivisionFixtures(auth, id),
-      listEntrants(auth, id),
-      getScheduleSettings(auth, id),
-      hasFeature(auth.orgId, "scheduling.board"),
-      hasFeature(auth.orgId, "scheduling.constraints"),
-      listOfficials(auth),
-    ]);
+  const [
+    competition,
+    stages,
+    fixtures,
+    entrants,
+    settings,
+    boardEditable,
+    constraints,
+    officials,
+    canExport,
+  ] = await Promise.all([
+    getCompetition(auth, division.competition_id),
+    listStages(auth, id),
+    listDivisionFixtures(auth, id),
+    listEntrants(auth, id),
+    getScheduleSettings(auth, id),
+    hasFeature(auth.orgId, "scheduling.board"),
+    hasFeature(auth.orgId, "scheduling.constraints"),
+    listOfficials(auth),
+    hasFeature(auth.orgId, "exports"),
+  ]);
 
   // Feed wiring for TBD card labels ("Winner of R1 #2" — doc 12 §2).
   const feedRows = await withTenant(auth.orgId, (tx) =>
@@ -87,12 +97,21 @@ export default async function DivisionSchedulePage({
               Schedule — {division.name}
             </h1>
             <span className="ml-auto flex flex-wrap items-center gap-1.5">
-              {/* Jul3/06 print templates — raw file endpoints */}
-              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/timetable?format=pdf`}>Timetable PDF</a>
-              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/scoresheet?format=pdf&pageBreaks=per_pitch`}>Scoresheets</a>
-              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/roster?format=pdf`}>Rosters</a>
-              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/standings?format=pdf&landscape=true`}>Standings PDF</a>
-              <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/participants?format=xlsx`}>Participants XLSX</a>
+              {/* Jul3/06 print templates — raw file endpoints, gated to plans
+                  with `exports`. Community sees the paywall instead of a raw
+                  402 (the buttons are direct links, so a blocked click would
+                  otherwise navigate the browser to the JSON error). */}
+              {canExport ? (
+                <>
+                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/timetable?format=pdf`}>Timetable PDF</a>
+                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/scoresheet?format=pdf&pageBreaks=per_pitch`}>Scoresheets</a>
+                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/roster?format=pdf`}>Rosters</a>
+                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/standings?format=pdf&landscape=true`}>Standings PDF</a>
+                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/participants?format=xlsx`}>Participants XLSX</a>
+                </>
+              ) : (
+                <UpgradeGate feature="exports" compact />
+              )}
             </span>
           </div>
         </div>

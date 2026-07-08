@@ -96,6 +96,10 @@ export const renameOrgSchema = z.object({
   name: z.string().min(1).max(60),
 }).strict();
 
+export const updateProfileSchema = z.object({
+  display_name: z.string().trim().min(1).max(80),
+}).strict();
+
 export const createInviteSchema = z.object({
   role: z.enum(["admin", "viewer", "scorer"]),
   max_uses: z.number().int().min(0).max(1000).default(1),

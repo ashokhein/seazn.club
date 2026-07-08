@@ -14,7 +14,7 @@
 -- fixtures.schedule_source / schedule_locked (doc 12 §3; manual = pinned).
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'fixtures') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'fixtures') THEN
     ALTER TABLE fixtures ADD COLUMN IF NOT EXISTS schedule_source text NOT NULL DEFAULT 'none';
     ALTER TABLE fixtures ADD COLUMN IF NOT EXISTS schedule_locked boolean NOT NULL DEFAULT false;
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fixtures_schedule_source_check') THEN
@@ -28,7 +28,7 @@ END $$;
 -- setup → schedule→publish → scheduled → start → active).
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'divisions') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'divisions') THEN
     ALTER TABLE divisions DROP CONSTRAINT IF EXISTS divisions_status_check;
     ALTER TABLE divisions ADD CONSTRAINT divisions_status_check
       CHECK (status IN ('setup','scheduled','active','completed'));
@@ -40,7 +40,7 @@ END $$;
 -- sessionWindows[]; tz is the venue-local zone (doc 12 §6 — DST boundaries).
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'divisions') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'divisions') THEN
     CREATE TABLE IF NOT EXISTS schedule_settings (
       division_id uuid PRIMARY KEY REFERENCES divisions(id) ON DELETE CASCADE,
       org_id      uuid NOT NULL,

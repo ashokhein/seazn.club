@@ -4,12 +4,31 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { sql } from "@/lib/db";
+import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
 
 const COOKIE_NAME = "seazn_session";
 const ORG_COOKIE = "seazn_org";
 const SESSION_DAYS = 30;
+
+// Auth data is read on nearly every request but changes rarely, so it caches
+// well (cache-aside, fail-open via lib/cache). Explicit busts run on the few
+// writes that touch these rows; short TTLs bound staleness if a bust is missed.
+const USER_TTL_SECONDS = 300;
+const ORGS_TTL_SECONDS = 120;
+const userKey = (uid: string) => `user:${uid}`;
+const orgsKey = (uid: string) => `orgs:${uid}`;
+
+/** Drop the cached `users` row for a user. Call after a profile/email write. */
+export async function invalidateUser(userId: string): Promise<void> {
+  await cacheDelPattern(userKey(userId));
+}
+
+/** Drop a user's cached org-membership list. Call after a membership change. */
+export async function invalidateUserOrgs(userId: string): Promise<void> {
+  await cacheDelPattern(orgsKey(userId));
+}
 
 function secretKey(): Uint8Array {
   const secret = process.env.AUTH_SECRET;
@@ -71,11 +90,16 @@ export async function getCurrentUser(): Promise<User | null> {
     return null;
   }
 
+  const cached = await cacheGet<User>(userKey(uid));
+  if (cached) return cached;
+
   const rows = await sql<User[]>`
     select id, display_name, email, avatar_url
     from users where id = ${uid} limit 1
   `;
-  return rows[0] ?? null;
+  const user = rows[0] ?? null;
+  if (user) await cacheSet(userKey(uid), user, USER_TTL_SECONDS);
+  return user;
 }
 
 /** Throws if not authenticated. Use inside API routes / server actions. */
@@ -91,24 +115,30 @@ export async function requireUser(): Promise<User> {
 
 /** Every organization the user belongs to, with their role, newest first. */
 export async function getUserOrgs(userId: string): Promise<OrgMembership[]> {
-  return sql<OrgMembership[]>`
+  const cached = await cacheGet<OrgMembership[]>(orgsKey(userId));
+  if (cached) return cached;
+
+  const orgs = await sql<OrgMembership[]>`
     select o.id, o.name, o.slug, o.created_by, o.created_at,
            o.logo_url, o.logo_storage_path, o.payment_instructions, m.role
     from org_members m
     join organizations o on o.id = m.org_id
     where m.user_id = ${userId}
     order by o.created_at asc`;
+  await cacheSet(orgsKey(userId), orgs, ORGS_TTL_SECONDS);
+  return orgs;
 }
 
-/** The user's role in an org, or null if they are not a member. */
+/**
+ * The user's role in an org, or null if they are not a member. Derived from the
+ * cached membership list, so it shares getUserOrgs's cache-aside path.
+ */
 export async function getOrgRole(
   orgId: string,
   userId: string,
 ): Promise<OrgRole | null> {
-  const rows = await sql<{ role: OrgRole }[]>`
-    select role from org_members
-    where org_id = ${orgId} and user_id = ${userId} limit 1`;
-  return rows[0]?.role ?? null;
+  const orgs = await getUserOrgs(userId);
+  return orgs.find((o) => o.id === orgId)?.role ?? null;
 }
 
 /** Read the active-org cookie (the board currently selected in the UI). */
@@ -183,7 +213,7 @@ export async function createOrgForUser(
 ): Promise<Organization> {
   await assertMayOwnAnotherOrg(userId);
   const slug = await generateOrgSlug();
-  return sql.begin(async (tx) => {
+  const org = await sql.begin(async (tx) => {
     const [o] = await tx<Organization[]>`
       insert into organizations (name, slug, created_by)
       values (${name}, ${slug}, ${userId})
@@ -197,6 +227,8 @@ export async function createOrgForUser(
       on conflict (org_id) do nothing`;
     return o;
   });
+  await invalidateUserOrgs(userId);
+  return org;
 }
 
 /**

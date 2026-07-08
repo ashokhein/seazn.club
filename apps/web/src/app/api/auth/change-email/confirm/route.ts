@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
+import { invalidateUser } from "@/lib/auth";
 
 /**
  * Confirm an email-address change via the token link sent to the new address.
@@ -46,6 +47,7 @@ export async function GET(req: Request) {
       await tx`update users set email = ${row.new_email} where id = ${row.user_id}`;
       await tx`update email_change_requests set confirmed = true where id = ${row.id}`;
     });
+    await invalidateUser(row.user_id);
 
     return NextResponse.redirect(
       new URL("/settings/account?email_change=success", req.url),

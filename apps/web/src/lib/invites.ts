@@ -74,4 +74,6 @@ export async function grantInvite(invite: InviteRow, userId: string): Promise<vo
       update org_invites set used_count = used_count + 1
       where id = ${invite.id}`;
   });
+  const { invalidateUserOrgs } = await import("@/lib/auth");
+  await invalidateUserOrgs(userId);
 }

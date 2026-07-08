@@ -32,7 +32,6 @@ const FEATURE_REASONS: Record<string, string> = {
   // Platform
   "api.access": "API keys are a Pro feature.",
   "api.write": "Write access via the API needs the Business plan.",
-  webhooks: "Webhooks need the Business plan.",
   exports: "CSV/PDF exports are a Pro feature.",
   "exports.branded": "Branded print templates (club colours, sponsor logos) are a Pro feature.",
   // Clubs & bulk import (Jul3/01 §7)
@@ -67,7 +66,7 @@ export function featureReason(featureKey: string): string {
 // Cheapest plan that unlocks each feature (mirrors the plan_entitlements
 // seeds, V112 + V240). Everything not listed here unlocks on Pro — only the
 // Business-tier exceptions need rows.
-const BUSINESS_FEATURES = new Set(["api.write", "webhooks", "scorers.max"]);
+const BUSINESS_FEATURES = new Set(["api.write", "scorers.max"]);
 
 export type PaidPlan = "pro" | "business";
 

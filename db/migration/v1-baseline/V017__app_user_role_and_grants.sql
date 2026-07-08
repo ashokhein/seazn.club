@@ -15,9 +15,9 @@ do $$ begin
   end if;
 end $$;
 
-grant usage on schema public to app_user;
-grant select, insert, update, delete on all tables in schema public to app_user;
-grant usage, select on all sequences in schema public to app_user;
+grant usage on schema ${flyway:defaultSchema} to app_user;
+grant select, insert, update, delete on all tables in schema ${flyway:defaultSchema} to app_user;
+grant usage, select on all sequences in schema ${flyway:defaultSchema} to app_user;
 
 -- Allow the connection role to switch into app_user (required for SET ROLE).
 grant app_user to postgres;

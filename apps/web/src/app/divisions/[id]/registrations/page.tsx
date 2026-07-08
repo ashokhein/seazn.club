@@ -19,9 +19,14 @@ export default async function DivisionRegistrationsPage({
   const { auth, canEdit } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
   const competition = await getCompetition(auth, division.competition_id);
-  const paidAllowed = await hasFeature(auth.orgId, "registration.paid");
-  const [org] = await sql<{ slug: string }[]>`
-    select slug from organizations where id = ${auth.orgId}`;
+  const [org] = await sql<{ slug: string; charges_enabled: boolean }[]>`
+    select slug, stripe_charges_enabled as charges_enabled
+    from organizations where id = ${auth.orgId}`;
+  // Offline (cash/bank) fees are free on every plan; only online (Stripe) fees
+  // need Pro. So the fee field is unlocked whenever charges aren't enabled.
+  const paidAllowed = org.charges_enabled
+    ? await hasFeature(auth.orgId, "registration.paid")
+    : true;
   // Public registration is a per-competition page; only public/unlisted comps
   // are reachable without a login.
   const registerUrl =

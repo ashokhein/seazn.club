@@ -20,6 +20,7 @@ import { OrgLogo } from "@/components/org-logo";
 import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
 import { UpgradeButton, ManageBillingButton } from "@/components/billing-actions";
 import {
+  DisplayNameForm,
   ChangeEmailForm,
   LeaveOrgButton,
   TransferOwnerForm,
@@ -465,11 +466,10 @@ export default async function SettingsPage({
                 )}
 
                 {/* Profile */}
-                <section className="card space-y-1 p-5">
+                <section className="card space-y-2 p-5">
                   <SectionHeader icon={User}>Profile</SectionHeader>
-                  <p className="text-sm text-slate-500">
-                    Display name: <span className="font-medium text-slate-700">{user.display_name}</span>
-                  </p>
+                  <label className="block text-sm text-slate-500">Display name</label>
+                  <DisplayNameForm currentName={user.display_name} />
                   <p className="text-sm text-slate-500">
                     Email: <span className="font-medium text-slate-700">{user.email}</span>
                   </p>

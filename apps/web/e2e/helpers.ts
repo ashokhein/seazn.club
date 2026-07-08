@@ -2,7 +2,6 @@ import type { APIRequestContext, Page } from "@playwright/test";
 
 // Shared test tag so parallel/rerun state never collides.
 export const TAG = Date.now().toString(36);
-export const PASSWORD = "e2epass123";
 export const proEmail = () => `e2e-pro-${TAG}@example.com`;
 
 // Thin JSON helpers over the app's own endpoints — used to set up heavy state
@@ -26,13 +25,20 @@ export async function apiJson<T = unknown>(
   return { status: res.status(), data: json.data, error: json.error };
 }
 
-/** UI login on a fresh page (used by specs that need their own context). */
-export async function loginUi(page: Page, email: string, password = PASSWORD): Promise<void> {
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(password);
-  await page.locator("form").getByRole("button", { name: /sign in/i }).click();
-  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 20_000 });
+/**
+ * Passwordless UI login on a fresh page (specs that need their own context).
+ * Requests a magic link and opens the dev-exposed URL to establish the session;
+ * an unknown email auto-creates the account.
+ */
+export async function loginUi(page: Page, email: string): Promise<void> {
+  const res = await page.request.post("/api/auth/magic-link", { data: { email } });
+  const loginUrl = ((await res.json()) as { data?: { login_url?: string } }).data?.login_url;
+  if (!loginUrl) throw new Error("magic-link login_url missing — dev server required");
+  await page.goto(loginUrl);
+  await page.waitForURL(
+    (u) => !u.pathname.startsWith("/login") && !u.pathname.startsWith("/magic-link"),
+    { timeout: 20_000 },
+  );
 }
 
 /** Create a scored generic-league division via the API and return ids. */

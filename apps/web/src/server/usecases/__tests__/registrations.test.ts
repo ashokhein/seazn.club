@@ -552,17 +552,19 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     expect(settings.capacity).toBe(8);
   });
 
-  it("Community org: saving an entry fee → 402 registration.paid; free registration still works", async () => {
+  it("Community org: offline entry fee is allowed; only online (Stripe) fees need Pro", async () => {
     const { orgId, orgSlug, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
-    await expect(
-      putRegistrationSettings(owner, division.id, {
-        enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
-        form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
-      }),
-    ).rejects.toThrow(PaymentRequiredError);
 
+    // Offline (no Stripe Connect) — a fee saves fine on Community.
+    const saved = await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+    expect(saved.fee_cents).toBe(500);
+
+    // Free registration still works.
     await putRegistrationSettings(owner, division.id, {
       enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
       form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
@@ -571,6 +573,15 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
       ...SUBMIT_BASE, division_id: division.id,
     }, "http://t.local");
     expect(res.registration.status).toBe("pending");
+
+    // Turn on online charges → collecting a fee via Stripe now needs Pro.
+    await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+    await expect(
+      putRegistrationSettings(owner, division.id, {
+        enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
+        form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      }),
+    ).rejects.toThrow(PaymentRequiredError);
   });
 
   it("capacity above the plan's entrant quota is rejected at save", async () => {

@@ -49,7 +49,7 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON scorer_assignments TO app_user;
 -- columns instead.
 DO $$
 BEGIN
-  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = 'public' AND tablename = 'divisions') THEN
+  IF EXISTS (SELECT 1 FROM pg_tables WHERE schemaname = '${flyway:defaultSchema}' AND tablename = 'divisions') THEN
     ALTER TABLE divisions ADD COLUMN IF NOT EXISTS scorer_can_finalize      boolean NOT NULL DEFAULT true;
     ALTER TABLE divisions ADD COLUMN IF NOT EXISTS scorer_can_enter_lineups boolean NOT NULL DEFAULT true;
   END IF;
