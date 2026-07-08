@@ -37,7 +37,11 @@ export async function consumePasswordReset(
     }
 
     const hash = await hashPassword(newPassword);
-    await tx`update users set password_hash = ${hash} where id = ${row.user_id}`;
+    // The reset link was delivered to the user's email, so consuming it proves
+    // ownership — verify the address too (no-op if already verified).
+    await tx`
+      update users set password_hash = ${hash}, email_verified = true
+      where id = ${row.user_id}`;
     await tx`update password_resets set used = true where id = ${row.id}`;
   });
 }

@@ -3,6 +3,7 @@ import { sql } from "@/lib/db";
 import {
   verificationTemplate,
   passwordResetTemplate,
+  magicLinkTemplate,
   emailChangeConfirmTemplate,
   emailChangeNoticeTemplate,
   accountDeletionTemplate,
@@ -113,6 +114,10 @@ export async function sendVerificationEmail(to: string, link: string): Promise<b
 
 export async function sendPasswordResetEmail(to: string, link: string): Promise<boolean> {
   return send({ to, transactional: true, ...passwordResetTemplate(link) });
+}
+
+export async function sendMagicLinkEmail(to: string, link: string): Promise<boolean> {
+  return send({ to, transactional: true, ...magicLinkTemplate(link) });
 }
 
 export async function sendEmailChangeConfirmation(to: string, link: string): Promise<boolean> {
