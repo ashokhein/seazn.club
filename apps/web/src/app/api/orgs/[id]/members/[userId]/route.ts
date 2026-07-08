@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { requireOrgRole } from "@/lib/auth";
+import { requireOrgRole, invalidateUserOrgs } from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
 
 /** Remove a member (owners only). Cannot remove the last owner. Transactional. */
@@ -30,6 +30,7 @@ export async function DELETE(
 
       await tx`delete from org_members where org_id = ${id} and user_id = ${userId}`;
     });
+    await invalidateUserOrgs(userId);
 
     return { ok: true };
   });

@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { requireUser, getOrgRole } from "@/lib/auth";
+import { requireUser, getOrgRole, invalidateUserOrgs } from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
 
 /**
@@ -33,6 +33,7 @@ export async function DELETE(
 
       await tx`delete from org_members where org_id = ${id} and user_id = ${user.id}`;
     });
+    await invalidateUserOrgs(user.id);
 
     return { ok: true };
   });

@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { requireOrgRole } from "@/lib/auth";
+import { requireOrgRole, invalidateUserOrgs } from "@/lib/auth";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
 import { EDITOR_ROLES, renameOrgSchema, type Organization } from "@/lib/types";
@@ -33,6 +33,12 @@ export async function PATCH(
       where id = ${id}
       returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions`;
     if (!org) throw new HttpError(404, "Organization not found");
+
+    // name/logo/payment appear in every member's cached org list — bust each.
+    const members = await sql<{ user_id: string }[]>`
+      select user_id from org_members where org_id = ${id}`;
+    await Promise.all(members.map((m) => invalidateUserOrgs(m.user_id)));
+
     return org;
   });
 }

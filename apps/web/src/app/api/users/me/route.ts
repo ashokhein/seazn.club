@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { requireUser, destroySession } from "@/lib/auth";
+import { requireUser, destroySession, invalidateUser, invalidateUserOrgs } from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
 import { deleteAccountSchema } from "@/lib/types";
 import { sendAccountDeletionEmail } from "@/lib/email";
@@ -55,6 +55,9 @@ export async function DELETE(req: Request) {
           purge_after   = ${purgeAfter.toISOString()}
         where id = ${user.id}`;
     });
+
+    await invalidateUser(user.id);
+    await invalidateUserOrgs(user.id);
 
     // Best-effort notification before destroying session
     await sendAccountDeletionEmail(user.email);

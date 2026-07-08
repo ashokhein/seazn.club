@@ -1,5 +1,5 @@
 import { sql } from "@/lib/db";
-import { requireOrgRole } from "@/lib/auth";
+import { requireOrgRole, invalidateUserOrgs } from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
 import { transferOwnerSchema } from "@/lib/types";
 
@@ -38,6 +38,8 @@ export async function POST(
         update org_members set role = 'owner'
         where org_id = ${id} and user_id = ${new_owner_id}`;
     });
+    await invalidateUserOrgs(user.id);
+    await invalidateUserOrgs(new_owner_id);
 
     return { ok: true };
   });
