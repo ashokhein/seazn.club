@@ -23,6 +23,15 @@ const VISIBILITY_STYLE: Record<string, string> = {
 
 export default async function DashboardPage() {
   const { auth, org, canEdit } = await requirePageAuth();
+
+  // Reaching the dashboard is the end of first-run: mark onboarding done so a
+  // user who left the wizard by any route (nav, back button) isn't sent back
+  // to /onboarding on their next login. Idempotent — a no-op once set.
+  if (auth.userId) {
+    const { markOnboardingDone } = await import("@/lib/activation");
+    await markOnboardingDone(auth.userId);
+  }
+
   const { items: competitions } = await listCompetitions(auth, { cursor: null, limit: 100 });
 
   return (
