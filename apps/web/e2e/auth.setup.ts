@@ -31,6 +31,9 @@ setup("authenticate as a fresh Pro org", async ({ page, request }) => {
   if (!dbUrl) throw new Error("DATABASE_URL required to set the org's plan to pro for e2e");
   const { default: postgres } = await import("postgres");
   const sql = postgres(dbUrl, {
+    // The app lives in a dedicated schema — unqualified table names resolve
+    // only when the search_path points there.
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
     ssl:
       process.env.DATABASE_SSL === "disable"
         ? false
