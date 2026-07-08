@@ -400,9 +400,16 @@ export async function putRegistrationSettings(
   input: PutRegistrationSettings,
 ): Promise<RegistrationSettingsRow & { charges_enabled: boolean }> {
   await requireFeature(auth.orgId, "registration.enabled");
-  // Entry fees are the paid layer (doc 16 §1.1). Gate at the WRITE: a
-  // Community org can never save a fee, so public submit stays simple.
-  if (input.fee_cents > 0) await requireFeature(auth.orgId, "registration.paid");
+  // Entry fees are the paid layer (doc 16 §1.1). Offline (cash/bank) fees are
+  // free on every plan; only collecting online via Stripe Connect is Pro, and
+  // that gate lives at Connect onboarding (stripe-connect). So a fee only needs
+  // registration.paid here when the org actually has online charges enabled.
+  if (input.fee_cents > 0) {
+    const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
+      select stripe_charges_enabled as charges_enabled from organizations
+      where id = ${auth.orgId}`;
+    if (charges_enabled) await requireFeature(auth.orgId, "registration.paid");
+  }
 
   // Capacity can't promise more than the plan's entrant quota (doc 10 §1) —
   // confirm would hit the wall after money changed hands.
