@@ -64,3 +64,16 @@ export async function needsTour(userId: string): Promise<boolean> {
     from users where id = ${userId}`;
   return !row?.done;
 }
+
+/**
+ * True in the window where the product tour should auto-start: first-run
+ * onboarding is finished but the tour isn't. Keeps the sequence onboarding →
+ * tour, so the tour never fires over an incomplete wizard.
+ */
+export async function needsTourAfterOnboarding(userId: string): Promise<boolean> {
+  const [row] = await sql<{ ready: boolean }[]>`
+    select (onboarding_completed_at is not null
+            and product_tour_completed_at is null) as ready
+    from users where id = ${userId}`;
+  return !!row?.ready;
+}

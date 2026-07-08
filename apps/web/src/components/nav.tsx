@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { LayoutDashboard, Settings, Users } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
-import { needsTour } from "@/lib/activation";
+import { needsTourAfterOnboarding } from "@/lib/activation";
 import { EDITOR_ROLES } from "@/lib/types";
 import { LogoutButton } from "@/components/logout-button";
 import { ProductTour } from "@/components/product-tour";
@@ -34,7 +34,8 @@ export async function Nav() {
   // Tour targets editor flows (rename org, create competition) — viewers skip it.
   const canTour =
     !!user && !!activeOrg && (EDITOR_ROLES as readonly string[]).includes(activeOrg.role);
-  const tourPending = canTour && (await needsTour(user!.id));
+  // Sequence: the tour only auto-starts once onboarding is complete.
+  const tourPending = canTour && (await needsTourAfterOnboarding(user!.id));
 
   return (
     <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
