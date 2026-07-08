@@ -34,9 +34,12 @@ test("add a team to a club and manage its squad", async ({ page }) => {
   // Collapsed by default; the leading-chevron accordion drives aria-expanded.
   await expect(teamToggle).toHaveAttribute("aria-expanded", "false");
 
-  // Expand its squad, add a player, save.
+  // Expand its squad, add a player, save. The picker is a search that shows
+  // only the first few matches, so filter to our player first (the shared CI
+  // DB holds far more than fit unfiltered).
   await teamToggle.click();
   await expect(teamToggle).toHaveAttribute("aria-expanded", "true");
+  await page.getByPlaceholder("Find player…").fill(playerName);
   await page.getByRole("button", { name: `+ ${playerName}` }).click();
   await page.getByRole("button", { name: /Save squad/ }).click();
 
