@@ -1,24 +1,30 @@
 import { test as setup, expect } from "@playwright/test";
-import { proEmail, PASSWORD } from "./helpers";
+import { proEmail } from "./helpers";
 
 const AUTH_STATE = "e2e/.auth/pro.json";
 
 // Provision a fresh Pro account once, then persist its logged-in cookies for
-// every other spec. Signup → verify → onboarding via the app's own endpoints,
-// pro subscription flipped directly in the DB (DATABASE_URL required — same
-// disposable DB the target server uses), then a real UI login to capture the
-// browser session.
+// every other spec. Passwordless: request a magic link and open it in the
+// browser to establish the session (an unknown email auto-creates the account),
+// complete onboarding, flip the org to Pro directly in the DB (DATABASE_URL
+// required — same disposable DB the target server uses), then capture state.
 setup("authenticate as a fresh Pro org", async ({ page, request }) => {
   const email = proEmail();
 
-  const signup = await request.post("/api/auth/signup", {
-    data: { email, password: PASSWORD },
-  });
-  const reg = (await signup.json()) as { data?: { verify_token?: string }; verify_token?: string };
-  const verifyToken = reg.data?.verify_token ?? reg.verify_token;
-  await request.post("/api/auth/verify-email", { data: { token: verifyToken } });
-  await request.post("/api/onboarding/complete", {});
-  await request.post("/api/tour", {}).catch(() => undefined);
+  // Dev exposes the link as `login_url` so the flow is testable without email.
+  const linkRes = await request.post("/api/auth/magic-link", { data: { email } });
+  const loginUrl = ((await linkRes.json()) as { data?: { login_url?: string } }).data
+    ?.login_url;
+  if (!loginUrl)
+    throw new Error("magic-link login_url missing — dev server (non-production) required for e2e");
+
+  // Opening the link consumes the token, signs in, and redirects (→ onboarding).
+  await page.goto(loginUrl);
+  await page.waitForURL((u) => !u.pathname.startsWith("/magic-link"), { timeout: 30_000 });
+
+  // The browser context is now authenticated — drive setup through it.
+  await page.request.post("/api/onboarding/complete", { data: {} });
+  await page.request.post("/api/tour", { data: {} }).catch(() => undefined);
 
   // Pro plan → advanced entitlements resolve like a paying org.
   const dbUrl = process.env.DATABASE_URL;
@@ -43,12 +49,9 @@ setup("authenticate as a fresh Pro org", async ({ page, request }) => {
     on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
   await sql.end();
 
-  // Real UI login → capture the browser storage state.
-  await page.goto("/login");
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.locator("form").getByRole("button", { name: /sign in/i }).click();
-  await page.waitForURL((u) => !u.pathname.startsWith("/login"), { timeout: 30_000 });
+  // Session is already live from the magic link — confirm the app renders for
+  // the (now Pro) org, then persist the browser storage state.
+  await page.goto("/dashboard");
   await expect(page.getByRole("navigation")).toBeVisible();
 
   await page.context().storageState({ path: AUTH_STATE });

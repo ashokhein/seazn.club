@@ -588,16 +588,25 @@ async function runSport(s: Session, compId: string, d: SportDriver): Promise<voi
   check(`${label}: standings rank all 4 entrants`, data<{ rows: unknown[] }>(standings).rows.length === 4);
 }
 
+/**
+ * Passwordless sign-in: request a magic link, then consume the dev-exposed
+ * token (dev returns `login_url`). An unknown email creates the account.
+ */
+async function signIn(s: Session, email: string): Promise<V1Res> {
+  const req = data<{ login_url?: string }>(
+    await must(s, "/api/auth/magic-link", "POST", { email }),
+  );
+  const token = new URL(req.login_url ?? "").searchParams.get("token");
+  return must(s, "/api/auth/magic-link/consume", "POST", { token });
+}
+
 // ---------------------------------------------------------------------------
 // Entitlement gate: fine-fidelity scoring is 402 on community
 // ---------------------------------------------------------------------------
 
 async function communityGateSuite(): Promise<void> {
   const s = newSession();
-  const reg = data<{ verify_token?: string }>(await must(s, "/api/auth/signup", "POST", {
-    email: `community_${tag}@example.com`, password: "communitypass",
-  }) as V1Res);
-  await must(s, "/api/auth/verify-email", "POST", { token: reg.verify_token });
+  await signIn(s, `community_${tag}@example.com`);
 
   const comp = await must(s, "/api/v1/competitions", "POST", { name: `Community Gate ${tag}` });
   const compId = data<{ id: string }>(comp).id;
@@ -627,13 +636,8 @@ async function main() {
   await seedCatalog();
 
   const s = newSession();
-  const reg = data<{ verify_token?: string }>(await must(s, "/api/auth/signup", "POST", {
-    email: `sports_${tag}@example.com`, password: "sportspass",
-  }) as V1Res);
-  const ver = data<{ org_id: string }>(await must(s, "/api/auth/verify-email", "POST", {
-    token: reg.verify_token,
-  }) as V1Res);
-  check("owner signed up + org provisioned", !!ver.org_id);
+  const ver = data<{ org_id: string }>(await signIn(s, `sports_${tag}@example.com`));
+  check("owner signed in + org provisioned", !!ver.org_id);
 
   // Pro BEFORE any division exists: 8 divisions in one competition and the
   // fine-fidelity (rally / ball-by-ball) paths need it. Flipping later would

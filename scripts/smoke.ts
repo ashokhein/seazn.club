@@ -62,25 +62,37 @@ async function expectFail(label: string, fn: () => Promise<unknown>) {
   }
 }
 
+/**
+ * Passwordless sign-in: request a magic link, then consume the dev-exposed
+ * token (dev returns `login_url` so the flow is testable without email). An
+ * unknown email creates the account. Returns the consume payload and leaves the
+ * session cookie on `s`.
+ */
+async function signIn(s: Session, email: string) {
+  const req = (await call(s, "/api/auth/magic-link", "POST", { email })) as {
+    login_url?: string;
+  };
+  const token = new URL(req.login_url ?? "").searchParams.get("token");
+  return (await call(s, "/api/auth/magic-link/consume", "POST", { token })) as {
+    has_org: boolean;
+    org_id: string;
+    redirect: string;
+  };
+}
+
 const tag = Date.now().toString(36);
 
 async function main() {
   const admin = newSession();
 
-  // --- Auth: sign up a fresh owner (signup -> verify -> session) ---
-  const areg = (await call(admin, "/api/auth/signup", "POST", {
-    email: `admin_${tag}@example.com`,
-    password: "adminpass",
-  })) as { verify_token?: string };
-  const ver = (await call(admin, "/api/auth/verify-email", "POST", {
-    token: areg.verify_token,
-  })) as { has_org: boolean; org_id: string; redirect: string };
-  check("admin signed up + verified", !!admin.cookies["seazn_session"]);
+  // --- Auth: passwordless sign-in for a fresh owner (link -> consume) ---
+  const ver = await signIn(admin, `admin_${tag}@example.com`);
+  check("admin signed in (passwordless)", !!admin.cookies["seazn_session"]);
   // A default org is auto-provisioned on first sign-in (no forced form).
   check("default org auto-provisioned", !!ver.org_id && ver.has_org === true);
   check("active org cookie set", admin.cookies["seazn_org"] === ver.org_id);
   // A brand-new account (no onboarding completed) lands on the first-run wizard.
-  check("verify redirects new user to onboarding", ver.redirect === "/onboarding");
+  check("new user routed to onboarding", ver.redirect === "/onboarding");
   const org = { id: ver.org_id };
 
   // --- Competition lifecycle guards (v2 service layer) ---
@@ -112,22 +124,22 @@ async function main() {
 
   const viewer = newSession();
   const viewerEmail = `viewer_${tag}@example.com`;
-  const vreg = (await call(viewer, "/api/auth/signup", "POST", {
+  // Requesting a link creates the account but grants no session until consumed.
+  const vlink = (await call(viewer, "/api/auth/magic-link", "POST", {
     email: viewerEmail,
-    password: "viewerpass",
-  })) as { needs_verification: boolean; verify_token?: string };
-  check("signup requires verification", vreg.needs_verification === true);
-  check("no session before verifying", !viewer.cookies["seazn_session"]);
-  await expectFail("login blocked before verification", () =>
-    call(newSession(), "/api/auth/login", "POST", {
-      email: viewerEmail,
-      password: "viewerpass",
+  })) as { login_url?: string };
+  check("no session before consuming link", !viewer.cookies["seazn_session"]);
+  await expectFail("bogus magic token rejected", () =>
+    call(newSession(), "/api/auth/magic-link/consume", "POST", {
+      token: "not-a-real-token-000000000000",
     }),
   );
-  await call(viewer, "/api/auth/verify-email", "POST", {
-    token: vreg.verify_token,
-  });
-  check("session created after verifying", !!viewer.cookies["seazn_session"]);
+  const vtoken = new URL(vlink.login_url ?? "").searchParams.get("token");
+  await call(viewer, "/api/auth/magic-link/consume", "POST", { token: vtoken });
+  check("session created after consuming link", !!viewer.cookies["seazn_session"]);
+  await expectFail("magic link is single-use", () =>
+    call(newSession(), "/api/auth/magic-link/consume", "POST", { token: vtoken }),
+  );
 
   const accept = (await call(
     viewer,
@@ -157,13 +169,7 @@ async function main() {
     { role: "admin", max_uses: 0 },
   )) as { token: string };
   const member = newSession();
-  const mreg = (await call(member, "/api/auth/signup", "POST", {
-    email: `member_${tag}@example.com`,
-    password: "memberpass",
-  })) as { verify_token?: string };
-  await call(member, "/api/auth/verify-email", "POST", {
-    token: mreg.verify_token,
-  });
+  await signIn(member, `member_${tag}@example.com`);
   await call(member, `/api/invites/${adminInvite.token}/accept`, "POST");
   const memberComp = await v1(member, "/api/v1/competitions", "POST", { name: `Member Made ${tag}` });
   check("invited admin can create competition", memberComp.status === 201);
