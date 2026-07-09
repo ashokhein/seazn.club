@@ -36,12 +36,13 @@ Nothing dropped. Style mirrors `engine/Jul3/00-idea-backlog.md`.
 | 29 | Cricket: "undo last" made scoring disappear | [09](09-engine-fixes-and-sim.md) §2 | fold/replay regression on compensating event |
 | 30 | Don't use default alert/confirm; modal confirmation | [03](03-ui-system-refresh.md) §3 | 8 files call `confirm()` today |
 | 31 | (implied by ask) Deep-dive, out-of-the-box ROI features + suggestions | [10](10-roi-features-and-suggestions.md) | ranked impact × effort |
+| 32 | In-built Stripe — no Customer Portal for any billing flow (2nd intake, 9 Jul) | [07](07-pricing-packaging-v3.md) §7 | cancel/resume, card update (Elements), invoices, interval switch all in-app; delete `/api/billing/portal` |
 
 ## Cluster summary
 
 - **Fix trust** (28, 29, 27, 8): engine correctness + safe deletes → PROMPT-38.
 - **Fix the shell** (1–3, 11–14, 12, 30, 17, 16, 9, 5): mobile + UI system + navigation → PROMPT-30/31/32/33.
-- **Fix the funnel** (7, 10, 15, 24, 25, 19, 20): packaging, marketing, registration → PROMPT-34/36.
+- **Fix the funnel** (7, 10, 15, 24, 25, 19, 20, 32): packaging, marketing, registration, in-app billing → PROMPT-34/36.
 - **Explain the product** (18, 21–23): editor + help + format gallery → PROMPT-35.
 - **Operate & open up** (26, 6): admin v2 + developer API → PROMPT-37.
 - **Grow** (31): ROI backlog → PROMPT-39 wave 1.

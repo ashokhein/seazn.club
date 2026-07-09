@@ -28,7 +28,7 @@ and a **marketing-page → competition funnel** that converts visitors before th
 | 04 | [04-scheduling-ux-v3.md](04-scheduling-ux-v3.md) | Competition schedule board at 5+ divisions; division schedule page fix list | PROMPT-33 |
 | 05 | [05-registration-v2.md](05-registration-v2.md) | Public registration redesign, reference-number generation, custom-field ordering | PROMPT-34 |
 | 06 | [06-content-editor-and-help.md](06-content-editor-and-help.md) | Competition rich editor + preview, in-repo help centre, fixture-format gallery with mind-maps | PROMPT-35 |
-| 07 | [07-pricing-packaging-v3.md](07-pricing-packaging-v3.md) | Free/Pro matrix reorg, per-event Event Pass (metered), multi-currency, annual framing, marketing home/pricing rewrite, Start-a-competition funnel | PROMPT-36 |
+| 07 | [07-pricing-packaging-v3.md](07-pricing-packaging-v3.md) | Free/Pro matrix reorg, per-event Event Pass (metered), multi-currency, annual framing, marketing home/pricing rewrite, Start-a-competition funnel, in-app billing (no Stripe Portal) | PROMPT-36 |
 | 08 | [08-admin-and-developer-api.md](08-admin-and-developer-api.md) | Admin console v2 (trial extend, plan flips, overrides), published OpenAPI docs, scoped developer keys | PROMPT-37 |
 | 09 | [09-engine-fixes-and-sim.md](09-engine-fixes-and-sim.md) | Badminton scoring correctness, cricket undo regression, sim-replay refresh, safe division delete | PROMPT-38 |
 | 10 | [10-roi-features-and-suggestions.md](10-roi-features-and-suggestions.md) | Out-of-the-box ROI features + market research, impact×effort ranked | PROMPT-39 (wave 1 only) |

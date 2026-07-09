@@ -41,6 +41,18 @@ billing-map memory gotchas (`ui_mode: "embedded_page"` — do NOT rename; reconc
 7. **Jobs** (v3/11 gap 6): pg-boss on existing Postgres, worker process group in
    fly.toml, wrapped in `server/jobs.ts` (enqueue/schedule + handler registry); v3 jobs:
    funnel +24h reminder, draft expiry.
+8. **In-app billing — kill the Customer Portal** (v3/07 §7): `GET /api/billing/summary`
+   (plan, payment methods, upcoming invoice, invoice list); `POST /api/billing/{cancel,
+   resume,interval,setup-intent,default-payment-method,retry-invoice}`; plan card with
+   cancel-at-period-end state; interval switch with upcoming-invoice proration preview
+   before confirm; PaymentElement card add (SetupIntent, handles 3DS via `confirmSetup`),
+   default/remove management; AddressElement + VAT/GST ID feeding `automatic_tax`;
+   in-app invoice list (Stripe-hosted `invoice_pdf` links allowed); dunning banner from
+   `invoice.payment_failed`, cleared by `invoice.payment_succeeded`, retry via
+   `invoices.pay`; consume `customer.subscription.updated` for cancel-state sync.
+   Delete `/api/billing/portal` + all portal links (env-flag safety hatch for one
+   release, then remove). Cancel flow reuses the freeze preview + ConfirmDialog danger;
+   one-question cancel-reason → `product_events`.
 
 ## Acceptance
 - Unit matrix: entitlement resolution (override × pass × plan) for free/pass/pro incl.
@@ -53,5 +65,9 @@ billing-map memory gotchas (`ui_mode: "embedded_page"` — do NOT rename; reconc
   analogue per test-infra memory) → reconcile on return lifts gate for that comp only;
   funnel wizard → magic-link `login_url` → lands inside created competition; pricing page
   switches currency and shows no Business column.
+- In-app billing e2e (Stripe test mode): cancel → "Pro until {date}" → resume; interval
+  switch shows proration preview before charging; card add with 3DS test card succeeds;
+  simulated `invoice.payment_failed` webhook raises the banner, `payment_succeeded`
+  clears it; **no response anywhere links to `billing.stripe.com`** (portal gone).
 - smoke.ts: free, event-pass, and pro paths (house rule); `npm test` + `tsc` green;
   `stripe:sync` idempotent re-run documented; update v3/README status.
