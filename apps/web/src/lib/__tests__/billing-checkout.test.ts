@@ -13,7 +13,7 @@ const base = {
 describe("buildEmbeddedCheckoutParams", () => {
   it("uses embedded ui_mode with a return_url and no hosted urls", () => {
     const p = buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" });
-    expect(p.ui_mode).toBe("embedded");
+    expect(p.ui_mode).toBe("embedded_page");
     expect(p.return_url).toBe(base.returnUrl);
     expect("success_url" in p).toBe(false);
     expect("cancel_url" in p).toBe(false);
