@@ -7,6 +7,8 @@ import { withTenant } from "@/lib/db";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { captureServer } from "@/lib/posthog-server";
+import { EVENTS } from "@/lib/analytics-events";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { EngineError } from "@seazn/engine/core";
 import {
@@ -883,6 +885,15 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     return { created, existing: gen.length - created, fixtures };
   });
   void fireStageRevalidate(auth.orgId, stageId);
+  // Activation funnel (feature 1): fixtures exist → the tournament is playable.
+  if (outcome.created > 0) {
+    await captureServer({
+      event: EVENTS.SCHEDULE_GENERATED,
+      distinctId: auth.userId ?? `org:${auth.orgId}`,
+      orgId: auth.orgId,
+      properties: { stage_id: stageId, fixtures_created: outcome.created },
+    });
+  }
   return outcome;
 }
 

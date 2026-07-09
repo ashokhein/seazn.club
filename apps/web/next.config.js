@@ -34,6 +34,19 @@ const nextConfig = {
   // exports); bundling it breaks that path resolution, so load it — and
   // exceljs, likewise native-ish — from node_modules on the server.
   serverExternalPackages: ["pdfkit", "exceljs"],
+  // PostHog reverse proxy: front analytics through our own origin so
+  // ad-blockers don't drop events. Client posts to /ingest (see
+  // instrumentation-client). skipTrailingSlashRedirect keeps PostHog's
+  // trailing-slash API paths from being 308'd.
+  skipTrailingSlashRedirect: true,
+  async rewrites() {
+    const us = "https://us.i.posthog.com";
+    const usAssets = "https://us-assets.i.posthog.com";
+    return [
+      { source: "/ingest/static/:path*", destination: `${usAssets}/static/:path*` },
+      { source: "/ingest/:path*", destination: `${us}/:path*` },
+    ];
+  },
   async headers() {
     return [
       {

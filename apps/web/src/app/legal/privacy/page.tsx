@@ -29,7 +29,7 @@ export default function PrivacyPage() {
               <li><strong>Organisation data:</strong> organisation name, slug, member roles.</li>
               <li><strong>Tournament data:</strong> player names, results, standings, audit logs.</li>
               <li><strong>Billing data:</strong> subscription status, plan. Card details are held by Stripe and never stored on our servers.</li>
-              <li><strong>Usage data:</strong> activation funnel events (e.g. "first tournament created"). No third-party analytics.</li>
+              <li><strong>Usage data:</strong> product analytics events (e.g. "first tournament created", page views) collected via PostHog, only with your consent. Withdraw anytime by clearing cookies or rejecting the cookie banner.</li>
               <li><strong>Communication preferences:</strong> email suppression list (bounces / complaints).</li>
             </ul>
           </section>
@@ -38,7 +38,8 @@ export default function PrivacyPage() {
             <h2 className="mb-2 text-lg font-semibold text-slate-800">3. Legal basis (GDPR)</h2>
             <ul className="list-disc space-y-1 pl-5">
               <li><strong>Contract</strong> — processing necessary to provide the service you signed up for.</li>
-              <li><strong>Legitimate interests</strong> — security logging, fraud prevention, activation analytics.</li>
+              <li><strong>Legitimate interests</strong> — security logging, fraud prevention.</li>
+              <li><strong>Consent</strong> — product analytics (PostHog), set only after you accept the cookie banner and withdrawable at any time.</li>
               <li><strong>Legal obligation</strong> — tax records, dispute resolution.</li>
             </ul>
           </section>
@@ -71,7 +72,7 @@ export default function PrivacyPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">8. Cookies</h2>
-            <p>We use essential session cookies only. No tracking or advertising cookies. See our <Link href="/legal/cookie-policy" className="text-purple-600 underline">Cookie Policy</Link>.</p>
+            <p>We use essential session cookies plus, with your consent, PostHog analytics cookies. No advertising cookies. See our <Link href="/legal/cookie-policy" className="text-purple-600 underline">Cookie Policy</Link>.</p>
           </section>
 
           <section>

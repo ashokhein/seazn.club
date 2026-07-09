@@ -12,7 +12,7 @@ export default function CookiePolicyPage() {
       <MarketingNav />
       <main className="mx-auto max-w-3xl px-4 py-16">
         <h1 className="mb-2 text-3xl font-bold text-purple-900">Cookie Policy</h1>
-        <p className="mb-8 text-sm text-slate-400">Last updated: 30 June 2026</p>
+        <p className="mb-8 text-sm text-slate-400">Last updated: 9 July 2026</p>
         <div className="space-y-6 text-sm text-slate-700">
 
           <section>
@@ -47,9 +47,15 @@ export default function CookiePolicyPage() {
                   </tr>
                   <tr>
                     <td className="font-mono">seazn_cookie_consent</td>
-                    <td>Records that you dismissed the cookie banner</td>
-                    <td>Session (localStorage)</td>
+                    <td>Records your analytics consent choice</td>
+                    <td>Persistent (localStorage)</td>
                     <td>Functional</td>
+                  </tr>
+                  <tr>
+                    <td className="font-mono">ph_* / __ph_*</td>
+                    <td>PostHog product analytics — only set after you Accept</td>
+                    <td>1 year</td>
+                    <td>Analytics (opt-in)</td>
                   </tr>
                 </tbody>
               </table>
@@ -58,7 +64,7 @@ export default function CookiePolicyPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">Third-party cookies</h2>
-            <p>We do not use third-party tracking, advertising, or analytics cookies. Stripe may set cookies during the checkout flow — see <a href="https://stripe.com/cookies-policy/legal" className="text-purple-600 underline" target="_blank" rel="noopener noreferrer">Stripe's cookie policy</a>.</p>
+            <p>We use <a href="https://posthog.com/" className="text-purple-600 underline" target="_blank" rel="noopener noreferrer">PostHog</a> for product analytics to understand how Seazn Club is used and improve it. These cookies are only set if you choose <strong>Accept</strong> on the cookie banner — reject and none are set. We do not use advertising cookies. Stripe may set cookies during the checkout flow — see <a href="https://stripe.com/cookies-policy/legal" className="text-purple-600 underline" target="_blank" rel="noopener noreferrer">Stripe's cookie policy</a>.</p>
           </section>
 
           <section>

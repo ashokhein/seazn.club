@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { AnalyticsBootstrap } from "@/components/analytics-bootstrap";
+import { CookieConsent } from "@/components/cookie-consent";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({
@@ -50,7 +53,16 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full font-sans">{children}</body>
+      <body className="min-h-full font-sans">
+        {children}
+        {/* Identifies the logged-in user for PostHog; a no-op for anon traffic.
+            Suspense keeps its DB reads off the page's render-blocking path. */}
+        <Suspense fallback={null}>
+          <AnalyticsBootstrap />
+        </Suspense>
+        {/* Global consent banner — analytics stays opted out until Accept. */}
+        <CookieConsent />
+      </body>
     </html>
   );
 }

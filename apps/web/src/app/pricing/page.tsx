@@ -2,6 +2,8 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
+import { TrackOnMount } from "@/components/analytics-track-mount";
+import { EVENTS } from "@/lib/analytics-events";
 
 export const metadata: Metadata = {
   title: "Pricing — Seazn Club",
@@ -65,6 +67,7 @@ const FAQS = [
 export default function PricingPage() {
   return (
     <>
+      <TrackOnMount event={EVENTS.PRICING_VIEWED} />
       <MarketingNav />
       <main>
         <section className="mx-auto max-w-4xl px-4 pb-20 pt-16 text-center">

@@ -1,0 +1,31 @@
+/**
+ * Canonical PostHog event names, shared by the client tracker (lib/analytics)
+ * and the server capture path (lib/posthog-server). No imports here so both
+ * runtimes can pull it in freely.
+ *
+ * Funnels these power:
+ *  - Activation (feature 1): signup → onboarding → COMPETITION_CREATED →
+ *    DIVISION_CREATED → RESULT_ENTERED (the true "aha": a live scoreline)
+ *  - Revenue (feature 2): PRICING_VIEWED / BILLING_VIEWED → CHECKOUT_STARTED
+ *    → SUBSCRIPTION_STARTED (or PAYMENT_FAILED / SUBSCRIPTION_CANCELED)
+ */
+export const EVENTS = {
+  PRICING_VIEWED: "pricing_viewed",
+  BILLING_VIEWED: "billing_viewed",
+  CHECKOUT_STARTED: "checkout_started",
+  COMPETITION_CREATED: "competition_created",
+  DIVISION_CREATED: "division_created",
+  SCHEDULE_GENERATED: "schedule_generated",
+  REGISTRATION_SUBMITTED: "registration_submitted",
+  COMPETITION_STARTED: "competition_started",
+  RESULT_ENTERED: "result_entered",
+  COMPETITION_COMPLETED: "competition_completed",
+  SUBSCRIPTION_STARTED: "subscription_started",
+  SUBSCRIPTION_CANCELED: "subscription_canceled",
+  PAYMENT_FAILED: "payment_failed",
+} as const;
+
+export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];
+
+/** PostHog group type for our multi-tenant model — one group per club/org. */
+export const ORG_GROUP = "organization";

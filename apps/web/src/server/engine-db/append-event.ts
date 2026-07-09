@@ -10,6 +10,8 @@ import {
 } from "@seazn/engine/core";
 import { resolveModule } from "./registry";
 import { loadLineupPair } from "./lineups";
+import { captureServer } from "@/lib/posthog-server";
+import { EVENTS } from "@/lib/analytics-events";
 
 // What a caller supplies; persistence stamps id/seq/recordedAt (spec 03 §2 —
 // ids/time are injected). `id`/`recordedAt` are accepted for test determinism.
@@ -90,7 +92,15 @@ export async function appendEvent(
   expectedSeq: number,
   input: AppendInput,
 ): Promise<AppendResult> {
-  return withTenant(orgId, async (tx) => {
+  // Activation funnel (feature 1): the first time a fixture yields a result is
+  // the "aha" moment. The tx returns whether this append crossed that line;
+  // capture happens OUTSIDE the tx (below) so a PostHog flush never touches the
+  // write path.
+  type FirstResult = { distinctId: string; sportKey: string; status: string };
+  const { appended, firstResult } = await withTenant<{
+    appended: AppendResult;
+    firstResult: FirstResult | null;
+  }>(orgId, async (tx) => {
     // Serialise all appends to this fixture (spec 02 §8 — fixture is the write
     // aggregate). The lock is held to commit, so a concurrent appender blocks,
     // then re-reads the committed max seq and 409s.
@@ -192,6 +202,11 @@ export async function appendEvent(
     `;
 
     const status = nextStatus(fixture.status, candidate.type, outcome);
+    // Fire once, on the transition from no-result to a decided result.
+    const firstResult: FirstResult | null =
+      fixture.outcome === null && outcome !== null
+        ? { distinctId: candidate.recordedBy ?? `org:${orgId}`, sportKey: division.sport_key, status }
+        : null;
     // Also rewrite when a void erased a previously-stored outcome — otherwise
     // fixtures.outcome would go stale against the fold (doc 08 §4 undo).
     if (status !== fixture.status || outcome !== null || fixture.outcome !== null) {
@@ -211,6 +226,19 @@ export async function appendEvent(
       status,
     })})`;
 
-    return { seq: candidate.seq, event: candidate, state, summary, outcome, status };
+    return {
+      appended: { seq: candidate.seq, event: candidate, state, summary, outcome, status },
+      firstResult,
+    };
   });
+
+  if (firstResult) {
+    await captureServer({
+      event: EVENTS.RESULT_ENTERED,
+      distinctId: firstResult.distinctId,
+      orgId,
+      properties: { sport_key: firstResult.sportKey, status: firstResult.status, fixture_id: fixtureId },
+    });
+  }
+  return appended;
 }

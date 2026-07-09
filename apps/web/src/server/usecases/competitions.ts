@@ -5,6 +5,8 @@ import "server-only";
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { captureServer } from "@/lib/posthog-server";
+import { EVENTS } from "@/lib/analytics-events";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { page, type ListQuery, type Page } from "@/server/api-v1/http";
 import type { CreateCompetition, PatchCompetition } from "@/server/api-v1/schemas";
@@ -104,18 +106,26 @@ export async function createCompetition(
   const slug = input.slug ?? slugify(input.name);
   await assertActiveQuota(auth);
   if (input.visibility === "public") await assertPublicQuota(auth);
-  return withTenant(auth.orgId, async (tx) => {
+  const row = await withTenant(auth.orgId, async (tx) => {
     const [existing] = await tx`select 1 from competitions where slug = ${slug}`;
     if (existing) throw new HttpError(409, `slug '${slug}' is already in use`);
-    const [row] = await tx<CompetitionRow[]>`
+    const [created] = await tx<CompetitionRow[]>`
       insert into competitions (org_id, name, slug, description, starts_on, ends_on,
                                 visibility, branding, created_by)
       values (${auth.orgId}, ${input.name}, ${slug}, ${input.description ?? null},
               ${input.starts_on ?? null}, ${input.ends_on ?? null}, ${input.visibility},
               ${tx.json(input.branding as never)}, ${auth.userId})
       returning ${tx(COLS)}`;
-    return row;
+    return created;
   });
+  // Activation event (feature 1) — first competition is the "aha" moment.
+  await captureServer({
+    event: EVENTS.COMPETITION_CREATED,
+    distinctId: auth.userId ?? `org:${auth.orgId}`,
+    orgId: auth.orgId,
+    properties: { visibility: input.visibility },
+  });
+  return row;
 }
 
 export async function getCompetition(auth: AuthCtx, id: string): Promise<CompetitionRow> {
@@ -153,15 +163,17 @@ export async function patchCompetition(
   if (patch.discovery?.tagline || patch.discovery?.hero_image_path) {
     await requireFeature(auth.orgId, "discovery.branding");
   }
+  let statusChangedTo: string | null = null;
   const { row, discoveryTouched } = await withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {
       const [taken] = await tx`
         select 1 from competitions where slug = ${patch.slug} and id <> ${id}`;
       if (taken) throw new HttpError(409, `slug '${patch.slug}' is already in use`);
     }
-    const [before] = await tx<{ visibility: string; discoverable: boolean }[]>`
-      select visibility, discoverable from competitions where id = ${id}`;
+    const [before] = await tx<{ visibility: string; discoverable: boolean; status: string }[]>`
+      select visibility, discoverable, status from competitions where id = ${id}`;
     if (!before) throw new HttpError(404, "competition not found");
+    if (patch.status && patch.status !== before.status) statusChangedTo = patch.status;
 
     const effective = { ...patch };
     const nextVisibility = patch.visibility ?? before.visibility;
@@ -209,6 +221,16 @@ export async function patchCompetition(
   if (discoveryTouched) {
     await invalidateDiscoveryCache();
     fireDiscoveryRevalidate();
+  }
+  // Lifecycle events (feature 1): tournament start/finish. `active` = play is on;
+  // `complete` = it's wrapped up.
+  if (statusChangedTo === "active" || statusChangedTo === "complete") {
+    await captureServer({
+      event: statusChangedTo === "active" ? EVENTS.COMPETITION_STARTED : EVENTS.COMPETITION_COMPLETED,
+      distinctId: auth.userId ?? `org:${auth.orgId}`,
+      orgId: auth.orgId,
+      properties: { competition_id: id },
+    });
   }
   return row;
 }

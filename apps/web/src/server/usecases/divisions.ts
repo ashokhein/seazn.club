@@ -9,6 +9,8 @@ import { EngineError } from "@seazn/engine/core";
 import { resolveModule } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateDivision, PatchDivision } from "@/server/api-v1/schemas";
+import { captureServer } from "@/lib/posthog-server";
+import { EVENTS } from "@/lib/analytics-events";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { slugify } from "./competitions";
 
@@ -53,7 +55,7 @@ export async function createDivision(
   input: CreateDivision,
 ): Promise<DivisionRow> {
   const slug = input.slug ?? slugify(input.name);
-  return withTenant(auth.orgId, async (tx) => {
+  const row = await withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx`select 1 from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
     await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
@@ -105,6 +107,14 @@ export async function createDivision(
       returning ${tx(COLS)}`;
     return row;
   });
+  // Activation funnel (feature 1): step after competition_created.
+  await captureServer({
+    event: EVENTS.DIVISION_CREATED,
+    distinctId: auth.userId ?? `org:${auth.orgId}`,
+    orgId: auth.orgId,
+    properties: { sport_key: input.sport_key, competition_id: competitionId },
+  });
+  return row;
 }
 
 export async function getDivision(auth: AuthCtx, id: string): Promise<DivisionRow> {
