@@ -6,6 +6,11 @@ export { PaymentRequiredError } from "@/lib/errors";
 
 type Resolved = { bool_value: boolean | null; int_value: number | null };
 
+// Cache entries wrap the resolved value: a legitimate "deny" resolves to null,
+// which is indistinguishable from a cache miss (cacheGet returns null for
+// both), so an unwrapped deny would re-query Postgres on every call.
+type CacheEntry = { v: Resolved | null };
+
 // Resolved entitlements change only on subscription / override writes, so they
 // cache well. Short TTL bounds staleness even if an invalidation is missed.
 const ENT_TTL_SECONDS = 300;
@@ -25,12 +30,12 @@ export async function invalidateOrgEntitlements(orgId: string): Promise<void> {
  * Falls back to 'community' plan when no subscription row exists.
  */
 async function resolve(orgId: string, featureKey: string): Promise<Resolved | null> {
-  const cached = await cacheGet<Resolved | null>(entKey(orgId, featureKey));
-  if (cached !== null) return cached;
+  const cached = await cacheGet<CacheEntry>(entKey(orgId, featureKey));
+  // The `v` check also skips stale pre-wrapper entries (raw Resolved shape).
+  if (cached && cached.v !== undefined) return cached.v;
 
   const fresh = await resolveFromDb(orgId, featureKey);
-  // Cache the resolved value (including a "deny" null, stored as JSON null).
-  await cacheSet(entKey(orgId, featureKey), fresh, ENT_TTL_SECONDS);
+  await cacheSet(entKey(orgId, featureKey), { v: fresh }, ENT_TTL_SECONDS);
   return fresh;
 }
 
