@@ -1,5 +1,6 @@
 import path from "node:path";
 import { withSentryConfig } from "@sentry/nextjs";
+import { posthogIngestHosts } from "./src/lib/posthog-proxy.mjs";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -40,11 +41,12 @@ const nextConfig = {
   // trailing-slash API paths from being 308'd.
   skipTrailingSlashRedirect: true,
   async rewrites() {
-    const us = "https://us.i.posthog.com";
-    const usAssets = "https://us-assets.i.posthog.com";
+    // Region-derived from NEXT_PUBLIC_POSTHOG_HOST (see posthog-proxy). Must be
+    // set at build time — these rewrite destinations bake into the server.
+    const { ingest, assets } = posthogIngestHosts();
     return [
-      { source: "/ingest/static/:path*", destination: `${usAssets}/static/:path*` },
-      { source: "/ingest/:path*", destination: `${us}/:path*` },
+      { source: "/ingest/static/:path*", destination: `${assets}/static/:path*` },
+      { source: "/ingest/:path*", destination: `${ingest}/:path*` },
     ];
   },
   async headers() {
