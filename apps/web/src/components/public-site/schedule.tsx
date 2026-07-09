@@ -2,8 +2,12 @@
 // Schedule tab (doc 09 §2): fixtures by round/date, entrant filter, decided
 // scorelines from ScoreSummary.headline. Client-side filter keeps the page
 // ISR-cacheable (searchParams would force dynamic rendering).
+//
+// Each fixture renders as a "scorebug" row — time/court rail, stacked sides,
+// right-aligned per-side scores — the public site's signature element.
 import Link from "next/link";
 import { useState } from "react";
+import { CalendarPlus } from "lucide-react";
 import type { PublicFixture } from "@/server/public-site/data";
 
 interface Props {
@@ -20,6 +24,98 @@ function dayKey(iso: string | null): string | null {
 
 const UNSCHEDULED = "unscheduled";
 
+const timeOf = (iso: string) =>
+  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+const shortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+
+/** Per-side score lines fit the stacked layout only when short ("3", "21").
+    Long lines (cricket innings, set strings) fall back to the headline chip. */
+function sideLines(f: PublicFixture): [string, string] | null {
+  const perSide = f.summary?.perSide;
+  if (!perSide || perSide.length !== 2) return null;
+  if (perSide.some((s) => s.line.length > 7)) return null;
+  const byId = Object.fromEntries(perSide.map((s) => [s.entrantId, s.line]));
+  const home = f.home_entrant_id ? byId[f.home_entrant_id] : undefined;
+  const away = f.away_entrant_id ? byId[f.away_entrant_id] : undefined;
+  return home != null && away != null ? [home, away] : null;
+}
+
+function ScorebugRow({
+  fixture: f,
+  entrantNames,
+  href,
+  railMode,
+}: {
+  fixture: PublicFixture;
+  entrantNames: Record<string, string>;
+  href: string;
+  railMode: "time" | "date";
+}) {
+  const live = f.status === "in_play";
+  const decided = f.status === "decided" || f.status === "finalized";
+  const winner = f.outcome?.winner ?? null;
+  const lines = decided || live ? sideLines(f) : null;
+  const homeName = f.home_entrant_id ? (entrantNames[f.home_entrant_id] ?? "?") : "TBD";
+  const awayName = f.away_entrant_id ? (entrantNames[f.away_entrant_id] ?? "?") : "TBD";
+
+  const nameCls = (id: string | null) =>
+    winner && id === winner
+      ? "truncate text-[15px] font-semibold leading-6 text-ink"
+      : winner
+        ? "truncate text-[15px] font-medium leading-6 text-ink-muted"
+        : "truncate text-[15px] font-medium leading-6 text-ink";
+  const scoreCls = (id: string | null) => {
+    const weight = winner && id === winner ? "font-bold" : "font-semibold";
+    const color = live ? "text-emerald-600" : winner && id !== winner ? "text-ink-muted" : "text-ink";
+    return `pl-2 text-right font-display text-lg tabular-nums leading-6 ${weight} ${color}`;
+  };
+
+  return (
+    <Link
+      href={href}
+      className="relative grid grid-cols-[3.25rem_minmax(0,1fr)_auto] items-center gap-x-3 px-3.5 py-2.5 transition hover:bg-accent-soft/60"
+    >
+      {live ? <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-emerald-400" /> : null}
+
+      <span className="row-span-2 flex flex-col items-start">
+        {live ? (
+          <span className="flex items-center gap-1 text-[11px] font-bold uppercase tracking-wide text-emerald-600">
+            <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            Live
+          </span>
+        ) : (
+          <span className="font-display text-sm font-semibold text-ink">
+            {decided ? "Final" : f.scheduled_at ? timeOf(f.scheduled_at) : "TBD"}
+          </span>
+        )}
+        <span className="mt-0.5 max-w-[3.25rem] truncate text-[10px] uppercase tracking-wide text-ink-muted">
+          {!decided && !live && railMode === "date" && f.scheduled_at
+            ? shortDate(f.scheduled_at)
+            : (f.court_label ?? "")}
+        </span>
+      </span>
+
+      <span className={nameCls(f.home_entrant_id)}>{homeName}</span>
+      {lines ? (
+        <span className={scoreCls(f.home_entrant_id)}>{lines[0]}</span>
+      ) : (
+        <span
+          className={`row-span-2 self-center ${
+            f.summary?.headline
+              ? "rounded-full bg-accent-soft px-2.5 py-0.5 font-display text-sm font-semibold tabular-nums text-accent-strong"
+              : "text-[11px] text-ink-muted"
+          }`}
+        >
+          {f.summary?.headline ?? (f.venue && railMode === "time" ? f.venue : "")}
+        </span>
+      )}
+      <span className={nameCls(f.away_entrant_id)}>{awayName}</span>
+      {lines ? <span className={scoreCls(f.away_entrant_id)}>{lines[1]}</span> : null}
+    </Link>
+  );
+}
+
 export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
   const [entrant, setEntrant] = useState<string>("");
   // Day view first (fixtures by date) — matches how a spectator reads a
@@ -35,8 +131,7 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
 
   const groups = new Map<string, PublicFixture[]>();
   for (const f of shown) {
-    const key =
-      mode === "day" ? (dayKey(f.scheduled_at) ?? UNSCHEDULED) : String(f.round_no);
+    const key = mode === "day" ? (dayKey(f.scheduled_at) ?? UNSCHEDULED) : String(f.round_no);
     const list = groups.get(key) ?? [];
     list.push(f);
     groups.set(key, list);
@@ -66,14 +161,14 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
   return (
     <div>
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <label className="text-sm text-zinc-600" htmlFor="entrant-filter">
-          Filter
+        <label className="sr-only" htmlFor="entrant-filter">
+          Show matches for
         </label>
         <select
           id="entrant-filter"
           value={entrant}
           onChange={(e) => setEntrant(e.target.value)}
-          className="rounded-lg border border-purple-200 bg-white px-2.5 py-1.5 text-sm outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-200"
+          className="rounded-lg border border-zinc-300 bg-surface px-2.5 py-1.5 text-sm text-ink outline-none transition focus:border-accent focus:ring-2 focus:ring-accent-line"
         >
           <option value="">All entrants</option>
           {options.map(([id, name]) => (
@@ -83,16 +178,21 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
           ))}
         </select>
         {anyScheduled && (
-          <div className="inline-flex overflow-hidden rounded-lg border border-purple-200 text-sm">
+          <div
+            role="group"
+            aria-label="Group fixtures by"
+            className="inline-flex overflow-hidden rounded-lg border border-zinc-300 text-sm"
+          >
             {(["day", "round"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
+                aria-pressed={mode === v}
                 onClick={() => setView(v)}
                 className={`px-3 py-1.5 font-medium capitalize transition ${
                   mode === v
-                    ? "bg-purple-600 text-white"
-                    : "bg-white text-purple-700 hover:bg-purple-50"
+                    ? "bg-accent text-accent-ink"
+                    : "bg-surface text-ink-muted hover:bg-accent-soft hover:text-accent-strong"
                 }`}
               >
                 {v}
@@ -102,70 +202,44 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
         )}
         <a
           href={`${divisionPath}/calendar.ics${entrant ? `?entrant=${entrant}` : ""}`}
-          className="text-sm font-medium text-purple-700 underline underline-offset-2 hover:text-purple-900"
+          className="inline-flex items-center gap-1.5 text-sm font-medium text-accent-strong underline-offset-2 hover:underline"
         >
-          Subscribe (.ics)
+          <CalendarPlus aria-hidden className="h-4 w-4" />
+          Add to calendar
         </a>
       </div>
 
       {orderedGroups.map(([key, list]) => (
-          <section key={key} className="mb-6">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-700/70">
-              {groupLabel(key)}
-            </h3>
-            <ul className="divide-y divide-purple-50 overflow-hidden rounded-xl border border-purple-100 bg-white shadow-sm">
-              {[...list]
-                .sort((a, b) =>
-                  mode === "day"
-                    ? (a.scheduled_at ?? "").localeCompare(b.scheduled_at ?? "") ||
-                      a.round_no - b.round_no
-                    : a.round_no - b.round_no,
-                )
-                .map((f) => (
+        <section key={key} className="mb-6">
+          <h3 className="mb-2 flex items-center gap-3 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
+            {groupLabel(key)}
+            <span aria-hidden className="h-px flex-1 bg-zinc-200" />
+          </h3>
+          <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200/80 bg-surface shadow-sm">
+            {[...list]
+              .sort((a, b) =>
+                mode === "day"
+                  ? (a.scheduled_at ?? "").localeCompare(b.scheduled_at ?? "") ||
+                    a.round_no - b.round_no
+                  : a.round_no - b.round_no,
+              )
+              .map((f) => (
                 <li key={f.id}>
-                  <Link
+                  <ScorebugRow
+                    fixture={f}
+                    entrantNames={entrantNames}
                     href={`${divisionPath}/fixtures/${f.id}`}
-                    className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5 text-sm transition hover:bg-purple-50/60"
-                  >
-                    <span className="font-medium">
-                      {f.home_entrant_id ? (entrantNames[f.home_entrant_id] ?? "?") : "TBD"}
-                      <span className="font-normal text-zinc-400"> vs </span>
-                      {f.away_entrant_id ? (entrantNames[f.away_entrant_id] ?? "?") : "TBD"}
-                    </span>
-                    <span className="text-xs text-zinc-500">
-                      {f.status === "in_play" ? (
-                        <span className="flex items-center gap-1.5 rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">
-                          <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                          LIVE
-                        </span>
-                      ) : f.summary?.headline ? (
-                        <span className="rounded-full bg-purple-50 px-2 py-0.5 font-semibold tabular-nums text-purple-700">
-                          {f.summary.headline}
-                        </span>
-                      ) : (
-                        <>
-                          {f.scheduled_at
-                            ? new Date(f.scheduled_at).toLocaleString("en-GB", {
-                                weekday: "short",
-                                day: "numeric",
-                                month: "short",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
-                            : "Time TBD"}
-                          {f.venue ? ` · ${f.venue}` : ""}
-                          {f.court_label ? ` · ${f.court_label}` : ""}
-                        </>
-                      )}
-                    </span>
-                  </Link>
+                    railMode={mode === "day" ? "time" : "date"}
+                  />
                 </li>
               ))}
-            </ul>
-          </section>
-        ))}
+          </ul>
+        </section>
+      ))}
       {shown.length === 0 ? (
-        <p className="text-sm text-zinc-500">No fixtures yet.</p>
+        <p className="rounded-xl border border-dashed border-zinc-300 bg-surface p-6 text-center text-sm text-ink-muted">
+          No fixtures yet — the schedule appears once the draw is made.
+        </p>
       ) : null}
     </div>
   );

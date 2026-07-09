@@ -29,44 +29,48 @@ function FixtureCard({
     <span
       className={
         id && id === winner
-          ? "flex items-center gap-1 font-semibold text-purple-800"
+          ? "truncate font-semibold text-ink"
           : winner
-            ? "text-zinc-400"
-            : undefined
+            ? "truncate text-ink-muted"
+            : "truncate text-ink"
       }
     >
       {sideLabel(id, entrantNames)}
-      {id && id === winner ? <span className="text-[10px]">▸</span> : null}
     </span>
   );
   const live = fixture.status === "in_play";
   return (
     <Link
       href={href}
-      className={`block rounded-lg border bg-white p-2.5 text-sm shadow-sm transition hover:-translate-y-0.5 hover:shadow ${
-        live ? "border-emerald-300 hover:border-emerald-400" : "border-purple-100 hover:border-purple-300"
+      className={`relative block overflow-hidden rounded-lg border bg-surface p-2.5 text-sm shadow-sm transition hover:-translate-y-0.5 hover:shadow ${
+        live ? "border-emerald-300 hover:border-emerald-400" : "border-zinc-200/80 hover:border-accent-line"
       }`}
     >
+      {winner ? <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-accent" /> : null}
+      {live ? <span aria-hidden className="absolute inset-y-0 left-0 w-0.5 bg-emerald-400" /> : null}
       <div className="flex flex-col gap-0.5">
         {side(fixture.home_entrant_id)}
         {side(fixture.away_entrant_id)}
       </div>
-      <div className="mt-1 text-xs text-zinc-500">
+      <div className="mt-1.5 text-xs text-ink-muted">
         {live ? (
-          <span className="flex items-center gap-1.5 font-semibold text-emerald-700">
+          <span className="flex items-center gap-1.5 font-bold uppercase tracking-wide text-emerald-600">
             <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-500" />
-            LIVE
+            Live
           </span>
+        ) : fixture.summary?.headline ? (
+          <span className="font-display text-sm font-semibold tabular-nums text-accent-strong">
+            {fixture.summary.headline}
+          </span>
+        ) : fixture.scheduled_at ? (
+          new Date(fixture.scheduled_at).toLocaleString("en-GB", {
+            day: "numeric",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
         ) : (
-          (fixture.summary?.headline ??
-            (fixture.scheduled_at
-              ? new Date(fixture.scheduled_at).toLocaleString("en-GB", {
-                  day: "numeric",
-                  month: "short",
-                  hour: "2-digit",
-                  minute: "2-digit",
-                })
-              : "TBD"))
+          "TBD"
         )}
       </div>
     </Link>
@@ -100,7 +104,7 @@ export function Bracket({ kind, fixtures, entrantNames, fixtureHref }: Props) {
       <div className={kind === "stepladder" ? "flex flex-col gap-4" : "flex gap-6"}>
         {ordered.map(([roundNo, list]) => (
           <div key={roundNo} className="min-w-48">
-            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-700/70">
+            <h3 className="mb-2 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
               {roundName(roundNo)}
             </h3>
             <div className="flex flex-col justify-around gap-3">

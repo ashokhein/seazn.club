@@ -212,7 +212,7 @@ async function main() {
   // The advanced features are entitlement-gated — org2 must be Pro (and it
   // needs headroom past competitions.max_active for the extra competitions).
   await setPlan(org2.id, "pro");
-  await jul3Suite(admin, org2.id);
+  await jul3Suite(admin, org2.id, org2.slug);
 
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
@@ -380,6 +380,18 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   const pubComp = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}`);
   check("v1 public competition lists divisions", v1data<{ divisions: unknown[] }>(pubComp).divisions.length === 1);
 
+  // Public-page theming, free path (public redesign): the branding write is
+  // accepted, but the public view empties it for orgs without
+  // dashboard.branding — the page must NOT carry the --ps-* accent override.
+  const branded = await v1(admin, `/api/v1/competitions/${compId}`, "PATCH", {
+    branding: { colors: { primary: "#0f766e" } },
+  });
+  check("v1 branding patch accepted", branded.status === 200);
+  const freePage = await fetch(`${BASE}/shared/${orgSlug}/${compSlug}`);
+  const freeHtml = await freePage.text();
+  check("public competition page renders (community)", freePage.status === 200 && freeHtml.includes("V1 Cup"));
+  check("community public page keeps default theme", !freeHtml.includes("--ps-accent:#0f766e"));
+
   // Entitlement gate: community org → 402; Pro override → key works via Bearer.
   const denied = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
   check("v1 API keys 402-gated on api.access", denied.status === 402 && denied.json.error?.code === "PAYMENT_REQUIRED");
@@ -439,13 +451,22 @@ async function v1Multipart(
  * route/auth/envelope fails CI even when the usecase unit passes. Runs against
  * a Pro org (advanced features are entitlement-gated).
  */
-async function jul3Suite(admin: Session, orgId: string): Promise<void> {
+async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promise<void> {
   void orgId;
   // Fresh competition + football division (football has the richest surface:
   // scorers, cards, MOTM, scoresheets).
-  const comp = v1data<{ id: string }>(
+  const comp = v1data<{ id: string; slug: string }>(
     await v1(admin, "/api/v1/competitions", "POST", { name: `Jul3 Cup ${tag}`, visibility: "public" }),
   );
+
+  // Public-page theming, pro path (public redesign): dashboard.branding lets
+  // the brand color through the public view and the competition page inlines
+  // the --ps-* accent override for its whole subtree.
+  await v1(admin, `/api/v1/competitions/${comp.id}`, "PATCH", {
+    branding: { colors: { primary: "#0f766e" } },
+  });
+  const themedHtml = await (await fetch(`${BASE}/shared/${orgSlug}/${comp.slug}`)).text();
+  check("pro public page carries the org accent theme", themedHtml.includes("--ps-accent:#0f766e"));
   const div = await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
     name: "Open", sport_key: "generic", variant_key: "score",
     config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },

@@ -4,6 +4,24 @@
   --background: #faf7ff;
   --foreground: #2e1065;
   --brand: #7c3aed;
+
+  /* ---- Public-site theme tokens ("courtside" system) ----
+     Every public page derives from these vars so an org can re-brand the
+     whole surface by overriding --ps-* on a wrapper element (see
+     lib/public-theme.ts — the resolver emits the same derived values; keep
+     the two in sync, guarded by lib/__tests__/public-theme.test.ts). */
+  --ps-accent: #7c3aed;
+  --ps-accent-ink: #ffffff;
+  --ps-accent-strong: #6931c9;
+  --ps-accent-soft: #f5effe;
+  --ps-accent-line: #decefb;
+  --ps-court: #231738;
+  --ps-court-ink: #f7f5fb;
+  --ps-court-muted: rgba(247, 245, 251, 0.64);
+  --ps-canvas: #f6f5f8;
+  --ps-surface: #ffffff;
+  --ps-ink: #1d1928;
+  --ps-muted: #6f6a7c;
 }
 
 @theme inline {
@@ -12,6 +30,22 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+  /* Public-site palette — themeable per org via the --ps-* vars above. */
+  --color-accent: var(--ps-accent);
+  --color-accent-ink: var(--ps-accent-ink);
+  --color-accent-strong: var(--ps-accent-strong);
+  --color-accent-soft: var(--ps-accent-soft);
+  --color-accent-line: var(--ps-accent-line);
+  --color-court: var(--ps-court);
+  --color-court-ink: var(--ps-court-ink);
+  --color-court-muted: var(--ps-court-muted);
+  --color-canvas: var(--ps-canvas);
+  --color-surface: var(--ps-surface);
+  --color-ink: var(--ps-ink);
+  --color-ink-muted: var(--ps-muted);
+  /* Display face (Barlow Condensed) is only mounted on the public tree;
+     everywhere else the utility falls back to the body face. */
+  --font-display: var(--ps-font-display, var(--font-geist-sans));
 }
 
 html,
@@ -95,6 +129,23 @@ body {
 }
 .animate-live-pulse {
   animation: live-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-slide-in,
+  .animate-trophy,
+  .animate-slide-progress,
+  .animate-blob,
+  .animate-live-pulse {
+    animation: none;
+  }
+}
+
+/* Keyboard focus is always visible; the color follows the org accent on
+   public pages and defaults to the platform violet everywhere else. */
+:where(a, button, summary, [role="tab"]):focus-visible {
+  outline: 2px solid var(--ps-accent);
+  outline-offset: 2px;
 }
 
 @layer components {

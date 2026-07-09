@@ -70,19 +70,22 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
 
   return (
     <div className="mx-auto max-w-xl">
-      <p className="text-xs text-zinc-400">
-        <Link href={`/shared/${orgSlug}/${competitionSlug}`} className="hover:underline">
+      <p className="text-xs text-ink-muted">
+        <Link
+          href={`/shared/${orgSlug}/${competitionSlug}`}
+          className="hover:text-accent-strong hover:underline"
+        >
           {view.competition_name}
         </Link>{" "}
         / Registration
       </p>
 
-      <div className={`mt-3 rounded-lg border p-5 ${copy.tone}`}>
-        <h1 className="text-lg font-semibold">{copy.title}</h1>
+      <div className={`mt-3 rounded-xl border p-5 ${copy.tone}`}>
+        <h1 className="font-display text-2xl font-semibold">{copy.title}</h1>
         <p className="mt-1 text-sm">{copy.body}</p>
       </div>
 
-      <dl className="mt-5 space-y-2 rounded-lg border border-zinc-200 bg-white p-5 text-sm">
+      <dl className="mt-5 space-y-2 rounded-xl border border-zinc-200/80 bg-surface p-5 text-sm shadow-sm">
         <Row label="Name">{view.display_name}</Row>
         <Row label="Division">{view.division_name}</Row>
         <Row label="Competition">{view.competition_name}</Row>
@@ -104,8 +107,8 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
       </dl>
 
       {view.payment_due && (
-        <div className="mt-5 rounded-lg border border-purple-200 bg-purple-50 p-5">
-          <h2 className="text-sm font-semibold text-purple-800">How to pay your entry fee</h2>
+        <div className="mt-5 rounded-xl border border-accent-line bg-accent-soft p-5">
+          <h2 className="text-sm font-semibold text-accent-strong">How to pay your entry fee</h2>
           {view.payment_instructions ? (
             <p className="mt-2 whitespace-pre-line text-sm text-zinc-700">
               {view.payment_instructions}
