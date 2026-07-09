@@ -577,14 +577,24 @@ export async function moveFixture(
       (FixtureLite & { competition_id: string })[]
     >`
       select f.id, f.stage_id, f.division_id, f.round_no, f.home_entrant_id,
-             f.away_entrant_id, f.scheduled_at, f.court_label, f.status,
-             f.schedule_locked, f.winner_to_fixture, f.loser_to_fixture,
+             f.away_entrant_id, f.scheduled_at, f.court_label, f.venue, f.pool_id,
+             f.status, f.schedule_locked, f.winner_to_fixture, f.loser_to_fixture,
              d.competition_id
       from fixtures f join divisions d on d.id = f.division_id
       where f.id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + fixture.division_id}))`;
     await assertCompetitionNotFrozen(auth.orgId, fixture.competition_id, tx);
+
+    // Single-fixture moves are board edits too — the whole-division freeze
+    // must hold here exactly as it does for applySchedule (this is the route
+    // the board's drag/keyboard move actually uses). Scope locks deliberately
+    // do NOT bite on single moves (see history.test.ts — the board apply path
+    // enforces them; a targeted move is the escape hatch).
+    const lockState = await divisionLockState(tx, fixture.division_id);
+    if (lockState.frozen) {
+      throw new HttpError(422, "the division schedule is locked — unlock it to edit");
+    }
 
     const movesTimetable = patch.scheduled_at !== undefined || patch.court_label !== undefined;
     if (movesTimetable && fixture.status !== MOVABLE_STATUS) {

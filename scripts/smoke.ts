@@ -213,6 +213,11 @@ async function main() {
   // needs headroom past competitions.max_active for the extra competitions).
   await setPlan(org2.id, "pro");
   await jul3Suite(admin, org2.id);
+
+  // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
+  // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
+  // fresh community owner. Destructive downgrade runs last.
+  await gapSuite(admin, org.id, org2.id);
 }
 
 // v1 responses: { ok, data | error: {code, message, …}, requestId }.
@@ -575,7 +580,241 @@ async function jul3Suite(admin: Session, orgId: string): Promise<void> {
 }
 
 /**
- * Purge this run's test data: delete the three test users and every org they
+ * Growth-wave coverage the earlier suites miss (kept per feedback: every
+ * feature exercised on the pro AND the free path where a free path exists):
+ * device links, scorer seats via scoped invites, discovery, public
+ * registration, ownership transfer, account export, and the in-app
+ * downgrade → competition-freeze path. `proOrgId` (org2) must be Pro on
+ * entry; the downgrade at the end deliberately flips it to community.
+ */
+async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promise<void> {
+  // A dedicated started division in the Pro org for device links + scorers.
+  const comp = await v1(admin, "/api/v1/competitions", "POST", { name: `Gap Cup ${tag}` });
+  const compId = v1data<{ id: string }>(comp).id;
+  const div = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
+    name: "Gap",
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  });
+  const divId = v1data<{ id: string }>(div).id;
+  await v1(
+    admin,
+    `/api/v1/divisions/${divId}/entrants`,
+    "POST",
+    ["GA", "GB", "GC", "GD"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })),
+  );
+  const stage = await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", {
+    seq: 1,
+    kind: "league",
+    name: "League",
+  });
+  const gen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`, "POST");
+  const fixtureId = v1data<{ fixtures: { id: string }[] }>(gen).fixtures[0]!.id;
+  await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
+
+  // --- Device links (Pro): mint once, token opens the scoring door alone ---
+  const dl = await v1(admin, `/api/v1/fixtures/${fixtureId}/device-links`, "POST", {
+    label: "Court 1",
+  });
+  const dlSecret = v1data<{ secret: string }>(dl).secret ?? "";
+  check("gap device link minted (dl_)", dl.status === 201 && dlSecret.startsWith("dl_"));
+  const bare = newSession(); // no cookies — the token is the credential
+  const dlState = await v1(bare, `/api/v1/fixtures/${fixtureId}/state`, "GET", undefined, {
+    Authorization: `Bearer ${dlSecret}`,
+  });
+  const dlSeq = v1data<{ last_seq: number }>(dlState).last_seq;
+  const dlEvent = await v1(
+    bare,
+    `/api/v1/fixtures/${fixtureId}/events`,
+    "POST",
+    { expected_seq: dlSeq, type: "generic.result", payload: { p1Score: 2, p2Score: 1 } },
+    { Authorization: `Bearer ${dlSecret}` },
+  );
+  check("gap device-link bearer can score", dlEvent.status === 201);
+
+  // --- Scorer seat: a division-scoped invite creates membership + assignment ---
+  const scorerInvite = (await call(admin, `/api/orgs/${proOrgId}/invites`, "POST", {
+    role: "scorer",
+    max_uses: 1,
+    default_scope: { type: "division", id: divId },
+  })) as { token: string };
+  const scorer = newSession();
+  await signIn(scorer, `scorer_${tag}@example.com`);
+  const accepted = (await call(scorer, `/api/invites/${scorerInvite.token}/accept`, "POST", {})) as {
+    landing: string;
+  };
+  check("gap scorer lands on my-matches", accepted.landing === "/my-matches");
+  const assigned = await v1(scorer, "/api/v1/me/assigned-fixtures");
+  check(
+    "gap scorer sees assigned fixtures",
+    assigned.status === 200 && v1data<unknown[]>(assigned).length > 0,
+  );
+  // scorers.max (Pro = 1): a second scorer can't take a seat.
+  const scorerInvite2 = (await call(admin, `/api/orgs/${proOrgId}/invites`, "POST", {
+    role: "scorer",
+    max_uses: 1,
+    default_scope: { type: "division", id: divId },
+  })) as { token: string };
+  const scorer2 = newSession();
+  await signIn(scorer2, `scorer2_${tag}@example.com`);
+  const seatFull = await raw(scorer2, `/api/invites/${scorerInvite2.token}/accept`, "POST", {});
+  check("gap second scorer seat blocked (scorers.max)", seatFull.status === 402);
+
+  // --- Discovery: public + discoverable (started division passes the quality
+  // floor); discoverable without public visibility is rejected ---
+  const pub = await v1(admin, `/api/v1/competitions/${compId}`, "PATCH", { visibility: "public" });
+  check("gap competition made public", pub.status === 200);
+  const disc = await v1(admin, `/api/v1/competitions/${compId}`, "PATCH", {
+    discoverable: true,
+    discovery: { country: "GB" },
+  });
+  check("gap discoverable set", disc.status === 200);
+  const discovery = await v1(bare, `/api/v1/public/discovery?q=${encodeURIComponent(`Gap Cup ${tag}`)}`);
+  check(
+    "gap discovery lists the competition",
+    discovery.status === 200 &&
+      v1data<{ items: { name: string }[] }>(discovery).items.some(
+        (i) => i.name === `Gap Cup ${tag}`,
+      ),
+  );
+  const privComp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Gap Hidden ${tag}`,
+    visibility: "private",
+  });
+  const badDisc = await v1(admin, `/api/v1/competitions/${v1data<{ id: string }>(privComp).id}`, "PATCH", {
+    discoverable: true,
+  });
+  check("gap discoverable requires public (422)", badDisc.status === 422);
+
+  // --- Public registration: open free signup → pending + access token →
+  // organiser confirm materialises an entrant ---
+  const regSettings = await v1(admin, `/api/v1/divisions/${divId}/registration-settings`, "PUT", {
+    enabled: true,
+    entrant_kind: "individual",
+    capacity: 10,
+    fee_cents: 0,
+    currency: "gbp",
+    form_fields: [],
+  });
+  check("gap registration opened", regSettings.status === 200);
+  const orgs = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const proSlug = orgs.find((o) => o.id === proOrgId)!.slug;
+  const compSlug = v1data<{ slug: string }>(await v1(admin, `/api/v1/competitions/${compId}`)).slug;
+  const reg = await v1(bare, `/api/v1/public/orgs/${proSlug}/competitions/${compSlug}/register`, "POST", {
+    division_id: divId,
+    display_name: `Walk In ${tag}`,
+    contact_email: `walkin_${tag}@example.com`,
+  });
+  const regData = v1data<{ registration_id: string; status: string; access_token: string }>(reg);
+  check(
+    "gap public registration pending + tokened",
+    reg.status === 201 && regData.status === "pending" && regData.access_token.length > 0,
+  );
+  const confirmed = await v1(admin, `/api/v1/registrations/${regData.registration_id}/confirm`, "POST", {});
+  check("gap registration confirmed", confirmed.status === 200 || confirmed.status === 201);
+  const gapEntrants = await v1(admin, `/api/v1/divisions/${divId}/entrants`);
+  check(
+    "gap confirmed registration is an entrant",
+    v1data<{ display_name: string }[]>(gapEntrants).some((e) => e.display_name === `Walk In ${tag}`),
+  );
+
+  // --- Free paths on a fresh community owner: device links 402, offline
+  // entry fees allowed without Stripe ---
+  const free = newSession();
+  await signIn(free, `free_${tag}@example.com`);
+  const fComp = await v1(free, "/api/v1/competitions", "POST", { name: `Free Gap ${tag}` });
+  const fDiv = await v1(free, `/api/v1/competitions/${v1data<{ id: string }>(fComp).id}/divisions`, "POST", {
+    name: "Free",
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  });
+  const fDivId = v1data<{ id: string }>(fDiv).id;
+  await v1(free, `/api/v1/divisions/${fDivId}/entrants`, "POST", [
+    { kind: "individual", display_name: "F1", seed: 1 },
+    { kind: "individual", display_name: "F2", seed: 2 },
+  ]);
+  const fStage = await v1(free, `/api/v1/divisions/${fDivId}/stages`, "POST", {
+    seq: 1,
+    kind: "league",
+    name: "League",
+  });
+  const fGen = await v1(free, `/api/v1/stages/${v1data<{ id: string }>(fStage).id}/generate`, "POST");
+  const fFixture = v1data<{ fixtures: { id: string }[] }>(fGen).fixtures[0]!.id;
+  const fDl = await v1(free, `/api/v1/fixtures/${fFixture}/device-links`, "POST", { label: "X" });
+  check(
+    "gap device links Pro-gated (402 on community)",
+    fDl.status === 402 && fDl.json.error?.code === "PAYMENT_REQUIRED",
+  );
+  const fFee = await v1(free, `/api/v1/divisions/${fDivId}/registration-settings`, "PUT", {
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 500,
+    currency: "gbp",
+    form_fields: [],
+  });
+  check("gap offline entry fee allowed on community", fFee.status === 200);
+
+  // --- Ownership transfer on org1 (owner + the invited members): away & back ---
+  const members = (await call(admin, `/api/orgs/${org1Id}/members`)) as {
+    user_id: string;
+    email: string;
+    role: string;
+  }[];
+  const owner = members.find((m) => m.role === "owner")!;
+  const target = members.find((m) => m.role !== "owner" && m.role !== "scorer")!;
+  await call(admin, `/api/orgs/${org1Id}/transfer-owner`, "POST", { new_owner_id: target.user_id });
+  const mid = (await call(admin, `/api/orgs/${org1Id}/members`)) as { user_id: string; role: string }[];
+  check(
+    "gap ownership transferred",
+    mid.find((m) => m.user_id === target.user_id)?.role === "owner" &&
+      mid.find((m) => m.user_id === owner.user_id)?.role === "admin",
+  );
+  // The old owner is admin now — the NEW owner must hand it back. Their
+  // session belongs to viewer/member users created earlier; sign the target
+  // user in fresh (same passwordless door).
+  const targetSession = newSession();
+  await signIn(targetSession, target.email);
+  await raw(targetSession, "/api/orgs/active", "POST", { org_id: org1Id });
+  await call(targetSession, `/api/orgs/${org1Id}/transfer-owner`, "POST", {
+    new_owner_id: owner.user_id,
+  });
+  const after = (await call(admin, `/api/orgs/${org1Id}/members`)) as {
+    user_id: string;
+    role: string;
+  }[];
+  check("gap ownership restored", after.find((m) => m.user_id === owner.user_id)?.role === "owner");
+
+  // --- Account: display-name edit + GDPR export ---
+  const renamedMe = await raw(admin, "/api/users/me", "PATCH", { display_name: `Gap Admin ${tag}` });
+  check("gap display name updated", renamedMe.status === 200);
+  const exported = await fetch(`${BASE}/api/users/me/export`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
+  check("gap account export downloads", exported.status === 200);
+
+  // --- Downgrade → freeze (destructive; keep last). org2 has no Stripe
+  // subscription, so the in-app downgrade applies immediately; over-quota
+  // competitions freeze (least-recently-active first) while the rest stay
+  // writable. ---
+  await raw(admin, "/api/orgs/active", "POST", { org_id: proOrgId });
+  const down = await raw(admin, "/api/billing/downgrade", "POST", {});
+  check("gap in-app downgrade to community", down.status === 200);
+  const list = await v1(admin, "/api/v1/competitions?limit=50");
+  const comps = v1data<{ items: { id: string }[] } | { id: string }[]>(list);
+  const ids = (Array.isArray(comps) ? comps : comps.items).map((c) => c.id);
+  const probes = await Promise.all(
+    ids.map((id) => v1(admin, `/api/v1/competitions/${id}`, "PATCH", { description: "probe" })),
+  );
+  const blocked = probes.filter((p) => p.status === 402).length;
+  const writable = probes.filter((p) => p.status === 200).length;
+  check("gap downgrade freezes over-quota competitions", blocked >= 1);
+  check("gap in-quota competitions stay writable", writable >= 1);
+}
+
+/**
+ * Purge this run's test data: delete the run's test users and every org they
  * created (org delete cascades competitions/divisions/fixtures/members/
  * invites). Scoped to the run's `tag` by exact email match. No-op when
  * DATABASE_URL is unset. Never throws — teardown must not fail the run.
@@ -613,6 +852,10 @@ async function cleanup(tag: string): Promise<void> {
     `admin_${tag}@example.com`,
     `viewer_${tag}@example.com`,
     `member_${tag}@example.com`,
+    `scorer_${tag}@example.com`,
+    `scorer2_${tag}@example.com`,
+    `free_${tag}@example.com`,
+    `walkin_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
