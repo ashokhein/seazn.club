@@ -194,6 +194,7 @@ const ORG_TABLES = {
   fixture: "fixtures",
   registration: "registrations",
   club: "clubs",
+  team: "teams",
   import: "imports",
   official: "officials",
 } as const;

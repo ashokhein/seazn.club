@@ -217,7 +217,7 @@ export function RegistrationsPanel({
               onChange={(e) => set({ entrant_kind: e.target.value as Settings["entrant_kind"] })}
               className="input mt-1 w-full"
             >
-              <option value="individual">Individual (creates a person)</option>
+              <option value="individual">Individual (creates a player)</option>
               <option value="team">Team</option>
               <option value="pair">Pair</option>
             </select>

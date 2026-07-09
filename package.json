@@ -27,6 +27,7 @@
     "db:validate": "bash scripts/flyway.sh validate",
     "db:baseline": "bash scripts/flyway.sh baseline",
     "sync:sports": "node --experimental-strip-types scripts/sync-sports.ts",
+    "stripe:sync": "node --env-file=apps/web/.env.local --experimental-strip-types scripts/stripe-sync.ts",
     "openapi:gen": "node --experimental-strip-types scripts/openapi-gen.ts",
     "check:rls": "node --experimental-strip-types scripts/check-rls.ts"
   }

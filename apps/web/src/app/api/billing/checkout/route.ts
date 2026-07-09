@@ -5,7 +5,11 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
 import { checkoutSchema } from "@/lib/types";
+import { buildEmbeddedCheckoutParams } from "@/lib/billing";
 
+/** POST /api/billing/checkout — start an EMBEDDED Stripe Checkout session and
+ *  return its client_secret; the billing page mounts <EmbeddedCheckout> with it
+ *  (in-page, no redirect until completion). */
 export async function POST(req: Request) {
   return handler(async () => {
     const orgId = await getActiveOrgId();
@@ -29,36 +33,17 @@ export async function POST(req: Request) {
     // Reuse existing Stripe customer if we already have one
     const [sub] = await sql<{ stripe_customer_id: string | null }[]>`
       select stripe_customer_id from subscriptions where org_id = ${orgId}`;
-    const existingCustomerId = sub?.stripe_customer_id ?? undefined;
 
-    const stripe = getStripe();
-    const base = baseUrl(req);
+    const session = await getStripe().checkout.sessions.create(
+      buildEmbeddedCheckoutParams({
+        priceId: plan.price_id,
+        orgId,
+        returnUrl: `${baseUrl(req)}/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        customerId: sub?.stripe_customer_id ?? undefined,
+        customerEmail: user.email,
+      }),
+    );
 
-    const session = await stripe.checkout.sessions.create({
-      mode: "subscription",
-      ...(existingCustomerId
-        ? { customer: existingCustomerId }
-        : { customer_email: user.email }),
-      metadata: { org_id: orgId },
-      // Honour the "no card required" trial: don't ask for a payment method up
-      // front. If none is added by the time the trial ends, cancel rather than
-      // silently attempting to bill a card we never collected.
-      payment_method_collection: "if_required",
-      subscription_data: {
-        trial_period_days: 14,
-        trial_settings: {
-          end_behavior: { missing_payment_method: "cancel" },
-        },
-        metadata: { org_id: orgId },
-      },
-      line_items: [{ price: plan.price_id, quantity: 1 }],
-      success_url: `${base}/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${base}/settings/billing`,
-      allow_promotion_codes: true,
-      tax_id_collection: { enabled: true },
-      automatic_tax: { enabled: true },
-    });
-
-    return { url: session.url };
+    return { client_secret: session.client_secret };
   });
 }

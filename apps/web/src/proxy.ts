@@ -21,14 +21,17 @@ function cspHeader(nonce: string): { name: string; value: string } {
   const enforce = process.env.CSP_MODE === "enforce";
   const value = [
     `default-src 'self'`,
-    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${isDev ? " 'unsafe-eval'" : ""}`,
+    // Stripe.js is loaded from js.stripe.com for Embedded Checkout.
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' https://js.stripe.com${isDev ? " 'unsafe-eval'" : ""}`,
     // Tailwind ships an external stylesheet; 'unsafe-inline' covers the small
     // inline styles Next injects. Styles are low-risk vs script injection.
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' blob: data: https:`,
     `font-src 'self' data:`,
-    `connect-src 'self' https://*.supabase.co wss://*.supabase.co https://*.ingest.sentry.io https://*.sentry.io`,
-    `frame-src 'self'`,
+    // Stripe: api.stripe.com for tokenization; supabase + sentry as before.
+    `connect-src 'self' https://api.stripe.com https://*.supabase.co wss://*.supabase.co https://*.ingest.sentry.io https://*.sentry.io`,
+    // Embedded Checkout renders inside a Stripe-hosted iframe.
+    `frame-src 'self' https://js.stripe.com https://*.stripe.com https://hooks.stripe.com`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,

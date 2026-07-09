@@ -5,7 +5,12 @@ export default defineConfig({
   test: {
     environment: "node",
     pool: "threads",
-    isolate: false,
+    // Each DB suite lazily creates a postgres client (cached on globalThis) and
+    // ends it in afterAll. With isolate:false that client + globalThis are shared
+    // across files, so one file's teardown strands another file's in-flight query
+    // (CONNECTION_ENDED). Isolate per file so each owns — and ends — its own
+    // connection; the teardown races vanish.
+    isolate: true,
     // Playwright specs (e2e/) run under `playwright test`, not vitest.
     exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
     // @seazn/engine ships TS source (workspace symlink) — inline it so vitest

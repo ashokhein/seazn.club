@@ -12,8 +12,10 @@ export async function GET(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
     const auth = await requireResourceAuth(req, "division", id, "read");
-    const clubId = new URL(req.url).searchParams.get("club_id") ?? undefined;
-    return listEntrants(auth, id, clubId);
+    const query = new URL(req.url).searchParams;
+    const clubId = query.get("club_id") ?? undefined;
+    const teamId = query.get("team_id") ?? undefined;
+    return listEntrants(auth, id, { clubId, teamId });
   });
 }
 

@@ -55,12 +55,14 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/entrants", method: "post", summary: "Register entrant(s) — object or bulk array", tag: "entrants", request: S.CreateEntrants, response: z.union([S.Entrant, z.array(S.Entrant)]), status: 201, errors: [422] },
   { path: "/entrants/{id}", method: "get", summary: "Get an entrant with members", tag: "entrants", response: S.Entrant },
   { path: "/entrants/{id}", method: "patch", summary: "Withdraw, seed or edit members", tag: "entrants", request: S.PatchEntrant, response: S.Entrant, errors: [422] },
+  { path: "/divisions/{id}/roster", method: "get", summary: "Every (person → team entrant) membership in the division (same-division double-roster warning)", tag: "entrants" },
   // Persons
   { path: "/persons", method: "get", summary: "List persons", tag: "persons", response: pageOf(S.Person), query: PAGE_QUERY },
   { path: "/persons", method: "post", summary: "Create a person", tag: "persons", request: S.CreatePerson, response: S.Person, status: 201 },
   { path: "/persons/{id}", method: "get", summary: "Get a person", tag: "persons", response: S.Person },
   { path: "/persons/{id}", method: "patch", summary: "Update a person", tag: "persons", request: S.PatchPerson, response: S.Person },
   { path: "/persons/{id}/merge", method: "post", summary: "Merge a duplicate person into this one", tag: "persons", request: S.MergePersons, response: S.Person, errors: [422] },
+  { path: "/persons/{id}/photo", method: "post", summary: "Upload a player photo (multipart `file`); public display gated by public_photo consent", tag: "persons", response: S.Person, errors: [400, 404, 415, 502] },
   { path: "/persons/{id}/profiles/{sport}", method: "get", summary: "Get a per-sport profile", tag: "persons" },
   { path: "/persons/{id}/profiles/{sport}", method: "put", summary: "Upsert a per-sport profile", tag: "persons", request: S.PutProfile, errors: [422] },
   // Stages
@@ -130,6 +132,11 @@ export const ROUTES: RouteSpec[] = [
   { path: "/clubs/{id}", method: "get", summary: "Club detail: teams across divisions", tag: "clubs", response: S.ClubDetail },
   { path: "/clubs/{id}", method: "patch", summary: "Update a club", tag: "clubs", request: S.PatchClub, response: S.Club, errors: [402] },
   { path: "/clubs/{id}", method: "delete", summary: "Delete a club (teams survive, badges fall back)", tag: "clubs", errors: [402] },
+  // Teams (Pro clubs.hierarchy) — parent-club teams and their persistent squads.
+  { path: "/clubs/{id}/teams", method: "post", summary: "Add a team under a club (Pro `clubs.hierarchy`)", tag: "clubs", request: S.CreateTeam, status: 201, errors: [402, 404, 409] },
+  { path: "/teams", method: "get", summary: "List teams with their division entries", tag: "clubs" },
+  { path: "/teams/{id}/squad", method: "get", summary: "Get a team's persistent squad", tag: "clubs", errors: [404] },
+  { path: "/teams/{id}/squad", method: "put", summary: "Replace a team's squad (auto-seeds entrant rosters on enrollment)", tag: "clubs", request: S.SetTeamSquad, errors: [402, 404] },
   { path: "/clubs/logos", method: "post", summary: "Bulk logo assign: multipart `files` + `mapping` JSON + `assign_remaining` (Jul3/01 §5; Pro `logos.bulk` for >1 file)", tag: "clubs", response: z.array(S.LogoAssignment), errors: [402, 422] },
   { path: "/imports", method: "post", summary: "Upload a participants spreadsheet (multipart `file`) → dry-run { importId, plan }; writes nothing (Jul3/01 §6)", tag: "clubs", response: S.ImportPreview, status: 201, errors: [402, 413, 422] },
   { path: "/imports/{id}", method: "get", summary: "Re-preview a stored import against current state", tag: "clubs", response: S.ImportPreview },

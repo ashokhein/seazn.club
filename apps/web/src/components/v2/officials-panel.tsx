@@ -415,7 +415,15 @@ export function OfficialsPanel({
               <tr key={f.id} className="border-t border-slate-100 align-top">
                 <td className="px-4 py-2 text-sm text-slate-700">{f.label}</td>
                 <td className="px-4 py-2 text-sm text-slate-500">
-                  {f.scheduled_at ? new Date(f.scheduled_at).toLocaleString() : "—"}
+                  {f.scheduled_at
+                    ? new Date(f.scheduled_at).toLocaleString("en-GB", {
+                        weekday: "short",
+                        day: "numeric",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      })
+                    : "—"}
                 </td>
                 <td className="px-4 py-2">
                   {f.officials.length === 0 ? (

@@ -2,10 +2,23 @@
 
 // Clubs directory (Jul3/01 §2, §5, §8): club CRUD, teams-across-divisions
 // detail, and the bulk logo grid (drag-drop, per-club re-map, assign-remaining).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+
+interface PersonLite {
+  id: string;
+  full_name: string;
+}
+interface SquadMember {
+  person_id: string;
+  full_name: string;
+  squad_number: number | null;
+  default_position_key: string | null;
+  is_captain: boolean;
+  roles: string[];
+}
 
 export interface ClubListRow {
   id: string;
@@ -46,7 +59,34 @@ export function ClubsPanel({
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
+  const [logo, setLogo] = useState<File | null>(null);
+  const logoInput = useRef<HTMLInputElement>(null);
   const [detail, setDetail] = useState<ClubDetail | null>(null);
+  // Persons directory for the squad picker (loaded once; org rosters are small).
+  const [persons, setPersons] = useState<PersonLite[]>([]);
+
+  useEffect(() => {
+    if (!canEdit) return;
+    (async () => {
+      const all: PersonLite[] = [];
+      let cursor: string | null = null;
+      for (let i = 0; i < 20; i++) {
+        const url: string = cursor
+          ? `/api/v1/persons?limit=100&cursor=${encodeURIComponent(cursor)}`
+          : "/api/v1/persons?limit=100";
+        const page: { items: PersonLite[]; nextCursor: string | null } = await apiV1(url);
+        all.push(...page.items);
+        if (!page.nextCursor) break;
+        cursor = page.nextCursor;
+      }
+      setPersons(all);
+    })().catch(() => setPersons([]));
+  }, [canEdit]);
+
+  const reloadDetail = (clubId: string) =>
+    apiV1<ClubDetail>(`/api/v1/clubs/${clubId}`)
+      .then(setDetail)
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed"));
 
   async function run(fn: () => Promise<unknown>) {
     setError(null);
@@ -66,24 +106,56 @@ export function ClubsPanel({
     }
   }
 
+  // Per-row badge (single file mapped to the club) — same endpoint as the bulk
+  // grid, so imported/existing clubs can be re-badged one at a time.
+  const uploadBadge = (clubId: string, file: File) =>
+    run(async () => {
+      const form = new FormData();
+      form.append("files", file);
+      form.append("mapping", JSON.stringify({ [file.name]: clubId }));
+      const res = await fetch("/api/v1/clubs/logos", { method: "POST", body: form });
+      if (!res.ok) {
+        const p = (await res.json().catch(() => ({}))) as {
+          error?: { message?: string; feature_key?: string };
+        };
+        if (res.status === 402) {
+          setPaywallFeature(String(p.error?.feature_key ?? ""));
+          return;
+        }
+        throw new Error(p.error?.message ?? "Badge upload failed");
+      }
+    });
+
   return (
     <div className="space-y-5">
       {canEdit && (
         <form
-          className="card flex flex-wrap items-end gap-3 p-4"
+          className="card grid grid-cols-1 gap-3 p-4 sm:flex sm:flex-wrap sm:items-end"
           onSubmit={(e) => {
             e.preventDefault();
             if (!name.trim()) return;
             void run(async () => {
-              await apiV1("/api/v1/clubs", {
+              const club = await apiV1<ClubListRow>("/api/v1/clubs", {
                 method: "POST",
                 json: {
                   name: name.trim(),
                   ...(shortName.trim() ? { short_name: shortName.trim() } : {}),
                 },
               });
+              if (logo) {
+                const form = new FormData();
+                form.append("files", logo);
+                form.append("mapping", JSON.stringify({ [logo.name]: club.id }));
+                const res = await fetch("/api/v1/clubs/logos", { method: "POST", body: form });
+                if (!res.ok) {
+                  const p = (await res.json().catch(() => ({}))) as { error?: { message?: string } };
+                  throw new Error(p.error?.message ?? "Badge upload failed");
+                }
+              }
               setName("");
               setShortName("");
+              setLogo(null);
+              if (logoInput.current) logoInput.current.value = "";
             });
           }}
         >
@@ -93,9 +165,20 @@ export function ClubsPanel({
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-600">
             Short name
-            <input className="input w-28" value={shortName} onChange={(e) => setShortName(e.target.value)} />
+            <input className="input w-full sm:w-28" value={shortName} onChange={(e) => setShortName(e.target.value)} />
           </label>
-          <button type="submit" className="btn btn-primary" disabled={busy}>
+          <label className="flex flex-col gap-1 text-sm text-slate-600">
+            Badge
+            <input
+              ref={logoInput}
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              aria-label="Club badge"
+              className="w-full text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
+              onChange={(e) => setLogo(e.target.files?.[0] ?? null)}
+            />
+          </label>
+          <button type="submit" className="btn btn-primary w-full sm:w-auto" disabled={busy}>
             Add club
           </button>
         </form>
@@ -141,16 +224,7 @@ export function ClubsPanel({
                 </td>
                 <td className="px-4 py-2 text-sm text-slate-500">{c.short_name ?? "—"}</td>
                 <td className="px-4 py-2">
-                  {c.logo_path ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={`${storageBase}/${c.logo_path}`}
-                      alt={`${c.name} badge`}
-                      className="h-8 w-8 rounded object-contain"
-                    />
-                  ) : (
-                    <span className="text-sm text-slate-400">—</span>
-                  )}
+                  <BadgeCell club={c} storageBase={storageBase} canEdit={canEdit} busy={busy} onUpload={uploadBadge} />
                 </td>
                 {canEdit && (
                   <td className="px-4 py-2 text-right">
@@ -186,20 +260,355 @@ export function ClubsPanel({
           {detail.teams.length === 0 ? (
             <p className="text-sm text-slate-500">No teams belong to this club yet.</p>
           ) : (
-            <ul className="space-y-1 text-sm text-slate-700">
+            <ul className="space-y-2 text-sm text-slate-700">
               {detail.teams.map((t) => (
-                <li key={t.id} className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium">{t.name}</span>
-                  {t.entries.map((e) => (
-                    <span key={e.division_id} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                      {e.division_name}
-                    </span>
-                  ))}
-                </li>
+                <TeamDetailRow
+                  key={t.id}
+                  team={t}
+                  persons={persons}
+                  canEdit={canEdit}
+                  onError={setError}
+                  onPaywall={setPaywallFeature}
+                />
               ))}
             </ul>
           )}
+
+          {canEdit && (
+            <AddTeamForm
+              clubId={detail.id}
+              onError={setError}
+              onPaywall={setPaywallFeature}
+              onDone={() => reloadDetail(detail.id)}
+            />
+          )}
         </section>
+      )}
+    </div>
+  );
+}
+
+// Badge cell in the clubs table: shows the badge (or a dash) plus, for editors,
+// a set/change control that uploads a single file for this club.
+function BadgeCell({
+  club,
+  storageBase,
+  canEdit,
+  busy,
+  onUpload,
+}: {
+  club: ClubListRow;
+  storageBase: string;
+  canEdit: boolean;
+  busy: boolean;
+  onUpload: (clubId: string, file: File) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  return (
+    <div className="flex items-center gap-2">
+      {club.logo_path ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={`${storageBase}/${club.logo_path}`}
+          alt={`${club.name} badge`}
+          className="h-8 w-8 rounded object-contain"
+        />
+      ) : (
+        <span className="text-sm text-slate-400">—</span>
+      )}
+      {canEdit && (
+        <>
+          <button
+            type="button"
+            className="text-xs text-purple-600 hover:underline"
+            disabled={busy}
+            onClick={() => inputRef.current?.click()}
+          >
+            {club.logo_path ? "change" : "set"}
+          </button>
+          <input
+            ref={inputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            aria-label={`Badge for ${club.name}`}
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0];
+              if (f) onUpload(club.id, f);
+              e.target.value = "";
+            }}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// Add a team directly under a club (Pro clubs.hierarchy).
+function AddTeamForm({
+  clubId,
+  onError,
+  onPaywall,
+  onDone,
+}: {
+  clubId: string;
+  onError: (msg: string) => void;
+  onPaywall: (feature: string) => void;
+  onDone: () => void;
+}) {
+  const [name, setName] = useState("");
+  const [shortName, setShortName] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  return (
+    <form
+      className="grid grid-cols-1 gap-2 border-t border-slate-200 pt-3 sm:flex sm:flex-wrap sm:items-end"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (!name.trim()) return;
+        setBusy(true);
+        onError("");
+        void apiV1(`/api/v1/clubs/${clubId}/teams`, {
+          method: "POST",
+          json: { name: name.trim(), ...(shortName.trim() ? { short_name: shortName.trim() } : {}) },
+        })
+          .then(() => {
+            setName("");
+            setShortName("");
+            onDone();
+          })
+          .catch((err) => {
+            if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED")
+              onPaywall(String(err.extra.feature_key ?? ""));
+            else onError(err instanceof Error ? err.message : "Failed");
+          })
+          .finally(() => setBusy(false));
+      }}
+    >
+      <label className="flex flex-col gap-1 text-xs text-slate-600">
+        Team name
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Riverside U12" />
+      </label>
+      <label className="flex flex-col gap-1 text-xs text-slate-600">
+        Short
+        <input className="input w-full sm:w-24" value={shortName} onChange={(e) => setShortName(e.target.value)} />
+      </label>
+      <button type="submit" className="btn btn-primary w-full text-sm sm:w-auto" disabled={busy || !name.trim()}>
+        Add team
+      </button>
+    </form>
+  );
+}
+
+// One team in the club detail: its division entries + an expandable squad editor.
+function TeamDetailRow({
+  team,
+  persons,
+  canEdit,
+  onError,
+  onPaywall,
+}: {
+  team: { id: string; name: string; entries: { division_id: string; division_name: string }[] };
+  persons: PersonLite[];
+  canEdit: boolean;
+  onError: (msg: string) => void;
+  onPaywall: (feature: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [squad, setSquad] = useState<SquadMember[] | null>(null);
+
+  async function toggle() {
+    const next = !open;
+    setOpen(next);
+    if (next && squad === null) {
+      try {
+        const res = await apiV1<{ members: SquadMember[] }>(`/api/v1/teams/${team.id}/squad`);
+        setSquad(res.members);
+      } catch {
+        setSquad([]);
+      }
+    }
+  }
+
+  return (
+    <li className="rounded-md border border-slate-100">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="flex w-full flex-wrap items-center gap-2 p-2 text-left hover:text-purple-700"
+      >
+        <span
+          aria-hidden
+          className={`inline-block text-[10px] leading-none text-slate-400 transition-transform ${open ? "rotate-90" : ""}`}
+        >
+          ▸
+        </span>
+        <span className="font-medium text-slate-800">{team.name}</span>
+        {team.entries.map((e) => (
+          <span key={e.division_id} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
+            {e.division_name}
+          </span>
+        ))}
+      </button>
+      {open && (
+        <div className="px-2 pb-2 pl-6">
+          {squad === null ? (
+            <p className="text-xs text-slate-400">Loading squad…</p>
+          ) : (
+            <TeamSquadEditor
+              teamId={team.id}
+              initial={squad}
+              persons={persons}
+              canEdit={canEdit}
+              onSaved={setSquad}
+              onError={onError}
+              onPaywall={onPaywall}
+            />
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
+// The persistent squad editor: add/remove people, squad number, captain. Saved
+// members auto-seed an entrant roster whenever the team is enrolled.
+function TeamSquadEditor({
+  teamId,
+  initial,
+  persons,
+  canEdit,
+  onSaved,
+  onError,
+  onPaywall,
+}: {
+  teamId: string;
+  initial: SquadMember[];
+  persons: PersonLite[];
+  canEdit: boolean;
+  onSaved: (members: SquadMember[]) => void;
+  onError: (msg: string) => void;
+  onPaywall: (feature: string) => void;
+}) {
+  const [members, setMembers] = useState<SquadMember[]>(initial);
+  const [filter, setFilter] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+
+  const memberIds = new Set(members.map((m) => m.person_id));
+  const candidates = persons
+    .filter((p) => !memberIds.has(p.id))
+    .filter((p) => !filter || p.full_name.toLowerCase().includes(filter.toLowerCase()))
+    .slice(0, 6);
+
+  function update(i: number, patch: Partial<SquadMember>) {
+    setMembers((prev) => prev.map((m, j) => (j === i ? { ...m, ...patch } : m)));
+    setDirty(true);
+  }
+
+  function save() {
+    setBusy(true);
+    onError("");
+    void apiV1<{ members: SquadMember[] }>(`/api/v1/teams/${teamId}/squad`, {
+      method: "PUT",
+      json: {
+        members: members.map((m) => ({
+          person_id: m.person_id,
+          squad_number: m.squad_number,
+          default_position_key: m.default_position_key,
+          is_captain: m.is_captain,
+          roles: m.roles,
+        })),
+      },
+    })
+      .then((res) => {
+        setMembers(res.members);
+        onSaved(res.members);
+        setDirty(false);
+      })
+      .catch((err) => {
+        if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED")
+          onPaywall(String(err.extra.feature_key ?? ""));
+        else onError(err instanceof Error ? err.message : "Failed");
+      })
+      .finally(() => setBusy(false));
+  }
+
+  return (
+    <div className="space-y-2 rounded-md bg-slate-50 p-2 text-xs">
+      {members.length === 0 && <p className="text-slate-400">No players in this squad yet.</p>}
+      {members.map((m, i) => (
+        <div key={m.person_id} className="flex flex-wrap items-center gap-2">
+          <span className="w-40 truncate font-medium text-slate-700">{m.full_name}</span>
+          <input
+            type="number"
+            min={0}
+            placeholder="No."
+            disabled={!canEdit}
+            value={m.squad_number ?? ""}
+            onChange={(e) => update(i, { squad_number: e.target.value ? Number(e.target.value) : null })}
+            className="input w-16 px-2 py-1"
+            aria-label={`Squad number for ${m.full_name}`}
+          />
+          <label className="flex items-center gap-1 text-slate-500">
+            <input
+              type="checkbox"
+              disabled={!canEdit}
+              checked={m.is_captain}
+              onChange={(e) =>
+                setMembers((prev) =>
+                  prev.map((mm, j) => ({ ...mm, is_captain: j === i ? e.target.checked : false })),
+                )
+              }
+            />
+            captain
+          </label>
+          {canEdit && (
+            <button
+              type="button"
+              className="text-red-600 hover:underline"
+              onClick={() => {
+                setMembers((prev) => prev.filter((_, j) => j !== i));
+                setDirty(true);
+              }}
+            >
+              remove
+            </button>
+          )}
+        </div>
+      ))}
+
+      {canEdit && (
+        <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2">
+          <input
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="Find player…"
+            className="input w-40 px-2 py-1"
+          />
+          {candidates.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => {
+                setMembers((prev) => [
+                  ...prev,
+                  { person_id: p.id, full_name: p.full_name, squad_number: null, default_position_key: null, is_captain: false, roles: [] },
+                ]);
+                setDirty(true);
+              }}
+              className="rounded-full border border-slate-200 px-2 py-0.5 text-slate-500 hover:border-purple-300"
+            >
+              + {p.full_name}
+            </button>
+          ))}
+          {persons.length === 0 && <span className="text-slate-400">No players yet — add them under Players.</span>}
+          <div className="flex-1" />
+          <button type="button" className="btn btn-primary px-3 py-1" disabled={busy || !dirty} onClick={save}>
+            {busy ? "Saving…" : "Save squad"}
+          </button>
+        </div>
       )}
     </div>
   );
