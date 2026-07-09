@@ -8,7 +8,14 @@ import { z } from "zod";
 import { rateLimit, EMAIL_LIMIT } from "@/lib/rate-limit";
 import { headers } from "next/headers";
 
-const schema = z.object({ email: z.string().email().max(120) }).strict();
+// `next` is the post-login redirect (e.g. /join/{token} invite pages send it);
+// it is re-validated by safeNextPath before use.
+const schema = z
+  .object({
+    email: z.string().email().max(120),
+    next: z.string().max(500).optional(),
+  })
+  .strict();
 
 /** Turn an email into a friendly default display name (the part before @). */
 function displayNameFromEmail(email: string): string {
@@ -53,9 +60,9 @@ export async function POST(req: Request) {
     const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
     await rateLimit(`magic-link:${ip}`, EMAIL_LIMIT);
 
-    const body = await req.json();
-    const { email } = schema.parse(body);
-    const next = safeNextPath((body as { next?: unknown })?.next);
+    const body = schema.parse(await req.json());
+    const { email } = body;
+    const next = safeNextPath(body.next);
 
     const userId = await resolveOrCreateUser(email);
 

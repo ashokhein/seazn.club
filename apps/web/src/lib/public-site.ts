@@ -183,3 +183,46 @@ export function formatMetric(value: number | undefined, decimals?: number): stri
   if (decimals !== undefined) return value.toFixed(decimals);
   return `${value}`;
 }
+
+// ---------------------------------------------------------------------------
+// Set-based per-set breakdown for the public match page. The set-based kernel
+// (engine sports/setbased) puts every set's points in ScoreSummary.detail.sets;
+// this extracts them render-ready or returns null for non-set-based sports
+// (whose detail carries a different shape, or none).
+// ---------------------------------------------------------------------------
+export interface SetScore {
+  home: number;
+  away: number;
+  closed: boolean;
+}
+
+export interface SetBreakdown {
+  /** Column label: badminton & table tennis score "Games", volleyball "Sets". */
+  unit: string;
+  sets: SetScore[];
+}
+
+const GAME_UNIT_SPORTS = new Set(["badminton", "tabletennis"]);
+
+/** The kernel headline carries the open set's points — "1 — 0 (14–11)". The
+ *  public match page renders those in the per-set scoreboard card instead, so
+ *  it strips the suffix to keep the big scoreline sets-only. */
+export function stripLiveSetPoints(headline: string): string {
+  return headline.replace(/\s*\([^)]*\)\s*$/, "");
+}
+
+export function setBreakdown(summary: unknown, sportKey: string): SetBreakdown | null {
+  if (typeof summary !== "object" || summary === null) return null;
+  const detail = (summary as { detail?: unknown }).detail;
+  if (typeof detail !== "object" || detail === null) return null;
+  const raw = (detail as { sets?: unknown }).sets;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const sets: SetScore[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const { home, away, closed } = entry as Record<string, unknown>;
+    if (typeof home !== "number" || typeof away !== "number") return null;
+    sets.push({ home, away, closed: closed === true });
+  }
+  return { unit: GAME_UNIT_SPORTS.has(sportKey) ? "Game" : "Set", sets };
+}

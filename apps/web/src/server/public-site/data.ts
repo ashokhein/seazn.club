@@ -69,7 +69,11 @@ export interface PublicFixture {
   court_label: string | null;
   status: string;
   outcome: { kind?: string; winner?: string } | null;
-  summary: { headline?: string; perSide?: { entrantId: string; line: string }[] } | null;
+  summary: {
+    headline?: string;
+    perSide?: { entrantId: string; line: string }[];
+    detail?: unknown;
+  } | null;
   last_seq: number | null;
 }
 

@@ -4,7 +4,13 @@ export const dynamic = "force-dynamic";
 import Link from "next/link";
 import { Nav } from "@/components/nav";
 import { requireResourcePageAuth } from "@/server/page-auth";
-import { getFixture, getFixtureState, getLineup, listEvents } from "@/server/usecases/fixtures";
+import {
+  eventRecorderNames,
+  getFixture,
+  getFixtureState,
+  getLineup,
+  listEvents,
+} from "@/server/usecases/fixtures";
 import { getDivision } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
 import { getEntrant } from "@/server/usecases/entrants";
@@ -25,10 +31,11 @@ export default async function FixturePage({
   const { auth, canScore } = await requireResourcePageAuth("fixture", id);
   const isScorer = auth.role === "scorer";
   const fixture = await getFixture(auth, id);
-  const [division, state, events] = await Promise.all([
+  const [division, state, events, recorderNames] = await Promise.all([
     getDivision(auth, fixture.division_id),
     getFixtureState(auth, id),
     listEvents(auth, id, 0),
+    eventRecorderNames(auth, id),
   ]);
   const competition = await getCompetition(auth, division.competition_id);
   const sportModule = resolveModule(division.sport_key, division.module_version);
@@ -117,9 +124,12 @@ export default async function FixturePage({
             type: e.type,
             payload: e.payload,
             recorded_at: e.recorded_at,
+            recorded_by: e.recorded_by,
             voids_event_id: e.voids_event_id,
+            device_link_id: e.device_link_id,
           }))}
           canEdit={canScore && !(competition.frozen ?? false)}
+          recorderNames={recorderNames}
         />
 
         {/* Day-of device link (doc 13 §7): editors only — scorers never mint. */}

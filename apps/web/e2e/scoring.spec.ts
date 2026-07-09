@@ -1,5 +1,11 @@
 import { test, expect } from "@playwright/test";
-import { apiJson, seedScoredDivision, TAG } from "./helpers";
+import {
+  addEntrantsViaApi,
+  apiJson,
+  createStageAndGenerate,
+  seedScoredDivision,
+  TAG,
+} from "./helpers";
 
 // Scoring discoverability + sport-shaped pads (organiser feedback: the score
 // pad was hard to reach, and cricket should be over-by-over, not ball-by-ball).
@@ -11,6 +17,76 @@ test("every fixture row has a Score entry point", async ({ page, request }) => {
   await expect(page.getByRole("link", { name: /^(Score|View)/ }).first()).toBeVisible({
     timeout: 20_000,
   });
+});
+
+test("forfeit dropdown closes when clicking outside", async ({ page, request }) => {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    name: `Badminton ${TAG}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    { name: "MS", sport_key: "badminton", variant_key: "bwf", config: {}, eligibility: [] },
+  );
+  const divisionId = div.data!.id;
+  await addEntrantsViaApi(request, divisionId, ["Asha", "Bala"]);
+  const { fixtureIds } = await createStageAndGenerate(request, divisionId, {
+    kind: "knockout",
+    name: "Final",
+  });
+  await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
+
+  await page.goto(`/fixtures/${fixtureIds[0]}`);
+  await page.getByRole("button", { name: /Forfeit/ }).click({ timeout: 20_000 });
+  await expect(page.getByRole("button", { name: /forfeits$/ }).first()).toBeVisible();
+
+  // clicking anywhere outside the menu must dismiss it
+  await page.getByRole("heading", { level: 1 }).click();
+  await expect(page.getByRole("button", { name: /forfeits$/ })).toHaveCount(0);
+});
+
+test("badminton pad shows the current game number, not always game 1", async ({
+  page,
+  request,
+}) => {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    name: `Badminton games ${TAG}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    { name: "WS", sport_key: "badminton", variant_key: "bwf", config: {}, eligibility: [] },
+  );
+  const divisionId = div.data!.id;
+  const { ids } = await addEntrantsViaApi(request, divisionId, ["Mina", "Rita"]);
+  const { fixtureIds } = await createStageAndGenerate(request, divisionId, {
+    kind: "knockout",
+    name: "Final",
+  });
+  const fixtureId = fixtureIds[0]!;
+  await apiJson(request, `/api/v1/divisions/${divisionId}/start`, "POST");
+
+  // start + take game 1 to 21-0 via the ledger API
+  await apiJson(request, `/api/v1/fixtures/${fixtureId}/events`, "POST", {
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
+  });
+  for (let seq = 1; seq <= 21; seq++) {
+    await apiJson(request, `/api/v1/fixtures/${fixtureId}/events`, "POST", {
+      expected_seq: seq,
+      type: "badminton.rally",
+      payload: { wonBy: ids[0] },
+    });
+  }
+
+  await page.goto(`/fixtures/${fixtureId}`);
+  await expect(page.getByText("Game 2", { exact: false })).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/games won 1/)).toBeVisible();
 });
 
 test("cricket scores over-by-over: add an over grows the total, then close innings", async ({

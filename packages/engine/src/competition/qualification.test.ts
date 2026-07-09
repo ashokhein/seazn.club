@@ -64,8 +64,10 @@ describe("resolveQualification — topN (spec 05 §3)", () => {
     expect(resolveQualification({ topN: 2 }, { pools: [], overall })).toEqual(["L1", "L2"]);
   });
 
-  it("throws when topN exceeds the field", () => {
-    expect(() => resolveQualification({ topN: 9 }, { pools: [], overall })).toThrow(/exceeds/);
+  it("throws a human-readable message when topN exceeds the field", () => {
+    expect(() => resolveQualification({ topN: 9 }, { pools: [], overall })).toThrow(
+      /takes the top 9, but the previous stage has only 4 entrants/,
+    );
   });
 });
 

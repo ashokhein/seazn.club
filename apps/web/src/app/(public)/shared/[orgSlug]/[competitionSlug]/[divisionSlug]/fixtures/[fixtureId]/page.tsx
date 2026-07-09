@@ -98,6 +98,7 @@ export default async function FixturePage({ params }: Props) {
         initial={{ status: fixture.status, summary: fixture.summary, outcome: fixture.outcome }}
         realtime={realtime}
         entrantNames={entrantNames}
+        sportKey={division.sport_key}
       />
     </div>
   );

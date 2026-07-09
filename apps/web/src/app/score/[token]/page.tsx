@@ -98,8 +98,9 @@ export default async function ScorePadPage({
   ]);
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-6">
-      <DeviceScorePad
+    <main className="min-h-screen bg-slate-950 px-4 py-6">
+      <div className="mx-auto max-w-2xl">
+        <DeviceScorePad
         token={token}
         deviceLinkId={link.id}
         fixture={{
@@ -137,17 +138,18 @@ export default async function ScorePadPage({
           voids_event_id: e.voids_event_id,
           device_link_id: e.device_link_id,
         }))}
-      />
+        />
+      </div>
     </main>
   );
 }
 
 function DeadLink({ message }: { message: string }) {
   return (
-    <main className="mx-auto flex min-h-[60vh] max-w-md flex-col items-center justify-center px-4 text-center">
+    <main className="flex min-h-screen flex-col items-center justify-center bg-slate-950 px-4 text-center">
       <p className="text-4xl">⏱️</p>
-      <h1 className="mt-3 text-lg font-semibold text-slate-800">{message}</h1>
-      <p className="mt-2 text-sm text-slate-500">
+      <h1 className="mt-3 text-lg font-semibold text-slate-100">{message}</h1>
+      <p className="mt-2 text-sm text-slate-400">
         Ask the organiser to hand you a fresh link.
       </p>
     </main>

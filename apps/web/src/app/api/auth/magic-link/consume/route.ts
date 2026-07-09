@@ -5,7 +5,14 @@ import { consumeLoginLink } from "@/lib/login-link";
 import { rateLimit, AUTH_LIMIT } from "@/lib/rate-limit";
 import { headers } from "next/headers";
 
-const schema = z.object({ token: z.string().min(10) }).strict();
+// `next` is the post-login redirect carried by the emailed link (invite
+// pages); postAuthLanding re-validates it via safeNextPath.
+const schema = z
+  .object({
+    token: z.string().min(10),
+    next: z.string().max(500).optional(),
+  })
+  .strict();
 
 /** Consume a passwordless sign-in token and start a session. */
 export async function POST(req: Request) {
@@ -13,9 +20,8 @@ export async function POST(req: Request) {
     const ip = (await headers()).get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
     await rateLimit(`magic-link-consume:${ip}`, AUTH_LIMIT);
 
-    const body = await req.json();
-    const { token } = schema.parse(body);
-    const next = (body as { next?: unknown })?.next;
+    const body = schema.parse(await req.json());
+    const { token, next } = body;
 
     const userId = await consumeLoginLink(token);
     if (!userId) {
