@@ -1,13 +1,19 @@
 # PROMPT-30 — Hierarchical Routing (`/o/[org]/c/[comp]/d/[div]`), Breadcrumbs, Back Button
 
-**Read first:** `v3/01-routing-and-navigation.md` (normative); `engine/08-api-design.md`
-(API stays id-based); `engine/README.md` v1-cutover redirect precedent. Preamble: PROMPT-00.
-House rules: regression test per change; extend `scripts/smoke.ts`; `tsc` + unit before push.
+**Read first:** `v3/01-routing-and-navigation.md` (normative); `v3/11-gaps-and-decisions.md`
+gaps 3, 9; `engine/08-api-design.md` (API stays id-based); `engine/README.md` v1-cutover
+redirect precedent. Preamble: PROMPT-00. House rules: regression test per change; extend
+`scripts/smoke.ts`; `tsc` + unit before push. **Isolation (v3/11 §3):** one short-lived
+branch, merged same-day; do not run alongside PROMPT-31/32/33; rollback = revert.
 
 ## Task
 1. **Slugs & constraints** (v3/01 §2): unique `(org_id, slug)` on competitions,
    `(competition_id, slug)` on divisions; dedupe backfill migration (`-2` suffix);
    `slug_history` table + rename-redirect behaviour (console + `/shared`).
+   **Reserved org slugs** (v3/11 gap 9): validator + check constraint blocking `admin,
+   api, app, billing, dashboard, developers, discover, docs, embed, help, join, legal,
+   login, new, o, onboarding, pricing, settings, shared, slideshow, start, static,
+   support, www` + every existing top-level route segment; migration audits existing slugs.
 2. **Route builder:** `lib/routes.ts` typed builders for every console path; ESLint rule
    banning string-built console hrefs; codemod all `<Link>`/`redirect()` call sites.
 3. **New route tree** under `app/o/[orgSlug]/…` per v3/01 §2 (move, don't duplicate,
@@ -21,7 +27,8 @@ House rules: regression test per change; extend `scripts/smoke.ts`; `tsc` + unit
    `aria-label="Back to {parent}"`.
 
 ## Acceptance
-- Unit: route builder outputs; slug dedupe; redirect resolution incl. renamed slugs.
+- Unit: route builder outputs; slug dedupe; redirect resolution incl. renamed slugs;
+  reserved slug rejected at create + rename.
 - E2E: login (magic-link `login_url`) lands on `/o/[slug]`; deep-link to a division in a
   non-active org works in a second tab without corrupting the first (two-tab test);
   legacy `/divisions/[id]` 301s; breadcrumb links each level; back button reaches parent.

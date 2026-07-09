@@ -49,6 +49,8 @@ Scoring: **Impact** on revenue/retention/acquisition, **Effort** in engineering 
   compounding. Mostly exists as data; needs the page.
 - **Calendar feeds (ICS)** per division/team — "subscribe to your matches" in any
   calendar app; tiny effort, daily-touch retention.
+- **Console command palette (⌘K)** — comps/divisions/entrants/help search; cards improve
+  browsing, not finding (>20-comp orgs). Deferred to v4 (v3/11 gap 16).
 - **Status-quo guardrail:** resist native mobile apps (competitors' branded-app offering)
   — the PWA + share-card + ICS trio covers 90% of the value at 5% of the cost. Revisit
   only if player accounts (11) hit scale.
