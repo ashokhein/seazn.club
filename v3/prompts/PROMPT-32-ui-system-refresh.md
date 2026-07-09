@@ -1,7 +1,7 @@
 # PROMPT-32 — UI System Refresh: Cards, ConfirmDialog, Tips, Logos, Plan Scrub, Visibility
 
-**Read first:** `v3/03-ui-system-refresh.md` (normative); `v3/01` §2 (route builder for
-card links). Preamble: PROMPT-00.
+**Read first:** `v3/03-ui-system-refresh.md` (normative); `v3/11-gaps-and-decisions.md`
+gaps 4, 7, 8, 11; `v3/01` §2 (route builder for card links). Preamble: PROMPT-00.
 
 ## Task
 1. **Card system** (v3/03 §1–2): `<EntityCard>` (glyph, name, status chip, meta line,
@@ -21,7 +21,11 @@ card links). Preamble: PROMPT-00.
    `api-keys.tsx` copy; CI grep gate; DB plan key untouched.
 6. **Visibility picker** (v3/03 §7): radio-card component (Private / Link only / Public,
    consequence sentences, share-URL + copy on selection); swap into division +
-   competition settings; keys/noindex behaviour unchanged.
+   competition settings; keys/noindex behaviour unchanged. Youth divisions (v3/11 gap 8):
+   default Private + consent-responsibility interstitial before Link only/Public.
+7. **Messages layer** (v3/11 gap 4): all new copy from this prompt (tips, picker,
+   dialogs, chips) via `lib/messages.ts` flat key→string map — English only, no library;
+   the pattern every later v3 prompt follows.
 
 ## Acceptance
 - Golden/unit: chip states; logo fallback chain; typedName mismatch blocks confirm.

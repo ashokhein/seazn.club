@@ -14,7 +14,10 @@ semantics — diagrams must be correct); `v3/03` §4 (Tips deep-links). Preamble
    (ISR); nav tree per §3 structure; seed the getting-started series + one article per
    live feature area (write for non-technical organisers); FlexSearch build-time index;
    `scripts/help-shots.ts` Playwright screenshot generator against seeded demo data;
-   footer + console `?` menu links; Tips `helpSlug` links go live.
+   footer + console `?` menu links; Tips `helpSlug` links go live. **Ownership (v3/11
+   gap 14):** founder owns prose; add PR-checklist line "UX change → update its /help
+   article"; help-shots regenerates weekly in CI; extend the registry-vs-content
+   stale-doc test to feature areas.
 3. **Format gallery** (v3/06 §4): explainer page per format family with hand-authored
    SVG flow diagram (mind-map style: pools/stages as nodes, progression arrows) + live
    `format-preview` embed (canned 8-entrant set) rendered with console bracket/round

@@ -32,6 +32,7 @@ and a **marketing-page → competition funnel** that converts visitors before th
 | 08 | [08-admin-and-developer-api.md](08-admin-and-developer-api.md) | Admin console v2 (trial extend, plan flips, overrides), published OpenAPI docs, scoped developer keys | PROMPT-37 |
 | 09 | [09-engine-fixes-and-sim.md](09-engine-fixes-and-sim.md) | Badminton scoring correctness, cricket undo regression, sim-replay refresh, safe division delete | PROMPT-38 |
 | 10 | [10-roi-features-and-suggestions.md](10-roi-features-and-suggestions.md) | Out-of-the-box ROI features + market research, impact×effort ranked | PROMPT-39 (wave 1 only) |
+| 11 | [11-gaps-and-decisions.md](11-gaps-and-decisions.md) | Self-review: 16 gaps with decided defaults (Event Pass quota/tax, i18n layer, analytics, jobs, youth privacy, a11y bar, …) — **read before implementing any prompt** | patches inline |
 
 ## Prompt index (`prompts/`)
 
@@ -42,7 +43,7 @@ extended for every feature (pro + free paths); `tsc` + unit tests before push.
 | Prompt | Delivers | Depends on |
 |--------|----------|-----------|
 | [PROMPT-30](prompts/PROMPT-30-routing-and-navigation.md) | Slug-based `/o/[org]/c/[comp]/d/[div]` console routes, breadcrumbs, back button | — |
-| [PROMPT-31](prompts/PROMPT-31-mobile-responsive-overhaul.md) | Mobile pass over every console page + viewport e2e suite | 30 (route names) |
+| [PROMPT-31](prompts/PROMPT-31-mobile-responsive-overhaul.md) | Mobile pass over every console page + viewport e2e suite | 32 (primitives) |
 | [PROMPT-32](prompts/PROMPT-32-ui-system-refresh.md) | Card grids, ConfirmDialog, Tips, logo matrix, Business scrub, visibility picker | — |
 | [PROMPT-33](prompts/PROMPT-33-scheduling-ux-v3.md) | Multi-division schedule board v3 + division schedule fixes | 31, 32 |
 | [PROMPT-34](prompts/PROMPT-34-registration-v2.md) | Registration page v2 + reference numbers | 32 |
@@ -52,11 +53,17 @@ extended for every feature (pro + free paths); `tsc` + unit tests before push.
 | [PROMPT-38](prompts/PROMPT-38-engine-fixes-and-sim.md) | Badminton/cricket fixes, sim-replay v2, division delete | — (do FIRST) |
 | [PROMPT-39](prompts/PROMPT-39-roi-quick-wins.md) | Share cards, QR poster, embeds, sponsor slots | 32 |
 
-## Suggested build order
+## Build order (canonical — see v3/11 gap 3)
 
 1. **PROMPT-38** — correctness first; badminton/cricket bugs erode trust daily.
-2. **PROMPT-32** → **PROMPT-31** — UI primitives, then the mobile pass that uses them.
-3. **PROMPT-30** — routing (big churn; land while surface is freshly touched).
+2. **PROMPT-32** → **PROMPT-31** — UI primitives, then the mobile pass that uses them
+   (31 depends on 32 only; components patterned in 31 survive the route move in 30).
+3. **PROMPT-30** — routing: one short-lived branch, merged same-day; rollback = revert.
 4. **PROMPT-33 / 34** — scheduling board + registration (organiser-visible wins).
 5. **PROMPT-36** — pricing/packaging + funnel (revenue).
 6. **PROMPT-35 / 37 / 39** — help, admin/API, growth quick-wins, any order.
+
+**Prompts 30–33 must not run in parallel** — routing, mobile and board work churn the
+same files (and other sessions work this repo). Read
+[11-gaps-and-decisions.md](11-gaps-and-decisions.md) before starting any prompt: its 16
+decided defaults override older doc text where they conflict.

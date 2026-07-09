@@ -57,6 +57,10 @@ One-time purchase that upgrades **a single competition** for its lifetime:
 - **Pro interplay:** Pro org buying a pass = blocked (nothing to add). Pass-holding org
   going Pro: no refund, pass becomes moot (fine). Downgrade from Pro: passed comps stay
   upgraded — passes are lifetime per comp.
+- **Quota semantics (v3/11 gap 1):** a passed comp is exempt from the org-level
+  active-competition quota (else free orgs — the pass market — could never use one);
+  refund/chargeback revokes (`revoked_at`, freeze machinery); passes never carry to
+  duplicated/next-edition comps.
 
 ## 4. Multi-currency + annual (intake #25)
 
@@ -70,6 +74,10 @@ One-time purchase that upgrades **a single competition** for its lifetime:
   showing "$16.67/mo billed yearly — save 17%". Add first-year offer coupon capability
   (admin coupons exist) rather than a separate price.
 - `subscriptions` gains `currency`; portal/receipts follow Stripe automatically.
+- **Tax (v3/11 gap 2):** Stripe Tax (`automatic_tax`) on all checkouts; tax-inclusive
+  display EU/UK/AU/IN, exclusive US; **INR = Event Pass only at launch** (RBI e-mandate
+  makes INR recurring painful); entry-fee (Connect) tax stays the organiser's — say so
+  in /help/billing.
 
 ## 5. Marketing pages (intake #10)
 

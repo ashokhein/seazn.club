@@ -106,6 +106,11 @@ radio cards (division + competition settings, same component):
 - Each option shows its consequence sentence permanently (not a tooltip) — the decision
   *is* the consequence.
 - After choosing Link only/Public, surface the share URL + copy button right there.
+- **Youth divisions (v3/11 gap 8):** default Private; choosing Link only/Public first
+  shows a consent-responsibility interstitial (organiser confirms guardian consent).
+- **Org accent (v3/11 gap 7):** console stays violet; org accent themes public surfaces
+  only (masthead/links), never chips/hues; WCAG contrast guard falls back to violet.
+  Dark mode is an explicit v3 non-goal.
 
 Related: [[v3/01]] route builder, [[v3/02]] responsive behaviours, [[v3/04]] lane hues,
 [[v3/05]] registration uses card/ticket language, [[v3/06]] help links from Tips.

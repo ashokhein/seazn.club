@@ -64,6 +64,9 @@ Every accepted registration gets a human-quotable reference:
 ## 4. Trust & abuse
 
 - Rate-limit by IP+division; honeypot field (no CAPTCHA at current scale).
+- **Youth privacy (v3/11 gap 8):** youth divisions auto-add guardian-consent preset
+  (checkbox + guardian name); `player_name_display: first_initial` default on youth —
+  honoured on all public surfaces including `/r/[ref]` and OG images.
 - Ref codes are lookups, not auth: `/r/[ref]` exposes only what the success screen showed;
   self-withdraw requires the email-confirmation token, not just the ref.
 
