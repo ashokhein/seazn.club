@@ -21,8 +21,7 @@ export function buildEmbeddedCheckoutParams(args: {
   customerEmail?: string;
 }): Stripe.Checkout.SessionCreateParams {
   return {
-    // stripe-node v22 names the embedded UI mode "embedded_page".
-    ui_mode: "embedded_page",
+    ui_mode: "embedded",
     mode: "subscription",
     ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
     metadata: { org_id: args.orgId },
