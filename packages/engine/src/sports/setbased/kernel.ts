@@ -492,8 +492,12 @@ export function makeSetBasedModule(
     // coarse and fine folds render identically (§9.6).
     summary(state): ScoreSummary {
       const points = { home: totalPoints(state, "home"), away: totalPoints(state, "away") };
+      // While a set is mid-flight, surface its live points next to the set
+      // tally ("1 — 0 (14–11)") so rally scoring is visible at the headline.
+      const open = openSet(state);
+      const inSet = open === null ? "" : ` (${open.set.home}–${open.set.away})`;
       return {
-        headline: `${state.setsWon.home} — ${state.setsWon.away}`,
+        headline: `${state.setsWon.home} — ${state.setsWon.away}${inSet}`,
         perSide: [
           { entrantId: state.entrants.home, line: `${state.setsWon.home}` },
           { entrantId: state.entrants.away, line: `${state.setsWon.away}` },

@@ -139,8 +139,8 @@ export function DeviceScorePad({
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
         <p className="text-4xl">⏱️</p>
-        <h1 className="mt-3 text-lg font-semibold text-slate-800">{dead}</h1>
-        <p className="mt-2 text-sm text-slate-500">Ask the organiser for a fresh link.</p>
+        <h1 className="mt-3 text-lg font-semibold text-slate-100">{dead}</h1>
+        <p className="mt-2 text-sm text-slate-400">Ask the organiser for a fresh link.</p>
       </div>
     );
   }
@@ -149,6 +149,7 @@ export function DeviceScorePad({
   const decided = live.outcome !== null;
   const started = live.status !== "scheduled";
   const scoring = live.status !== "finalized" && live.status !== "cancelled";
+  const inPlay = live.status === "in_play";
 
   // Undo-own (doc 13 §7): only un-voided events THIS link recorded.
   const lastOwnVoidable = [...events]
@@ -162,26 +163,54 @@ export function DeviceScorePad({
 
   return (
     <div className="space-y-4">
-      <header className="card p-4">
-        <p className="text-xs text-slate-400">
-          {fixture.competition_name} · {fixture.division_name} · Round {fixture.round_no}
-          {fixture.court_label ? ` · ${fixture.court_label}` : ""}
-        </p>
-        <h1 className="mt-1 text-lg font-semibold text-slate-900">
-          {home?.name ?? "TBD"} <span className="text-slate-400">vs</span> {away?.name ?? "TBD"}
-        </h1>
-        <p className="mt-1 font-mono text-2xl text-slate-800">{summary?.headline ?? "—"}</p>
-        <p className="mt-1 text-[11px] text-slate-400">
+      {/* LED-scoreboard header: the one glowing thing on the dark court. */}
+      <header className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-[0_0_40px_-12px_rgba(16,185,129,0.25)]">
+        <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-2">
+          <p className="truncate text-[11px] uppercase tracking-widest text-slate-500">
+            {fixture.division_name} · Round {fixture.round_no}
+            {fixture.court_label ? ` · ${fixture.court_label}` : ""}
+          </p>
+          {inPlay ? (
+            <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-emerald-400">
+              <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-400" />
+              Live
+            </span>
+          ) : (
+            <span className="shrink-0 text-[11px] uppercase tracking-widest text-slate-500">
+              {live.status.replace("_", " ")}
+            </span>
+          )}
+        </div>
+        <div className="px-4 py-5 text-center">
+          <p className="flex items-baseline justify-center gap-3 text-sm font-medium text-slate-200">
+            <span className="max-w-[40%] truncate">{home?.name ?? "TBD"}</span>
+            <span className="text-[10px] uppercase tracking-widest text-slate-600">vs</span>
+            <span className="max-w-[40%] truncate">{away?.name ?? "TBD"}</span>
+          </p>
+          <p className="mt-2 font-mono text-5xl font-bold tabular-nums tracking-tight text-emerald-300 [text-shadow:0_0_24px_rgba(52,211,153,0.35)]">
+            {summary?.headline ?? "0 — 0"}
+          </p>
+        </div>
+        <p className="border-t border-slate-800 px-4 py-2 text-center text-[10px] uppercase tracking-widest text-slate-600">
           Courtside {sport.scorerLabel.toLowerCase()} pad · link active today only
         </p>
       </header>
 
-      {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      {error && (
+        <p className="rounded-md border border-red-900/50 bg-red-950/60 px-3 py-2 text-sm text-red-300">
+          {error}
+        </p>
+      )}
 
-      {scoring && home && away && (
+      {scoring && home && away && (!started || lastOwnVoidable) && (
         <div className="flex flex-wrap gap-2">
           {!started && (
-            <button type="button" disabled={busy} onClick={() => send("core.start", {})} className="btn btn-primary">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => send("core.start", {})}
+              className="btn btn-primary h-12 flex-1 text-base"
+            >
               Start match
             </button>
           )}
@@ -190,10 +219,11 @@ export function DeviceScorePad({
               type="button"
               disabled={busy}
               onClick={() => send("core.void", { event_id: lastOwnVoidable.id })}
-              className="btn btn-ghost"
+              className="flex h-12 items-center justify-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-6 text-sm font-semibold text-amber-300 transition hover:border-amber-400/60 hover:bg-amber-500/20 active:scale-[0.98] disabled:opacity-50"
               title={`Undo ${lastOwnVoidable.type} (seq ${lastOwnVoidable.seq})`}
             >
-              ⟲ Undo my last
+              <span aria-hidden className="text-base leading-none">⟲</span>
+              Undo my last entry
             </button>
           )}
         </div>
@@ -216,7 +246,7 @@ export function DeviceScorePad({
       )}
 
       {decided && scoring && (
-        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+        <p className="rounded-md border border-emerald-900/50 bg-emerald-950/60 px-3 py-2 text-sm text-emerald-300">
           Result recorded — the organiser finalizes it. Spot a mistake in your own entries?
           Use “Undo my last”.
         </p>

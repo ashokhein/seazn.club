@@ -22,6 +22,7 @@ import {
   resolveDeviceLinkToken,
   endOfLocalDay,
 } from "../device-links";
+import { eventRecorderNames } from "../fixtures";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -158,6 +159,12 @@ describe.skipIf(!HAS_DB)("device links (doc 13 §7, PROMPT-21)", () => {
       where fixture_id = ${fixture.id} order by seq`;
     expect(events.every((e) => e.recorded_by === ownerId)).toBe(true);
     expect(events.every((e) => e.device_link_id === link.id)).toBe(true);
+
+    // Activity attribution read model: recorded_by resolves to a display name.
+    const [{ display_name: ownerName }] = await sql<{ display_name: string }[]>`
+      select display_name from users where id = ${ownerId}`;
+    const names = await eventRecorderNames(owner, fixture.id);
+    expect(names[ownerId]).toBe(ownerName);
 
     // Undo own mistake pre-finalize.
     const [{ id: resultEventId }] = await sql<{ id: string }[]>`

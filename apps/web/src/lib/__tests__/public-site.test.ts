@@ -6,6 +6,8 @@ import {
   sportsEventJsonLd,
   standingsColumns,
   formatMetric,
+  setBreakdown,
+  stripLiveSetPoints,
   type StandingsRowLike,
 } from "@/lib/public-site";
 
@@ -114,5 +116,48 @@ describe("formatMetric", () => {
     expect(formatMetric(undefined)).toBe("—");
     expect(formatMetric(3)).toBe("3");
     expect(formatMetric(1.5, 2)).toBe("1.50");
+  });
+});
+
+describe("setBreakdown (public per-set scoreboard)", () => {
+  const summary = {
+    headline: "1 — 0 (5–3)",
+    perSide: [
+      { entrantId: "H", line: "1" },
+      { entrantId: "A", line: "0" },
+    ],
+    detail: {
+      sets: [
+        { home: 21, away: 15, closed: true },
+        { home: 5, away: 3, closed: false },
+      ],
+      points: { home: 26, away: 18 },
+    },
+  };
+
+  it("extracts every set including the live one, unit-labelled per sport", () => {
+    expect(setBreakdown(summary, "badminton")).toEqual({
+      unit: "Game",
+      sets: [
+        { home: 21, away: 15, closed: true },
+        { home: 5, away: 3, closed: false },
+      ],
+    });
+    expect(setBreakdown(summary, "tabletennis")?.unit).toBe("Game");
+    expect(setBreakdown(summary, "volleyball")?.unit).toBe("Set");
+  });
+
+  it("returns null for non-set-based or malformed summaries", () => {
+    expect(setBreakdown(null, "badminton")).toBeNull();
+    expect(setBreakdown({ headline: "2 — 1" }, "football")).toBeNull();
+    expect(setBreakdown({ detail: { sets: [] } }, "badminton")).toBeNull();
+    // cricket-style detail with a different shape must not leak through
+    expect(setBreakdown({ detail: { innings: [{ runs: 120 }] } }, "cricket")).toBeNull();
+    expect(setBreakdown({ detail: { sets: [{ home: "21", away: 15 }] } }, "badminton")).toBeNull();
+  });
+
+  it("strips the live-points suffix from the headline (shown in the card instead)", () => {
+    expect(stripLiveSetPoints("1 — 0 (14–11)")).toBe("1 — 0");
+    expect(stripLiveSetPoints("2 — 1")).toBe("2 — 1");
   });
 });

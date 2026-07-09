@@ -35,3 +35,23 @@ test("passwordless login: emailing a link creates the account and signs in", asy
   const cookies = await page.context().cookies();
   expect(cookies.some((c) => c.name === "seazn_session")).toBeTruthy();
 });
+
+// Invite pages (/join/{token}) send a `next` redirect with the email — both
+// the send AND consume endpoints must accept it (each once rejected it with a
+// strict schema) and the user must land on the invite page after sign-in.
+test("magic-link threads the invite-page `next` redirect through sign-in", async ({
+  request,
+  page,
+}) => {
+  const res = await request.post("/api/auth/magic-link", {
+    data: { email: `e2e-next-${Date.now().toString(36)}@example.com`, next: "/join/some-token" },
+  });
+  expect(res.ok()).toBeTruthy();
+  const body = await res.json();
+  expect(body.ok).toBe(true);
+  expect(body.data.login_url).toContain(`next=${encodeURIComponent("/join/some-token")}`);
+
+  // Opening the emailed link consumes the token and lands on the invite page.
+  await page.goto(body.data.login_url);
+  await page.waitForURL((u) => u.pathname === "/join/some-token", { timeout: 30_000 });
+});

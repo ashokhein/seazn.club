@@ -159,6 +159,24 @@ describe("badminton golden: 30-29 golden point", () => {
     bad(22, 19); // already won at 21-19
     bad(29, 29); // not terminal
   });
+
+  it("headline shows the open game's live points, then drops them once the game closes", () => {
+    // 3 rallies into game 1: sets 0-0, live points 2-1.
+    const winners: Side[] = ["home", "away", "home"];
+    const mid = fold(badminton, cfg, rallyMatch(badminton, winners));
+    expect(badminton.summary(mid).headline).toBe("0 — 0 (2–1)");
+
+    // Game 1 closes 21-1: no open set → no parenthetical.
+    for (let i = 0; i < 19; i++) winners.push("home");
+    const closed = fold(badminton, cfg, rallyMatch(badminton, winners));
+    expect(closed.setsWon).toEqual({ home: 1, away: 0 });
+    expect(badminton.summary(closed).headline).toBe("1 — 0");
+
+    // 1 rally into game 2: banked set plus fresh live points.
+    winners.push("away");
+    const second = fold(badminton, cfg, rallyMatch(badminton, winners));
+    expect(badminton.summary(second).headline).toBe("1 — 0 (0–1)");
+  });
 });
 
 // ---------------------------------------------------------------------------

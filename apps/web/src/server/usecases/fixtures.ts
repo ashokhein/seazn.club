@@ -2,7 +2,7 @@ import "server-only";
 // Fixture use-cases (doc 08 §3): schedule/venue/officials PATCH, lineups PUT,
 // ledger reads (events since_seq), live state (summary + last_seq for ETag).
 import type postgres from "postgres";
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { PatchFixture, PutLineup } from "@/server/api-v1/schemas";
@@ -170,6 +170,27 @@ export async function listEvents(auth: AuthCtx, fixtureId: string, sinceSeq: num
       where fixture_id = ${fixtureId} and seq > ${sinceSeq}
       order by seq`;
   });
+}
+
+/** Activity attribution: recorded_by → display name for a fixture's ledger.
+ *  The ids come from the tenant-scoped ledger read; `users` has no org RLS,
+ *  so the name lookup runs on the root client (same pattern as the org
+ *  members list). */
+export async function eventRecorderNames(
+  auth: AuthCtx,
+  fixtureId: string,
+): Promise<Record<string, string>> {
+  const ids = await withTenant(
+    auth.orgId,
+    (tx) => tx<{ recorded_by: string }[]>`
+      select distinct recorded_by from score_events
+      where fixture_id = ${fixtureId} and recorded_by is not null`,
+  );
+  if (ids.length === 0) return {};
+  const users = await sql<{ id: string; display_name: string | null; email: string }[]>`
+    select id, display_name, email from users
+    where id in ${sql(ids.map((r) => r.recorded_by))}`;
+  return Object.fromEntries(users.map((u) => [u.id, u.display_name ?? u.email]));
 }
 
 export interface FixtureStateOut {

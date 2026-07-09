@@ -4,7 +4,7 @@
 // POST /api/v1/fixtures/{id}/events with optimistic concurrency: every event
 // carries expected_seq + an idempotency key (doc 08 §4); a 409 resyncs from
 // the ledger and replays the UI.
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { describeEvent, EVENT_TONE_STYLE } from "@/lib/event-copy";
@@ -70,7 +70,9 @@ export interface EventIn {
   type: string;
   payload: unknown;
   recorded_at: string;
+  recorded_by?: string | null;
   voids_event_id: string | null;
+  device_link_id?: string | null;
 }
 
 interface Props {
@@ -88,6 +90,8 @@ interface Props {
   initialState: LiveState;
   initialEvents: EventIn[];
   canEdit: boolean;
+  /** recorded_by → display name for Activity attribution. */
+  recorderNames?: Record<string, string>;
 }
 
 export type SendEvent = (type: string, payload: unknown) => Promise<boolean>;
@@ -112,6 +116,7 @@ export function FixtureConsole({
   initialState,
   initialEvents,
   canEdit,
+  recorderNames = {},
 }: Props) {
   const router = useRouter();
   const [live, setLive] = useState<LiveState>(initialState);
@@ -316,6 +321,13 @@ export function FixtureConsole({
             {[...events].reverse().map((e) => {
               const voided = events.some((v) => v.voids_event_id === e.id);
               const desc = describeEvent(e.type, e.payload, entrantNames);
+              // Attribution: device-link events come from the handed device;
+              // signed-in recorders show by name.
+              const recorder = e.device_link_id
+                ? `Courtside ${sport.scorerLabel.toLowerCase()} pad`
+                : e.recorded_by
+                  ? (recorderNames[e.recorded_by] ?? sport.scorerLabel)
+                  : null;
               return (
                 <li
                   key={e.id}
@@ -328,7 +340,10 @@ export function FixtureConsole({
                   >
                     {desc.label}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-slate-700">{desc.text}</span>
+                  <span className="min-w-0 flex-1 truncate text-slate-700">
+                    {desc.text}
+                    {recorder ? <span className="text-slate-400"> ({recorder})</span> : null}
+                  </span>
                   <span className="shrink-0 text-slate-400">
                     {new Date(e.recorded_at).toLocaleTimeString()}
                   </span>
@@ -368,8 +383,17 @@ function ForfeitButton({
   send: SendEvent;
 }) {
   const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open]);
   return (
-    <div className="relative">
+    <div ref={ref} className="relative">
       <button
         type="button"
         disabled={busy}

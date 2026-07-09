@@ -15,6 +15,7 @@ interface SetBasedStateView {
   phase?: string;
   sets?: SetView[];
   setsWon?: { home: number; away: number };
+  cfg?: { bestOf?: number };
 }
 
 export function SetbasedPad({
@@ -43,6 +44,13 @@ export function SetbasedPad({
   const openSet = state.sets?.find((s) => !s.closed);
   const pre = state.phase === "pre" || live.status === "scheduled";
 
+  // Badminton/table-tennis call their sets "games" (engine unitLabel).
+  const unit = sport.key === "volleyball" ? "Set" : "Game";
+  // Current set number: the open set, or the next one about to start.
+  const closedCount = state.sets?.filter((s) => s.closed).length ?? 0;
+  const currentNo = closedCount + 1;
+  const bestOf = state.cfg?.bestOf;
+
   return (
     <div className="space-y-4">
       <div className="flex gap-1 text-xs">
@@ -61,7 +69,7 @@ export function SetbasedPad({
             onClick={() => setMode("summary")}
             className={`rounded-full px-3 py-1 ${mode === "summary" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
           >
-            Set totals
+            {unit} totals
           </button>
         )}
       </div>
@@ -73,28 +81,38 @@ export function SetbasedPad({
       )}
 
       {mode === "rally" && rallyType ? (
-        <div className="grid grid-cols-2 gap-3">
-          {[
-            { side: home, score: openSet?.home ?? 0, sets: state.setsWon?.home ?? 0 },
-            { side: away, score: openSet?.away ?? 0, sets: state.setsWon?.away ?? 0 },
-          ].map(({ side, score, sets }) => (
-            <button
-              key={side.id}
-              type="button"
-              disabled={busy || pre}
-              onClick={() => send(rallyType, { wonBy: side.id })}
-              className="rounded-xl border border-purple-200 bg-white p-6 text-center transition hover:border-purple-400 hover:bg-purple-50 disabled:opacity-50"
-            >
-              <span className="block truncate text-sm font-medium text-slate-700">
-                {side.name}
-              </span>
-              <span className="mt-1 block font-mono text-4xl text-slate-900">{score}</span>
-              <span className="mt-1 block text-xs text-slate-400">sets {sets}</span>
-              <span className="mt-2 block text-xs font-medium text-purple-600">
-                + point
-              </span>
-            </button>
-          ))}
+        <div className="space-y-2">
+          {!pre && (
+            <p className="text-xs font-semibold uppercase tracking-wide text-purple-600">
+              {unit} {currentNo}
+              {bestOf ? <span className="text-slate-400"> of {bestOf}</span> : null}
+            </p>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            {[
+              { side: home, score: openSet?.home ?? 0, sets: state.setsWon?.home ?? 0 },
+              { side: away, score: openSet?.away ?? 0, sets: state.setsWon?.away ?? 0 },
+            ].map(({ side, score, sets }) => (
+              <button
+                key={side.id}
+                type="button"
+                disabled={busy || pre}
+                onClick={() => send(rallyType, { wonBy: side.id })}
+                className="rounded-xl border border-purple-200 bg-white p-6 text-center transition hover:border-purple-400 hover:bg-purple-50 disabled:opacity-50"
+              >
+                <span className="block truncate text-sm font-medium text-slate-700">
+                  {side.name}
+                </span>
+                <span className="mt-1 block font-mono text-4xl text-slate-900">{score}</span>
+                <span className="mt-1 block text-xs text-slate-400">
+                  {unit.toLowerCase()}s won {sets}
+                </span>
+                <span className="mt-2 block text-xs font-medium text-purple-600">
+                  + point
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
       ) : (
         summaryType && (
@@ -134,10 +152,10 @@ export function SetbasedPad({
               disabled={busy || pre || sumHome === "" || sumAway === ""}
               className="btn btn-primary"
             >
-              Record set
+              Record {unit.toLowerCase()}
             </button>
             <span className="text-xs text-slate-400">
-              Enter each completed set&apos;s final points.
+              Enter each completed {unit.toLowerCase()}&apos;s final points.
             </span>
           </form>
         )
@@ -145,7 +163,7 @@ export function SetbasedPad({
 
       {(state.sets?.length ?? 0) > 0 && (
         <p className="font-mono text-xs text-slate-500">
-          Sets:{" "}
+          {unit}s:{" "}
           {state.sets!.map((s, i) => (
             <span key={i} className="mr-2">
               {s.home}–{s.away}

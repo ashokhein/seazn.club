@@ -142,9 +142,12 @@ export function resolveQualification(spec: QualificationSpec, tables: StageTable
       });
     }
     if (source.length < spec.topN) {
-      throw new EngineError("STAGE_NOT_READY", `topN=${spec.topN} exceeds ${source.length} entrants`, {
-        topN: spec.topN,
-      });
+      // Surfaces verbatim in the organiser UI — keep it human-readable.
+      throw new EngineError(
+        "STAGE_NOT_READY",
+        `This stage takes the top ${spec.topN}, but the previous stage has only ${source.length} entrant${source.length === 1 ? "" : "s"} — lower the qualifier count or add entrants`,
+        { topN: spec.topN, available: source.length },
+      );
     }
     return [...source]
       .sort((a, b) => (a.rank ?? Infinity) - (b.rank ?? Infinity))
