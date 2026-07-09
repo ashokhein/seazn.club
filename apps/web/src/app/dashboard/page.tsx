@@ -81,7 +81,7 @@ export default async function DashboardPage() {
                 </p>
               </div>
               <Link href="/competitions/new" className="btn btn-primary">
-                + New Competition
+                Create your first competition
               </Link>
             </div>
           ) : (

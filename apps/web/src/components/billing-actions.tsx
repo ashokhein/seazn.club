@@ -99,7 +99,13 @@ export function DowngradeButton() {
   );
 }
 
-export function ManageBillingButton() {
+export function ManageBillingButton({
+  label = "Manage billing →",
+  primary = false,
+}: {
+  label?: string;
+  primary?: boolean;
+} = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -122,8 +128,12 @@ export function ManageBillingButton() {
 
   return (
     <div>
-      <button onClick={go} disabled={loading} className="btn btn-ghost disabled:opacity-60">
-        {loading ? "Opening portal…" : "Manage billing →"}
+      <button
+        onClick={go}
+        disabled={loading}
+        className={`btn ${primary ? "btn-primary" : "btn-ghost"} disabled:opacity-60`}
+      >
+        {loading ? "Opening portal…" : label}
       </button>
       {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>

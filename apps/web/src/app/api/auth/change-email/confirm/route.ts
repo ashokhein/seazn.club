@@ -4,7 +4,7 @@ import { invalidateUser } from "@/lib/auth";
 
 /**
  * Confirm an email-address change via the token link sent to the new address.
- * Redirects to /settings/account on success or failure.
+ * Redirects to /settings?tab=account on success or failure.
  */
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -23,12 +23,12 @@ export async function GET(req: Request) {
 
     if (!row) {
       return NextResponse.redirect(
-        new URL("/settings/account?email_change=invalid", req.url),
+        new URL("/settings?tab=account&email_change=invalid", req.url),
       );
     }
     if (row.confirmed || new Date(row.expires_at) < new Date()) {
       return NextResponse.redirect(
-        new URL("/settings/account?email_change=expired", req.url),
+        new URL("/settings?tab=account&email_change=expired", req.url),
       );
     }
 
@@ -39,7 +39,7 @@ export async function GET(req: Request) {
     if (taken) {
       await sql`delete from email_change_requests where id = ${row.id}`;
       return NextResponse.redirect(
-        new URL("/settings/account?email_change=taken", req.url),
+        new URL("/settings?tab=account&email_change=taken", req.url),
       );
     }
 
@@ -50,11 +50,11 @@ export async function GET(req: Request) {
     await invalidateUser(row.user_id);
 
     return NextResponse.redirect(
-      new URL("/settings/account?email_change=success", req.url),
+      new URL("/settings?tab=account&email_change=success", req.url),
     );
   } catch {
     return NextResponse.redirect(
-      new URL("/settings/account?email_change=error", req.url),
+      new URL("/settings?tab=account&email_change=error", req.url),
     );
   }
 }

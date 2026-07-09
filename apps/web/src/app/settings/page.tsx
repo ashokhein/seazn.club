@@ -3,22 +3,20 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   Building2, Users, CreditCard, UserCircle,
-  Pencil, Image as ImageIcon, ArrowLeftRight, Zap, BarChart2,
-  TrendingUp, User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote,
+  Pencil, Image as ImageIcon, ArrowLeftRight,
+  User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, Cookie,
   type LucideIcon,
 } from "lucide-react";
-import { getActiveOrgId, getCurrentUser, getUserOrgs, requireOrgRole } from "@/lib/auth";
+import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { sql } from "@/lib/db";
-import { getLimit, hasFeature } from "@/lib/entitlements";
-import { EDITOR_ROLES, ORG_ROLES, type OrgMember, type Subscription } from "@/lib/types";
+import { hasFeature } from "@/lib/entitlements";
+import { EDITOR_ROLES, type OrgMember } from "@/lib/types";
 import { Nav } from "@/components/nav";
-import { BillingBanner } from "@/components/billing-banner";
 import { OrgTeam } from "@/components/org-team";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { OrgRename } from "@/components/org-rename";
 import { OrgLogo } from "@/components/org-logo";
 import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
-import { UpgradeButton, ManageBillingButton } from "@/components/billing-actions";
 import {
   DisplayNameForm,
   ChangeEmailForm,
@@ -27,6 +25,7 @@ import {
   DeleteAccountButton,
 } from "@/components/account-actions";
 import { ApiKeysPanel } from "@/components/api-keys";
+import { CookieSettingsButton } from "@/components/cookie-settings-button";
 import { TourReplayButton } from "@/components/tour-replay";
 import { PlanBadge } from "@/components/plan-badge";
 
@@ -61,74 +60,19 @@ const ROLE_BADGE: Record<string, string> = {
   viewer: "bg-slate-100 text-slate-600",
 };
 
-const STATUS_BADGE: Record<string, string> = {
-  trialing: "bg-purple-100 text-purple-700",
-  active: "bg-green-100 text-green-700",
-  past_due: "bg-amber-100 text-amber-700",
-  canceled: "bg-slate-100 text-slate-500",
-  suspended: "bg-red-100 text-red-700",
-};
+type Tab = "organization" | "team" | "api" | "account";
 
-function fmt(iso: string | null) {
-  if (!iso) return null;
-  return new Date(iso).toLocaleDateString("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function daysUntil(iso: string | null): number | null {
-  if (!iso) return null;
-  return Math.ceil((new Date(iso).getTime() - Date.now()) / 86_400_000);
-}
-
-function UsageRow({
-  label,
-  current,
-  limit,
-  note,
-}: {
-  label: string;
-  current: number | null;
-  limit: number | null;
-  note?: string;
-}) {
-  const unlimited = limit === null;
-  const pct = unlimited || current === null ? null : Math.min((current / limit) * 100, 100);
-  return (
-    <div>
-      <div className="flex justify-between text-sm">
-        <span className="text-slate-600">
-          {label}
-          {note && <span className="ml-1 text-xs text-slate-400">({note})</span>}
-        </span>
-        <span className="font-medium text-slate-800">
-          {current !== null ? `${current} / ` : ""}
-          {unlimited ? "∞" : limit}
-        </span>
-      </div>
-      {pct !== null && (
-        <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100">
-          <div
-            className={`h-1.5 rounded-full ${pct >= 90 ? "bg-amber-500" : "bg-purple-400"}`}
-            style={{ width: `${pct}%` }}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-type Tab = "organization" | "team" | "billing" | "api" | "account";
-
-const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon }[] = [
-  { tab: "organization",  label: "Organisation",   icon: Building2    },
-  { tab: "team",          label: "Team",           icon: Users        },
-  { tab: "billing",       label: "Plan & billing", icon: CreditCard   },
-  { tab: "api",           label: "Platform API",   icon: KeyRound     },
-  { tab: "account",       label: "Account",        icon: UserCircle   },
+// Plan & billing lives at its own route (/settings/billing) — it owns the
+// Stripe checkout-return reconciliation and portal flows — so it links out of
+// the tabbed sidebar rather than rendering an inline panel here.
+const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon; href?: string }[] = [
+  { tab: "organization",  label: "Organisation",   icon: Building2  },
+  { tab: "team",          label: "Team",           icon: Users      },
+  { tab: "api",           label: "Platform API",   icon: KeyRound   },
+  { tab: "account",       label: "Account",        icon: UserCircle },
 ];
+
+const BILLING_NAV = { label: "Plan & billing", icon: CreditCard, href: "/settings/billing" } as const;
 
 export default async function SettingsPage({
   searchParams,
@@ -162,28 +106,6 @@ export default async function SettingsPage({
     ]);
   }
 
-  // Billing tab data (doc 10 §1 entitlement keys)
-  let sub: Subscription | undefined;
-  let activeCompetitions = 0;
-  let competitionsLimit: number | null = null;
-  let divisionsLimit: number | null = null;
-  let entrantsLimit: number | null = null;
-  if (tab === "billing") {
-    const { role } = await requireOrgRole(active.id, ORG_ROLES);
-    void role; // only needed to confirm membership
-    const [subRow] = await sql<Subscription[]>`select * from subscriptions where org_id = ${active.id}`;
-    sub = subRow;
-    const [{ cnt }] = await sql<{ cnt: number }[]>`
-      select count(*)::int as cnt from competitions
-      where org_id = ${active.id} and status in ('draft', 'published', 'live')`;
-    activeCompetitions = cnt;
-    [competitionsLimit, divisionsLimit, entrantsLimit] = await Promise.all([
-      getLimit(active.id, "competitions.max_active"),
-      getLimit(active.id, "divisions.per_competition.max"),
-      getLimit(active.id, "entrants.per_division.max"),
-    ]);
-  }
-
   // Account tab data
   const orgMembersMap = new Map<string, OrgMember[]>();
   if (tab === "account") {
@@ -209,18 +131,9 @@ export default async function SettingsPage({
       }[email_change] ?? null)
     : null;
 
-  // Billing helpers
-  const planKey = sub?.plan_key ?? "community";
-  const subStatus = sub?.status ?? "active";
-  const isPro = planKey === "pro";
-  const isOwner = active.role === "owner";
-  const hasStripeCustomer = !!sub?.stripe_customer_id;
-  const trialDays = daysUntil(sub?.trial_end ?? null);
-
   return (
     <>
       <Nav />
-      {tab === "billing" && <BillingBanner orgId={active.id} />}
       <div className="mx-auto max-w-5xl px-4 py-8">
         <div className="flex gap-8">
 
@@ -250,6 +163,14 @@ export default async function SettingsPage({
                   </Link>
                 );
               })}
+              {/* Plan & billing is its own route (owns Stripe reconciliation). */}
+              <Link
+                href={BILLING_NAV.href}
+                className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
+              >
+                <BILLING_NAV.icon className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />
+                {BILLING_NAV.label}
+              </Link>
             </nav>
             <div className="my-4 border-t border-purple-100" />
             <Link
@@ -302,7 +223,7 @@ export default async function SettingsPage({
                       <p className="flex items-center gap-2 text-sm text-slate-400">
                         <PlanBadge feature="branding" />
                         Org logo requires{" "}
-                        <Link href="/settings?tab=billing" className="text-purple-600 underline">
+                        <Link href="/settings/billing" className="text-purple-600 underline">
                           an upgrade
                         </Link>
                       </p>
@@ -342,92 +263,6 @@ export default async function SettingsPage({
               </section>
             )}
 
-            {/* ── BILLING ── */}
-            {tab === "billing" && (
-              <div className="space-y-5">
-                {/* Current plan */}
-                <section className="card p-5">
-                  <SectionHeader icon={Zap}>Current plan</SectionHeader>
-                  <div className="flex items-center justify-between gap-4">
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xl font-bold text-slate-800 capitalize">{planKey}</span>
-                        <span className={`badge ${STATUS_BADGE[subStatus] ?? "bg-slate-100 text-slate-500"}`}>
-                          {subStatus.replace("_", " ")}
-                        </span>
-                      </div>
-                      {subStatus === "trialing" && trialDays !== null && (
-                        <p className="mt-1 text-sm text-purple-600">
-                          {trialDays > 0
-                            ? `${trialDays} day${trialDays === 1 ? "" : "s"} remaining in trial`
-                            : "Trial ended"}
-                        </p>
-                      )}
-                      {sub?.current_period_end && subStatus === "active" && (
-                        <p className="mt-1 text-sm text-slate-500">
-                          {sub.cancel_at_period_end
-                            ? `Cancels on ${fmt(sub.current_period_end)}`
-                            : `Renews ${fmt(sub.current_period_end)}`}
-                        </p>
-                      )}
-                    </div>
-                    {isOwner && isPro && hasStripeCustomer && <ManageBillingButton />}
-                  </div>
-                </section>
-
-                {/* Usage */}
-                <section className="card p-5">
-                  <SectionHeader icon={BarChart2}>Usage</SectionHeader>
-                  <div className="space-y-3">
-                    <UsageRow label="Active competitions" current={activeCompetitions} limit={competitionsLimit} />
-                    <UsageRow label="Divisions per competition" current={null} limit={divisionsLimit} />
-                    <UsageRow label="Entrants per division" current={null} limit={entrantsLimit} />
-                  </div>
-                </section>
-
-                {/* Upgrade */}
-                {!isPro && isOwner && (
-                  <section className="card p-5">
-                    <SectionHeader icon={TrendingUp}>Upgrade to Pro</SectionHeader>
-                    <div className="mb-5 grid grid-cols-2 gap-3 text-sm">
-                      <div className="rounded-xl border border-slate-200 p-4">
-                        <p className="mb-1 font-semibold text-slate-700">Community</p>
-                        <p className="text-2xl font-bold text-slate-800">Free</p>
-                        <ul className="mt-3 space-y-1 text-slate-500">
-                          <li>✓ Core formats</li>
-                          <li>✓ 2 active competitions</li>
-                          <li>✓ 1 division/competition</li>
-                          <li>✓ 16 entrants/division</li>
-                          <li className="text-slate-300">✗ Branding</li>
-                          <li className="text-slate-300">✗ Ball-by-ball scoring</li>
-                          <li className="text-slate-300">✗ Platform API</li>
-                        </ul>
-                      </div>
-                      <div className="rounded-xl border-2 border-purple-500 bg-purple-50 p-4">
-                        <p className="mb-1 font-semibold text-purple-700">Pro</p>
-                        <p className="text-2xl font-bold text-slate-800">
-                          $20<span className="text-base font-normal text-slate-500">/mo</span>
-                        </p>
-                        <ul className="mt-3 space-y-1 text-slate-700">
-                          <li>✓ All formats incl. double elim</li>
-                          <li>✓ Unlimited competitions</li>
-                          <li>✓ Unlimited divisions</li>
-                          <li>✓ 256 entrants/division</li>
-                          <li>✓ Custom branding</li>
-                          <li>✓ Ball-by-ball / rally scoring</li>
-                          <li>✓ Platform API + keys</li>
-                        </ul>
-                      </div>
-                    </div>
-                    <p className="mb-4 text-xs text-slate-400">
-                      14-day free trial · no card required · cancel anytime
-                    </p>
-                    <UpgradeButton interval="monthly" label="Start free trial — $20/mo" />
-                  </section>
-                )}
-              </div>
-            )}
-
             {/* ── PLATFORM API ── */}
             {tab === "api" && (
               <section className="card p-6">
@@ -442,7 +277,7 @@ export default async function SettingsPage({
                   <p className="flex items-center gap-2 text-sm text-slate-400">
                     <PlanBadge feature="api.access" />
                     Platform API keys require{" "}
-                    <Link href="/settings?tab=billing" className="text-purple-600 underline">
+                    <Link href="/settings/billing" className="text-purple-600 underline">
                       an upgrade
                     </Link>
                   </p>
@@ -498,6 +333,27 @@ export default async function SettingsPage({
                   </SectionHeader>
                   <p className="text-sm text-slate-500">
                     Download a copy of your profile, organizations, and tournaments.
+                  </p>
+                </section>
+
+                {/* Privacy & cookies — analytics consent can be changed/withdrawn here. */}
+                <section className="card p-5">
+                  <SectionHeader
+                    icon={Cookie}
+                    action={
+                      <CookieSettingsButton className="btn btn-ghost text-xs">
+                        Cookie settings
+                      </CookieSettingsButton>
+                    }
+                  >
+                    Privacy &amp; cookies
+                  </SectionHeader>
+                  <p className="text-sm text-slate-500">
+                    Change or withdraw your consent for PostHog product analytics. See our{" "}
+                    <Link href="/legal/cookie-policy" className="text-purple-600 underline">
+                      cookie policy
+                    </Link>
+                    .
                   </p>
                 </section>
 

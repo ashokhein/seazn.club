@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, requireOrgRole } from "@/lib/auth";
 import { sql } from "@/lib/db";
-import { reconcileCheckout } from "@/lib/billing";
+import { reconcileCheckout, billingCtaLabel } from "@/lib/billing";
 import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, ManageBillingButton, DowngradeButton } from "@/components/billing-actions";
@@ -145,7 +145,12 @@ export default async function BillingPage({
               )}
             </div>
 
-            {isOwner && isPro && hasStripeCustomer && <ManageBillingButton />}
+            {isOwner && isPro && hasStripeCustomer && (
+              <ManageBillingButton
+                label={billingCtaLabel(status)}
+                primary={status === "trialing"}
+              />
+            )}
             {isOwner && isPro && !hasStripeSubscription && <DowngradeButton />}
           </div>
         </section>

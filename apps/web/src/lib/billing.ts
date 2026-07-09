@@ -73,6 +73,15 @@ const STATUS_MAP: Record<string, string> = {
   paused: "past_due",
 };
 
+/**
+ * Label for the portal button on the billing page. A trialing Pro org has a
+ * Stripe customer but no card yet (14-day no-card trial), so the primary ask is
+ * "add a card"; once active it becomes ordinary billing management.
+ */
+export function billingCtaLabel(status: string): string {
+  return status === "trialing" ? "Add a card to keep Pro →" : "Manage billing →";
+}
+
 /** Look up our plan_key from a Stripe price ID. */
 export async function planKeyForPrice(priceId: string): Promise<string | null> {
   const [row] = await sql<{ key: string }[]>`
