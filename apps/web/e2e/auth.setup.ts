@@ -60,8 +60,19 @@ setup("authenticate as a fresh Pro org", async ({ page, request }) => {
   // Pre-dismiss the cookie-consent banner. It renders app-wide (root layout)
   // and its fixed overlay intercepts pointer events, so without this the banner
   // would sit over buttons and fail clicks across the suite. "rejected" keeps
-  // analytics off for tests. Captured into storageState → reused by every spec.
-  await page.evaluate(() => localStorage.setItem("seazn_cookie_consent", "rejected"));
+  // analytics off for tests. Both keys are required — the version stamp must
+  // match COOKIE_POLICY_VERSION or the re-prompt logic reopens the banner.
+  // Captured into storageState → reused by every spec.
+  const { CONSENT_KEY, CONSENT_VERSION_KEY, COOKIE_POLICY_VERSION } = await import(
+    "../src/lib/consent"
+  );
+  await page.evaluate(
+    ([k, vk, v]) => {
+      localStorage.setItem(k, "rejected");
+      localStorage.setItem(vk, v);
+    },
+    [CONSENT_KEY, CONSENT_VERSION_KEY, COOKIE_POLICY_VERSION] as const,
+  );
 
   await page.context().storageState({ path: AUTH_STATE });
 });
