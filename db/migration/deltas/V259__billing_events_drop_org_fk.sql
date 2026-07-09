@@ -1,0 +1,16 @@
+-- ---------------------------------------------------------------------------
+-- billing_events is a Stripe webhook idempotency / audit log. Its org_id is
+-- copied verbatim from Stripe event metadata — an external, cross-environment
+-- value we do not control. It can point at an org created in a *different*
+-- database (one Stripe test key feeds local + staging through a single
+-- registered webhook endpoint) or at one removed by a later baseline/schema
+-- migration. A hard FK to the mutable organizations table turns the guard
+-- insert into a foreign-key violation, the webhook returns 5xx, and Stripe
+-- retry-storms the endpoint forever.
+--
+-- Drop the constraint. org_id stays as best-effort informational data; the
+-- full event object (org_id included) is already preserved in payload jsonb,
+-- so nothing auditable is lost. IF EXISTS heals drift — some environments
+-- (e.g. staging, post seazn_club relocation) already lack this constraint.
+-- ---------------------------------------------------------------------------
+alter table billing_events drop constraint if exists billing_events_org_id_fkey;
