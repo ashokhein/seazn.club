@@ -93,6 +93,18 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Stock Redis speaks the same protocol as Upstash (our client is ioredis
+      # over REDIS_URL, not the Upstash REST SDK), so this exercises the real
+      # rate-limiter path — Lua EVAL, TTL, 429 — end to end in CI.
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       # Superuser connection so the app can `set role app_user` (RLS). Local =>
@@ -134,6 +146,15 @@ jobs:
 
       - name: Engine-db + service-layer integration tests (real Postgres)
         run: npm test --workspace apps/web -- run src/server
+
+      # REDIS_URL is scoped to this step only. Setting it job-wide would switch
+      # the entitlement cache (lib/entitlements.ts) on for the src/server suite,
+      # whose tests mutate entitlements via raw SQL without invalidating the
+      # cache — stale reads, false failures. The limiter test is self-contained.
+      - name: Rate-limiter integration tests (real Redis)
+        run: npm test --workspace apps/web -- run src/lib/__tests__/rate-limit.redis.test.ts
+        env:
+          REDIS_URL: redis://localhost:6379
 
       - name: Start dev server
         run: |

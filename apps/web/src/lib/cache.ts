@@ -79,18 +79,26 @@ export async function cacheDelPattern(pattern: string): Promise<void> {
   }
 }
 
+// INCR + set-TTL-on-first-hit as one atomic server-side step. Done as a single
+// Lua EVAL rather than INCR then EXPIRE so (a) a crash/error can't strand a key
+// with no TTL — which would lock that identifier out forever — and (b) it bills
+// as one Upstash command instead of two on pay-as-you-go.
+const INCR_WINDOW_LUA = `
+local n = redis.call('INCR', KEYS[1])
+if n == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end
+return n`;
+
 /**
  * Fixed-window counter. Returns the new count for `key` within the window, or
- * null if Redis is unavailable (caller should fall back). Sets the TTL on the
- * first increment of a window.
+ * null if Redis is unavailable (caller decides the fallback policy). The TTL is
+ * set atomically on the first increment of a window.
  */
 export async function incrWindow(key: string, windowSeconds: number): Promise<number | null> {
   const c = client();
   if (!c) return null;
   try {
-    const n = await c.incr(key);
-    if (n === 1) await c.expire(key, windowSeconds);
-    return n;
+    const n = await c.eval(INCR_WINDOW_LUA, 1, key, String(windowSeconds));
+    return Number(n);
   } catch {
     return null;
   }
