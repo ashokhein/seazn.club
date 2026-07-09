@@ -5,8 +5,11 @@
 // it directly.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const cacheMock = vi.hoisted(() => ({ incrWindow: vi.fn() }));
-vi.mock("@/lib/cache", () => ({ incrWindow: cacheMock.incrWindow }));
+const cacheMock = vi.hoisted(() => ({ incrWindow: vi.fn(), cacheEnabled: vi.fn(() => true) }));
+vi.mock("@/lib/cache", () => ({
+  incrWindow: cacheMock.incrWindow,
+  cacheEnabled: cacheMock.cacheEnabled,
+}));
 
 import { HttpError } from "@/lib/errors";
 import {
@@ -19,7 +22,11 @@ import {
 
 const CFG = { max: 3, windowSeconds: 60 };
 
-afterEach(() => cacheMock.incrWindow.mockReset());
+afterEach(() => {
+  cacheMock.incrWindow.mockReset();
+  cacheMock.cacheEnabled.mockReset();
+  cacheMock.cacheEnabled.mockReturnValue(true); // Redis configured by default
+});
 
 describe("rateLimit (Upstash-only)", () => {
   it("passes when the count is within the cap", async () => {
@@ -40,7 +47,7 @@ describe("rateLimit (Upstash-only)", () => {
     expect(cacheMock.incrWindow).toHaveBeenCalledWith("rl:login:1.2.3.4", 60);
   });
 
-  describe("when Redis is unavailable (incrWindow → null)", () => {
+  describe("when Redis is configured but unreachable (incrWindow → null)", () => {
     it("fails open by default — allows the request", async () => {
       cacheMock.incrWindow.mockResolvedValue(null);
       await expect(rateLimit("pub:1.2.3.4", CFG)).resolves.toBeUndefined();
@@ -48,9 +55,20 @@ describe("rateLimit (Upstash-only)", () => {
 
     it("fails closed when configured — throws 429", async () => {
       cacheMock.incrWindow.mockResolvedValue(null);
+      cacheMock.cacheEnabled.mockReturnValue(true);
       await expect(
         rateLimit("login:1.2.3.4", { ...CFG, failClosed: true }),
       ).rejects.toBeInstanceOf(HttpError);
+    });
+  });
+
+  describe("when Redis is not configured at all (local dev / e2e)", () => {
+    it("is inert — allows even a failClosed limit so auth flows work", async () => {
+      cacheMock.incrWindow.mockResolvedValue(null);
+      cacheMock.cacheEnabled.mockReturnValue(false);
+      await expect(
+        rateLimit("login:1.2.3.4", { ...CFG, failClosed: true }),
+      ).resolves.toBeUndefined();
     });
   });
 

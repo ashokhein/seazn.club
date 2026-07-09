@@ -1,6 +1,6 @@
 import "server-only";
 import { HttpError } from "@/lib/errors";
-import { incrWindow } from "@/lib/cache";
+import { incrWindow, cacheEnabled } from "@/lib/cache";
 
 export interface RateLimitConfig {
   /** Max requests allowed within `windowSeconds`. */
@@ -8,10 +8,13 @@ export interface RateLimitConfig {
   /** Window size in seconds. */
   windowSeconds: number;
   /**
-   * Behaviour when Redis is unavailable (an Upstash blip). Redis is the sole
-   * backend — there is no Postgres fallback — so this decides the tradeoff:
-   * `true` → deny with 429 (abuse-protection first), `false`/omitted → allow
-   * (availability first). Default is fail-open.
+   * Behaviour when Redis is *configured but unreachable* (an Upstash blip).
+   * Redis is the sole backend — there is no Postgres fallback — so this decides
+   * the tradeoff: `true` → deny with 429 (abuse-protection first),
+   * `false`/omitted → allow (availability first). Default is fail-open.
+   *
+   * Only applies when a REDIS_URL is set. With no Redis configured at all (local
+   * dev, e2e) the limiter is inert and always allows, regardless of this flag.
    */
   failClosed?: boolean;
 }
@@ -37,8 +40,11 @@ export async function rateLimit(
   const count = await incrWindow(`rl:${key}`, windowSeconds);
 
   if (count === null) {
-    // Redis unavailable — no fallback backend. Apply the per-limit policy.
-    if (failClosed) throw new HttpError(429, TOO_MANY);
+    // No count from Redis. Two distinct cases:
+    //  - Redis not configured (local dev, e2e): limiter is inert → always allow,
+    //    even for failClosed limits, so auth flows work without a Redis.
+    //  - Redis configured but unreachable (a real outage): apply failClosed.
+    if (failClosed && cacheEnabled()) throw new HttpError(429, TOO_MANY);
     return;
   }
 
