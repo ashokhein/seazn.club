@@ -12,6 +12,9 @@ node_modules/
 
 # testing
 coverage/
+# Playwright artifacts (also ignored in apps/web; this catches runs from the repo root)
+test-results/
+playwright-report/
 # PROMPT-14 simulation failure artifacts (uploaded by CI, replayed via sim:replay)
 sim-failures/
 
