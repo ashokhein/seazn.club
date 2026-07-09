@@ -1,0 +1,115 @@
+name: E2E
+
+# Playwright UI e2e suite, split out of the CI smoke job so PRs stay fast.
+# Runs automatically on pushes to main; for a PR, trigger it manually and
+# pass the PR number (Actions -> E2E -> Run workflow).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: "PR number to run the e2e suite against (empty = main)"
+        required: false
+        type: string
+
+concurrency:
+  group: e2e-${{ inputs.pr || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Playwright e2e (Postgres container)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      # No Redis on purpose: without REDIS_URL the rate limiter is inert
+      # (lib/rate-limit.ts), so the suite's magic-link logins can't trip the
+      # fail-closed 5-per-5-min email budget.
+
+    env:
+      # Superuser connection so the app can `set role app_user` (RLS). Local =>
+      # no SSL. Port 5432 keeps prepared statements on (not the Supabase pooler).
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DATABASE_SSL: disable
+      # Session signing secret (jose HS256) — CI-only dummy.
+      AUTH_SECRET: ci-only-insecure-secret-please-change-in-prod-0123456789
+      NEXT_PUBLIC_SUPABASE_URL: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Manual runs can target a PR by number; otherwise the pushed ref.
+          ref: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || github.ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Flyway CLI is downloaded by scripts/flyway.sh on first use; cache it
+      # per pinned version so CI doesn't re-download every run.
+      - name: Cache Flyway CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/seazn-flyway
+          key: flyway-cli-10.22.0-linux-x64
+
+      - name: Bootstrap database (Flyway migrate)
+        run: npm run db:apply
+
+      - name: Sync sport catalog from the engine registry
+        run: npm run sync:sports
+
+      - name: Start dev server
+        run: |
+          npm run dev > dev-server.log 2>&1 &
+          echo "waiting for server…"
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:3000/api/health >/dev/null; then
+              echo "server up after ${i}s window"; exit 0
+            fi
+            sleep 2
+          done
+          echo "server did not become healthy"; cat dev-server.log; exit 1
+
+      # Browsers cached per Playwright version.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/package-lock.json', 'package-lock.json') }}
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - name: Run Playwright e2e
+        run: npm run test:e2e
+        working-directory: apps/web
+        env:
+          PLAYWRIGHT_BASE: http://localhost:3000
+
+      - name: Upload Playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          retention-days: 7
+
+      - name: Dev server log (on failure)
+        if: failure()
+        run: cat dev-server.log || true
