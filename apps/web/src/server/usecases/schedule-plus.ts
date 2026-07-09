@@ -13,6 +13,7 @@ import {
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
+import { isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { appendDivisionEvent } from "@/server/engine-db";
 import type { ScheduleConfig } from "@/server/api-v1/schemas";
@@ -198,6 +199,20 @@ export async function aiConstraintsForDivision(
   prose: string,
   generate?: (system: string, prose: string) => Promise<unknown>,
 ): Promise<AiConstraintsOut> {
+  // Feature 3 — server-side flag as a rollout kill-switch, evaluated BEFORE the
+  // billing entitlement. fallback:true means "on unless PostHog explicitly
+  // turns it off", so an unconfigured PostHog (or a lookup blip) never breaks
+  // the paid feature. Flip the `ai-scheduling` flag off in PostHog to disable
+  // it for everyone (or a % / group cohort) without a redeploy. This is
+  // rollout control, NOT entitlement — the paid gate below is still enforced.
+  const flagOn = await isServerFeatureEnabled(
+    "ai-scheduling",
+    auth.userId ?? `org:${auth.orgId}`,
+    { orgId: auth.orgId, fallback: true },
+  );
+  if (!flagOn) {
+    throw new HttpError(503, "AI-assisted scheduling is temporarily unavailable.");
+  }
   await requireFeature(auth.orgId, "scheduling.ai");
   const parsed = await parseAiConstraints(prose, generate);
 

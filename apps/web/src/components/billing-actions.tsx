@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react";
 import { loadStripe } from "@stripe/stripe-js";
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from "@stripe/react-stripe-js";
+import { track, EVENTS } from "@/lib/analytics";
 
 // Load Stripe.js once for the whole app (publishable key is public).
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "");
@@ -55,6 +56,7 @@ export function UpgradeButton({
         onClick={() => {
           setError(null);
           setOpen(true);
+          track(EVENTS.CHECKOUT_STARTED, { plan_key: "pro", interval });
         }}
         className="btn btn-primary"
       >

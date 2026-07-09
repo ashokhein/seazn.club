@@ -19,6 +19,8 @@ import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getLimit, requireFeature } from "@/lib/entitlements";
 import { getStripe } from "@/lib/stripe";
+import { captureServer } from "@/lib/posthog-server";
+import { EVENTS } from "@/lib/analytics-events";
 import { sendRegistrationEmail, sendPaymentReminderEmail } from "@/lib/email";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type {
@@ -664,6 +666,20 @@ export async function submitRegistration(
     paymentInstructions: paid && reg.status !== "waitlisted" ? ctx.payment_instructions : null,
     statusUrl,
   }).catch(() => {});
+
+  // Public-registration funnel (feature 1): a distinct anonymous person per
+  // registrant (no login here), grouped by the receiving org.
+  await captureServer({
+    event: EVENTS.REGISTRATION_SUBMITTED,
+    distinctId: `reg:${reg.id}`,
+    orgId: ctx.org_id,
+    properties: {
+      division_id: input.division_id,
+      status: reg.status,
+      paid,
+      entrant_kind: settings.entrant_kind,
+    },
+  });
 
   // Stripe checkout is disabled — offline payment only.
   return { registration: reg, access_token: secret, checkout_url: null };

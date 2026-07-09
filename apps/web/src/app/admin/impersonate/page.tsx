@@ -1,3 +1,4 @@
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { sql } from "@/lib/db";
 import { createSession, setActiveOrgId } from "@/lib/auth";
@@ -29,6 +30,18 @@ export default async function ImpersonatePage({ searchParams }: PageProps) {
 
   // Create session as target user
   await createSession(row.target_id);
+
+  // Readable (non-httpOnly) marker so client analytics skips capture while
+  // staff impersonate — keeps impersonated activity out of real user data.
+  // Cleared on the target user's next genuine login by the auth flow lifetime.
+  const jar = await cookies();
+  jar.set("seazn_no_analytics", "1", {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60, // matches the 1-hour impersonation token
+  });
 
   // Set their first org as active
   const [firstOrg] = await sql<{ id: string }[]>`

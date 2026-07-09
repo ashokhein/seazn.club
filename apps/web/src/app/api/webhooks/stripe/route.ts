@@ -6,6 +6,16 @@ import { syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { handleRegistrationCheckoutCompleted } from "@/server/usecases/registrations";
 import { syncConnectAccount } from "@/server/usecases/stripe-connect";
+import { captureServer } from "@/lib/posthog-server";
+import { EVENTS } from "@/lib/analytics-events";
+
+/** Best-effort person id for org-scoped revenue events: the org owner, falling
+ *  back to a synthetic org id so the event still lands on the org group. */
+async function ownerDistinctId(orgId: string): Promise<string> {
+  const [row] = await sql<{ created_by: string | null }[]>`
+    select created_by from organizations where id = ${orgId}`;
+  return row?.created_by ?? `org:${orgId}`;
+}
 
 // ---------------------------------------------------------------------------
 // Event handlers
@@ -45,6 +55,11 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
     set plan_key = 'community', status = 'canceled', updated_at = now()
     where org_id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);
+  await captureServer({
+    event: EVENTS.SUBSCRIPTION_CANCELED,
+    distinctId: await ownerDistinctId(orgId),
+    orgId,
+  });
 }
 
 /** In Stripe v22 the subscription ref moved to invoice.parent.subscription_details.subscription */
@@ -57,9 +72,17 @@ function invoiceSubId(invoice: Stripe.Invoice): string | null {
 async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   const subId = invoiceSubId(invoice);
   if (!subId) return;
-  await sql`
+  const [row] = await sql<{ org_id: string }[]>`
     update subscriptions set status = 'past_due', updated_at = now()
-    where stripe_subscription_id = ${subId}`;
+    where stripe_subscription_id = ${subId}
+    returning org_id`;
+  if (row) {
+    await captureServer({
+      event: EVENTS.PAYMENT_FAILED,
+      distinctId: await ownerDistinctId(row.org_id),
+      orgId: row.org_id,
+    });
+  }
 }
 
 async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
@@ -109,9 +132,20 @@ export async function POST(req: Request) {
         await handleCheckoutCompleted(event.data.object as Stripe.Checkout.Session);
         break;
       case "customer.subscription.created":
-      case "customer.subscription.updated":
-        await handleSubscriptionChanged(event.data.object as Stripe.Subscription);
+      case "customer.subscription.updated": {
+        const stripeSub = event.data.object as Stripe.Subscription;
+        await handleSubscriptionChanged(stripeSub);
+        // Fire the activation-of-revenue event once, on creation only.
+        if (event.type === "customer.subscription.created" && stripeSub.metadata?.org_id) {
+          await captureServer({
+            event: EVENTS.SUBSCRIPTION_STARTED,
+            distinctId: await ownerDistinctId(stripeSub.metadata.org_id),
+            orgId: stripeSub.metadata.org_id,
+            properties: { plan_key: stripeSub.metadata?.plan_key, status: stripeSub.status },
+          });
+        }
         break;
+      }
       case "customer.subscription.deleted":
         await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
         break;

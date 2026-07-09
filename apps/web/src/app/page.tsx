@@ -4,7 +4,6 @@ import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
-import { CookieConsent } from "@/components/cookie-consent";
 import { getDiscoveryLive, getDiscoveryThisWeek } from "@/server/public-site/discovery";
 import { LiveNowStrip, ThisWeekSection } from "@/components/discovery-cards";
 
@@ -248,7 +247,6 @@ export default async function HomePage() {
         </section>
       </main>
       <MarketingFooter />
-      <CookieConsent />
     </>
   );
 }

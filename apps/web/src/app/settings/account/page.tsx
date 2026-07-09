@@ -11,6 +11,7 @@ import {
   TransferOwnerForm,
   DeleteAccountButton,
 } from "@/components/account-actions";
+import { CookieSettingsButton } from "@/components/cookie-settings-button";
 import type { OrgMember } from "@/lib/types";
 
 interface PageProps {
@@ -112,6 +113,27 @@ export default async function AccountSettingsPage({ searchParams }: PageProps) {
             >
               Download JSON
             </a>
+          </div>
+        </section>
+
+        {/* Privacy & cookies — analytics consent can be changed/withdrawn here. */}
+        <section className="card mb-6 p-5">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-purple-400">
+                Privacy &amp; cookies
+              </h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Change or withdraw your consent for PostHog product analytics. See our{" "}
+                <Link href="/legal/cookie-policy" className="text-purple-600 underline">
+                  cookie policy
+                </Link>
+                .
+              </p>
+            </div>
+            <CookieSettingsButton className="btn btn-ghost text-sm">
+              Cookie settings
+            </CookieSettingsButton>
           </div>
         </section>
 

@@ -9,6 +9,8 @@ import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, ManageBillingButton, DowngradeButton } from "@/components/billing-actions";
 import { ORG_ROLES, type Subscription } from "@/lib/types";
 import { getLimit } from "@/lib/entitlements";
+import { TrackOnMount } from "@/components/analytics-track-mount";
+import { EVENTS } from "@/lib/analytics-events";
 
 function fmt(iso: string | null) {
   if (!iso) return null;
@@ -88,6 +90,10 @@ export default async function BillingPage({
 
   return (
     <>
+      <TrackOnMount
+        event={EVENTS.BILLING_VIEWED}
+        properties={{ plan_key: sub?.plan_key ?? "community" }}
+      />
       <Nav />
       {orgId && <BillingBanner orgId={orgId} />}
       <main className="mx-auto max-w-3xl px-4 py-8">
