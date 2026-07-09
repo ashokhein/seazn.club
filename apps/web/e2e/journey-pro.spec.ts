@@ -195,4 +195,26 @@ test.describe.serial("pro lifecycle", () => {
     const res = await page.request.get(`/shared/${orgSlug}/${comp.data!.slug}`);
     expect(res.status()).toBe(404);
   });
+
+  test("an unlisted competition is reachable by link but noindexed", async ({
+    page,
+    request,
+  }) => {
+    const comp = await apiJson<{ id: string; slug: string }>(
+      request,
+      "/api/v1/competitions",
+      "POST",
+      { name: `Backdoor ${TAG}`, visibility: "unlisted" },
+    );
+    await page.goto(`/shared/${orgSlug}/${comp.data!.slug}`);
+    await expect(page.getByRole("heading", { name: `Backdoor ${TAG}` })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+  });
+
+  test("timetable export is available on Pro", async ({ request }) => {
+    const res = await request.get(`/api/v1/competitions/${competitionId}/exports/timetable`);
+    expect(res.status()).toBe(200);
+  });
 });

@@ -42,17 +42,13 @@ export async function loginUi(page: Page, email: string): Promise<void> {
   );
 }
 
-/**
- * Set an org's plan directly in the DB (same trick auth.setup.ts uses for the
- * Pro account). Targets by org id or by owner email. DATABASE_URL must point at
- * the same DB the dev server under test uses.
- */
-export async function setOrgPlanBySql(
-  target: { orgId?: string; email?: string },
-  plan: "pro" | "community",
-): Promise<void> {
+/** One-shot SQL client against the app's schema (DATABASE_URL must point at
+ *  the same DB the dev server under test uses). */
+async function withDb<T>(
+  fn: (sql: import("postgres").Sql) => Promise<T>,
+): Promise<T> {
   const dbUrl = process.env.DATABASE_URL;
-  if (!dbUrl) throw new Error("DATABASE_URL required to flip an org's plan for e2e");
+  if (!dbUrl) throw new Error("DATABASE_URL required for direct DB setup in e2e");
   const { default: postgres } = await import("postgres");
   const sql = postgres(dbUrl, {
     // The app lives in a dedicated schema — unqualified table names resolve
@@ -68,6 +64,21 @@ export async function setOrgPlanBySql(
     max: 1,
   });
   try {
+    return await fn(sql);
+  } finally {
+    await sql.end();
+  }
+}
+
+/**
+ * Set an org's plan directly in the DB (same trick auth.setup.ts uses for the
+ * Pro account). Targets by org id or by owner email.
+ */
+export async function setOrgPlanBySql(
+  target: { orgId?: string; email?: string },
+  plan: "pro" | "community",
+): Promise<void> {
+  await withDb(async (sql) => {
     if (target.orgId) {
       await sql`
         insert into subscriptions (org_id, plan_key, status)
@@ -84,9 +95,23 @@ export async function setOrgPlanBySql(
     } else {
       throw new Error("setOrgPlanBySql: pass orgId or email");
     }
-  } finally {
-    await sql.end();
-  }
+  });
+}
+
+/** Force a subscription lifecycle state (trialing / past_due / …) for banner
+ *  and CTA assertions — states Stripe would otherwise own. */
+export async function setOrgSubscriptionSql(
+  orgId: string,
+  fields: { plan_key: string; status: string; trial_end?: string | null },
+): Promise<void> {
+  await withDb(async (sql) => {
+    await sql`
+      insert into subscriptions (org_id, plan_key, status, trial_end)
+      values (${orgId}, ${fields.plan_key}, ${fields.status}, ${fields.trial_end ?? null})
+      on conflict (org_id) do update
+        set plan_key = ${fields.plan_key}, status = ${fields.status},
+            trial_end = ${fields.trial_end ?? null}`;
+  });
 }
 
 export interface OrgInfo {

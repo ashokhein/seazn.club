@@ -174,6 +174,13 @@ test.describe.serial("community lifecycle", () => {
     });
   });
 
+  test("exports are Pro-only", async ({ request }) => {
+    const res = await request.get(
+      `/api/v1/competitions/${competitionId}/exports/timetable`,
+    );
+    expect(res.status()).toBe(402);
+  });
+
   test("advanced formats (ladder) are gated for community", async ({ request }) => {
     // Use the un-started limits division — stage edits on an active division
     // would fail for lifecycle reasons before the paywall is consulted.
