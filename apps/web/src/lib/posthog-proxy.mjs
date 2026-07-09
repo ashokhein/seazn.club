@@ -8,7 +8,7 @@
 // so we map the dashboard host's region onto the ingest + assets hosts.
 
 /**
- * @param {NodeJS.ProcessEnv} [env]
+ * @param {Record<string, string | undefined>} [env]
  * @returns {{ ingest: string, assets: string }}
  */
 export function posthogIngestHosts(env = process.env) {
