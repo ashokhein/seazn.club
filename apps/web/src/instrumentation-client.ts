@@ -3,6 +3,7 @@
 // early pageviews are captured. Kept lightweight per the Next docs (<16ms).
 import posthog from "posthog-js";
 import * as Sentry from "@sentry/nextjs";
+import { analyticsConsented } from "@/lib/consent";
 
 // Sentry treats instrumentation-client as the client instrumentation entry once
 // it exists (it's injected alongside sentry.client.config, which still runs
@@ -21,15 +22,9 @@ function analyticsSuppressed(): boolean {
 }
 
 // GDPR: analytics is a non-essential third-party cookie, so it may only capture
-// after explicit opt-in. The cookie banner (components/cookie-consent) writes
-// this localStorage key; PostHog stays opted-out until it reads "accepted".
-function consentGranted(): boolean {
-  try {
-    return localStorage.getItem("seazn_cookie_consent") === "accepted";
-  } catch {
-    return false;
-  }
-}
+// after explicit opt-in against the CURRENT policy version. analyticsConsented
+// (lib/consent) reads the banner's localStorage keys; PostHog stays opted-out
+// until it returns true (accepted AND version current — a policy bump revokes).
 
 if (key && !analyticsSuppressed()) {
   try {
@@ -51,7 +46,7 @@ if (key && !analyticsSuppressed()) {
       opt_out_capturing_by_default: true,
       opt_out_persistence_by_default: true,
     });
-    if (consentGranted()) posthog.opt_in_capturing();
+    if (analyticsConsented()) posthog.opt_in_capturing();
   } catch {
     // Analytics must never break the app — swallow init failures.
   }

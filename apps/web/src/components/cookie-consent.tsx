@@ -5,8 +5,10 @@ import Link from "next/link";
 import posthog from "posthog-js";
 import {
   CONSENT_KEY,
+  CONSENT_VERSION_KEY,
   CONSENT_REOPEN_EVENT,
   COOKIE_POLICY_VERSION,
+  needsConsentPrompt,
   type ConsentChoice,
 } from "@/lib/consent";
 
@@ -23,7 +25,9 @@ export function CookieConsent() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (!localStorage.getItem(CONSENT_KEY)) setVisible(true);
+    // Show on first visit, or when the policy version moved on since the
+    // visitor last chose (policy change / new third party → re-consent).
+    if (needsConsentPrompt()) setVisible(true);
     // Re-open on demand so users can withdraw/change consent at any time.
     const reopen = () => setVisible(true);
     window.addEventListener(CONSENT_REOPEN_EVENT, reopen);
@@ -32,6 +36,8 @@ export function CookieConsent() {
 
   function decide(choice: ConsentChoice) {
     localStorage.setItem(CONSENT_KEY, choice);
+    // Stamp the version this choice covers, so a later policy bump re-prompts.
+    localStorage.setItem(CONSENT_VERSION_KEY, COOKIE_POLICY_VERSION);
     try {
       if (posthog.__loaded) {
         if (choice === "accepted") {
