@@ -10,7 +10,7 @@ export const communityEmail = () => `e2e-community-${TAG}@example.com`;
 export async function apiJson<T = unknown>(
   request: APIRequestContext,
   path: string,
-  method: "GET" | "POST" | "PATCH" | "DELETE" = "GET",
+  method: "GET" | "POST" | "PATCH" | "PUT" | "DELETE" = "GET",
   body?: unknown,
 ): Promise<{ status: number; data?: T; error?: { code?: string; message?: string } }> {
   const res = await request.fetch(path, {

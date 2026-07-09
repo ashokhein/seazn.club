@@ -69,8 +69,13 @@ test("cricket scores over-by-over: add an over grows the total, then close innin
   await expect(page.getByRole("button", { name: "Over-by-over" })).toBeVisible({ timeout: 20_000 });
   await expect(page.getByText(/— total/)).toContainText("0/0");
 
-  // record one over: 12 runs, 1 wicket
-  await page.getByLabel(/runs this over/i).fill("12");
+  // record one over: 12 runs, 1 wicket. Under load the fill can land before
+  // React hydrates (DOM value set, state empty → button stays disabled), so
+  // re-fill until the pad actually accepts the input.
+  await expect(async () => {
+    await page.getByLabel(/runs this over/i).fill("12");
+    await expect(page.getByRole("button", { name: /add over/i })).toBeEnabled({ timeout: 1_000 });
+  }).toPass({ timeout: 20_000 });
   await page.getByLabel(/wickets this over/i).fill("1");
   await page.getByRole("button", { name: /add over/i }).click();
 

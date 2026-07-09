@@ -94,9 +94,14 @@ test.describe.serial("pro lifecycle", () => {
     // POST is in flight, so poll the API for the real status change.
     await expect
       .poll(
-        async () =>
-          (await apiJson<{ status: string }>(request, `/api/v1/divisions/${divisionId}`)).data
-            ?.status,
+        async () => {
+          try {
+            return (await apiJson<{ status: string }>(request, `/api/v1/divisions/${divisionId}`))
+              .data?.status;
+          } catch {
+            return undefined; // transient dev-server hiccup — keep polling
+          }
+        },
         { timeout: 20_000 },
       )
       .toBe("active");
