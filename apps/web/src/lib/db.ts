@@ -11,7 +11,16 @@ type Tx = postgres.TransactionSql;
  * is created on first use so that importing this module never throws during
  * the build when env vars are not present.
  */
-const globalForDb = globalThis as unknown as { _sql?: Sql };
+const globalForDb = globalThis as unknown as { _sql?: Sql; _queryCount?: number };
+
+/**
+ * Number of statements sent to Postgres since process start. Regression tests
+ * use this to pin the round-trip budget of hot paths (fixture generation);
+ * the counter is a monotonic total, so tests diff before/after.
+ */
+export function statementCount(): number {
+  return globalForDb._queryCount ?? 0;
+}
 
 function getClient(): Sql {
   if (globalForDb._sql) return globalForDb._sql;
@@ -50,6 +59,9 @@ function getClient(): Sql {
     idle_timeout: 20,
     connect_timeout: 15,
     connection: { search_path: schema },
+    debug: () => {
+      globalForDb._queryCount = (globalForDb._queryCount ?? 0) + 1;
+    },
     types: {
       // Plain `date` columns (starts_on, ends_on, dob) stay 'YYYY-MM-DD'
       // strings — the API contracts declare them as strings and React can't
