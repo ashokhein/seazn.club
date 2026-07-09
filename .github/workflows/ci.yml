@@ -93,12 +93,26 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # Stock Redis speaks the same protocol as Upstash (our client is ioredis
+      # over REDIS_URL, not the Upstash REST SDK), so this exercises the real
+      # rate-limiter path — Lua EVAL, TTL, 429 — end to end in CI.
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
 
     env:
       # Superuser connection so the app can `set role app_user` (RLS). Local =>
       # no SSL. Port 5432 keeps prepared statements on (not the Supabase pooler).
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       DATABASE_SSL: disable
+      # Real Redis for the rate limiter (Upstash-compatible protocol).
+      REDIS_URL: redis://localhost:6379
       # Session signing secret (jose HS256) — CI-only dummy.
       AUTH_SECRET: ci-only-insecure-secret-please-change-in-prod-0123456789
       NEXT_PUBLIC_SUPABASE_URL: ""
@@ -134,6 +148,9 @@ jobs:
 
       - name: Engine-db + service-layer integration tests (real Postgres)
         run: npm test --workspace apps/web -- run src/server
+
+      - name: Rate-limiter integration tests (real Redis)
+        run: npm test --workspace apps/web -- run src/lib/__tests__/rate-limit.redis.test.ts
 
       - name: Start dev server
         run: |
