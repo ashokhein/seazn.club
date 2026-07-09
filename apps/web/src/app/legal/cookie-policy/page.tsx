@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
+import { CookieSettingsButton } from "@/components/cookie-settings-button";
 
 export const metadata: Metadata = {
   title: "Cookie Policy — Seazn Club",
@@ -69,7 +70,13 @@ export default function CookiePolicyPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">Managing cookies</h2>
-            <p>Essential cookies are required for the service to function and cannot be disabled. You can clear all cookies through your browser settings, but this will log you out. Most browsers also offer a "Do Not Track" option.</p>
+            <p>Essential cookies are required for the service to function and cannot be disabled. Analytics cookies are opt-in — you can change or withdraw your consent at any time:</p>
+            <p className="mt-3">
+              <CookieSettingsButton className="btn btn-ghost text-xs">
+                Manage cookie preferences
+              </CookieSettingsButton>
+            </p>
+            <p className="mt-3">You can also clear all cookies through your browser settings, but this will log you out. Most browsers also offer a "Do Not Track" option.</p>
           </section>
 
           <section>

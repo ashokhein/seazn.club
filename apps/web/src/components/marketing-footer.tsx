@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CookieSettingsButton } from "@/components/cookie-settings-button";
 
 const LEGAL = [
   { label: "Privacy", href: "/legal/privacy" },
@@ -71,6 +72,9 @@ export function MarketingFooter() {
                   </Link>
                 </li>
               ))}
+              <li>
+                <CookieSettingsButton className="text-slate-600 hover:text-purple-700" />
+              </li>
             </ul>
           </div>
         </div>

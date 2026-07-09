@@ -3,24 +3,35 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import posthog from "posthog-js";
-
-const KEY = "seazn_cookie_consent";
+import {
+  CONSENT_KEY,
+  CONSENT_REOPEN_EVENT,
+  COOKIE_POLICY_VERSION,
+  type ConsentChoice,
+} from "@/lib/consent";
 
 /**
  * Consent banner. Essential cookies (login) always run; analytics (PostHog) is
  * opt-in per GDPR. "Accept" opts PostHog into capturing; "Reject" keeps it
- * opted out. The choice is remembered so the banner shows once. instrumentation-
- * client reads the same key on load to decide whether to capture before hydration.
+ * opted out. The choice is remembered so the banner shows once, and can be
+ * changed later via a "Cookie settings" control (see CookieSettingsButton),
+ * which re-dispatches CONSENT_REOPEN_EVENT to reopen this banner —
+ * withdrawal is as easy as granting. instrumentation-client reads the same key
+ * on load to decide whether to capture before hydration.
  */
 export function CookieConsent() {
   const [visible, setVisible] = useState(false);
 
   useEffect(() => {
-    if (!localStorage.getItem(KEY)) setVisible(true);
+    if (!localStorage.getItem(CONSENT_KEY)) setVisible(true);
+    // Re-open on demand so users can withdraw/change consent at any time.
+    const reopen = () => setVisible(true);
+    window.addEventListener(CONSENT_REOPEN_EVENT, reopen);
+    return () => window.removeEventListener(CONSENT_REOPEN_EVENT, reopen);
   }, []);
 
-  function decide(choice: "accepted" | "rejected") {
-    localStorage.setItem(KEY, choice);
+  function decide(choice: ConsentChoice) {
+    localStorage.setItem(CONSENT_KEY, choice);
     try {
       if (posthog.__loaded) {
         if (choice === "accepted") {
@@ -33,6 +44,12 @@ export function CookieConsent() {
     } catch {
       // Never let an analytics hiccup block dismissing the banner.
     }
+    // Server-side proof-of-consent (GDPR). Best-effort — never blocks the UI.
+    void fetch("/api/consent", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ choice, policy_version: COOKIE_POLICY_VERSION }),
+    }).catch(() => {});
     setVisible(false);
   }
 

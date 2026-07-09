@@ -57,5 +57,11 @@ setup("authenticate as a fresh Pro org", async ({ page, request }) => {
   await page.goto("/dashboard");
   await expect(page.getByRole("navigation")).toBeVisible();
 
+  // Pre-dismiss the cookie-consent banner. It renders app-wide (root layout)
+  // and its fixed overlay intercepts pointer events, so without this the banner
+  // would sit over buttons and fail clicks across the suite. "rejected" keeps
+  // analytics off for tests. Captured into storageState → reused by every spec.
+  await page.evaluate(() => localStorage.setItem("seazn_cookie_consent", "rejected"));
+
   await page.context().storageState({ path: AUTH_STATE });
 });
