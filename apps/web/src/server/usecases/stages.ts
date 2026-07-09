@@ -2,6 +2,7 @@ import "server-only";
 // Stage use-cases (doc 08 §3): define the stage graph, generate fixtures
 // (idempotent — regeneration diffs against what exists, keyed by the pure
 // generator's stable ids), guarded completion, standings reads.
+import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
@@ -257,31 +258,63 @@ export async function deleteStage(auth: AuthCtx, stageId: string): Promise<{ del
 // from the current per-person points (rank-quartet pairing).
 // ---------------------------------------------------------------------------
 
-async function pairEntrantFor(
+/**
+ * Resolve (or create) the `pair` entrants for a set of person pairs in one
+ * batch — an americano stage references dozens of pairs per generate, so a
+ * per-pair lookup/insert is a round-trip storm over a pooled connection.
+ * Returns a map keyed by the sorted person ids joined with "," → entrant id.
+ */
+async function pairEntrantsFor(
   tx: Tx,
   divisionId: string,
-  people: [string, string],
-): Promise<string> {
-  const sorted = [...people].sort();
-  const [hit] = await tx<{ id: string }[]>`
-    select e.id from entrants e
-    where e.division_id = ${divisionId} and e.kind = 'pair'
-      and (select array_agg(em.person_id order by em.person_id)
-           from entrant_members em where em.entrant_id = e.id) = ${sorted}::uuid[]`;
-  if (hit) return hit.id;
-  const names = await tx<{ id: string; full_name: string }[]>`
-    select id, full_name from persons where id in ${tx(sorted)}`;
-  const label = sorted
-    .map((id) => names.find((n) => n.id === id)?.full_name ?? id)
-    .join(" / ");
-  const [row] = await tx<{ id: string }[]>`
-    insert into entrants (division_id, kind, display_name)
-    values (${divisionId}, 'pair', ${label}) returning id`;
-  for (const personId of sorted) {
-    await tx`insert into entrant_members (entrant_id, person_id, is_captain)
-             values (${row!.id}, ${personId}, false)`;
+  pairs: [string, string][],
+): Promise<Map<string, string>> {
+  const byPair = new Map<string, string>();
+  const wanted = new Map<string, [string, string]>();
+  for (const p of pairs) {
+    const sorted = [...p].sort() as [string, string];
+    wanted.set(sorted.join(","), sorted);
   }
-  return row!.id;
+  if (wanted.size === 0) return byPair;
+
+  const existing = await tx<{ id: string; members: string[] }[]>`
+    select e.id, array_agg(em.person_id order by em.person_id) as members
+    from entrants e
+    join entrant_members em on em.entrant_id = e.id
+    where e.division_id = ${divisionId} and e.kind = 'pair'
+    group by e.id`;
+  for (const row of existing) {
+    const key = row.members.join(",");
+    if (wanted.has(key) && !byPair.has(key)) byPair.set(key, row.id);
+  }
+
+  const missing = [...wanted.entries()].filter(([key]) => !byPair.has(key));
+  if (missing.length === 0) return byPair;
+
+  const personIds = [...new Set(missing.flatMap(([, pair]) => pair))];
+  const names = await tx<{ id: string; full_name: string }[]>`
+    select id, full_name from persons where id in ${tx(personIds)}`;
+  const nameOf = new Map(names.map((n) => [n.id, n.full_name]));
+
+  // Ids are generated client-side so both inserts go out as one multi-row
+  // statement each, without relying on RETURNING order.
+  const entrantRows = missing.map(([, sorted]) => ({
+    id: randomUUID(),
+    division_id: divisionId,
+    kind: "pair",
+    display_name: sorted.map((id) => nameOf.get(id) ?? id).join(" / "),
+  }));
+  await tx`insert into entrants ${tx(entrantRows)}`;
+  const memberRows = missing.flatMap(([, sorted], i) =>
+    sorted.map((personId) => ({
+      entrant_id: entrantRows[i].id,
+      person_id: personId,
+      is_captain: false,
+    })),
+  );
+  await tx`insert into entrant_members ${tx(memberRows)}`;
+  missing.forEach(([key], i) => byPair.set(key, entrantRows[i].id));
+  return byPair;
 }
 
 async function americanoGen(
@@ -342,17 +375,21 @@ async function americanoGen(
     ];
   }
 
+  const pairIds = await pairEntrantsFor(
+    tx,
+    divisionId,
+    planned.flatMap((r) => r.matches.flatMap((m) => [m.team1, m.team2])),
+  );
+  const idFor = (p: [string, string]) => pairIds.get([...p].sort().join(","))!;
   const gen: GenFixture[] = [];
   for (const round of planned) {
     for (const m of round.matches) {
-      const home = await pairEntrantFor(tx, divisionId, m.team1);
-      const away = await pairEntrantFor(tx, divisionId, m.team2);
       gen.push({
         extKey: m.id,
         roundNo: m.roundNo,
         seqInRound: m.court,
-        home,
-        away,
+        home: idFor(m.team1),
+        away: idFor(m.team2),
       });
     }
   }
@@ -804,26 +841,35 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
     const byKey = new Map<string, string>(); // ext_key → fixture uuid
     for (const f of existing) if (f.ext_key) byKey.set(f.ext_key, f.id);
 
-    let created = 0;
-    const createdIds: string[] = [];
-    for (const g of gen) {
-      if (byKey.has(g.extKey)) continue;
-      const award = g.award !== undefined;
-      const [row] = await tx<{ id: string }[]>`
-        insert into fixtures (stage_id, division_id, pool_id, round_no, seq_in_round,
-                              home_entrant_id, away_entrant_id, ext_key, status, outcome)
-        values (${stageId}, ${stage.division_id}, ${g.poolId ?? null}, ${g.roundNo}, ${g.seqInRound},
-                ${g.home}, ${g.away}, ${g.extKey},
-                ${award ? "forfeited" : "scheduled"},
-                ${award ? tx.json({ kind: "award", winner: g.award } as never) : null})
-        returning id`;
-      byKey.set(g.extKey, row.id);
-      createdIds.push(row.id);
-      created += 1;
-    }
+    // First pass: all new fixtures in one multi-row insert. Ids are generated
+    // client-side so the feed/bye passes can reference them without relying
+    // on RETURNING order.
+    const newRows = gen
+      .filter((g) => !byKey.has(g.extKey))
+      .map((g) => ({
+        id: randomUUID(),
+        stage_id: stageId,
+        division_id: stage.division_id,
+        pool_id: g.poolId ?? null,
+        round_no: g.roundNo,
+        seq_in_round: g.seqInRound,
+        home_entrant_id: g.home,
+        away_entrant_id: g.away,
+        ext_key: g.extKey,
+        status: g.award !== undefined ? "forfeited" : "scheduled",
+        outcome: g.award !== undefined ? JSON.stringify({ kind: "award", winner: g.award }) : null,
+      }));
+    if (newRows.length > 0) await tx`insert into fixtures ${tx(newRows)}`;
+    for (const r of newRows) byKey.set(r.ext_key, r.id);
+    const created = newRows.length;
+    const createdIds = newRows.map((r) => r.id);
 
-    // Second pass: feeds. A target's homeFrom/awayFrom becomes the SOURCE
-    // fixture's winner_to/loser_to (+slot 1=home, 2=away).
+    // Second pass: feeds, batched per side. A target's homeFrom/awayFrom
+    // becomes the SOURCE fixture's winner_to/loser_to (+slot 1=home, 2=away).
+    const feedUpdates = { winner: [], loser: [] } as Record<
+      "winner" | "loser",
+      { source: string; target: string; slot: number }[]
+    >;
     for (const g of gen) {
       const targetId = byKey.get(g.extKey);
       if (!targetId) continue;
@@ -834,25 +880,62 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
         if (!feed) continue;
         const sourceId = byKey.get(feed.extKey);
         if (!sourceId) continue;
-        if (feed.side === "winner") {
-          await tx`update fixtures set winner_to_fixture = ${targetId}, winner_to_slot = ${slot}
-                   where id = ${sourceId} and winner_to_fixture is null`;
-        } else {
-          await tx`update fixtures set loser_to_fixture = ${targetId}, loser_to_slot = ${slot}
-                   where id = ${sourceId} and loser_to_fixture is null`;
-        }
+        feedUpdates[feed.side].push({ source: sourceId, target: targetId, slot });
       }
     }
+    if (feedUpdates.winner.length > 0) {
+      const u = feedUpdates.winner;
+      await tx`
+        update fixtures f
+        set winner_to_fixture = v.target_id, winner_to_slot = v.slot
+        from (select unnest(${u.map((x) => x.source)}::uuid[]) as source_id,
+                     unnest(${u.map((x) => x.target)}::uuid[]) as target_id,
+                     unnest(${u.map((x) => x.slot)}::int[])    as slot) v
+        where f.id = v.source_id and f.winner_to_fixture is null`;
+    }
+    if (feedUpdates.loser.length > 0) {
+      const u = feedUpdates.loser;
+      await tx`
+        update fixtures f
+        set loser_to_fixture = v.target_id, loser_to_slot = v.slot
+        from (select unnest(${u.map((x) => x.source)}::uuid[]) as source_id,
+                     unnest(${u.map((x) => x.target)}::uuid[]) as target_id,
+                     unnest(${u.map((x) => x.slot)}::int[])    as slot) v
+        where f.id = v.source_id and f.loser_to_fixture is null`;
+    }
 
-    // Third pass: propagate bye awards into their winner feeds.
-    for (const g of gen) {
-      if (g.award === undefined) continue;
-      const sourceId = byKey.get(g.extKey);
-      if (!sourceId) continue;
-      const [source] = await tx<{ winner_to_fixture: string | null; winner_to_slot: number | null }[]>`
-        select winner_to_fixture, winner_to_slot from fixtures where id = ${sourceId}`;
-      if (source?.winner_to_fixture && source.winner_to_slot) {
-        await fillSlot(tx, source.winner_to_fixture, source.winner_to_slot, g.award);
+    // Third pass: propagate bye awards into their winner feeds (one lookup
+    // for all byes, then one fill per slot side).
+    const awarded = gen.filter((g) => g.award !== undefined && byKey.has(g.extKey));
+    if (awarded.length > 0) {
+      const sources = await tx<
+        { id: string; winner_to_fixture: string | null; winner_to_slot: number | null }[]
+      >`
+        select id, winner_to_fixture, winner_to_slot from fixtures
+        where id in ${tx(awarded.map((g) => byKey.get(g.extKey)!))}`;
+      const srcOf = new Map(sources.map((s) => [s.id, s]));
+      const fills: Record<1 | 2, { fixture: string; entrant: string }[]> = { 1: [], 2: [] };
+      for (const g of awarded) {
+        const source = srcOf.get(byKey.get(g.extKey)!);
+        if (source?.winner_to_fixture && (source.winner_to_slot === 1 || source.winner_to_slot === 2)) {
+          fills[source.winner_to_slot].push({ fixture: source.winner_to_fixture, entrant: g.award! });
+        }
+      }
+      if (fills[1].length > 0) {
+        await tx`
+          update fixtures f
+          set home_entrant_id = v.entrant_id
+          from (select unnest(${fills[1].map((x) => x.fixture)}::uuid[]) as fixture_id,
+                       unnest(${fills[1].map((x) => x.entrant)}::uuid[]) as entrant_id) v
+          where f.id = v.fixture_id and f.home_entrant_id is null`;
+      }
+      if (fills[2].length > 0) {
+        await tx`
+          update fixtures f
+          set away_entrant_id = v.entrant_id
+          from (select unnest(${fills[2].map((x) => x.fixture)}::uuid[]) as fixture_id,
+                       unnest(${fills[2].map((x) => x.entrant)}::uuid[]) as entrant_id) v
+          where f.id = v.fixture_id and f.away_entrant_id is null`;
       }
     }
 
