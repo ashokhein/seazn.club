@@ -57,7 +57,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/entrants", method: "get", summary: "List entrants", tag: "entrants", response: z.array(S.Entrant) },
   { path: "/divisions/{id}/entrants", method: "post", summary: "Register entrant(s) — object or bulk array", tag: "entrants", request: S.CreateEntrants, response: z.union([S.Entrant, z.array(S.Entrant)]), status: 201, errors: [422] },
   { path: "/entrants/{id}", method: "get", summary: "Get an entrant with members", tag: "entrants", response: S.Entrant },
-  { path: "/entrants/{id}", method: "patch", summary: "Withdraw, seed or edit members", tag: "entrants", request: S.PatchEntrant, response: S.Entrant, errors: [422] },
+  { path: "/entrants/{id}", method: "patch", summary: "Set status, seed or edit members (no fixture surgery — see /withdraw)", tag: "entrants", request: S.PatchEntrant, response: S.Entrant, errors: [422] },
+  { path: "/entrants/{id}/withdraw", method: "post", summary: "Withdraw with fixture surgery (spec 05 §5): tables expunge (<50% played) or walk over remaining; brackets walk over; open formats void remaining", tag: "entrants", errors: [409, 422] },
   { path: "/divisions/{id}/roster", method: "get", summary: "Every (person → team entrant) membership in the division (same-division double-roster warning)", tag: "entrants" },
   // Persons
   { path: "/persons", method: "get", summary: "List persons", tag: "persons", response: pageOf(S.Person), query: PAGE_QUERY },

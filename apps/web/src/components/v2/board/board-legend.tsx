@@ -4,6 +4,7 @@
 // filter. Tap chips to isolate any subset; state lives in the URL (?d=slug,
 // slug) so a filtered view is shareable. Empty selection = everyone.
 import { divisionAccent, divisionInk, divisionShortCode, divisionTint } from "@/lib/division-hue";
+import { Tip } from "@/components/ui/tip";
 import type { BoardDivision } from "./types";
 
 export function BoardLegend({
@@ -60,6 +61,7 @@ export function BoardLegend({
           Show all
         </button>
       )}
+      <Tip id="board.filter" />
     </div>
   );
 }

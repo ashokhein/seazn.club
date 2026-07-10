@@ -43,14 +43,17 @@ export default async function DivisionPage({
     params,
     searchParams,
   ]);
-  const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "")
-    ? (rawTab as Tab)
-    : "entrants";
-
   const page = await requireDivisionPage(orgSlug, compSlug, divSlug);
   const { auth, canEdit } = page;
   const id = page.division.id;
   const division = await getDivision(auth, id);
+  // Landing tab follows the division's life: while you're building the field
+  // it's entrants; once the tournament starts, match day lives on fixtures.
+  const defaultTab: Tab =
+    division.status === "active" || division.status === "completed" ? "fixtures" : "entrants";
+  const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "")
+    ? (rawTab as Tab)
+    : defaultTab;
   const [competition, stages, fixtures, entrants, scheduleSettings, canExport] = await Promise.all([
     getCompetition(auth, division.competition_id),
     listStages(auth, id),

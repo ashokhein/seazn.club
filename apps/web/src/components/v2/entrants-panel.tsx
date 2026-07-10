@@ -6,6 +6,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { msg } from "@/lib/messages";
 
 interface PositionGroup {
   key: string;
@@ -87,6 +89,7 @@ export function EntrantsPanel({
   eligibility,
 }: Props) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [persons, setPersons] = useState<Person[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
@@ -342,6 +345,20 @@ export function EntrantsPanel({
                     apiV1(`/api/v1/entrants/${e.id}`, { method: "PATCH", json: patch }),
                   )
                 }
+                onWithdraw={async () => {
+                  // Withdrawal mid-tournament does fixture surgery (spec 05
+                  // §5) — spell out the policy before firing.
+                  const ok = await confirmDialog({
+                    title: msg("confirm.withdrawEntrant.title", { name: e.display_name }),
+                    body: msg("confirm.withdrawEntrant.body"),
+                    confirmLabel: msg("confirm.withdrawEntrant.label"),
+                    tone: "danger",
+                  });
+                  if (!ok) return;
+                  await run(() =>
+                    apiV1(`/api/v1/entrants/${e.id}/withdraw`, { method: "POST", json: {} }),
+                  );
+                }}
               />
             ))}
           </tbody>
@@ -811,6 +828,7 @@ function EntrantTableRow({
   roles,
   otherTeamsFor,
   onPatch,
+  onWithdraw,
 }: {
   entrant: EntrantRow;
   canEdit: boolean;
@@ -820,6 +838,8 @@ function EntrantTableRow({
   roles: RoleSpec[];
   otherTeamsFor: (personId: string, exceptEntrantId: string) => DivisionRosterRow[];
   onPatch: (patch: Record<string, unknown>) => void;
+  /** Withdraw with fixture surgery (spec 05 §5) — confirm handled upstream. */
+  onWithdraw: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<Member[] | null>(null);
@@ -888,7 +908,7 @@ function EntrantTableRow({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => onPatch({ status: "withdrawn" })}
+                onClick={onWithdraw}
                 className="btn btn-danger px-2 py-1 text-xs"
               >
                 Withdraw

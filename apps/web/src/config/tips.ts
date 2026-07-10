@@ -76,6 +76,11 @@ export const TIPS = {
     body: "This division is for under-18 players, so a parent or guardian confirms the entry. Public pages show shortened names for youth divisions.",
     helpSlug: "registration/youth",
   },
+  "board.filter": {
+    title: "Filter by division",
+    body: "These chips are the divisions on this board. Tap any of them to show just those divisions; tap again to bring one back. The filter lives in the page URL, so you can share or bookmark a filtered view.",
+    helpSlug: "scheduling/board",
+  },
 } as const satisfies Record<string, TipEntry>;
 
 export type TipId = keyof typeof TIPS;

@@ -94,6 +94,12 @@ export const messages = {
   "sheet.close": "Close",
   "table.actions": "Actions",
 
+  // ── Entrant withdrawal (spec 05 §5) ──
+  "confirm.withdrawEntrant.title": "Withdraw {name}?",
+  "confirm.withdrawEntrant.body":
+    "In a running table stage: if they've played less than half their games, everything they played is voided (standings read as if they never entered); otherwise their results stand and remaining games walk over to opponents. In a bracket, opponents advance. This settles matches through the normal scoring ledger, so each one can be undone.",
+  "confirm.withdrawEntrant.label": "Withdraw entrant",
+
   // ── Constraints tab (Jul3/04, PROMPT-33 follow-ups) ──
   "confirm.shiftAll.title": "Shift every fixture by {minutes} minutes?",
   "confirm.shiftAll.body":
