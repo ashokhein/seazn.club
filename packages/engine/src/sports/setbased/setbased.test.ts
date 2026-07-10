@@ -65,7 +65,8 @@ describe("volleyball golden: 3-2 → 2:1 points split", () => {
     const state = fold(volleyball, cfg, events);
     expect(state.outcome).toEqual({ kind: "win", winner: "H", loser: "A", method: "regulation" });
     expect(state.setsWon).toEqual({ home: 3, away: 2 });
-    expect(volleyball.summary(state).headline).toBe("3 — 2");
+    // v3/09 §1a: the headline carries the per-set points (racquet scoreline).
+    expect(volleyball.summary(state).headline).toBe("3 — 2 · 25–20, 23–25, 25–18, 24–26, 15–13");
   });
 
   it("pays the FIVB 3-2 split 2:1 with integer point ledgers", () => {
@@ -160,22 +161,31 @@ describe("badminton golden: 30-29 golden point", () => {
     bad(29, 29); // not terminal
   });
 
-  it("headline shows the open game's live points, then drops them once the game closes", () => {
+  it("headline shows the open game's live points AND keeps banked game points (v3/09 §1a)", () => {
     // 3 rallies into game 1: sets 0-0, live points 2-1.
     const winners: Side[] = ["home", "away", "home"];
     const mid = fold(badminton, cfg, rallyMatch(badminton, winners));
     expect(badminton.summary(mid).headline).toBe("0 — 0 (2–1)");
 
-    // Game 1 closes 21-1: no open set → no parenthetical.
+    // Game 1 closes 21-1: the entered/earned points stay in the top score —
+    // the intake #28a regression was the headline collapsing to just "1 — 0".
     for (let i = 0; i < 19; i++) winners.push("home");
     const closed = fold(badminton, cfg, rallyMatch(badminton, winners));
     expect(closed.setsWon).toEqual({ home: 1, away: 0 });
-    expect(badminton.summary(closed).headline).toBe("1 — 0");
+    expect(badminton.summary(closed).headline).toBe("1 — 0 · 21–1");
 
-    // 1 rally into game 2: banked set plus fresh live points.
+    // 1 rally into game 2: banked set points plus fresh live points.
     winners.push("away");
     const second = fold(badminton, cfg, rallyMatch(badminton, winners));
-    expect(badminton.summary(second).headline).toBe("1 — 0 (0–1)");
+    expect(badminton.summary(second).headline).toBe("1 — 0 · 21–1 (0–1)");
+  });
+
+  it("a game entered as a summary is reflected in the headline (intake #28a)", () => {
+    const one = fold(badminton, cfg, summaryMatch(badminton, [[21, 15]]));
+    expect(badminton.summary(one).headline).toBe("1 — 0 · 21–15");
+    const two = fold(badminton, cfg, summaryMatch(badminton, [[21, 15], [21, 18]]));
+    expect(badminton.summary(two).headline).toBe("2 — 0 · 21–15, 21–18");
+    expect(two.outcome).toMatchObject({ kind: "win", winner: "H" });
   });
 });
 
