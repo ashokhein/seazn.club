@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta name="color-scheme" content="light">
+  <meta name="supported-color-schemes" content="light">
+  <title>{{SUBJECT}}</title>
+  <!--[if mso]>
+  <noscript>
+    <xml>
+      <o:OfficeDocumentSettings>
+        <o:PixelsPerInch>96</o:PixelsPerInch>
+      </o:OfficeDocumentSettings>
+    </xml>
+  </noscript>
+  <![endif]-->
+  <!--[if !mso]><!-->
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+  <!--<![endif]-->
+  <style>
+    /* Client resets */
+    body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+    table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+    img { -ms-interpolation-mode: bicubic; border: 0; outline: none; text-decoration: none; }
+    body { margin: 0; padding: 0; width: 100% !important; height: 100% !important; }
+    a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; }
+
+    @media only screen and (max-width: 620px) {
+      .sz-container { width: 100% !important; }
+      .sz-content { padding: 28px 20px !important; }
+      .sz-masthead { padding: 16px 20px !important; }
+      .sz-title { font-size: 26px !important; line-height: 30px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#f6f5f8;">
+  <!-- Preheader: shows next to the subject in the inbox list, invisible in the body -->
+  <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">
+    {{PREHEADER}}&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+  </div>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f6f5f8" style="background-color:#f6f5f8;">
+    <tr>
+      <td align="center" style="padding:32px 12px;">
+
+        <table role="presentation" class="sz-container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
+
+          <!-- ============ Masthead: courtside slab ============ -->
+          <tr>
+            <td class="sz-masthead" bgcolor="#231738" style="background-color:#231738;border-radius:14px 14px 0 0;padding:18px 32px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="left" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:21px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f7f5fb;">
+                    Seazn&nbsp;<span style="color:#a78bfa;">Club</span>
+                  </td>
+                  <td align="right" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:14px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:rgba(247,245,251,0.64);">
+                    {{MASTHEAD_TAG}}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- Court line: the accent stripe under the slab -->
+          <tr>
+            <td bgcolor="#7c3aed" style="background-color:#7c3aed;height:3px;line-height:3px;font-size:1px;">&nbsp;</td>
+          </tr>
+
+          <!-- ============ Card body ============ -->
+          <tr>
+            <td class="sz-content" bgcolor="#ffffff" style="background-color:#ffffff;border-radius:0 0 14px 14px;padding:36px 32px;">
+
+              <!-- Eyebrow -->
+              <p style="margin:0 0 6px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:13px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:#6931c9;">
+                {{EYEBROW}}
+              </p>
+
+              <!-- Title -->
+              <h1 class="sz-title" style="margin:0 0 18px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:32px;line-height:36px;font-weight:700;text-transform:uppercase;letter-spacing:0.5px;color:#1d1928;">
+                {{TITLE}}
+              </h1>
+
+              <!-- Composable content: concatenate blocks/*.html and drop in -->
+              {{CONTENT}}
+
+            </td>
+          </tr>
+
+          <!-- ============ Footer ============ -->
+          <tr>
+            <td style="padding:24px 32px;">
+              <p style="margin:0 0 8px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#6f6a7c;">
+                {{FOOTER_NOTE}}
+              </p>
+              <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#6f6a7c;">
+                &copy; {{YEAR}} Seazn Club &middot; League software for grassroots sport
+              </p>
+            </td>
+          </tr>
+
+        </table>
+
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
