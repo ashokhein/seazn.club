@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { LayoutDashboard, Settings, Users } from "lucide-react";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
+import { routes } from "@/lib/routes";
 import { needsTourAfterOnboarding } from "@/lib/activation";
 import { EDITOR_ROLES } from "@/lib/types";
 import { LogoutButton } from "@/components/logout-button";
@@ -19,6 +20,7 @@ export async function Nav() {
   const user = await getCurrentUser();
   let activeOrg: {
     name: string;
+    slug: string;
     role: string;
     logo_storage_path: string | null;
     logo_url: string | null;
@@ -71,7 +73,7 @@ export async function Nav() {
               {/* Labels collapse to icons under `sm` — aria-label keeps the
                   accessible name (axe link-name, v3/11 gap 11). */}
               <Link
-                href="/dashboard"
+                href={activeOrg ? routes.orgHome(activeOrg.slug) : "/orgs/new"}
                 aria-label="Dashboard"
                 className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
               >
@@ -87,7 +89,7 @@ export async function Nav() {
                 <span className="hidden sm:inline">Directory</span>
               </Link>
               <Link
-                href="/settings"
+                href={activeOrg ? routes.orgSettings(activeOrg.slug) : "/orgs/new"}
                 aria-label="Settings"
                 className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
               >
@@ -104,7 +106,7 @@ export async function Nav() {
           <Link href="/login" className="btn btn-primary">Sign in</Link>
         )}
       </div>
-      {canTour && <ProductTour autoStart={tourPending} />}
+      {canTour && activeOrg && <ProductTour autoStart={tourPending} orgSlug={activeOrg.slug} />}
     </header>
   );
 }

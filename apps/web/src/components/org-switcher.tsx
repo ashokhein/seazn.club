@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
 import type { OrgMembership } from "@/lib/types";
+import { routes } from "@/lib/routes";
 
 const ROLE_BADGE: Record<string, string> = {
   owner: "bg-amber-100 text-amber-700",
@@ -34,6 +35,10 @@ export function OrgSwitcher({
     setBusy(id);
     try {
       await api("/api/orgs/active", { method: "POST", json: { org_id: id } });
+      // PROMPT-30: the URL owns which org a page shows — navigate to the
+      // chosen org's settings; a cookie flip alone would change nothing.
+      const slug = orgs.find((o) => o.id === id)?.slug;
+      if (slug) router.push(routes.orgSettings(slug));
       router.refresh();
     } finally {
       setBusy(null);

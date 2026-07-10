@@ -1,7 +1,8 @@
 export const dynamic = "force-dynamic";
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
+import { getCurrentUser, resolveActiveOrg } from "@/lib/auth";
 import { needsOnboarding } from "@/lib/activation";
+import { routes } from "@/lib/routes";
 import { sql } from "@/lib/db";
 import { Nav } from "@/components/nav";
 import { OnboardingWizard } from "@/components/onboarding-wizard";
@@ -10,8 +11,10 @@ export default async function OnboardingPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
 
+  const org = await resolveActiveOrg(user);
+  if (!org) redirect("/orgs/new");
   const already = !(await needsOnboarding(user.id));
-  if (already) redirect("/dashboard");
+  if (already) redirect(routes.orgHome(org.slug));
 
   // Engine v2 sport catalog (seeded from the module registry by sync:sports).
   const sports = await sql<{ key: string; name: string }[]>`
@@ -31,7 +34,7 @@ export default async function OnboardingPage() {
             entrants — and you&apos;re scoring within minutes.
           </p>
         </div>
-        <OnboardingWizard sports={sports} />
+        <OnboardingWizard sports={sports} orgSlug={org.slug} />
       </main>
     </>
   );

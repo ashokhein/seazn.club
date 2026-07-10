@@ -12,7 +12,7 @@ test("create a competition via the wizard", async ({ page }) => {
 
   // Lands on the competition page (add-division CTA present).
   await expect(page.getByRole("link", { name: /add division/i })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(name)).toBeVisible();
+  await expect(page.getByRole("heading", { name })).toBeVisible();
 });
 
 // Settings are organised into tabs (General / Branding / Archived); one form

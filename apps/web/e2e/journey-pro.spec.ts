@@ -114,8 +114,18 @@ test.describe.serial("pro lifecycle", () => {
   test("score one fixture on the pad, the rest via API", async ({ page, request }) => {
     await page.goto(`/divisions/${divisionId}?tab=fixtures`);
     await page.getByRole("link", { name: /^Score/ }).first().click();
-    await page.waitForURL(/\/fixtures\//, { timeout: 20_000 });
-    const padFixtureId = page.url().match(/\/fixtures\/([0-9a-f-]{36})/)![1]!;
+    await page.waitForURL(/\/f\/\d+/, { timeout: 20_000 });
+    // PROMPT-30: the URL carries the per-division ordinal — map back to the id.
+    const padNo = Number(page.url().match(/\/f\/(\d+)/)![1]!);
+    let padFixtureId = "";
+    for (const id of fixtureIds) {
+      const fx = await apiJson<{ fixture_no: number }>(request, `/api/v1/fixtures/${id}`);
+      if (fx.data!.fixture_no === padNo) {
+        padFixtureId = id;
+        break;
+      }
+    }
+    expect(padFixtureId).not.toBe("");
     // Generic score pad: one labelled number input per side, then Record result.
     const inputs = page.getByRole("spinbutton");
     await inputs.nth(0).fill("3");

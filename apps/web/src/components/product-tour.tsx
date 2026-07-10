@@ -3,11 +3,14 @@
 import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
+import { routes } from "@/lib/routes";
 
 interface TourStep {
   id: string;
-  /** Route this step lives on — advancing across routes navigates there. */
-  path: string;
+  /** Route this step lives on — advancing across routes navigates there.
+   *  Console routes are org-scoped (PROMPT-30), so paths build from the
+   *  active org slug. */
+  path: (org: string) => string;
   /** Matches an element's data-tour attribute; null renders a centered card. */
   target: string | null;
   title: string;
@@ -17,35 +20,35 @@ interface TourStep {
 const STEPS: TourStep[] = [
   {
     id: "welcome",
-    path: "/dashboard",
+    path: (org: string) => routes.orgHome(org),
     target: null,
     title: "Welcome to Seazn Club 👋",
     body: "A quick tour of the essentials — your organisation, settings and creating your first competition. Takes under a minute.",
   },
   {
     id: "org-chip",
-    path: "/dashboard",
+    path: (org: string) => routes.orgHome(org),
     target: "org-chip",
     title: "Your organisation",
     body: "Everything you create lives under this organisation. Next, let's see where you can rename it.",
   },
   {
     id: "org-rename",
-    path: "/settings",
+    path: (org: string) => routes.orgSettings(org),
     target: "org-rename",
     title: "Rename your organisation",
     body: "Type a new name here and save. The tabs on the left also cover your team, plan and API keys.",
   },
   {
     id: "new-competition",
-    path: "/dashboard",
+    path: (org: string) => routes.orgHome(org),
     target: "new-competition",
     title: "Create a competition",
     body: "A competition holds one or more divisions — each with its own sport, entrants and format. Let's start one.",
   },
   {
     id: "wizard",
-    path: "/competitions/new",
+    path: (org: string) => routes.competitionNew(org),
     target: "competition-wizard",
     title: "Your first competition",
     body: "Follow the wizard: name it, add a division, pick a sport and format. Replay this tour anytime from Settings → Organisation.",
@@ -66,7 +69,7 @@ function measure(target: string): Rect | null {
   return { top: r.top, left: r.left, width: r.width, height: r.height };
 }
 
-export function ProductTour({ autoStart }: { autoStart: boolean }) {
+export function ProductTour({ autoStart, orgSlug }: { autoStart: boolean; orgSlug: string }) {
   const router = useRouter();
   const pathname = usePathname();
   const [step, setStep] = useState<number | null>(null);
@@ -81,7 +84,7 @@ export function ProductTour({ autoStart }: { autoStart: boolean }) {
     const stored = sessionStorage.getItem(TOUR_STORAGE_KEY);
     if (stored !== null) {
       const i = Number(stored);
-      if (Number.isInteger(i) && STEPS[i]?.path === pathname) {
+      if (Number.isInteger(i) && STEPS[i]?.path(orgSlug) === pathname) {
         setStep(i);
       } else if (!Number.isInteger(i) || !STEPS[i]) {
         sessionStorage.removeItem(TOUR_STORAGE_KEY);
@@ -90,11 +93,11 @@ export function ProductTour({ autoStart }: { autoStart: boolean }) {
       // be in flight; the component on the destination page resumes it.
       return;
     }
-    if (autoStart && pathname === "/dashboard") {
+    if (autoStart && pathname === routes.orgHome(orgSlug)) {
       sessionStorage.setItem(TOUR_STORAGE_KEY, "0");
       setStep(0);
     }
-  }, [autoStart, pathname]);
+  }, [autoStart, pathname, orgSlug]);
 
   const finish = useCallback((markDone: boolean) => {
     sessionStorage.removeItem(TOUR_STORAGE_KEY);
@@ -110,14 +113,14 @@ export function ProductTour({ autoStart }: { autoStart: boolean }) {
       }
       if (i < 0) return;
       sessionStorage.setItem(TOUR_STORAGE_KEY, String(i));
-      if (STEPS[i].path !== pathname) {
+      if (STEPS[i].path(orgSlug) !== pathname) {
         setStep(null); // hide until the destination page's tour resumes
-        router.push(STEPS[i].path);
+        router.push(STEPS[i].path(orgSlug));
       } else {
         setStep(i);
       }
     },
-    [pathname, router, finish],
+    [pathname, router, finish, orgSlug],
   );
 
   // Track the highlighted element's position; poll briefly in case it renders

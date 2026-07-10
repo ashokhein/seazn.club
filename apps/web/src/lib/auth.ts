@@ -1,5 +1,4 @@
 import "server-only";
-import crypto from "node:crypto";
 import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
@@ -7,6 +6,9 @@ import { sql } from "@/lib/db";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
+import { isReservedSlug } from "@/lib/public-site";
+import { routes } from "@/lib/routes";
+import { slugify, uniqueSlug } from "@/server/usecases/slugs";
 
 const COOKIE_NAME = "seazn_session";
 const ORG_COOKIE = "seazn_org";
@@ -174,14 +176,16 @@ export async function resolveActiveOrg(
   return orgs[0];
 }
 
-/** Generate a unique, auto-assigned org slug like `org-1a2b3c4d5e`. */
-async function generateOrgSlug(): Promise<string> {
-  for (let i = 0; i < 50; i++) {
-    const slug = `org-${crypto.randomBytes(5).toString("hex")}`;
-    const taken = await sql`select 1 from organizations where slug = ${slug}`;
-    if (taken.length === 0) return slug;
-  }
-  return `org-${Date.now().toString(36)}`;
+/** Readable, name-derived org slug (PROMPT-30): `/o/[slug]` and `/shared/
+ *  [slug]` are user-facing URLs. Globally unique; app routes stay reserved. */
+export async function generateOrgSlug(name: string, excludeOrgId?: string): Promise<string> {
+  return uniqueSlug(slugify(name), async (s) => {
+    if (isReservedSlug(s)) return true;
+    const taken = excludeOrgId
+      ? await sql`select 1 from organizations where slug = ${s} and id <> ${excludeOrgId}`
+      : await sql`select 1 from organizations where slug = ${s}`;
+    return taken.length > 0;
+  });
 }
 
 /**
@@ -212,21 +216,34 @@ export async function createOrgForUser(
   name: string,
 ): Promise<Organization> {
   await assertMayOwnAnotherOrg(userId);
-  const slug = await generateOrgSlug();
-  const org = await sql.begin(async (tx) => {
-    const [o] = await tx<Organization[]>`
-      insert into organizations (name, slug, created_by)
-      values (${name}, ${slug}, ${userId})
-      returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, branding`;
-    await tx`
-      insert into org_members (org_id, user_id, role)
-      values (${o.id}, ${userId}, 'owner')`;
-    await tx`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${o.id}, 'community', 'active')
-      on conflict (org_id) do nothing`;
-    return o;
-  });
+  // Readable slugs can collide when two same-named orgs sign up concurrently
+  // (check-then-insert race) — retry past the unique index, then salt.
+  let org: Organization | undefined;
+  for (let attempt = 0; ; attempt++) {
+    const base = await generateOrgSlug(name);
+    const slug = attempt < 2 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      org = await sql.begin(async (tx) => {
+        const [o] = await tx<Organization[]>`
+          insert into organizations (name, slug, created_by)
+          values (${name}, ${slug}, ${userId})
+          returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, branding`;
+        await tx`
+          insert into org_members (org_id, user_id, role)
+          values (${o.id}, ${userId}, 'owner')`;
+        await tx`
+          insert into subscriptions (org_id, plan_key, status)
+          values (${o.id}, 'community', 'active')
+          on conflict (org_id) do nothing`;
+        return o;
+      });
+      break;
+    } catch (err) {
+      const unique =
+        typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+      if (!unique || attempt >= 4) throw err;
+    }
+  }
   await invalidateUserOrgs(userId);
   return org;
 }
@@ -290,7 +307,12 @@ export async function postAuthLanding(
   // New users (onboarding_completed_at null) go to the first-run wizard.
   const { needsOnboarding } = await import("@/lib/activation");
   const isNew = await needsOnboarding(userId);
-  return { redirect: isNew ? "/onboarding" : "/dashboard", orgId, hasOrg: true };
+  if (isNew) return { redirect: "/onboarding", orgId, hasOrg: true };
+  // PROMPT-30: land on the active org's slug home — the URL, not the cookie,
+  // is what the session bookmarks and shares.
+  const orgs = await getUserOrgs(userId);
+  const active = orgs.find((o) => o.id === orgId) ?? orgs[0];
+  return { redirect: routes.orgHome(active.slug), orgId, hasOrg: true };
 }
 
 /**

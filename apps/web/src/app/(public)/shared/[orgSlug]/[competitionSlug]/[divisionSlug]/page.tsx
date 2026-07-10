@@ -3,11 +3,12 @@
 // per-sport table components. Knockout stages render brackets; stepladder a
 // ladder. Roster names are consent-filtered in the view (initials otherwise).
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { resolveModule } from "@/server/engine-db";
 import type { StandingsRow } from "@seazn/engine/competition";
 import { getPublicDivision, resolveLogoUrl } from "@/server/public-site/data";
+import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { Tabs } from "@/components/public-site/tabs";
 import { Schedule } from "@/components/public-site/schedule";
@@ -39,7 +40,11 @@ const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
 export default async function DivisionHomePage({ params }: Props) {
   const { orgSlug, competitionSlug, divisionSlug } = await params;
   const data = await getPublicDivision(orgSlug, competitionSlug, divisionSlug);
-  if (!data) notFound();
+  if (!data) {
+    const renamed = await sharedRenameTarget(orgSlug, competitionSlug, divisionSlug);
+    if (renamed) permanentRedirect(renamed);
+    notFound();
+  }
   const { org, competition, division, stages, pools, fixtures, standings, entrants } = data;
 
   // MetricSpec[] + cascade from the division's PINNED module version.

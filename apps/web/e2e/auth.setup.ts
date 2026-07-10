@@ -34,7 +34,8 @@ async function provision(page: Page, email: string): Promise<void> {
 /** Confirm the app renders, pre-dismiss cookie consent, persist storage state. */
 async function capture(page: Page, path: string): Promise<void> {
   await page.goto("/dashboard");
-  await expect(page.getByRole("navigation")).toBeVisible();
+  // Two navs since PROMPT-30 (header + breadcrumb) — assert the header one.
+  await expect(page.getByRole("navigation").first()).toBeVisible();
 
   // Pre-dismiss the cookie-consent banner. It renders app-wide (root layout)
   // and its fixed overlay intercepts pointer events, so without this the banner

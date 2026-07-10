@@ -1,165 +1,22 @@
 export const dynamic = "force-dynamic";
-// Competition overview: divisions as match-day cards (v3/03 §2); settings
-// live on their own page.
-import Link from "next/link";
-import { CalendarRange, Globe, MonitorPlay, Settings } from "lucide-react";
-import { Nav } from "@/components/nav";
-import { requireResourcePageAuth } from "@/server/page-auth";
-import { getCompetition } from "@/server/usecases/competitions";
-import { listDivisions } from "@/server/usecases/divisions";
-import { listDivisionCardStats, nextLine, formatLabel } from "@/server/usecases/card-stats";
-import { EntityCard } from "@/components/ui/entity-card";
-import { CardMenu } from "@/components/ui/card-menu";
-import { ViewToggleContainer } from "@/components/ui/view-toggle";
-import { StatusChip, divisionChipState, CHIP_SORT } from "@/components/ui/status-chip";
-import { SPORT_EMOJI } from "@/components/discovery-cards";
-import { divisionAccent } from "@/lib/division-hue";
-import { routes } from "@/lib/routes";
-import { msg } from "@/lib/messages";
-import { sql } from "@/lib/db";
+// Legacy id route — 301s to the slug chain, forwarding the query string
+// (PROMPT-30). Delete once the [legacy-route] log line goes quiet.
+import { permanentRedirect } from "next/navigation";
+import { legacyPath } from "@/server/legacy-routes";
 
-export default async function CompetitionPage({
+export default async function Legacy({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  const { id } = await params;
-  const { auth, org, canEdit } = await requireResourcePageAuth("competition", id);
-  const [competition, divisions, stats, [orgRow]] = await Promise.all([
-    getCompetition(auth, id),
-    listDivisions(auth, id),
-    listDivisionCardStats(auth, id),
-    sql<{ slug: string }[]>`select slug from organizations where id = ${auth.orgId}`,
-  ]);
-  const publicPath =
-    competition.visibility !== "private" && orgRow
-      ? `/shared/${orgRow.slug}/${competition.slug}`
-      : null;
-
-  return (
-    <>
-      <Nav />
-      <main className="mx-auto max-w-6xl px-4 py-8">
-        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-xs text-slate-500">
-              <Link href="/dashboard" className="hover:text-purple-600">
-                Competitions
-              </Link>{" "}
-              / {org.name}
-            </p>
-            <h1 className="mt-1 truncate text-xl font-semibold tracking-tight text-slate-900">
-              {competition.name}
-            </h1>
-          </div>
-          {/* Header actions: icon + label on desktop, icon-only under `sm`
-              (v3/02 pattern 5 — labels move into aria-label, 44px targets). */}
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={routes.slideshowCompetition(competition.id)}
-              target="_blank"
-              aria-label="Slideshow (opens in a new tab)"
-              className="btn btn-ghost gap-1.5"
-            >
-              <MonitorPlay className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Slideshow ↗</span>
-            </Link>
-            <Link
-              href={routes.competitionSchedule(competition.id)}
-              aria-label="Schedule board"
-              className="btn btn-ghost gap-1.5"
-            >
-              <CalendarRange className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Schedule board</span>
-            </Link>
-            {publicPath && (
-              <Link
-                href={publicPath}
-                target="_blank"
-                aria-label="View public page (opens in a new tab)"
-                className="btn btn-ghost gap-1.5"
-              >
-                <Globe className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">View public page ↗</span>
-              </Link>
-            )}
-            <Link
-              href={routes.competitionSettings(competition.id)}
-              aria-label="Settings"
-              className="btn btn-ghost gap-1.5"
-            >
-              <Settings className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Settings</span>
-            </Link>
-          </div>
-        </div>
-
-          <section>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-700">Divisions</h2>
-              {canEdit && !competition.frozen && (
-                <Link
-                  href={`/competitions/${competition.id}/divisions/new`}
-                  className="btn btn-primary"
-                >
-                  + Add division
-                </Link>
-              )}
-            </div>
-            {divisions.length === 0 ? (
-              <div className="card p-6 text-center text-sm text-slate-500">
-                <p>{msg("card.empty.divisions")}</p>
-                {canEdit && !competition.frozen && (
-                  <Link href={routes.divisionNew(competition.id)} className="btn btn-primary mt-4">
-                    {msg("card.empty.divisions.cta")}
-                  </Link>
-                )}
-              </div>
-            ) : (
-              <ViewToggleContainer storageKey="seazn.view.divisions" toggle={divisions.length > 20}>
-                {divisions
-                  .map((d) => ({
-                    d,
-                    chip: divisionChipState(d.status, {
-                      registrationOpen: stats.get(d.id)?.registration_open,
-                    }),
-                  }))
-                  .sort((a, b) => CHIP_SORT[a.chip] - CHIP_SORT[b.chip])
-                  .map(({ d, chip }) => {
-                    const s = stats.get(d.id);
-                    const entrantsLabel = s
-                      ? `${s.entrants}${s.capacity ? `/${s.capacity}` : ""} entrant${s.entrants === 1 && !s.capacity ? "" : "s"}`
-                      : null;
-                    return (
-                      <EntityCard
-                        key={d.id}
-                        href={routes.division(d.id)}
-                        glyph={SPORT_EMOJI[d.sport_key] ?? "🏅"}
-                        name={d.name}
-                        accent={divisionAccent(d.id)}
-                        chip={<StatusChip state={chip} />}
-                        meta={[formatLabel(s?.stage_kinds ?? []), entrantsLabel]
-                          .filter(Boolean)
-                          .join(" · ")}
-                        next={s ? nextLine(s.next) : null}
-                        progress={s ? { played: s.played, total: s.total } : null}
-                        menu={
-                          <CardMenu
-                            name={d.name}
-                            items={[
-                              { label: "Schedule", href: routes.divisionSchedule(d.id) },
-                              { label: "Registrations", href: routes.divisionRegistrations(d.id) },
-                              { label: "Slideshow", href: routes.slideshowDivision(d.id), external: true },
-                            ]}
-                          />
-                        }
-                      />
-                    );
-                  })}
-              </ViewToggleContainer>
-            )}
-          </section>
-      </main>
-    </>
-  );
+  const [{ id }, sp] = await Promise.all([params, searchParams]);
+  const qs = new URLSearchParams(
+    Object.entries(sp).flatMap(([k, v]) =>
+      v === undefined ? [] : Array.isArray(v) ? v.map((x) => [k, x]) : [[k, v]],
+    ) as [string, string][],
+  ).toString();
+  const path = await legacyPath("competition", id);
+  permanentRedirect(qs ? `${path}?${qs}` : path);
 }

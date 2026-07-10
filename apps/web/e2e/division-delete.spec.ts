@@ -48,7 +48,7 @@ test("deleting a setup division lifts the free-plan divisions gate", async ({ pa
   await dialog.getByRole("button", { name: "Delete division" }).click();
 
   // Redirects to the competition page; the division is gone.
-  await page.waitForURL(`**/competitions/${compId}`, { timeout: 20_000 });
+  await page.waitForURL(/\/o\/[^/]+\/c\/[^/?]+$/, { timeout: 20_000 });
   const goneRes = await apiJson(request, `/api/v1/divisions/${divisionId}`);
   expect(goneRes.status).toBe(404);
 

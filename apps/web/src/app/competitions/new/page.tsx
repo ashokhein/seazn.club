@@ -1,22 +1,10 @@
 export const dynamic = "force-dynamic";
+// Legacy create route — org-scoped now (PROMPT-30).
 import { redirect } from "next/navigation";
-import { Nav } from "@/components/nav";
 import { requirePageAuth } from "@/server/page-auth";
-import { CompetitionWizard } from "@/components/v2/competition-wizard";
+import { routes } from "@/lib/routes";
 
-export default async function NewCompetitionPage() {
-  const { canEdit } = await requirePageAuth();
-  if (!canEdit) redirect("/dashboard");
-
-  return (
-    <>
-      <Nav />
-      <main className="mx-auto max-w-2xl px-4 py-8" data-tour="competition-wizard">
-        <h1 className="mb-6 text-xl font-semibold tracking-tight text-slate-900">
-          New competition
-        </h1>
-        <CompetitionWizard />
-      </main>
-    </>
-  );
+export default async function LegacyNewCompetition() {
+  const { org } = await requirePageAuth();
+  redirect(routes.competitionNew(org.slug));
 }

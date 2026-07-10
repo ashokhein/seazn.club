@@ -134,9 +134,10 @@ test.describe.serial("billing", () => {
     await page.goto("/settings/billing");
     await expect(page.getByText("pro", { exact: true })).toBeVisible({ timeout: 20_000 });
 
-    // The button confirms via window.confirm — accept it.
-    page.on("dialog", (d) => d.accept());
+    // PROMPT-32 moved this to the in-app ConfirmDialog (native confirm is
+    // lint-banned) — confirm through the dialog.
     await page.getByRole("button", { name: "Downgrade to Community" }).click();
+    await page.getByRole("alertdialog").getByRole("button", { name: "Downgrade" }).click();
     await expect(page.getByText("community", { exact: true })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("button", { name: /start free trial/i })).toBeVisible();
 

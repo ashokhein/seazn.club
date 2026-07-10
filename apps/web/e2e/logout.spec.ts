@@ -5,10 +5,15 @@ import { test, expect } from "@playwright/test";
 // so the shared storage state is untouched for later specs.
 test("sign out ends the session and protects organiser pages", async ({ page }) => {
   await page.goto("/dashboard");
-  await expect(page.getByRole("navigation")).toBeVisible();
+  await expect(page.getByRole("navigation").first()).toBeVisible();
 
   await page.getByRole("button", { name: "Sign out" }).click();
-  await page.waitForURL((u) => !u.pathname.startsWith("/dashboard"), { timeout: 20_000 });
+  // PROMPT-30: authed home is /o/[slug]; sign-out must LEAVE the console
+  // (waiting for "not /dashboard" would pass vacuously now).
+  await page.waitForURL(
+    (u) => u.pathname === "/" || u.pathname.startsWith("/login"),
+    { timeout: 20_000 },
+  );
 
   // The session cookie is gone — organiser pages now redirect to login.
   await page.goto("/dashboard");

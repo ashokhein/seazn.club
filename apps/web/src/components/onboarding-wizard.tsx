@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { routes } from "@/lib/routes";
 
 interface SportOption {
   key: string;
@@ -18,20 +19,20 @@ const SPORT_EMOJI: Record<string, string> = {
   generic: "🏅",
 };
 
-export function OnboardingWizard({ sports }: { sports: SportOption[] }) {
+export function OnboardingWizard({ sports, orgSlug }: { sports: SportOption[]; orgSlug: string }) {
   const router = useRouter();
   const [skipping, setSkipping] = useState(false);
 
   async function skip() {
     setSkipping(true);
     await fetch("/api/onboarding/complete", { method: "POST" });
-    router.push("/dashboard");
+    router.push(routes.orgHome(orgSlug));
   }
 
   function proceed() {
     // Mark done server-side so the wizard doesn't reappear on refresh.
     fetch("/api/onboarding/complete", { method: "POST" }).catch(() => {});
-    router.push("/competitions/new");
+    router.push(routes.competitionNew(orgSlug));
   }
 
   return (

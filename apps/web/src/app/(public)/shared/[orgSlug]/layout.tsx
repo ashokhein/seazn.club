@@ -7,11 +7,12 @@
 // one accent color driven by the --ps-* vars (lib/public-theme.ts) so an org
 // can re-brand the whole surface later without touching components.
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import { Barlow_Condensed } from "next/font/google";
 import { isReservedSlug } from "@/lib/public-site";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { getPublicOrg } from "@/server/public-site/data";
+import { sharedRenameTarget } from "@/server/slug-resolve";
 
 const displayFont = Barlow_Condensed({
   weight: ["500", "600", "700"],
@@ -40,7 +41,12 @@ export default async function PublicOrgLayout({
   const { orgSlug } = await params;
   if (isReservedSlug(orgSlug)) notFound();
   const data = await getPublicOrg(orgSlug);
-  if (!data) notFound();
+  if (!data) {
+    // Renamed org? The old slug keeps working (v3/01 §2).
+    const renamed = await sharedRenameTarget(orgSlug);
+    if (renamed) permanentRedirect(renamed);
+    notFound();
+  }
   const { org } = data;
 
   return (

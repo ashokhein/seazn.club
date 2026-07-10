@@ -2,10 +2,11 @@
 // non-entitled orgs), division cards, live-now strip. Unlisted competitions
 // render with noindex; private ones never reach here (the view 404s them).
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { ChevronRight } from "lucide-react";
 import { getPublicCompetition } from "@/server/public-site/data";
+import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
 import { publicThemeStyle } from "@/lib/public-theme";
 
@@ -37,7 +38,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function CompetitionHomePage({ params }: Props) {
   const { orgSlug, competitionSlug } = await params;
   const data = await getPublicCompetition(orgSlug, competitionSlug);
-  if (!data) notFound();
+  if (!data) {
+    const renamed = await sharedRenameTarget(orgSlug, competitionSlug);
+    if (renamed) permanentRedirect(renamed);
+    notFound();
+  }
   const { org, competition, divisions, liveNow } = data;
   const branding = (competition.branding ?? {}) as Branding;
   // Register CTA (doc 16 §1.1): shown while any division accepts submissions.

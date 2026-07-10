@@ -13,7 +13,7 @@ import type { CreateDivision, PatchDivision } from "@/server/api-v1/schemas";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
-import { slugify } from "./competitions";
+import { slugify, uniqueSlug, recordSlugHistory, RESERVED_ENTITY_SLUGS } from "./slugs";
 
 export interface DivisionRow {
   id: string;
@@ -64,7 +64,6 @@ export async function createDivision(
   competitionId: string,
   input: CreateDivision,
 ): Promise<DivisionRow> {
-  const slug = input.slug ?? slugify(input.name);
   const row = await withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx`select 1 from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
@@ -105,9 +104,26 @@ export async function createDivision(
       });
     }
 
-    const [dupe] = await tx`
-      select 1 from divisions where competition_id = ${competitionId} and slug = ${slug}`;
-    if (dupe) throw new HttpError(409, `slug '${slug}' is already in use in this competition`);
+    // Explicit slugs 409 on collision; generated ones dedupe with "-2"
+    // suffixes and skip the reserved "new" (static /d/new route).
+    let slug: string;
+    if (input.slug) {
+      if (RESERVED_ENTITY_SLUGS.has(input.slug)) {
+        throw new HttpError(422, `slug '${input.slug}' is reserved`);
+      }
+      const [dupe] = await tx`
+        select 1 from divisions where competition_id = ${competitionId} and slug = ${input.slug}`;
+      if (dupe) {
+        throw new HttpError(409, `slug '${input.slug}' is already in use in this competition`);
+      }
+      slug = input.slug;
+    } else {
+      slug = await uniqueSlug(slugify(input.name), async (s) => {
+        const [taken] = await tx`
+          select 1 from divisions where competition_id = ${competitionId} and slug = ${s}`;
+        return !!taken;
+      });
+    }
 
     const [row] = await tx<DivisionRow[]>`
       insert into divisions (competition_id, name, slug, sport_key, variant_key, config,
@@ -316,9 +332,28 @@ export async function patchDivision(
     await requireFeature(auth.orgId, "formats.advanced");
   }
   return withTenant(auth.orgId, async (tx) => {
-    const cols = Object.keys(patch) as (keyof PatchDivision)[];
+    const effective: Record<string, unknown> = { ...patch };
+    // Rename regenerates the slug (v3/01 §2); old slug keeps redirecting.
+    if (patch.name) {
+      const [before] = await tx<{ name: string; slug: string; competition_id: string }[]>`
+        select name, slug, competition_id from divisions where id = ${id}`;
+      if (!before) throw new HttpError(404, "division not found");
+      if (patch.name !== before.name) {
+        const regenerated = await uniqueSlug(slugify(patch.name), async (s) => {
+          const [taken] = await tx`
+            select 1 from divisions
+            where competition_id = ${before.competition_id} and slug = ${s} and id <> ${id}`;
+          return !!taken;
+        });
+        if (regenerated !== before.slug) {
+          effective.slug = regenerated;
+          await recordSlugHistory(tx, "division", before.competition_id, before.slug, id);
+        }
+      }
+    }
+    const cols = Object.keys(effective);
     const values = {
-      ...patch,
+      ...effective,
       ...(patch.eligibility ? { eligibility: tx.json(patch.eligibility as never) } : {}),
       ...(patch.tiebreakers ? { tiebreakers: tx.json(patch.tiebreakers as never) } : {}),
     };

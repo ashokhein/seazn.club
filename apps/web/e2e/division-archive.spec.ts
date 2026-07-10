@@ -56,7 +56,7 @@ test("resulted division: 409 → archive → restore round-trip", async ({ page,
   await page.goto(`/divisions/${divisionId}`);
   await page.getByRole("button", { name: "Archive division" }).click({ timeout: 20_000 });
   await page.getByRole("dialog").getByRole("button", { name: "Archive division" }).click();
-  await page.waitForURL(`**/competitions/${compId}`, { timeout: 20_000 });
+  await page.waitForURL(/\/o\/[^/]+\/c\/[^/?]+$/, { timeout: 20_000 });
 
   // Hidden from the console list.
   const listed = await apiJson<{ id: string }[]>(

@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
+import { routes } from "@/lib/routes";
 
 /** Inline rename for the active organization (owners and admins). */
 export function OrgRename({
@@ -24,11 +25,14 @@ export function OrgRename({
     setError(null);
     setSaved(false);
     try {
-      await api(`/api/orgs/${orgId}`, {
+      const org = await api<{ slug: string }>(`/api/orgs/${orgId}`, {
         method: "PATCH",
         json: { name: name.trim() },
       });
       setSaved(true);
+      // Renames regenerate the slug (PROMPT-30) — move to the new URL; the
+      // old one 301s for anyone else holding it.
+      router.replace(routes.orgSettings(org.slug));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save");

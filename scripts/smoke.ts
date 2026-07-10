@@ -194,25 +194,32 @@ async function main() {
     name: `Second Org ${tag}`,
   })) as { id: string; slug: string };
   check("can create additional org", !!org2.id);
-  check("org slug auto-generated", /^org-[0-9a-f]+$/.test(org2.slug));
+  check("org slug readable (PROMPT-30)", org2.slug.startsWith("second-org"));
   check("creating org switches active", admin.cookies["seazn_org"] === org2.id);
   const myOrgs = (await call(admin, "/api/orgs")) as { id: string }[];
   check("admin now belongs to 2 orgs", myOrgs.length === 2);
-  // Rename the active org; slug stays immutable.
+  // Rename the active org; the slug regenerates and the old one redirects
+  // (PROMPT-30, v3/01 §2).
   const renamed = (await call(admin, `/api/orgs/${org2.id}`, "PATCH", {
-    name: "Renamed Org",
+    name: `Renamed Org ${tag}`,
   })) as { name: string; slug: string };
-  check("org renamed", renamed.name === "Renamed Org");
-  check("slug immutable on rename", renamed.slug === org2.slug);
+  check("org renamed", renamed.name === `Renamed Org ${tag}`);
+  check("rename regenerates slug", renamed.slug !== org2.slug && renamed.slug.startsWith("renamed-org"));
+  const oldConsole = await pageRedirect(admin, `/o/${org2.slug}`);
+  check(
+    "old org slug 301s on the console",
+    oldConsole.status >= 301 && oldConsole.status <= 308 &&
+      (oldConsole.location ?? "").includes(`/o/${renamed.slug}`),
+  );
 
   // --- Platform API /api/v1 (PROMPT-11) — the full engine v2 lifecycle ---
-  await v1Suite(admin, org2.id, org2.slug);
+  await v1Suite(admin, org2.id, renamed.slug);
 
   // --- Jul3 feature wave (PROMPT-21..28) over real HTTP ---
   // The advanced features are entitlement-gated — org2 must be Pro (and it
   // needs headroom past competitions.max_active for the extra competitions).
   await setPlan(org2.id, "pro");
-  await jul3Suite(admin, org2.id, org2.slug);
+  await jul3Suite(admin, org2.id, renamed.slug);
 
   // --- Division delete/archive lifecycle (PROMPT-38, v3/09 §4): delete on a
   // free org lifts the divisions quota; archive/restore on the Pro org.
@@ -220,12 +227,24 @@ async function main() {
 
   // --- v3 UI system (PROMPT-32): card grid render + visibility flip on both
   // plans — pro on org2, free on a fresh community owner.
-  await uiSystemSuite(admin, org2.slug);
+  await uiSystemSuite(admin, renamed.slug);
 
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
   await gapSuite(admin, org.id, org2.id);
+}
+
+/** Fetch a page WITHOUT following redirects — for 301 assertions (PROMPT-30). */
+async function pageRedirect(
+  s: Session,
+  path: string,
+): Promise<{ status: number; location: string | null }> {
+  const res = await fetch(BASE + path, {
+    redirect: "manual",
+    headers: Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {},
+  });
+  return { status: res.status, location: res.headers.get("location") };
 }
 
 /** Fetch a page as HTML with the session's cookies (raw() assumes JSON). */
@@ -274,6 +293,9 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
     "dashboard renders card grid (free)",
     freeDash.status === 200 && freeDash.body.includes("ecard"),
   );
+  // PROMPT-30 free path: slug console URL serves for community orgs too.
+  const freeConsole = await html(free, `/o/${freeOrg.slug}/c/${freeComp.slug}`);
+  check("console competition page serves (free)", freeConsole.status === 200);
   const freeFlip = await v1(free, `/api/v1/competitions/${freeComp.id}`, "PATCH", {
     visibility: "unlisted",
   });
@@ -383,6 +405,18 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   check("v1 generate creates 6 RR fixtures", v1data<{ created: number }>(gen1).created === 6);
   check("v1 generate is idempotent", v1data<{ created: number; existing: number }>(gen2).created === 0);
   const fixtures = v1data<{ fixtures: { id: string }[] }>(gen1).fixtures;
+
+  // --- PROMPT-30: slug console routes + legacy 301s ---
+  const consolePage = await html(admin, `/o/${orgSlug}/c/${compSlug}/d/${divSlug}`);
+  check("console division page serves on slug URL", consolePage.status === 200);
+  const fixturePage = await html(admin, `/o/${orgSlug}/c/${compSlug}/d/${divSlug}/f/1`);
+  check("fixture ordinal page serves (/f/1)", fixturePage.status === 200);
+  const legacy = await pageRedirect(admin, `/divisions/${divId}`);
+  check(
+    "legacy /divisions/[id] 301s to the slug chain",
+    legacy.status >= 301 && legacy.status <= 308 &&
+      (legacy.location ?? "").includes(`/o/${orgSlug}/c/${compSlug}/d/${divSlug}`),
+  );
 
   // Scheduling console (doc 12, PROMPT-17): scoring is closed until the
   // explicit start; auto pass proposes without persisting; start opens scoring.

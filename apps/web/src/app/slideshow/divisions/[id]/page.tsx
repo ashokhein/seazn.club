@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getDivision } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
+import { routes } from "@/lib/routes";
 import { buildDivisionSlides, orgBoardChrome } from "@/server/slideshow-data";
 import { hasFeature } from "@/lib/entitlements";
 import { publicThemeStyleChain } from "@/lib/public-theme";
@@ -16,7 +17,7 @@ export default async function DivisionSlideshowPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { auth } = await requireResourcePageAuth("division", id);
+  const { auth, org } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
   const competition = await getCompetition(auth, division.competition_id);
   const [slides, realtime, chrome] = await Promise.all([
@@ -29,7 +30,7 @@ export default async function DivisionSlideshowPage({
     <Slideshow
       title={`${competition.name} · ${division.name}`}
       slides={slides}
-      backHref={`/divisions/${id}`}
+      backHref={routes.division(org.slug, competition.slug, division.slug)}
       divisionIds={[id]}
       realtime={realtime}
       // competition.branding comes off the console read model (NOT emptied

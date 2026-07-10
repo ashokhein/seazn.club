@@ -1,0 +1,136 @@
+export const dynamic = "force-dynamic";
+// Fixture console (PROMPT-15 task 1): schedule, lineups, sport-shaped scoring
+// pad, void/undo, finalize. Server shell — all interaction in FixtureConsole.
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { requireFixturePage } from "@/server/page-auth";
+import {
+  eventRecorderNames,
+  getFixture,
+  getFixtureState,
+  getLineup,
+  listEvents,
+} from "@/server/usecases/fixtures";
+import { getDivision } from "@/server/usecases/divisions";
+import { getCompetition } from "@/server/usecases/competitions";
+import { getEntrant } from "@/server/usecases/entrants";
+import { resolveModule } from "@/server/engine-db";
+import {
+  FixtureConsole,
+  type SideInfo,
+  type LineupSlotIn,
+} from "@/components/v2/fixture-console";
+import { DeviceLinkPanel } from "@/components/v2/device-link-panel";
+
+export default async function FixturePage({
+  params,
+}: {
+  params: Promise<{ orgSlug: string; compSlug: string; divSlug: string; no: string }>;
+}) {
+  const { orgSlug, compSlug, divSlug, no } = await params;
+  const fixtureNo = Number(no);
+  if (!Number.isInteger(fixtureNo) || fixtureNo < 1) notFound();
+  const page = await requireFixturePage(orgSlug, compSlug, divSlug, fixtureNo);
+  const { auth, canScore } = page;
+  const id = page.fixtureId;
+  const isScorer = auth.role === "scorer";
+  const fixture = await getFixture(auth, id);
+  const [division, state, events, recorderNames] = await Promise.all([
+    getDivision(auth, fixture.division_id),
+    getFixtureState(auth, id),
+    listEvents(auth, id, 0),
+    eventRecorderNames(auth, id),
+  ]);
+  const competition = await getCompetition(auth, division.competition_id);
+  const sportModule = resolveModule(division.sport_key, division.module_version);
+
+  async function side(entrantId: string | null): Promise<SideInfo | null> {
+    if (!entrantId) return null;
+    const [entrant, lineup] = await Promise.all([
+      getEntrant(auth, entrantId),
+      getLineup(auth, id, entrantId),
+    ]);
+    return {
+      id: entrant.id,
+      name: entrant.display_name,
+      members: entrant.members as SideInfo["members"],
+      lineup: lineup.slots as LineupSlotIn[],
+    };
+  }
+  const [home, away] = await Promise.all([
+    side(fixture.home_entrant_id),
+    side(fixture.away_entrant_id),
+  ]);
+
+  return (
+    <>
+      <main className="mx-auto max-w-5xl px-4 py-8">
+        {isScorer && (
+          <p className="mb-4 text-xs text-slate-400">
+            <Link href="/my-matches" className="hover:text-purple-600">
+              ← My matches
+            </Link>
+            <span className="ml-2">
+              {competition.name} · {division.name}
+            </span>
+          </p>
+        )}
+
+        <FixtureConsole
+          fixture={{
+            id: fixture.id,
+            status: fixture.status,
+            scheduled_at: fixture.scheduled_at,
+            venue: fixture.venue,
+            court_label: fixture.court_label,
+            round_no: fixture.round_no,
+          }}
+          sport={{
+            key: division.sport_key,
+            config: division.config as Record<string, unknown>,
+            scorerLabel: sportModule.officialLabel.scorer,
+            positionGroups: sportModule.positions.groups,
+            roles: sportModule.positions.roles ?? [],
+            lineupSize: sportModule.positions.lineup.size,
+            fidelityTiers: sportModule.fidelityTiers,
+          }}
+          home={home}
+          away={away}
+          initialState={{
+            status: state.status,
+            last_seq: state.last_seq,
+            summary: state.summary,
+            state: state.state,
+            outcome: state.outcome,
+          }}
+          initialEvents={events.map((e) => ({
+            id: e.id,
+            seq: e.seq,
+            type: e.type,
+            payload: e.payload,
+            recorded_at: e.recorded_at,
+            recorded_by: e.recorded_by,
+            voids_event_id: e.voids_event_id,
+            device_link_id: e.device_link_id,
+          }))}
+          canEdit={canScore && !(competition.frozen ?? false)}
+          recorderNames={recorderNames}
+        />
+
+        {/* Day-of device link (doc 13 §7): editors only — scorers never mint. */}
+        {!isScorer &&
+          canScore &&
+          !(competition.frozen ?? false) &&
+          fixture.status !== "finalized" &&
+          fixture.status !== "cancelled" && (
+            <div className="mt-6">
+              <DeviceLinkPanel
+                fixtureId={fixture.id}
+                scorerLabel={sportModule.officialLabel.scorer}
+              />
+            </div>
+          )}
+      </main>
+    </>
+  );
+}

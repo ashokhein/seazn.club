@@ -38,6 +38,36 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  {
+    // v3/01 §6 (PROMPT-30): console URLs come from routes.* — string-built
+    // paths break when the URL scheme changes. Excluded: the builder itself,
+    // legacy redirect resolution + stub pages, API path docs, robots.
+    files: ["src/**/*.{ts,tsx}"],
+    ignores: [
+      "src/lib/routes.ts",
+      "src/server/legacy-routes.ts",
+      "src/server/api-v1/**",
+      "src/app/competitions/**",
+      "src/app/divisions/**",
+      "src/app/fixtures/**",
+      "src/app/robots.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        ...["JSXAttribute[name.name='href'] Literal",
+          "JSXAttribute[name.name='href'] TemplateLiteral > TemplateElement:first-child",
+          "CallExpression[callee.name=/^(redirect|permanentRedirect)$/] > Literal",
+          "CallExpression[callee.name=/^(redirect|permanentRedirect)$/] > TemplateLiteral > TemplateElement:first-child",
+          "CallExpression[callee.property.name=/^(push|replace|prefetch)$/] > Literal",
+          "CallExpression[callee.property.name=/^(push|replace|prefetch)$/] > TemplateLiteral > TemplateElement:first-child",
+        ].map((base) => ({
+          selector: `${base}[value${base.includes("TemplateElement") ? ".raw" : ""}=/^\\u002F(o|competitions|divisions|fixtures)\\u002F/]`,
+          message: "Build console hrefs with routes.* from @/lib/routes (PROMPT-30).",
+        })),
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
 ]);

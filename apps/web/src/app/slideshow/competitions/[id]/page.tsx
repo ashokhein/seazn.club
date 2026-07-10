@@ -5,6 +5,7 @@ export const dynamic = "force-dynamic";
 // resolver as the public courtside pages.
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
+import { routes } from "@/lib/routes";
 import { listDivisions } from "@/server/usecases/divisions";
 import { buildDivisionSlides, orgBoardChrome, type Slide } from "@/server/slideshow-data";
 import { hasFeature } from "@/lib/entitlements";
@@ -17,7 +18,7 @@ export default async function CompetitionSlideshowPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { auth } = await requireResourcePageAuth("competition", id);
+  const { auth, org } = await requireResourcePageAuth("competition", id);
   const [competition, divisions] = await Promise.all([
     getCompetition(auth, id),
     listDivisions(auth, id),
@@ -43,7 +44,7 @@ export default async function CompetitionSlideshowPage({
     <Slideshow
       title={competition.name}
       slides={slides}
-      backHref={`/competitions/${id}`}
+      backHref={routes.competition(org.slug, competition.slug)}
       divisionIds={ordered.map((d) => d.id)}
       realtime={realtime}
       // Same gate as the division board: console reads don't empty branding,
