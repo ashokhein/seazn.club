@@ -10,6 +10,7 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { describeEvent, EVENT_TONE_STYLE } from "@/lib/event-copy";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { LineupEditor } from "@/components/v2/lineup-editor";
+import { ScoringErrorBoundary } from "@/components/v2/scoring-error-boundary";
 import { GenericPad } from "@/components/v2/pads/generic-pad";
 import { BoardgamePad } from "@/components/v2/pads/boardgame-pad";
 import { SetbasedPad } from "@/components/v2/pads/setbased-pad";
@@ -272,17 +273,19 @@ export function FixtureConsole({
       {scoring && !decided && home && away && (
         <section className="card p-5">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Scoring</h2>
-          {sport.key === "cricket" ? (
-            <CricketPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
-          ) : sport.key === "football" ? (
-            <FootballPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
-          ) : SETBASED.has(sport.key) ? (
-            <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
-          ) : sport.key === "boardgame" ? (
-            <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
-          ) : (
-            <GenericPad sport={sport} home={home} away={away} send={send} busy={busy} />
-          )}
+          <ScoringErrorBoundary fixtureId={fixture.id}>
+            {sport.key === "cricket" ? (
+              <CricketPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : sport.key === "football" ? (
+              <FootballPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : SETBASED.has(sport.key) ? (
+              <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : sport.key === "boardgame" ? (
+              <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
+            ) : (
+              <GenericPad sport={sport} home={home} away={away} send={send} busy={busy} />
+            )}
+          </ScoringErrorBoundary>
         </section>
       )}
 

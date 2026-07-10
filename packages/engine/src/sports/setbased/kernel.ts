@@ -489,15 +489,23 @@ export function makeSetBasedModule(
     outcome: (state) => state.outcome,
 
     // §9.5 — defined at every prefix; reads only the folded set ledger so
-    // coarse and fine folds render identically (§9.6).
+    // coarse and fine folds render identically (§9.6). The headline carries the
+    // per-set points, racquet-scoreline style ("2 — 0 · 21–15, 21–18"): a
+    // just-entered set summary must be visible in the top score (v3/09 §1a —
+    // "chosen score not reflected in top score").
     summary(state): ScoreSummary {
       const points = { home: totalPoints(state, "home"), away: totalPoints(state, "away") };
+      const closedSets = state.sets.filter((set) => set.closed);
+      const setLine =
+        closedSets.length === 0
+          ? ""
+          : ` · ${closedSets.map((set) => `${set.home}–${set.away}`).join(", ")}`;
       // While a set is mid-flight, surface its live points next to the set
-      // tally ("1 — 0 (14–11)") so rally scoring is visible at the headline.
+      // tally ("1 — 0 · 21–15 (14–11)") so rally scoring is visible too.
       const open = openSet(state);
       const inSet = open === null ? "" : ` (${open.set.home}–${open.set.away})`;
       return {
-        headline: `${state.setsWon.home} — ${state.setsWon.away}${inSet}`,
+        headline: `${state.setsWon.home} — ${state.setsWon.away}${setLine}${inSet}`,
         perSide: [
           { entrantId: state.entrants.home, line: `${state.setsWon.home}` },
           { entrantId: state.entrants.away, line: `${state.setsWon.away}` },

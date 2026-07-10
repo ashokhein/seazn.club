@@ -83,6 +83,10 @@ export async function v1<T>(fn: () => Promise<T | Reply<T>>): Promise<NextRespon
   try {
     const result = await fn();
     if (result instanceof Reply) {
+      // 204 carries no body by definition (v3/09 §4 — DELETE division).
+      if (result.status === 204) {
+        return new NextResponse(null, { status: 204, headers: result.headers });
+      }
       return NextResponse.json(
         { ok: true, data: result.data, requestId },
         { status: result.status, headers: result.headers },
@@ -131,7 +135,13 @@ export async function v1<T>(fn: () => Promise<T | Reply<T>>): Promise<NextRespon
     }
     if (err instanceof HttpError) {
       if (err.status >= 500) Sentry.captureException(err);
-      return errorResponse(requestId, err.status, err.code ?? statusCode(err.status), err.message);
+      return errorResponse(
+        requestId,
+        err.status,
+        err.code ?? statusCode(err.status),
+        err.message,
+        err.extra,
+      );
     }
     Sentry.captureException(err);
     const message = err instanceof Error ? err.message : "Server error";

@@ -32,11 +32,14 @@ export default async function DivisionSlideshowPage({
       backHref={`/divisions/${id}`}
       divisionIds={[id]}
       realtime={realtime}
-      themeStyle={
-        chrome.themed
-          ? publicThemeStyleChain(competition.branding, chrome.branding)
-          : undefined
-      }
+      // competition.branding comes off the console read model (NOT emptied
+      // in-query like the public views) — gate it on the same entitlement,
+      // or a Community board leaks the brand color (smoke: "community
+      // slideshow keeps default theme").
+      themeStyle={publicThemeStyleChain(
+        chrome.themed ? competition.branding : null,
+        chrome.branding,
+      )}
       logo={chrome.logo}
     />
   );

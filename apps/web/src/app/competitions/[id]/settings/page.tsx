@@ -4,7 +4,9 @@ import Link from "next/link";
 import { Nav } from "@/components/nav";
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
+import { listDivisions } from "@/server/usecases/divisions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
+import { ArchivedDivisions } from "@/components/v2/archived-divisions";
 import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
 
@@ -27,11 +29,13 @@ export default async function CompetitionSettingsPage({
 }) {
   const { id } = await params;
   const { auth, org, canEdit } = await requireResourcePageAuth("competition", id);
-  const [competition, discoveryBranding, themeBranding] = await Promise.all([
+  const [competition, discoveryBranding, themeBranding, allDivisions] = await Promise.all([
     getCompetition(auth, id),
     hasFeature(auth.orgId, "discovery.branding"),
     hasFeature(auth.orgId, "dashboard.branding"),
+    listDivisions(auth, id, { includeArchived: true }),
   ]);
+  const archivedDivisions = allDivisions.filter((d) => d.archived_at !== null);
 
   const [agg] = await withTenant(auth.orgId, (tx) =>
     tx<{ total: number; underway: number; done: number; scheduled: number }[]>`
@@ -84,6 +88,17 @@ export default async function CompetitionSettingsPage({
           themeBranding={themeBranding}
           orgBranding={org.branding}
           suggestedStatus={suggestedStatus}
+        />
+
+        {/* v3/09 §4 — restore/purge surface for archived divisions. */}
+        <ArchivedDivisions
+          divisions={archivedDivisions.map((d) => ({
+            id: d.id,
+            name: d.name,
+            sport_key: d.sport_key,
+            archived_at: d.archived_at as string,
+          }))}
+          canEdit={canEdit}
         />
       </main>
     </>

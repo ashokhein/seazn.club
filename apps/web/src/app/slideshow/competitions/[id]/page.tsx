@@ -46,11 +46,12 @@ export default async function CompetitionSlideshowPage({
       backHref={`/competitions/${id}`}
       divisionIds={ordered.map((d) => d.id)}
       realtime={realtime}
-      themeStyle={
-        chrome.themed
-          ? publicThemeStyleChain(competition.branding, chrome.branding)
-          : undefined
-      }
+      // Same gate as the division board: console reads don't empty branding,
+      // so the entitlement check happens here.
+      themeStyle={publicThemeStyleChain(
+        chrome.themed ? competition.branding : null,
+        chrome.branding,
+      )}
       logo={chrome.logo}
     />
   );

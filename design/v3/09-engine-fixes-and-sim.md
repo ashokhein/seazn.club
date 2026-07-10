@@ -98,3 +98,32 @@ archives; restore round-trips. Smoke extended: delete path on free, archive on p
 
 Related: engine/04 (scoring specs), engine/sports/badminton.md + cricket.md (normative),
 Jul3/03 (undo semantics), [[v3/03]] ConfirmDialog.
+
+## 6. Implementation notes (PROMPT-38, 2026-07-10)
+
+Landed on `feat/engine-fixes-prompt-38`. Deviations/diagnoses vs the sketches above:
+
+- **§1a root cause (engine, not client):** the setbased kernel's fold and set
+  predicate were correct; the divergence was `summary()` collapsing the headline
+  to sets-won only ("1 — 0"), so a summary-entered game score never appeared in
+  the top score. Fixed in the kernel: headlines now carry per-set points
+  ("2 — 0 · 21–15, 21–18", open set in parens). §1b set-end rules verified
+  correct — the boundary matrices are now permanent tests + sim scenarios.
+- **§2 root cause (persistence, not fold):** `resolveVoids` already hides
+  compensating events from modules; the regression was `fixtures.status`
+  drifting from the fold after a void (undo of `core.start`/`core.forfeit`/
+  `core.abandon` left the status stuck), dead-ending the console. Status is now
+  derived from the void-resolved ledger in `appendEvent`. Undo-of-nothing is a
+  usecase-level 409 (`REGISTRATION_OPEN`-style typed code: no target / already
+  undone / undoing an undo). The scoring-panel error boundary landed as
+  defence in depth (`ScoringErrorBoundary`).
+- **§4 route naming:** `POST /divisions/{id}/restore` was already taken by the
+  Jul3/03 checkpoint restore, so un-archiving is `DELETE /divisions/{id}/archive`
+  (archive as a resource). Purge reuses `DELETE /divisions/{id}` on an archived
+  division (409 `ARCHIVE_COOL_OFF` inside 30 days). Open registration blocks
+  archive as well as delete. Restore re-checks the divisions quota (402 rather
+  than silently exceeding the plan).
+- **§3:** `league_legs2` joined the division-matrix templates; americano/ladder
+  are engine-level scenario suites (StageKind stays the six-kind enum — those
+  formats are app-level stage configs). `npm run sim:matrix` emits
+  `packages/engine/sim-report.json`; CI runs `SIM_SEEDS=5` and uploads it.
