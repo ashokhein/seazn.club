@@ -23147,6 +23147,16 @@
                             "withdrawn"
                           ]
                         },
+                        "ref_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "access_token": {
                           "type": "string"
                         },
@@ -23164,6 +23174,7 @@
                       "required": [
                         "registration_id",
                         "status",
+                        "ref_code",
                         "access_token",
                         "checkout_url"
                       ],

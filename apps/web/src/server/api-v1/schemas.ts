@@ -784,6 +784,8 @@ export type PublicRegisterRequest = z.infer<typeof PublicRegisterRequest>;
 export const PublicRegisterResponse = z.object({
   registration_id: Uuid,
   status: RegistrationStatus,
+  /** Quotable reference (v3/05 §3) — also on the ticket and in the email. */
+  ref_code: z.string().nullable(),
   /** Self-service secret, shown exactly once (status page / withdraw / pay). */
   access_token: z.string(),
   /** Stripe Checkout URL when an entry fee is due now. */

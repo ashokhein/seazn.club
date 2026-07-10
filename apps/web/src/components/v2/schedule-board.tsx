@@ -86,14 +86,28 @@ export function ScheduleBoard({
     return new Set(raw.split(",").filter((s) => known.has(s)));
   }, [searchParams, divisions]);
 
-  const setFilter = useCallback(
-    (slugs: Set<string>) => {
-      const qs = new URLSearchParams(searchParams.toString());
-      if (slugs.size === 0) qs.delete("d");
-      else qs.set("d", [...slugs].sort().join(","));
+  // The filter's synchronous source of truth. Two quick taps race BOTH the
+  // useSearchParams snapshot and window.location (the router commits the URL
+  // after its transition), so the second tap would otherwise derive from the
+  // pre-first-tap state and drop a selection. The ref mutates immediately;
+  // the URL follows and re-syncs it on external navigation.
+  const filterRef = useRef(new Set(selectedSlugs));
+  useEffect(() => {
+    filterRef.current = new Set(selectedSlugs);
+  }, [selectedSlugs]);
+
+  const toggleFilter = useCallback(
+    (slug: string | null) => {
+      const cur = filterRef.current;
+      if (slug === null) cur.clear();
+      else if (cur.has(slug)) cur.delete(slug);
+      else cur.add(slug);
+      const qs = new URLSearchParams(window.location.search);
+      if (cur.size === 0) qs.delete("d");
+      else qs.set("d", [...cur].sort().join(","));
       router.replace(`${pathname}${qs.size > 0 ? `?${qs}` : ""}`, { scroll: false });
     },
-    [pathname, router, searchParams],
+    [pathname, router],
   );
 
   const visibleDivisions = useMemo(
@@ -352,13 +366,8 @@ export function ScheduleBoard({
       <BoardLegend
         divisions={divisions}
         selected={selectedSlugs}
-        onToggle={(slug) => {
-          const next = new Set(selectedSlugs);
-          if (next.has(slug)) next.delete(slug);
-          else next.add(slug);
-          setFilter(next);
-        }}
-        onClear={() => setFilter(new Set())}
+        onToggle={toggleFilter}
+        onClear={() => toggleFilter(null)}
       />
 
       {/* Density modes + day picker + bulk tools */}

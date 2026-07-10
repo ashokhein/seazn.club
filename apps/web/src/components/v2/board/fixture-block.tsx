@@ -96,6 +96,7 @@ export function FixtureBlock({
         {showDivision && (
           <span
             title={divisionName}
+            data-division-chip={divisionShortCode(divisionName)}
             className="rounded px-1 font-semibold"
             style={{
               backgroundColor: divisionTint(fixture.division_id),

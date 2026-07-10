@@ -76,8 +76,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ ref: str
               {view.competition_name}
             </div>
             <div style={{ fontSize: 22, color: "#52525b" }}>
-              {view.division_name}
-              {dates ? ` · ${dates}` : ""}
+              {`${view.division_name}${dates ? ` · ${dates}` : ""}`}
             </div>
           </div>
           <div style={{ display: "flex", flex: 1, alignItems: "center", padding: "20px 36px", gap: 32 }}>
@@ -104,7 +103,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ ref: str
                   borderRadius: 8,
                   padding: "4px 14px",
                   transform: "rotate(-4deg)",
-                  width: "fit-content",
+                  alignSelf: "flex-start",
                 }}
               >
                 {stamp.label}

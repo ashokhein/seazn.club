@@ -29,6 +29,7 @@ export async function POST(req: Request, { params }: Ctx) {
     return reply(201, {
       registration_id: result.registration.id,
       status: result.registration.status,
+      ref_code: result.registration.ref_code,
       access_token: result.access_token,
       checkout_url: result.checkout_url,
     });

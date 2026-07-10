@@ -229,6 +229,10 @@ async function main() {
   // plans — pro on org2, free on a fresh community owner.
   await uiSystemSuite(admin, renamed.slug);
 
+  // --- v3 scheduling board + registration v2 (PROMPT-33/34): board render,
+  // seq-tokened reschedule + stale 409, SZ refs + /r/[ref] on pro AND free.
+  await schedRegV3Suite(admin, renamed.slug);
+
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
@@ -302,6 +306,150 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   check("visibility flips to Link only (free)", freeFlip.status === 200);
   const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
   check("link-only page serves + noindex (free)", freeShared.status === 200 && freeShared.body.includes("noindex"));
+}
+
+/** PROMPT-33/34 smoke: board v3 renders + a seq-tokened reschedule lands and
+ *  a stale token 409s (pro); registration issues an SZ ref and /r/[ref]
+ *  resolves it on pro AND free orgs (house rule). */
+async function schedRegV3Suite(
+  admin: Session,
+  proOrgSlug: string,
+): Promise<void> {
+  // --- Pro path: competition + division + timetable + board page ---
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `Sched v3 ${tag}`,
+      visibility: "public",
+    }),
+  );
+  const div = v1data<{ id: string; slug: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Boarded",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+    { kind: "individual", display_name: "S1", seed: 1 },
+    { kind: "individual", display_name: "S2", seed: 2 },
+    { kind: "individual", display_name: "S3", seed: 3 },
+    { kind: "individual", display_name: "S4", seed: 4 },
+  ]);
+  const stage = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1, kind: "league", name: "League",
+    }),
+  );
+  await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
+    config: {
+      startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
+      courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+    },
+    tz: "UTC",
+  });
+  const gen = v1data<{ fixtures: { id: string }[] }>(
+    await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST"),
+  );
+  const fixture = gen.fixtures[0]!.id;
+
+  const board = await html(admin, `/o/${proOrgSlug}/c/${comp.slug}/schedule`);
+  check(
+    "sched board v3 renders (pro)",
+    board.status === 200 && board.body.includes("Board density"),
+  );
+
+  // Reschedule with the current division seq — lands; replaying the same
+  // (now stale) token 409s with SEQ_CONFLICT (v3/11 gap 10).
+  const seq0 = v1data<{ seq: number }>(await v1(admin, `/api/v1/divisions/${div.id}`)).seq;
+  const move = await v1(admin, `/api/v1/fixtures/${fixture}`, "PATCH", {
+    scheduled_at: "2026-10-01T09:00:00.000Z",
+    court_label: "A",
+    expected_seq: Number(seq0),
+  });
+  check("sched seq-tokened reschedule lands", move.status === 200);
+  const stale = await v1(admin, `/api/v1/fixtures/${fixture}`, "PATCH", {
+    scheduled_at: "2026-10-01T10:00:00.000Z",
+    court_label: "A",
+    expected_seq: Number(seq0),
+  });
+  check(
+    "sched stale seq 409s with SEQ_CONFLICT",
+    stale.status === 409 && stale.json.error?.code === "SEQ_CONFLICT",
+  );
+
+  // Registration → SZ ref → public /r/[ref] page (pro org).
+  await v1(admin, `/api/v1/divisions/${div.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "gbp", form_fields: [],
+  });
+  const reg = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
+    division_id: div.id,
+    display_name: `Ref Probe ${tag}`,
+    contact_email: `refprobe_${tag}@example.com`,
+  });
+  const regData = v1data<{ ref_code: string }>(reg);
+  check(
+    "reg issues an SZ ref (pro)",
+    reg.status === 201 && /^SZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(regData.ref_code ?? ""),
+  );
+  const refPage = await html(newSession(), `/r/${regData.ref_code}`);
+  check(
+    "reg /r/[ref] resolves (pro)",
+    refPage.status === 200 && refPage.body.includes(regData.ref_code),
+  );
+  // Save-ticket PNG (next/og) renders for the same ref.
+  const png = await fetch(`${BASE}/r/${regData.ref_code}/ticket.png`);
+  check(
+    "reg ticket.png renders (pro)",
+    png.status === 200 && (png.headers.get("content-type") ?? "").startsWith("image/png"),
+  );
+
+  // Honeypot: a filled `website` field is rejected before any work.
+  const honey = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
+    division_id: div.id,
+    display_name: "Bot Entry",
+    contact_email: `bot_${tag}@example.com`,
+    website: "https://spam.example",
+  });
+  check("reg honeypot rejects bots (400)", honey.status === 400);
+
+  // --- Free path: fresh community owner, registration + ref lookup ---
+  const free = newSession();
+  const freeVer = await signIn(free, `sched_free_${tag}@example.com`);
+  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
+  const fComp = v1data<{ id: string; slug: string }>(
+    await v1(free, "/api/v1/competitions", "POST", { name: `Sched Free ${tag}`, visibility: "public" }),
+  );
+  const fDiv = v1data<{ id: string; slug: string }>(
+    await v1(free, `/api/v1/competitions/${fComp.id}/divisions`, "POST", {
+      name: "Free Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await v1(free, `/api/v1/divisions/${fDiv.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "gbp", form_fields: [],
+  });
+  const fReg = await v1(newSession(), `/api/v1/public/orgs/${freeOrg.slug}/competitions/${fComp.slug}/register`, "POST", {
+    division_id: fDiv.id,
+    display_name: `Free Ref ${tag}`,
+    contact_email: `freeref_${tag}@example.com`,
+  });
+  const fRegData = v1data<{ ref_code: string }>(fReg);
+  check(
+    "reg issues an SZ ref (free)",
+    fReg.status === 201 && /^SZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(fRegData.ref_code ?? ""),
+  );
+  const fRefPage = await html(newSession(), `/r/${fRegData.ref_code}`);
+  check(
+    "reg /r/[ref] resolves (free)",
+    fRefPage.status === 200 && fRefPage.body.includes(fRegData.ref_code),
+  );
+  // Community sees the division fixtures page (schedule list) fine.
+  const fFixtures = await html(free, `/o/${freeOrg.slug}/c/${fComp.slug}/d/${fDiv.slug}?tab=fixtures`);
+  check("division fixtures page renders (free)", fFixtures.status === 200);
 }
 
 // v1 responses: { ok, data | error: {code, message, …}, requestId }.

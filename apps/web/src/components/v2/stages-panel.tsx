@@ -382,7 +382,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                     <p className="sticky top-0 z-10 flex items-baseline gap-2 bg-slate-50 px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
                       Round {round}
                       {dates.from && (
-                        <span className="normal-case text-slate-500">
+                        <span data-testid="round-dates" className="normal-case text-slate-500">
                           <ClientDateRange from={dates.from} to={dates.to} tz={tz} />
                         </span>
                       )}
@@ -421,7 +421,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                   <h4 className="flex items-baseline gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
                     {stage.name} — {bracketRoundLabel(stage.kind, round, maxRound)}
                     {dates.from && (
-                      <span className="normal-case text-slate-500">
+                      <span data-testid="round-dates" className="normal-case text-slate-500">
                         <ClientDateRange from={dates.from} to={dates.to} tz={tz} />
                       </span>
                     )}

@@ -6,7 +6,22 @@ engine**: mobile, navigation, pricing/packaging, self-serve growth, documentatio
 handful of correctness fixes. Intake: the 9 Jul 2026 organiser/founder list (31 items,
 captured verbatim in [00-intake-backlog.md](00-intake-backlog.md)).
 
-> **Status: designed; PROMPT-38, PROMPT-32, PROMPT-31 and PROMPT-30 implemented.**
+> **Status: designed; PROMPT-38, PROMPT-32, PROMPT-31, PROMPT-30, PROMPT-33 and
+> PROMPT-34 implemented.**
+> PROMPT-33 + PROMPT-34 (2026-07-10, branch `feat/v3-sched-reg-prompt-33-34`) —
+> board v3 (`components/v2/board/*`: hue-chip blocks, legend-as-filter `?d=`,
+> Board/Agenda/By-division density, conflicts side panel, unscheduled tray with
+> pick-then-place for touch+keyboard, `expected_seq` optimistic 409 on every
+> schedule write), division fixtures page fix list (rounds + date ranges,
+> competition-tz times, pinned unscheduled + auto CTA, Now-playing strip,
+> undo-able inline reschedule, bye/void ghosts, timetable-export print),
+> registration v2 (ticket-not-a-form rebuild with ONE ordered section list,
+> `SZ-XXXX-XXXX` refs — mask widened from the doc's `SZ-XXXX-XX` to hold its
+> own stated 6+2 composition — tear-off ticket + QR + save-PNG via next/og,
+> `/r/[ref]` public status, token-gated self-withdraw, panel ref search,
+> honeypot + IP+division rate bucket), youth privacy (auto `divisions.youth`,
+> `player_name_display` masking across public JSON/slideshow/ticket, guardian
+> preset always on youth forms). V264.
 > PROMPT-38 (2026-07-10, branch `feat/engine-fixes-prompt-38`) — badminton
 > headline + set-end matrix, cricket undo/status coherence + scoring error
 > boundary, sim-replay v2, division delete/archive/restore.
