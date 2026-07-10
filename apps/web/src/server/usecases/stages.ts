@@ -60,7 +60,7 @@ export interface StageRow {
 const STAGE_COLS = ["id", "division_id", "seq", "kind", "name", "config", "qualification", "status"] as const;
 
 export const FIXTURE_COLS = [
-  "id", "stage_id", "division_id", "pool_id", "round_no", "seq_in_round",
+  "id", "stage_id", "division_id", "pool_id", "round_no", "seq_in_round", "fixture_no",
   "home_entrant_id", "away_entrant_id", "scheduled_at", "venue", "court_label",
   "officials", "status", "outcome", "schedule_source", "schedule_locked", "created_at",
 ] as const;
@@ -72,6 +72,8 @@ export interface FixtureRow {
   pool_id: string | null;
   round_no: number;
   seq_in_round: number;
+  /** Per-division ordinal (PROMPT-30) — the /f/[no] URL segment. */
+  fixture_no: number;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
   scheduled_at: string | null;

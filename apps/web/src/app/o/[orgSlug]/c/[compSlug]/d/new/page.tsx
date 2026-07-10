@@ -1,8 +1,8 @@
 export const dynamic = "force-dynamic";
 // Division builder: sport → variant → eligibility → stage graph (PROMPT-15).
 import { redirect } from "next/navigation";
-import { Nav } from "@/components/nav";
-import { requireResourcePageAuth } from "@/server/page-auth";
+import { requireCompetitionPage } from "@/server/page-auth";
+import { routes } from "@/lib/routes";
 import { getCompetition } from "@/server/usecases/competitions";
 import { withTenant } from "@/lib/db";
 import { DivisionBuilder, type SportOption } from "@/components/v2/division-builder";
@@ -10,11 +10,13 @@ import { DivisionBuilder, type SportOption } from "@/components/v2/division-buil
 export default async function NewDivisionPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ orgSlug: string; compSlug: string }>;
 }) {
-  const { id } = await params;
-  const { auth, canEdit } = await requireResourcePageAuth("competition", id);
-  if (!canEdit) redirect(`/competitions/${id}`);
+  const { orgSlug, compSlug } = await params;
+  const page = await requireCompetitionPage(orgSlug, compSlug, { tail: "/d/new" });
+  const { auth, canEdit } = page;
+  const id = page.competition.id;
+  if (!canEdit) redirect(routes.competition(orgSlug, compSlug));
   const competition = await getCompetition(auth, id);
 
   // Sport catalog + variant presets (system rows are tenant-readable, org
@@ -38,7 +40,6 @@ export default async function NewDivisionPage({
 
   return (
     <>
-      <Nav />
       <main className="mx-auto max-w-3xl px-4 py-8">
         <h1 className="mb-1 text-xl font-semibold tracking-tight text-slate-900">
           New division
@@ -46,7 +47,7 @@ export default async function NewDivisionPage({
         <p className="mb-6 text-sm text-slate-500">
           in <span className="font-medium">{competition.name}</span>
         </p>
-        <DivisionBuilder competitionId={id} sports={sports} />
+        <DivisionBuilder competitionId={id} orgSlug={orgSlug} compSlug={compSlug} sports={sports} />
       </main>
     </>
   );

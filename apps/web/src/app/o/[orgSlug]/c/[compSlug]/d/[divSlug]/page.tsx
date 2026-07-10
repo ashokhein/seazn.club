@@ -3,10 +3,9 @@ export const dynamic = "force-dynamic";
 // (per stage: generate/complete/schedule), standings with the cascade trace.
 import Link from "next/link";
 import { ClipboardList, MonitorPlay } from "lucide-react";
-import { Nav } from "@/components/nav";
 import { StatusChip, divisionChipState } from "@/components/ui/status-chip";
 import { routes } from "@/lib/routes";
-import { requireResourcePageAuth } from "@/server/page-auth";
+import { requireDivisionPage } from "@/server/page-auth";
 import { getDivision } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listStages, getStandings } from "@/server/usecases/stages";
@@ -35,15 +34,20 @@ export default async function DivisionPage({
   params,
   searchParams,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ orgSlug: string; compSlug: string; divSlug: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
-  const [{ id }, { tab: rawTab }] = await Promise.all([params, searchParams]);
+  const [{ orgSlug, compSlug, divSlug }, { tab: rawTab }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "")
     ? (rawTab as Tab)
     : "entrants";
 
-  const { auth, canEdit } = await requireResourcePageAuth("division", id);
+  const page = await requireDivisionPage(orgSlug, compSlug, divSlug);
+  const { auth, canEdit } = page;
+  const id = page.division.id;
   const division = await getDivision(auth, id);
   const [competition, stages, fixtures, entrants] = await Promise.all([
     getCompetition(auth, division.competition_id),
@@ -87,21 +91,8 @@ export default async function DivisionPage({
 
   return (
     <>
-      <Nav />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6">
-          <p className="text-xs text-slate-500">
-            <Link href="/dashboard" className="hover:text-purple-600">
-              Competitions
-            </Link>{" "}
-            /{" "}
-            <Link
-              href={`/competitions/${competition.id}`}
-              className="hover:text-purple-600"
-            >
-              {competition.name}
-            </Link>
-          </p>
           <div className="mt-1 flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">
               {division.name}
@@ -123,7 +114,7 @@ export default async function DivisionPage({
               <span className="hidden sm:inline">Slideshow ↗</span>
             </Link>
             <Link
-              href={routes.divisionRegistrations(id)}
+              href={routes.divisionRegistrations(orgSlug, compSlug, divSlug)}
               aria-label="Registrations"
               className="btn btn-ghost gap-1.5"
             >
@@ -146,7 +137,7 @@ export default async function DivisionPage({
           {TABS.map((t) => (
             <Link
               key={t}
-              href={`/divisions/${id}?tab=${t}`}
+              href={routes.division(orgSlug, compSlug, divSlug, t)}
               className={`border-b-2 px-4 py-2 text-sm font-medium capitalize transition ${
                 tab === t
                   ? "border-purple-600 text-purple-700"
@@ -245,7 +236,8 @@ export default async function DivisionPage({
           <DivisionDangerZone
             divisionId={id}
             divisionName={division.name}
-            competitionId={competition.id}
+            orgSlug={orgSlug}
+            compSlug={compSlug}
           />
         )}
       </main>

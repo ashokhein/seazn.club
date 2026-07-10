@@ -1,10 +1,10 @@
 export const dynamic = "force-dynamic";
-// Organiser home — competitions as match-day cards (v3/03 §2).
+// Org home — competitions as match-day cards (v3/03 §2). Nav comes from the
+// /o layout; auth comes from the URL (PROMPT-30).
 import Link from "next/link";
 import { Trophy } from "lucide-react";
-import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
-import { requirePageAuth } from "@/server/page-auth";
+import { requireOrgPage } from "@/server/page-auth";
 import { listCompetitions } from "@/server/usecases/competitions";
 import { listCompetitionCardStats, nextLine } from "@/server/usecases/card-stats";
 import { EntityCard } from "@/components/ui/entity-card";
@@ -14,8 +14,13 @@ import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/sta
 import { routes } from "@/lib/routes";
 import { msg } from "@/lib/messages";
 
-export default async function DashboardPage() {
-  const { auth, org, canEdit } = await requirePageAuth();
+export default async function OrgHomePage({
+  params,
+}: {
+  params: Promise<{ orgSlug: string }>;
+}) {
+  const { orgSlug } = await params;
+  const { auth, org, canEdit } = await requireOrgPage(orgSlug);
 
   // Reaching the dashboard is the end of first-run: mark onboarding done so a
   // user who left the wizard by any route (nav, back button) isn't sent back
@@ -36,7 +41,6 @@ export default async function DashboardPage() {
 
   return (
     <>
-      <Nav />
       <BillingBanner orgId={org.id} />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-6">
@@ -58,7 +62,7 @@ export default async function DashboardPage() {
               Directory
             </Link>
             {canEdit && (
-              <Link href={routes.competitionNew()} data-tour="new-competition" className="btn btn-primary">
+              <Link href={routes.competitionNew(orgSlug)} data-tour="new-competition" className="btn btn-primary">
                 + New Competition
               </Link>
             )}
@@ -76,7 +80,7 @@ export default async function DashboardPage() {
                   {msg("card.empty.competitions")}
                 </h2>
               </div>
-              <Link href={routes.competitionNew()} className="btn btn-primary">
+              <Link href={routes.competitionNew(orgSlug)} className="btn btn-primary">
                 {msg("card.empty.competitions.cta")}
               </Link>
             </div>
@@ -90,7 +94,7 @@ export default async function DashboardPage() {
               return (
                 <EntityCard
                   key={c.id}
-                  href={routes.competition(c.id)}
+                  href={routes.competition(orgSlug, c.slug)}
                   name={c.name}
                   chip={<StatusChip state={c.frozen ? "frozen" : chip} />}
                   meta={
@@ -104,8 +108,8 @@ export default async function DashboardPage() {
                     <CardMenu
                       name={c.name}
                       items={[
-                        { label: "Schedule board", href: routes.competitionSchedule(c.id) },
-                        { label: "Settings", href: routes.competitionSettings(c.id) },
+                        { label: "Schedule board", href: routes.competitionSchedule(orgSlug, c.slug) },
+                        { label: "Settings", href: routes.competitionSettings(orgSlug, c.slug) },
                         { label: "Slideshow", href: routes.slideshowCompetition(c.id), external: true },
                       ]}
                     />

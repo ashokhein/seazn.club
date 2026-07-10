@@ -30,7 +30,7 @@ export function LaunchActions({ divisionId, status, canEdit }: Props) {
         method: "POST",
       });
       if (out.generated > 0) {
-        router.push(`/divisions/${divisionId}?tab=fixtures`);
+        router.push("?tab=fixtures");
       }
       router.refresh();
     } catch (err) {

@@ -7,9 +7,10 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { VisibilityPicker } from "@/components/ui/visibility-picker";
+import { routes } from "@/lib/routes";
 
 
-export function CompetitionWizard() {
+export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -27,7 +28,7 @@ export function CompetitionWizard() {
     setPaywall(null);
     setBusy(true);
     try {
-      const created = await apiV1<{ id: string }>("/api/v1/competitions", {
+      const created = await apiV1<{ id: string; slug: string }>("/api/v1/competitions", {
         method: "POST",
         json: {
           name,
@@ -38,7 +39,7 @@ export function CompetitionWizard() {
           branding: accent ? { accent } : {},
         },
       });
-      router.push(`/competitions/${created.id}`);
+      router.push(routes.competition(orgSlug, created.slug));
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywall({
@@ -134,7 +135,7 @@ export function CompetitionWizard() {
       <div className="flex justify-end gap-2">
         <button
           type="button"
-          onClick={() => router.push("/dashboard")}
+          onClick={() => router.push(routes.orgHome(orgSlug))}
           className="btn btn-ghost"
         >
           Cancel

@@ -3,8 +3,7 @@ export const dynamic = "force-dynamic";
 // live on their own page.
 import Link from "next/link";
 import { CalendarRange, Globe, MonitorPlay, Settings } from "lucide-react";
-import { Nav } from "@/components/nav";
-import { requireResourcePageAuth } from "@/server/page-auth";
+import { requireCompetitionPage } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { listDivisionCardStats, nextLine, formatLabel } from "@/server/usecases/card-stats";
@@ -16,38 +15,29 @@ import { SPORT_EMOJI } from "@/components/discovery-cards";
 import { divisionAccent } from "@/lib/division-hue";
 import { routes } from "@/lib/routes";
 import { msg } from "@/lib/messages";
-import { sql } from "@/lib/db";
 
 export default async function CompetitionPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ orgSlug: string; compSlug: string }>;
 }) {
-  const { id } = await params;
-  const { auth, org, canEdit } = await requireResourcePageAuth("competition", id);
-  const [competition, divisions, stats, [orgRow]] = await Promise.all([
+  const { orgSlug, compSlug } = await params;
+  const page = await requireCompetitionPage(orgSlug, compSlug);
+  const { auth, canEdit } = page;
+  const id = page.competition.id;
+  const [competition, divisions, stats] = await Promise.all([
     getCompetition(auth, id),
     listDivisions(auth, id),
     listDivisionCardStats(auth, id),
-    sql<{ slug: string }[]>`select slug from organizations where id = ${auth.orgId}`,
   ]);
   const publicPath =
-    competition.visibility !== "private" && orgRow
-      ? `/shared/${orgRow.slug}/${competition.slug}`
-      : null;
+    competition.visibility !== "private" ? routes.shared(orgSlug, competition.slug) : null;
 
   return (
     <>
-      <Nav />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="text-xs text-slate-500">
-              <Link href="/dashboard" className="hover:text-purple-600">
-                Competitions
-              </Link>{" "}
-              / {org.name}
-            </p>
             <h1 className="mt-1 truncate text-xl font-semibold tracking-tight text-slate-900">
               {competition.name}
             </h1>
@@ -65,7 +55,7 @@ export default async function CompetitionPage({
               <span className="hidden sm:inline">Slideshow ↗</span>
             </Link>
             <Link
-              href={routes.competitionSchedule(competition.id)}
+              href={routes.competitionSchedule(orgSlug, compSlug)}
               aria-label="Schedule board"
               className="btn btn-ghost gap-1.5"
             >
@@ -84,7 +74,7 @@ export default async function CompetitionPage({
               </Link>
             )}
             <Link
-              href={routes.competitionSettings(competition.id)}
+              href={routes.competitionSettings(orgSlug, compSlug)}
               aria-label="Settings"
               className="btn btn-ghost gap-1.5"
             >
@@ -99,7 +89,7 @@ export default async function CompetitionPage({
               <h2 className="text-sm font-semibold text-slate-700">Divisions</h2>
               {canEdit && !competition.frozen && (
                 <Link
-                  href={`/competitions/${competition.id}/divisions/new`}
+                  href={routes.divisionNew(orgSlug, compSlug)}
                   className="btn btn-primary"
                 >
                   + Add division
@@ -110,7 +100,7 @@ export default async function CompetitionPage({
               <div className="card p-6 text-center text-sm text-slate-500">
                 <p>{msg("card.empty.divisions")}</p>
                 {canEdit && !competition.frozen && (
-                  <Link href={routes.divisionNew(competition.id)} className="btn btn-primary mt-4">
+                  <Link href={routes.divisionNew(orgSlug, compSlug)} className="btn btn-primary mt-4">
                     {msg("card.empty.divisions.cta")}
                   </Link>
                 )}
@@ -133,7 +123,7 @@ export default async function CompetitionPage({
                     return (
                       <EntityCard
                         key={d.id}
-                        href={routes.division(d.id)}
+                        href={routes.division(orgSlug, compSlug, d.slug)}
                         glyph={SPORT_EMOJI[d.sport_key] ?? "🏅"}
                         name={d.name}
                         accent={divisionAccent(d.id)}
@@ -147,8 +137,8 @@ export default async function CompetitionPage({
                           <CardMenu
                             name={d.name}
                             items={[
-                              { label: "Schedule", href: routes.divisionSchedule(d.id) },
-                              { label: "Registrations", href: routes.divisionRegistrations(d.id) },
+                              { label: "Schedule", href: routes.divisionSchedule(orgSlug, compSlug, d.slug) },
+                              { label: "Registrations", href: routes.divisionRegistrations(orgSlug, compSlug, d.slug) },
                               { label: "Slideshow", href: routes.slideshowDivision(d.id), external: true },
                             ]}
                           />

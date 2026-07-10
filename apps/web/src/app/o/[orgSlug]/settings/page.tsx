@@ -1,17 +1,17 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { redirect } from "next/navigation";
 import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Palette,
   User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, Cookie,
   type LucideIcon,
 } from "lucide-react";
-import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
+import { getUserOrgs } from "@/lib/auth";
+import { requireOrgPage } from "@/server/page-auth";
+import { routes } from "@/lib/routes";
 import { sql } from "@/lib/db";
 import { hasFeature } from "@/lib/entitlements";
-import { EDITOR_ROLES, type OrgMember } from "@/lib/types";
-import { Nav } from "@/components/nav";
+import { type OrgMember } from "@/lib/types";
 import { OrgTeam } from "@/components/org-team";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { OrgRename } from "@/components/org-rename";
@@ -73,22 +73,18 @@ const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon; href?: string }[] 
   { tab: "account",       label: "Account",        icon: UserCircle },
 ];
 
-const BILLING_NAV = { label: "Plan & billing", icon: CreditCard, href: "/settings/billing" } as const;
+const BILLING_NAV = { label: "Plan & billing", icon: CreditCard } as const;
 
 export default async function SettingsPage({
+  params,
   searchParams,
 }: {
+  params: Promise<{ orgSlug: string }>;
   searchParams: Promise<{ tab?: string; email_change?: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
+  const { orgSlug } = await params;
+  const { user, org: active, canEdit } = await requireOrgPage(orgSlug);
   const orgs = await getUserOrgs(user.id);
-  if (orgs.length === 0) redirect("/orgs/new");
-
-  const activeId = await getActiveOrgId();
-  const active = orgs.find((o) => o.id === activeId) ?? orgs[0];
-  const canEdit = (EDITOR_ROLES as readonly string[]).includes(active.role);
 
   const { tab: rawTab, email_change } = await searchParams;
   const tab: Tab = (NAV_ITEMS.some((n) => n.tab === rawTab) ? rawTab : "organization") as Tab;
@@ -135,7 +131,6 @@ export default async function SettingsPage({
 
   return (
     <>
-      <Nav />
       <div className="mx-auto max-w-5xl px-4 py-4 md:py-8">
         <div className="flex flex-col gap-4 md:flex-row md:gap-8">
 
@@ -151,7 +146,7 @@ export default async function SettingsPage({
                 return (
                   <Link
                     key={t}
-                    href={`/settings?tab=${t}`}
+                    href={routes.orgSettings(orgSlug, t)}
                     className={`flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
                       active
                         ? "bg-purple-100 font-medium text-purple-800"
@@ -168,7 +163,7 @@ export default async function SettingsPage({
               })}
               {/* Plan & billing is its own route (owns Stripe reconciliation). */}
               <Link
-                href={BILLING_NAV.href}
+                href={routes.billing(orgSlug)}
                 className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
               >
                 <BILLING_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
@@ -177,10 +172,10 @@ export default async function SettingsPage({
             </nav>
             <div className="my-4 hidden border-t border-purple-100 md:block" />
             <Link
-              href="/dashboard"
+              href={routes.orgHome(orgSlug)}
               className="hidden rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-50 hover:text-slate-600 md:block"
             >
-              ← Dashboard
+              ← Competitions
             </Link>
           </aside>
 
@@ -226,7 +221,7 @@ export default async function SettingsPage({
                       <p className="flex items-center gap-2 text-sm text-slate-500">
                         <PlanBadge feature="branding" />
                         Org logo requires{" "}
-                        <Link href="/settings/billing" className="text-purple-600 underline">
+                        <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
                           an upgrade
                         </Link>
                       </p>
@@ -243,7 +238,7 @@ export default async function SettingsPage({
                       <p className="flex items-center gap-2 text-sm text-slate-500">
                         <PlanBadge feature="branding" />
                         Brand color requires{" "}
-                        <Link href="/settings/billing" className="text-purple-600 underline">
+                        <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
                           an upgrade
                         </Link>
                       </p>
@@ -297,7 +292,7 @@ export default async function SettingsPage({
                   <p className="flex items-center gap-2 text-sm text-slate-500">
                     <PlanBadge feature="api.access" />
                     Platform API keys require{" "}
-                    <Link href="/settings/billing" className="text-purple-600 underline">
+                    <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
                       an upgrade
                     </Link>
                   </p>

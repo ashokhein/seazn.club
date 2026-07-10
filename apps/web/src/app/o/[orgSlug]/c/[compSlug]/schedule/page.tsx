@@ -2,9 +2,7 @@ export const dynamic = "force-dynamic";
 // Competition-wide multi-division schedule board (doc 12 §2 / doc 06 §4.3):
 // every division's fixtures on one grid, division-coloured cards. Pro only
 // (doc 12 §5 — scheduling.multi_division).
-import Link from "next/link";
-import { Nav } from "@/components/nav";
-import { requireResourcePageAuth } from "@/server/page-auth";
+import { requireCompetitionPage } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { listStages } from "@/server/usecases/stages";
@@ -22,17 +20,18 @@ const PALETTE = ["#7c3aed", "#0ea5e9", "#f59e0b", "#10b981", "#ef4444", "#ec4899
 export default async function CompetitionSchedulePage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ orgSlug: string; compSlug: string }>;
 }) {
-  const { id } = await params;
-  const { auth, canEdit } = await requireResourcePageAuth("competition", id);
+  const { orgSlug, compSlug } = await params;
+  const page = await requireCompetitionPage(orgSlug, compSlug, { tail: "/schedule" });
+  const { auth, canEdit } = page;
+  const id = page.competition.id;
   const competition = await getCompetition(auth, id);
 
   const multiAllowed = await hasFeature(auth.orgId, "scheduling.multi_division");
   if (!multiAllowed) {
     return (
       <>
-        <Nav />
         <main className="mx-auto max-w-3xl px-4 py-8">
           <h1 className="mb-4 text-xl font-semibold text-slate-900">
             Competition schedule — {competition.name}
@@ -112,16 +111,8 @@ export default async function CompetitionSchedulePage({
 
   return (
     <>
-      <Nav />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-4">
-          <p className="text-xs text-slate-400">
-            <Link href="/dashboard" className="hover:text-purple-600">Competitions</Link>
-            {" / "}
-            <Link href={`/competitions/${id}`} className="hover:text-purple-600">
-              {competition.name}
-            </Link>
-          </p>
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
             Competition schedule — {competition.name}
           </h1>

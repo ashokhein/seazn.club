@@ -8,14 +8,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { ConfirmDialog } from "@/components/v2/confirm-dialog";
+import { routes } from "@/lib/routes";
 
 interface Props {
   divisionId: string;
   divisionName: string;
-  competitionId: string;
+  orgSlug: string;
+  compSlug: string;
 }
 
-export function DivisionDangerZone({ divisionId, divisionName, competitionId }: Props) {
+export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug }: Props) {
   const router = useRouter();
   const [dialog, setDialog] = useState<"none" | "delete" | "archive">("none");
   const [busy, setBusy] = useState(false);
@@ -27,7 +29,7 @@ export function DivisionDangerZone({ divisionId, divisionName, competitionId }: 
     setError(null);
     try {
       await apiV1(`/api/v1/divisions/${divisionId}`, { method: "DELETE" });
-      router.push(`/competitions/${competitionId}`);
+      router.push(routes.competition(orgSlug, compSlug));
       router.refresh();
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "DIVISION_HAS_RESULTS") {
@@ -47,7 +49,7 @@ export function DivisionDangerZone({ divisionId, divisionName, competitionId }: 
     setError(null);
     try {
       await apiV1(`/api/v1/divisions/${divisionId}/archive`, { method: "POST" });
-      router.push(`/competitions/${competitionId}`);
+      router.push(routes.competition(orgSlug, compSlug));
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Archive failed");

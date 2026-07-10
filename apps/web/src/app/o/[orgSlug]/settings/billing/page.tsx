@@ -1,13 +1,12 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { getActiveOrgId, getCurrentUser, requireOrgRole } from "@/lib/auth";
 import { sql } from "@/lib/db";
 import { reconcileCheckout, billingCtaLabel } from "@/lib/billing";
-import { Nav } from "@/components/nav";
+import { requireOrgPage } from "@/server/page-auth";
+import { routes } from "@/lib/routes";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, ManageBillingButton, DowngradeButton } from "@/components/billing-actions";
-import { ORG_ROLES, type Subscription } from "@/lib/types";
+import { type Subscription } from "@/lib/types";
 import { getLimit } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
@@ -35,18 +34,16 @@ const STATUS_BADGE: Record<string, string> = {
 };
 
 export default async function BillingPage({
+  params,
   searchParams,
 }: {
+  params: Promise<{ orgSlug: string }>;
   searchParams: Promise<{ checkout?: string; session_id?: string }>;
 }) {
-  const user = await getCurrentUser();
-  if (!user) redirect("/login");
-
-  const orgId = await getActiveOrgId();
-  if (!orgId) redirect("/orgs/new");
-
-  const { role } = await requireOrgRole(orgId, ORG_ROLES);
-  const isOwner = role === "owner";
+  const { orgSlug } = await params;
+  const { org } = await requireOrgPage(orgSlug);
+  const orgId = org.id;
+  const isOwner = org.role === "owner";
 
   // Reconcile straight from Stripe on return from checkout, so the plan updates
   // even if the webhook is delayed or missing (best-effort, never throws).
@@ -94,14 +91,13 @@ export default async function BillingPage({
         event={EVENTS.BILLING_VIEWED}
         properties={{ plan_key: sub?.plan_key ?? "community" }}
       />
-      <Nav />
       {orgId && <BillingBanner orgId={orgId} />}
       <main className="mx-auto max-w-3xl px-4 py-8">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-2xl font-bold tracking-tight text-purple-900">
             Plan & Billing
           </h1>
-          <Link href="/settings" className="btn btn-ghost">
+          <Link href={routes.orgSettings(orgSlug)} className="btn btn-ghost">
             ← Settings
           </Link>
         </div>

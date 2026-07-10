@@ -2,10 +2,9 @@ export const dynamic = "force-dynamic";
 // Drag-and-drop schedule board for one division (doc 12 §2, PROMPT-17).
 // Community renders it view-only (doc 12 §5 — scheduling.board).
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
 import { venueLabel } from "@/lib/venue";
-import { Nav } from "@/components/nav";
-import { requireResourcePageAuth } from "@/server/page-auth";
+import { requireDivisionPage } from "@/server/page-auth";
+import { routes } from "@/lib/routes";
 import { getDivision } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listStages } from "@/server/usecases/stages";
@@ -29,12 +28,17 @@ export default async function DivisionSchedulePage({
   params,
   searchParams,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ orgSlug: string; compSlug: string; divSlug: string }>;
   searchParams: Promise<{ tab?: string }>;
 }) {
-  const [{ id }, { tab: rawTab }] = await Promise.all([params, searchParams]);
+  const [{ orgSlug, compSlug, divSlug }, { tab: rawTab }] = await Promise.all([
+    params,
+    searchParams,
+  ]);
   const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "board";
-  const { auth, canEdit } = await requireResourcePageAuth("division", id);
+  const page = await requireDivisionPage(orgSlug, compSlug, divSlug, { tail: "/schedule" });
+  const { auth, canEdit } = page;
+  const id = page.division.id;
   const division = await getDivision(auth, id);
   const [
     competition,
@@ -71,27 +75,8 @@ export default async function DivisionSchedulePage({
 
   return (
     <>
-      <Nav />
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-4">
-          <Link
-            href={`/divisions/${id}`}
-            className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-slate-200 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:bg-slate-50 hover:text-slate-900"
-          >
-            <ArrowLeft className="h-3.5 w-3.5" strokeWidth={2} />
-            Back to {division.name}
-          </Link>
-          <p className="text-xs text-slate-400">
-            <Link href="/dashboard" className="hover:text-purple-600">Competitions</Link>
-            {" / "}
-            <Link href={`/competitions/${competition.id}`} className="hover:text-purple-600">
-              {competition.name}
-            </Link>
-            {" / "}
-            <Link href={`/divisions/${id}`} className="hover:text-purple-600">
-              {division.name}
-            </Link>
-          </p>
           <div className="mt-1 flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-semibold tracking-tight text-slate-900">
               Schedule — {division.name}
@@ -122,7 +107,7 @@ export default async function DivisionSchedulePage({
           {TABS.map((t) => (
             <Link
               key={t}
-              href={`/divisions/${id}/schedule?tab=${t}`}
+              href={`${routes.divisionSchedule(orgSlug, compSlug, divSlug)}?tab=${t}`}
               className={`border-b-2 px-4 py-2 text-sm font-medium capitalize transition ${
                 tab === t
                   ? "border-purple-600 text-purple-700"

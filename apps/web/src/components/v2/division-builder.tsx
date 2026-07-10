@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { routes } from "@/lib/routes";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { venueNoun, venueLabel } from "@/lib/venue";
 import { defaultMatchMinutes } from "@/lib/match-length";
@@ -287,9 +288,13 @@ const SPORT_RULES: Record<string, RuleField[]> = {
 
 export function DivisionBuilder({
   competitionId,
+  orgSlug,
+  compSlug,
   sports,
 }: {
   competitionId: string;
+  orgSlug: string;
+  compSlug: string;
   sports: SportOption[];
 }) {
   const router = useRouter();
@@ -399,7 +404,7 @@ export function DivisionBuilder({
 
     setBusy(true);
     try {
-      const division = await apiV1<{ id: string }>(
+      const division = await apiV1<{ id: string; slug: string }>(
         `/api/v1/competitions/${competitionId}/divisions`,
         {
           method: "POST",
@@ -437,7 +442,7 @@ export function DivisionBuilder({
         /* board settings are editable later — ignore */
       }
 
-      router.push(`/divisions/${division.id}`);
+      router.push(routes.division(orgSlug, compSlug, division.slug));
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
@@ -1010,7 +1015,7 @@ export function DivisionBuilder({
       <div className="flex items-center justify-between gap-2">
         <button
           type="button"
-          onClick={() => router.push(`/competitions/${competitionId}`)}
+          onClick={() => router.push(routes.competition(orgSlug, compSlug))}
           className="btn btn-ghost"
         >
           Cancel

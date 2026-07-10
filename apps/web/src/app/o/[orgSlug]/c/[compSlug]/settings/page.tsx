@@ -1,14 +1,13 @@
 export const dynamic = "force-dynamic";
 // Competition settings — moved off the overview into its own page.
-import Link from "next/link";
-import { Nav } from "@/components/nav";
-import { requireResourcePageAuth } from "@/server/page-auth";
+import { requireCompetitionPage } from "@/server/page-auth";
+import { routes } from "@/lib/routes";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { ArchivedDivisions } from "@/components/v2/archived-divisions";
 import { hasFeature } from "@/lib/entitlements";
-import { withTenant, sql } from "@/lib/db";
+import { withTenant } from "@/lib/db";
 
 /** State-derived status nudge: published → live → completed as matches progress. */
 function suggestStatus(
@@ -25,10 +24,12 @@ function suggestStatus(
 export default async function CompetitionSettingsPage({
   params,
 }: {
-  params: Promise<{ id: string }>;
+  params: Promise<{ orgSlug: string; compSlug: string }>;
 }) {
-  const { id } = await params;
-  const { auth, org, canEdit } = await requireResourcePageAuth("competition", id);
+  const { orgSlug, compSlug } = await params;
+  const page = await requireCompetitionPage(orgSlug, compSlug, { tail: "/settings" });
+  const { auth, org, canEdit } = page;
+  const id = page.competition.id;
   const [competition, discoveryBranding, themeBranding, allDivisions] = await Promise.all([
     getCompetition(auth, id),
     hasFeature(auth.orgId, "discovery.branding"),
@@ -40,19 +41,16 @@ export default async function CompetitionSettingsPage({
   // Youth flag (v3/11 gap 8): any live division with a U-age eligibility rule
   // raises the guardian-consent interstitial before the competition leaves
   // Private. Org slug feeds the picker's share URL.
-  const [[youthRow], [orgRow]] = await Promise.all([
-    withTenant(auth.orgId, (tx) =>
-      tx<{ youth: boolean }[]>`
-        select exists(
-          select 1 from divisions d,
-                 jsonb_array_elements(d.eligibility) r
-          where d.competition_id = ${id} and d.archived_at is null
-            and r->>'kind' = 'age'
-            and coalesce((r->>'maxAgeAt')::int, 99) < 18
-        ) as youth`,
-    ),
-    sql<{ slug: string }[]>`select slug from organizations where id = ${auth.orgId}`,
-  ]);
+  const [youthRow] = await withTenant(auth.orgId, (tx) =>
+    tx<{ youth: boolean }[]>`
+      select exists(
+        select 1 from divisions d,
+               jsonb_array_elements(d.eligibility) r
+        where d.competition_id = ${id} and d.archived_at is null
+          and r->>'kind' = 'age'
+          and coalesce((r->>'maxAgeAt')::int, 99) < 18
+      ) as youth`,
+  );
 
   const [agg] = await withTenant(auth.orgId, (tx) =>
     tx<{ total: number; underway: number; done: number; scheduled: number }[]>`
@@ -69,18 +67,8 @@ export default async function CompetitionSettingsPage({
 
   return (
     <>
-      <Nav />
       <main className="mx-auto max-w-2xl px-4 py-8">
         <div className="mb-6">
-          <p className="text-xs text-slate-400">
-            <Link href="/dashboard" className="hover:text-purple-600">
-              Competitions
-            </Link>{" "}
-            / {org.name} /{" "}
-            <Link href={`/competitions/${competition.id}`} className="hover:text-purple-600">
-              {competition.name}
-            </Link>
-          </p>
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
             Settings — {competition.name}
           </h1>
@@ -105,7 +93,7 @@ export default async function CompetitionSettingsPage({
           themeBranding={themeBranding}
           orgBranding={org.branding}
           suggestedStatus={suggestedStatus}
-          sharePath={orgRow ? `/shared/${orgRow.slug}/${competition.slug}` : null}
+          sharePath={routes.shared(orgSlug, competition.slug)}
           hasYouthDivisions={youthRow?.youth ?? false}
           archivedCount={archivedDivisions.length}
           archivedPanel={
