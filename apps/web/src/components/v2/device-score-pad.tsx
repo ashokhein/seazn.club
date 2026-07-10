@@ -7,6 +7,7 @@
 // Offline-tolerant: sends retry with the SAME idempotency key (doc 08 §4).
 import { useCallback, useState } from "react";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { ScoringErrorBoundary } from "@/components/v2/scoring-error-boundary";
 import { GenericPad } from "@/components/v2/pads/generic-pad";
 import { BoardgamePad } from "@/components/v2/pads/boardgame-pad";
 import { SetbasedPad } from "@/components/v2/pads/setbased-pad";
@@ -242,17 +243,19 @@ export function DeviceScorePad({
 
       {scoring && !decided && home && away && (
         <section className="card p-4">
-          {sport.key === "cricket" ? (
-            <CricketPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
-          ) : sport.key === "football" ? (
-            <FootballPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
-          ) : SETBASED.has(sport.key) ? (
-            <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
-          ) : sport.key === "boardgame" ? (
-            <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
-          ) : (
-            <GenericPad sport={sport} home={home} away={away} send={send} busy={busy} />
-          )}
+          <ScoringErrorBoundary>
+            {sport.key === "cricket" ? (
+              <CricketPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : sport.key === "football" ? (
+              <FootballPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : SETBASED.has(sport.key) ? (
+              <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : sport.key === "boardgame" ? (
+              <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
+            ) : (
+              <GenericPad sport={sport} home={home} away={away} send={send} busy={busy} />
+            )}
+          </ScoringErrorBoundary>
         </section>
       )}
 

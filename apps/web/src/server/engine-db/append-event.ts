@@ -4,6 +4,7 @@ import { withTenant } from "@/lib/db";
 import {
   EngineError,
   foldMatch,
+  resolveVoids,
   type EventEnvelope,
   type MatchOutcome,
   type ScoreSummary,
@@ -62,17 +63,24 @@ interface EventRow {
 // Terminal DB statuses that lock the ledger against further appends.
 const LOCKED = new Set(["finalized", "cancelled"]);
 
-// Map the decided event / outcome onto the fixtures.status enum.
-function nextStatus(current: string, type: string, outcome: MatchOutcome | null): string {
-  if (type === "core.finalize") return "finalized";
-  if (type === "core.abandon") return "abandoned";
-  if (type === "core.forfeit") return "forfeited";
-  if (outcome !== null) return "decided";
-  if (current === "scheduled" && type === "core.start") return "in_play";
-  // Undo of the deciding event (doc 08 §4): the fold no longer yields an
-  // outcome, so a decided fixture drops back to in_play.
-  if (current === "decided" && type === "core.void") return "in_play";
-  return current;
+// Map the folded ledger onto the fixtures.status enum. Derived from the
+// ACTIVE (void-resolved) events, not from event-type transitions: a void can
+// erase core.start / core.forfeit / core.abandon / the deciding event, and the
+// status must follow the fold or the console dead-ends (v3/09 §2 — the cricket
+// "undo made scoring disappear" regression was status=in_play with the fold
+// back in the pre phase, so neither the Start button nor the pad rendered).
+function nextStatus(
+  candidateType: string,
+  outcome: MatchOutcome | null,
+  active: readonly EventEnvelope[],
+): string {
+  if (candidateType === "core.finalize") return "finalized";
+  const has = (type: string) => active.some((event) => event.type === type);
+  // Abandon first: cricket abandon folds to a no_result OUTCOME, but the
+  // fixture status stays "abandoned" (replay policy owns it from here).
+  if (has("core.abandon")) return "abandoned";
+  if (outcome !== null) return has("core.forfeit") ? "forfeited" : "decided";
+  return has("core.start") ? "in_play" : "scheduled";
 }
 
 /**
@@ -182,9 +190,11 @@ export async function appendEvent(
     // Fold-validate the full stream INCLUDING the candidate. A throwing module
     // (invalid event, already-decided, …) aborts the tx before any insert, so
     // the ledger only ever holds valid events (spec 03 §2 guarantee 2).
-    const state = foldMatch(sportModule, division.config, lineups, [...prior, candidate]);
+    const stream = [...prior, candidate];
+    const state = foldMatch(sportModule, division.config, lineups, stream);
     const summary = sportModule.summary(state);
     const outcome = sportModule.outcome(state);
+    const active = resolveVoids(stream);
 
     await tx`
       insert into score_events (id, fixture_id, seq, type, payload, recorded_by, recorded_at, voids_event_id, device_link_id)
@@ -201,7 +211,7 @@ export async function appendEvent(
         summary = excluded.summary, updated_at = now()
     `;
 
-    const status = nextStatus(fixture.status, candidate.type, outcome);
+    const status = nextStatus(candidate.type, outcome, active);
     // Fire once, on the transition from no-result to a decided result.
     const firstResult: FirstResult | null =
       fixture.outcome === null && outcome !== null
