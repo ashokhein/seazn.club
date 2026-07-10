@@ -44,6 +44,40 @@ export default async function CompetitionSchedulePage({
   }
 
   const divisions = await listDivisions(auth, id);
+  // No divisions → nothing to schedule. Bail before the settings lookup, which
+  // would otherwise be fed the competition id and 404 ("division not found").
+  if (divisions.length === 0) {
+    return (
+      <>
+        <Nav />
+        <main className="mx-auto max-w-3xl px-4 py-8">
+          <p className="text-xs text-slate-400">
+            <Link href="/dashboard" className="hover:text-purple-600">Competitions</Link>
+            {" / "}
+            <Link href={`/competitions/${id}`} className="hover:text-purple-600">
+              {competition.name}
+            </Link>
+          </p>
+          <h1 className="mt-1 mb-4 text-xl font-semibold tracking-tight text-slate-900">
+            Competition schedule — {competition.name}
+          </h1>
+          <div className="card p-6 text-sm text-slate-500">
+            No divisions yet — the schedule board fills in once this competition
+            has divisions with fixtures.{" "}
+            {canEdit && !(competition.frozen ?? false) && (
+              <Link
+                href={`/competitions/${id}/divisions/new`}
+                className="font-medium text-purple-600 hover:text-purple-700"
+              >
+                Add a division
+              </Link>
+            )}
+          </div>
+        </main>
+      </>
+    );
+  }
+
   const [boardEditable, constraints] = await Promise.all([
     hasFeature(auth.orgId, "scheduling.board"),
     hasFeature(auth.orgId, "scheduling.constraints"),

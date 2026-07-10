@@ -365,3 +365,22 @@ test.describe.serial("schedule board", () => {
     expect(auto.status).toBe(422);
   });
 });
+
+// Regression: with zero divisions the competition schedule page fed the
+// competition id into the settings lookup and crashed with 404
+// "division not found". It must render an empty state instead.
+test("competition schedule shows an empty state when there are no divisions", async ({
+  page,
+  request,
+}) => {
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    name: `Board empty ${TAG}`,
+    visibility: "private",
+  });
+  await page.goto(`/competitions/${comp.data!.id}/schedule`);
+  await expect(
+    page.getByRole("heading", { name: /competition schedule/i }),
+  ).toBeVisible();
+  await expect(page.getByText(/no divisions yet/i)).toBeVisible();
+  await expect(page.getByText(/division not found/i)).not.toBeVisible();
+});
