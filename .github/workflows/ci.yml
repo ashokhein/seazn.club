@@ -37,6 +37,18 @@ jobs:
       # defaults to 200 divisions per sport×format when CI=true) and the
       # coverage gate (≥90% lines; 100% on core/ and tiebreakers.ts).
       - run: npm run test:coverage --workspace packages/engine
+      # Sim matrix (v3/09 §3): bounded profile — every module × format ×
+      # SIM_SEEDS seeds + the permanent scenario suites; emits sim-report.json.
+      # A failure line prints its reproducing seed token.
+      - name: Sim matrix (bounded CI profile)
+        run: SIM_SEEDS=5 npm run sim:matrix --workspace packages/engine
+      - name: Sim report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sim-report
+          path: packages/engine/sim-report.json
+          if-no-files-found: ignore
       - name: Simulation failure artifacts (repro with `npm run sim:replay -- <seedToken>`)
         if: failure()
         uses: actions/upload-artifact@v4

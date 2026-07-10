@@ -48,9 +48,11 @@ import { lineupFromCatalog, TEST_INSTANT } from "./helpers.ts";
 // Templates & options
 // ---------------------------------------------------------------------------
 
-// The five stage-graph templates the harness exercises (PROMPT-14 §1).
+// The stage-graph templates the harness exercises (PROMPT-14 §1; v3/09 §3
+// added league_legs2 — the Jul3/08 §2 multi-leg round robin).
 export const FORMAT_TEMPLATES = [
   "league",
+  "league_legs2",
   "group_knockout",
   "swiss_knockout",
   "double_elim",
@@ -105,6 +107,7 @@ export interface SimStageRecord {
   fixtures: SimFixtureRecord[];
   tables?: StageTables;
   cascade?: TiebreakerKey[]; // table stages: the ranking cascade applied
+  legs?: number; // round robins: pairings repeat exactly this often (Jul3/08 §2)
   finalRanks: EntrantId[];
   qualification?: { spec: QualificationSpec; seeds: EntrantId[] }; // feed to the next stage
 }
@@ -477,6 +480,7 @@ function playRoundRobinStage(
   kind: Extract<StageKind, "league" | "group">,
   pools: readonly { poolId: string; entrants: readonly EntrantId[] }[],
   seeds: ReadonlyMap<EntrantId, number>,
+  legs = 1,
 ): PlayedTableStage {
   ctx.divisionEvents.push(...openStage(stageId));
 
@@ -485,10 +489,10 @@ function playRoundRobinStage(
   const tableFixtures: TableFixture[] = [];
 
   for (const pool of pools) {
-    const schedule = generateRoundRobin({ entrants: pool.entrants, seeds });
-    if (schedule.fixtures.length !== roundRobinFixtureCount(pool.entrants.length)) {
+    const schedule = generateRoundRobin({ entrants: pool.entrants, seeds, config: { legs } });
+    if (schedule.fixtures.length !== roundRobinFixtureCount(pool.entrants.length, legs)) {
       throw new SimInvariantError(
-        `round robin incomplete: pool "${pool.poolId}" produced ${schedule.fixtures.length} fixtures for ${pool.entrants.length} entrants`,
+        `round robin incomplete: pool "${pool.poolId}" produced ${schedule.fixtures.length} fixtures for ${pool.entrants.length} entrants over ${legs} legs`,
       );
     }
     for (const fixture of schedule.fixtures) {
@@ -537,6 +541,7 @@ function playRoundRobinStage(
       fixtures: records,
       tables: completed.tables,
       cascade: [...stage.cascade],
+      ...(legs === 1 ? {} : { legs }),
       finalRanks,
     },
     tables: completed.tables,
@@ -828,6 +833,21 @@ export function simulateDivision(opts: SimOptions): SimulationResult {
       break;
     }
 
+    case "league_legs2": {
+      // Jul3/08 §2 — double round robin: every pairing twice, mirrored venues.
+      const stage = playRoundRobinStage(
+        ctx,
+        "league",
+        "league",
+        [{ poolId: "P1", entrants }],
+        seeds,
+        2,
+      );
+      stages.push(stage.record);
+      finalRanks = stage.finalRanks;
+      break;
+    }
+
     case "group_knockout": {
       // Pools of ~4 dealt by seed; single pool below 8 entrants.
       const poolCount = Math.max(1, Math.floor(n / 4));
@@ -1072,8 +1092,12 @@ export function assertDivisionInvariants(
         inRound.add(fixture.away);
         perRound.set(roundKey, inRound);
       }
+      // Multi-leg round robins (Jul3/08 §2) meet exactly `legs` times.
+      const maxMeets = stage.legs ?? 1;
       for (const [key, count] of pairs) {
-        if (count > 1) fail(sim, `stage "${stage.id}" pair met ${count} times: ${key}`);
+        if (count > maxMeets) {
+          fail(sim, `stage "${stage.id}" pair met ${count} times (legs=${maxMeets}): ${key}`);
+        }
       }
     }
 
