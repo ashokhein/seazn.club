@@ -687,6 +687,10 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     { Authorization: `Bearer ${dlSecret}` },
   );
   check("gap device-link bearer can score", dlEvent.status === 201);
+  // The pad page wears the org brand (chain set by jul3Suite: org #1d4ed8);
+  // Gap Cup has no competition color, so the org default shows through.
+  const padHtml = await (await fetch(`${BASE}/score/${dlSecret}`)).text();
+  check("gap device pad carries the org theme", padHtml.includes("--ps-accent:#1d4ed8"));
 
   // --- Scorer seat: a division-scoped invite creates membership + assignment ---
   const scorerInvite = (await call(admin, `/api/orgs/${proOrgId}/invites`, "POST", {
@@ -865,6 +869,9 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   const blocked = probes.filter((p) => p.status === 402).length;
   const writable = probes.filter((p) => p.status === 200).length;
   check("gap downgrade freezes over-quota competitions", blocked >= 1);
+  // Branding read-gates follow the plan down: the pad sheds the org theme.
+  const downPadHtml = await (await fetch(`${BASE}/score/${dlSecret}`)).text();
+  check("gap downgraded pad drops the org theme", !downPadHtml.includes("--ps-accent:#1d4ed8"));
   check("gap in-quota competitions stay writable", writable >= 1);
 }
 

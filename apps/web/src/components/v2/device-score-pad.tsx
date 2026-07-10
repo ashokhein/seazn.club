@@ -34,6 +34,8 @@ export interface PadEventIn {
 interface Props {
   token: string;
   deviceLinkId: string;
+  /** Org logo URL (Pro branding), resolved server-side. */
+  logo?: string | null;
   fixture: {
     id: string;
     round_no: number;
@@ -55,6 +57,7 @@ const DEAD_CODES = new Set(["LINK_EXPIRED", "LINK_REVOKED", "LINK_INVALID", "UNA
 export function DeviceScorePad({
   token,
   deviceLinkId,
+  logo = null,
   fixture,
   sport,
   home,
@@ -163,12 +166,20 @@ export function DeviceScorePad({
 
   return (
     <div className="space-y-4">
-      {/* LED-scoreboard header: the one glowing thing on the dark court. */}
+      {/* LED-scoreboard header: the one glowing thing on the dark court.
+          Accent keel + org logo carry the club branding (--ps-* chain). */}
       <header className="overflow-hidden rounded-2xl border border-slate-800 bg-slate-900 shadow-[0_0_40px_-12px_rgba(16,185,129,0.25)]">
+        <div aria-hidden className="h-0.5 bg-accent" />
         <div className="flex items-center justify-between gap-2 border-b border-slate-800 px-4 py-2">
-          <p className="truncate text-[11px] uppercase tracking-widest text-slate-500">
-            {fixture.division_name} · Round {fixture.round_no}
-            {fixture.court_label ? ` · ${fixture.court_label}` : ""}
+          <p className="flex min-w-0 items-center gap-2 truncate text-[11px] uppercase tracking-widest text-slate-500">
+            {logo && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={logo} alt="" className="h-5 w-5 shrink-0 rounded bg-white/10 object-cover" />
+            )}
+            <span className="truncate">
+              {fixture.division_name} · Round {fixture.round_no}
+              {fixture.court_label ? ` · ${fixture.court_label}` : ""}
+            </span>
           </p>
           {inPlay ? (
             <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-emerald-400">

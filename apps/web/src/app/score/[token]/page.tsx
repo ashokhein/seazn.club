@@ -10,6 +10,8 @@ import { getEntrant } from "@/server/usecases/entrants";
 import { withTenant } from "@/lib/db";
 import { resolveModule } from "@/server/engine-db";
 import { HttpError } from "@/lib/errors";
+import { orgBoardChrome } from "@/server/slideshow-data";
+import { publicThemeStyleChain } from "@/lib/public-theme";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
   DeviceScorePad,
@@ -62,12 +64,14 @@ export default async function ScorePadPage({
         config: unknown;
         competition_name: string;
         division_name: string;
+        competition_branding: unknown;
       }[]
     >`
       select f.id, f.round_no, f.venue, f.court_label, f.scheduled_at,
              f.home_entrant_id, f.away_entrant_id,
              d.sport_key, d.module_version, d.config,
-             c.name as competition_name, d.name as division_name
+             c.name as competition_name, d.name as division_name,
+             c.branding as competition_branding
       from fixtures f
       join divisions d on d.id = f.division_id
       join competitions c on c.id = d.competition_id
@@ -75,6 +79,14 @@ export default async function ScorePadPage({
     return row ?? null;
   });
   if (!fixture) return <DeadLink message="This fixture no longer exists." />;
+
+  // Same brand chain as the public pages / noticeboard (Pro entitlements
+  // resolved inside orgBoardChrome): the volunteer's pad wears club colors.
+  const chrome = await orgBoardChrome(read);
+  const themed = chrome.branding !== null;
+  const themeStyle = themed
+    ? publicThemeStyleChain(fixture.competition_branding, chrome.branding)
+    : undefined;
 
   const sportModule = resolveModule(fixture.sport_key, fixture.module_version);
   const [state, events] = await Promise.all([
@@ -98,10 +110,11 @@ export default async function ScorePadPage({
   ]);
 
   return (
-    <main className="min-h-screen bg-slate-950 px-4 py-6">
+    <main style={themeStyle} className="min-h-screen bg-court px-4 py-6">
       <div className="mx-auto max-w-2xl">
         <DeviceScorePad
         token={token}
+        logo={chrome.logo}
         deviceLinkId={link.id}
         fixture={{
           id: fixture.id,
