@@ -9,7 +9,10 @@ export async function GET(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
     const auth = await requireResourceAuth(req, "competition", id, "read");
-    return listDivisions(auth, id);
+    // ?archived=1 — the competition-settings "Archived divisions" list
+    // (v3/09 §4); default hides archived rows.
+    const includeArchived = new URL(req.url).searchParams.get("archived") === "1";
+    return listDivisions(auth, id, { includeArchived });
   });
 }
 

@@ -87,7 +87,10 @@ checklists:
 
 Ordered. Each prompt is self-contained: context, task, files, acceptance criteria.
 
-**Status:** 00–15 ✅ implemented · 16–20 open.
+**Status:** 00–15 ✅ implemented · 16–20 open. PROMPT-38 (v3) hardened this wave's
+engine: setbased headline carries per-set points, fixture status derives from the
+void-resolved ledger, sim harness → matrix runner (`sim:matrix`, sim-report.json,
+undo-storm/boundary/officials/points/carry-over/americano/ladder scenarios).
 
 | Prompt | Delivers | Depends on |
 |--------|----------|-----------|

@@ -136,6 +136,7 @@ export const Division = z.object({
   officials_hide_names: z.boolean(),
   scheduling_mode: z.enum(["timed", "flexible"]),
   auto_progress: z.boolean(),
+  archived_at: z.string().nullable(), // v3/09 §4 — set = archived (hidden, restorable)
   created_at: z.string(),
 });
 

@@ -11,6 +11,7 @@ import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
 import { resolveModule } from "@/server/engine-db";
 import { withTenant } from "@/lib/db";
+import { DivisionDangerZone } from "@/components/v2/division-danger-zone";
 import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
@@ -218,6 +219,16 @@ export default async function DivisionPage({
         )}
 
         {tab === "stats" && <StatsPanel divisionId={id} />}
+
+        {/* Delete/archive (v3/09 §4) — owners/admins, even on frozen comps:
+            reducing usage is the honest way out of an over-quota freeze. */}
+        {canEdit && (
+          <DivisionDangerZone
+            divisionId={id}
+            divisionName={division.name}
+            competitionId={competition.id}
+          />
+        )}
       </main>
     </>
   );

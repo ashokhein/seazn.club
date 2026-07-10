@@ -2,6 +2,7 @@ import "server-only";
 // Division use-cases (doc 08 §3, doc 06). Creation snapshots the merged
 // variant config and PINS the sport module version (doc 02 §4) so a running
 // division always replays under the rules it started with.
+import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { withinLimit, requireFeature } from "@/lib/entitlements";
@@ -30,22 +31,31 @@ export interface DivisionRow {
   scheduling_mode: string;
   auto_progress: boolean;
   schedule_locked: boolean;
+  archived_at: string | null;
   created_at: string;
 }
 
 const COLS = [
   "id", "competition_id", "name", "slug", "sport_key", "variant_key", "config",
   "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
-  "scheduling_mode", "auto_progress", "schedule_locked", "created_at",
+  "scheduling_mode", "auto_progress", "schedule_locked", "archived_at", "created_at",
 ] as const;
 
-export async function listDivisions(auth: AuthCtx, competitionId: string): Promise<DivisionRow[]> {
+export async function listDivisions(
+  auth: AuthCtx,
+  competitionId: string,
+  opts: { includeArchived?: boolean } = {},
+): Promise<DivisionRow[]> {
   return withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx`select 1 from competitions where id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
+    // Archived divisions are hidden from the console (v3/09 §4) — only the
+    // competition-settings "Archived divisions" list asks for them.
     return tx<DivisionRow[]>`
       select ${tx(COLS)} from divisions
-      where competition_id = ${competitionId} order by created_at, id`;
+      where competition_id = ${competitionId}
+      ${opts.includeArchived ? tx`` : tx`and archived_at is null`}
+      order by created_at, id`;
   });
 }
 
@@ -61,9 +71,11 @@ export async function createDivision(
     await assertCompetitionNotFrozen(auth.orgId, competitionId, tx);
 
     // Doc 10 §1: `divisions.per_competition.max` (Community's real bite: 1).
-    // Count in the same tx as the insert (doc 10 §2 rule 1).
+    // Count in the same tx as the insert (doc 10 §2 rule 1). Archived
+    // divisions don't count — archiving frees the slot (v3/09 §4).
     const [{ n }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from divisions where competition_id = ${competitionId}`;
+      select count(*)::int as n from divisions
+      where competition_id = ${competitionId} and archived_at is null`;
     const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1);
     if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
 
@@ -122,6 +134,175 @@ export async function getDivision(auth: AuthCtx, id: string): Promise<DivisionRo
     const [row] = await tx<DivisionRow[]>`select ${tx(COLS)} from divisions where id = ${id}`;
     if (!row) throw new HttpError(404, "division not found");
     return row;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Delete / archive / restore — v3/09 §4 (PROMPT-38). Graduated
+// destructiveness: setup divisions hard-delete; started/resulted divisions
+// archive (hidden + restorable); archived divisions purge after a 30-day
+// cool-off. Owner/admin only (the route enforces the role).
+// ---------------------------------------------------------------------------
+
+const PURGE_COOL_OFF_DAYS = 30;
+
+interface DeleteTarget {
+  id: string;
+  competition_id: string;
+  name: string;
+  slug: string;
+  sport_key: string;
+  status: string;
+  archived_at: string | null;
+}
+
+async function auditCompetition(
+  tx: postgres.TransactionSql,
+  competitionId: string,
+  type: string,
+  payload: Record<string, unknown>,
+  actorId: string | null,
+): Promise<void> {
+  await tx`
+    insert into competition_events (competition_id, type, payload, actor_id)
+    values (${competitionId}, ${type}, ${tx.json(payload as never)}, ${actorId})`;
+}
+
+// Open registration blocks delete AND archive: registrants could still be
+// paying into a division that is about to vanish (v3/09 §4).
+async function assertRegistrationClosed(
+  tx: postgres.TransactionSql,
+  divisionId: string,
+  action: "delete" | "archive",
+): Promise<void> {
+  const [settings] = await tx<{ enabled: boolean; closes_at: string | null }[]>`
+    select enabled, closes_at from registration_settings where division_id = ${divisionId}`;
+  const open =
+    settings?.enabled === true &&
+    (settings.closes_at === null || new Date(settings.closes_at).getTime() > Date.now());
+  if (open) {
+    throw new HttpError(
+      409,
+      `Registration is open for this division — close registration first, then ${action} it`,
+      "REGISTRATION_OPEN",
+    );
+  }
+}
+
+/**
+ * DELETE semantics: setup division (never started, nothing decided) → hard
+ * delete; archived ≥30 days → purge (hard delete); anything else → 409
+ * DIVISION_HAS_RESULTS with the `{archive: true}` hint. Frozen competitions
+ * are NOT blocked: deleting reduces usage, which is the honest way out of an
+ * over-quota freeze.
+ */
+export async function deleteDivision(auth: AuthCtx, id: string): Promise<void> {
+  await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<DeleteTarget[]>`
+      select id, competition_id, name, slug, sport_key, status, archived_at
+      from divisions where id = ${id}`;
+    if (!division) throw new HttpError(404, "division not found");
+    await assertRegistrationClosed(tx, id, "delete");
+
+    const [{ decided }] = await tx<{ decided: number }[]>`
+      select count(*)::int as decided from fixtures
+      where division_id = ${id} and status in ('decided', 'finalized', 'forfeited')`;
+
+    if (division.archived_at !== null) {
+      // Purge path: archived divisions hard-delete after the cool-off.
+      const ageMs = Date.now() - new Date(division.archived_at).getTime();
+      const coolOffMs = PURGE_COOL_OFF_DAYS * 24 * 60 * 60 * 1000;
+      if (ageMs < coolOffMs) {
+        const daysLeft = Math.ceil((coolOffMs - ageMs) / (24 * 60 * 60 * 1000));
+        throw new HttpError(
+          409,
+          `An archived division can be purged ${PURGE_COOL_OFF_DAYS} days after archiving — ${daysLeft} day(s) to go`,
+          "ARCHIVE_COOL_OFF",
+        );
+      }
+    } else if (division.status !== "setup" || decided > 0) {
+      throw new HttpError(
+        409,
+        "This division has started or has recorded results — archive it instead (restorable), or purge it 30 days after archiving",
+        "DIVISION_HAS_RESULTS",
+        { archive: true },
+      );
+    }
+
+    const [{ entrants }] = await tx<{ entrants: number }[]>`
+      select count(*)::int as entrants from entrants where division_id = ${id}`;
+    const [{ fixtures }] = await tx<{ fixtures: number }[]>`
+      select count(*)::int as fixtures from fixtures where division_id = ${id}`;
+
+    // The division ledger dies with the row (ON DELETE CASCADE); the audit
+    // fact lives on the competition ledger, which survives (v3/09 §4).
+    // Persons/teams/clubs are org-level rows — untouched by design.
+    await auditCompetition(
+      tx,
+      division.competition_id,
+      division.archived_at !== null ? "division_purged" : "division_deleted",
+      {
+        division_id: id,
+        name: division.name,
+        slug: division.slug,
+        sport_key: division.sport_key,
+        entrants,
+        fixtures,
+        decided_fixtures: decided,
+      },
+      auth.userId,
+    );
+    await tx`delete from divisions where id = ${id}`;
+  });
+}
+
+/** Archive: hide from console/public/quota, restorable. Idempotent. */
+export async function archiveDivision(auth: AuthCtx, id: string): Promise<DivisionRow> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [existing] = await tx<DivisionRow[]>`
+      select ${tx(COLS)} from divisions where id = ${id}`;
+    if (!existing) throw new HttpError(404, "division not found");
+    if (existing.archived_at !== null) return existing;
+    await assertRegistrationClosed(tx, id, "archive");
+
+    const [row] = await tx<DivisionRow[]>`
+      update divisions set archived_at = now() where id = ${id} returning ${tx(COLS)}`;
+    await auditCompetition(
+      tx,
+      existing.competition_id,
+      "division_archived",
+      { division_id: id, name: existing.name, slug: existing.slug },
+      auth.userId,
+    );
+    return row as DivisionRow;
+  });
+}
+
+/** Restore an archived division. Re-checks the divisions quota — restoring
+ *  must not smuggle a competition back over its plan limit. */
+export async function restoreDivision(auth: AuthCtx, id: string): Promise<DivisionRow> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [existing] = await tx<DivisionRow[]>`
+      select ${tx(COLS)} from divisions where id = ${id}`;
+    if (!existing) throw new HttpError(404, "division not found");
+    if (existing.archived_at === null) return existing;
+
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from divisions
+      where competition_id = ${existing.competition_id} and archived_at is null`;
+    const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1);
+    if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
+
+    const [row] = await tx<DivisionRow[]>`
+      update divisions set archived_at = null where id = ${id} returning ${tx(COLS)}`;
+    await auditCompetition(
+      tx,
+      existing.competition_id,
+      "division_restored",
+      { division_id: id, name: existing.name, slug: existing.slug },
+      auth.userId,
+    );
+    return row as DivisionRow;
   });
 }
 

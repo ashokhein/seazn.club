@@ -38,11 +38,13 @@ export type Slide =
 /**
  * Org chrome for the noticeboard masthead — brand color blob and logo URL,
  * entitlement-gated like the public pages (theme: dashboard.branding,
- * logo: branding).
+ * logo: branding). `themed` is exposed so callers gate the OTHER links of the
+ * theme chain (competition.branding) with the same read-entitlement — the
+ * console read model doesn't empty branding the way the public views do.
  */
 export async function orgBoardChrome(
   auth: AuthCtx,
-): Promise<{ branding: unknown; logo: string | null }> {
+): Promise<{ branding: unknown; logo: string | null; themed: boolean }> {
   const [themed, logoBranded, [org]] = await Promise.all([
     hasFeature(auth.orgId, "dashboard.branding"),
     hasFeature(auth.orgId, "branding"),
@@ -53,6 +55,7 @@ export async function orgBoardChrome(
   return {
     branding: themed ? (org?.branding ?? null) : null,
     logo: logoBranded ? resolveLogoUrl(org?.logo_storage_path, org?.logo_url) : null,
+    themed,
   };
 }
 

@@ -57,6 +57,7 @@ export async function scoreEvent(
   }
 
   await assertEntitledToScore(auth, fixtureId, input);
+  if (input.type === "core.void") await assertUndoTarget(auth, fixtureId, input);
 
   const result = await appendEvent(auth.orgId, fixtureId, input.expected_seq, {
     type: input.type,
@@ -97,6 +98,33 @@ export async function scoreEvent(
     .catch(() => null);
   void invalidatePublicCache(auth.orgId, fixtureId, movesDiscovery);
   return out;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Undo with nothing to undo is a 409, never a crash (v3/09 §2): a missing /
+// unknown / already-voided target answers CONFLICT before the fold would 422,
+// so a double-tapped "Undo last" degrades to a calm "already undone".
+async function assertUndoTarget(
+  auth: AuthCtx,
+  fixtureId: string,
+  input: AppendEventRequest,
+): Promise<void> {
+  const eventId = (input.payload as { event_id?: unknown } | null)?.event_id;
+  if (typeof eventId !== "string" || !UUID_RE.test(eventId)) {
+    throw new HttpError(409, "Nothing to undo");
+  }
+  const [target] = await withTenant(auth.orgId, (tx) => tx<{ type: string; voided: boolean }[]>`
+    select e.type,
+           exists (select 1 from score_events v
+                   where v.fixture_id = e.fixture_id and v.voids_event_id = e.id) as voided
+    from score_events e
+    where e.id = ${eventId} and e.fixture_id = ${fixtureId}`);
+  if (!target) throw new HttpError(409, "Nothing to undo — that entry does not exist");
+  if (target.voided) throw new HttpError(409, "Nothing to undo — that entry is already undone");
+  if (target.type === "core.void") {
+    throw new HttpError(409, "An undo cannot be undone — re-record the entry instead");
+  }
 }
 
 // Entitlement gates at THE scoring door (doc 10 §2 rules 2 & 4):

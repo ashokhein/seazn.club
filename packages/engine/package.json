@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Pure tournament engine for seazn.club — zero effectful deps (design corpus: engine/).",
+  "description": "Pure tournament engine for seazn.club \u2014 zero effectful deps (design corpus: engine/).",
   "exports": {
     "./core": "./src/core/index.ts",
     "./sport": "./src/sport/index.ts",
@@ -22,9 +22,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "sim": "vitest run src/testkit/simulation.test.ts src/testkit/chaos.test.ts",
+    "sim": "vitest run src/testkit/simulation.test.ts src/testkit/chaos.test.ts src/testkit/undo-sweep.test.ts",
     "sim:replay": "node --experimental-strip-types scripts/sim-replay.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "sim:matrix": "node --experimental-strip-types scripts/sim-replay.ts --matrix"
   },
   "peerDependencies": {
     "zod": "^4.4.3"
