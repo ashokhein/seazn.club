@@ -7,21 +7,43 @@
 // Toss picks first break before the start; umpire adjustments tuck away
 // under a details fold. Strike-by-strike stays reserved (Pro, later).
 import { useState } from "react";
-import type { SendEvent, SideInfo } from "@/components/v2/fixture-console";
+import type { LiveState, SendEvent, SideInfo } from "@/components/v2/fixture-console";
+
+// The carrom fold state (engine CarromState) as the pad reads it — same
+// live.state pattern as the set-based (badminton) scoreboard.
+interface CarromGameView {
+  score?: { home?: number; away?: number };
+  winner?: "home" | "away" | "draw" | null;
+  boards?: unknown[];
+}
+interface CarromStateView {
+  phase?: string;
+  games?: CarromGameView[];
+  gamesWon?: { home?: number; away?: number };
+  cfg?: { bestOf?: number; gameTo?: number };
+}
 
 export function CarromPad({
   home,
   away,
+  live,
   send,
   busy,
   started,
 }: {
   home: SideInfo;
   away: SideInfo;
+  live: LiveState;
   send: SendEvent;
   busy: boolean;
   started: boolean;
 }) {
+  const state = (live.state ?? {}) as CarromStateView;
+  const games = state.games ?? [];
+  const openIndex = games.findIndex((g) => (g.winner ?? null) === null);
+  const currentNo = openIndex === -1 ? games.length + 1 : openIndex + 1;
+  const bestOf = state.cfg?.bestOf;
+  const gameTo = state.cfg?.gameTo;
   const [winnerId, setWinnerId] = useState<string | null>(null);
   const [coinsLeft, setCoinsLeft] = useState(0);
   const [queenTo, setQueenTo] = useState<string>(""); // "" = nobody credited
@@ -45,6 +67,62 @@ export function CarromPad({
 
   return (
     <div className="space-y-4">
+      {/* Per-game scoreboard (badminton-style): one column per game, live
+          points in the open game, games-won tally at the end. */}
+      {games.length > 0 && (
+        <div className="scroll-x scroll-x-fade">
+          <table className="text-sm" aria-label="Carrom games">
+            <thead>
+              <tr className="text-left text-xs tracking-wide text-slate-500 uppercase">
+                <th className="py-1 pr-4 font-medium">
+                  Game {currentNo}
+                  {bestOf ? ` of ${bestOf}` : ""}
+                  {gameTo ? ` · first to ${gameTo}` : ""}
+                </th>
+                {games.map((_, i) => (
+                  <th key={i} className="px-2 py-1 text-center font-medium">
+                    G{i + 1}
+                  </th>
+                ))}
+                <th className="px-2 py-1 text-center font-medium">Games</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(["home", "away"] as const).map((side) => (
+                <tr key={side} className="border-t border-slate-100">
+                  <td className="max-w-40 truncate py-1 pr-4 font-medium text-slate-800">
+                    {side === "home" ? home.name : away.name}
+                  </td>
+                  {games.map((g, i) => {
+                    const pts = g.score?.[side] ?? 0;
+                    const isOpen = i === openIndex;
+                    const won = g.winner === side;
+                    return (
+                      <td
+                        key={i}
+                        className={`px-2 py-1 text-center tabular-nums ${
+                          won
+                            ? "font-semibold text-slate-900"
+                            : isOpen
+                              ? "font-semibold text-purple-700"
+                              : "text-slate-500"
+                        }`}
+                      >
+                        {pts}
+                        {isOpen ? "•" : ""}
+                      </td>
+                    );
+                  })}
+                  <td className="px-2 py-1 text-center font-semibold text-slate-900 tabular-nums">
+                    {state.gamesWon?.[side] ?? 0}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {!started && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-slate-600">
@@ -55,6 +133,7 @@ export function CarromPad({
               key={side.id}
               type="button"
               disabled={busy}
+              aria-label={`${side.name} breaks first`}
               onClick={() => send("carrom.toss", { firstBreak: side.id })}
               className="btn btn-ghost px-3 py-1.5 text-xs"
             >
@@ -77,6 +156,7 @@ export function CarromPad({
               type="button"
               disabled={busy}
               aria-pressed={winnerId === side.id}
+              aria-label={`Board won by ${side.name}`}
               onClick={() => setWinnerId(winnerId === side.id ? null : side.id)}
               className={`btn px-4 ${
                 winnerId === side.id ? "btn-primary" : "btn-ghost"

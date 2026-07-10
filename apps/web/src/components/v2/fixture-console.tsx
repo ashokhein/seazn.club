@@ -287,7 +287,7 @@ export function FixtureConsole({
               // Carrom scores board-by-board (carrom.board.summary) — the
               // generic 1-result pad would send generic.result, which the
               // module rejects as an unknown event type.
-              <CarromPad home={home} away={away} send={send} busy={busy} started={started} />
+              <CarromPad home={home} away={away} live={live} send={send} busy={busy} started={started} />
             ) : (
               <GenericPad sport={sport} home={home} away={away} send={send} busy={busy} />
             )}

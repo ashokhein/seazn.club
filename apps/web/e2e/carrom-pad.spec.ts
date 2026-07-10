@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { TAG, apiJson, activeOrg } from "./helpers";
+import { TAG, apiJson, activeOrg, expectNoHorizontalScroll } from "./helpers";
 
 // Regression: carrom had no pad, fell through to GenericPad, and every score
 // attempt died with `unknown event type "generic.result"` (organiser report
@@ -34,19 +34,25 @@ test("carrom fixture scores board-by-board through its own pad", async ({ page, 
   await apiJson(request, `/api/v1/divisions/${div.data!.id}/start`, "POST");
   const fixtureNo = gen.data!.fixtures[0]!.fixture_no;
 
+  // Phone viewport: the pad and its per-game scoreboard must hold 390px
+  // without page-level horizontal scroll (v3/02 gate).
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/o/${org.slug}/c/${comp.data!.slug}/d/${div.data!.slug}/f/${fixtureNo}`);
 
   // The carrom pad renders (not the generic score-entry pad).
   await expect(page.getByText("Board won by")).toBeVisible({ timeout: 20_000 });
 
   // Record one board: Meena wins, 4 coins left, queen covered by Meena.
-  await page.getByRole("button", { name: "Meena", exact: true }).click();
+  await page.getByRole("button", { name: "Board won by Meena" }).click();
   await page.getByLabel(/Opponent's coins left/).fill("4");
   await page.getByLabel(/Queen covered by/).selectOption({ label: "Meena" });
   await page.getByRole("button", { name: "Record board" }).click();
 
-  // The board banks points (4 coins + queen 3 = 7) — and no unknown-event
-  // error surfaces anywhere.
-  await expect(page.getByText(/\(7\)/).first()).toBeVisible({ timeout: 20_000 });
+  // The board banks points (4 coins + queen 3 = 7): the per-game scoreboard
+  // shows the live game column — and no unknown-event error surfaces.
+  const scoreboard = page.getByRole("table", { name: "Carrom games" });
+  await expect(scoreboard).toBeVisible({ timeout: 20_000 });
+  await expect(scoreboard.getByText("7•")).toBeVisible();
   await expect(page.getByText(/unknown event/i)).toHaveCount(0);
+  await expectNoHorizontalScroll(page);
 });
