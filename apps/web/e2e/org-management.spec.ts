@@ -19,11 +19,16 @@ test.describe.serial("org management", () => {
     const renameRow = page.locator("label", { hasText: "Organization name" });
     await renameRow.getByRole("textbox").fill(newName);
     await renameRow.getByRole("button", { name: "Save" }).click();
-    await expect(page.getByText("Saved.")).toBeVisible({ timeout: 20_000 });
+    // PROMPT-30: renaming regenerates the slug and lands on the new URL —
+    // wait for the NEW slug (the old settings URL matches the pattern too).
+    await page.waitForURL(
+      (u) => u.pathname.endsWith("/settings") && !u.pathname.includes(`/o/${original.slug}`),
+      { timeout: 20_000 },
+    );
 
     // Persisted, not just optimistic UI.
     await page.reload();
-    await expect(page.getByLabel("Organization name")).toHaveValue(newName);
+    await expect(page.getByLabel("Organization name")).toHaveValue(newName, { timeout: 20_000 });
     original = { ...original, name: newName };
   });
 
@@ -55,9 +60,9 @@ test.describe.serial("org management", () => {
     await expect
       .poll(async () => (await activeOrg(page)).name, { timeout: 20_000 })
       .toBe(secondOrgName);
-    // Full reload: the rename input is a client component seeded from
-    // useState(initialName), so router.refresh alone won't reset it.
-    await page.reload();
+    // Re-enter through the legacy cookie-following entry point (PROMPT-30:
+    // the /o URL owns the page; reloading the old org's URL would show it).
+    await page.goto("/settings");
     await expect(page.getByLabel("Organization name")).toHaveValue(secondOrgName, {
       timeout: 20_000,
     });
@@ -68,7 +73,7 @@ test.describe.serial("org management", () => {
     await expect
       .poll(async () => (await activeOrg(page)).id, { timeout: 20_000 })
       .toBe(original.id);
-    await page.reload();
+    await page.goto("/settings");
     await expect(page.getByLabel("Organization name")).toHaveValue(original.name, {
       timeout: 20_000,
     });

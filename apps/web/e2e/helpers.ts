@@ -257,8 +257,16 @@ export async function createCompetitionViaUi(
   await page.locator("label").filter({ has: radio }).click();
   await expect(radio).toBeChecked();
   await page.getByRole("button", { name: /create/i }).click();
-  await page.waitForURL(/\/competitions\/[0-9a-f-]{36}/, { timeout: 20_000 });
-  return page.url().match(/\/competitions\/([0-9a-f-]{36})/)![1]!;
+  // PROMPT-30: the wizard lands on the slug URL — resolve the id via the API.
+  await page.waitForURL(/\/o\/[^/]+\/c\/(?!new$)[^/?]+$/, { timeout: 20_000 });
+  const slug = page.url().match(/\/c\/([^/?]+)$/)![1]!;
+  const list = await apiJson<{ items: { id: string; slug: string }[] }>(
+    page.request,
+    "/api/v1/competitions?limit=100",
+  );
+  const match = list.data!.items.find((c) => c.slug === slug);
+  if (!match) throw new Error(`created competition '${slug}' not in list`);
+  return match.id;
 }
 
 /**
@@ -277,8 +285,16 @@ export async function createDivisionViaUi(
   // Creation is guarded to the last tab.
   await page.getByRole("button", { name: "Scheduling", exact: true }).click();
   await page.getByRole("button", { name: /create division/i }).click();
-  await page.waitForURL(/\/divisions\/[0-9a-f-]{36}/, { timeout: 20_000 });
-  return page.url().match(/\/divisions\/([0-9a-f-]{36})/)![1]!;
+  // PROMPT-30: builder lands on the division slug URL — resolve id via API.
+  await page.waitForURL(/\/o\/[^/]+\/c\/[^/]+\/d\/(?!new(?:$|[/?]))[^/?]+/, { timeout: 20_000 });
+  const slug = page.url().match(/\/d\/([^/?]+)/)![1]!;
+  const list = await apiJson<{ id: string; slug: string }[]>(
+    page.request,
+    `/api/v1/competitions/${competitionId}/divisions`,
+  );
+  const match = list.data!.find((d) => d.slug === slug);
+  if (!match) throw new Error(`created division '${slug}' not in list`);
+  return match.id;
 }
 
 /** Create a scored generic-league division via the API and return ids. */

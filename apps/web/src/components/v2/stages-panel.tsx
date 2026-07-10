@@ -7,6 +7,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { routes } from "@/lib/routes";
+import { ClientTime } from "@/components/client-time";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
@@ -502,9 +503,13 @@ function FixtureLine({
           className={`badge ${timed ? "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200" : "bg-slate-100 text-slate-500"}`}
           title={timed ? "This match has a kick-off time" : "No kick-off time yet"}
         >
-          {timed
-            ? `Scheduled · ${new Date(fixture.scheduled_at as string).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
-            : "Unscheduled"}
+          {timed ? (
+            <>
+              Scheduled · <ClientTime value={fixture.scheduled_at} mode="datetime" />
+            </>
+          ) : (
+            "Unscheduled"
+          )}
           {fixture.court_label ? ` · ${fixture.court_label}` : fixture.venue ? ` · ${fixture.venue}` : ""}
         </span>
         {/* Play state only once it's under way / done. */}

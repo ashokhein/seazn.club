@@ -41,7 +41,7 @@ export default async function BillingPage({
   searchParams: Promise<{ checkout?: string; session_id?: string }>;
 }) {
   const { orgSlug } = await params;
-  const { org } = await requireOrgPage(orgSlug);
+  const { org } = await requireOrgPage(orgSlug, { tail: "/settings/billing" });
   const orgId = org.id;
   const isOwner = org.role === "owner";
 

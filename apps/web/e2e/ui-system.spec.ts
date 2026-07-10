@@ -25,7 +25,8 @@ test("card grid: competition card renders match-day anatomy and navigates", asyn
   await expect(card.getByText("Draft", { exact: true })).toBeVisible();
   // Whole card is the click target (stretched link).
   await card.getByRole("link", { name: `Card Nav ${TAG}` }).click();
-  await page.waitForURL(new RegExp(`/competitions/${comp.data!.id}`));
+  // PROMPT-30: cards navigate to the slug URL.
+  await page.waitForURL(/\/o\/[^/]+\/c\/[^/?]+$/, { timeout: 20_000 });
   await expect(page.getByRole("heading", { name: `Card Nav ${TAG}` })).toBeVisible();
 });
 

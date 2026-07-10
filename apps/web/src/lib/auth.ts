@@ -216,21 +216,34 @@ export async function createOrgForUser(
   name: string,
 ): Promise<Organization> {
   await assertMayOwnAnotherOrg(userId);
-  const slug = await generateOrgSlug(name);
-  const org = await sql.begin(async (tx) => {
-    const [o] = await tx<Organization[]>`
-      insert into organizations (name, slug, created_by)
-      values (${name}, ${slug}, ${userId})
-      returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, branding`;
-    await tx`
-      insert into org_members (org_id, user_id, role)
-      values (${o.id}, ${userId}, 'owner')`;
-    await tx`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${o.id}, 'community', 'active')
-      on conflict (org_id) do nothing`;
-    return o;
-  });
+  // Readable slugs can collide when two same-named orgs sign up concurrently
+  // (check-then-insert race) — retry past the unique index, then salt.
+  let org: Organization | undefined;
+  for (let attempt = 0; ; attempt++) {
+    const base = await generateOrgSlug(name);
+    const slug = attempt < 2 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`;
+    try {
+      org = await sql.begin(async (tx) => {
+        const [o] = await tx<Organization[]>`
+          insert into organizations (name, slug, created_by)
+          values (${name}, ${slug}, ${userId})
+          returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, branding`;
+        await tx`
+          insert into org_members (org_id, user_id, role)
+          values (${o.id}, ${userId}, 'owner')`;
+        await tx`
+          insert into subscriptions (org_id, plan_key, status)
+          values (${o.id}, 'community', 'active')
+          on conflict (org_id) do nothing`;
+        return o;
+      });
+      break;
+    } catch (err) {
+      const unique =
+        typeof err === "object" && err !== null && (err as { code?: string }).code === "23505";
+      if (!unique || attempt >= 4) throw err;
+    }
+  }
   await invalidateUserOrgs(userId);
   return org;
 }

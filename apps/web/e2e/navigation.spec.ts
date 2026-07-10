@@ -4,7 +4,7 @@ import { test, expect } from "@playwright/test";
 test.describe("navigation shell", () => {
   test("dashboard loads with nav", async ({ page }) => {
     await page.goto("/dashboard");
-    await expect(page.getByRole("navigation")).toBeVisible();
+    await expect(page.getByRole("navigation").first()).toBeVisible();
     // Header CTA is always present and — since the empty-state hero now uses a
     // distinct label ("Create your first competition") — resolves to exactly one
     // element in every board state (strict mode would throw on a collision).
@@ -36,9 +36,10 @@ test.describe("settings shell", () => {
     // Regression: the Platform API nav item once vanished during the dedup.
     await expect(page.getByRole("link", { name: "Platform API" })).toBeVisible();
     // Plan & billing owns Stripe reconciliation, so it links out, not a ?tab=.
+    // PROMPT-30: billing is org-scoped — /o/[slug]/settings/billing.
     await expect(page.getByRole("link", { name: "Plan & billing" })).toHaveAttribute(
       "href",
-      "/settings/billing",
+      /\/o\/[^/]+\/settings\/billing$/,
     );
   });
 

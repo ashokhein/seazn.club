@@ -83,7 +83,7 @@ export default async function SettingsPage({
   searchParams: Promise<{ tab?: string; email_change?: string }>;
 }) {
   const { orgSlug } = await params;
-  const { user, org: active, canEdit } = await requireOrgPage(orgSlug);
+  const { user, org: active, canEdit } = await requireOrgPage(orgSlug, { tail: "/settings" });
   const orgs = await getUserOrgs(user.id);
 
   const { tab: rawTab, email_change } = await searchParams;

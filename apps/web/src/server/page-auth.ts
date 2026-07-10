@@ -68,13 +68,13 @@ function settle(res: Resolution, target: (newSlug: string) => string): ResolvedE
  */
 export async function requireOrgPage(
   orgSlug: string,
-  opts: { allowScorer?: boolean } = {},
+  opts: { allowScorer?: boolean; tail?: string } = {},
 ): Promise<PageAuth> {
   const user = await getCurrentUser();
   if (!user) redirect("/login");
   const resolved = await orgBySlug(orgSlug);
   if (resolved && "renamedTo" in resolved) {
-    permanentRedirect(routes.orgHome(resolved.renamedTo));
+    permanentRedirect(routes.orgHome(resolved.renamedTo) + (opts.tail ?? ""));
   }
   if (!resolved) notFound();
   const orgs = await getUserOrgs(user.id);
@@ -96,7 +96,10 @@ export async function requireCompetitionPage(
   compSlug: string,
   opts: { tail?: string } = {},
 ): Promise<PageAuth & { competition: ResolvedEntity }> {
-  const page = await requireOrgPage(orgSlug);
+  // Scorers have no organiser surface below the org level — 404, never a
+  // redirect (doc 13 §2 parity with requireResourcePageAuth).
+  const page = await requireOrgPage(orgSlug, { allowScorer: true });
+  if (page.org.role === "scorer") notFound();
   const competition = settle(
     await compBySlug(page.org.id, compSlug),
     (s) => routes.competition(orgSlug, s) + (opts.tail ?? ""),
