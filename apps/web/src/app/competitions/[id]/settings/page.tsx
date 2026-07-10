@@ -88,17 +88,19 @@ export default async function CompetitionSettingsPage({
           themeBranding={themeBranding}
           orgBranding={org.branding}
           suggestedStatus={suggestedStatus}
-        />
-
-        {/* v3/09 §4 — restore/purge surface for archived divisions. */}
-        <ArchivedDivisions
-          divisions={archivedDivisions.map((d) => ({
-            id: d.id,
-            name: d.name,
-            sport_key: d.sport_key,
-            archived_at: d.archived_at as string,
-          }))}
-          canEdit={canEdit}
+          archivedCount={archivedDivisions.length}
+          archivedPanel={
+            /* v3/09 §4 — restore/purge surface for archived divisions. */
+            <ArchivedDivisions
+              divisions={archivedDivisions.map((d) => ({
+                id: d.id,
+                name: d.name,
+                sport_key: d.sport_key,
+                archived_at: d.archived_at as string,
+              }))}
+              canEdit={canEdit}
+            />
+          }
         />
       </main>
     </>

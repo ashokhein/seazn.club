@@ -73,7 +73,7 @@ export function ArchivedDivisions({
     new Date(new Date(archivedAt).getTime() + PURGE_COOL_OFF_DAYS * 24 * 60 * 60 * 1000);
 
   return (
-    <section className="card mt-6 p-5" data-testid="archived-divisions">
+    <section className="card p-5" data-testid="archived-divisions">
       <h2 className="text-sm font-semibold text-slate-700">Archived divisions</h2>
       <p className="mt-1 text-xs text-slate-500">
         Hidden from your console and the public site; they don’t count against your plan.

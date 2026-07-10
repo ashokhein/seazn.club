@@ -65,8 +65,9 @@ test("resulted division: 409 → archive → restore round-trip", async ({ page,
   );
   expect(listed.data!.every((d) => d.id !== divisionId)).toBe(true);
 
-  // Restore from competition settings → Archived divisions.
+  // Restore from competition settings → Archived tab.
   await page.goto(`/competitions/${compId}/settings`);
+  await page.getByRole("tab", { name: /Archived/ }).click({ timeout: 20_000 });
   const archivedSection = page.getByTestId("archived-divisions");
   await expect(archivedSection.getByText("Resulted")).toBeVisible({ timeout: 20_000 });
   // Purge is locked behind the 30-day cool-off.
