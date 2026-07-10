@@ -1,10 +1,13 @@
 export const dynamic = "force-dynamic";
 // Per-division noticeboard slideshow — standings, live fixtures, results.
+// Pro orgs (dashboard.branding) get the board tinted with their brand color,
+// same resolver as the public courtside pages.
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getDivision } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
-import { buildDivisionSlides } from "@/server/slideshow-data";
+import { buildDivisionSlides, orgBoardChrome } from "@/server/slideshow-data";
 import { hasFeature } from "@/lib/entitlements";
+import { publicThemeStyleChain } from "@/lib/public-theme";
 import { Slideshow } from "@/components/v2/slideshow";
 
 export default async function DivisionSlideshowPage({
@@ -16,9 +19,10 @@ export default async function DivisionSlideshowPage({
   const { auth } = await requireResourcePageAuth("division", id);
   const division = await getDivision(auth, id);
   const competition = await getCompetition(auth, division.competition_id);
-  const [slides, realtime] = await Promise.all([
+  const [slides, realtime, chrome] = await Promise.all([
     buildDivisionSlides(auth, id, division.name),
     hasFeature(auth.orgId, "realtime"),
+    orgBoardChrome(auth),
   ]);
 
   return (
@@ -28,6 +32,8 @@ export default async function DivisionSlideshowPage({
       backHref={`/divisions/${id}`}
       divisionIds={[id]}
       realtime={realtime}
+      themeStyle={publicThemeStyleChain(competition.branding, chrome.branding)}
+      logo={chrome.logo}
     />
   );
 }

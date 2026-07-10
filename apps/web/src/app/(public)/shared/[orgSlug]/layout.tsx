@@ -10,6 +10,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Barlow_Condensed } from "next/font/google";
 import { isReservedSlug } from "@/lib/public-site";
+import { publicThemeStyle } from "@/lib/public-theme";
 import { getPublicOrg } from "@/server/public-site/data";
 
 const displayFont = Barlow_Condensed({
@@ -44,16 +45,29 @@ export default async function PublicOrgLayout({
 
   return (
     <div
+      // Org brand color themes the whole public tree (Pro dashboard.branding,
+      // emptied in-query otherwise); competition pages override deeper via
+      // their own inline vars — the CSS cascade is the resolution chain.
+      style={publicThemeStyle(org.branding)}
       className={`${displayFont.variable} flex min-h-screen flex-col bg-canvas text-ink`}
     >
       <header className="sticky top-0 z-40 bg-court text-court-ink shadow-md">
         <div className="mx-auto flex h-[52px] max-w-5xl items-center gap-3 px-4">
-          <span
-            aria-hidden
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent font-display text-sm font-bold text-accent-ink"
-          >
-            {monogram(org.name)}
-          </span>
+          {org.logo ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={org.logo}
+              alt=""
+              className="h-8 w-8 shrink-0 rounded-md bg-white/10 object-cover"
+            />
+          ) : (
+            <span
+              aria-hidden
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-accent font-display text-sm font-bold text-accent-ink"
+            >
+              {monogram(org.name)}
+            </span>
+          )}
           <Link
             href={`/shared/${org.slug}`}
             className="min-w-0 truncate font-display text-xl font-semibold uppercase tracking-wide hover:text-white"

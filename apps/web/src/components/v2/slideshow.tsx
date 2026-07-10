@@ -4,8 +4,15 @@
 // is entitlement-split (doc 09 §4 pattern, same as live-score): Pro orgs
 // subscribe to `division:{id}` realtime broadcasts and refresh on push;
 // everyone else (and any subscription failure) falls back to 45 s polling.
-// Escape returns to the console. Dark, large-type, made for a TV.
+// Escape returns to the console.
+//
+// Visual system: "courtside" broadcast package, same as the public pages —
+// the whole board is the dark court slab, themeable per org via the --ps-*
+// vars (Pro dashboard.branding passes themeStyle from the page), scoreboard
+// type (Barlow Condensed via the slideshow layout), an accent keel under the
+// masthead, and scorebug strips sized for a TV across the hall.
 import { useEffect, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -31,6 +38,8 @@ export function Slideshow({
   backHref,
   divisionIds = [],
   realtime = false,
+  themeStyle,
+  logo = null,
 }: {
   title: string;
   slides: Slide[];
@@ -39,6 +48,10 @@ export function Slideshow({
   divisionIds?: string[];
   /** Org `realtime` entitlement, resolved server-side. */
   realtime?: boolean;
+  /** --ps-* overrides from publicThemeStyle (Pro branding), resolved server-side. */
+  themeStyle?: CSSProperties;
+  /** Org logo URL (Pro branding), resolved server-side. */
+  logo?: string | null;
 }) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
@@ -131,63 +144,81 @@ export function Slideshow({
     0,
   );
 
-  const medal = ["bg-amber-300 text-amber-950", "bg-slate-300 text-slate-900", "bg-orange-400/80 text-orange-950"];
-
   return (
-    <div className="relative flex min-h-screen flex-col overflow-hidden bg-slate-950 text-slate-100">
-      {/* Ambient backdrop — slow drifting glows, made for a TV left on all day */}
+    <div
+      style={themeStyle}
+      className="relative flex min-h-screen flex-col overflow-hidden bg-court text-court-ink"
+    >
+      {/* Static backdrop — soft accent wash from the top, vignette below.
+          No animation: this board is left running on a TV all day. */}
       <div aria-hidden className="pointer-events-none absolute inset-0">
-        <div className="animate-blob absolute -left-48 -top-48 h-[36rem] w-[36rem] rounded-full bg-purple-600/20 blur-3xl" />
-        <div className="animate-blob absolute -bottom-56 -right-40 h-[42rem] w-[42rem] rounded-full bg-fuchsia-600/10 blur-3xl [animation-delay:-7s]" />
-        <div className="animate-blob absolute left-1/2 top-1/3 h-96 w-96 -translate-x-1/2 rounded-full bg-indigo-600/10 blur-3xl [animation-delay:-3.5s]" />
+        <div className="absolute inset-x-0 top-0 h-[55vh] bg-[radial-gradient(80%_100%_at_50%_0%,color-mix(in_srgb,var(--ps-accent)_18%,transparent),transparent_70%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(130%_80%_at_50%_115%,rgba(0,0,0,0.45),transparent_60%)]" />
       </div>
 
-      {/* Header */}
-      <header className="relative flex items-center justify-between px-10 py-6">
-        <div className="flex min-w-0 items-center gap-4">
+      {/* Masthead — court slab bar with the accent keel, echoing the public site. */}
+      <header className="relative z-10">
+        <div className="flex items-center gap-5 px-10 py-4">
           <Link
             href={backHref}
             aria-label="Exit slideshow"
-            className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-sm font-medium text-slate-300 ring-1 ring-inset ring-white/15 transition hover:bg-white/20 hover:text-white"
+            className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/10 px-3 py-1.5 text-sm font-medium text-court-muted ring-1 ring-inset ring-white/15 transition hover:bg-white/20 hover:text-court-ink"
           >
             <ArrowLeft className="h-4 w-4" strokeWidth={2} />
             <span className="hidden sm:inline">Back</span>
           </Link>
-          <h1 className="truncate text-2xl font-bold tracking-tight">{title}</h1>
+          {logo && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logo}
+              alt=""
+              className="h-10 w-10 shrink-0 rounded-md bg-white/10 object-cover"
+            />
+          )}
+          <h1 className="min-w-0 truncate font-display text-3xl font-semibold uppercase tracking-wide">
+            {title}
+          </h1>
           {liveCount > 0 && (
-            <span className="flex shrink-0 items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 text-sm font-semibold text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
+            <span className="flex shrink-0 items-center gap-2 rounded-full bg-emerald-400/10 px-3 py-1 font-display text-lg font-semibold uppercase tracking-wide text-emerald-300 ring-1 ring-inset ring-emerald-400/30">
               <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-400" />
-              LIVE
+              Live
+            </span>
+          )}
+          {clock && (
+            <span className="ml-auto shrink-0 font-display text-3xl font-semibold tabular-nums text-court-muted">
+              {clock}
             </span>
           )}
         </div>
-        {clock && (
-          <span className="text-2xl font-medium tabular-nums text-slate-400">{clock}</span>
-        )}
+        <div aria-hidden className="h-0.5 bg-accent" />
       </header>
 
       {/* Slide — keyed on index so each rotation re-runs the entrance animation */}
-      <main className="relative flex flex-1 flex-col justify-center px-10 pb-10">
+      <main className="relative z-10 flex flex-1 flex-col justify-center px-12 py-8">
         {!slide ? (
           <div className="text-center">
-            <p className="animate-trophy mb-4 text-6xl">🏟️</p>
-            <p className="text-2xl text-slate-400">Nothing to show yet</p>
-            <p className="mt-2 text-lg text-slate-600">
+            <p className="font-display text-6xl font-bold uppercase tracking-tight">
+              Nothing to show yet
+            </p>
+            <p className="mt-4 text-xl text-court-muted">
               Generate fixtures and this board comes alive.
             </p>
           </div>
         ) : (
-          <div key={index} className="animate-slide-in mx-auto w-full max-w-5xl">
-            <p className="mb-1 text-center text-lg font-semibold uppercase tracking-widest text-purple-400">
-              {slide.division}
-            </p>
-            <h2 className="mb-8 text-center text-5xl font-black tracking-tight">
-              {slide.kind === "standings" ? slide.caption : slide.title}
-            </h2>
+          <div key={index} className="animate-slide-in mx-auto w-full max-w-6xl">
+            <div className="mb-8">
+              <p className="font-display text-xl font-semibold uppercase tracking-[0.28em] text-accent-line">
+                {slide.division}
+              </p>
+              <h2 className="mt-1 font-display text-7xl font-bold uppercase leading-none tracking-tight">
+                {slide.kind === "standings" ? slide.caption : slide.title}
+              </h2>
+              <div aria-hidden className="mt-4 h-1 w-20 bg-accent" />
+            </div>
 
             {slide.kind === "standings" ? (
               <div>
-                <div className="grid grid-cols-[3.5rem_1fr_repeat(4,3.5rem)_5.5rem] gap-x-4 px-6 pb-3 text-sm font-semibold uppercase tracking-wider text-slate-500">
+                <div className="grid grid-cols-[4rem_minmax(0,1fr)_repeat(4,4rem)_7rem] gap-x-5 px-6 pb-2 font-display text-base font-semibold uppercase tracking-[0.2em] text-court-muted">
                   <span>#</span>
                   <span>Entrant</span>
                   <span className="text-right">P</span>
@@ -196,36 +227,45 @@ export function Slideshow({
                   <span className="text-right">L</span>
                   <span className="text-right">Pts</span>
                 </div>
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {slide.rows.slice(0, 10).map((r, i) => (
                     <div
                       key={r.rank + r.name}
-                      className={`grid grid-cols-[3.5rem_1fr_repeat(4,3.5rem)_5.5rem] items-center gap-x-4 rounded-xl px-6 py-3 text-2xl ring-1 ring-inset ${
-                        i === 0
-                          ? "bg-gradient-to-r from-amber-400/15 via-white/[0.04] to-transparent ring-amber-400/20"
-                          : "bg-white/[0.04] ring-white/5"
-                      }`}
+                      className="relative grid grid-cols-[4rem_minmax(0,1fr)_repeat(4,4rem)_7rem] items-center gap-x-5 rounded-lg bg-white/[0.05] px-6 py-2.5 ring-1 ring-inset ring-white/10"
                     >
+                      {i === 0 && (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-0 left-0 w-1 rounded-l-lg bg-accent"
+                        />
+                      )}
                       <span>
-                        {i < 3 ? (
-                          <span
-                            className={`inline-flex h-9 w-9 items-center justify-center rounded-full text-lg font-bold ${medal[i]}`}
-                          >
+                        {i === 0 ? (
+                          <span className="flex h-10 w-10 items-center justify-center rounded-md bg-accent font-display text-2xl font-bold text-accent-ink">
                             {r.rank}
                           </span>
                         ) : (
-                          <span className="pl-3 text-xl text-slate-500">{r.rank}</span>
+                          <span className="pl-2.5 font-display text-2xl font-semibold text-court-muted">
+                            {r.rank}
+                          </span>
                         )}
                       </span>
-                      <span className="flex min-w-0 items-center gap-3 truncate font-semibold">
+                      <span className="min-w-0 truncate font-display text-3xl font-semibold">
                         {r.name}
-                        {i === 0 && <span className="animate-trophy shrink-0 text-xl">🏆</span>}
                       </span>
-                      <span className="text-right text-xl text-slate-400">{r.played}</span>
-                      <span className="text-right text-xl text-slate-400">{r.won}</span>
-                      <span className="text-right text-xl text-slate-400">{r.drawn}</span>
-                      <span className="text-right text-xl text-slate-400">{r.lost}</span>
-                      <span className="text-right text-3xl font-black text-purple-300">
+                      <span className="text-right font-display text-2xl tabular-nums text-court-muted">
+                        {r.played}
+                      </span>
+                      <span className="text-right font-display text-2xl tabular-nums text-court-muted">
+                        {r.won}
+                      </span>
+                      <span className="text-right font-display text-2xl tabular-nums text-court-muted">
+                        {r.drawn}
+                      </span>
+                      <span className="text-right font-display text-2xl tabular-nums text-court-muted">
+                        {r.lost}
+                      </span>
+                      <span className="text-right font-display text-4xl font-bold tabular-nums text-accent-line">
                         {r.points}
                       </span>
                     </div>
@@ -233,40 +273,51 @@ export function Slideshow({
                 </div>
               </div>
             ) : (
-              <ul className="space-y-3">
+              <ul className="space-y-2.5">
                 {slide.items.map((f, i) => {
                   const live = f.status === "in_play";
                   return (
                     <li
                       key={i}
-                      className={`grid grid-cols-[1fr_auto_1fr_auto] items-center gap-6 rounded-2xl px-8 py-5 ring-1 ring-inset ${
-                        live
-                          ? "bg-emerald-400/[0.06] ring-emerald-400/30"
-                          : "bg-white/[0.04] ring-white/5"
+                      className={`relative grid grid-cols-[4rem_minmax(0,1fr)_auto_minmax(0,1fr)_6.5rem] items-center gap-x-6 rounded-lg px-7 py-3.5 ring-1 ring-inset ring-white/10 ${
+                        live ? "bg-white/[0.09]" : "bg-white/[0.05]"
                       }`}
                     >
-                      <span className="min-w-0 truncate text-right text-2xl font-semibold">
+                      {live && (
+                        <span
+                          aria-hidden
+                          className="absolute inset-y-0 left-0 w-1 rounded-l-lg bg-emerald-400"
+                        />
+                      )}
+                      <span className="font-display text-xl font-semibold uppercase text-court-muted">
+                        R{f.round}
+                      </span>
+                      <span className="min-w-0 truncate text-right font-display text-4xl font-semibold">
                         {f.home}
                       </span>
                       <span
-                        className={`shrink-0 rounded-xl px-4 py-1.5 text-center text-3xl font-black tabular-nums ${
-                          f.line ? "bg-white/5 text-purple-300" : "text-lg font-semibold text-slate-500"
+                        className={`shrink-0 px-2 text-center font-display tabular-nums ${
+                          f.line
+                            ? "text-5xl font-bold text-accent-line"
+                            : "text-2xl font-semibold text-court-muted"
                         }`}
                       >
                         {f.line ?? "vs"}
                       </span>
-                      <span className="min-w-0 truncate text-2xl font-semibold">{f.away}</span>
-                      <span
-                        className={`flex shrink-0 items-center gap-2 rounded-full px-3 py-1 text-sm font-medium ${
-                          live
-                            ? "bg-emerald-400/15 text-emerald-300"
-                            : "bg-white/5 text-slate-400"
-                        }`}
-                      >
-                        {live && (
-                          <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-400" />
+                      <span className="min-w-0 truncate font-display text-4xl font-semibold">
+                        {f.away}
+                      </span>
+                      <span className="flex items-center justify-end gap-2 font-display text-lg font-semibold uppercase tracking-wide">
+                        {live ? (
+                          <>
+                            <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-400" />
+                            <span className="text-emerald-300">Live</span>
+                          </>
+                        ) : (
+                          <span className="text-court-muted">
+                            {STATUS_LABEL[f.status] ?? f.status}
+                          </span>
                         )}
-                        {STATUS_LABEL[f.status] ?? f.status}
                       </span>
                     </li>
                   );
@@ -277,17 +328,20 @@ export function Slideshow({
         )}
       </main>
 
-      {/* Footer — per-slide progress bar + jump dots */}
+      {/* Footer — slide counter, per-slide progress rail, jump dots. */}
       {slides.length > 1 && (
-        <footer className="relative pb-6">
-          <div className="mx-auto mb-4 h-1 max-w-lg overflow-hidden rounded-full bg-white/10">
+        <footer className="relative z-10 flex items-center gap-6 px-10 pb-6">
+          <span className="shrink-0 font-display text-lg font-semibold tabular-nums text-court-muted">
+            {index + 1} / {slides.length}
+          </span>
+          <div className="h-1 flex-1 overflow-hidden rounded-full bg-white/10">
             <div
               key={index}
-              className="animate-slide-progress h-full rounded-full bg-gradient-to-r from-purple-400 to-fuchsia-400"
+              className="animate-slide-progress h-full rounded-full bg-accent"
               style={{ animationDuration: `${SLIDE_MS}ms` }}
             />
           </div>
-          <div className="flex items-center justify-center gap-2">
+          <div className="flex shrink-0 items-center gap-2">
             {slides.map((_, i) => (
               <button
                 key={i}
@@ -295,7 +349,7 @@ export function Slideshow({
                 aria-label={`Slide ${i + 1}`}
                 onClick={() => setIndex(i)}
                 className={`h-2 rounded-full transition-all ${
-                  i === index ? "w-6 bg-purple-400" : "w-2 bg-slate-700 hover:bg-slate-500"
+                  i === index ? "w-6 bg-accent" : "w-2 bg-white/20 hover:bg-white/40"
                 }`}
               />
             ))}

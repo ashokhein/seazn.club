@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { publicBrandColor, publicThemeStyle, resolvePublicTheme } from "../public-theme";
+import {
+  publicBrandColor,
+  publicThemeStyle,
+  publicThemeStyleChain,
+  resolvePublicTheme,
+} from "../public-theme";
 
 describe("resolvePublicTheme", () => {
   it("returns null for missing or unparsable colors", () => {
@@ -73,5 +78,28 @@ describe("publicThemeStyle", () => {
     const style = publicThemeStyle({ colors: { primary: "#0f766e" } });
     expect(style).toBeDefined();
     expect((style as Record<string, string>)["--ps-accent"]).toBe("#0f766e");
+  });
+});
+
+describe("publicThemeStyleChain", () => {
+  const comp = { colors: { primary: "#be123c" } };
+  const org = { colors: { primary: "#0f766e" } };
+
+  it("competition override wins over the org default", () => {
+    const style = publicThemeStyleChain(comp, org) as Record<string, string>;
+    expect(style["--ps-accent"]).toBe("#be123c");
+  });
+
+  it("falls through to the org color when the competition has none", () => {
+    const style = publicThemeStyleChain({}, org) as Record<string, string>;
+    expect(style["--ps-accent"]).toBe("#0f766e");
+  });
+
+  it("returns undefined (violet defaults) when nothing carries a color", () => {
+    expect(publicThemeStyleChain({}, null)).toBeUndefined();
+  });
+
+  it("a winning color that fails the guard stays violet, not the next blob", () => {
+    expect(publicThemeStyleChain({ colors: { primary: "#ffe14d" } }, org)).toBeUndefined();
   });
 });

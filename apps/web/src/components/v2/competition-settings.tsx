@@ -5,6 +5,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { BrandColorPicker } from "@/components/brand-color-picker";
+import { publicBrandColor } from "@/lib/public-theme";
 
 interface CompetitionLite {
   id: string;
@@ -18,6 +20,7 @@ interface CompetitionLite {
   frozen: boolean;
   discoverable: boolean;
   discovery: Record<string, string | null>;
+  branding: unknown;
 }
 
 const STATUSES = ["draft", "published", "live", "completed", "archived"];
@@ -40,11 +43,17 @@ export function CompetitionSettings({
   competition,
   canEdit,
   discoveryBranding,
+  themeBranding = false,
+  orgBranding = null,
   suggestedStatus = null,
 }: {
   competition: CompetitionLite;
   canEdit: boolean;
   discoveryBranding: boolean;
+  /** Org has dashboard.branding — public pages/noticeboard honor brand color. */
+  themeBranding?: boolean;
+  /** Org-level branding blob — the color this competition inherits. */
+  orgBranding?: unknown;
   /** State-derived nudge, e.g. "live" once matches are underway. */
   suggestedStatus?: string | null;
 }) {
@@ -61,6 +70,7 @@ export function CompetitionSettings({
     country: competition.discovery.country ?? "",
     tagline: competition.discovery.tagline ?? "",
     hero_image_path: competition.discovery.hero_image_path ?? "",
+    brand_primary: publicBrandColor(competition.branding),
   });
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
@@ -118,6 +128,15 @@ export function CompetitionSettings({
                 }
               : {}),
           },
+          // Brand color override; {} = inherit the org color. Only rides for
+          // entitled orgs — the public views ignore it otherwise anyway.
+          ...(themeBranding
+            ? {
+                branding: form.brand_primary
+                  ? { colors: { primary: form.brand_primary } }
+                  : {},
+              }
+            : {}),
         },
       });
       setSaved(true);
@@ -230,6 +249,22 @@ export function CompetitionSettings({
           )}
         </label>
       </div>
+
+      {themeBranding && (
+        <div>
+          <span className="label">Brand color</span>
+          <p className="mb-2 text-xs text-slate-500">
+            Colors this competition&apos;s public pages and TV noticeboard.
+          </p>
+          <BrandColorPicker
+            value={form.brand_primary}
+            onSelect={(hex) => setForm({ ...form, brand_primary: hex })}
+            disabled={readOnly}
+            defaultLabel="Same as organisation"
+            defaultHex={publicBrandColor(orgBranding) ?? "#7c3aed"}
+          />
+        </div>
+      )}
 
       {/* Showcase on seazn.club (doc 15 §1): explicit opt-in, public only. */}
       <fieldset className="space-y-3 rounded-lg border border-purple-100 bg-purple-50/50 p-3">

@@ -35,6 +35,8 @@ export interface Organization {
   logo_url: string | null;
   logo_storage_path: string | null;
   payment_instructions: string | null;
+  /** `{ colors: { primary: "#hex" } }` — same shape as competitions.branding. */
+  branding: unknown;
 }
 
 /** An organization paired with the current user's role in it. */

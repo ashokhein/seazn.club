@@ -1,11 +1,14 @@
 export const dynamic = "force-dynamic";
 // Competition-wide noticeboard slideshow — rotates through every division
-// that has something to show (active divisions first).
+// that has something to show (active divisions first). Pro orgs
+// (dashboard.branding) get the board tinted with their brand color, same
+// resolver as the public courtside pages.
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
-import { buildDivisionSlides, type Slide } from "@/server/slideshow-data";
+import { buildDivisionSlides, orgBoardChrome, type Slide } from "@/server/slideshow-data";
 import { hasFeature } from "@/lib/entitlements";
+import { publicThemeStyleChain } from "@/lib/public-theme";
 import { Slideshow } from "@/components/v2/slideshow";
 
 export default async function CompetitionSlideshowPage({
@@ -31,7 +34,10 @@ export default async function CompetitionSlideshowPage({
   for (const d of ordered) {
     slides.push(...(await buildDivisionSlides(auth, d.id, d.name)));
   }
-  const realtime = await hasFeature(auth.orgId, "realtime");
+  const [realtime, chrome] = await Promise.all([
+    hasFeature(auth.orgId, "realtime"),
+    orgBoardChrome(auth),
+  ]);
 
   return (
     <Slideshow
@@ -40,6 +46,8 @@ export default async function CompetitionSlideshowPage({
       backHref={`/competitions/${id}`}
       divisionIds={ordered.map((d) => d.id)}
       realtime={realtime}
+      themeStyle={publicThemeStyleChain(competition.branding, chrome.branding)}
+      logo={chrome.logo}
     />
   );
 }

@@ -391,6 +391,22 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   const freeHtml = await freePage.text();
   check("public competition page renders (community)", freePage.status === 200 && freeHtml.includes("V1 Cup"));
   check("community public page keeps default theme", !freeHtml.includes("--ps-accent:#0f766e"));
+  // Slideshow shares the courtside theme layer, gated the same way: on
+  // Community the board must keep the default violet, not the brand color.
+  const freeBoard = await fetch(`${BASE}/slideshow/divisions/${divId}`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
+  const freeBoardHtml = await freeBoard.text();
+  check("community slideshow renders", freeBoard.status === 200);
+  check("community slideshow keeps default theme", !freeBoardHtml.includes("--ps-accent:#0f766e"));
+  // Org-level brand color: the write lands on any plan, but the public org
+  // landing ignores it without dashboard.branding.
+  const orgBrand = await raw(admin, `/api/orgs/${orgId}`, "PATCH", {
+    branding: { colors: { primary: "#0f766e" } },
+  });
+  check("org branding patch accepted", orgBrand.status === 200);
+  const freeOrgHtml = await (await fetch(`${BASE}/shared/${orgSlug}`)).text();
+  check("community org landing keeps default theme", !freeOrgHtml.includes("--ps-accent:#0f766e"));
 
   // Entitlement gate: community org → 402; Pro override → key works via Bearer.
   const denied = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
@@ -452,7 +468,6 @@ async function v1Multipart(
  * a Pro org (advanced features are entitlement-gated).
  */
 async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promise<void> {
-  void orgId;
   // Fresh competition + football division (football has the richest surface:
   // scorers, cards, MOTM, scoresheets).
   const comp = v1data<{ id: string; slug: string }>(
@@ -472,6 +487,25 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
     config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
   });
   const divId = v1data<{ id: string }>(div).id;
+
+  // Slideshow theming, pro path: dashboard.branding tints the noticeboard
+  // with the brand color via the same --ps-* resolver.
+  const proBoard = await fetch(`${BASE}/slideshow/divisions/${divId}`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
+  const proBoardHtml = await proBoard.text();
+  check("pro slideshow renders", proBoard.status === 200);
+  check("pro slideshow carries the org accent theme", proBoardHtml.includes("--ps-accent:#0f766e"));
+
+  // Org default vs competition override (theme chain): an org-level color
+  // themes the org landing; a competition with its own color still wins.
+  await call(admin, `/api/orgs/${orgId}`, "PATCH", {
+    branding: { colors: { primary: "#1d4ed8" } },
+  });
+  const orgLandingHtml = await (await fetch(`${BASE}/shared/${orgSlug}`)).text();
+  check("pro org landing carries the org color", orgLandingHtml.includes("--ps-accent:#1d4ed8"));
+  const overrideHtml = await (await fetch(`${BASE}/shared/${orgSlug}/${comp.slug}`)).text();
+  check("competition color overrides the org color", overrideHtml.includes("--ps-accent:#0f766e"));
 
   // -- PROMPT-21: clubs + bulk import ------------------------------------
   const club = await v1(admin, "/api/v1/clubs", "POST", { name: `Acme ${tag}`, short_name: "ACM" });

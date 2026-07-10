@@ -107,3 +107,16 @@ export function publicThemeStyle(branding: unknown): CSSProperties | undefined {
   const vars = resolvePublicTheme(publicBrandColor(branding));
   return vars ? (vars as CSSProperties) : undefined;
 }
+
+/**
+ * Resolution chain: first branding blob that carries a color wins
+ * (competition override before org default). A winner that then fails the
+ * contrast guard falls to the violet defaults, not to the next blob — same
+ * behavior a lone `publicThemeStyle` has.
+ */
+export function publicThemeStyleChain(...brandings: unknown[]): CSSProperties | undefined {
+  for (const b of brandings) {
+    if (publicBrandColor(b)) return publicThemeStyle(b);
+  }
+  return undefined;
+}

@@ -2,10 +2,12 @@ import "server-only";
 // Slide builder for the noticeboard slideshow (v1 parity — the marketing page
 // promises "Print & slideshow"). One slide deck per division; the competition
 // slideshow concatenates the decks of every division with anything to show.
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { listStages, getStandings } from "@/server/usecases/stages";
 import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
+import { hasFeature } from "@/lib/entitlements";
+import { resolveLogoUrl } from "@/server/public-site/data";
 import type { AuthCtx } from "@/server/api-v1/auth";
 
 const TABLE_KINDS = new Set(["league", "group", "swiss"]);
@@ -32,6 +34,27 @@ export interface FixtureSlideItem {
 export type Slide =
   | { kind: "standings"; division: string; caption: string; rows: StandingsSlideRow[] }
   | { kind: "fixtures"; division: string; title: string; items: FixtureSlideItem[] };
+
+/**
+ * Org chrome for the noticeboard masthead — brand color blob and logo URL,
+ * entitlement-gated like the public pages (theme: dashboard.branding,
+ * logo: branding).
+ */
+export async function orgBoardChrome(
+  auth: AuthCtx,
+): Promise<{ branding: unknown; logo: string | null }> {
+  const [themed, logoBranded, [org]] = await Promise.all([
+    hasFeature(auth.orgId, "dashboard.branding"),
+    hasFeature(auth.orgId, "branding"),
+    sql<{ branding: unknown; logo_url: string | null; logo_storage_path: string | null }[]>`
+      select branding, logo_url, logo_storage_path
+      from organizations where id = ${auth.orgId}`,
+  ]);
+  return {
+    branding: themed ? (org?.branding ?? null) : null,
+    logo: logoBranded ? resolveLogoUrl(org?.logo_storage_path, org?.logo_url) : null,
+  };
+}
 
 export async function buildDivisionSlides(
   auth: AuthCtx,

@@ -5,7 +5,7 @@ import "server-only";
 // call use-cases outside a request scope where revalidateTag would throw.
 import { revalidateTag } from "next/cache";
 import { cacheDelPattern } from "@/lib/cache";
-import { divisionTag, competitionTag, DISCOVERY_TAG } from "./data";
+import { divisionTag, competitionTag, orgTag, DISCOVERY_TAG } from "./data";
 
 export { DISCOVERY_TAG };
 
@@ -15,6 +15,16 @@ export function fireDivisionRevalidate(divisionId: string, competitionId?: strin
     // serve stale while fresh regenerates — right for spectator pages).
     revalidateTag(divisionTag(divisionId), "max");
     if (competitionId) revalidateTag(competitionTag(competitionId), "max");
+  } catch {
+    // outside a Next request scope (tests, scripts) — nothing to invalidate
+  }
+}
+
+/** Org chrome changes (name, logo, brand color) show on every page of the
+ *  org's public tree — bust the whole org tag. */
+export function fireOrgRevalidate(orgSlug: string): void {
+  try {
+    revalidateTag(orgTag(orgSlug), "max");
   } catch {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
   Building2, Users, CreditCard, UserCircle,
-  Pencil, Image as ImageIcon, ArrowLeftRight,
+  Pencil, Image as ImageIcon, ArrowLeftRight, Palette,
   User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, Cookie,
   type LucideIcon,
 } from "lucide-react";
@@ -16,6 +16,7 @@ import { OrgTeam } from "@/components/org-team";
 import { OrgSwitcher } from "@/components/org-switcher";
 import { OrgRename } from "@/components/org-rename";
 import { OrgLogo } from "@/components/org-logo";
+import { OrgBrandColor } from "@/components/org-brand-color";
 import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
 import {
   DisplayNameForm,
@@ -223,6 +224,23 @@ export default async function SettingsPage({
                       <p className="flex items-center gap-2 text-sm text-slate-400">
                         <PlanBadge feature="branding" />
                         Org logo requires{" "}
+                        <Link href="/settings/billing" className="text-purple-600 underline">
+                          an upgrade
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {canEdit && (
+                  <div className="mt-5 border-t border-slate-100 pt-5">
+                    <SubSection icon={Palette} label="Brand color" />
+                    {canBrand ? (
+                      <OrgBrandColor orgId={active.id} initialBranding={active.branding} />
+                    ) : (
+                      <p className="flex items-center gap-2 text-sm text-slate-400">
+                        <PlanBadge feature="branding" />
+                        Brand color requires{" "}
                         <Link href="/settings/billing" className="text-purple-600 underline">
                           an upgrade
                         </Link>

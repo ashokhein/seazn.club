@@ -26,6 +26,10 @@ export interface PublicOrg {
   name: string;
   slug: string;
   branded: boolean; // Pro branding entitlement — removable platform footer
+  /** Org brand color blob — emptied in-query without dashboard.branding. */
+  branding: unknown;
+  /** Resolved logo URL — null without the branding entitlement or a logo. */
+  logo: string | null;
 }
 
 export interface PublicCompetition {
@@ -133,10 +137,31 @@ export interface PublicPlayer {
 }
 
 async function loadOrg(orgSlug: string): Promise<PublicOrg | null> {
-  const [row] = await sql<(PublicOrg & { branded: boolean })[]>`
-    select o.id, o.name, o.slug, org_has_feature(o.id, 'branding') as branded
+  // Branding reads are entitlement-gated in the query, same rule as the
+  // public_*_v views: theme color needs dashboard.branding, logo needs
+  // branding (the key that also unlocks the upload).
+  const [row] = await sql<
+    (Omit<PublicOrg, "logo"> & { logo_url: string | null; logo_storage_path: string | null })[]
+  >`
+    select o.id, o.name, o.slug, org_has_feature(o.id, 'branding') as branded,
+           case when org_has_feature(o.id, 'dashboard.branding')
+                then o.branding else '{}'::jsonb end as branding,
+           case when org_has_feature(o.id, 'branding') then o.logo_url end as logo_url,
+           case when org_has_feature(o.id, 'branding') then o.logo_storage_path end as logo_storage_path
     from organizations o where o.slug = ${orgSlug} limit 1`;
-  return row ?? null;
+  if (!row) return null;
+  const { logo_url, logo_storage_path, ...org } = row;
+  return { ...org, logo: resolveLogoUrl(logo_storage_path, logo_url) };
+}
+
+/** Storage-path logos live in the public supabase assets bucket. */
+export function resolveLogoUrl(
+  storagePath: string | null | undefined,
+  logoUrl: string | null | undefined,
+): string | null {
+  const base = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (storagePath && base) return `${base}/storage/v1/object/public/assets/${storagePath}`;
+  return logoUrl ?? null;
 }
 
 /** Org landing: the org + its `public` competitions (unlisted stays link-only). */

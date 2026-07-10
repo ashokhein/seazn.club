@@ -27,9 +27,10 @@ export default async function CompetitionSettingsPage({
 }) {
   const { id } = await params;
   const { auth, org, canEdit } = await requireResourcePageAuth("competition", id);
-  const [competition, discoveryBranding] = await Promise.all([
+  const [competition, discoveryBranding, themeBranding] = await Promise.all([
     getCompetition(auth, id),
     hasFeature(auth.orgId, "discovery.branding"),
+    hasFeature(auth.orgId, "dashboard.branding"),
   ]);
 
   const [agg] = await withTenant(auth.orgId, (tx) =>
@@ -76,9 +77,12 @@ export default async function CompetitionSettingsPage({
             frozen: competition.frozen ?? false,
             discoverable: competition.discoverable,
             discovery: (competition.discovery ?? {}) as Record<string, string | null>,
+            branding: competition.branding,
           }}
           canEdit={canEdit}
           discoveryBranding={discoveryBranding}
+          themeBranding={themeBranding}
+          orgBranding={org.branding}
           suggestedStatus={suggestedStatus}
         />
       </main>
