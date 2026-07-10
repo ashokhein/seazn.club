@@ -33,13 +33,27 @@ export interface DivisionRow {
   schedule_locked: boolean;
   archived_at: string | null;
   created_at: string;
+  /** Division event-ledger head — the board's optimistic token (gap 10). */
+  seq: number;
+  /** Youth privacy (v3/11 gap 8): auto from U-age eligibility, overridable. */
+  youth: boolean;
+  player_name_display: "full" | "first_initial" | null;
 }
 
 const COLS = [
   "id", "competition_id", "name", "slug", "sport_key", "variant_key", "config",
   "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
   "scheduling_mode", "auto_progress", "schedule_locked", "archived_at", "created_at",
+  "seq", "youth", "player_name_display",
 ] as const;
+
+/** U-anything eligibility (maxAgeAt below 18) marks a division youth. */
+export function eligibilityIsYouth(rules: unknown[]): boolean {
+  return rules.some((raw) => {
+    const rule = raw as { kind?: string; maxAgeAt?: number };
+    return rule.kind === "age" && (rule.maxAgeAt ?? 99) < 18;
+  });
+}
 
 export async function listDivisions(
   auth: AuthCtx,
@@ -127,11 +141,12 @@ export async function createDivision(
 
     const [row] = await tx<DivisionRow[]>`
       insert into divisions (competition_id, name, slug, sport_key, variant_key, config,
-                             module_version, eligibility, tiebreakers)
+                             module_version, eligibility, tiebreakers, youth)
       values (${competitionId}, ${input.name}, ${slug}, ${input.sport_key}, ${input.variant_key},
               ${tx.json(parsed.data as never)}, ${sport.module_version},
               ${tx.json(input.eligibility as never)},
-              ${input.tiebreakers ? tx.json(input.tiebreakers as never) : null})
+              ${input.tiebreakers ? tx.json(input.tiebreakers as never) : null},
+              ${eligibilityIsYouth(input.eligibility)})
       returning ${tx(COLS)}`;
     return row;
   });
@@ -333,6 +348,11 @@ export async function patchDivision(
   }
   return withTenant(auth.orgId, async (tx) => {
     const effective: Record<string, unknown> = { ...patch };
+    // Eligibility edits re-derive the youth flag unless the same patch sets
+    // it explicitly (v3/11 gap 8 — auto with organiser override).
+    if (patch.eligibility !== undefined && patch.youth === undefined) {
+      effective.youth = eligibilityIsYouth(patch.eligibility);
+    }
     // Rename regenerates the slug (v3/01 §2); old slug keeps redirecting.
     if (patch.name) {
       const [before] = await tx<{ name: string; slug: string; competition_id: string }[]>`

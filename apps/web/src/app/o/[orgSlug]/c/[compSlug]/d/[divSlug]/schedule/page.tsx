@@ -14,6 +14,7 @@ import { getScheduleSettings } from "@/server/usecases/schedule";
 import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
+import { StandaloneScheduleSettings } from "@/components/v2/board/settings-panel";
 import { OfficialsPanel } from "@/components/v2/officials-panel";
 import { HistoryPanel } from "@/components/v2/history-panel";
 import { ConstraintsPanel } from "@/components/v2/constraints-panel";
@@ -21,7 +22,7 @@ import { listOfficials } from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
-const TABS = ["board", "officials", "constraints", "history"] as const;
+const TABS = ["board", "settings", "constraints", "officials", "history"] as const;
 type Tab = (typeof TABS)[number];
 
 export default async function DivisionSchedulePage({
@@ -127,7 +128,7 @@ export default async function DivisionSchedulePage({
               </div>
             )}
             <ScheduleBoard
-              divisions={[{ id: division.id, name: division.name, status: division.status, color: "#7c3aed" }]}
+              divisions={[{ id: division.id, name: division.name, slug: division.slug, status: division.status, seq: Number(division.seq), schedule_locked: division.schedule_locked }]}
               stages={stages.map((s) => ({ id: s.id, division_id: id, seq: s.seq, kind: s.kind, name: s.name, status: s.status }))}
               fixtures={fixtures}
               entrantNames={Object.fromEntries(entrants.map((e) => [e.id, e.display_name]))}
@@ -138,6 +139,7 @@ export default async function DivisionSchedulePage({
               competitionStart={competition.starts_on}
               competitionEnd={competition.ends_on}
               venueCap={venueLabel(division.sport_key)}
+              showSettings={false}
             />
           </>
         )}
@@ -169,6 +171,19 @@ export default async function DivisionSchedulePage({
           hideNames={division.officials_hide_names}
           canEdit={canEdit && !frozen}
         />
+        )}
+
+        {/* Core scheduling settings on their own tab (organiser ask) —
+            moved off the board where they crowded the grid. */}
+        {tab === "settings" && (
+          <StandaloneScheduleSettings
+            divisionId={id}
+            config={settings.config}
+            tz={settings.tz}
+            canEdit={editable}
+            constraintsAllowed={constraints}
+            venueCap={venueLabel(division.sport_key)}
+          />
         )}
 
         {tab === "constraints" && (

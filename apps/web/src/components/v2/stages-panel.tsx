@@ -1,13 +1,15 @@
 "use client";
 
-// Fixture console per stage (PROMPT-15 task 1): generate (idempotent),
-// complete (guarded progression), inline scheduling; scoring lives on the
-// fixture page.
+// Fixture console per stage (PROMPT-15 task 1, rebuilt per v3/04 §3): rounds
+// grouped with date ranges, competition-timezone rendering, pinned
+// unscheduled section with an auto-schedule CTA, "Now playing" strip, inline
+// reschedule with undo, bye/void ghost rows, sticky round headers on mobile,
+// print via the DocModel timetable export. Scoring lives on the fixture page.
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { routes } from "@/lib/routes";
-import { ClientTime } from "@/components/client-time";
+import { ClientDateRange, ClientTime } from "@/components/client-time";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
@@ -48,6 +50,10 @@ interface Props {
   fixtures: FixtureRow[];
   entrantNames: Record<string, string>;
   canEdit: boolean;
+  /** Competition timezone (schedule settings) — every time renders in it. */
+  tz: string;
+  /** Print goes through the Jul3/06 timetable export (Pro `exports` gate). */
+  canExport: boolean;
 }
 
 const FIXTURE_STATUS_STYLE: Record<string, string> = {
@@ -60,13 +66,60 @@ const FIXTURE_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-slate-100 text-slate-400",
 };
 
-export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fixtures, entrantNames, canEdit }: Props) {
+export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fixtures, entrantNames, canEdit, tz, canExport }: Props) {
   const confirmDialog = useConfirm();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // stage id in flight
   const [notice, setNotice] = useState<string | null>(null);
+  // Set after an inline reschedule lands: the notice grows an Undo button
+  // that steps the division history back one event (Jul3/03).
+  const [undoable, setUndoable] = useState(false);
+
+  async function undoLast() {
+    setError(null);
+    try {
+      await apiV1(`/api/v1/divisions/${divisionId}/undo`, { method: "POST", json: {} });
+      setNotice("Change undone.");
+      setUndoable(false);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Undo failed");
+    }
+  }
+
+  // "Auto-schedule remaining" (v3/04 §3 item 3) — the board's propose+apply
+  // pair for one stage, launched from the pinned unscheduled section.
+  async function autoScheduleStage(stageId: string) {
+    setError(null);
+    setNotice(null);
+    setBusy(stageId);
+    try {
+      const out = await apiV1<{
+        assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
+      }>(`/api/v1/stages/${stageId}/schedule/auto`, { method: "POST", json: { only_unlocked: true } });
+      if (out.assignments.length === 0) {
+        setNotice("Nothing to schedule — no free slots or nothing unscheduled.");
+        return;
+      }
+      const applied = await apiV1<{ applied: number }>(`/api/v1/stages/${stageId}/schedule/apply`, {
+        method: "POST",
+        json: { assignments: out.assignments, source: "auto" },
+      });
+      setNotice(`Placed ${applied.applied} fixture(s).`);
+      setUndoable(true);
+      router.refresh();
+    } catch (err) {
+      if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
+        setPaywallFeature(String(err.extra.feature_key ?? ""));
+      } else {
+        setError(err instanceof Error ? err.message : "Failed");
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function act(stageId: string, action: "generate" | "complete" | "delete") {
     setError(null);
@@ -125,15 +178,71 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
     );
   }
 
+  const nowPlaying = fixtures.filter((f) => f.status === "in_play");
+
   return (
     <div className="space-y-6">
       {canEdit && <TipCallout id="division.start-locks" />}
       {notice && (
-        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>
+        <p className="flex items-center gap-2 rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+          {notice}
+          {undoable && (
+            <button
+              type="button"
+              onClick={() => void undoLast()}
+              className="font-semibold underline hover:no-underline"
+            >
+              {msg("schedule.undo")}
+            </button>
+          )}
+        </p>
       )}
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      )}
+
+      {/* Timezone honesty (v3/04 §3 item 2) + print (item 8). */}
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="text-xs text-slate-500" data-testid="tz-caption">
+          {msg("schedule.tz.caption", { tz })}
+        </p>
+        <div className="flex-1" />
+        {canExport && (
+          <a
+            className="btn btn-ghost text-xs"
+            href={`/api/v1/divisions/${divisionId}/exports/timetable?format=pdf`}
+          >
+            Print schedule
+          </a>
+        )}
+      </div>
+
+      {/* "Now playing" strip (item 4): in-play matches float above the rounds. */}
+      {nowPlaying.length > 0 && (
+        <section
+          className="rounded-xl border border-amber-200 bg-amber-50/70 p-3"
+          aria-label={msg("schedule.nowPlaying")}
+        >
+          <h3 className="mb-1.5 text-xs font-semibold tracking-wide text-amber-800 uppercase">
+            {msg("schedule.nowPlaying")}
+          </h3>
+          <ul className="flex flex-wrap gap-2">
+            {nowPlaying.map((f) => (
+              <li key={f.id}>
+                <Link
+                  href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 hover:border-amber-400"
+                >
+                  <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
+                  {f.home_entrant_id ? (entrantNames[f.home_entrant_id] ?? "?") : "TBD"} vs{" "}
+                  {f.away_entrant_id ? (entrantNames[f.away_entrant_id] ?? "?") : "TBD"}
+                  {f.court_label ? <span className="text-slate-500">· {f.court_label}</span> : null}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
 
       {/* Active work first: completed stages sink to the bottom, so once the
@@ -147,6 +256,18 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
         .map((stage) => {
         const stageFixtures = fixtures.filter((f) => f.stage_id === stage.id);
         const rounds = [...new Set(stageFixtures.map((f) => f.round_no))].sort((a, b) => a - b);
+        // Pinned unscheduled section (v3/04 §3 item 3): timetable-less rows
+        // come out of the round lists; byes stay in place as ghosts.
+        const unscheduled = stageFixtures.filter(
+          (f) => f.scheduled_at === null && f.status === "scheduled" && !isBye(f),
+        );
+        const roundDates = (round: number): { from: string | null; to: string | null } => {
+          const times = stageFixtures
+            .filter((f) => f.round_no === round && f.scheduled_at !== null)
+            .map((f) => f.scheduled_at as string)
+            .sort();
+          return { from: times[0] ?? null, to: times[times.length - 1] ?? null };
+        };
         // Mirrors the server guard: last stage only, nothing played yet.
         const deletable =
           stage.seq === Math.max(...stages.map((s) => s.seq)) &&
@@ -207,20 +328,68 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
               )}
             </header>
 
+            {/* Pinned unscheduled section (item 3) — count + auto CTA. */}
+            {unscheduled.length > 0 && (
+              <div className="border-b border-dashed border-slate-200 bg-slate-50/60 px-4 py-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-xs font-semibold text-slate-700">
+                    {msg("schedule.unscheduled.title")}
+                    <span className="ml-1.5 rounded-full bg-slate-200 px-1.5 text-[11px] font-medium text-slate-700">
+                      {unscheduled.length}
+                    </span>
+                  </p>
+                  {canEdit && stage.status !== "complete" && (
+                    <button
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => void autoScheduleStage(stage.id)}
+                      className="btn btn-primary px-3 py-1 text-xs"
+                    >
+                      {busy === stage.id ? "Working…" : msg("schedule.unscheduled.cta")}
+                    </button>
+                  )}
+                </div>
+                <ul className="mt-2 divide-y divide-slate-100">
+                  {unscheduled.map((f) => (
+                    <FixtureLine
+                      key={f.id}
+                      fixture={f}
+                      href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
+                      entrantNames={entrantNames}
+                      canEdit={canEdit}
+                      tz={tz}
+                      onRescheduled={() => {
+                        setNotice(msg("schedule.rescheduled"));
+                        setUndoable(true);
+                      }}
+                    />
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {stageFixtures.length === 0 ? (
-              <p className="px-4 py-4 text-sm text-slate-400">
+              <p className="px-4 py-4 text-sm text-slate-500">
                 No fixtures yet{canEdit ? " — generate them when entrants are registered." : "."}
               </p>
             ) : splitRounds ? null : (
               <div className="divide-y divide-slate-100">
-                {rounds.map((round) => (
+                {rounds.map((round) => {
+                  const dates = roundDates(round);
+                  return (
                   <div key={round}>
-                    <p className="bg-slate-50 px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
+                    {/* Sticky round header (items 1 + 7): label + date range. */}
+                    <p className="sticky top-0 z-10 flex items-baseline gap-2 bg-slate-50 px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
                       Round {round}
+                      {dates.from && (
+                        <span data-testid="round-dates" className="normal-case text-slate-500">
+                          <ClientDateRange from={dates.from} to={dates.to} tz={tz} />
+                        </span>
+                      )}
                     </p>
                     <ul className="divide-y divide-slate-50">
                       {stageFixtures
-                        .filter((f) => f.round_no === round)
+                        .filter((f) => f.round_no === round && (f.scheduled_at !== null || isBye(f) || f.status !== "scheduled"))
                         .map((f) => (
                           <FixtureLine
                             key={f.id}
@@ -228,26 +397,39 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                             href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
                             entrantNames={entrantNames}
                             canEdit={canEdit}
+                            tz={tz}
+                            onRescheduled={() => {
+                              setNotice(msg("schedule.rescheduled"));
+                              setUndoable(true);
+                            }}
                           />
                         ))}
                     </ul>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </section>
 
           {splitRounds &&
-            rounds.map((round) => (
+            rounds.map((round) => {
+              const dates = roundDates(round);
+              return (
               <section key={round} className="card overflow-hidden">
-                <header className="border-b border-slate-100 bg-slate-50 px-4 py-2">
-                  <h4 className="text-xs font-medium uppercase tracking-wide text-slate-400">
+                <header className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50 px-4 py-2">
+                  <h4 className="flex items-baseline gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
                     {stage.name} — {bracketRoundLabel(stage.kind, round, maxRound)}
+                    {dates.from && (
+                      <span data-testid="round-dates" className="normal-case text-slate-500">
+                        <ClientDateRange from={dates.from} to={dates.to} tz={tz} />
+                      </span>
+                    )}
                   </h4>
                 </header>
                 <ul className="divide-y divide-slate-50">
                   {stageFixtures
-                    .filter((f) => f.round_no === round)
+                    .filter((f) => f.round_no === round && (f.scheduled_at !== null || isBye(f) || f.status !== "scheduled"))
                     .map((f) => (
                       <FixtureLine
                         key={f.id}
@@ -255,11 +437,17 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                         href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
                         entrantNames={entrantNames}
                         canEdit={canEdit}
+                        tz={tz}
+                        onRescheduled={() => {
+                          setNotice(msg("schedule.rescheduled"));
+                          setUndoable(true);
+                        }}
                       />
                     ))}
                 </ul>
               </section>
-            ))}
+              );
+            })}
           </div>
         );
       })}
@@ -393,6 +581,15 @@ function AddStageForm({
 
 const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
 
+/** A bye: one side empty with an auto-advance award outcome (v3/04 §3 item 6). */
+function isBye(f: FixtureRow): boolean {
+  const o = f.outcome as { kind?: string } | null;
+  return o?.kind === "award" && (f.home_entrant_id === null || f.away_entrant_id === null);
+}
+
+/** Voided fixtures render struck through with the reason (item 6). */
+const VOID_STATUSES = new Set(["cancelled", "abandoned", "forfeited"]);
+
 // Named bracket rounds, by distance from the last round. Double-elim round
 // numbers encode WB/LB/GF lanes, so plain "Round N" stays honest there.
 function bracketRoundLabel(kind: string, roundNo: number, maxRound: number): string {
@@ -435,11 +632,16 @@ function FixtureLine({
   href,
   entrantNames,
   canEdit,
+  tz,
+  onRescheduled,
 }: {
   fixture: FixtureRow;
   href: string;
   entrantNames: Record<string, string>;
   canEdit: boolean;
+  tz?: string;
+  /** Fired after a schedule PATCH lands — the panel offers Undo (item 5). */
+  onRescheduled?: () => void;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -455,6 +657,16 @@ function FixtureLine({
   const away = fixture.away_entrant_id ? (entrantNames[fixture.away_entrant_id] ?? "?") : "TBD";
   const decided = outcomeText(fixture.outcome, entrantNames);
 
+  // Bye ghost row (item 6): structural, not schedulable, no actions.
+  if (isBye(fixture)) {
+    const who = fixture.home_entrant_id ?? fixture.away_entrant_id;
+    return (
+      <li className="px-4 py-2 text-sm text-slate-500 italic">
+        R{fixture.round_no} · {msg("schedule.bye", { name: entrantNames[who ?? ""] ?? "?" })}
+      </li>
+    );
+  }
+
   async function patchSchedule(json: Record<string, unknown>) {
     setBusy(true);
     setError(null);
@@ -462,6 +674,7 @@ function FixtureLine({
       await apiV1(`/api/v1/fixtures/${fixture.id}`, { method: "PATCH", json });
       setEditing(false);
       router.refresh();
+      onRescheduled?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -486,17 +699,21 @@ function FixtureLine({
   const played = ["in_play", "decided", "finalized", "cancelled"].includes(fixture.status);
   const timed = !!fixture.scheduled_at;
 
+  const voided = VOID_STATUSES.has(fixture.status);
+
   return (
     <li className="px-4 py-2">
       <div className="flex flex-wrap items-center gap-3">
         <Link
           href={href}
-          className="min-w-0 flex-1 text-sm text-slate-800 hover:text-purple-700"
+          className={`min-w-0 flex-1 text-sm hover:text-purple-700 ${
+            voided ? "text-slate-500 line-through" : "text-slate-800"
+          }`}
         >
           <span className="font-medium">{home}</span>
           <span className="mx-1.5 text-slate-400">vs</span>
           <span className="font-medium">{away}</span>
-          {decided && <span className="ml-2 text-xs text-slate-400">{decided}</span>}
+          {decided && !voided && <span className="ml-2 text-xs text-slate-500 no-underline">{decided}</span>}
         </Link>
         {/* Timetable chip — reflects whether the match has a kick-off time. */}
         <span
@@ -505,7 +722,7 @@ function FixtureLine({
         >
           {timed ? (
             <>
-              Scheduled · <ClientTime value={fixture.scheduled_at} mode="datetime" />
+              Scheduled · <ClientTime value={fixture.scheduled_at} mode="datetime" tz={tz} />
             </>
           ) : (
             "Unscheduled"
@@ -522,7 +739,10 @@ function FixtureLine({
         <Link href={href} className="btn btn-ghost px-3 py-1 text-xs">
           {decided ? "View" : fixture.status === "in_play" ? "Score ●" : "Score"}
         </Link>
-        {canEdit && (
+        {/* Timetable controls only while the match is still movable — once
+            it's in play or decided the server refuses moves anyway, so the
+            buttons would just be a dead end. */}
+        {canEdit && fixture.status === "scheduled" && (
           <button
             type="button"
             onClick={() => setEditing(!editing)}
@@ -531,7 +751,7 @@ function FixtureLine({
             {editing ? "Close" : timed ? "Edit time" : "Schedule"}
           </button>
         )}
-        {canEdit && timed && !editing && (
+        {canEdit && fixture.status === "scheduled" && timed && !editing && (
           <button
             type="button"
             disabled={busy}

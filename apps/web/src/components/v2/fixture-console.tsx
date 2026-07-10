@@ -13,6 +13,7 @@ import { LineupEditor } from "@/components/v2/lineup-editor";
 import { ScoringErrorBoundary } from "@/components/v2/scoring-error-boundary";
 import { GenericPad } from "@/components/v2/pads/generic-pad";
 import { BoardgamePad } from "@/components/v2/pads/boardgame-pad";
+import { CarromPad } from "@/components/v2/pads/carrom-pad";
 import { SetbasedPad } from "@/components/v2/pads/setbased-pad";
 import { FootballPad } from "@/components/v2/pads/football-pad";
 import { CricketPad } from "@/components/v2/pads/cricket-pad";
@@ -282,6 +283,11 @@ export function FixtureConsole({
               <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
             ) : sport.key === "boardgame" ? (
               <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
+            ) : sport.key === "carrom" ? (
+              // Carrom scores board-by-board (carrom.board.summary) — the
+              // generic 1-result pad would send generic.result, which the
+              // module rejects as an unknown event type.
+              <CarromPad home={home} away={away} live={live} send={send} busy={busy} started={started} />
             ) : (
               <GenericPad sport={sport} home={home} away={away} send={send} busy={busy} />
             )}

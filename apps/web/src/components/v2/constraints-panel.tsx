@@ -1,12 +1,22 @@
 "use client";
 
-// Constraints v2 console (Jul3/04 §6): constraint editor, AI prose box
-// (propose-only — parsed constraints shown for approval, never auto-applied),
-// bulk time shift, and the pre-publish wait-time report.
+// Constraints v2 console (Jul3/04 §6): constraint editor, bulk time shift,
+// and the pre-publish wait-time report. The AI prose box ("Describe your
+// constraints") is parked — endpoint intact, UI withdrawn for now.
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { msg } from "@/lib/messages";
+
+/** 625 → "10h 25m"; 45 → "45m". The raw minute dumps read like debug output. */
+function fmtDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  if (h === 0) return `${m}m`;
+  return m === 0 ? `${h}h` : `${h}h ${m}m`;
+}
 
 interface Constraints {
   restMin?: number;
@@ -39,17 +49,13 @@ export function ConstraintsPanel({
   canEdit: boolean;
 }) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [constraints, setConstraints] = useState<Constraints>(
     initialSettings.config.constraints ?? {},
   );
-  const [prose, setProse] = useState("");
-  const [proposal, setProposal] = useState<{
-    constraints: Constraints;
-    unresolved: { kind: string; name: string }[];
-  } | null>(null);
   const [shiftMinutes, setShiftMinutes] = useState(15);
   const [report, setReport] = useState<{ worst: WaitRow[] } | null>(null);
 
@@ -79,7 +85,6 @@ export function ConstraintsPanel({
         json: { config: { ...current.config, constraints: next }, tz: current.tz },
       });
       setConstraints(next);
-      setProposal(null);
     }, true);
 
   return (
@@ -153,62 +158,9 @@ export function ConstraintsPanel({
           )}
         </div>
 
-        {/* AI prose box */}
-        {canEdit && (
-          <div className="card space-y-3 p-4">
-            <h3 className="text-sm font-semibold text-slate-900">Describe your constraints</h3>
-            <textarea
-              className="input h-20 w-full"
-              placeholder='e.g. "no player plays two teams at once, at least one break between games, U8 starts at 09:00"'
-              value={prose}
-              onChange={(e) => setProse(e.target.value)}
-            />
-            <button
-              type="button"
-              className="btn"
-              disabled={busy || prose.trim().length < 3}
-              onClick={() =>
-                void run(async () => {
-                  const out = await apiV1<{
-                    constraints: Constraints;
-                    unresolved: { kind: string; name: string }[];
-                  }>(`/api/v1/divisions/${divisionId}/schedule/ai-constraints`, {
-                    method: "POST",
-                    json: { prose },
-                  });
-                  setProposal(out);
-                })
-              }
-            >
-              Parse with AI
-            </button>
-            {proposal && (
-              <div className="space-y-2 rounded-md bg-slate-50 p-3 text-sm">
-                <pre className="overflow-x-auto text-xs text-slate-700">
-                  {JSON.stringify(proposal.constraints, null, 2)}
-                </pre>
-                {proposal.unresolved.length > 0 && (
-                  <p className="text-xs text-amber-700">
-                    Couldn&apos;t match:{" "}
-                    {proposal.unresolved.map((u) => `${u.kind} "${u.name}"`).join(", ")}
-                  </p>
-                )}
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={busy}
-                  onClick={() => void save(proposal.constraints)}
-                >
-                  Apply these constraints
-                </button>
-                <p className="text-xs text-slate-500">
-                  The AI only proposes — nothing changes until you apply, and the schedule
-                  itself always comes from the solver.
-                </p>
-              </div>
-            )}
-          </div>
-        )}
+        {/* "Describe your constraints" (AI prose → constraints, Jul3/04 §5)
+            is parked for a later release — the endpoint stays, the UI is
+            withdrawn until the feature earns its place. */}
 
         {/* bulk shift */}
         {canEdit && (
@@ -225,9 +177,17 @@ export function ConstraintsPanel({
               minutes
               <button
                 type="button"
-                className="btn"
+                className="btn btn-primary px-3 py-1.5 text-xs"
                 disabled={busy || shiftMinutes === 0}
-                onClick={() =>
+                onClick={async () => {
+                  // A whole-timetable move deserves a breath first (organiser
+                  // ask) — and the honest promise that conflicts are fixable.
+                  const ok = await confirmDialog({
+                    title: msg("confirm.shiftAll.title", { minutes: shiftMinutes }),
+                    body: msg("confirm.shiftAll.body"),
+                    confirmLabel: msg("confirm.shiftAll.label"),
+                  });
+                  if (!ok) return;
                   void run(
                     () =>
                       apiV1("/api/v1/schedule/shift", {
@@ -239,8 +199,8 @@ export function ConstraintsPanel({
                         },
                       }),
                     true,
-                  )
-                }
+                  );
+                }}
               >
                 Shift everything
               </button>
@@ -254,9 +214,12 @@ export function ConstraintsPanel({
         {/* wait report */}
         <div className="card space-y-3 p-4">
           <h3 className="text-sm font-semibold text-slate-900">Wait-time report</h3>
+          <p className="text-xs text-slate-500">
+            Who sits around the longest between their matches — worth a look before you publish.
+          </p>
           <button
             type="button"
-            className="btn"
+            className="btn btn-primary px-3 py-1.5 text-xs"
             disabled={busy}
             onClick={() =>
               void run(async () => {
@@ -264,23 +227,52 @@ export function ConstraintsPanel({
               })
             }
           >
-            Check waits
+            {busy ? "Checking…" : "Check waits"}
           </button>
           {report &&
             (report.worst.length === 0 ? (
               <p className="text-sm text-slate-500">No multi-game waits yet.</p>
             ) : (
-              <ul className="space-y-1 text-sm text-slate-700">
-                {report.worst.map((r) => (
-                  <li key={r.display_name} className="flex items-center gap-2">
-                    <span className="font-medium">{r.display_name}</span>
-                    <span className="text-slate-500">
-                      longest wait {r.maxGapMinutes} min · {r.fixtures} games ·{" "}
-                      {r.spanMinutes} min span
-                    </span>
-                  </li>
-                ))}
-              </ul>
+              <div className="scroll-x scroll-x-fade">
+                <table className="w-full text-sm" aria-label="Longest waits between matches">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-xs tracking-wide text-slate-500 uppercase">
+                      <th className="py-1.5 pr-3 font-medium">Entrant</th>
+                      <th className="py-1.5 pr-3 font-medium">Games</th>
+                      <th className="py-1.5 pr-3 font-medium">Longest wait</th>
+                      <th className="py-1.5 font-medium">First to last</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {report.worst.map((r, i) => (
+                      <tr key={r.display_name} className="border-b border-slate-100 last:border-0">
+                        <td className="py-1.5 pr-3 font-medium text-slate-800">{r.display_name}</td>
+                        <td className="py-1.5 pr-3 text-slate-600 tabular-nums">{r.fixtures}</td>
+                        <td className="py-1.5 pr-3 tabular-nums">
+                          <span
+                            className={`rounded px-1.5 py-0.5 text-xs font-semibold ${
+                              i === 0
+                                ? "bg-red-100 text-red-700"
+                                : (r.maxGapMinutes ?? 0) >= 120
+                                  ? "bg-amber-100 text-amber-800"
+                                  : "bg-slate-100 text-slate-600"
+                            }`}
+                          >
+                            {fmtDuration(r.maxGapMinutes ?? 0)}
+                          </span>
+                        </td>
+                        <td className="py-1.5 text-slate-600 tabular-nums">
+                          {fmtDuration(r.spanMinutes)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <p className="mt-2 text-xs text-slate-500">
+                  Sorted worst-first. Tighten the gaps by re-flowing on the board, or raise min
+                  rest and re-run.
+                </p>
+              </div>
             ))}
         </div>
       </div>

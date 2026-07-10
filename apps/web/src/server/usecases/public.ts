@@ -8,6 +8,7 @@ import { sql } from "@/lib/db";
 import { cacheGet, cacheSet } from "@/lib/cache";
 import { HttpError } from "@/lib/errors";
 import { rateLimit } from "@/lib/rate-limit";
+import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 
 // s-maxage=30 at the edge (doc 08 §6); Redis mirrors that window.
 export const PUBLIC_CACHE_CONTROL = "public, s-maxage=30, stale-while-revalidate=300";
@@ -118,11 +119,33 @@ export async function publicEntrants(
 ): Promise<unknown> {
   const division = await findDivision(orgSlug, compSlug, divSlug);
   return cached(`pub:v1:div:${division.id}:entrants`, async () => {
-    const entrants = await sql`
+    const entrants = await sql<
+      { kind: string; display_name: string; members: { name?: string | null }[] | null }[]
+    >`
       select id, kind, display_name, seed, status, members
       from public_entrants_v where division_id = ${division.id}
       order by seed nulls last, display_name`;
-    return { division_id: division.id, entrants };
+    // Youth privacy (v3/11 gap 8): person-shaped names mask to "Arun K."
+    // when the division resolves first_initial. Team names are not personal
+    // and pass through; member names (already consent-gated) mask too. The
+    // standings/schedule pages join names from this payload, so masking here
+    // covers every public dashboard surface.
+    const [priv] = await sql<{ youth: boolean; player_name_display: string | null }[]>`
+      select youth, player_name_display from divisions where id = ${division.id}`;
+    const mode = resolveNameDisplay(priv?.player_name_display ?? null, priv?.youth ?? false);
+    const masked =
+      mode === "full"
+        ? entrants
+        : entrants.map((e) => ({
+            ...e,
+            display_name:
+              e.kind === "team" ? e.display_name : maskDisplayName(e.display_name, mode),
+            members: (e.members ?? [])?.map((m) => ({
+              ...m,
+              name: m.name ? maskDisplayName(m.name, mode) : m.name,
+            })),
+          }));
+    return { division_id: division.id, entrants: masked };
   });
 }
 

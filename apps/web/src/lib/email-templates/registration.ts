@@ -10,6 +10,9 @@ export interface RegistrationEmailArgs {
   currency: string;
   paymentInstructions: string | null;
   statusUrl: string;
+  /** Quotable reference (v3/05 §3) + its public status page. */
+  refCode?: string | null;
+  refStatusUrl?: string | null;
 }
 
 /** Registration confirmation — carries the offline (cash/bank) payment
@@ -51,6 +54,14 @@ export function registrationTemplate(
       title: waitlisted ? "You're on the waitlist" : "Registration received",
       contentHtml:
         paragraph(intro) +
+        (opts.refCode
+          ? panel(
+              `Your reference: ${escapeHtml(opts.refCode)}`,
+              "Quote it to the organiser or look yourself up on the day" +
+                (opts.refStatusUrl ? ` at ${opts.refStatusUrl}` : "") +
+                ".",
+            )
+          : "") +
         paymentBlock +
         button("View your registration", opts.statusUrl) +
         linkFallback(opts.statusUrl),
@@ -58,6 +69,10 @@ export function registrationTemplate(
     }),
     text:
       `${waitlisted ? "You're on the waitlist" : "Registration received"} for ${opts.competitionName} (${opts.orgName}).` +
+      (opts.refCode
+        ? `\n\nYour reference: ${opts.refCode}` +
+          (opts.refStatusUrl ? `\nCheck your status: ${opts.refStatusUrl}` : "")
+        : "") +
       paymentText +
       `\n\nView your registration: ${opts.statusUrl}`,
   };

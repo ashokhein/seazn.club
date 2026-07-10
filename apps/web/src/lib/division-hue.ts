@@ -25,3 +25,35 @@ export function divisionHue(divisionId: string): number {
 export function divisionAccent(divisionId: string): string {
   return `hsl(${divisionHue(divisionId)} 62% 48%)`;
 }
+
+/** Pale wash for chip/lane backgrounds — readable under divisionInk text. */
+export function divisionTint(divisionId: string): string {
+  return `hsl(${divisionHue(divisionId)} 70% 93%)`;
+}
+
+/** Text colour paired with divisionTint: same hue, dark enough for AA on the
+ *  93% wash (axe gate runs serious/critical on the mobile suite). */
+export function divisionInk(divisionId: string): string {
+  return `hsl(${divisionHue(divisionId)} 75% 26%)`;
+}
+
+/**
+ * Short code chip for board blocks (v3/04 §2): "U16 Boys Singles" → U16B.
+ * Age-group tokens (U16, O40) survive whole; other words contribute initials;
+ * a single-word name keeps its first four letters. Always ≤ 4 chars.
+ */
+export function divisionShortCode(name: string): string {
+  const tokens = name.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return "DIV";
+  if (tokens.length === 1) return tokens[0]!.slice(0, 4).toUpperCase();
+  const age = tokens.find((t) => /^[UuOo]-?\d{1,2}$/.test(t));
+  if (age) {
+    const ageCode = age.replace("-", "").toUpperCase();
+    const initials = tokens
+      .filter((t) => t !== age)
+      .map((t) => t[0]!.toUpperCase())
+      .join("");
+    return (ageCode + initials).slice(0, 4);
+  }
+  return tokens.map((t) => t[0]!.toUpperCase()).join("").slice(0, 4);
+}

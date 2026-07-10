@@ -52,8 +52,8 @@ export const TIPS = {
     helpSlug: "registration/reference-numbers",
   },
   "schedule.locking": {
-    title: "Locked slots",
-    body: "Locking a slot pins it — the auto-scheduler and clear actions leave it exactly where it is.",
+    title: "Pinned slots",
+    body: "Pin a match (📌 → 🔒) and the auto passes — Auto-schedule, Re-flow remaining, Clear slots — leave it exactly where it is. You can still drag or move a pinned match yourself, and it stays pinned at its new slot. To stop ALL edits, freeze the whole schedule from the History panel instead.",
     helpSlug: "scheduling/locks",
   },
   "schedule.undo-watermark": {
@@ -70,6 +70,21 @@ export const TIPS = {
     title: "The slideshow URL",
     body: "Open it on any TV or projector browser — it cycles standings and matchups by itself and keeps itself up to date.",
     helpSlug: "sharing/slideshow",
+  },
+  "register.youth": {
+    title: "Why guardian consent?",
+    body: "This division is for under-18 players, so a parent or guardian confirms the entry. Public pages show shortened names for youth divisions.",
+    helpSlug: "registration/youth",
+  },
+  "board.filter": {
+    title: "Filter by division",
+    body: "These chips are the divisions on this board. Tap any of them to show just those divisions; tap again to bring one back. The filter lives in the page URL, so you can share or bookmark a filtered view.",
+    helpSlug: "scheduling/board",
+  },
+  "schedule.save-points": {
+    title: "Save points",
+    body: "A save point bookmarks the timetable exactly as it is now — every kick-off time and court. Restore rewinds the schedule to that bookmark by undoing each change since, one by one. Match results are never touched: if rewinding would erase a played result, the restore stops there. One save point is free; more need Pro.",
+    helpSlug: "scheduling/undo",
   },
 } as const satisfies Record<string, TipEntry>;
 

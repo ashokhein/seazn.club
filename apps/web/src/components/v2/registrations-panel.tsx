@@ -11,6 +11,7 @@ import { PlanBadge } from "@/components/plan-badge";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
 import { msg } from "@/lib/messages";
+import { normalizeRefCode } from "@/lib/ref-code";
 
 interface FormField {
   key: string;
@@ -36,6 +37,7 @@ interface Settings {
 interface Registration {
   id: string;
   status: string;
+  ref_code: string | null;
   display_name: string;
   contact_email: string;
   dob: string | null;
@@ -91,6 +93,22 @@ export function RegistrationsPanel({
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+
+  // Ref-or-name filter (v3/05 §3). Refs match dash/case-insensitively so a
+  // code quoted over the phone ("sz abcd efgh") still finds the row.
+  const q = query.trim().toLowerCase();
+  const qAsRef = normalizeRefCode(query).toLowerCase();
+  const shownRegs =
+    q === ""
+      ? regs
+      : regs.filter(
+          (r) =>
+            r.display_name.toLowerCase().includes(q) ||
+            r.contact_email.toLowerCase().includes(q) ||
+            (r.ref_code !== null &&
+              (r.ref_code.toLowerCase().includes(q) || r.ref_code.toLowerCase() === qAsRef)),
+        );
   // Fee is entered in major units (pounds) but stored as integer minor units
   // (pence). A local string keeps mid-typing states like "1." / "1.5" intact.
   const [feeText, setFeeText] = useState("");
@@ -357,9 +375,20 @@ export function RegistrationsPanel({
       <section>
         <div className="mb-3 flex items-center justify-between">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
-            Registrations <span className="text-slate-400">({regs.length})</span>
+            Registrations <span className="text-slate-500">({regs.length})</span>
             <Tip id="registration.ref-number" />
           </h2>
+          {/* Search by ref (v3/05 §3) — day-of check-in lookup. Names match
+              too, so one box serves both. */}
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search ref or name…"
+            aria-label="Search registrations by reference or name"
+            className="input w-48 px-2 py-1 text-xs"
+            data-testid="reg-search"
+          />
           <a
             href={`/api/v1/divisions/${divisionId}/registrations/export`}
             className="btn btn-ghost text-xs"
@@ -373,14 +402,24 @@ export function RegistrationsPanel({
             No registrations yet. Share the public competition page — the Register button
             appears while a division is open.
           </div>
+        ) : shownRegs.length === 0 ? (
+          <div className="card p-6 text-sm text-slate-500">
+            Nothing matches “{query}” — check the reference for typos (letters O/I are never
+            used; try 0/1).
+          </div>
         ) : (
           <ul className="space-y-2">
-            {regs.map((r) => {
+            {shownRegs.map((r) => {
               const refundable =
                 r.payment_intent_id !== null && r.refunded_cents < r.amount_cents;
               return (
                 <li key={r.id} className="card flex flex-wrap items-center gap-3 p-3 text-sm">
                   <span className={`badge ${STATUS_STYLE[r.status] ?? ""}`}>{r.status}</span>
+                  {r.ref_code && (
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-slate-700">
+                      {r.ref_code}
+                    </span>
+                  )}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate font-medium text-slate-800">
                       {r.display_name}
@@ -388,7 +427,7 @@ export function RegistrationsPanel({
                         <span className="ml-2 text-xs font-normal text-emerald-600">entrant ✓</span>
                       )}
                     </span>
-                    <span className="block truncate text-xs text-slate-400">
+                    <span className="block truncate text-xs text-slate-500">
                       {r.contact_email}
                       {r.guardian_name ? ` · guardian: ${r.guardian_name}` : ""}
                       {r.amount_cents > 0

@@ -87,6 +87,20 @@ describe("email builders compose from the html templates", () => {
     expect(out.html).toContain(">Bank transfer\nRef: SPRING</p>");
   });
 
+  it("registration carries the reference number + status link in html AND text (v3/05 §3)", () => {
+    const out = registrationTemplate({
+      ...registrationArgs,
+      refCode: "SZ-ABCD-EFG2",
+      refStatusUrl: "https://seazn.club/r/SZ-ABCD-EFG2",
+    });
+    expect(out.html).toContain("SZ-ABCD-EFG2");
+    expect(out.html).toContain("https://seazn.club/r/SZ-ABCD-EFG2");
+    expect(out.text).toContain("Your reference: SZ-ABCD-EFG2");
+    expect(out.text).toContain("https://seazn.club/r/SZ-ABCD-EFG2");
+    // Rows without a ref (pre-v2) keep the old shape — no dangling label.
+    expect(registrationTemplate(registrationArgs).text).not.toContain("Your reference");
+  });
+
   it("registration waitlist variant drops the fee panel", () => {
     const out = registrationTemplate({ ...registrationArgs, status: "waitlisted" });
     expect(out.html).toContain("on the waitlist");
