@@ -83,8 +83,7 @@ export default async function ScorePadPage({
   // Same brand chain as the public pages / noticeboard (Pro entitlements
   // resolved inside orgBoardChrome): the volunteer's pad wears club colors.
   const chrome = await orgBoardChrome(read);
-  const themed = chrome.branding !== null;
-  const themeStyle = themed
+  const themeStyle = chrome.themed
     ? publicThemeStyleChain(fixture.competition_branding, chrome.branding)
     : undefined;
 
