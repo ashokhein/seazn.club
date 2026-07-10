@@ -61,7 +61,7 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
       name: "Open",
       sport_key: "generic",
       variant_key: "score",
-      config: {},
+      config: GENERIC_CONFIG,
       eligibility: [],
     });
 
@@ -101,7 +101,7 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
       name: "Open",
       sport_key: "generic",
       variant_key: "score",
-      config: {},
+      config: GENERIC_CONFIG,
       eligibility: [],
     });
     const [{ id: stageId }] = await sql<{ id: string }[]>`
@@ -136,7 +136,7 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
       name: "U16 Boys",
       sport_key: "generic",
       variant_key: "score",
-      config: {},
+      config: GENERIC_CONFIG,
       eligibility: [],
     });
     const names = await breadcrumbNames(auth.orgId);
@@ -146,5 +146,6 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
 });
 
 afterAll(async () => {
+  if (!HAS_DB) return; // DB-less unit job: connecting just to disconnect throws
   await sql.end();
 });
