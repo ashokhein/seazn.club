@@ -52,8 +52,8 @@ export const TIPS = {
     helpSlug: "registration/reference-numbers",
   },
   "schedule.locking": {
-    title: "Locked slots",
-    body: "Locking a slot pins it — the auto-scheduler and clear actions leave it exactly where it is.",
+    title: "Pinned slots",
+    body: "Pin a match (📌 → 🔒) and the auto passes — Auto-schedule, Re-flow remaining, Clear slots — leave it exactly where it is. You can still drag or move a pinned match yourself, and it stays pinned at its new slot. To stop ALL edits, freeze the whole schedule from the History panel instead.",
     helpSlug: "scheduling/locks",
   },
   "schedule.undo-watermark": {

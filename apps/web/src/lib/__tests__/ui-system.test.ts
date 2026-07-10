@@ -100,3 +100,16 @@ describe("card meta lines (v3/03 §1)", () => {
     ).toBe("Now: A vs B · Court 2");
   });
 });
+
+describe("pin tip copy (PROMPT-33 follow-up)", () => {
+  it("schedule.locking explains BOTH halves: auto passes skip pins, manual moves still work", async () => {
+    const { TIPS } = await import("@/config/tips");
+    const tip = TIPS["schedule.locking"];
+    // The old copy implied a pinned slot was immovable — it isn't. Any future
+    // edit must keep saying that manual moves stay allowed and point at the
+    // division freeze for full read-only.
+    expect(tip.body).toMatch(/Auto-schedule|auto pass/i);
+    expect(tip.body).toMatch(/still drag|move .* yourself/i);
+    expect(tip.body).toMatch(/freeze/i);
+  });
+});

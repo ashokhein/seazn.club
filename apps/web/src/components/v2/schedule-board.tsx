@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { Tip } from "@/components/ui/tip";
 import { msg } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
 import { BoardAgenda } from "./board/board-agenda";
@@ -324,6 +325,8 @@ export function ScheduleBoard({
                 </button>
               </span>
             ))}
+        {/* Pin semantics live next to the buttons they modify (v3/03 §4). */}
+        {canEdit && <Tip id="schedule.locking" />}
         <div className="flex-1" />
         <ConflictsBadge
           count={visibleConflicts.length}
