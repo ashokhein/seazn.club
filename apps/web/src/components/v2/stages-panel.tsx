@@ -739,7 +739,10 @@ function FixtureLine({
         <Link href={href} className="btn btn-ghost px-3 py-1 text-xs">
           {decided ? "View" : fixture.status === "in_play" ? "Score ●" : "Score"}
         </Link>
-        {canEdit && (
+        {/* Timetable controls only while the match is still movable — once
+            it's in play or decided the server refuses moves anyway, so the
+            buttons would just be a dead end. */}
+        {canEdit && fixture.status === "scheduled" && (
           <button
             type="button"
             onClick={() => setEditing(!editing)}
@@ -748,7 +751,7 @@ function FixtureLine({
             {editing ? "Close" : timed ? "Edit time" : "Schedule"}
           </button>
         )}
-        {canEdit && timed && !editing && (
+        {canEdit && fixture.status === "scheduled" && timed && !editing && (
           <button
             type="button"
             disabled={busy}

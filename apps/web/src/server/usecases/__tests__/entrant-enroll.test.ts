@@ -200,4 +200,37 @@ describe.skipIf(!HAS_DB)("enroll an existing team", () => {
     const after = await getEntrant(auth, entrant!.id);
     expect(after.display_name).toBe("Old Name U14");
   });
+
+  it("a started division refuses new entrants — except open formats (ladder/americano)", async () => {
+    const { auth } = await seedOrg("pro");
+    const comp = await createCompetition(auth, { name: "Lock Cup", visibility: "private", branding: {} });
+
+    // Fixed-format division (league): active → 422 on add; withdraw untouched.
+    const league = await makeDivision(auth, comp.id, "generic");
+    await createEntrants(auth, league.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+    ]);
+    await withTenant(auth.orgId, (tx) => tx`
+      insert into stages (division_id, seq, kind, name, config)
+      values (${league.id}, 1, 'league', 'League', '{}')`);
+    await withTenant(auth.orgId, (tx) => tx`
+      update divisions set status = 'active' where id = ${league.id}`);
+    await expect(
+      createEntrants(auth, league.id, [{ kind: "individual", display_name: "Latecomer", members: [] }]),
+    ).rejects.toThrow(/started/);
+    expect((await listEntrants(auth, league.id)).length).toBe(2);
+
+    // Ladder divisions run over an open window — late joiners are the point.
+    const ladder = await makeDivision(auth, comp.id, "generic");
+    await withTenant(auth.orgId, (tx) => tx`
+      insert into stages (division_id, seq, kind, name, config)
+      values (${ladder.id}, 1, 'ladder', 'Ladder', '{}')`);
+    await withTenant(auth.orgId, (tx) => tx`
+      update divisions set status = 'active' where id = ${ladder.id}`);
+    const [late] = await createEntrants(auth, ladder.id, [
+      { kind: "individual", display_name: "Challenger", members: [] },
+    ]);
+    expect(late!.display_name).toBe("Challenger");
+  });
 });

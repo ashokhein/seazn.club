@@ -61,3 +61,81 @@ export function toLocalInput(iso: string | Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+
+// ---------------------------------------------------------------------------
+// Daily play hours ⇄ session windows (PROMPT-33 follow-up). The engine takes
+// ABSOLUTE {from,to} intervals; organisers think "we play 09:00–18:00". These
+// two convert between the shapes so the settings panel can offer plain hours
+// while the auto pass and validator keep their one interval system.
+// ---------------------------------------------------------------------------
+
+export interface IsoWindow {
+  from: string;
+  to: string;
+}
+
+const HHMM = /^(\d{2}):(\d{2})$/;
+
+/** Cap on the expansion when the schedule has no end date — two weeks of
+ *  windows is plenty for the auto pass's search horizon. */
+const DEFAULT_SPAN_DAYS = 14;
+
+/**
+ * Expand daily play hours into one absolute window per day across the
+ * schedule's date span (inclusive). Returns null when the hours don't parse
+ * or are inverted/empty (from must be before to — overnight windows are out
+ * of scope). Times are local wall-clock, matching every other input on the
+ * settings panel.
+ */
+export function dailyHoursToWindows(
+  fromHHMM: string,
+  toHHMM: string,
+  startIso: string,
+  endIso?: string | null,
+): IsoWindow[] | null {
+  const from = HHMM.exec(fromHHMM);
+  const to = HHMM.exec(toHHMM);
+  if (!from || !to) return null;
+  if (fromHHMM >= toHHMM) return null;
+  const first = new Date(startIso);
+  if (Number.isNaN(first.getTime())) return null;
+  const last = endIso ? new Date(endIso) : null;
+  const days =
+    last && !Number.isNaN(last.getTime())
+      ? Math.max(1, Math.round((dayStart(last) - dayStart(first)) / 86_400_000) + 1)
+      : DEFAULT_SPAN_DAYS;
+  const out: IsoWindow[] = [];
+  for (let i = 0; i < Math.min(days, 90); i++) {
+    const d = new Date(dayStart(first) + i * 86_400_000 + 12 * 3_600_000); // noon anchor dodges DST
+    const at = (h: string, m: string) =>
+      new Date(d.getFullYear(), d.getMonth(), d.getDate(), Number(h), Number(m)).toISOString();
+    out.push({ from: at(from[1]!, from[2]!), to: at(to[1]!, to[2]!) });
+  }
+  return out;
+}
+
+function dayStart(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
+/**
+ * The inverse, for prefilling the panel: when every window shares the same
+ * local wall-clock from/to, report those hours; otherwise null (hand-built
+ * windows from the constraints panel stay untouched).
+ */
+export function windowsToDailyHours(
+  windows: readonly IsoWindow[],
+): { from: string; to: string } | null {
+  if (windows.length === 0) return null;
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const hhmm = (iso: string) => {
+    const d = new Date(iso);
+    return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+  const from = hhmm(windows[0]!.from);
+  const to = hhmm(windows[0]!.to);
+  for (const w of windows) {
+    if (hhmm(w.from) !== from || hhmm(w.to) !== to) return null;
+  }
+  return { from, to };
+}

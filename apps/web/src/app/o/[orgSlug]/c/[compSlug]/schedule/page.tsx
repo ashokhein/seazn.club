@@ -117,6 +117,7 @@ export default async function CompetitionSchedulePage({
             slug: division.slug,
             status: division.status,
             seq: Number(division.seq),
+            schedule_locked: division.schedule_locked,
           }))}
           stages={perDivision.flatMap(({ division, stages }) =>
             stages.map((s) => ({

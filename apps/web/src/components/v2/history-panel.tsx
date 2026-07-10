@@ -124,10 +124,10 @@ export function HistoryPanel({
         </div>
         {canEdit && (
           <>
-            <button type="button" className="btn" disabled={busy} onClick={() => void step("undo")}>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void step("undo")}>
               ↩ Undo
             </button>
-            <button type="button" className="btn" disabled={busy} onClick={() => void step("redo")}>
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={() => void step("redo")}>
               ↪ Redo
             </button>
             <label className="ml-auto flex items-center gap-2 text-sm text-slate-600">
@@ -201,7 +201,7 @@ export function HistoryPanel({
                 onChange={(e) => setLabel(e.target.value)}
                 aria-label="Save point label"
               />
-              <button type="submit" className="btn" disabled={busy}>Save point</button>
+              <button type="submit" className="btn btn-primary" disabled={busy}>Save point</button>
             </form>
           )}
           {checkpoints.length === 0 ? (

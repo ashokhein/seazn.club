@@ -94,6 +94,12 @@ export const messages = {
   "sheet.close": "Close",
   "table.actions": "Actions",
 
+  // ── Constraints tab (Jul3/04, PROMPT-33 follow-ups) ──
+  "confirm.shiftAll.title": "Shift every fixture by {minutes} minutes?",
+  "confirm.shiftAll.body":
+    "Locked and decided fixtures stay put. If the shift lands anything in a conflict, the board flags it — you can fix those matches individually, or undo the whole shift from the history panel.",
+  "confirm.shiftAll.label": "Shift everything",
+
   // ── Schedule board v3 (v3/04 §2, PROMPT-33) ──
   "board.density.board": "Board",
   "board.density.agenda": "Agenda",

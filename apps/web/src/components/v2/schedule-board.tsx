@@ -11,6 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { Tip } from "@/components/ui/tip";
+import { apiV1 } from "@/lib/client-v1";
 import { msg } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
 import { BoardAgenda } from "./board/board-agenda";
@@ -50,6 +51,9 @@ interface Props {
   competitionEnd?: string | null;
   /** Sport-appropriate playing-area word, capitalised (e.g. "Pitch"). */
   venueCap?: string;
+  /** Render the inline settings card. The division schedule page turns this
+   *  off and hosts the settings on its constraints tab instead. */
+  showSettings?: boolean;
 }
 
 /** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
@@ -71,6 +75,7 @@ export function ScheduleBoard({
   competitionStart,
   competitionEnd,
   venueCap = "Court",
+  showSettings = true,
 }: Props) {
   const router = useRouter();
   const pathname = usePathname();
@@ -91,9 +96,19 @@ export function ScheduleBoard({
   // useSearchParams snapshot and window.location (the router commits the URL
   // after its transition), so the second tap would otherwise derive from the
   // pre-first-tap state and drop a selection. The ref mutates immediately;
-  // the URL follows and re-syncs it on external navigation.
+  // the URL follows. Re-syncing from the URL must ignore stale echoes: a
+  // re-render carrying the PRE-tap search params would otherwise wipe the
+  // tap that's still in flight — so while a push is pending, only the echo
+  // that matches it re-opens URL→ref syncing (for back/forward nav).
   const filterRef = useRef(new Set(selectedSlugs));
+  const pendingPush = useRef<string | null>(null);
   useEffect(() => {
+    const fromUrl = [...selectedSlugs].sort().join(",");
+    if (pendingPush.current !== null) {
+      if (fromUrl !== pendingPush.current) return; // stale echo — ignore
+      pendingPush.current = null; // our push landed; resume normal syncing
+      return;
+    }
     filterRef.current = new Set(selectedSlugs);
   }, [selectedSlugs]);
 
@@ -103,9 +118,10 @@ export function ScheduleBoard({
       if (slug === null) cur.clear();
       else if (cur.has(slug)) cur.delete(slug);
       else cur.add(slug);
+      pendingPush.current = [...cur].sort().join(",");
       const qs = new URLSearchParams(window.location.search);
       if (cur.size === 0) qs.delete("d");
-      else qs.set("d", [...cur].sort().join(","));
+      else qs.set("d", pendingPush.current);
       router.replace(`${pathname}${qs.size > 0 ? `?${qs}` : ""}`, { scroll: false });
     },
     [pathname, router],
@@ -126,6 +142,26 @@ export function ScheduleBoard({
 
   // ------------------------------------------------------------- actions
   const actions = useBoardActions(divisions, fixtures, entrantNames, feedLabels, canEdit);
+
+  // Whole-division freeze toggle (Jul3/03 §4) — same endpoint the History
+  // panel uses, surfaced where organisers actually are when it matters.
+  const toggleFreeze = useCallback(async () => {
+    if (!single) return;
+    try {
+      await apiV1(`/api/v1/divisions/${single.id}/locks`, {
+        method: "PATCH",
+        json: { schedule_locked: !single.schedule_locked },
+      });
+      actions.setNotice(
+        single.schedule_locked
+          ? "Schedule unfrozen — edits are open again."
+          : "Schedule frozen — all edits are blocked until you unfreeze.",
+      );
+      router.refresh();
+    } catch (err) {
+      actions.setError(err instanceof Error ? err.message : "Could not change the freeze.");
+    }
+  }, [single, actions, router]);
   const board = useMemo(
     () => actions.board.filter((f) => visibleIds.has(f.division_id)),
     [actions.board, visibleIds],
@@ -328,6 +364,28 @@ export function ScheduleBoard({
         {/* Pin semantics live next to the buttons they modify (v3/03 §4). */}
         {canEdit && <Tip id="schedule.locking" />}
         <div className="flex-1" />
+        {/* Whole-division freeze (Jul3/03 §4), surfaced on the board itself —
+            single-division boards only; the competition board freezes per
+            division on each division's own page. */}
+        {canEdit && single && (
+          <button
+            type="button"
+            disabled={actions.busy}
+            onClick={() => void toggleFreeze()}
+            title={
+              single.schedule_locked
+                ? "Unfreeze — allow schedule edits again"
+                : "Freeze — block ALL schedule edits (yours included) until unfrozen"
+            }
+            className={`btn px-3 py-1.5 text-xs ${
+              single.schedule_locked
+                ? "border border-amber-300 bg-amber-50 text-amber-800"
+                : "btn-ghost"
+            }`}
+          >
+            {single.schedule_locked ? "🔒 Frozen — unfreeze" : "Freeze schedule"}
+          </button>
+        )}
         <ConflictsBadge
           count={visibleConflicts.length}
           open={panelOpen}
@@ -583,20 +641,22 @@ export function ScheduleBoard({
         />
       )}
 
-      {/* Settings */}
-      <SettingsPanel
-        divisionId={settings.division_id}
-        config={cfg}
-        tz={settings.tz}
-        canEdit={canEdit}
-        constraintsAllowed={constraintsAllowed}
-        venueCap={venueCap}
-        onSaved={() => {
-          actions.setNotice("Scheduling settings saved.");
-          router.refresh();
-        }}
-        onError={(err) => actions.setError(err instanceof Error ? err.message : "Something went wrong — please try again.")}
-      />
+      {/* Settings (hosted on the constraints tab when the page says so) */}
+      {showSettings && (
+        <SettingsPanel
+          divisionId={settings.division_id}
+          config={cfg}
+          tz={settings.tz}
+          canEdit={canEdit}
+          constraintsAllowed={constraintsAllowed}
+          venueCap={venueCap}
+          onSaved={() => {
+            actions.setNotice("Scheduling settings saved.");
+            router.refresh();
+          }}
+          onError={(err) => actions.setError(err instanceof Error ? err.message : "Something went wrong — please try again.")}
+        />
+      )}
     </div>
   );
 }

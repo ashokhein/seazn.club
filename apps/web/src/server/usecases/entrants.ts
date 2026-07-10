@@ -141,6 +141,24 @@ export async function createEntrants(
     if (!division) throw new HttpError(404, "division not found");
     await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
 
+    // A started tournament's field is closed — fixtures were generated from
+    // it, and a latecomer would never receive matches (or would corrupt a
+    // bracket). Open-window formats are the exception: ladders and americano
+    // sessions take late joiners by design (Jul3/08 §6). Withdrawals stay
+    // available in every state.
+    if (division.status === "active" || division.status === "completed") {
+      const [openFormat] = await tx`
+        select 1 from stages
+        where division_id = ${divisionId} and kind in ('ladder', 'americano')
+        limit 1`;
+      if (!openFormat) {
+        throw new HttpError(
+          422,
+          "This tournament has started — the entrant list is locked. Withdrawing entrants still works.",
+        );
+      }
+    }
+
     // Doc 10 §1: `entrants.per_division.max` (16/64/256) — the whole batch
     // must fit; count in the same tx as the inserts (doc 10 §2 rule 1).
     const [{ n }] = await tx<{ n: number }[]>`
