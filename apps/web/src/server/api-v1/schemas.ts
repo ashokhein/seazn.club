@@ -298,6 +298,9 @@ export const PatchFixture = z
     officials: z.array(z.record(z.string(), z.unknown())),
     /** Pin/lock (doc 12 §2): locked assignments survive re-running auto. */
     schedule_locked: z.boolean(),
+    /** Optimistic token (v3/11 gap 10): the division seq the client loaded.
+     *  Stale → 409 SEQ_CONFLICT, the board refetches and toasts. */
+    expected_seq: z.number().int().nonnegative(),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -564,6 +567,8 @@ export const ApplyScheduleRequest = z.object({
     .min(1)
     .max(500),
   source: z.enum(["auto", "manual"]).default("auto"),
+  /** Optimistic token (v3/11 gap 10) — see PatchFixture.expected_seq. */
+  expected_seq: z.number().int().nonnegative().optional(),
 });
 export type ApplyScheduleRequest = z.infer<typeof ApplyScheduleRequest>;
 

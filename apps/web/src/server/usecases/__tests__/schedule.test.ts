@@ -398,4 +398,66 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
       expect(r.scheduled_at?.toISOString()).toBe(at((r.round_no - 1) * 60));
     }
   });
+
+  it("rejects a stale expected_seq on schedule writes with 409 SEQ_CONFLICT (v3/11 gap 10)", async () => {
+    const { auth } = await seedOrg("pro");
+    const competition = await createCompetition(auth, { name: "TwoAdmins", visibility: "private", branding: {} });
+    const division = await createDivision(auth, competition.id, {
+      name: "Open", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    });
+    await createEntrants(auth, division.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+      { kind: "individual", display_name: "C", seed: 3, members: [] },
+      { kind: "individual", display_name: "D", seed: 4, members: [] },
+    ]);
+    const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+    await putScheduleSettings(auth, division.id, {
+      config: {
+        startAt: T0, matchMinutes: 30, gapMinutes: 0,
+        courts: ["C1", "C2"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      },
+      tz: "UTC",
+    });
+    const { fixtures } = await generateStageFixtures(auth, stage!.id);
+    const [fa, fb] = fixtures;
+
+    const seqOf = async () => {
+      const [row] = await sql<{ seq: number }[]>`
+        select seq::int from divisions where id = ${division.id}`;
+      return Number(row!.seq);
+    };
+
+    // Client A loads the board at seq S, writes with expected_seq = S — lands.
+    const seq0 = await seqOf();
+    await patchFixture(auth, fa!.id, {
+      scheduled_at: at(0), court_label: "C1", expected_seq: seq0,
+    });
+
+    // Client B still holds seq S: its write must 409, nothing persisted.
+    let conflict: unknown;
+    try {
+      await patchFixture(auth, fb!.id, {
+        scheduled_at: at(0), court_label: "C2", expected_seq: seq0,
+      });
+    } catch (err) {
+      conflict = err;
+    }
+    expect(EngineError.is(conflict)).toBe(true);
+    expect((conflict as EngineError).code).toBe("SEQ_CONFLICT");
+    // the 409 carries the current seq so the client can resync
+    expect((conflict as EngineError).data).toMatchObject({ actualSeq: await seqOf() });
+    const [bRow] = await sql<{ scheduled_at: Date | null }[]>`
+      select scheduled_at from fixtures where id = ${fb!.id}`;
+    expect(bRow!.scheduled_at).toBeNull();
+
+    // After resync (fresh seq) the same write goes through.
+    await patchFixture(auth, fb!.id, {
+      scheduled_at: at(60), court_label: "C2", expected_seq: await seqOf(),
+    });
+
+    // Writes without the token stay accepted (older clients keep working).
+    await patchFixture(auth, fa!.id, { scheduled_at: at(120) });
+  });
 });

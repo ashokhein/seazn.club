@@ -455,6 +455,7 @@ export async function applySchedule(
       where s.id = ${stageId}`;
     if (!stage) throw new HttpError(404, "stage not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
+    await assertFreshSeq(tx, stage.division_id, input.expected_seq);
     await assertCompetitionNotFrozen(auth.orgId, stage.competition_id, tx);
 
     const settings = await loadSettings(tx, stage.division_id);
@@ -557,6 +558,26 @@ export interface MoveInput {
   court_label?: string | null;
   venue?: string | null;
   schedule_locked?: boolean;
+  expected_seq?: number;
+}
+
+/** Optimistic-concurrency guard (v3/11 gap 10): schedule writes may carry the
+ *  division seq the client rendered from; a stale token means another admin
+ *  edited the board since — 409 with the current seq so the client resyncs. */
+async function assertFreshSeq(
+  tx: Tx,
+  divisionId: string,
+  expectedSeq: number | undefined,
+): Promise<void> {
+  if (expectedSeq === undefined) return;
+  const [row] = await tx<{ seq: string | number }[]>`
+    select seq from divisions where id = ${divisionId}`;
+  const actual = Number(row?.seq ?? 0);
+  if (expectedSeq !== actual) {
+    throw new EngineError("SEQ_CONFLICT", "schedule changed since you loaded it", {
+      actualSeq: actual,
+    });
+  }
 }
 
 /**
@@ -584,6 +605,7 @@ export async function moveFixture(
       where f.id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
     await tx`select pg_advisory_xact_lock(hashtext(${"division:" + fixture.division_id}))`;
+    await assertFreshSeq(tx, fixture.division_id, patch.expected_seq);
     await assertCompetitionNotFrozen(auth.orgId, fixture.competition_id, tx);
 
     // Single-fixture moves are board edits too — the whole-division freeze

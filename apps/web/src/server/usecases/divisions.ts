@@ -33,12 +33,15 @@ export interface DivisionRow {
   schedule_locked: boolean;
   archived_at: string | null;
   created_at: string;
+  /** Division event-ledger head — the board's optimistic token (gap 10). */
+  seq: number;
 }
 
 const COLS = [
   "id", "competition_id", "name", "slug", "sport_key", "variant_key", "config",
   "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
   "scheduling_mode", "auto_progress", "schedule_locked", "archived_at", "created_at",
+  "seq",
 ] as const;
 
 export async function listDivisions(

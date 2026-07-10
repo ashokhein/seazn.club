@@ -11985,6 +11985,11 @@
                       "auto",
                       "manual"
                     ]
+                  },
+                  "expected_seq": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
                   }
                 },
                 "required": [
@@ -13506,6 +13511,11 @@
                   },
                   "schedule_locked": {
                     "type": "boolean"
+                  },
+                  "expected_seq": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
                   }
                 },
                 "additionalProperties": false
