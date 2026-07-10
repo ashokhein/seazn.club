@@ -178,7 +178,11 @@ export function HistoryPanel({
         </div>
 
         <div className="card space-y-2 p-4">
-          <h3 className="text-sm font-semibold text-slate-900">Save points</h3>
+          {/* Tip beside, not inside, the heading (accessible-name hygiene). */}
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-semibold text-slate-900">Save points</h3>
+            <Tip id="schedule.save-points" />
+          </div>
           {canEdit && (
             <form
               className="flex items-end gap-2"

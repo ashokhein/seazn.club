@@ -81,6 +81,11 @@ export const TIPS = {
     body: "These chips are the divisions on this board. Tap any of them to show just those divisions; tap again to bring one back. The filter lives in the page URL, so you can share or bookmark a filtered view.",
     helpSlug: "scheduling/board",
   },
+  "schedule.save-points": {
+    title: "Save points",
+    body: "A save point bookmarks the timetable exactly as it is now — every kick-off time and court. Restore rewinds the schedule to that bookmark by undoing each change since, one by one. Match results are never touched: if rewinding would erase a played result, the restore stops there. One save point is free; more need Pro.",
+    helpSlug: "scheduling/undo",
+  },
 } as const satisfies Record<string, TipEntry>;
 
 export type TipId = keyof typeof TIPS;
