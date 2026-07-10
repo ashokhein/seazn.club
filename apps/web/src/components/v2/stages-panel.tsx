@@ -8,6 +8,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { TipCallout } from "@/components/ui/tip";
+import { msg } from "@/lib/messages";
 
 interface StageRow {
   id: string;
@@ -52,6 +55,7 @@ const FIXTURE_STATUS_STYLE: Record<string, string> = {
 };
 
 export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdit }: Props) {
+  const confirmDialog = useConfirm();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
@@ -117,6 +121,7 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
 
   return (
     <div className="space-y-6">
+      {canEdit && <TipCallout id="division.start-locks" />}
       {notice && (
         <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>
       )}
@@ -180,14 +185,14 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
                 <button
                   type="button"
                   disabled={busy !== null}
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `Delete stage "${stage.name}"? Its ${stageFixtures.length} fixture(s) and pools are removed too. This cannot be undone.`,
-                      )
-                    ) {
-                      void act(stage.id, "delete");
-                    }
+                  onClick={async () => {
+                    const ok = await confirmDialog({
+                      title: msg("confirm.deleteStage.title"),
+                      body: msg("confirm.deleteStage.body", { name: stage.name }),
+                      confirmLabel: msg("confirm.deleteStage.label"),
+                      tone: "danger",
+                    });
+                    if (ok) void act(stage.id, "delete");
                   }}
                   className="btn btn-danger px-3 py-1.5 text-xs"
                 >

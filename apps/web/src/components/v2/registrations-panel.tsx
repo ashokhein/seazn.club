@@ -8,6 +8,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { Tip } from "@/components/ui/tip";
+import { msg } from "@/lib/messages";
 
 interface FormField {
   key: string;
@@ -80,6 +83,7 @@ export function RegistrationsPanel({
   /** registration.paid entitlement — false shows the plan badge on the fee field. */
   paidAllowed?: boolean;
 }) {
+  const confirmDialog = useConfirm();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [regs, setRegs] = useState<Registration[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -169,9 +173,24 @@ export function RegistrationsPanel({
     });
   }
 
-  function action(id: string, verb: "confirm" | "waitlist" | "withdraw" | "refund") {
-    if (verb === "withdraw" && !window.confirm("Withdraw this registration?")) return;
-    if (verb === "refund" && !window.confirm("Refund the remaining amount?")) return;
+  async function action(id: string, verb: "confirm" | "waitlist" | "withdraw" | "refund") {
+    if (verb === "withdraw" || verb === "refund") {
+      const ok = await confirmDialog(
+        verb === "withdraw"
+          ? {
+              title: msg("confirm.withdrawRegistration.title"),
+              body: msg("confirm.withdrawRegistration.body"),
+              confirmLabel: msg("confirm.withdrawRegistration.label"),
+              tone: "danger",
+            }
+          : {
+              title: msg("confirm.refundRegistration.title"),
+              body: msg("confirm.refundRegistration.body"),
+              confirmLabel: msg("confirm.refundRegistration.label"),
+            },
+      );
+      if (!ok) return;
+    }
     void run(() => apiV1(`/api/v1/registrations/${id}/${verb}`, { method: "POST", json: {} }));
   }
 
@@ -337,8 +356,9 @@ export function RegistrationsPanel({
 
       <section>
         <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-slate-700">
+          <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
             Registrations <span className="text-slate-400">({regs.length})</span>
+            <Tip id="registration.ref-number" />
           </h2>
           <a
             href={`/api/v1/divisions/${divisionId}/registrations/export`}

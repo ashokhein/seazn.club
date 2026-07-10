@@ -13,16 +13,27 @@ import {
   formatMetric,
   type MetricSpecLike,
 } from "@/lib/public-site";
+import { EntityLogo } from "@/components/ui/entity-logo";
 
 interface Props {
   rows: StandingsRow[];
   metricSpecs: MetricSpecLike[];
   cascade: readonly string[];
   entrantNames: Record<string, string>;
+  /** entrant_id → badge URL (v3/03 §5 placement matrix). Omit = no badge
+   *  column at all; null values fall back to initials via EntityLogo. */
+  entrantLogos?: Record<string, string | null>;
   caption?: string;
 }
 
-export function StandingsTable({ rows, metricSpecs, cascade, entrantNames, caption }: Props) {
+export function StandingsTable({
+  rows,
+  metricSpecs,
+  cascade,
+  entrantNames,
+  entrantLogos,
+  caption,
+}: Props) {
   const columns = standingsColumns(metricSpecs, cascade, rows, DERIVED_METRICS);
   const ranked = [...rows].sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99));
   // Podium chips are fixed vocabulary (gold/silver/bronze) — deliberately NOT
@@ -53,7 +64,7 @@ export function StandingsTable({ rows, metricSpecs, cascade, entrantNames, capti
         ) : null}
         <thead>
           <tr className="border-b border-zinc-200 text-left text-[11px] uppercase tracking-wider text-ink-muted">
-            <th scope="col" className="w-12 py-2.5 pl-4 pr-2 font-semibold">#</th>
+            <th scope="col" className="sticky left-0 z-10 w-12 bg-surface py-2.5 pl-4 pr-2 font-semibold">#</th>
             <th scope="col" className="py-2.5 pr-3 font-semibold">Team</th>
             {columns.map((col) => (
               <th key={col.key} scope="col" className="px-2.5 py-2.5 text-right font-semibold last:pr-4">
@@ -70,7 +81,13 @@ export function StandingsTable({ rows, metricSpecs, cascade, entrantNames, capti
                 row.rank === 1 ? "bg-amber-50/60" : ""
               }`}
             >
-              <td className="py-2.5 pl-4 pr-2 tabular-nums">
+              {/* Rank column frozen inside the scroll container (v3/02 §3.3)
+                  — solid bg so scrolled columns pass underneath, not through. */}
+              <td
+                className={`sticky left-0 z-10 py-2.5 pl-4 pr-2 tabular-nums ${
+                  row.rank === 1 ? "bg-amber-50" : "bg-surface"
+                }`}
+              >
                 {row.tieBreak ? (
                   <details className="relative inline-block">
                     <summary className="inline-flex cursor-help list-none items-start whitespace-nowrap">
@@ -93,6 +110,14 @@ export function StandingsTable({ rows, metricSpecs, cascade, entrantNames, capti
                 )}
               </td>
               <th scope="row" className="py-2.5 pr-3 text-left font-medium text-ink">
+                {entrantLogos && (
+                  <EntityLogo
+                    src={entrantLogos[row.entrantId]}
+                    name={entrantNames[row.entrantId] ?? ""}
+                    size={20}
+                    className="mr-2"
+                  />
+                )}
                 {entrantNames[row.entrantId] ?? row.entrantId}
               </th>
               {columns.map((col) => (

@@ -66,7 +66,7 @@ export function LadderPanel({
       {paywall && <UpgradeGate feature={paywall} />}
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      <div className="card overflow-hidden">
+      <div className="card scroll-x scroll-x-fade">
         <table className="table">
           <thead>
             <tr>

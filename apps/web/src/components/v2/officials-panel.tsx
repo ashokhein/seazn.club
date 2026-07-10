@@ -400,7 +400,7 @@ export function OfficialsPanel({
       )}
 
       {/* per-fixture manual assignment */}
-      <div className="card overflow-hidden">
+      <div className="card scroll-x scroll-x-fade">
         <table className="table">
           <thead>
             <tr>

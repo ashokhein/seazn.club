@@ -5,6 +5,8 @@ import { loadStripe } from "@stripe/stripe-js";
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from "@stripe/react-stripe-js";
 import { track, EVENTS } from "@/lib/analytics";
 import { fetchCheckoutClientSecret } from "@/lib/billing-checkout-client";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { msg } from "@/lib/messages";
 
 // Load Stripe.js once for the whole app (publishable key is public).
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "");
@@ -41,9 +43,14 @@ export function UpgradeButton({
   if (clientSecret) {
     return (
       <div className="mt-2">
-        <EmbeddedCheckoutProvider stripe={stripePromise} options={{ clientSecret }}>
-          <EmbeddedCheckout />
-        </EmbeddedCheckoutProvider>
+        {/* Full-bleed at phone widths (v3/02 §3.2 — the reported 375px break):
+            escape the card p-5 + main px-4 so the Stripe iframe gets the full
+            viewport; no fixed min-width parent. */}
+        <div className="-mx-9 w-auto sm:mx-0">
+          <EmbeddedCheckoutProvider stripe={stripePromise} options={{ clientSecret }}>
+            <EmbeddedCheckout />
+          </EmbeddedCheckoutProvider>
+        </div>
         <button
           type="button"
           onClick={() => setClientSecret(null)}
@@ -70,11 +77,18 @@ export function UpgradeButton({
 }
 
 export function DowngradeButton() {
+  const confirm = useConfirm();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function go() {
-    if (!confirm("Downgrade to Community? Pro features become unavailable immediately.")) return;
+    const ok = await confirm({
+      title: msg("confirm.downgrade.title"),
+      body: msg("confirm.downgrade.body"),
+      confirmLabel: msg("confirm.downgrade.label"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setLoading(true);
     setError(null);
     const res = await fetch("/api/billing/downgrade", {

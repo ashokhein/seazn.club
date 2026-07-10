@@ -6,12 +6,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { VisibilityPicker } from "@/components/ui/visibility-picker";
 
-const VISIBILITIES = [
-  { key: "private", label: "Private", help: "Only your organisation can see it." },
-  { key: "unlisted", label: "Unlisted", help: "Anyone with the link; not indexed." },
-  { key: "public", label: "Public", help: "On your public dashboard, indexable." },
-] as const;
 
 export function CompetitionWizard() {
   const router = useRouter();
@@ -84,32 +80,9 @@ export function CompetitionWizard() {
         />
       </label>
 
-      <fieldset>
-        <legend className="label">Visibility</legend>
-        <div className="grid gap-2 sm:grid-cols-3">
-          {VISIBILITIES.map((v) => (
-            <label
-              key={v.key}
-              className={`cursor-pointer rounded-lg border p-3 text-sm transition ${
-                visibility === v.key
-                  ? "border-purple-500 bg-purple-50 text-purple-800"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-purple-200"
-              }`}
-            >
-              <input
-                type="radio"
-                name="visibility"
-                value={v.key}
-                checked={visibility === v.key}
-                onChange={() => setVisibility(v.key)}
-                className="sr-only"
-              />
-              <span className="block font-medium">{v.label}</span>
-              <span className="mt-0.5 block text-xs text-slate-500">{v.help}</span>
-            </label>
-          ))}
-        </div>
-      </fieldset>
+      {/* v3/03 §7: the one visibility component everywhere. No share URL at
+          create time (the competition has no public page yet). */}
+      <VisibilityPicker value={visibility} onChange={setVisibility} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">

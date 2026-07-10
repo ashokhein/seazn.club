@@ -52,6 +52,13 @@ the work is applying patterns, not inventing breakpoints.
   scroll container; freeze the first column (`position: sticky; left: 0`).
 - Fixtures list: already list-like; enforce patterns 2/5 (score entry = bottom sheet).
 
+> **Implementation note (PROMPT-31, 2026-07-10):** entrants (and the other v2
+> panels) kept their tables inside pattern-4 scroll containers instead of a card
+> rewrite — the rows embed roster editors whose card form is a bigger redesign;
+> `<ResponsiveTable>` exists for the next table that opts in. Score entry stayed
+> on the fixture page (its dialogs now render as bottom sheets via the shared
+> modal); the dedicated score-sheet bottom sheet folds into v3/04's board work.
+
 ### 3.4 Schedule board — deferred to v3/04 (its own redesign; mobile agenda view there).
 
 ### 3.5 Remaining sweep

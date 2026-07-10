@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { msg } from "@/lib/messages";
 
 // ---------------------------------------------------------------------------
 // Display name form
@@ -145,11 +147,18 @@ export function ChangeEmailForm({ currentEmail }: { currentEmail: string }) {
 
 export function LeaveOrgButton({ orgId, orgName }: { orgId: string; orgName: string }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
   async function handleLeave() {
-    if (!confirm(`Leave "${orgName}"? You will lose access immediately.`)) return;
+    const ok = await confirm({
+      title: msg("confirm.leaveOrg.title"),
+      body: msg("confirm.leaveOrg.body", { name: orgName }),
+      confirmLabel: msg("confirm.leaveOrg.label"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setLoading(true);
     setError("");
     try {
@@ -192,6 +201,7 @@ export function TransferOwnerForm({
   members: { user_id: string; display_name: string; email: string; role: string }[];
 }) {
   const router = useRouter();
+  const confirm = useConfirm();
   const [newOwnerId, setNewOwnerId] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -201,7 +211,13 @@ export function TransferOwnerForm({
 
   async function handleTransfer(e: React.FormEvent) {
     e.preventDefault();
-    if (!confirm("Transfer ownership? You will become an admin and cannot undo this yourself.")) return;
+    const ok = await confirm({
+      title: msg("confirm.transferOwner.title"),
+      body: msg("confirm.transferOwner.body"),
+      confirmLabel: msg("confirm.transferOwner.label"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setLoading(true);
     setError("");
     try {

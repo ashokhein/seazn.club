@@ -111,30 +111,32 @@ export function OrgTeam({
       )}
 
       {/* Members */}
-      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-400">
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-purple-600">
         Members
       </h4>
       {!members ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-slate-500">Loading…</p>
       ) : (
         <ul className="space-y-2">
           {members.map((m) => (
             <li
               key={m.user_id}
-              className="flex items-center gap-3 rounded-lg border border-purple-50 bg-white px-3 py-2"
+              className="flex flex-wrap items-center gap-3 rounded-lg border border-purple-50 bg-white px-3 py-2"
             >
               <Avatar name={m.display_name} src={m.avatar_url} size={32} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-slate-800">
                   {m.display_name}
                   {m.user_id === currentUserId && (
-                    <span className="ml-1 text-xs text-slate-400">(you)</span>
+                    <span className="ml-1 text-xs text-slate-500">(you)</span>
                   )}
                 </p>
-                <p className="truncate text-xs text-slate-400">{m.email}</p>
+                <p className="truncate text-xs text-slate-500">{m.email}</p>
               </div>
               {isOwner && m.user_id !== currentUserId ? (
-                <div className="flex shrink-0 items-center gap-2">
+                /* Actions wrap to their own full-width line on phones —
+                   thumb-sized targets instead of a cramped row (v3/02 §3.1). */
+                <div className="flex w-full items-center justify-end gap-2 sm:w-auto sm:shrink-0">
                   <select
                     value={m.role}
                     disabled={busy}
@@ -170,7 +172,7 @@ export function OrgTeam({
       {/* Invite links */}
       {isEditor && (
         <>
-          <h4 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-purple-400">
+          <h4 className="mb-2 mt-6 text-xs font-semibold uppercase tracking-wide text-purple-600">
             Invite links
           </h4>
           <div className="flex flex-wrap items-end gap-2">
@@ -191,7 +193,7 @@ export function OrgTeam({
             <button
               onClick={createInvite}
               disabled={busy}
-              className="btn btn-primary"
+              className="btn btn-primary w-full sm:w-auto"
             >
               + Create link
             </button>
@@ -209,7 +211,7 @@ export function OrgTeam({
                   </span>
                   <InviteLink token={i.token} />
                   {i.expires_at && (
-                    <span className="shrink-0 text-xs text-slate-400">
+                    <span className="shrink-0 text-xs text-slate-500">
                       expires <ClientTime value={i.expires_at} mode="time" />
                     </span>
                   )}

@@ -8,6 +8,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { Tip } from "@/components/ui/tip";
+import { msg } from "@/lib/messages";
 
 interface HistoryRow {
   seq: number;
@@ -53,6 +56,7 @@ export function HistoryPanel({
   canEdit: boolean;
 }) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [history, setHistory] = useState<HistoryOut | null>(null);
   const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
   const [label, setLabel] = useState("");
@@ -112,7 +116,12 @@ export function HistoryPanel({
   return (
     <section className="mt-8 space-y-4" aria-label="Schedule history">
       <div className="flex flex-wrap items-center gap-2">
-        <h2 className="text-lg font-semibold tracking-tight text-slate-900">History</h2>
+        {/* Tip sits OUTSIDE the h2 — inside it would pollute the heading's
+            accessible name ("History About: …"). */}
+        <div className="flex items-center gap-1.5">
+          <h2 className="text-lg font-semibold tracking-tight text-slate-900">History</h2>
+          <Tip id="schedule.undo-watermark" />
+        </div>
         {canEdit && (
           <>
             <button type="button" className="btn" disabled={busy} onClick={() => void step("undo")}>
@@ -210,8 +219,13 @@ export function HistoryPanel({
                       type="button"
                       className="ml-auto text-xs text-purple-600 hover:underline"
                       disabled={busy}
-                      onClick={() => {
-                        if (!confirm(`Restore "${cp.label}"? Edits after it are undone (results are never touched).`)) return;
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: msg("confirm.restoreCheckpoint.title"),
+                          body: msg("confirm.restoreCheckpoint.body", { name: cp.label }),
+                          confirmLabel: msg("confirm.restoreCheckpoint.label"),
+                        });
+                        if (!ok) return;
                         void run(() =>
                           apiV1(`/api/v1/divisions/${divisionId}/restore`, {
                             method: "POST",
@@ -241,8 +255,14 @@ export function HistoryPanel({
             type="button"
             className="btn mt-2 border-red-200 text-red-700 hover:bg-red-50"
             disabled={busy}
-            onClick={() => {
-              if (!confirm("Clear the division's unlocked timetable slots?")) return;
+            onClick={async () => {
+              const ok = await confirmDialog({
+                title: msg("confirm.clearSlots.title"),
+                body: msg("confirm.clearSlots.body"),
+                confirmLabel: msg("confirm.clearSlots.label"),
+                tone: "danger",
+              });
+              if (!ok) return;
               void run(() =>
                 apiV1("/api/v1/schedule/clear", {
                   method: "POST",

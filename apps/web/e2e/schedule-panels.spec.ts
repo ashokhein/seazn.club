@@ -43,8 +43,10 @@ test("history (PROMPT-23): undo then redo round-trips without error", async ({ p
   const { divisionId } = await seedScoredDivision(request);
   await page.goto(`/divisions/${divisionId}/schedule?tab=history`);
 
-  const undo = page.getByRole("button", { name: /Undo/ });
-  const redo = page.getByRole("button", { name: /Redo/ });
+  // Exact labels: the panel's Tip ⓘ ("About: Undo and save points") would
+  // otherwise collide with a loose /Undo/ match.
+  const undo = page.getByRole("button", { name: "↩ Undo" });
+  const redo = page.getByRole("button", { name: "↪ Redo" });
   await expect(undo).toBeEnabled({ timeout: 20_000 });
   await expect(page.getByRole("heading", { name: "Recent edits" })).toBeVisible();
 

@@ -5,6 +5,7 @@
 // disabled until the user types the resource name exactly (v3/09 §4 division
 // delete). Body copy must state what is destroyed vs kept.
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { isConfirmArmed } from "@/lib/typed-confirm";
 
 interface Props {
   open: boolean;
@@ -50,11 +51,11 @@ export function ConfirmDialog({
   }, [open, onCancel]);
 
   if (!open) return null;
-  const armed = typedName === undefined || typed === typedName;
+  const armed = isConfirmArmed(typedName, typed);
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 sm:items-center sm:p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -62,7 +63,9 @@ export function ConfirmDialog({
         if (e.target === e.currentTarget) onCancel();
       }}
     >
-      <div className="card w-full max-w-md space-y-4 p-6 shadow-xl">
+      {/* Bottom sheet under `sm` (v3/02 pattern 3). */}
+      <div className="card w-full space-y-4 rounded-t-2xl rounded-b-none p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-xl sm:max-w-md sm:rounded-2xl sm:pb-6">
+        <span className="sheet-handle" aria-hidden />
         <h2 className="text-base font-semibold text-slate-900">{title}</h2>
         <div className="space-y-2 text-sm text-slate-600">{children}</div>
         {typedName !== undefined && (

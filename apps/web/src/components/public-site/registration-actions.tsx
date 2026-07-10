@@ -5,6 +5,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { msg } from "@/lib/messages";
 
 export function RegistrationActions({
   registrationId,
@@ -18,6 +20,7 @@ export function RegistrationActions({
   paymentDue: boolean;
 }) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -37,7 +40,13 @@ export function RegistrationActions({
   }
 
   async function withdraw() {
-    if (!window.confirm("Withdraw this registration? This frees your spot.")) return;
+    const ok = await confirmDialog({
+      title: msg("confirm.withdrawOwnRegistration.title"),
+      body: msg("confirm.withdrawOwnRegistration.body"),
+      confirmLabel: msg("confirm.withdrawOwnRegistration.label"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     setError(null);
     try {

@@ -6,6 +6,7 @@ import { sql, withTenant } from "@/lib/db";
 import { listStages, getStandings } from "@/server/usecases/stages";
 import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
+import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { hasFeature } from "@/lib/entitlements";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -25,6 +26,10 @@ export interface StandingsSlideRow {
 export interface FixtureSlideItem {
   home: string;
   away: string;
+  /** Team badge URLs (team → club via team_display_v) — the matchup slide is
+   *  the one surface that may show both sides' badges at once (v3/03 §5). */
+  homeLogo: string | null;
+  awayLogo: string | null;
   /** Display-ready score headline from match_states, e.g. "2 – 1" or "21-15, 21-18". */
   line: string | null;
   status: string;
@@ -64,10 +69,11 @@ export async function buildDivisionSlides(
   divisionId: string,
   divisionName: string,
 ): Promise<Slide[]> {
-  const [stages, fixtures, entrants] = await Promise.all([
+  const [stages, fixtures, entrants, logos] = await Promise.all([
     listStages(auth, divisionId),
     listDivisionFixtures(auth, divisionId),
     listEntrants(auth, divisionId),
+    listEntrantLogoUrls(auth, divisionId),
   ]);
   const names = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
   const slides: Slide[] = [];
@@ -126,6 +132,8 @@ export async function buildDivisionSlides(
   const item = (f: (typeof fixtures)[number]): FixtureSlideItem => ({
     home: names[f.home_entrant_id ?? ""] ?? "TBD",
     away: names[f.away_entrant_id ?? ""] ?? "TBD",
+    homeLogo: logos[f.home_entrant_id ?? ""] ?? null,
+    awayLogo: logos[f.away_entrant_id ?? ""] ?? null,
     line: lineOf.get(f.id) ?? null,
     status: f.status,
     round: f.round_no,

@@ -134,6 +134,14 @@ export interface PublicEntrant {
   seed: number | null;
   status: string;
   members: PublicEntrantMember[];
+  /** Effective badge block from team_display_v (team → club fallback);
+   *  null for individual/pair entrants (v3/03 §5). */
+  team_display?: {
+    club_id: string | null;
+    club_name: string | null;
+    logo_path: string | null;
+    colors: unknown;
+  } | null;
 }
 
 export interface PublicPlayer {
@@ -280,7 +288,8 @@ export async function getPublicDivision(
         select stage_id, pool_id, rows, updated_at
         from public_standings_v where division_id = ${division.id}`;
       const entrants = await sql<PublicEntrant[]>`
-        select id, division_id, kind, display_name, seed, status, members
+        select id, division_id, kind, display_name, seed, status, members,
+               team_display
         from public_entrants_v where division_id = ${division.id}
         order by seed nulls last, display_name`;
       return { stages, pools, fixtures, standings, entrants };

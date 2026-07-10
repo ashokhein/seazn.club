@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { BrandColorPicker } from "@/components/brand-color-picker";
+import { VisibilityPicker } from "@/components/ui/visibility-picker";
+import { Tip } from "@/components/ui/tip";
 import { publicBrandColor } from "@/lib/public-theme";
 
 interface CompetitionLite {
@@ -50,10 +52,16 @@ export function CompetitionSettings({
   suggestedStatus = null,
   archivedPanel = null,
   archivedCount = 0,
+  sharePath = null,
+  hasYouthDivisions = false,
 }: {
   competition: CompetitionLite;
   canEdit: boolean;
   discoveryBranding: boolean;
+  /** Public path for the share-URL row of the visibility picker (v3/03 §7). */
+  sharePath?: string | null;
+  /** Any U-age division in this competition (v3/11 gap 8 interstitial). */
+  hasYouthDivisions?: boolean;
   /** Org has dashboard.branding — public pages/noticeboard honor brand color. */
   themeBranding?: boolean;
   /** Org-level branding blob — the color this competition inherits. */
@@ -258,20 +266,22 @@ export function CompetitionSettings({
                 </label>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <label className="block">
-                  <span className="label">Visibility</span>
-                  <select
-                    disabled={readOnly}
+              {/* v3/03 §7: radio cards with consequence sentences replace the
+                  engineer-vocabulary select; share URL surfaces on selection. */}
+              <div className="flex items-start gap-1.5">
+                <div className="min-w-0 flex-1">
+                  <VisibilityPicker
                     value={form.visibility}
-                    onChange={(e) => setForm({ ...form, visibility: e.target.value })}
-                    className="select"
-                  >
-                    <option value="private">private</option>
-                    <option value="unlisted">unlisted</option>
-                    <option value="public">public</option>
-                  </select>
-                </label>
+                    disabled={readOnly}
+                    sharePath={sharePath}
+                    hasYouthDivisions={hasYouthDivisions}
+                    onChange={(next) => setForm({ ...form, visibility: next })}
+                  />
+                </div>
+                <Tip id="division.visibility" className="mt-0.5" />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <label className="block">
                   <span className="label">Status</span>
                   <select

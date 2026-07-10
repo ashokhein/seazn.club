@@ -23,7 +23,7 @@ export default function CookiePolicyPage() {
 
           <section>
             <h2 className="mb-2 text-lg font-semibold text-slate-800">Cookies we set</h2>
-            <div className="overflow-hidden rounded-xl border border-purple-100 bg-white">
+            <div className="scroll-x scroll-x-fade rounded-xl border border-purple-100 bg-white">
               <table className="table w-full">
                 <thead>
                   <tr>
