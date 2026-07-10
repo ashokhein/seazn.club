@@ -41,16 +41,9 @@ const COLS = [
   "visibility", "branding", "status", "created_at", "discoverable", "discovery",
 ] as const;
 
-export function slugify(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80);
-  return slug || "untitled";
-}
+// Slug helpers moved to ./slugs (PROMPT-30) \u2014 re-exported for existing importers.
+import { slugify, uniqueSlug, recordSlugHistory, RESERVED_ENTITY_SLUGS } from "./slugs";
+export { slugify } from "./slugs";
 
 export async function listCompetitions(
   auth: AuthCtx,
@@ -103,12 +96,25 @@ export async function createCompetition(
   auth: AuthCtx,
   input: CreateCompetition,
 ): Promise<CompetitionRow> {
-  const slug = input.slug ?? slugify(input.name);
   await assertActiveQuota(auth);
   if (input.visibility === "public") await assertPublicQuota(auth);
   const row = await withTenant(auth.orgId, async (tx) => {
-    const [existing] = await tx`select 1 from competitions where slug = ${slug}`;
-    if (existing) throw new HttpError(409, `slug '${slug}' is already in use`);
+    // Explicit slugs are the caller's choice — collisions 409. Generated
+    // slugs dedupe with "-2" suffixes; "new" is reserved (static /c/new).
+    let slug: string;
+    if (input.slug) {
+      if (RESERVED_ENTITY_SLUGS.has(input.slug)) {
+        throw new HttpError(422, `slug '${input.slug}' is reserved`);
+      }
+      const [existing] = await tx`select 1 from competitions where slug = ${input.slug}`;
+      if (existing) throw new HttpError(409, `slug '${input.slug}' is already in use`);
+      slug = input.slug;
+    } else {
+      slug = await uniqueSlug(slugify(input.name), async (s) => {
+        const [taken] = await tx`select 1 from competitions where slug = ${s}`;
+        return !!taken;
+      });
+    }
     const [created] = await tx<CompetitionRow[]>`
       insert into competitions (org_id, name, slug, description, starts_on, ends_on,
                                 visibility, branding, created_by)
@@ -166,16 +172,34 @@ export async function patchCompetition(
   let statusChangedTo: string | null = null;
   const { row, discoveryTouched } = await withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {
+      if (RESERVED_ENTITY_SLUGS.has(patch.slug)) {
+        throw new HttpError(422, `slug '${patch.slug}' is reserved`);
+      }
       const [taken] = await tx`
         select 1 from competitions where slug = ${patch.slug} and id <> ${id}`;
       if (taken) throw new HttpError(409, `slug '${patch.slug}' is already in use`);
     }
-    const [before] = await tx<{ visibility: string; discoverable: boolean; status: string }[]>`
-      select visibility, discoverable, status from competitions where id = ${id}`;
+    const [before] = await tx<
+      { visibility: string; discoverable: boolean; status: string; name: string; slug: string }[]
+    >`
+      select visibility, discoverable, status, name, slug from competitions where id = ${id}`;
     if (!before) throw new HttpError(404, "competition not found");
     if (patch.status && patch.status !== before.status) statusChangedTo = patch.status;
 
     const effective = { ...patch };
+    // Rename regenerates the slug (v3/01 §2); the old slug keeps redirecting
+    // via slug_history, so links and QR codes survive.
+    if (!patch.slug && patch.name && patch.name !== before.name) {
+      const regenerated = await uniqueSlug(slugify(patch.name), async (s) => {
+        const [taken] = await tx`
+          select 1 from competitions where slug = ${s} and id <> ${id}`;
+        return !!taken;
+      });
+      if (regenerated !== before.slug) effective.slug = regenerated;
+    }
+    if (effective.slug && effective.slug !== before.slug) {
+      await recordSlugHistory(tx, "competition", auth.orgId, before.slug, id);
+    }
     const nextVisibility = patch.visibility ?? before.visibility;
     // Hard coupling (doc 15 §1): never leak a non-public competition to
     // discovery. Turning it on needs `public`; dropping visibility

@@ -22,6 +22,10 @@ create table slug_history (
 create unique index slug_history_lookup_key
   on slug_history (entity_type, coalesce(parent_id, '00000000-0000-0000-0000-000000000000'::uuid), old_slug);
 
+-- Slugs are public URL material, not tenant secrets — no RLS; renames write
+-- from tenant transactions (app_user) and the org PATCH route.
+grant select, insert, update on slug_history to app_user;
+
 alter table fixtures add column fixture_no int;
 
 update fixtures f set fixture_no = t.rn

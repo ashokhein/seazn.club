@@ -7,6 +7,8 @@ import { sql } from "@/lib/db";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
+import { isReservedSlug } from "@/lib/public-site";
+import { slugify, uniqueSlug } from "@/server/usecases/slugs";
 
 const COOKIE_NAME = "seazn_session";
 const ORG_COOKIE = "seazn_org";
@@ -174,14 +176,16 @@ export async function resolveActiveOrg(
   return orgs[0];
 }
 
-/** Generate a unique, auto-assigned org slug like `org-1a2b3c4d5e`. */
-async function generateOrgSlug(): Promise<string> {
-  for (let i = 0; i < 50; i++) {
-    const slug = `org-${crypto.randomBytes(5).toString("hex")}`;
-    const taken = await sql`select 1 from organizations where slug = ${slug}`;
-    if (taken.length === 0) return slug;
-  }
-  return `org-${Date.now().toString(36)}`;
+/** Readable, name-derived org slug (PROMPT-30): `/o/[slug]` and `/shared/
+ *  [slug]` are user-facing URLs. Globally unique; app routes stay reserved. */
+export async function generateOrgSlug(name: string, excludeOrgId?: string): Promise<string> {
+  return uniqueSlug(slugify(name), async (s) => {
+    if (isReservedSlug(s)) return true;
+    const taken = excludeOrgId
+      ? await sql`select 1 from organizations where slug = ${s} and id <> ${excludeOrgId}`
+      : await sql`select 1 from organizations where slug = ${s}`;
+    return taken.length > 0;
+  });
 }
 
 /**
@@ -212,7 +216,7 @@ export async function createOrgForUser(
   name: string,
 ): Promise<Organization> {
   await assertMayOwnAnotherOrg(userId);
-  const slug = await generateOrgSlug();
+  const slug = await generateOrgSlug(name);
   const org = await sql.begin(async (tx) => {
     const [o] = await tx<Organization[]>`
       insert into organizations (name, slug, created_by)
