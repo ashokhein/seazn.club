@@ -32,7 +32,11 @@ export default async function DivisionSlideshowPage({
       backHref={`/divisions/${id}`}
       divisionIds={[id]}
       realtime={realtime}
-      themeStyle={publicThemeStyleChain(competition.branding, chrome.branding)}
+      themeStyle={
+        chrome.themed
+          ? publicThemeStyleChain(competition.branding, chrome.branding)
+          : undefined
+      }
       logo={chrome.logo}
     />
   );

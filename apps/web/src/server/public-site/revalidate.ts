@@ -21,10 +21,13 @@ export function fireDivisionRevalidate(divisionId: string, competitionId?: strin
 }
 
 /** Org chrome changes (name, logo, brand color) show on every page of the
- *  org's public tree — bust the whole org tag. */
+ *  org's public tree — bust the whole org tag. Unlike the spectator tags
+ *  above, this write comes from an org admin who immediately looks at their
+ *  public page: `{ expire: 0 }` expires the entry now (blocking refresh on
+ *  the next request) instead of serving one more stale view under "max". */
 export function fireOrgRevalidate(orgSlug: string): void {
   try {
-    revalidateTag(orgTag(orgSlug), "max");
+    revalidateTag(orgTag(orgSlug), { expire: 0 });
   } catch {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }

@@ -38,11 +38,14 @@ export type Slide =
 /**
  * Org chrome for the noticeboard masthead — brand color blob and logo URL,
  * entitlement-gated like the public pages (theme: dashboard.branding,
- * logo: branding).
+ * logo: branding). `themed` is the theme entitlement itself: callers must
+ * gate the WHOLE color chain on it — competition.branding comes from the
+ * authed usecases un-gated, so chaining it unguarded leaks brand colors
+ * onto Community boards.
  */
 export async function orgBoardChrome(
   auth: AuthCtx,
-): Promise<{ branding: unknown; logo: string | null }> {
+): Promise<{ themed: boolean; branding: unknown; logo: string | null }> {
   const [themed, logoBranded, [org]] = await Promise.all([
     hasFeature(auth.orgId, "dashboard.branding"),
     hasFeature(auth.orgId, "branding"),
@@ -51,6 +54,7 @@ export async function orgBoardChrome(
       from organizations where id = ${auth.orgId}`,
   ]);
   return {
+    themed,
     branding: themed ? (org?.branding ?? null) : null,
     logo: logoBranded ? resolveLogoUrl(org?.logo_storage_path, org?.logo_url) : null,
   };

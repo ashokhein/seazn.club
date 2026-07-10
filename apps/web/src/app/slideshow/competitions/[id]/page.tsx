@@ -46,7 +46,11 @@ export default async function CompetitionSlideshowPage({
       backHref={`/competitions/${id}`}
       divisionIds={ordered.map((d) => d.id)}
       realtime={realtime}
-      themeStyle={publicThemeStyleChain(competition.branding, chrome.branding)}
+      themeStyle={
+        chrome.themed
+          ? publicThemeStyleChain(competition.branding, chrome.branding)
+          : undefined
+      }
       logo={chrome.logo}
     />
   );
