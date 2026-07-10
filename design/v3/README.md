@@ -6,7 +6,7 @@ engine**: mobile, navigation, pricing/packaging, self-serve growth, documentatio
 handful of correctness fixes. Intake: the 9 Jul 2026 organiser/founder list (31 items,
 captured verbatim in [00-intake-backlog.md](00-intake-backlog.md)).
 
-> **Status: designed; PROMPT-38, PROMPT-32 and PROMPT-31 implemented.**
+> **Status: designed; PROMPT-38, PROMPT-32, PROMPT-31 and PROMPT-30 implemented.**
 > PROMPT-38 (2026-07-10, branch `feat/engine-fixes-prompt-38`) — badminton
 > headline + set-end matrix, cricket undo/status coherence + scoring error
 > boundary, sim-replay v2, division delete/archive/restore.
@@ -55,7 +55,7 @@ extended for every feature (pro + free paths); `tsc` + unit tests before push.
 
 | Prompt | Delivers | Depends on |
 |--------|----------|-----------|
-| [PROMPT-30](prompts/PROMPT-30-routing-and-navigation.md) | Slug-based `/o/[org]/c/[comp]/d/[div]` console routes, breadcrumbs, back button | — |
+| [PROMPT-30](prompts/PROMPT-30-routing-and-navigation.md) | Slug-based `/o/[org]/c/[comp]/d/[div]` console routes, breadcrumbs, back button — ✅ implemented (branch `feat/v3-routing-prompt-30`: V263 slug_history + fixture_no, requireOrgPage family, legacy 301s, org/comp/div rename redirects incl. /shared, readable org slugs, lint ban on string console hrefs) | — |
 | [PROMPT-31](prompts/PROMPT-31-mobile-responsive-overhaul.md) | Mobile pass over every console page + viewport e2e suite | 32 (primitives) |
 | [PROMPT-32](prompts/PROMPT-32-ui-system-refresh.md) | Card grids, ConfirmDialog, Tips, logo matrix, Business scrub, visibility picker | — |
 | [PROMPT-33](prompts/PROMPT-33-scheduling-ux-v3.md) | Multi-division schedule board v3 + division schedule fixes | 31, 32 |
