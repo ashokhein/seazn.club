@@ -8,6 +8,7 @@ import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
 import { isReservedSlug } from "@/lib/public-site";
+import { routes } from "@/lib/routes";
 import { slugify, uniqueSlug } from "@/server/usecases/slugs";
 
 const COOKIE_NAME = "seazn_session";
@@ -294,7 +295,12 @@ export async function postAuthLanding(
   // New users (onboarding_completed_at null) go to the first-run wizard.
   const { needsOnboarding } = await import("@/lib/activation");
   const isNew = await needsOnboarding(userId);
-  return { redirect: isNew ? "/onboarding" : "/dashboard", orgId, hasOrg: true };
+  if (isNew) return { redirect: "/onboarding", orgId, hasOrg: true };
+  // PROMPT-30: land on the active org's slug home — the URL, not the cookie,
+  // is what the session bookmarks and shares.
+  const orgs = await getUserOrgs(userId);
+  const active = orgs.find((o) => o.id === orgId) ?? orgs[0];
+  return { redirect: routes.orgHome(active.slug), orgId, hasOrg: true };
 }
 
 /**

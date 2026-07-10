@@ -4,6 +4,7 @@ import { HttpError } from "@/lib/errors";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
+import { routes } from "@/lib/routes";
 
 export async function POST(req: Request) {
   return handler(async () => {
@@ -11,8 +12,11 @@ export async function POST(req: Request) {
     if (!orgId) throw new HttpError(400, "No active organization");
     await requireOrgRole(orgId, ["owner"]);
 
-    const [sub] = await sql<{ stripe_customer_id: string | null }[]>`
-      select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+    const [[sub], [org]] = await Promise.all([
+      sql<{ stripe_customer_id: string | null }[]>`
+        select stripe_customer_id from subscriptions where org_id = ${orgId}`,
+      sql<{ slug: string }[]>`select slug from organizations where id = ${orgId}`,
+    ]);
     if (!sub?.stripe_customer_id)
       throw new HttpError(
         400,
@@ -21,7 +25,7 @@ export async function POST(req: Request) {
 
     const session = await getStripe().billingPortal.sessions.create({
       customer: sub.stripe_customer_id,
-      return_url: `${baseUrl(req)}/settings/billing`,
+      return_url: `${baseUrl(req)}${routes.billing(org.slug)}`,
     });
 
     return { url: session.url };

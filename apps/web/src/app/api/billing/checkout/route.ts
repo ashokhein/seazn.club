@@ -6,6 +6,7 @@ import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
 import { checkoutSchema } from "@/lib/types";
 import { buildEmbeddedCheckoutParams } from "@/lib/billing";
+import { routes } from "@/lib/routes";
 
 /** POST /api/billing/checkout — start an EMBEDDED Stripe Checkout session and
  *  return its client_secret; the billing page mounts <EmbeddedCheckout> with it
@@ -31,14 +32,17 @@ export async function POST(req: Request) {
       );
 
     // Reuse existing Stripe customer if we already have one
-    const [sub] = await sql<{ stripe_customer_id: string | null }[]>`
-      select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+    const [[sub], [org]] = await Promise.all([
+      sql<{ stripe_customer_id: string | null }[]>`
+        select stripe_customer_id from subscriptions where org_id = ${orgId}`,
+      sql<{ slug: string }[]>`select slug from organizations where id = ${orgId}`,
+    ]);
 
     const session = await getStripe().checkout.sessions.create(
       buildEmbeddedCheckoutParams({
         priceId: plan.price_id,
         orgId,
-        returnUrl: `${baseUrl(req)}/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        returnUrl: `${baseUrl(req)}${routes.billing(org.slug)}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
         customerId: sub?.stripe_customer_id ?? undefined,
         customerEmail: user.email,
       }),
