@@ -146,5 +146,6 @@ describe.skipIf(!HAS_DB)("slug-resolve (PROMPT-30)", () => {
 });
 
 afterAll(async () => {
+  if (!HAS_DB) return; // DB-less unit job: connecting just to disconnect throws
   await sql.end();
 });
