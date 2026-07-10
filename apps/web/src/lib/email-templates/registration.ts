@@ -1,4 +1,5 @@
-import { btn, card, escapeHtml, money } from "./shared";
+import { button, linkFallback, panel, paragraph, renderEmail } from "./compose";
+import { escapeHtml, money } from "./shared";
 
 export interface RegistrationEmailArgs {
   orgName: string;
@@ -19,17 +20,16 @@ export function registrationTemplate(
   const waitlisted = opts.status === "waitlisted";
   const paid = opts.feeCents > 0 && !waitlisted;
   const intro = waitlisted
-    ? `You're on the waitlist for <strong>${opts.competitionName}</strong>. We'll be in touch if a place opens up.`
-    : `Thanks ${opts.displayName} — your registration for <strong>${opts.competitionName}</strong> has been received.`;
+    ? `You're on the waitlist for <strong>${escapeHtml(opts.competitionName)}</strong>. We'll be in touch if a place opens up.`
+    : `Thanks ${escapeHtml(opts.displayName)} — your registration for <strong>${escapeHtml(opts.competitionName)}</strong> has been received.`;
 
   const paymentBlock =
     paid && opts.paymentInstructions
-      ? `<div style="margin:16px 0;padding:16px;border:1px solid #e9d5ff;border-radius:12px;background:#faf5ff">
-           <p style="margin:0 0 8px;color:#6b21a8;font-weight:600">Entry fee: ${money(opts.feeCents, opts.currency)}</p>
-           <p style="margin:0;color:#334155;white-space:pre-line">${escapeHtml(opts.paymentInstructions)}</p>
-         </div>`
+      ? panel(`Entry fee: ${money(opts.feeCents, opts.currency)}`, opts.paymentInstructions)
       : paid
-        ? `<p style="color:#334155">Entry fee: <strong>${money(opts.feeCents, opts.currency)}</strong>. The organiser will contact you with payment details.</p>`
+        ? paragraph(
+            `Entry fee: <strong>${money(opts.feeCents, opts.currency)}</strong>. The organiser will contact you with payment details.`,
+          )
         : "";
 
   const paymentText =
@@ -41,12 +41,21 @@ export function registrationTemplate(
 
   return {
     subject: `Registration received — ${opts.competitionName}`,
-    html: card(
-      "Registration received",
-      intro,
-      paymentBlock + btn("View your registration", opts.statusUrl),
-      `Or paste: ${opts.statusUrl}`,
-    ),
+    html: renderEmail({
+      subject: `Registration received — ${opts.competitionName}`,
+      preheader: waitlisted
+        ? `You're on the waitlist for ${opts.competitionName} — we'll be in touch.`
+        : `Your entry for ${opts.competitionName} is in${paid ? " — payment details inside" : ""}.`,
+      mastheadTag: opts.orgName,
+      eyebrow: `${opts.orgName} · ${opts.competitionName}`,
+      title: waitlisted ? "You're on the waitlist" : "Registration received",
+      contentHtml:
+        paragraph(intro) +
+        paymentBlock +
+        button("View your registration", opts.statusUrl) +
+        linkFallback(opts.statusUrl),
+      footerNote: `You received this because this address was used to enter ${opts.competitionName} at ${opts.orgName}.`,
+    }),
     text:
       `${waitlisted ? "You're on the waitlist" : "Registration received"} for ${opts.competitionName} (${opts.orgName}).` +
       paymentText +

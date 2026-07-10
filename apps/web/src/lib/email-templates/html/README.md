@@ -71,7 +71,9 @@ All values substituted into tokens MUST be HTML-escaped first
 
 ## Email inventory → block recipe
 
-Every send lives in `lib/email.ts`; builders in `lib/email-templates/*.ts`.
+Every send lives in `lib/email.ts`; builders in `lib/email-templates/*.ts`
+compose these files via `../compose.ts` (loads + fills the tokens, escapes
+plain-text inputs). `email-builders.test.ts` pins each recipe.
 
 | Email (builder) | Kind | Recipe |
 | --- | --- | --- |
