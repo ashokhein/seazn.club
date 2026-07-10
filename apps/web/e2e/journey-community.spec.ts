@@ -24,6 +24,29 @@ test.describe.serial("community lifecycle", () => {
   let fixtureIds: string[] = [];
 
   test("run a full small tournament on the free plan", async ({ page, request }) => {
+    // On CI the dev server pays first-compile for the slideshow AND the public
+    // division page inside this single test — 60s is not enough on a 2-core
+    // runner (Turbopack took ~14s + ~19s for those two routes alone).
+    test.slow();
+
+    // A failed earlier attempt leaves its competition behind, and BOTH free
+    // ceilings then 402 the wizard on retry: competitions.max_active counts
+    // draft/published/live, and dashboard.public.max counts public rows in
+    // ANY status. Retire leftovers on both axes (TAG differs per attempt —
+    // match on the stable prefix).
+    const leftovers = await apiJson<{ items: { id: string; name: string }[] }>(
+      request,
+      "/api/v1/competitions",
+    );
+    for (const c of leftovers.data?.items ?? []) {
+      if (c.name.startsWith("Village Cup ")) {
+        await apiJson(request, `/api/v1/competitions/${c.id}`, "PATCH", {
+          status: "archived",
+          visibility: "private",
+        });
+      }
+    }
+
     competitionId = await createCompetitionViaUi(page, `Village Cup ${TAG}`, "public");
     const comp = await apiJson<{ slug: string }>(request, `/api/v1/competitions/${competitionId}`);
     competitionSlug = comp.data!.slug;
