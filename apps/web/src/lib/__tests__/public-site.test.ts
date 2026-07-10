@@ -161,3 +161,29 @@ describe("setBreakdown (public per-set scoreboard)", () => {
     expect(stripLiveSetPoints("2 — 1")).toBe("2 — 1");
   });
 });
+
+describe("isoDateTime (timestamptz rows crossing into client components)", () => {
+  it("converts Date to ISO string — postgres.js returns Date, client sorts strings", async () => {
+    const { isoDateTime } = await import("../public-site");
+    const d = new Date("2026-07-11T10:00:00Z");
+    expect(isoDateTime(d)).toBe("2026-07-11T10:00:00.000Z");
+  });
+  it("passes strings through and nulls everything else", async () => {
+    const { isoDateTime } = await import("../public-site");
+    expect(isoDateTime("2026-07-11T10:00:00Z")).toBe("2026-07-11T10:00:00Z");
+    expect(isoDateTime(null)).toBeNull();
+    expect(isoDateTime(undefined)).toBeNull();
+    expect(isoDateTime(42)).toBeNull();
+  });
+});
+
+describe("competitionChip (spectator status vocabulary)", () => {
+  it("maps completed and archived to finished — completed used to read as upcoming", async () => {
+    const { competitionChip } = await import("../public-site");
+    expect(competitionChip("completed")).toBe("finished");
+    expect(competitionChip("archived")).toBe("finished");
+    expect(competitionChip("live")).toBe("on-now");
+    expect(competitionChip("draft")).toBe("upcoming");
+    expect(competitionChip("published")).toBe("upcoming");
+  });
+});

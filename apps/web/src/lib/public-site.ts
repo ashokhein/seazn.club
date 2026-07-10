@@ -226,3 +226,25 @@ export function setBreakdown(summary: unknown, sportKey: string): SetBreakdown |
   }
   return { unit: GAME_UNIT_SPORTS.has(sportKey) ? "Game" : "Set", sets };
 }
+
+// ---------------------------------------------------------------------------
+// Row normalization + spectator vocabulary
+// ---------------------------------------------------------------------------
+
+/** postgres.js returns timestamptz columns as Date objects, and RSC hands
+    them to client components untouched — where string code (localeCompare
+    sorts, slicing) crashes. Normalize to ISO string at the query edge. */
+export function isoDateTime(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString();
+  return typeof value === "string" ? value : null;
+}
+
+/** Spectator-language chip over the competition status vocab
+    (draft|published|live|completed|archived). */
+export type CompetitionChip = "on-now" | "finished" | "upcoming";
+export function competitionChip(status: string): CompetitionChip {
+  if (status === "live") return "on-now";
+  if (status === "completed" || status === "archived") return "finished";
+  return "upcoming";
+}

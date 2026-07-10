@@ -9,6 +9,13 @@ import "server-only";
 // `revalidateTag('division:{id}')` for instant refresh (see usecases/scoring.ts).
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
+import { isoDateTime } from "@/lib/public-site";
+
+/** timestamptz → ISO string before rows cross into client components. */
+const normalizeFixture = <T extends { scheduled_at: unknown }>(f: T): T => ({
+  ...f,
+  scheduled_at: isoDateTime(f.scheduled_at),
+});
 
 export const REVALIDATE_FAST = 30; // competition / division / fixture pages
 export const REVALIDATE_SLOW = 300; // entrant / player pages
@@ -224,7 +231,7 @@ export async function getPublicCompetition(
         join public_divisions_v d on d.id = f.division_id
         where d.competition_id = ${competition.id} and f.status = 'in_play'
         order by f.scheduled_at nulls last limit 12`;
-      return { org, competition, divisions, liveNow };
+      return { org, competition, divisions, liveNow: liveNow.map(normalizeFixture) };
     },
     ["pub-comp", orgSlug, compSlug],
     { tags: [orgTag(orgSlug)], revalidate: REVALIDATE_FAST },
@@ -268,7 +275,7 @@ export async function getPublicDivision(
                home_entrant_id, away_entrant_id, scheduled_at, venue, court_label,
                status, outcome, summary, last_seq
         from public_fixtures_v where division_id = ${division.id}
-        order by round_no, seq_in_round`;
+        order by round_no, seq_in_round`.then((rows) => rows.map(normalizeFixture));
       const standings = await sql<PublicStandings[]>`
         select stage_id, pool_id, rows, updated_at
         from public_standings_v where division_id = ${division.id}`;
@@ -315,13 +322,14 @@ export async function getPublicFixture(
 
   const detail = await unstable_cache(
     async () => {
-      const [fixture] = await sql<PublicFixture[]>`
+      const [fixtureRow] = await sql<PublicFixture[]>`
         select id, division_id, stage_id, pool_id, round_no, seq_in_round,
                home_entrant_id, away_entrant_id, scheduled_at, venue, court_label,
                status, outcome, summary, last_seq
         from public_fixtures_v
         where id = ${fixtureId} and division_id = ${division.id} limit 1`;
-      if (!fixture) return null;
+      if (!fixtureRow) return null;
+      const fixture = normalizeFixture(fixtureRow);
       const names = await sql<{ id: string; display_name: string }[]>`
         select id, display_name from public_entrants_v
         where division_id = ${division.id}`;

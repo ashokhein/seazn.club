@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ChevronRight } from "lucide-react";
 import { getPublicOrg } from "@/server/public-site/data";
+import { competitionChip } from "@/lib/public-site";
 
 export const revalidate = 30;
 
@@ -23,10 +24,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 const fmtDate = (iso: string) =>
   new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 
-/** Spectator-language chip over the competition vocab (draft|live|archived);
-    anything not live/archived reads as upcoming. */
+/** Spectator-language chip; the status → chip mapping lives in
+    lib/public-site.ts (competitionChip) so it unit-tests without JSX. */
 function statusChip(status: string) {
-  if (status === "live") {
+  const chip = competitionChip(status);
+  if (chip === "on-now") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-200">
         <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -34,7 +36,7 @@ function statusChip(status: string) {
       </span>
     );
   }
-  if (status === "archived") {
+  if (chip === "finished") {
     return (
       <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
         Finished
