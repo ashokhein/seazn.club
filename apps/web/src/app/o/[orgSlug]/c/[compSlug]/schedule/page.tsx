@@ -2,7 +2,9 @@ export const dynamic = "force-dynamic";
 // Competition-wide multi-division schedule board (doc 12 §2 / doc 06 §4.3):
 // every division's fixtures on one grid, division-coloured cards. Pro only
 // (doc 12 §5 — scheduling.multi_division).
+import Link from "next/link";
 import { requireCompetitionPage } from "@/server/page-auth";
+import { routes } from "@/lib/routes";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
 import { listStages } from "@/server/usecases/stages";
@@ -48,15 +50,7 @@ export default async function CompetitionSchedulePage({
   if (divisions.length === 0) {
     return (
       <>
-        <Nav />
         <main className="mx-auto max-w-3xl px-4 py-8">
-          <p className="text-xs text-slate-400">
-            <Link href="/dashboard" className="hover:text-purple-600">Competitions</Link>
-            {" / "}
-            <Link href={`/competitions/${id}`} className="hover:text-purple-600">
-              {competition.name}
-            </Link>
-          </p>
           <h1 className="mt-1 mb-4 text-xl font-semibold tracking-tight text-slate-900">
             Competition schedule — {competition.name}
           </h1>
@@ -65,7 +59,7 @@ export default async function CompetitionSchedulePage({
             has divisions with fixtures.{" "}
             {canEdit && !(competition.frozen ?? false) && (
               <Link
-                href={`/competitions/${id}/divisions/new`}
+                href={routes.divisionNew(orgSlug, compSlug)}
                 className="font-medium text-purple-600 hover:text-purple-700"
               >
                 Add a division
