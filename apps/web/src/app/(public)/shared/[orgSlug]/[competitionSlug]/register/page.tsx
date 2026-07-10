@@ -45,11 +45,7 @@ export default async function RegisterPage({ params }: Props) {
           Registration is not open for this competition.
         </p>
       ) : (
-        <RegisterForm
-          orgSlug={orgSlug}
-          competitionSlug={competitionSlug}
-          divisions={info.divisions}
-        />
+        <RegisterForm org={info.org} competition={info.competition} divisions={info.divisions} />
       )}
     </div>
   );

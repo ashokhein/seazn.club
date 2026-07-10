@@ -22,6 +22,8 @@ import { getStripe } from "@/lib/stripe";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 import { sendRegistrationEmail, sendPaymentReminderEmail } from "@/lib/email";
+import { generateRefCode, isValidRefCode, normalizeRefCode } from "@/lib/ref-code";
+import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type {
   PublicRegisterRequest,
@@ -29,6 +31,7 @@ import type {
   RegistrationFormField,
 } from "@/server/api-v1/schemas";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
+import { resolveLogoUrl } from "@/server/public-site/data";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 
 type Tx = postgres.TransactionSql;
@@ -189,6 +192,8 @@ export interface RegistrationRow {
   division_id: string;
   org_id: string;
   status: "pending" | "paid" | "confirmed" | "waitlisted" | "withdrawn";
+  /** Human-quotable reference (v3/05 §3); null on pre-v2 rows. */
+  ref_code: string | null;
   display_name: string;
   contact_email: string;
   dob: string | null;
@@ -210,11 +215,11 @@ export interface RegistrationRow {
 }
 
 const REG_COLS = [
-  "id", "division_id", "org_id", "status", "display_name", "contact_email",
-  "dob", "gender", "guardian_name", "guardian_consent", "answers", "roster",
-  "amount_cents", "currency", "checkout_session_id", "payment_intent_id",
-  "refunded_cents", "refunded_at", "entrant_id", "promoted_at",
-  "withdrawn_at", "created_at",
+  "id", "division_id", "org_id", "status", "ref_code", "display_name",
+  "contact_email", "dob", "gender", "guardian_name", "guardian_consent",
+  "answers", "roster", "amount_cents", "currency", "checkout_session_id",
+  "payment_intent_id", "refunded_cents", "refunded_at", "entrant_id",
+  "promoted_at", "withdrawn_at", "created_at",
 ] as const;
 
 const SETTINGS_COLS = [
@@ -477,14 +482,25 @@ export interface PublicDivisionInfo {
   closes_at: string | null;
   capacity: number | null;
   remaining: number | null;
+  /** Spots already taken — drives the masthead capacity meter (v3/05 §2). */
+  taken: number;
   open: boolean;
   closed_reason: string | null;
   requires_dob: boolean;
+  /** Youth division (v3/11 gap 8): the form always adds guardian consent. */
+  youth: boolean;
   form_fields: RegistrationFormField[];
 }
 
 export interface PublicRegistrationInfoResult {
-  competition: { id: string; name: string; slug: string };
+  competition: {
+    id: string;
+    name: string;
+    slug: string;
+    starts_on: string | null;
+    ends_on: string | null;
+  };
+  org: { name: string; slug: string; logo_url: string | null };
   divisions: PublicDivisionInfo[];
 }
 
@@ -494,9 +510,15 @@ export async function publicRegistrationInfo(
   compSlug: string,
 ): Promise<PublicRegistrationInfoResult> {
   const [comp] = await sql<
-    { id: string; name: string; slug: string; org_id: string; charges_enabled: boolean }[]
+    {
+      id: string; name: string; slug: string; org_id: string; charges_enabled: boolean;
+      starts_on: string | null; ends_on: string | null;
+      org_name: string; logo_storage_path: string | null; logo_url: string | null;
+    }[]
   >`
-    select c.id, c.name, c.slug, c.org_id, o.stripe_charges_enabled as charges_enabled
+    select c.id, c.name, c.slug, c.org_id, o.stripe_charges_enabled as charges_enabled,
+           c.starts_on, c.ends_on,
+           o.name as org_name, o.logo_storage_path, o.logo_url
     from competitions c join organizations o on o.id = c.org_id
     where o.slug = ${orgSlug} and c.slug = ${compSlug}
       and c.visibility in ('public','unlisted') and o.status = 'active'`;
@@ -508,10 +530,11 @@ export async function publicRegistrationInfo(
       slug: string;
       sport_key: string;
       eligibility: unknown[];
+      youth: boolean;
       active: number;
     })[]
   >`
-    select rs.*, d.name, d.slug, d.sport_key, d.eligibility,
+    select rs.*, d.name, d.slug, d.sport_key, d.eligibility, d.youth,
            (select count(*)::int from registrations r
              where r.division_id = rs.division_id
                and r.status in ${sql([...SPOT_HOLDERS])}) as active
@@ -541,13 +564,29 @@ export async function publicRegistrationInfo(
       closes_at: r.closes_at ? new Date(r.closes_at).toISOString() : null,
       capacity: r.capacity,
       remaining,
+      taken: r.active,
       open,
       closed_reason: reason,
       requires_dob: requiresDob(r.eligibility ?? []),
+      youth: r.youth,
       form_fields: r.form_fields ?? [],
     };
   });
-  return { competition: { id: comp.id, name: comp.name, slug: comp.slug }, divisions };
+  return {
+    competition: {
+      id: comp.id,
+      name: comp.name,
+      slug: comp.slug,
+      starts_on: comp.starts_on,
+      ends_on: comp.ends_on,
+    },
+    org: {
+      name: comp.org_name,
+      slug: orgSlug,
+      logo_url: resolveLogoUrl(comp.logo_storage_path, comp.logo_url),
+    },
+    divisions,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -627,20 +666,40 @@ export async function submitRegistration(
       const waitlisted = taken >= hardCap;
       // Roster only applies to team entries; drop it for individual/pair.
       const roster = settings.entrant_kind === "team" ? input.players : [];
-      const [row] = await tx<RegistrationRow[]>`
-        insert into registrations
-          (division_id, status, display_name, contact_email, dob, gender,
-           guardian_name, guardian_consent, answers, roster, amount_cents, currency,
-           access_token_hash)
-        values
-          (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"},
-           ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
-           ${input.gender ?? null}, ${input.guardian_name ?? null},
-           ${input.guardian_consent}, ${tx.json(answers as never)},
-           ${tx.json(roster as never)},
-           ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
-           ${hashRegistrationToken(secret)})
-        returning ${sql(REG_COLS as unknown as string[])}`;
+      // Reference number (v3/05 §3): server-generated, unique per environment;
+      // ~729M payload space so a couple of retries always clears a collision.
+      let row: RegistrationRow | undefined;
+      for (let attempt = 0; attempt < 5 && !row; attempt++) {
+        const ref = generateRefCode();
+        try {
+          // Savepoint: a unique-violation must not abort the outer tx —
+          // roll back to here and draw a fresh code instead.
+          row = (await tx.savepoint(async (sp) => {
+            const [r] = await sp<RegistrationRow[]>`
+              insert into registrations
+                (division_id, status, ref_code, display_name, contact_email, dob, gender,
+                 guardian_name, guardian_consent, answers, roster, amount_cents, currency,
+                 access_token_hash)
+              values
+                (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"}, ${ref},
+                 ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
+                 ${input.gender ?? null}, ${input.guardian_name ?? null},
+                 ${input.guardian_consent}, ${sp.json(answers as never)},
+                 ${sp.json(roster as never)},
+                 ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
+                 ${hashRegistrationToken(secret)})
+              returning ${sql(REG_COLS as unknown as string[])}`;
+            return r;
+          })) as unknown as RegistrationRow;
+        } catch (err) {
+          // 23505 on the ref index → draw again; anything else is real.
+          const pg = err as { code?: string; constraint_name?: string };
+          if (pg.code !== "23505" || !String(pg.constraint_name ?? "").includes("ref_code")) {
+            throw err;
+          }
+        }
+      }
+      if (!row) throw new HttpError(503, "could not allocate a reference — please retry");
       await audit(tx, ctx.competition_id, ctx.org_id, "registration.submitted", {
         registration_id: row.id,
         division_id: input.division_id,
@@ -665,6 +724,8 @@ export async function submitRegistration(
     currency: settings.currency,
     paymentInstructions: paid && reg.status !== "waitlisted" ? ctx.payment_instructions : null,
     statusUrl,
+    refCode: reg.ref_code,
+    refStatusUrl: reg.ref_code ? `${origin}/r/${reg.ref_code}` : null,
   }).catch(() => {});
 
   // Public-registration funnel (feature 1): a distinct anonymous person per
@@ -828,11 +889,14 @@ export async function reconcileRegistration(regId: string, token: string): Promi
 export interface PublicStatusView {
   id: string;
   status: string;
+  /** Quotable reference (v3/05 §3); null on pre-v2 rows. */
+  ref_code: string | null;
   display_name: string;
   division_name: string;
   competition_name: string;
   competition_slug: string;
   org_slug: string;
+  org_name: string;
   starts_on: string | null;
   ends_on: string | null;
   fee_cents: number;
@@ -864,11 +928,13 @@ export async function publicRegistrationStatus(
   return {
     id: reg.id,
     status: reg.status,
+    ref_code: reg.ref_code,
     display_name: reg.display_name,
     division_name: div?.name ?? "",
     competition_name: ctx.comp_name,
     competition_slug: ctx.comp_slug,
     org_slug: ctx.org_slug,
+    org_name: ctx.org_name,
     starts_on: ctx.starts_on,
     ends_on: ctx.ends_on,
     fee_cents: settings?.fee_cents ?? 0,
@@ -891,6 +957,88 @@ export async function withdrawRegistrationPublic(
   const reg = await regByToken(regId, token);
   await withdrawCore(reg, null);
   return publicRegistrationStatus(regId, token);
+}
+
+// ---------------------------------------------------------------------------
+// Reference-number lookups — /r/[ref] (v3/05 §3, PROMPT-34)
+// ---------------------------------------------------------------------------
+
+/** What /r/[ref] shows the world: never more than the success screen, and
+ *  the name honours the division's public name display (v3/11 gap 8). */
+export interface PublicRefView {
+  ref_code: string;
+  status: string;
+  display_name: string;
+  division_name: string;
+  division_slug: string;
+  competition_name: string;
+  competition_slug: string;
+  org_slug: string;
+  org_name: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  created_at: string;
+  /** True when the ?token= the viewer presented matches — unlocks withdraw. */
+  can_withdraw: boolean;
+}
+
+async function regByRef(ref: string): Promise<RegistrationRow> {
+  // Checksum rejects typos before the DB sees them; normalise dashes/case so
+  // "sz abcd efgh" read over a phone still resolves.
+  const canonical = normalizeRefCode(ref);
+  if (!isValidRefCode(canonical)) throw new HttpError(404, "registration not found");
+  const [reg] = await sql<RegistrationRow[]>`
+    select ${sql(REG_COLS as unknown as string[])} from registrations
+    where ref_code = ${canonical}`;
+  if (!reg) throw new HttpError(404, "registration not found");
+  return reg;
+}
+
+export async function publicRegistrationStatusByRef(
+  ref: string,
+  token?: string | null,
+): Promise<PublicRefView> {
+  const reg = await regByRef(ref);
+  const ctx = await divisionCtx(sql, reg.division_id);
+  const [div] = await sql<
+    { name: string; slug: string; youth: boolean; player_name_display: string | null }[]
+  >`
+    select name, slug, youth, player_name_display from divisions
+    where id = ${reg.division_id}`;
+  const mode = resolveNameDisplay(div?.player_name_display ?? null, div?.youth ?? false);
+  const canWithdraw =
+    !!token &&
+    reg.status !== "withdrawn" &&
+    hashRegistrationToken(token) ===
+      (await sql<{ access_token_hash: string }[]>`
+        select access_token_hash from registrations where id = ${reg.id}`)[0]!.access_token_hash;
+  return {
+    ref_code: reg.ref_code!,
+    status: reg.status,
+    display_name: maskDisplayName(reg.display_name, mode),
+    division_name: div?.name ?? "",
+    division_slug: div?.slug ?? "",
+    competition_name: ctx.comp_name,
+    competition_slug: ctx.comp_slug,
+    org_slug: ctx.org_slug,
+    org_name: ctx.org_name,
+    starts_on: ctx.starts_on,
+    ends_on: ctx.ends_on,
+    created_at: new Date(reg.created_at).toISOString(),
+    can_withdraw: canWithdraw,
+  };
+}
+
+/** Self-withdraw from /r/[ref] — the ref is a lookup, NOT auth: the email
+ *  token is still required (v3/05 §4). */
+export async function withdrawRegistrationByRef(
+  ref: string,
+  token: string,
+): Promise<PublicRefView> {
+  const reg = await regByRef(ref);
+  const byToken = await regByToken(reg.id, token); // 404s on a bad token
+  await withdrawCore(byToken, null);
+  return publicRegistrationStatusByRef(ref, token);
 }
 
 /** Resume/complete payment from the status page (pending paid regs — fresh

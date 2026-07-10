@@ -42,6 +42,8 @@ import {
   publicRegistrationInfo,
   submitRegistration,
   publicRegistrationStatus,
+  publicRegistrationStatusByRef,
+  withdrawRegistrationByRef,
   handleRegistrationCheckoutCompleted,
   withdrawRegistrationPublic,
   confirmRegistration,
@@ -52,6 +54,8 @@ import {
   registrationIcs,
   type RegistrationRow,
 } from "../registrations";
+import { isValidRefCode } from "@/lib/ref-code";
+import { resolveNameDisplay } from "@/lib/name-display";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -594,5 +598,104 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
         form_fields: [], opens_at: null, closes_at: null, capacity: 64, refund_lock_at: null,
       }),
     ).rejects.toThrow(/entrant limit/);
+  });
+
+  // ── Reference numbers + /r/[ref] (v3/05 §3, PROMPT-34) ──
+
+  it("submit issues a checksummed SZ ref; /r/[ref] resolves it, dashes/case optional", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg();
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+    const { registration } = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+
+    expect(registration.ref_code).toMatch(/^SZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+    expect(isValidRefCode(registration.ref_code!)).toBe(true);
+
+    const view = await publicRegistrationStatusByRef(registration.ref_code!);
+    expect(view.status).toBe("pending");
+    expect(view.display_name).toBe("Alex Test");
+    expect(view.division_slug).toBe(division.slug);
+    expect(view.can_withdraw).toBe(false); // no token presented
+
+    // Quoted over the phone: lowercase, no dashes — still resolves.
+    const sloppy = registration.ref_code!.toLowerCase().replace(/-/g, "");
+    const view2 = await publicRegistrationStatusByRef(sloppy);
+    expect(view2.ref_code).toBe(registration.ref_code);
+
+    // A typo'd ref fails the checksum → 404, before touching the table.
+    const chars = registration.ref_code!.replace("SZ-", "").replace(/-/g, "").split("");
+    chars[0] = chars[0] === "A" ? "B" : "A";
+    await expect(
+      publicRegistrationStatusByRef(`SZ-${chars.slice(0, 4).join("")}-${chars.slice(4).join("")}`),
+    ).rejects.toThrow(/not found/);
+  });
+
+  it("self-withdraw by ref requires the email token — the ref alone is a lookup, not auth", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg();
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+    const { registration, access_token } = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    const ref = registration.ref_code!;
+
+    await expect(withdrawRegistrationByRef(ref, "rg_wrong-token")).rejects.toThrow(/not found/);
+    const [still] = await sql<{ status: string }[]>`
+      select status from registrations where id = ${registration.id}`;
+    expect(still!.status).toBe("pending");
+
+    const view = await withdrawRegistrationByRef(ref, access_token);
+    expect(view.status).toBe("withdrawn");
+  });
+
+  // ── Youth privacy (v3/11 gap 8, PROMPT-34) ──
+
+  it("U16 eligibility auto-sets divisions.youth; /r/[ref] masks the name to first-initial", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg();
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner, {
+      eligibility: [{ kind: "age", maxAgeAt: 15, cutoff: { month: 9, day: 1, yearOf: "season_start" } }],
+    });
+    expect(division.youth).toBe(true);
+    expect(resolveNameDisplay(division.player_name_display, division.youth)).toBe("first_initial");
+
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+    const { registration } = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE,
+      display_name: "Arun Kumar",
+      division_id: division.id,
+      dob: "2012-05-01",
+      guardian_name: "Priya Kumar",
+      guardian_consent: true,
+    }, "http://test.local");
+
+    const view = await publicRegistrationStatusByRef(registration.ref_code!);
+    expect(view.display_name).toBe("Arun K.");
+
+    // Organiser-side stays full-fidelity (exports/check-in need real names).
+    const rows = await listRegistrations(owner, division.id, null);
+    expect(rows.find((r) => r.id === registration.id)?.display_name).toBe("Arun Kumar");
+    expect(rows.find((r) => r.id === registration.id)?.ref_code).toBe(registration.ref_code);
+  });
+
+  it("open (non-youth) divisions default to full names and no auto guardian gate", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const owner = asOwner(orgId, ownerId);
+    const { division } = await rig(owner);
+    expect(division.youth).toBe(false);
+    expect(resolveNameDisplay(division.player_name_display, division.youth)).toBe("full");
   });
 });

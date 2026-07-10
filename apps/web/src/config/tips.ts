@@ -71,6 +71,11 @@ export const TIPS = {
     body: "Open it on any TV or projector browser — it cycles standings and matchups by itself and keeps itself up to date.",
     helpSlug: "sharing/slideshow",
   },
+  "register.youth": {
+    title: "Why guardian consent?",
+    body: "This division is for under-18 players, so a parent or guardian confirms the entry. Public pages show shortened names for youth divisions.",
+    helpSlug: "registration/youth",
+  },
 } as const satisfies Record<string, TipEntry>;
 
 export type TipId = keyof typeof TIPS;

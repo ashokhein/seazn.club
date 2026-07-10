@@ -1,6 +1,7 @@
 import { v1, parseBody, reply } from "@/server/api-v1/http";
 import { rateLimit } from "@/lib/rate-limit";
 import { baseUrl } from "@/lib/oauth";
+import { HttpError } from "@/lib/errors";
 import { PublicRegisterRequest } from "@/server/api-v1/schemas";
 import { submitRegistration } from "@/server/usecases/registrations";
 
@@ -17,6 +18,13 @@ export async function POST(req: Request, { params }: Ctx) {
     await rateLimit(`regsubmit:${ip}`, { max: 10, windowSeconds: 60 });
     const { orgSlug, slug } = await params;
     const input = await parseBody(req, PublicRegisterRequest);
+    // Honeypot (v3/05 §4): the visible form never fills `website`.
+    if (input.website) {
+      throw new HttpError(400, "Registration failed");
+    }
+    // Second bucket per IP+division (v3/05 §4): one address hammering a
+    // single division throttles harder than the general write budget above.
+    await rateLimit(`regsubmit:${ip}:${input.division_id}`, { max: 5, windowSeconds: 300 });
     const result = await submitRegistration(orgSlug, slug, input, baseUrl(req));
     return reply(201, {
       registration_id: result.registration.id,

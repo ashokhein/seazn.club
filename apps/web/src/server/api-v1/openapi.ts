@@ -129,6 +129,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/public/registrations/{id}/withdraw", method: "post", summary: "Registrant self-withdraw (token)", tag: "public", public: true, request: S.PublicRegistrationToken, response: S.PublicRegistrationStatus },
   { path: "/public/registrations/{id}/checkout", method: "post", summary: "(Re)open Stripe Checkout for a pending paid registration", tag: "public", public: true, request: S.PublicRegistrationToken, errors: [422, 503] },
   { path: "/public/registrations/{id}/ics", method: "get", summary: "Confirmation .ics for the competition dates (?token=)", tag: "public", public: true, errors: [401] },
+  { path: "/public/registrations/by-ref/{ref}/withdraw", method: "post", summary: "Self-withdraw via reference number — the ref locates, the email token authorises (v3/05 §3)", tag: "public", public: true, request: S.PublicRegistrationToken, errors: [404] },
   // Clubs & bulk import (Jul3/01, PROMPT-21)
   { path: "/clubs", method: "get", summary: "List clubs", tag: "clubs", response: z.array(S.Club) },
   { path: "/clubs", method: "post", summary: "Create a club (Pro `clubs.hierarchy`)", tag: "clubs", request: S.CreateClub, response: S.Club, status: 201, errors: [402, 409] },

@@ -116,6 +116,11 @@ export const PatchDivision = z
     scheduling_mode: z.enum(["timed", "flexible"]),
     /** Jul3/08 §5: progression fires without a button (Pro formats.advanced). */
     auto_progress: z.boolean(),
+    /** Youth flag (v3/11 gap 8): auto-set from U-age eligibility, this is
+     *  the organiser override. */
+    youth: z.boolean(),
+    /** Public name rendering; null resolves youth → first_initial. */
+    player_name_display: z.enum(["full", "first_initial"]).nullable(),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -726,15 +731,26 @@ export const PublicRegistrationDivision = z.object({
   capacity: z.number().int().nullable(),
   /** Spots left before new submissions waitlist; null = uncapped. */
   remaining: z.number().int().nullable(),
+  /** Spots taken — the masthead capacity meter (v3/05 §2). */
+  taken: z.number().int(),
   open: z.boolean(),
   /** 'window' | 'full' (waitlist only) | 'payments_unavailable' | null */
   closed_reason: z.string().nullable(),
   requires_dob: z.boolean(),
+  /** Youth division (v3/11 gap 8): the form always adds guardian consent. */
+  youth: z.boolean(),
   form_fields: z.array(RegistrationFormField),
 });
 
 export const PublicRegistrationInfo = z.object({
-  competition: z.object({ id: Uuid, name: z.string(), slug: z.string() }),
+  competition: z.object({
+    id: Uuid,
+    name: z.string(),
+    slug: z.string(),
+    starts_on: z.string().nullable(),
+    ends_on: z.string().nullable(),
+  }),
+  org: z.object({ name: z.string(), slug: z.string(), logo_url: z.string().nullable() }),
   divisions: z.array(PublicRegistrationDivision),
 });
 
@@ -759,6 +775,9 @@ export const PublicRegisterRequest = z.object({
     )
     .max(50)
     .default([]),
+  /** Honeypot (v3/05 §4): hidden on the real form; bots that fill it get a
+   *  generic rejection in the route before any work happens. */
+  website: z.string().max(200).optional(),
 });
 export type PublicRegisterRequest = z.infer<typeof PublicRegisterRequest>;
 
@@ -775,11 +794,14 @@ export const PublicRegisterResponse = z.object({
 export const PublicRegistrationStatus = z.object({
   id: Uuid,
   status: RegistrationStatus,
+  /** Quotable reference (v3/05 §3); null on pre-v2 rows. */
+  ref_code: z.string().nullable(),
   display_name: z.string(),
   division_name: z.string(),
   competition_name: z.string(),
   competition_slug: z.string(),
   org_slug: z.string(),
+  org_name: z.string(),
   starts_on: z.string().nullable(),
   ends_on: z.string().nullable(),
   fee_cents: z.number().int(),

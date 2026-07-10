@@ -8,6 +8,7 @@ import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
 import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { hasFeature } from "@/lib/entitlements";
+import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import type { AuthCtx } from "@/server/api-v1/auth";
 
@@ -69,13 +70,25 @@ export async function buildDivisionSlides(
   divisionId: string,
   divisionName: string,
 ): Promise<Slide[]> {
-  const [stages, fixtures, entrants, logos] = await Promise.all([
+  const [stages, fixtures, entrants, logos, priv] = await Promise.all([
     listStages(auth, divisionId),
     listDivisionFixtures(auth, divisionId),
     listEntrants(auth, divisionId),
     listEntrantLogoUrls(auth, divisionId),
+    withTenant(auth.orgId, (tx) =>
+      tx<{ youth: boolean; player_name_display: string | null }[]>`
+        select youth, player_name_display from divisions where id = ${divisionId}`,
+    ),
   ]);
-  const names = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
+  // Slideshow renders on venue screens — a public surface for name-display
+  // purposes (v3/11 gap 8). Team names pass through; person names mask.
+  const mode = resolveNameDisplay(priv[0]?.player_name_display ?? null, priv[0]?.youth ?? false);
+  const names = Object.fromEntries(
+    entrants.map((e) => [
+      e.id,
+      e.kind === "team" ? e.display_name : maskDisplayName(e.display_name, mode),
+    ]),
+  );
   const slides: Slide[] = [];
 
   // ── Standings — one slide per table stage (per pool when pooled) ──
