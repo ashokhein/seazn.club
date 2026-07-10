@@ -35,6 +35,11 @@ const nextConfig = {
   // exports); bundling it breaks that path resolution, so load it — and
   // exceljs, likewise native-ish — from node_modules on the server.
   serverExternalPackages: ["pdfkit", "exceljs"],
+  // Email HTML templates are read from disk at runtime (lib/email-templates/
+  // compose.ts) — make sure they land in the standalone trace for every route.
+  outputFileTracingIncludes: {
+    "/*": ["src/lib/email-templates/html/**/*"],
+  },
   // PostHog reverse proxy: front analytics through our own origin so
   // ad-blockers don't drop events. Client posts to /ingest (see
   // instrumentation-client). skipTrailingSlashRedirect keeps PostHog's
