@@ -42,6 +42,9 @@ test("carrom fixture scores board-by-board through its own pad", async ({ page, 
   // The carrom pad renders (not the generic score-entry pad).
   await expect(page.getByText("Board won by")).toBeVisible({ timeout: 20_000 });
 
+  // Boards only score once the match is live (module phase gate).
+  await page.getByRole("button", { name: "Start match" }).click();
+
   // Record one board: Meena wins, 4 coins left, queen covered by Meena.
   await page.getByRole("button", { name: "Board won by Meena" }).click();
   await page.getByLabel(/Opponent's coins left/).fill("4");
