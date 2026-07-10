@@ -115,7 +115,7 @@ export default async function BillingPage({
 
         {/* Current plan */}
         <section className="card mb-6 p-5">
-          <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-400">
+          <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
             Current plan
           </h2>
           <div className="flex items-center justify-between gap-4">
@@ -157,7 +157,7 @@ export default async function BillingPage({
 
         {/* Usage */}
         <section className="card mb-6 p-5">
-          <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-400">
+          <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
             Usage
           </h2>
           <div className="space-y-3">
@@ -183,10 +183,11 @@ export default async function BillingPage({
         {/* Upgrade / plan comparison */}
         {!isPro && isOwner && (
           <section className="card p-5">
-            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-400">
+            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
               Upgrade to Pro
             </h2>
-            <div className="mb-5 grid grid-cols-2 gap-3 text-sm">
+            {/* Stacks under `xs` — two 160px columns don't fit a 375px phone. */}
+            <div className="mb-5 grid gap-3 text-sm xs:grid-cols-2">
               <div className="rounded-xl border border-slate-200 p-4">
                 <p className="mb-1 font-semibold text-slate-700">Community</p>
                 <p className="text-2xl font-bold text-slate-800">
@@ -219,7 +220,7 @@ export default async function BillingPage({
                 </ul>
               </div>
             </div>
-            <p className="mb-4 text-xs text-slate-400">
+            <p className="mb-4 text-xs text-slate-500">
               14-day free trial · no card required · cancel anytime
             </p>
             <div className="flex flex-wrap gap-3">
@@ -251,7 +252,7 @@ function UsageRow({
       <div className="flex justify-between text-sm">
         <span className="text-slate-600">
           {label}
-          {note && <span className="ml-1 text-xs text-slate-400">({note})</span>}
+          {note && <span className="ml-1 text-xs text-slate-500">({note})</span>}
         </span>
         <span className="font-medium text-slate-800">
           {current !== null ? `${current} / ` : ""}

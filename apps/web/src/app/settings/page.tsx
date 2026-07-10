@@ -49,8 +49,8 @@ function SectionHeader({ icon: Icon, children, action }: {
 function SubSection({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
   return (
     <div className="mb-2 flex items-center gap-1.5">
-      <Icon className="h-3.5 w-3.5 text-slate-400" strokeWidth={1.75} />
-      <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">{label}</p>
+      <Icon className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.75} />
+      <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
     </div>
   );
 }
@@ -97,7 +97,8 @@ export default async function SettingsPage({
   const canBrand =
     tab === "organization" ? await hasFeature(active.id, "branding") : false;
 
-  // Platform API tab (doc 10 §1): api.access = Pro, api.write = Business.
+  // Platform API tab (doc 10 §1): api.access = Pro; api.write sits above Pro
+  // (hidden plan key — v3/03 §6 scrub).
   let hasApiAccess = false;
   let hasApiWrite = false;
   if (tab === "api") {
@@ -135,29 +136,30 @@ export default async function SettingsPage({
   return (
     <>
       <Nav />
-      <div className="mx-auto max-w-5xl px-4 py-8">
-        <div className="flex gap-8">
+      <div className="mx-auto max-w-5xl px-4 py-4 md:py-8">
+        <div className="flex flex-col gap-4 md:flex-row md:gap-8">
 
-          {/* ── Left sidebar ── */}
-          <aside className="w-44 shrink-0">
-            <p className="mb-3 px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+          {/* ── Sidebar on desktop; sticky scrollable tab row on phones
+                 (v3/02 §3.1 — no more desktop-width rows in one long scroll). ── */}
+          <aside className="w-full md:w-44 md:shrink-0">
+            <p className="mb-3 hidden px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 md:block">
               Settings
             </p>
-            <nav className="space-y-0.5">
+            <nav className="scroll-x scroll-x-fade sticky top-0 z-30 -mx-4 flex gap-1 whitespace-nowrap bg-[var(--background)]/90 px-4 py-2 backdrop-blur md:static md:z-auto md:mx-0 md:block md:space-y-0.5 md:bg-transparent md:p-0 md:backdrop-blur-none">
               {NAV_ITEMS.map(({ tab: t, label, icon: Icon }) => {
                 const active = tab === t;
                 return (
                   <Link
                     key={t}
                     href={`/settings?tab=${t}`}
-                    className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
+                    className={`flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
                       active
                         ? "bg-purple-100 font-medium text-purple-800"
                         : "text-slate-600 hover:bg-purple-50 hover:text-purple-700"
                     }`}
                   >
                     <Icon
-                      className={`h-4 w-4 shrink-0 ${active ? "text-purple-600" : "text-slate-400"}`}
+                      className={`h-4 w-4 shrink-0 ${active ? "text-purple-600" : "text-slate-500"}`}
                       strokeWidth={1.75}
                     />
                     {label}
@@ -167,16 +169,16 @@ export default async function SettingsPage({
               {/* Plan & billing is its own route (owns Stripe reconciliation). */}
               <Link
                 href={BILLING_NAV.href}
-                className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
+                className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
               >
-                <BILLING_NAV.icon className="h-4 w-4 shrink-0 text-slate-400" strokeWidth={1.75} />
+                <BILLING_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
                 {BILLING_NAV.label}
               </Link>
             </nav>
-            <div className="my-4 border-t border-purple-100" />
+            <div className="my-4 hidden border-t border-purple-100 md:block" />
             <Link
               href="/dashboard"
-              className="block rounded-lg px-3 py-2 text-sm text-slate-400 transition hover:bg-slate-50 hover:text-slate-600"
+              className="hidden rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-50 hover:text-slate-600 md:block"
             >
               ← Dashboard
             </Link>
@@ -196,7 +198,7 @@ export default async function SettingsPage({
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-semibold text-slate-800">{active.name}</p>
-                    <p className="truncate font-mono text-xs text-purple-400">{active.slug}</p>
+                    <p className="truncate font-mono text-xs text-purple-600">{active.slug}</p>
                   </div>
                   <span className={`badge ${ROLE_BADGE[active.role]}`}>{active.role}</span>
                 </div>
@@ -221,7 +223,7 @@ export default async function SettingsPage({
                         }
                       />
                     ) : (
-                      <p className="flex items-center gap-2 text-sm text-slate-400">
+                      <p className="flex items-center gap-2 text-sm text-slate-500">
                         <PlanBadge feature="branding" />
                         Org logo requires{" "}
                         <Link href="/settings/billing" className="text-purple-600 underline">
@@ -238,7 +240,7 @@ export default async function SettingsPage({
                     {canBrand ? (
                       <OrgBrandColor orgId={active.id} initialBranding={active.branding} />
                     ) : (
-                      <p className="flex items-center gap-2 text-sm text-slate-400">
+                      <p className="flex items-center gap-2 text-sm text-slate-500">
                         <PlanBadge feature="branding" />
                         Brand color requires{" "}
                         <Link href="/settings/billing" className="text-purple-600 underline">
@@ -286,13 +288,13 @@ export default async function SettingsPage({
               <section className="card p-6">
                 <SectionHeader icon={KeyRound}>Platform API</SectionHeader>
                 {!canEdit ? (
-                  <p className="text-sm text-slate-400">
+                  <p className="text-sm text-slate-500">
                     Only owners and admins can manage API keys.
                   </p>
                 ) : hasApiAccess ? (
                   <ApiKeysPanel orgId={active.id} canWriteScope={hasApiWrite} />
                 ) : (
-                  <p className="flex items-center gap-2 text-sm text-slate-400">
+                  <p className="flex items-center gap-2 text-sm text-slate-500">
                     <PlanBadge feature="api.access" />
                     Platform API keys require{" "}
                     <Link href="/settings/billing" className="text-purple-600 underline">
@@ -327,7 +329,7 @@ export default async function SettingsPage({
                     Email: <span className="font-medium text-slate-700">{user.email}</span>
                   </p>
                   <p className="text-sm text-slate-500">
-                    Account ID: <span className="font-mono text-xs text-purple-400">{user.id}</span>
+                    Account ID: <span className="font-mono text-xs text-purple-600">{user.id}</span>
                   </p>
                 </section>
 
@@ -387,7 +389,7 @@ export default async function SettingsPage({
                             <div className="flex items-center justify-between">
                               <div>
                                 <p className="font-medium text-slate-800">{org.name}</p>
-                                <p className="text-xs text-slate-400 font-mono">{org.slug}</p>
+                                <p className="text-xs text-slate-500 font-mono">{org.slug}</p>
                               </div>
                               <span
                                 className={`badge text-xs ${
@@ -411,7 +413,7 @@ export default async function SettingsPage({
                               <LeaveOrgButton orgId={org.id} orgName={org.name} />
                             )}
                             {org.role === "owner" && members.length === 1 && (
-                              <p className="text-xs text-slate-400">
+                              <p className="text-xs text-slate-500">
                                 Sole owner — invite others before you can transfer or leave.
                               </p>
                             )}

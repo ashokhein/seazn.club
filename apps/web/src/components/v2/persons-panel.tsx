@@ -101,7 +101,7 @@ export function PersonsPanel({
         className="input max-w-xs"
       />
 
-      <section className="card overflow-hidden">
+      <section className="card scroll-x scroll-x-fade">
         <table className="table">
           <thead>
             <tr>

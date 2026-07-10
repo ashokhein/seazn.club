@@ -68,8 +68,11 @@ export async function Nav() {
         {user ? (
           <div className="flex items-center gap-1">
             <nav className="flex items-center gap-0.5">
+              {/* Labels collapse to icons under `sm` — aria-label keeps the
+                  accessible name (axe link-name, v3/11 gap 11). */}
               <Link
                 href="/dashboard"
+                aria-label="Dashboard"
                 className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
               >
                 <LayoutDashboard className="h-4 w-4" strokeWidth={1.75} />
@@ -77,6 +80,7 @@ export async function Nav() {
               </Link>
               <Link
                 href="/directory"
+                aria-label="Directory"
                 className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
               >
                 <Users className="h-4 w-4" strokeWidth={1.75} />
@@ -84,6 +88,7 @@ export async function Nav() {
               </Link>
               <Link
                 href="/settings"
+                aria-label="Settings"
                 className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
               >
                 <Settings className="h-4 w-4" strokeWidth={1.75} />

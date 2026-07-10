@@ -1,5 +1,32 @@
 import { expect, type APIRequestContext, type Page } from "@playwright/test";
 
+/**
+ * v3/02 §4 viewport gate: the page-level rule is "no horizontal scroll,
+ * ever" — anything wide must scroll inside its own container. Run on every
+ * audited route in the mobile project.
+ */
+export async function expectNoHorizontalScroll(page: Page): Promise<void> {
+  const { scrollWidth, clientWidth } = await page.evaluate(() => ({
+    scrollWidth: document.documentElement.scrollWidth,
+    clientWidth: document.documentElement.clientWidth,
+  }));
+  expect(
+    scrollWidth,
+    `page scrolls horizontally (${scrollWidth}px content in ${clientWidth}px viewport)`,
+  ).toBeLessThanOrEqual(clientWidth);
+}
+
+/**
+ * Native dialogs are banned (v3/03 §3). Arm this before any delete-ish click:
+ * a window.confirm/alert firing anywhere fails the test.
+ */
+export function failOnNativeDialog(page: Page): void {
+  page.on("dialog", (dialog) => {
+    void dialog.dismiss();
+    throw new Error(`native ${dialog.type}() fired — use the ConfirmDialog provider`);
+  });
+}
+
 // Shared test tag so parallel/rerun state never collides.
 export const TAG = Date.now().toString(36);
 export const proEmail = () => `e2e-pro-${TAG}@example.com`;

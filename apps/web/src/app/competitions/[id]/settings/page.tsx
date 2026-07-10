@@ -8,7 +8,7 @@ import { listDivisions } from "@/server/usecases/divisions";
 import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { ArchivedDivisions } from "@/components/v2/archived-divisions";
 import { hasFeature } from "@/lib/entitlements";
-import { withTenant } from "@/lib/db";
+import { withTenant, sql } from "@/lib/db";
 
 /** State-derived status nudge: published → live → completed as matches progress. */
 function suggestStatus(
@@ -36,6 +36,23 @@ export default async function CompetitionSettingsPage({
     listDivisions(auth, id, { includeArchived: true }),
   ]);
   const archivedDivisions = allDivisions.filter((d) => d.archived_at !== null);
+
+  // Youth flag (v3/11 gap 8): any live division with a U-age eligibility rule
+  // raises the guardian-consent interstitial before the competition leaves
+  // Private. Org slug feeds the picker's share URL.
+  const [[youthRow], [orgRow]] = await Promise.all([
+    withTenant(auth.orgId, (tx) =>
+      tx<{ youth: boolean }[]>`
+        select exists(
+          select 1 from divisions d,
+                 jsonb_array_elements(d.eligibility) r
+          where d.competition_id = ${id} and d.archived_at is null
+            and r->>'kind' = 'age'
+            and coalesce((r->>'maxAgeAt')::int, 99) < 18
+        ) as youth`,
+    ),
+    sql<{ slug: string }[]>`select slug from organizations where id = ${auth.orgId}`,
+  ]);
 
   const [agg] = await withTenant(auth.orgId, (tx) =>
     tx<{ total: number; underway: number; done: number; scheduled: number }[]>`
@@ -88,6 +105,8 @@ export default async function CompetitionSettingsPage({
           themeBranding={themeBranding}
           orgBranding={org.branding}
           suggestedStatus={suggestedStatus}
+          sharePath={orgRow ? `/shared/${orgRow.slug}/${competition.slug}` : null}
+          hasYouthDivisions={youthRow?.youth ?? false}
           archivedCount={archivedDivisions.length}
           archivedPanel={
             /* v3/09 §4 — restore/purge surface for archived divisions. */

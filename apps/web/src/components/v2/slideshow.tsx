@@ -292,8 +292,12 @@ export function Slideshow({
                       <span className="font-display text-xl font-semibold uppercase text-court-muted">
                         R{f.round}
                       </span>
-                      <span className="min-w-0 truncate text-right font-display text-4xl font-semibold">
-                        {f.home}
+                      <span className="flex min-w-0 items-center justify-end gap-3 text-right font-display text-4xl font-semibold">
+                        <span className="min-w-0 truncate">{f.home}</span>
+                        {f.homeLogo && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={f.homeLogo} alt="" aria-hidden className="h-10 w-10 shrink-0 rounded-md bg-white/90 object-contain p-0.5" />
+                        )}
                       </span>
                       <span
                         className={`shrink-0 px-2 text-center font-display tabular-nums ${
@@ -304,8 +308,12 @@ export function Slideshow({
                       >
                         {f.line ?? "vs"}
                       </span>
-                      <span className="min-w-0 truncate font-display text-4xl font-semibold">
-                        {f.away}
+                      <span className="flex min-w-0 items-center gap-3 font-display text-4xl font-semibold">
+                        {f.awayLogo && (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={f.awayLogo} alt="" aria-hidden className="h-10 w-10 shrink-0 rounded-md bg-white/90 object-contain p-0.5" />
+                        )}
+                        <span className="min-w-0 truncate">{f.away}</span>
                       </span>
                       <span className="flex items-center justify-end gap-2 font-display text-lg font-semibold uppercase tracking-wide">
                         {live ? (

@@ -91,14 +91,16 @@ export function ArchivedDivisions({
         {divisions.map((d) => {
           const purgeReady = purgeReadyAt(d.archived_at).getTime() <= now;
           return (
-            <li key={d.id} className="flex items-center gap-3 py-2 text-sm">
+            // Wrapping row (v3/02 pattern 5): the action pair drops to its own
+            // full-width line on phones instead of pushing past the card edge.
+            <li key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-2 text-sm">
               <span className="min-w-0 flex-1 truncate text-slate-700">{d.name}</span>
               <span className="chip">{d.sport_key}</span>
-              <span className="shrink-0 text-xs text-slate-400">
+              <span className="shrink-0 text-xs text-slate-500">
                 archived {new Date(d.archived_at).toLocaleDateString()}
               </span>
               {canEdit && (
-                <>
+                <div className="flex w-full items-center justify-end gap-2 sm:w-auto sm:shrink-0">
                   <button
                     type="button"
                     className="btn btn-ghost text-xs"
@@ -120,7 +122,7 @@ export function ArchivedDivisions({
                   >
                     Purge…
                   </button>
-                </>
+                </div>
               )}
             </li>
           );

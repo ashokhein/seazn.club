@@ -46,7 +46,7 @@ export default function SubProcessorsPage() {
           and operate under equivalent data protection standards.
         </p>
 
-        <div className="overflow-hidden rounded-2xl border border-purple-100 bg-white">
+        <div className="scroll-x scroll-x-fade rounded-2xl border border-purple-100 bg-white">
           <table className="table w-full">
             <thead>
               <tr>

@@ -140,6 +140,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/teams", method: "get", summary: "List teams with their division entries", tag: "clubs" },
   { path: "/teams/{id}/squad", method: "get", summary: "Get a team's persistent squad", tag: "clubs", errors: [404] },
   { path: "/teams/{id}/squad", method: "put", summary: "Replace a team's squad (auto-seeds entrant rosters on enrollment)", tag: "clubs", request: S.SetTeamSquad, errors: [402, 404] },
+  { path: "/teams/{id}/logo", method: "post", summary: "Set a team badge: multipart `file` (v3/03 §5; overrides the club badge for this team)", tag: "clubs", errors: [404, 422] },
+  { path: "/teams/{id}/logo", method: "delete", summary: "Clear a team badge (falls back to the club badge)", tag: "clubs", errors: [404] },
   { path: "/clubs/logos", method: "post", summary: "Bulk logo assign: multipart `files` + `mapping` JSON + `assign_remaining` (Jul3/01 §5; Pro `logos.bulk` for >1 file)", tag: "clubs", response: z.array(S.LogoAssignment), errors: [402, 422] },
   { path: "/imports", method: "post", summary: "Upload a participants spreadsheet (multipart `file`) → dry-run { importId, plan }; writes nothing (Jul3/01 §6)", tag: "clubs", response: S.ImportPreview, status: 201, errors: [402, 413, 422] },
   { path: "/imports/{id}", method: "get", summary: "Re-preview a stored import against current state", tag: "clubs", response: S.ImportPreview },

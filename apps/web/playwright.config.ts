@@ -39,7 +39,7 @@ export default defineConfig({
     { name: "setup", testMatch: /auth\.setup\.ts/ },
     {
       name: "parallel",
-      testIgnore: SERIAL_SPECS,
+      testIgnore: [SERIAL_SPECS, /mobile\.spec\.ts/],
       use: { ...devices["Desktop Chrome"], storageState: AUTH_STATE },
       dependencies: ["setup"],
     },
@@ -48,6 +48,28 @@ export default defineConfig({
       testMatch: SERIAL_SPECS,
       fullyParallel: false,
       use: { ...devices["Desktop Chrome"], storageState: AUTH_STATE },
+      dependencies: ["setup"],
+    },
+    // v3/02 §4 viewport gate: mobile.spec.ts runs at both reference phones —
+    // iPhone SE (375×667) and iPhone 14 (390×844). Desktop projects ignore it.
+    {
+      name: "mobile-se",
+      testMatch: /mobile\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 375, height: 667 },
+        storageState: AUTH_STATE,
+      },
+      dependencies: ["setup"],
+    },
+    {
+      name: "mobile-14",
+      testMatch: /mobile\.spec\.ts/,
+      use: {
+        ...devices["Desktop Chrome"],
+        viewport: { width: 390, height: 844 },
+        storageState: AUTH_STATE,
+      },
       dependencies: ["setup"],
     },
   ],

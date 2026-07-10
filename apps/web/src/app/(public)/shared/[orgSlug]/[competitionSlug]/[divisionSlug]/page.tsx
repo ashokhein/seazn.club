@@ -7,7 +7,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { resolveModule } from "@/server/engine-db";
 import type { StandingsRow } from "@seazn/engine/competition";
-import { getPublicDivision } from "@/server/public-site/data";
+import { getPublicDivision, resolveLogoUrl } from "@/server/public-site/data";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { Tabs } from "@/components/public-site/tabs";
 import { Schedule } from "@/components/public-site/schedule";
@@ -54,6 +54,10 @@ export default async function DivisionHomePage({ params }: Props) {
   }
 
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
+  // Badge chips (v3/03 §5): team → club resolved by the view; URL resolved here.
+  const entrantLogos = Object.fromEntries(
+    entrants.map((e) => [e.id, resolveLogoUrl(e.team_display?.logo_path ?? null, null)]),
+  );
   const basePath = `/shared/${org.slug}/${competition.slug}/${division.slug}`;
   const poolName = new Map(pools.map((p) => [p.id, p.name]));
   const stageById = new Map(stages.map((s) => [s.id, s]));
@@ -145,6 +149,7 @@ export default async function DivisionHomePage({ params }: Props) {
                   metricSpecs={metricSpecs}
                   cascade={cascade}
                   entrantNames={entrantNames}
+                  entrantLogos={entrantLogos}
                   caption={
                     snap.pool_id
                       ? `${stage.name} — ${poolName.get(snap.pool_id) ?? "Pool"}`

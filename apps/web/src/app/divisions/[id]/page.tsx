@@ -2,13 +2,17 @@ export const dynamic = "force-dynamic";
 // Division console (PROMPT-15 task 1): entrants & rosters, fixture console
 // (per stage: generate/complete/schedule), standings with the cascade trace.
 import Link from "next/link";
+import { ClipboardList, MonitorPlay } from "lucide-react";
 import { Nav } from "@/components/nav";
+import { StatusChip, divisionChipState } from "@/components/ui/status-chip";
+import { routes } from "@/lib/routes";
 import { requireResourcePageAuth } from "@/server/page-auth";
 import { getDivision } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listStages, getStandings } from "@/server/usecases/stages";
 import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
+import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { resolveModule } from "@/server/engine-db";
 import { withTenant } from "@/lib/db";
 import { DivisionDangerZone } from "@/components/v2/division-danger-zone";
@@ -49,6 +53,9 @@ export default async function DivisionPage({
   ]);
   const sportModule = resolveModule(division.sport_key, division.module_version);
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
+  // Badge chips on standings rows (v3/03 §5) — resolved once per render.
+  const entrantLogos =
+    tab === "standings" ? await listEntrantLogoUrls(auth, id) : undefined;
   const cascade = division.tiebreakers ?? sportModule.defaultTiebreakers;
 
   // Standings per table stage (+ per pool), with pool labels.
@@ -83,7 +90,7 @@ export default async function DivisionPage({
       <Nav />
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6">
-          <p className="text-xs text-slate-400">
+          <p className="text-xs text-slate-500">
             <Link href="/dashboard" className="hover:text-purple-600">
               Competitions
             </Link>{" "}
@@ -102,16 +109,26 @@ export default async function DivisionPage({
             <span className="chip">
               {division.sport_key} · {division.variant_key}
             </span>
-            <span className={`badge ${divisionStatusStyle(division.status)}`}>
-              {division.status}
-            </span>
-            {frozen && <span className="badge bg-sky-100 text-sky-700">read-only</span>}
+            <StatusChip state={divisionChipState(division.status)} />
+            {frozen && <StatusChip state="frozen" />}
             <div className="flex-1" />
-            <Link href={`/slideshow/divisions/${id}`} target="_blank" className="btn btn-ghost">
-              Slideshow ↗
+            {/* Icon + label on desktop, icon-only under `sm` (v3/02 pattern 5). */}
+            <Link
+              href={routes.slideshowDivision(id)}
+              target="_blank"
+              aria-label="Slideshow (opens in a new tab)"
+              className="btn btn-ghost gap-1.5"
+            >
+              <MonitorPlay className="h-4 w-4" strokeWidth={1.75} />
+              <span className="hidden sm:inline">Slideshow ↗</span>
             </Link>
-            <Link href={`/divisions/${id}/registrations`} className="btn btn-ghost">
-              Registrations
+            <Link
+              href={routes.divisionRegistrations(id)}
+              aria-label="Registrations"
+              className="btn btn-ghost gap-1.5"
+            >
+              <ClipboardList className="h-4 w-4" strokeWidth={1.75} />
+              <span className="hidden sm:inline">Registrations</span>
             </Link>
             {editable && (
               <InviteScorer
@@ -124,7 +141,8 @@ export default async function DivisionPage({
           </div>
         </div>
 
-        <nav className="mb-6 flex gap-1 border-b border-slate-200">
+        {/* v3/02 §3.3: tabs scroll horizontally with an edge fade — never wrap. */}
+        <nav className="scroll-x scroll-x-fade mb-6 flex gap-1 whitespace-nowrap border-b border-slate-200">
           {TABS.map((t) => (
             <Link
               key={t}
@@ -198,12 +216,13 @@ export default async function DivisionPage({
                       metricSpecs={sportModule.metrics as MetricSpecLike[]}
                       cascade={cascade}
                       entrantNames={entrantNames}
+                      entrantLogos={entrantLogos}
                       caption={caption}
                     />
                   </div>
                 ))}
                 {/* Cascade trace (doc 05 §4): the exact tie-break order in force. */}
-                <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-400">
+                <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
                   Tie-break cascade:{" "}
                   {cascade.map((key, i) => (
                     <span key={key}>
@@ -232,11 +251,4 @@ export default async function DivisionPage({
       </main>
     </>
   );
-}
-
-function divisionStatusStyle(status: string): string {
-  if (status === "active") return "bg-amber-100 text-amber-700";
-  if (status === "scheduled") return "bg-sky-100 text-sky-700";
-  if (status === "completed") return "bg-emerald-100 text-emerald-700";
-  return "bg-slate-100 text-slate-600";
 }

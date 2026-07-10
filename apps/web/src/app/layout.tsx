@@ -4,6 +4,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AnalyticsBootstrap } from "@/components/analytics-bootstrap";
 import { CookieConsent } from "@/components/cookie-consent";
+import { ConfirmProvider } from "@/components/ui/confirm-provider";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({
@@ -54,7 +55,9 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full font-sans">
-        {children}
+        {/* Confirmation dialogs everywhere (v3/03 §3) — console and public
+            trees both have destructive actions. */}
+        <ConfirmProvider>{children}</ConfirmProvider>
         {/* Identifies the logged-in user for PostHog; a no-op for anon traffic.
             Suspense keeps its DB reads off the page's render-blocking path. */}
         <Suspense fallback={null}>

@@ -218,10 +218,68 @@ async function main() {
   // free org lifts the divisions quota; archive/restore on the Pro org.
   await divisionLifecycleSuite(admin, org2.id);
 
+  // --- v3 UI system (PROMPT-32): card grid render + visibility flip on both
+  // plans — pro on org2, free on a fresh community owner.
+  await uiSystemSuite(admin, org2.slug);
+
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
   await gapSuite(admin, org.id, org2.id);
+}
+
+/** Fetch a page as HTML with the session's cookies (raw() assumes JSON). */
+async function html(s: Session, path: string): Promise<{ status: number; body: string }> {
+  const res = await fetch(BASE + path, {
+    headers: Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {},
+  });
+  return { status: res.status, body: await res.text() };
+}
+
+/** PROMPT-32 smoke: match-day cards render server-side and the visibility
+ *  keys flip end-to-end (share page live + noindex) on pro AND free orgs. */
+async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> {
+  // Pro path (admin's active org is the pro org2).
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `UI Cards ${tag}`,
+      visibility: "private",
+    }),
+  );
+  const dash = await html(admin, "/dashboard");
+  check("dashboard renders card grid (pro)", dash.status === 200 && dash.body.includes("ecard"));
+  check("card carries status chip", dash.body.includes('data-chip="draft"'));
+
+  const flip = await v1(admin, `/api/v1/competitions/${comp.id}`, "PATCH", {
+    visibility: "unlisted",
+  });
+  check("visibility flips to Link only (pro)", flip.status === 200);
+  const shared = await html(newSession(), `/shared/${proOrgSlug}/${comp.slug}`);
+  check("link-only page serves (pro)", shared.status === 200);
+  check("link-only page keeps noindex", shared.body.includes("noindex"));
+
+  // Free path: fresh community owner, same flow.
+  const free = newSession();
+  const freeVer = await signIn(free, `ui_free_${tag}@example.com`);
+  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
+  const freeComp = v1data<{ id: string; slug: string }>(
+    await v1(free, "/api/v1/competitions", "POST", {
+      name: `UI Cards Free ${tag}`,
+      visibility: "private",
+    }),
+  );
+  const freeDash = await html(free, "/dashboard");
+  check(
+    "dashboard renders card grid (free)",
+    freeDash.status === 200 && freeDash.body.includes("ecard"),
+  );
+  const freeFlip = await v1(free, `/api/v1/competitions/${freeComp.id}`, "PATCH", {
+    visibility: "unlisted",
+  });
+  check("visibility flips to Link only (free)", freeFlip.status === 200);
+  const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
+  check("link-only page serves + noindex (free)", freeShared.status === 200 && freeShared.body.includes("noindex"));
 }
 
 // v1 responses: { ok, data | error: {code, message, …}, requestId }.
@@ -1042,6 +1100,7 @@ async function cleanup(tag: string): Promise<void> {
     `scorer2_${tag}@example.com`,
     `free_${tag}@example.com`,
     `walkin_${tag}@example.com`,
+    `ui_free_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {

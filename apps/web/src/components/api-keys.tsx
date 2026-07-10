@@ -3,6 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Check, KeyRound } from "lucide-react";
 import { PlanBadge } from "@/components/plan-badge";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { Tip } from "@/components/ui/tip";
+import { msg } from "@/lib/messages";
 
 interface ApiKeyRow {
   id: string;
@@ -45,9 +48,10 @@ export function ApiKeysPanel({
   canWriteScope,
 }: {
   orgId: string;
-  /** api.write entitlement (Business): allows minting write-scoped keys. */
+  /** api.write entitlement (above Pro): allows minting write-scoped keys. */
   canWriteScope: boolean;
 }) {
+  const confirmDialog = useConfirm();
   const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
@@ -90,9 +94,13 @@ export function ApiKeysPanel({
   }
 
   async function revoke(key: ApiKeyRow) {
-    if (!window.confirm(`Revoke "${key.name}"? Integrations using it will stop working immediately.`)) {
-      return;
-    }
+    const ok = await confirmDialog({
+      title: msg("confirm.revokeKey.title"),
+      body: msg("confirm.revokeKey.body", { name: key.name }),
+      confirmLabel: msg("confirm.revokeKey.label"),
+      tone: "danger",
+    });
+    if (!ok) return;
     setError(null);
     try {
       await v1(`/api/v1/orgs/${orgId}/api-keys/${key.id}`, { method: "DELETE" });
@@ -175,10 +183,11 @@ export function ApiKeysPanel({
             disabled={!canWriteScope}
           />
           Allow writes
+          <Tip id="api.key-scopes" />
           {!canWriteScope && (
             <>
               <PlanBadge feature="api.write" />
-              <span className="text-xs text-slate-400">(read-only on Pro)</span>
+              <span className="text-xs text-slate-500">(read-only on Pro)</span>
             </>
           )}
         </label>
@@ -186,9 +195,9 @@ export function ApiKeysPanel({
 
       {/* Active keys */}
       {keys === null ? (
-        <p className="text-sm text-slate-400">Loading…</p>
+        <p className="text-sm text-slate-500">Loading…</p>
       ) : active.length === 0 ? (
-        <p className="text-sm text-slate-400">
+        <p className="text-sm text-slate-500">
           No API keys yet. Create one to call the platform API with{" "}
           <code className="font-mono text-xs">Authorization: Bearer sc_…</code>
         </p>
@@ -199,7 +208,7 @@ export function ApiKeysPanel({
               <KeyRound className="h-4 w-4 shrink-0 text-purple-400" strokeWidth={1.75} />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium text-slate-800">{key.name}</p>
-                <p className="text-xs text-slate-400">
+                <p className="text-xs text-slate-500">
                   {key.scopes.join(" + ")} · created {fmt(key.created_at)} · last used{" "}
                   {fmt(key.last_used_at)}
                 </p>
@@ -217,7 +226,7 @@ export function ApiKeysPanel({
       )}
 
       {revoked.length > 0 && (
-        <details className="text-sm text-slate-400">
+        <details className="text-sm text-slate-500">
           <summary className="cursor-pointer">Revoked keys ({revoked.length})</summary>
           <ul className="mt-2 space-y-1">
             {revoked.map((key) => (

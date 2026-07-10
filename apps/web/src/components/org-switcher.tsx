@@ -82,7 +82,7 @@ export function OrgSwitcher({
                         Active
                       </span>
                     ) : busy === o.id ? (
-                      <span className="text-xs text-slate-400">Switching…</span>
+                      <span className="text-xs text-slate-500">Switching…</span>
                     ) : null}
                   </span>
                 </button>

@@ -68,6 +68,14 @@ Three logo levels exist conceptually; only org + club exist in data (club badge 
 `team_display_v` shipped in Jul3/01). **Add `teams.logo_url`** (upload path mirrors club
 logos; falls back club → org monogram → initials avatar).
 
+> **Implementation note (PROMPT-32, 2026-07-10):** no new migration was needed —
+> `teams.logo_path` has existed since V206 and `team_display_v` already resolves
+> team → club. What shipped: `POST/DELETE /api/v1/teams/{id}/logo` (content-hash
+> upload mirroring club badges), the `<EntityLogo>` chain component, badges on
+> console + public standings rows, slideshow fixture rows (both sides on the
+> matchup surface), and per-team upload in the club detail. XLSX/PDF row chips
+> were not added — exports already carry branded logos via Jul3/06's pipeline.
+
 | Surface | Org logo | Club logo | Team logo |
 |---|---|---|---|
 | Console header / org switcher | ✅ 24px | — | — |

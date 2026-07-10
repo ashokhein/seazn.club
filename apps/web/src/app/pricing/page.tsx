@@ -129,7 +129,7 @@ export default function PricingPage() {
           </div>
 
           {/* Feature comparison table */}
-          <div className="mt-12 overflow-hidden rounded-2xl border border-purple-100 bg-white">
+          <div className="scroll-x scroll-x-fade mt-12 rounded-2xl border border-purple-100 bg-white">
             <table className="table w-full">
               <thead>
                 <tr>

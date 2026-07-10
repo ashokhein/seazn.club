@@ -4,10 +4,13 @@ import "server-only";
 // team" flow. Each team carries a persistent squad (team_members) managed in the
 // club directory, used to auto-seed an entrant's roster on enrollment.
 // Reads are ungated; create/edit (Pro club hierarchy) require clubs.hierarchy.
+import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
+import { supabaseAdmin } from "@/lib/supabase-admin";
+import { publicStorageUrl } from "@/lib/supabase-storage";
 import type { z } from "zod";
 import type { EntrantMemberInput } from "@/server/api-v1/schemas";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -77,6 +80,70 @@ export async function createTeam(
       returning id, name, short_name, club_id`;
     return team!;
   });
+}
+
+// ---------------------------------------------------------------------------
+// Team logo (v3/03 §5): same pipeline as club badges — content-hash path in
+// the public assets bucket, one object per unique bytes. Single-file, so it
+// stays available on Community (like one-at-a-time club logos); teams fall
+// back to their club badge via team_display_v when unset.
+// ---------------------------------------------------------------------------
+
+const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+const LOGO_MIME = new Map([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/webp", "webp"],
+  ["image/svg+xml", "svg"],
+]);
+
+export async function setTeamLogo(
+  auth: AuthCtx,
+  teamId: string,
+  file: { contentType: string; bytes: Buffer },
+): Promise<{ logo_path: string }> {
+  const ext = LOGO_MIME.get(file.contentType);
+  if (!ext) throw new HttpError(422, `unsupported logo type '${file.contentType}'`);
+  if (file.bytes.length > LOGO_MAX_BYTES) throw new HttpError(422, "logo exceeds the 2 MB limit");
+  return withTenant(auth.orgId, async (tx) => {
+    const [team] = await tx`select 1 from teams where id = ${teamId}`;
+    if (!team) throw new HttpError(404, "team not found");
+    const hash = createHash("sha256").update(file.bytes).digest("hex").slice(0, 32);
+    const path = `orgs/${auth.orgId}/teams/${hash}.${ext}`;
+    const { error } = await supabaseAdmin()
+      .storage.from("assets")
+      .upload(path, file.bytes, { contentType: file.contentType, upsert: true });
+    if (error) throw new HttpError(502, `logo upload failed: ${error.message}`);
+    await tx`update teams set logo_path = ${path} where id = ${teamId}`;
+    return { logo_path: path };
+  });
+}
+
+export async function removeTeamLogo(auth: AuthCtx, teamId: string): Promise<void> {
+  await withTenant(auth.orgId, async (tx) => {
+    const [team] = await tx`select 1 from teams where id = ${teamId}`;
+    if (!team) throw new HttpError(404, "team not found");
+    // Objects are content-hash shared across teams — clear the pointer only.
+    await tx`update teams set logo_path = null where id = ${teamId}`;
+  });
+}
+
+/** entrant_id → resolved badge URL for a division (team → club via
+ *  team_display_v; null = fall through to monogram/initials in EntityLogo). */
+export async function listEntrantLogoUrls(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<Record<string, string | null>> {
+  const rows = await withTenant(auth.orgId, (tx) =>
+    tx<{ entrant_id: string; logo_path: string | null }[]>`
+      select e.id as entrant_id, td.logo_path
+      from entrants e
+      left join team_display_v td on td.team_id = e.team_id and td.org_id = ${auth.orgId}
+      where e.division_id = ${divisionId}`,
+  );
+  return Object.fromEntries(
+    rows.map((r) => [r.entrant_id, r.logo_path ? publicStorageUrl(r.logo_path) : null]),
+  );
 }
 
 /** Load a team's persistent squad (in the CreateEntrant member shape, minus

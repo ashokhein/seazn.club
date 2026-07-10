@@ -22,16 +22,18 @@ export function Modal({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const maxW = size === "lg" ? "max-w-2xl" : "max-w-md";
+  const maxW = size === "lg" ? "sm:max-w-2xl" : "sm:max-w-md";
 
   return (
     <div className="modal-overlay" onClick={onClose}>
+      {/* Bottom sheet under `sm`, centered modal above (v3/02 pattern 3). */}
       <div
-        className={`flex max-h-[85vh] w-full ${maxW} flex-col rounded-2xl border border-purple-100 bg-white p-6 shadow-2xl`}
+        className={`flex max-h-[85vh] w-full ${maxW} flex-col rounded-t-2xl border border-purple-100 bg-white p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-2xl sm:rounded-2xl sm:pb-6`}
         role="dialog"
         aria-modal="true"
         onClick={(e) => e.stopPropagation()}
       >
+        <span className="sheet-handle" aria-hidden />
         <div className="mb-3 flex shrink-0 items-center justify-between">
           <h3 className="text-lg font-semibold text-purple-900">{title}</h3>
           <button

@@ -6,6 +6,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { msg } from "@/lib/messages";
 
 interface PersonLite {
   id: string;
@@ -54,6 +56,7 @@ export function ClubsPanel({
   canEdit: boolean;
 }) {
   const router = useRouter();
+  const confirmDialog = useConfirm();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -189,7 +192,7 @@ export function ClubsPanel({
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      <section className="card overflow-hidden">
+      <section className="card scroll-x scroll-x-fade">
         <table className="table">
           <thead>
             <tr>
@@ -232,8 +235,14 @@ export function ClubsPanel({
                       type="button"
                       className="text-sm text-red-600 hover:underline"
                       disabled={busy}
-                      onClick={() => {
-                        if (!confirm(`Delete ${c.name}? Its teams stay, badges fall back to none.`)) return;
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: msg("confirm.deleteClub.title"),
+                          body: msg("confirm.deleteClub.body", { name: c.name }),
+                          confirmLabel: msg("confirm.deleteClub.label"),
+                          tone: "danger",
+                        });
+                        if (!ok) return;
                         void run(() => apiV1(`/api/v1/clubs/${c.id}`, { method: "DELETE" }));
                       }}
                     >
@@ -265,10 +274,12 @@ export function ClubsPanel({
                 <TeamDetailRow
                   key={t.id}
                   team={t}
+                  storageBase={storageBase}
                   persons={persons}
                   canEdit={canEdit}
                   onError={setError}
                   onPaywall={setPaywallFeature}
+                  onLogoChanged={() => reloadDetail(detail.id)}
                 />
               ))}
             </ul>
@@ -403,19 +414,50 @@ function AddTeamForm({
 // One team in the club detail: its division entries + an expandable squad editor.
 function TeamDetailRow({
   team,
+  storageBase,
   persons,
   canEdit,
   onError,
   onPaywall,
+  onLogoChanged,
 }: {
-  team: { id: string; name: string; entries: { division_id: string; division_name: string }[] };
+  team: {
+    id: string;
+    name: string;
+    logo_path: string | null;
+    entries: { division_id: string; division_name: string }[];
+  };
+  storageBase: string;
   persons: PersonLite[];
   canEdit: boolean;
   onError: (msg: string) => void;
   onPaywall: (feature: string) => void;
+  onLogoChanged: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [squad, setSquad] = useState<SquadMember[] | null>(null);
+  const logoInputRef = useRef<HTMLInputElement>(null);
+  const [logoBusy, setLogoBusy] = useState(false);
+
+  // Team-level badge (v3/03 §5): overrides the club badge for this team only.
+  async function uploadLogo(file: File | undefined) {
+    if (!file) return;
+    setLogoBusy(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`/api/v1/teams/${team.id}/logo`, { method: "POST", body: form });
+      const payload = await res.json().catch(() => ({}));
+      if (!res.ok || payload?.ok === false) {
+        throw new Error(payload?.error?.message ?? `Upload failed (${res.status})`);
+      }
+      onLogoChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Logo upload failed");
+    } finally {
+      setLogoBusy(false);
+    }
+  }
 
   async function toggle() {
     const next = !open;
@@ -444,6 +486,15 @@ function TeamDetailRow({
         >
           ▸
         </span>
+        {team.logo_path ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`${storageBase}/${team.logo_path}`}
+            alt=""
+            aria-hidden
+            className="h-5 w-5 rounded object-contain"
+          />
+        ) : null}
         <span className="font-medium text-slate-800">{team.name}</span>
         {team.entries.map((e) => (
           <span key={e.division_id} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
@@ -451,6 +502,28 @@ function TeamDetailRow({
           </span>
         ))}
       </button>
+      {canEdit && (
+        <div className="flex items-center gap-2 px-2 pb-1 pl-6">
+          <button
+            type="button"
+            disabled={logoBusy}
+            onClick={() => logoInputRef.current?.click()}
+            className="text-xs text-purple-600 hover:underline disabled:opacity-50"
+          >
+            {logoBusy ? "Uploading…" : team.logo_path ? "Change badge" : "Set team badge"}
+          </button>
+          <input
+            ref={logoInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp,image/svg+xml"
+            className="hidden"
+            onChange={(e) => {
+              void uploadLogo(e.target.files?.[0]);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      )}
       {open && (
         <div className="px-2 pb-2 pl-6">
           {squad === null ? (

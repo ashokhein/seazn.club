@@ -27,6 +27,9 @@ jobs:
       - run: npm run typecheck --workspace apps/web
       - run: npm run typecheck --workspace packages/engine
       - run: npm run engine:boundary
+      # v3/03 §6: retired plan tier must never reappear in UI copy.
+      - name: Plan-scrub grep gate (PROMPT-32)
+        run: bash scripts/check-plan-scrub.sh
       - name: OpenAPI spec drift gate (PROMPT-11)
         run: |
           npm run openapi:gen

@@ -1,25 +1,18 @@
 export const dynamic = "force-dynamic";
-// Organiser home — competitions on the v2 engine (PROMPT-15 task 1).
+// Organiser home — competitions as match-day cards (v3/03 §2).
 import Link from "next/link";
 import { Trophy } from "lucide-react";
 import { Nav } from "@/components/nav";
 import { BillingBanner } from "@/components/billing-banner";
 import { requirePageAuth } from "@/server/page-auth";
 import { listCompetitions } from "@/server/usecases/competitions";
-
-const STATUS_STYLE: Record<string, string> = {
-  draft: "bg-slate-100 text-slate-600",
-  published: "bg-sky-100 text-sky-700",
-  live: "bg-amber-100 text-amber-700",
-  completed: "bg-emerald-100 text-emerald-700",
-  archived: "bg-slate-100 text-slate-400",
-};
-
-const VISIBILITY_STYLE: Record<string, string> = {
-  public: "bg-emerald-50 text-emerald-600",
-  unlisted: "bg-sky-50 text-sky-600",
-  private: "bg-slate-50 text-slate-500",
-};
+import { listCompetitionCardStats, nextLine } from "@/server/usecases/card-stats";
+import { EntityCard } from "@/components/ui/entity-card";
+import { CardMenu } from "@/components/ui/card-menu";
+import { ViewToggleContainer } from "@/components/ui/view-toggle";
+import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
+import { routes } from "@/lib/routes";
+import { msg } from "@/lib/messages";
 
 export default async function DashboardPage() {
   const { auth, org, canEdit } = await requirePageAuth();
@@ -33,6 +26,13 @@ export default async function DashboardPage() {
   }
 
   const { items: competitions } = await listCompetitions(auth, { cursor: null, limit: 100 });
+  const stats = await listCompetitionCardStats(auth);
+
+  // Live first, then Registration open, Draft, Completed (v3/03 §2);
+  // secondary = the query's recency order, kept by stable sort.
+  const sorted = competitions
+    .map((c) => ({ c, chip: competitionChipState(c.status) }))
+    .sort((a, b) => CHIP_SORT[a.chip] - CHIP_SORT[b.chip]);
 
   return (
     <>
@@ -58,7 +58,7 @@ export default async function DashboardPage() {
               Directory
             </Link>
             {canEdit && (
-              <Link href="/competitions/new" data-tour="new-competition" className="btn btn-primary">
+              <Link href={routes.competitionNew()} data-tour="new-competition" className="btn btn-primary">
                 + New Competition
               </Link>
             )}
@@ -73,55 +73,47 @@ export default async function DashboardPage() {
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-slate-800">
-                  No competitions yet
+                  {msg("card.empty.competitions")}
                 </h2>
-                <p className="mt-1 text-sm text-slate-500">
-                  Create your first competition, add a division for your sport,
-                  register entrants and you&apos;re live.
-                </p>
               </div>
-              <Link href="/competitions/new" className="btn btn-primary">
-                Create your first competition
+              <Link href={routes.competitionNew()} className="btn btn-primary">
+                {msg("card.empty.competitions.cta")}
               </Link>
             </div>
           ) : (
             <p className="text-sm text-slate-500">No competitions yet.</p>
           )
         ) : (
-          <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {competitions.map((c) => (
-              <li key={c.id}>
-                <Link
-                  href={`/competitions/${c.id}`}
-                  className="group block rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-purple-300 hover:shadow"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <span className="block truncate text-sm font-semibold text-slate-800 group-hover:text-purple-700">
-                      {c.name}
-                    </span>
-                    <span className={`badge shrink-0 ${STATUS_STYLE[c.status] ?? STATUS_STYLE.draft}`}>
-                      {c.frozen ? "frozen" : c.status}
-                    </span>
-                  </div>
-                  <p className="mt-1 line-clamp-2 text-xs text-slate-500">
-                    {c.description ?? "—"}
-                  </p>
-                  <div className="mt-3 flex items-center gap-2 text-[11px]">
-                    <span className={`badge ${VISIBILITY_STYLE[c.visibility] ?? VISIBILITY_STYLE.private}`}>
-                      {c.visibility}
-                    </span>
-                    <span className="font-mono text-slate-400">{c.slug}</span>
-                    {c.starts_on && (
-                      <span className="text-slate-400">
-                        {c.starts_on}
-                        {c.ends_on ? ` → ${c.ends_on}` : ""}
-                      </span>
-                    )}
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <ViewToggleContainer storageKey="seazn.view.competitions" toggle={competitions.length > 20}>
+            {sorted.map(({ c, chip }) => {
+              const s = stats.get(c.id);
+              return (
+                <EntityCard
+                  key={c.id}
+                  href={routes.competition(c.id)}
+                  name={c.name}
+                  chip={<StatusChip state={c.frozen ? "frozen" : chip} />}
+                  meta={
+                    s
+                      ? `${s.divisions} division${s.divisions === 1 ? "" : "s"} · ${s.entrants} entrant${s.entrants === 1 ? "" : "s"}`
+                      : null
+                  }
+                  next={s ? nextLine(s.next) : null}
+                  progress={s ? { played: s.played, total: s.total } : null}
+                  menu={
+                    <CardMenu
+                      name={c.name}
+                      items={[
+                        { label: "Schedule board", href: routes.competitionSchedule(c.id) },
+                        { label: "Settings", href: routes.competitionSettings(c.id) },
+                        { label: "Slideshow", href: routes.slideshowCompetition(c.id), external: true },
+                      ]}
+                    />
+                  }
+                />
+              );
+            })}
+          </ViewToggleContainer>
         )}
       </main>
     </>

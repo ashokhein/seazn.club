@@ -42,7 +42,7 @@ export function OrgPaymentInstructions({
   return (
     <label className="block">
       <span className="label">Cash / bank transfer instructions</span>
-      <p className="mb-2 text-xs text-slate-400">
+      <p className="mb-2 text-xs text-slate-500">
         Shown to registrants of paid divisions and included in their confirmation email.
         e.g. bank name, account number, sort code / IBAN, reference to use, or &ldquo;pay cash on
         the day&rdquo;.

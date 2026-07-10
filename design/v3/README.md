@@ -6,12 +6,21 @@ engine**: mobile, navigation, pricing/packaging, self-serve growth, documentatio
 handful of correctness fixes. Intake: the 9 Jul 2026 organiser/founder list (31 items,
 captured verbatim in [00-intake-backlog.md](00-intake-backlog.md)).
 
-> **Status: designed; PROMPT-38 implemented** (2026-07-10, branch
-> `feat/engine-fixes-prompt-38`) — badminton headline + set-end matrix, cricket
-> undo/status coherence + scoring error boundary, sim-replay v2 (matrix +
-> `sim-report.json` + CI profile), division delete/archive/restore. The rest are
-> designed, not implemented. Prompts numbered PROMPT-30…39 (continuing Jul3's
-> 21–29). Numbering of design docs is independent of `engine/` docs.
+> **Status: designed; PROMPT-38, PROMPT-32 and PROMPT-31 implemented.**
+> PROMPT-38 (2026-07-10, branch `feat/engine-fixes-prompt-38`) — badminton
+> headline + set-end matrix, cricket undo/status coherence + scoring error
+> boundary, sim-replay v2, division delete/archive/restore.
+> PROMPT-32 + PROMPT-31 (2026-07-10, branch `feat/v3-ui-prompt-32-31`) —
+> match-day card system (EntityCard/StatusChip/division hue), promise-based
+> ConfirmDialog provider (all 9 native `confirm()` sites replaced + ESLint
+> ban), Tips framework (12-tip registry), EntityLogo chain + team badges,
+> plan scrub + CI grep gate, visibility radio cards + youth interstitial,
+> `lib/messages.ts` copy layer, `lib/routes.ts` route builder, five mobile
+> patterns applied console-wide, Playwright `mobile-se`/`mobile-14` viewport
+> gate (no-h-scroll + axe serious/critical + Fast-3G LCP). Deviations noted
+> inline in docs 02/03. The rest are designed, not implemented. Prompts
+> numbered PROMPT-30…39 (continuing Jul3's 21–29). Numbering of design docs
+> is independent of `engine/` docs.
 
 ## Theme
 
