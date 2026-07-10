@@ -21,10 +21,14 @@ export function fireDivisionRevalidate(divisionId: string, competitionId?: strin
 }
 
 /** Org chrome changes (name, logo, brand color) show on every page of the
- *  org's public tree — bust the whole org tag. */
+ *  org's public tree — bust the whole org tag. `{ expire: 0 }`, NOT 'max':
+ *  'max' is stale-while-revalidate, so the organiser's very next look at
+ *  their public page would still show the old chrome (exactly the smoke
+ *  failure "pro org landing carries the org color"). Chrome edits are
+ *  read-your-own-writes; scoring pages keep SWR above. */
 export function fireOrgRevalidate(orgSlug: string): void {
   try {
-    revalidateTag(orgTag(orgSlug), "max");
+    revalidateTag(orgTag(orgSlug), { expire: 0 });
   } catch {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
