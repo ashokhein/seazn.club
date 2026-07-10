@@ -11,6 +11,8 @@ import { getCompetition } from "@/server/usecases/competitions";
 import { listStages, getStandings } from "@/server/usecases/stages";
 import { listDivisionFixtures } from "@/server/usecases/fixtures";
 import { listEntrants } from "@/server/usecases/entrants";
+import { getScheduleSettings } from "@/server/usecases/schedule";
+import { hasFeature } from "@/lib/entitlements";
 import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { resolveModule } from "@/server/engine-db";
 import { withTenant } from "@/lib/db";
@@ -49,11 +51,13 @@ export default async function DivisionPage({
   const { auth, canEdit } = page;
   const id = page.division.id;
   const division = await getDivision(auth, id);
-  const [competition, stages, fixtures, entrants] = await Promise.all([
+  const [competition, stages, fixtures, entrants, scheduleSettings, canExport] = await Promise.all([
     getCompetition(auth, division.competition_id),
     listStages(auth, id),
     listDivisionFixtures(auth, id),
     listEntrants(auth, id),
+    getScheduleSettings(auth, id),
+    hasFeature(auth.orgId, "exports"),
   ]);
   const sportModule = resolveModule(division.sport_key, division.module_version);
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
@@ -196,6 +200,8 @@ export default async function DivisionPage({
               fixtures={fixtures}
               entrantNames={entrantNames}
               canEdit={editable}
+              tz={scheduleSettings.tz}
+              canExport={canExport}
             />
           </>
         )}
