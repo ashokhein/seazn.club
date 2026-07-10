@@ -55,7 +55,7 @@ const divInput = (name: string) => ({
   name,
   sport_key: "generic",
   variant_key: "score",
-  config: {},
+  config: GENERIC_CONFIG,
   eligibility: [],
 });
 
