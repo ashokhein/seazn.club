@@ -25,6 +25,8 @@ interface CompetitionLite {
 
 const STATUSES = ["draft", "published", "live", "completed", "archived"];
 
+type SettingsTab = "general" | "branding" | "archived";
+
 const STATUS_HINT: Record<string, string> = {
   published: "A timetable is set — publish it?",
   live: "Matches are underway — mark it live?",
@@ -46,6 +48,8 @@ export function CompetitionSettings({
   themeBranding = false,
   orgBranding = null,
   suggestedStatus = null,
+  archivedPanel = null,
+  archivedCount = 0,
 }: {
   competition: CompetitionLite;
   canEdit: boolean;
@@ -56,8 +60,13 @@ export function CompetitionSettings({
   orgBranding?: unknown;
   /** State-derived nudge, e.g. "live" once matches are underway. */
   suggestedStatus?: string | null;
+  /** Rendered under the Archived tab (outside the settings form). */
+  archivedPanel?: React.ReactNode;
+  /** The Archived tab only shows when there is something to restore. */
+  archivedCount?: number;
 }) {
   const router = useRouter();
+  const [tab, setTab] = useState<SettingsTab>("general");
   const [form, setForm] = useState({
     name: competition.name,
     description: competition.description ?? "",
@@ -152,206 +161,261 @@ export function CompetitionSettings({
     }
   }
 
+  // One form, one save — tabs only organise the fields. Form state lives in
+  // `form`, so switching tabs never loses unsaved edits. The Archived panel is
+  // a separate surface (its own API calls), so it renders outside the form.
+  const tabs: { key: SettingsTab; label: string }[] = [
+    { key: "general", label: "General" },
+    ...(themeBranding ? [{ key: "branding" as const, label: "Branding" }] : []),
+    ...(archivedCount > 0
+      ? [{ key: "archived" as const, label: `Archived (${archivedCount})` }]
+      : []),
+  ];
+  // A refresh can remove the selected tab (last archived division restored,
+  // entitlement drop) — fall back to General instead of a blank panel.
+  const activeTab: SettingsTab = tabs.some((t) => t.key === tab) ? tab : "general";
+
   return (
-    <form onSubmit={save} className="card space-y-4 p-5">
-      <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-slate-700">Settings</h2>
-        {competition.frozen && (
-          <span className="badge bg-sky-100 text-sky-700">read-only (over quota)</span>
-        )}
+    <div>
+      <div
+        role="tablist"
+        aria-label="Competition settings"
+        className="mb-4 flex flex-wrap gap-1 border-b border-slate-200"
+      >
+        {tabs.map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            role="tab"
+            aria-selected={activeTab === t.key}
+            onClick={() => setTab(t.key)}
+            className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
+              activeTab === t.key
+                ? "border-purple-600 text-purple-700"
+                : "border-transparent text-slate-500 hover:text-slate-700"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
       </div>
 
-      <label className="block">
-        <span className="label">Name</span>
-        <input
-          required
-          disabled={readOnly}
-          value={form.name}
-          onChange={(e) => setForm({ ...form, name: e.target.value })}
-          className="input"
-        />
-      </label>
+      {activeTab === "archived" ? (
+        archivedPanel
+      ) : (
+        <form onSubmit={save} className="card space-y-4 p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-700">Settings</h2>
+            {competition.frozen && (
+              <span className="badge bg-sky-100 text-sky-700">read-only (over quota)</span>
+            )}
+          </div>
 
-      <label className="block">
-        <span className="label">Description</span>
-        <textarea
-          disabled={readOnly}
-          rows={3}
-          value={form.description}
-          onChange={(e) => setForm({ ...form, description: e.target.value })}
-          className="textarea"
-        />
-      </label>
+          {activeTab === "general" && (
+            <>
+              <label className="block">
+                <span className="label">Name</span>
+                <input
+                  required
+                  disabled={readOnly}
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="input"
+                />
+              </label>
 
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block">
-          <span className="label">Starts</span>
-          <input
-            type="date"
-            disabled={readOnly}
-            value={form.starts_on}
-            onChange={(e) => setForm({ ...form, starts_on: e.target.value })}
-            className="input"
-          />
-        </label>
-        <label className="block">
-          <span className="label">Ends</span>
-          <input
-            type="date"
-            disabled={readOnly}
-            value={form.ends_on}
-            onChange={(e) => setForm({ ...form, ends_on: e.target.value })}
-            className="input"
-          />
-        </label>
-      </div>
+              <label className="block">
+                <span className="label">Description</span>
+                <textarea
+                  disabled={readOnly}
+                  rows={3}
+                  value={form.description}
+                  onChange={(e) => setForm({ ...form, description: e.target.value })}
+                  className="textarea"
+                />
+              </label>
 
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block">
-          <span className="label">Visibility</span>
-          <select
-            disabled={readOnly}
-            value={form.visibility}
-            onChange={(e) => setForm({ ...form, visibility: e.target.value })}
-            className="select"
-          >
-            <option value="private">private</option>
-            <option value="unlisted">unlisted</option>
-            <option value="public">public</option>
-          </select>
-        </label>
-        <label className="block">
-          <span className="label">Status</span>
-          <select
-            disabled={!canEdit}
-            value={form.status}
-            onChange={(e) => setForm({ ...form, status: e.target.value })}
-            className="select"
-          >
-            {STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
-          {showSuggestion && (
-            <span className="mt-1.5 flex flex-wrap items-center gap-2 rounded-md bg-purple-50 px-2.5 py-1.5 text-xs text-purple-800">
-              {STATUS_HINT[suggestedStatus!] ?? `Looks like this should be “${suggestedStatus}”.`}
-              <button
-                type="button"
-                disabled={busy}
-                onClick={() => void applyStatus(suggestedStatus!)}
-                className="btn btn-primary px-2 py-0.5 text-xs"
-              >
-                Set to {suggestedStatus}
-              </button>
-            </span>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="label">Starts</span>
+                  <input
+                    type="date"
+                    disabled={readOnly}
+                    value={form.starts_on}
+                    onChange={(e) => setForm({ ...form, starts_on: e.target.value })}
+                    className="input"
+                  />
+                </label>
+                <label className="block">
+                  <span className="label">Ends</span>
+                  <input
+                    type="date"
+                    disabled={readOnly}
+                    value={form.ends_on}
+                    onChange={(e) => setForm({ ...form, ends_on: e.target.value })}
+                    className="input"
+                  />
+                </label>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <label className="block">
+                  <span className="label">Visibility</span>
+                  <select
+                    disabled={readOnly}
+                    value={form.visibility}
+                    onChange={(e) => setForm({ ...form, visibility: e.target.value })}
+                    className="select"
+                  >
+                    <option value="private">private</option>
+                    <option value="unlisted">unlisted</option>
+                    <option value="public">public</option>
+                  </select>
+                </label>
+                <label className="block">
+                  <span className="label">Status</span>
+                  <select
+                    disabled={!canEdit}
+                    value={form.status}
+                    onChange={(e) => setForm({ ...form, status: e.target.value })}
+                    className="select"
+                  >
+                    {STATUSES.map((s) => (
+                      <option key={s} value={s}>
+                        {s}
+                      </option>
+                    ))}
+                  </select>
+                  {showSuggestion && (
+                    <span className="mt-1.5 flex flex-wrap items-center gap-2 rounded-md bg-purple-50 px-2.5 py-1.5 text-xs text-purple-800">
+                      {STATUS_HINT[suggestedStatus!] ??
+                        `Looks like this should be “${suggestedStatus}”.`}
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => void applyStatus(suggestedStatus!)}
+                        className="btn btn-primary px-2 py-0.5 text-xs"
+                      >
+                        Set to {suggestedStatus}
+                      </button>
+                    </span>
+                  )}
+                </label>
+              </div>
+
+              {/* Showcase on seazn.club (doc 15 §1): explicit opt-in, public
+                  only — lives right under visibility, which gates it. */}
+              <fieldset className="space-y-3 rounded-lg border border-purple-100 bg-purple-50/50 p-3">
+                <label className="flex items-start gap-2">
+                  <input
+                    type="checkbox"
+                    disabled={readOnly || form.visibility !== "public"}
+                    checked={form.discoverable && form.visibility === "public"}
+                    onChange={(e) => setForm({ ...form, discoverable: e.target.checked })}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    <span className="text-sm font-semibold text-slate-700">
+                      Showcase on seazn.club
+                    </span>
+                    <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                      {SHOWCASE_CONSENT_COPY}
+                    </span>
+                  </span>
+                </label>
+                {form.visibility !== "public" && (
+                  <p className="text-xs text-amber-600">
+                    Set visibility to <b>public</b> to enable showcasing.
+                  </p>
+                )}
+                {form.discoverable && form.visibility === "public" && (
+                  <>
+                    <div className="grid grid-cols-2 gap-3">
+                      <label className="block">
+                        <span className="label">City (optional)</span>
+                        <input
+                          disabled={readOnly}
+                          value={form.city}
+                          onChange={(e) => setForm({ ...form, city: e.target.value })}
+                          className="input"
+                        />
+                      </label>
+                      <label className="block">
+                        <span className="label">Country (optional)</span>
+                        <input
+                          disabled={readOnly}
+                          value={form.country}
+                          onChange={(e) => setForm({ ...form, country: e.target.value })}
+                          className="input"
+                        />
+                      </label>
+                    </div>
+                    <label className="block">
+                      <span className="label">
+                        Tagline{" "}
+                        {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
+                      </span>
+                      <input
+                        disabled={readOnly || !discoveryBranding}
+                        value={form.tagline}
+                        onChange={(e) => setForm({ ...form, tagline: e.target.value })}
+                        placeholder={
+                          discoveryBranding ? "One line on your cards" : "Upgrade for card branding"
+                        }
+                        className="input"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="label">
+                        Hero image URL{" "}
+                        {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
+                      </span>
+                      <input
+                        disabled={readOnly || !discoveryBranding}
+                        value={form.hero_image_path}
+                        onChange={(e) => setForm({ ...form, hero_image_path: e.target.value })}
+                        className="input"
+                      />
+                    </label>
+                  </>
+                )}
+              </fieldset>
+
+              <p className="text-xs text-slate-400">
+                Slug: <span className="font-mono">{competition.slug}</span>
+              </p>
+            </>
           )}
-        </label>
-      </div>
 
-      {themeBranding && (
-        <div>
-          <span className="label">Brand color</span>
-          <p className="mb-2 text-xs text-slate-500">
-            Colors this competition&apos;s public pages and TV noticeboard.
-          </p>
-          <BrandColorPicker
-            value={form.brand_primary}
-            onSelect={(hex) => setForm({ ...form, brand_primary: hex })}
-            disabled={readOnly}
-            defaultLabel="Same as organisation"
-            defaultHex={publicBrandColor(orgBranding) ?? "#7c3aed"}
-          />
-        </div>
-      )}
-
-      {/* Showcase on seazn.club (doc 15 §1): explicit opt-in, public only. */}
-      <fieldset className="space-y-3 rounded-lg border border-purple-100 bg-purple-50/50 p-3">
-        <label className="flex items-start gap-2">
-          <input
-            type="checkbox"
-            disabled={readOnly || form.visibility !== "public"}
-            checked={form.discoverable && form.visibility === "public"}
-            onChange={(e) => setForm({ ...form, discoverable: e.target.checked })}
-            className="mt-0.5"
-          />
-          <span>
-            <span className="text-sm font-semibold text-slate-700">Showcase on seazn.club</span>
-            <span className="mt-1 block text-xs leading-relaxed text-slate-500">
-              {SHOWCASE_CONSENT_COPY}
-            </span>
-          </span>
-        </label>
-        {form.visibility !== "public" && (
-          <p className="text-xs text-amber-600">
-            Set visibility to <b>public</b> to enable showcasing.
-          </p>
-        )}
-        {form.discoverable && form.visibility === "public" && (
-          <>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="label">City (optional)</span>
-                <input
-                  disabled={readOnly}
-                  value={form.city}
-                  onChange={(e) => setForm({ ...form, city: e.target.value })}
-                  className="input"
-                />
-              </label>
-              <label className="block">
-                <span className="label">Country (optional)</span>
-                <input
-                  disabled={readOnly}
-                  value={form.country}
-                  onChange={(e) => setForm({ ...form, country: e.target.value })}
-                  className="input"
-                />
-              </label>
+          {activeTab === "branding" && themeBranding && (
+            <div>
+              <span className="label">Brand color</span>
+              <p className="mb-2 text-xs text-slate-500">
+                Colors this competition&apos;s public pages and TV noticeboard.
+              </p>
+              <BrandColorPicker
+                value={form.brand_primary}
+                onSelect={(hex) => setForm({ ...form, brand_primary: hex })}
+                disabled={readOnly}
+                defaultLabel="Same as organisation"
+                defaultHex={publicBrandColor(orgBranding) ?? "#7c3aed"}
+              />
             </div>
-            <label className="block">
-              <span className="label">
-                Tagline {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
-              </span>
-              <input
-                disabled={readOnly || !discoveryBranding}
-                value={form.tagline}
-                onChange={(e) => setForm({ ...form, tagline: e.target.value })}
-                placeholder={discoveryBranding ? "One line on your cards" : "Upgrade for card branding"}
-                className="input"
-              />
-            </label>
-            <label className="block">
-              <span className="label">
-                Hero image URL {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
-              </span>
-              <input
-                disabled={readOnly || !discoveryBranding}
-                value={form.hero_image_path}
-                onChange={(e) => setForm({ ...form, hero_image_path: e.target.value })}
-                className="input"
-              />
-            </label>
-          </>
-        )}
-      </fieldset>
+          )}
 
-      <p className="text-xs text-slate-400">
-        Slug: <span className="font-mono">{competition.slug}</span>
-      </p>
+          {paywallFeature && <UpgradeGate feature={paywallFeature} />}
+          {error && (
+            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+          )}
+          {saved && <p className="text-sm text-emerald-600">Saved.</p>}
 
-      {paywallFeature && <UpgradeGate feature={paywallFeature} />}
-      {error && (
-        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+          {canEdit && (
+            <button type="submit" disabled={busy} className="btn btn-primary w-full">
+              {busy ? "Saving…" : "Save settings"}
+            </button>
+          )}
+        </form>
       )}
-      {saved && <p className="text-sm text-emerald-600">Saved.</p>}
-
-      {canEdit && (
-        <button type="submit" disabled={busy} className="btn btn-primary w-full">
-          {busy ? "Saving…" : "Save settings"}
-        </button>
-      )}
-    </form>
+    </div>
   );
 }
