@@ -1,70 +1,39 @@
 "use client";
 
-// Drag-and-drop schedule board (doc 12 §2, PROMPT-17): grid of courts × time
-// (day/week views), fixture cards with TBD feed labels and division colours,
-// optimistic drag + debounced re-validation, violation badges, pin/lock,
-// re-flow remaining, bulk shift/swap, realtime refresh on division:{id}, and
-// a keyboard-accessible move menu (select a card → move via controls).
+// Schedule board v3 (v3/04 §2, PROMPT-33): courts × time grid with day tabs,
+// division hue bars + short-code chips, legend-as-filter with URL state,
+// Board / Agenda / By-division density modes (per-user persist, Agenda is the
+// mobile default), a conflicts side panel, a docked unscheduled tray with one
+// pick-then-place mechanism for mouse, touch AND keyboard, and optimistic-
+// concurrency on every write (v3/11 gap 10). Week view (cross-day drag) and
+// the pin/undo affordances predate v3 and stay.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { UpgradeGate } from "@/components/upgrade-gate";
-import { dayKey, daySlots, toLocalInput, type FeedLabelPair } from "@/lib/schedule-board";
+import { msg } from "@/lib/messages";
+import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
+import { BoardAgenda } from "./board/board-agenda";
+import { BoardGrid } from "./board/board-grid";
+import { BoardLanes } from "./board/board-lanes";
+import { BoardLegend } from "./board/board-legend";
+import { BoardTray } from "./board/board-tray";
+import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
+import { MovePanel } from "./board/move-panel";
+import { SettingsPanel } from "./board/settings-panel";
+import {
+  cardTitle,
+  DENSITY_STORAGE_KEY,
+  type BoardConfig,
+  type BoardDivision,
+  type BoardFixture,
+  type BoardStage,
+  type Density,
+} from "./board/types";
+import { useBoardActions } from "./board/use-board-actions";
+
+export type { BoardConfig, BoardConflict, BoardDivision, BoardFixture, BoardStage } from "./board/types";
 
 const MIN = 60_000;
-
-export interface BoardDivision {
-  id: string;
-  name: string;
-  status: string;
-  color: string;
-}
-
-export interface BoardStage {
-  id: string;
-  division_id: string;
-  seq: number;
-  kind: string;
-  name: string;
-  status: string;
-}
-
-export interface BoardFixture {
-  id: string;
-  stage_id: string;
-  division_id: string;
-  round_no: number;
-  seq_in_round: number;
-  home_entrant_id: string | null;
-  away_entrant_id: string | null;
-  /** ISO string over the wire, Date when it crosses straight from an RSC. */
-  scheduled_at: string | Date | null;
-  venue: string | null;
-  court_label: string | null;
-  status: string;
-  schedule_source: string;
-  schedule_locked: boolean;
-  outcome: unknown;
-}
-
-export interface BoardConfig {
-  startAt?: string | null;
-  endAt?: string | null;
-  matchMinutes: number;
-  gapMinutes: number;
-  courts: string[];
-  perEntrantMinRest: number;
-  blackouts: { court?: string; from: string; to: string }[];
-  sessionWindows: { from: string; to: string }[];
-  roundMinutes?: number | null;
-}
-
-export interface BoardConflict {
-  fixture_id: string;
-  code: string;
-  blocking: boolean;
-  detail?: string;
-}
 
 interface Props {
   divisions: BoardDivision[];
@@ -81,27 +50,6 @@ interface Props {
   /** Sport-appropriate playing-area word, capitalised (e.g. "Pitch"). */
   venueCap?: string;
 }
-
-const CONFLICT_LABEL: Record<string, string> = {
-  "conflict.court": "court clash",
-  "warn.rest": "rest",
-  "warn.person_overlap": "person overlap",
-  "warn.order": "plays before feeder",
-  "warn.blackout": "blackout",
-  "warn.no_slot": "no slot",
-};
-
-// Plain-English explanations shown to organisers (no codes, no UUIDs).
-const CONFLICT_HELP: Record<string, string> = {
-  "conflict.court": "Two matches would use the same court at the same time.",
-  "warn.rest": "There isn't enough rest between matches for a team or player.",
-  "warn.person_overlap": "Someone would be playing in two matches at once.",
-  "warn.order": "This match feeds a later one, so it can't start before the earlier match finishes.",
-  "warn.blackout": "This time falls inside a blackout period.",
-  "warn.no_slot": "There's no free slot for this match at that time.",
-};
-
-type Override = { scheduled_at: string | null; court_label: string | null; schedule_locked: boolean };
 
 /** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
 function addDaysKey(key: string, n: number): string {
@@ -124,52 +72,71 @@ export function ScheduleBoard({
   venueCap = "Court",
 }: Props) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const single = divisions.length === 1 ? divisions[0] : null;
   const cfg = settings.config;
-  const [overrides, setOverrides] = useState<Record<string, Override>>({});
-  const [dragDay, setDragDay] = useState<string | null>(null); // week-view drop target
-  const [conflicts, setConflicts] = useState<BoardConflict[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [paywall, setPaywall] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null); // keyboard move target
-  const [view, setView] = useState<"day" | "week">("day");
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const multi = divisions.length > 1;
 
-  // Server props are the source of truth; optimistic overrides melt away on
-  // each refresh (last-write-wins per fixture, doc 12 §6). Render-time state
-  // adjustment (the React "derive from props" pattern) — no effect cascade.
-  const [seenFixtures, setSeenFixtures] = useState(fixtures);
-  if (seenFixtures !== fixtures) {
-    setSeenFixtures(fixtures);
-    setOverrides({});
-  }
+  // ------------------------------------------------- division filter (?d=)
+  const selectedSlugs = useMemo(() => {
+    const raw = searchParams.get("d");
+    if (!raw) return new Set<string>();
+    const known = new Set(divisions.map((d) => d.slug));
+    return new Set(raw.split(",").filter((s) => known.has(s)));
+  }, [searchParams, divisions]);
 
-  const board: BoardFixture[] = useMemo(
-    () =>
-      fixtures.map((f) => {
-        const o = overrides[f.id];
-        return o ? { ...f, ...o } : f;
-      }),
-    [fixtures, overrides],
+  const setFilter = useCallback(
+    (slugs: Set<string>) => {
+      const qs = new URLSearchParams(searchParams.toString());
+      if (slugs.size === 0) qs.delete("d");
+      else qs.set("d", [...slugs].sort().join(","));
+      router.replace(`${pathname}${qs.size > 0 ? `?${qs}` : ""}`, { scroll: false });
+    },
+    [pathname, router, searchParams],
   );
 
-  const colorOf = useMemo(
-    () => Object.fromEntries(divisions.map((d) => [d.id, d.color])),
+  const visibleDivisions = useMemo(
+    () =>
+      selectedSlugs.size === 0
+        ? divisions
+        : divisions.filter((d) => selectedSlugs.has(d.slug)),
+    [divisions, selectedSlugs],
+  );
+  const visibleIds = useMemo(() => new Set(visibleDivisions.map((d) => d.id)), [visibleDivisions]);
+  const divisionNames = useMemo(
+    () => Object.fromEntries(divisions.map((d) => [d.id, d.name])),
     [divisions],
   );
-  const conflictsByFixture = useMemo(() => {
-    const map: Record<string, BoardConflict[]> = {};
-    for (const c of conflicts) (map[c.fixture_id] ??= []).push(c);
-    return map;
-  }, [conflicts]);
 
-  const scheduled = board.filter((f) => f.scheduled_at !== null && f.court_label !== null);
-  const unscheduled = board.filter(
-    (f) => (f.scheduled_at === null || f.court_label === null) && f.status === "scheduled",
+  // ------------------------------------------------------------- actions
+  const actions = useBoardActions(divisions, fixtures, entrantNames, feedLabels, canEdit);
+  const board = useMemo(
+    () => actions.board.filter((f) => visibleIds.has(f.division_id)),
+    [actions.board, visibleIds],
   );
 
+  const scheduled = board.filter((f) => f.scheduled_at !== null);
+  const unscheduled = board.filter((f) => f.scheduled_at === null && f.status === "scheduled");
+
+  // ------------------------------------------------------- density modes
+  const [density, setDensity] = useState<Density>("board");
+  const [view, setView] = useState<"day" | "week">("day");
+  useEffect(() => {
+    const saved = window.localStorage.getItem(DENSITY_STORAGE_KEY) as Density | null;
+    if (saved === "board" || saved === "agenda" || saved === "lanes") {
+      setDensity(saved);
+    } else if (window.matchMedia("(max-width: 640px)").matches || divisions.length >= 8) {
+      // Agenda is the mobile default and the ≥8-division fallback (v3/04 §2).
+      setDensity("agenda");
+    }
+  }, [divisions.length]);
+  const pickDensity = useCallback((d: Density) => {
+    setDensity(d);
+    window.localStorage.setItem(DENSITY_STORAGE_KEY, d);
+  }, []);
+
+  // ------------------------------------------------------------ day tabs
   const days = useMemo(() => {
     const set = new Set(scheduled.map((f) => dayKey(f.scheduled_at as string)));
     if (set.size === 0 && cfg.startAt) set.add(dayKey(cfg.startAt));
@@ -177,13 +144,10 @@ export function ScheduleBoard({
     return [...set].sort();
   }, [scheduled, cfg.startAt]);
   const [day, setDay] = useState<string>(days[0] as string);
-  // Only guard against an empty value — the day may be any date (arrows can
-  // step onto days that have no fixtures yet).
   if (!day) setDay(days[0] as string);
 
-  // Week view spans the division's own schedule dates first (set at creation or
-  // on this board), then the competition dates, then the scheduled fixtures'
-  // range — always at least four days so cards can be dragged across days.
+  // Week view spans the division's own schedule dates first, then the
+  // competition dates, then the scheduled fixtures' range — min four days.
   const weekDays = useMemo(() => {
     const keys = scheduled.map((f) => dayKey(f.scheduled_at as string)).sort();
     const start =
@@ -197,7 +161,6 @@ export function ScheduleBoard({
       keys[keys.length - 1] ?? null,
     ].filter((k): k is string => k !== null && k >= start).sort();
     let end = candidatesEnd[candidatesEnd.length - 1] ?? start;
-    // Guarantee a minimum span of 4 days (start + 3).
     const minEnd = addDaysKey(start, 3);
     if (end < minEnd) end = minEnd;
     const out: string[] = [];
@@ -214,260 +177,85 @@ export function ScheduleBoard({
     return list;
   }, [cfg.courts, scheduled]);
 
-  // ------------------------------------------------------------------ actions
-
-  const runValidate = useCallback(async () => {
-    try {
-      const results = await Promise.all(
-        divisions.map((d) =>
-          apiV1<{ conflicts: BoardConflict[] }>(`/api/v1/divisions/${d.id}/schedule/validate`, {
-            method: "POST",
-          }),
-        ),
-      );
-      setConflicts(results.flatMap((r) => r.conflicts));
-    } catch {
-      /* validation is advisory — never break the board */
-    }
-  }, [divisions]);
-
-  const queueValidate = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(() => void runValidate(), 400);
-  }, [runValidate]);
-
-  // Full report on load and after every server refresh (doc 12 §4 — board
-  // load + after external edits). Debounced: state lands in a timer callback.
+  // ------------------------------------------- pick-then-place (gap 11)
+  const [pickedId, setPickedId] = useState<string | null>(null);
+  const [announce, setAnnounce] = useState("");
+  const pickedFixture = pickedId !== null ? (board.find((f) => f.id === pickedId) ?? null) : null;
   useEffect(() => {
-    queueValidate();
-    return () => {
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-    };
-  }, [queueValidate, fixtures]);
+    if (pickedId && !pickedFixture) setPickedId(null); // filtered away / refreshed
+  }, [pickedId, pickedFixture]);
 
-  function fail(err: unknown) {
-    if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
-      setPaywall(String(err.extra.feature_key ?? ""));
-    } else if (err instanceof ApiV1Error && err.code === "SCHEDULE_CONFLICT") {
-      const list = (err.extra.conflicts as BoardConflict[] | undefined) ?? [];
-      const titleOf = (id: string) => {
-        const f = board.find((x) => x.id === id);
-        return f ? cardTitle(f, entrantNames, feedLabels) : "another match";
-      };
-      const reasons = [
-        ...new Set(
-          list.map((c) => {
-            let msg = CONFLICT_HELP[c.code] ?? "This slot doesn't work.";
-            // The server's detail can carry a fixture id — name the match instead.
-            const uuid = c.detail?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/i)?.[0];
-            if (uuid) msg += ` (with ${titleOf(uuid)})`;
-            return msg;
-          }),
-        ),
-      ];
-      setError(
-        reasons.length > 0
-          ? `Can't schedule here. ${reasons.join(" ")}`
-          : "Can't schedule here — it clashes with another match.",
-      );
-    } else {
-      // Never surface raw codes/stack text; fall back to a friendly line.
-      const raw = err instanceof Error ? err.message : "";
-      const friendly = raw && !/[{}<>]|error:|\bundefined\b|[0-9a-f]{8}-[0-9a-f]{4}/i.test(raw);
-      setError(friendly ? raw : "Something went wrong — please try again.");
-    }
-  }
-
-  async function moveCard(fixtureId: string, atIso: string | null, court: string | null) {
-    if (!canEdit) return;
-    setError(null);
-    const prev = board.find((f) => f.id === fixtureId);
-    if (!prev || prev.status !== "scheduled") return;
-    setOverrides((o) => ({
-      ...o,
-      [fixtureId]: {
-        scheduled_at: atIso,
-        court_label: court,
-        schedule_locked: prev.schedule_locked,
-      },
-    }));
-    try {
-      await apiV1(`/api/v1/fixtures/${fixtureId}`, {
-        method: "PATCH",
-        json: { scheduled_at: atIso, court_label: court },
-      });
-      queueValidate();
-      router.refresh();
-    } catch (err) {
-      setOverrides((o) => {
-        const rest = { ...o };
-        delete rest[fixtureId];
-        return rest;
-      });
-      fail(err);
-    }
-  }
-
-  // Week-view drag between day columns: keep the kick-off time + court, just
-  // change the date. Unscheduled cards land at the config start time (or 09:00).
-  function moveToDay(fixtureId: string, targetDay: string) {
-    const f = board.find((x) => x.id === fixtureId);
-    if (!f || f.status !== "scheduled") return;
-    if (f.scheduled_at && dayKey(f.scheduled_at as string) === targetDay) return;
-    const src = f.scheduled_at ? new Date(f.scheduled_at) : cfg.startAt ? new Date(cfg.startAt) : null;
-    const hh = src ? String(src.getHours()).padStart(2, "0") : "09";
-    const mm = src ? String(src.getMinutes()).padStart(2, "0") : "00";
-    const iso = new Date(`${targetDay}T${hh}:${mm}:00`).toISOString();
-    void moveCard(fixtureId, iso, f.court_label ?? courts[0] ?? "1");
-  }
-
-  async function togglePin(f: BoardFixture) {
-    if (!canEdit) return;
-    setError(null);
-    try {
-      await apiV1(`/api/v1/fixtures/${f.id}`, {
-        method: "PATCH",
-        json: { schedule_locked: !f.schedule_locked },
-      });
-      router.refresh();
-    } catch (err) {
-      fail(err);
-    }
-  }
-
-  async function autoRun(stageId: string, onlyUnlocked: boolean) {
-    setError(null);
-    setNotice(null);
-    setBusy(true);
-    try {
-      const out = await apiV1<{
-        assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
-        conflicts: BoardConflict[];
-      }>(`/api/v1/stages/${stageId}/schedule/auto`, {
-        method: "POST",
-        json: { only_unlocked: onlyUnlocked },
-      });
-      if (out.assignments.length === 0) {
-        setNotice("Nothing to schedule for this stage.");
-        return;
-      }
-      const applied = await apiV1<{ applied: number; conflicts: BoardConflict[] }>(
-        `/api/v1/stages/${stageId}/schedule/apply`,
-        {
-          method: "POST",
-          json: {
-            assignments: out.assignments.map((a) => ({
-              fixture_id: a.fixture_id,
-              scheduled_at: a.scheduled_at,
-              court_label: a.court_label,
-            })),
-            source: "auto",
-          },
-        },
-      );
-      setConflicts(applied.conflicts);
-      setNotice(
-        `Placed ${applied.applied} fixture(s)` +
-          (applied.conflicts.length > 0 ? ` — ${applied.conflicts.length} warning(s).` : "."),
-      );
-      router.refresh();
-    } catch (err) {
-      fail(err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function act(path: string, done: string) {
-    setError(null);
-    setNotice(null);
-    setBusy(true);
-    try {
-      await apiV1(path, { method: "POST" });
-      setNotice(done);
-      router.refresh();
-    } catch (err) {
-      fail(err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // Bulk tools (doc 12 §2): shift the selected day ±N minutes / swap two courts.
-  async function shiftDay(minutes: number) {
-    setBusy(true);
-    setError(null);
-    try {
-      for (const f of scheduled) {
-        if (dayKey(f.scheduled_at as string) !== day || f.status !== "scheduled") continue;
-        await apiV1(`/api/v1/fixtures/${f.id}`, {
-          method: "PATCH",
-          json: {
-            scheduled_at: new Date(new Date(f.scheduled_at as string).getTime() + minutes * MIN).toISOString(),
-          },
-        });
-      }
-      router.refresh();
-      queueValidate();
-    } catch (err) {
-      fail(err);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function swapCourts(a: string, b: string) {
-    setBusy(true);
-    setError(null);
-    try {
-      for (const f of scheduled) {
-        if (dayKey(f.scheduled_at as string) !== day || f.status !== "scheduled") continue;
-        if (f.court_label === a) {
-          await apiV1(`/api/v1/fixtures/${f.id}`, { method: "PATCH", json: { court_label: b } });
-        } else if (f.court_label === b) {
-          await apiV1(`/api/v1/fixtures/${f.id}`, { method: "PATCH", json: { court_label: a } });
+  const pick = useCallback(
+    (fixtureId: string) => {
+      setPickedId((cur) => {
+        const next = cur === fixtureId ? null : fixtureId;
+        const f = actions.board.find((x) => x.id === fixtureId);
+        if (next && f) {
+          setAnnounce(`Picked ${cardTitle(f, entrantNames, feedLabels)} — choose a slot.`);
+        } else {
+          setAnnounce("Pick cancelled.");
         }
-      }
-      router.refresh();
-      queueValidate();
-    } catch (err) {
-      fail(err);
-    } finally {
-      setBusy(false);
-    }
-  }
+        return next;
+      });
+    },
+    [actions.board, entrantNames, feedLabels],
+  );
 
-  // Realtime board refresh on division:{id} (doc 12 §6 — two organisers).
+  const place = useCallback(
+    async (atIso: string, court: string | null) => {
+      if (!pickedFixture) return;
+      const title = cardTitle(pickedFixture, entrantNames, feedLabels);
+      const ok = await actions.moveCard(pickedFixture.id, atIso, court);
+      if (ok) {
+        setPickedId(null);
+        setAnnounce(
+          `${title} scheduled at ${new Date(atIso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}${court ? ` on ${court}` : ""}.`,
+        );
+      }
+    },
+    [actions, entrantNames, feedLabels, pickedFixture],
+  );
+
+  // Esc anywhere cancels the pick.
   useEffect(() => {
-    if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return;
-    let cancelled = false;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const channels: any[] = [];
-    (async () => {
-      try {
-        const { supabaseBrowser } = await import("@/lib/supabase-browser");
-        const sb = supabaseBrowser();
-        for (const d of divisions) {
-          if (cancelled) return;
-          channels.push(
-            sb
-              .channel(`division:${d.id}`)
-              .on("broadcast", { event: "schedule_changed" }, () => router.refresh())
-              .subscribe(),
-          );
-        }
-      } catch {
-        /* realtime is best-effort; the board still works without it */
+    if (!pickedId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPickedId(null);
+        setAnnounce("Pick cancelled.");
       }
-    })();
-    return () => {
-      cancelled = true;
-      for (const ch of channels) ch?.unsubscribe();
     };
-  }, [divisions, router]);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [pickedId]);
 
-  // ------------------------------------------------------------------ grid math
+  // ------------------------------------------------- conflicts panel
+  const visibleConflicts = useMemo(
+    () => actions.conflicts.filter((c) => board.some((f) => f.id === c.fixture_id)),
+    [actions.conflicts, board],
+  );
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const highlightTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const jumpTo = useCallback(
+    (fixtureId: string) => {
+      const f = actions.board.find((x) => x.id === fixtureId);
+      if (!f) return;
+      if (f.scheduled_at !== null) setDay(dayKey(f.scheduled_at as string));
+      setPanelOpen(false);
+      setHighlightId(fixtureId);
+      if (highlightTimer.current) clearTimeout(highlightTimer.current);
+      highlightTimer.current = setTimeout(() => setHighlightId(null), 2500);
+      requestAnimationFrame(() => {
+        document
+          .querySelector(`[data-fixture-id="${fixtureId}"]`)
+          ?.scrollIntoView({ block: "center", behavior: "smooth" });
+      });
+    },
+    [actions.board],
+  );
 
+  // ------------------------------------------------------------ grid math
   const slotMinutes = cfg.matchMinutes + cfg.gapMinutes;
   const dayFixtures = scheduled.filter((f) => dayKey(f.scheduled_at as string) === day);
   const dayStartDefault = new Date(`${day}T08:00`).getTime();
@@ -480,35 +268,41 @@ export function ScheduleBoard({
       : dayEndDefault;
   const slots = daySlots(gridFrom, gridTo, slotMinutes);
 
-  const selectedFixture = selected !== null ? (board.find((f) => f.id === selected) ?? null) : null;
-
-  // ------------------------------------------------------------------ render
-
+  // ------------------------------------------------------------- render
   return (
     <div className="space-y-4">
-      {paywall && <UpgradeGate feature={paywall} />}
-      {notice && <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{notice}</p>}
-      {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+      {/* Live region: pick/place + stale-board announcements (WCAG, gap 11). */}
+      <p aria-live="polite" role="status" className="sr-only">
+        {announce}
+      </p>
+
+      {actions.paywall && <UpgradeGate feature={actions.paywall} />}
+      {actions.notice && (
+        <p className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{actions.notice}</p>
+      )}
+      {actions.error && (
+        <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{actions.error}</p>
+      )}
 
       {/* Action bar */}
       <div className="flex flex-wrap items-center gap-2">
         {canEdit &&
           stages
-            .filter((s) => s.status !== "complete")
+            .filter((s) => s.status !== "complete" && visibleIds.has(s.division_id))
             .map((s) => (
               <span key={s.id} className="inline-flex items-center gap-1">
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => autoRun(s.id, false)}
+                  disabled={actions.busy}
+                  onClick={() => void actions.autoRun(s.id, false)}
                   className="btn btn-primary px-3 py-1.5 text-xs"
                 >
                   Auto-schedule {stages.length > 1 ? s.name : ""}
                 </button>
                 <button
                   type="button"
-                  disabled={busy}
-                  onClick={() => autoRun(s.id, true)}
+                  disabled={actions.busy}
+                  onClick={() => void actions.autoRun(s.id, true)}
                   className="btn btn-ghost px-3 py-1.5 text-xs"
                   title="Re-run the auto pass over unlocked fixtures only; pinned cards stay"
                 >
@@ -517,20 +311,35 @@ export function ScheduleBoard({
               </span>
             ))}
         <div className="flex-1" />
+        <ConflictsBadge
+          count={visibleConflicts.length}
+          open={panelOpen}
+          onToggle={() => setPanelOpen((o) => !o)}
+        />
         {canEdit && single && single.status !== "active" && single.status !== "completed" && (
           <>
             <button
               type="button"
-              disabled={busy}
-              onClick={() => act(`/api/v1/divisions/${single.id}/publish-schedule`, "Schedule published — it is now on the public dashboard and .ics feeds.")}
+              disabled={actions.busy}
+              onClick={() =>
+                void actions.act(
+                  `/api/v1/divisions/${single.id}/publish-schedule`,
+                  "Schedule published — it is now on the public dashboard and .ics feeds.",
+                )
+              }
               className="btn btn-ghost px-3 py-1.5 text-xs"
             >
               Publish schedule
             </button>
             <button
               type="button"
-              disabled={busy}
-              onClick={() => act(`/api/v1/divisions/${single.id}/start`, "Tournament started — scoring is open.")}
+              disabled={actions.busy}
+              onClick={() =>
+                void actions.act(
+                  `/api/v1/divisions/${single.id}/start`,
+                  "Tournament started — scoring is open.",
+                )
+              }
               className="btn btn-primary px-3 py-1.5 text-xs"
             >
               Start tournament
@@ -539,72 +348,104 @@ export function ScheduleBoard({
         )}
       </div>
 
-      {/* Division colour legend (competition-wide view, doc 06 §4.3) */}
-      {divisions.length > 1 && (
-        <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500">
-          {divisions.map((d) => (
-            <span key={d.id} className="inline-flex items-center gap-1">
-              <span className="h-2.5 w-2.5 rounded-sm" style={{ backgroundColor: d.color }} />
-              {d.name}
-            </span>
+      {/* Legend doubles as the division filter (v3/04 §2) — URL-backed. */}
+      <BoardLegend
+        divisions={divisions}
+        selected={selectedSlugs}
+        onToggle={(slug) => {
+          const next = new Set(selectedSlugs);
+          if (next.has(slug)) next.delete(slug);
+          else next.add(slug);
+          setFilter(next);
+        }}
+        onClear={() => setFilter(new Set())}
+      />
+
+      {/* Density modes + day picker + bulk tools */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div role="group" aria-label="Board density" className="flex rounded-lg border border-purple-100 bg-white p-0.5">
+          {(
+            [
+              { v: "board" as const, label: msg("board.density.board") },
+              { v: "agenda" as const, label: msg("board.density.agenda") },
+              { v: "lanes" as const, label: msg("board.density.lanes") },
+            ]
+          ).map(({ v, label }) => (
+            <button
+              key={v}
+              type="button"
+              aria-pressed={density === v}
+              onClick={() => pickDensity(v)}
+              className={`rounded-md px-2.5 py-1 text-xs font-medium transition ${
+                density === v ? "bg-purple-100 text-purple-800" : "text-slate-500 hover:text-purple-700"
+              }`}
+            >
+              {label}
+            </button>
           ))}
         </div>
-      )}
 
-      {/* Day picker, view toggle, bulk tools */}
-      <div className="flex flex-wrap items-center gap-2">
-        {view === "day" && (
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setDay(addDaysKey(day, -1))}
-              aria-label="Previous day"
-              className="btn btn-ghost px-2 py-1 text-xs"
-            >
-              ‹
-            </button>
-            <span className="min-w-32 text-center text-sm font-semibold text-slate-800">
-              {new Date(`${day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
-            </span>
-            <button
-              type="button"
-              onClick={() => setDay(addDaysKey(day, 1))}
-              aria-label="Next day"
-              className="btn btn-ghost px-2 py-1 text-xs"
-            >
-              ›
-            </button>
-          </div>
-        )}
-        {days.map((d) => (
+        {density === "board" && (
           <button
-            key={d}
             type="button"
-            onClick={() => setDay(d)}
-            className={`rounded-full px-3 py-1 text-xs font-medium ${
-              d === day ? "bg-purple-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-            }`}
+            onClick={() => setView(view === "day" ? "week" : "day")}
+            className="btn btn-ghost px-3 py-1 text-xs"
           >
-            {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+            {view === "day" ? "Week view" : "Day view"}
           </button>
-        ))}
-        <button
-          type="button"
-          onClick={() => setView(view === "day" ? "week" : "day")}
-          className="btn btn-ghost px-3 py-1 text-xs"
-        >
-          {view === "day" ? "Week view" : "Day view"}
-        </button>
-        {canEdit && view === "day" && (
+        )}
+
+        {(density !== "board" || view === "day") && (
+          <>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setDay(addDaysKey(day, -1))}
+                aria-label="Previous day"
+                className="btn btn-ghost px-2 py-1 text-xs"
+              >
+                ‹
+              </button>
+              <span className="min-w-32 text-center text-sm font-semibold text-slate-800">
+                {new Date(`${day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+              </span>
+              <button
+                type="button"
+                onClick={() => setDay(addDaysKey(day, 1))}
+                aria-label="Next day"
+                className="btn btn-ghost px-2 py-1 text-xs"
+              >
+                ›
+              </button>
+            </div>
+            <div className="scroll-x scroll-x-fade flex gap-1 whitespace-nowrap">
+              {days.map((d) => (
+                <button
+                  key={d}
+                  type="button"
+                  onClick={() => setDay(d)}
+                  aria-pressed={d === day}
+                  className={`rounded-full px-3 py-1 text-xs font-medium ${
+                    d === day ? "bg-purple-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  }`}
+                >
+                  {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {canEdit && density === "board" && view === "day" && (
           <span className="ml-auto flex items-center gap-1 text-xs text-slate-500">
             Shift day
-            <button type="button" disabled={busy} onClick={() => shiftDay(-15)} className="btn btn-ghost px-2 py-1 text-xs">−15m</button>
-            <button type="button" disabled={busy} onClick={() => shiftDay(15)} className="btn btn-ghost px-2 py-1 text-xs">+15m</button>
+            <button type="button" disabled={actions.busy} onClick={() => void actions.shiftDay(day, -15)} className="btn btn-ghost px-2 py-1 text-xs">−15m</button>
+            <button type="button" disabled={actions.busy} onClick={() => void actions.shiftDay(day, 15)} className="btn btn-ghost px-2 py-1 text-xs">+15m</button>
             {courts.length >= 2 && (
               <button
                 type="button"
-                disabled={busy}
-                onClick={() => swapCourts(courts[0] as string, courts[1] as string)}
+                disabled={actions.busy}
+                onClick={() => void actions.swapCourts(day, courts[0] as string, courts[1] as string)}
                 className="btn btn-ghost px-2 py-1 text-xs"
                 title={`Swap ${courts[0]} ↔ ${courts[1]} for this day`}
               >
@@ -615,209 +456,119 @@ export function ScheduleBoard({
         )}
       </div>
 
-      {/* Keyboard-accessible move panel (a11y — doc 12 / PROMPT-17 item 5) */}
-      {canEdit && selectedFixture && (
+      {/* Keyboard/precise move for the picked fixture (predates v3, stays). */}
+      {canEdit && pickedFixture && (
         <MovePanel
-          fixture={selectedFixture}
+          fixture={pickedFixture}
           courts={courts}
           venueCap={venueCap}
           entrantNames={entrantNames}
           feedLabels={feedLabels}
           onMove={(atIso, court) => {
-            void moveCard(selectedFixture.id, atIso, court);
-            setSelected(null);
+            void place(atIso ?? new Date().toISOString(), court);
           }}
-          onClose={() => setSelected(null)}
+          onClose={() => setPickedId(null)}
         />
       )}
 
-      {/* The grid */}
-      {view === "day" ? (
-        <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-          <table className="w-full border-collapse text-xs" aria-label="Schedule board">
-            <thead>
-              <tr>
-                <th className="w-16 border-b border-slate-200 bg-slate-50 px-2 py-2 text-left font-medium text-slate-500">Time</th>
-                {courts.map((c) => (
-                  <th key={c} className="border-b border-l border-slate-200 bg-slate-50 px-2 py-2 text-left font-medium text-slate-600">
-                    {c}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {slots.map((t) => (
-                <tr key={t}>
-                  <td className="border-b border-slate-100 px-2 py-1 align-top text-slate-400">
-                    {new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}
-                  </td>
-                  {courts.map((court) => {
-                    const cell = dayFixtures.filter((f) => {
-                      const at = new Date(f.scheduled_at as string).getTime();
-                      return f.court_label === court && at >= t && at < t + slotMinutes * MIN;
-                    });
-                    return (
-                      <td
-                        key={court}
-                        className="h-10 border-b border-l border-slate-100 px-1 py-0.5 align-top"
-                        onDragOver={canEdit ? (e) => e.preventDefault() : undefined}
-                        onDrop={
-                          canEdit
-                            ? (e) => {
-                                e.preventDefault();
-                                const fid = e.dataTransfer.getData("text/fixture");
-                                if (fid) void moveCard(fid, new Date(t).toISOString(), court);
-                              }
-                            : undefined
-                        }
-                      >
-                        {cell.map((f) => (
-                          <FixtureCard
-                            key={f.id}
-                            fixture={f}
-                            entrantNames={entrantNames}
-                            feedLabels={feedLabels}
-                            conflicts={conflictsByFixture[f.id] ?? []}
-                            color={divisions.length > 1 ? colorOf[f.division_id] : undefined}
-                            canEdit={canEdit}
-                            selected={selected === f.id}
-                            onSelect={() => setSelected(selected === f.id ? null : f.id)}
-                            onTogglePin={() => void togglePin(f)}
-                          />
-                        ))}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <div>
-          {canEdit && (
-            <p className="mb-2 text-xs text-slate-400">
-              Drag a match between days to reschedule it — it keeps its kick-off time and court.
-            </p>
+      {/* Board + tray share the row on desktop; tray is a sheet on mobile. */}
+      <div className="flex items-start gap-4">
+        <div className="min-w-0 flex-1">
+          {density === "board" && view === "day" && (
+            <BoardGrid
+              day={day}
+              slots={slots}
+              slotMinutes={slotMinutes}
+              courts={courts}
+              fixtures={dayFixtures}
+              divisionNames={divisionNames}
+              entrantNames={entrantNames}
+              feedLabels={feedLabels}
+              conflictsByFixture={actions.conflictsByFixture}
+              canEdit={canEdit}
+              multi={multi}
+              pickedId={pickedId}
+              onPick={pick}
+              onPlace={(iso, court) => void place(iso, court)}
+              onDropCard={(fid, iso, court) => void actions.moveCard(fid, iso, court)}
+              onTogglePin={(f) => void actions.togglePin(f)}
+              venueCap={venueCap}
+              highlightId={highlightId}
+            />
           )}
-          <div className="flex gap-3 overflow-x-auto pb-2">
-            {weekDays.map((d) => {
-              const dayFx = scheduled
-                .filter((f) => dayKey(f.scheduled_at as string) === d)
-                .sort(
-                  (a, b) =>
-                    new Date(a.scheduled_at as string).getTime() -
-                    new Date(b.scheduled_at as string).getTime(),
-                );
-              const isToday = d === dayKey(new Date());
-              const dropOver = dragDay === d;
-              return (
-                <div
-                  key={d}
-                  onDragOver={canEdit ? (e) => { e.preventDefault(); setDragDay(d); } : undefined}
-                  onDragLeave={canEdit ? () => setDragDay((cur) => (cur === d ? null : cur)) : undefined}
-                  onDrop={
-                    canEdit
-                      ? (e) => {
-                          e.preventDefault();
-                          setDragDay(null);
-                          const fid = e.dataTransfer.getData("text/fixture");
-                          if (fid) moveToDay(fid, d);
-                        }
-                      : undefined
-                  }
-                  className={`flex w-52 shrink-0 flex-col rounded-xl border ${
-                    dropOver ? "border-purple-400 bg-purple-50/70" : "border-slate-200 bg-slate-50/60"
-                  }`}
-                >
-                  <div
-                    className={`flex items-center justify-between rounded-t-xl border-b px-3 py-2 ${
-                      isToday ? "border-purple-200 bg-purple-50" : "border-slate-200"
-                    }`}
-                  >
-                    <div className="leading-tight">
-                      <p className="text-xs font-semibold text-slate-700">
-                        {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "short" })}
-                      </p>
-                      <p className="text-[11px] text-slate-400">
-                        {new Date(`${d}T12:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
-                      </p>
-                    </div>
-                    <span className="rounded-full bg-white px-1.5 text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
-                      {dayFx.length}
-                    </span>
-                  </div>
-                  <ul className="flex min-h-24 flex-1 flex-col gap-1.5 p-2">
-                    {dayFx.length === 0 && (
-                      <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 px-2 py-4 text-center text-[11px] text-slate-400">
-                        {canEdit ? "Drop a match here" : "No fixtures"}
-                      </li>
-                    )}
-                    {dayFx.map((f) => {
-                      const movable = canEdit && f.status === "scheduled";
-                      return (
-                        <li
-                          key={f.id}
-                          draggable={movable}
-                          onDragStart={(e) => e.dataTransfer.setData("text/fixture", f.id)}
-                          className={`rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs shadow-sm ${
-                            movable ? "cursor-grab hover:border-purple-300" : "opacity-70"
-                          }`}
-                          style={
-                            divisions.length > 1
-                              ? { borderLeftWidth: 3, borderLeftColor: colorOf[f.division_id] }
-                              : undefined
-                          }
-                        >
-                          <div className="flex items-center justify-between text-[10px] text-slate-400">
-                            <span>
-                              {new Date(f.scheduled_at as string).toLocaleTimeString(undefined, {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                            <span>{f.court_label}</span>
-                          </div>
-                          <p className="truncate font-medium text-slate-700">
-                            {cardTitle(f, entrantNames, feedLabels)}
-                          </p>
-                          {f.status !== "scheduled" && (
-                            <span className="text-[10px] text-sky-600">{f.status}</span>
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
-      {/* Unscheduled tray */}
-      {unscheduled.length > 0 && (
-        <section className="card p-3">
-          <h4 className="mb-2 text-xs font-semibold text-slate-600">
-            Unscheduled ({unscheduled.length}) — drag onto the board{canEdit ? "" : " (view-only)"}
-          </h4>
-          <div className="flex flex-wrap gap-1.5">
-            {unscheduled.map((f) => (
-              <FixtureCard
-                key={f.id}
-                fixture={f}
-                entrantNames={entrantNames}
-                feedLabels={feedLabels}
-                conflicts={conflictsByFixture[f.id] ?? []}
-                color={divisions.length > 1 ? colorOf[f.division_id] : undefined}
-                canEdit={canEdit}
-                selected={selected === f.id}
-                onSelect={() => setSelected(selected === f.id ? null : f.id)}
-                onTogglePin={() => void togglePin(f)}
-              />
-            ))}
-          </div>
-        </section>
+          {density === "board" && view === "week" && (
+            <WeekView
+              weekDays={weekDays}
+              scheduled={scheduled}
+              cfgStartAt={cfg.startAt ?? null}
+              courts={courts}
+              divisionNames={divisionNames}
+              entrantNames={entrantNames}
+              feedLabels={feedLabels}
+              canEdit={canEdit}
+              multi={multi}
+              onMove={(fid, iso, court) => void actions.moveCard(fid, iso, court)}
+            />
+          )}
+
+          {density === "agenda" && (
+            <BoardAgenda
+              fixtures={dayFixtures}
+              divisionNames={divisionNames}
+              entrantNames={entrantNames}
+              feedLabels={feedLabels}
+              conflictsByFixture={actions.conflictsByFixture}
+              canEdit={canEdit}
+              multi={multi}
+              pickedId={pickedId}
+              onPick={pick}
+              onPlace={(iso, court) => void place(iso, court)}
+              onTogglePin={(f) => void actions.togglePin(f)}
+              highlightId={highlightId}
+            />
+          )}
+
+          {density === "lanes" && (
+            <BoardLanes
+              day={day}
+              divisions={visibleDivisions}
+              fixtures={dayFixtures}
+              entrantNames={entrantNames}
+              feedLabels={feedLabels}
+              conflictsByFixture={actions.conflictsByFixture}
+              canEdit={canEdit}
+              pickedId={pickedId}
+              onPick={pick}
+              onTogglePin={(f) => void actions.togglePin(f)}
+              highlightId={highlightId}
+            />
+          )}
+        </div>
+
+        <BoardTray
+          unscheduled={unscheduled}
+          divisions={visibleDivisions}
+          entrantNames={entrantNames}
+          feedLabels={feedLabels}
+          conflictsByFixture={actions.conflictsByFixture}
+          canEdit={canEdit}
+          pickedId={pickedId}
+          onPick={pick}
+          onTogglePin={(f) => void actions.togglePin(f)}
+        />
+      </div>
+
+      {panelOpen && (
+        <ConflictsPanel
+          conflicts={visibleConflicts}
+          board={board}
+          entrantNames={entrantNames}
+          feedLabels={feedLabels}
+          divisionNames={divisionNames}
+          onJump={jumpTo}
+          onClose={() => setPanelOpen(false)}
+        />
       )}
 
       {/* Settings */}
@@ -829,291 +580,156 @@ export function ScheduleBoard({
         constraintsAllowed={constraintsAllowed}
         venueCap={venueCap}
         onSaved={() => {
-          setNotice("Scheduling settings saved.");
+          actions.setNotice("Scheduling settings saved.");
           router.refresh();
         }}
-        onError={fail}
+        onError={(err) => actions.setError(err instanceof Error ? err.message : "Something went wrong — please try again.")}
       />
     </div>
   );
 }
 
-function cardTitle(
-  f: BoardFixture,
-  names: Record<string, string>,
-  feeds: Record<string, FeedLabelPair>,
-): string {
-  const home = f.home_entrant_id
-    ? (names[f.home_entrant_id] ?? "?")
-    : (feeds[f.id]?.home ?? "TBD");
-  const away = f.away_entrant_id
-    ? (names[f.away_entrant_id] ?? "?")
-    : (feeds[f.id]?.away ?? "TBD");
-  return `${home} vs ${away}`;
-}
-
-function FixtureCard({
-  fixture,
-  entrantNames,
-  feedLabels,
-  conflicts,
-  color,
-  canEdit,
-  selected,
-  onSelect,
-  onTogglePin,
-}: {
-  fixture: BoardFixture;
-  entrantNames: Record<string, string>;
-  feedLabels: Record<string, FeedLabelPair>;
-  conflicts: BoardConflict[];
-  color?: string;
-  canEdit: boolean;
-  selected: boolean;
-  onSelect: () => void;
-  onTogglePin: () => void;
-}) {
-  const movable = canEdit && fixture.status === "scheduled";
-  const blocking = conflicts.some((c) => c.blocking);
-  return (
-    <div
-      draggable={movable}
-      onDragStart={(e) => e.dataTransfer.setData("text/fixture", fixture.id)}
-      className={`group mb-0.5 rounded border px-1.5 py-1 text-[11px] leading-tight ${
-        blocking
-          ? "border-red-300 bg-red-50"
-          : conflicts.length > 0
-            ? "border-amber-300 bg-amber-50"
-            : "border-slate-200 bg-white"
-      } ${selected ? "ring-2 ring-purple-400" : ""} ${movable ? "cursor-grab" : "opacity-80"}`}
-      style={color ? { borderLeftWidth: 3, borderLeftColor: color } : undefined}
-    >
-      <div className="flex items-center gap-1">
-        {/* A decided fixture is done — no scheduling handle. It comes back the
-            moment the result is undone (status returns to 'scheduled'). */}
-        {movable ? (
-          <button
-            type="button"
-            onClick={onSelect}
-            aria-pressed={selected}
-            aria-label={`${cardTitle(fixture, entrantNames, feedLabels)} — round ${fixture.round_no}. Select to move via menu`}
-            className="min-w-0 flex-1 truncate text-left font-medium text-slate-700 hover:text-purple-700"
-          >
-            {cardTitle(fixture, entrantNames, feedLabels)}
-          </button>
-        ) : (
-          <span className="min-w-0 flex-1 truncate text-left font-medium text-slate-600">
-            {cardTitle(fixture, entrantNames, feedLabels)}
-          </span>
-        )}
-        {canEdit && fixture.status === "scheduled" && (
-          <button
-            type="button"
-            onClick={onTogglePin}
-            aria-label={fixture.schedule_locked ? "Unlock (allow re-flow)" : "Pin/lock this slot"}
-            title={fixture.schedule_locked ? "Locked — survives re-flow" : "Pin this slot"}
-            className={fixture.schedule_locked ? "" : "opacity-30 group-hover:opacity-100"}
-          >
-            {fixture.schedule_locked ? "🔒" : "📌"}
-          </button>
-        )}
-      </div>
-      <div className="flex flex-wrap items-center gap-1 text-[10px] text-slate-400">
-        <span>R{fixture.round_no}</span>
-        {fixture.status !== "scheduled" && <span className="text-sky-600">{fixture.status}</span>}
-        {conflicts.map((c, i) => (
-          <span
-            key={i}
-            title={c.detail}
-            className={`rounded px-1 ${c.blocking ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}
-          >
-            {CONFLICT_LABEL[c.code] ?? c.code}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// Keyboard-accessible alternative to dragging: pick court + time, hit Move.
-function MovePanel({
-  fixture,
+// Week view (cross-day drag) — behaviour unchanged from the pre-v3 board.
+function WeekView({
+  weekDays,
+  scheduled,
+  cfgStartAt,
   courts,
-  venueCap = "Court",
+  divisionNames,
   entrantNames,
   feedLabels,
+  canEdit,
+  multi,
   onMove,
-  onClose,
 }: {
-  fixture: BoardFixture;
+  weekDays: string[];
+  scheduled: BoardFixture[];
+  cfgStartAt: string | null;
   courts: string[];
-  venueCap?: string;
+  divisionNames: Record<string, string>;
   entrantNames: Record<string, string>;
   feedLabels: Record<string, FeedLabelPair>;
-  onMove: (atIso: string | null, court: string | null) => void;
-  onClose: () => void;
-}) {
-  const [when, setWhen] = useState(
-    fixture.scheduled_at ? toLocalInput(fixture.scheduled_at) : "",
-  );
-  const [court, setCourt] = useState(fixture.court_label ?? courts[0] ?? "");
-  return (
-    <div
-      role="dialog"
-      aria-label={`Move ${cardTitle(fixture, entrantNames, feedLabels)}`}
-      className="flex flex-wrap items-end gap-2 rounded-lg border border-purple-200 bg-purple-50 p-3"
-      onKeyDown={(e) => {
-        if (e.key === "Escape") onClose();
-      }}
-    >
-      <p className="w-full text-xs font-medium text-purple-800">
-        Move: {cardTitle(fixture, entrantNames, feedLabels)}
-      </p>
-      <label className="block">
-        <span className="label">When</span>
-        <input
-          type="datetime-local"
-          value={when}
-          onChange={(e) => setWhen(e.target.value)}
-          className="input px-2 py-1 text-xs"
-          autoFocus
-        />
-      </label>
-      <label className="block">
-        <span className="label">{venueCap}</span>
-        <select value={court} onChange={(e) => setCourt(e.target.value)} className="input px-2 py-1 text-xs">
-          {courts.map((c) => (
-            <option key={c} value={c}>{c}</option>
-          ))}
-        </select>
-      </label>
-      <button
-        type="button"
-        onClick={() => onMove(when ? new Date(when).toISOString() : null, court || null)}
-        className="btn btn-primary px-3 py-1.5 text-xs"
-      >
-        Move
-      </button>
-      <button type="button" onClick={onClose} className="btn btn-ghost px-3 py-1.5 text-xs">
-        Cancel
-      </button>
-    </div>
-  );
-}
-
-function SettingsPanel({
-  divisionId,
-  config,
-  tz,
-  canEdit,
-  constraintsAllowed,
-  venueCap = "Court",
-  onSaved,
-  onError,
-}: {
-  divisionId: string;
-  config: BoardConfig;
-  tz: string;
   canEdit: boolean;
-  constraintsAllowed: boolean;
-  venueCap?: string;
-  onSaved: () => void;
-  onError: (err: unknown) => void;
+  multi: boolean;
+  onMove: (fixtureId: string, atIso: string, court: string | null) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [startAt, setStartAt] = useState(config.startAt ? toLocalInput(config.startAt) : "");
-  const [endAt, setEndAt] = useState(config.endAt ? dayKey(config.endAt) : "");
-  const [matchMinutes, setMatchMinutes] = useState(config.matchMinutes);
-  const [gapMinutes, setGapMinutes] = useState(config.gapMinutes);
-  const [rest, setRest] = useState(config.perEntrantMinRest);
-  const [courtsText, setCourtsText] = useState(config.courts.join(", "));
-  const [zone, setZone] = useState(tz);
-  const [saving, setSaving] = useState(false);
+  const [dragDay, setDragDay] = useState<string | null>(null);
 
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)} className="text-xs text-purple-600 hover:underline">
-        Scheduling settings ({config.courts.length} {venueCap.toLowerCase()}{config.courts.length === 1 ? "" : "s"}, {config.matchMinutes}
-        min matches{config.perEntrantMinRest > 0 ? `, ${config.perEntrantMinRest}min rest` : ""})
-      </button>
-    );
+  function moveToDay(fixtureId: string, targetDay: string) {
+    const f = scheduled.find((x) => x.id === fixtureId);
+    if (!f || f.status !== "scheduled") return;
+    if (f.scheduled_at && dayKey(f.scheduled_at as string) === targetDay) return;
+    const src = f.scheduled_at ? new Date(f.scheduled_at) : cfgStartAt ? new Date(cfgStartAt) : null;
+    const hh = src ? String(src.getHours()).padStart(2, "0") : "09";
+    const mm = src ? String(src.getMinutes()).padStart(2, "0") : "00";
+    const iso = new Date(`${targetDay}T${hh}:${mm}:00`).toISOString();
+    onMove(fixtureId, iso, f.court_label ?? courts[0] ?? null);
   }
 
-  async function save() {
-    setSaving(true);
-    try {
-      const courts = courtsText.split(",").map((c) => c.trim()).filter(Boolean);
-      await apiV1(`/api/v1/divisions/${divisionId}/schedule-settings`, {
-        method: "PUT",
-        json: {
-          config: {
-            ...config,
-            startAt: startAt ? new Date(startAt).toISOString() : null,
-            endAt: endAt ? new Date(`${endAt}T23:59:00`).toISOString() : null,
-            matchMinutes,
-            gapMinutes,
-            perEntrantMinRest: rest,
-            courts: courts.length > 0 ? courts : ["Court 1"],
-          },
-          tz: zone,
-        },
-      });
-      setOpen(false);
-      onSaved();
-    } catch (err) {
-      onError(err);
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  const constrained = !constraintsAllowed;
   return (
-    <section className="card space-y-2 p-4">
-      <h4 className="text-sm font-semibold text-slate-700">Scheduling settings</h4>
-      {constrained && <UpgradeGate feature="scheduling.constraints" compact />}
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="block">
-          <span className="label">First match</span>
-          <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="input px-2 py-1 text-xs" disabled={!canEdit} />
-        </label>
-        <label className="block">
-          <span className="label">End date</span>
-          <input type="date" value={endAt} onChange={(e) => setEndAt(e.target.value)} className="input px-2 py-1 text-xs" disabled={!canEdit} />
-        </label>
-        <label className="block">
-          <span className="label">Match (min)</span>
-          <input type="number" min={1} value={matchMinutes} onChange={(e) => setMatchMinutes(Number(e.target.value))} className="input w-20 px-2 py-1 text-xs" disabled={!canEdit} />
-        </label>
-        <label className="block">
-          <span className="label">Gap (min)</span>
-          <input type="number" min={0} value={gapMinutes} onChange={(e) => setGapMinutes(Number(e.target.value))} className="input w-20 px-2 py-1 text-xs" disabled={!canEdit} />
-        </label>
-        <label className="block">
-          <span className="label">Min rest (min)</span>
-          <input type="number" min={0} value={rest} onChange={(e) => setRest(Number(e.target.value))} className="input w-20 px-2 py-1 text-xs" disabled={!canEdit || constrained} />
-        </label>
-        <label className="block">
-          <span className="label">{venueCap}s (comma-separated)</span>
-          <input value={courtsText} onChange={(e) => setCourtsText(e.target.value)} className="input w-56 px-2 py-1 text-xs" disabled={!canEdit} />
-        </label>
-        <label className="block">
-          <span className="label">Timezone</span>
-          <input value={zone} onChange={(e) => setZone(e.target.value)} className="input w-36 px-2 py-1 text-xs" disabled={!canEdit} />
-        </label>
-        {canEdit && (
-          <button type="button" disabled={saving} onClick={save} className="btn btn-primary px-3 py-1.5 text-xs">
-            {saving ? "Saving…" : "Save"}
-          </button>
-        )}
-        <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost px-3 py-1.5 text-xs">
-          Close
-        </button>
+    <div>
+      {canEdit && (
+        <p className="mb-2 text-xs text-slate-500">
+          Drag a match between days to reschedule it — it keeps its kick-off time and court.
+        </p>
+      )}
+      <div className="scroll-x scroll-x-fade flex gap-3 pb-2">
+        {weekDays.map((d) => {
+          const dayFx = scheduled
+            .filter((f) => dayKey(f.scheduled_at as string) === d)
+            .sort(
+              (a, b) =>
+                new Date(a.scheduled_at as string).getTime() -
+                new Date(b.scheduled_at as string).getTime(),
+            );
+          const isToday = d === dayKey(new Date());
+          const dropOver = dragDay === d;
+          return (
+            <div
+              key={d}
+              onDragOver={canEdit ? (e) => { e.preventDefault(); setDragDay(d); } : undefined}
+              onDragLeave={canEdit ? () => setDragDay((cur) => (cur === d ? null : cur)) : undefined}
+              onDrop={
+                canEdit
+                  ? (e) => {
+                      e.preventDefault();
+                      setDragDay(null);
+                      const fid = e.dataTransfer.getData("text/fixture");
+                      if (fid) moveToDay(fid, d);
+                    }
+                  : undefined
+              }
+              className={`flex w-52 shrink-0 flex-col rounded-xl border ${
+                dropOver ? "border-purple-400 bg-purple-50/70" : "border-slate-200 bg-slate-50/60"
+              }`}
+            >
+              <div
+                className={`flex items-center justify-between rounded-t-xl border-b px-3 py-2 ${
+                  isToday ? "border-purple-200 bg-purple-50" : "border-slate-200"
+                }`}
+              >
+                <div className="leading-tight">
+                  <p className="text-xs font-semibold text-slate-700">
+                    {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "short" })}
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    {new Date(`${d}T12:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                  </p>
+                </div>
+                <span className="rounded-full bg-white px-1.5 text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
+                  {dayFx.length}
+                </span>
+              </div>
+              <ul className="flex min-h-24 flex-1 flex-col gap-1.5 p-2">
+                {dayFx.length === 0 && (
+                  <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 px-2 py-4 text-center text-[11px] text-slate-500">
+                    {canEdit ? "Drop a match here" : "No fixtures"}
+                  </li>
+                )}
+                {dayFx.map((f) => {
+                  const movable = canEdit && f.status === "scheduled";
+                  return (
+                    <li
+                      key={f.id}
+                      draggable={movable}
+                      onDragStart={(e) => e.dataTransfer.setData("text/fixture", f.id)}
+                      className={`rounded-lg border border-slate-200 bg-white px-2 py-1.5 text-xs shadow-sm ${
+                        movable ? "cursor-grab hover:border-purple-300" : "opacity-70"
+                      }`}
+                      style={{
+                        borderLeftWidth: 3,
+                        borderLeftColor: `hsl(${0} 0% 80%)`,
+                      }}
+                      data-fixture-id={f.id}
+                    >
+                      <div className="flex items-center justify-between text-[10px] text-slate-500">
+                        <span>
+                          {new Date(f.scheduled_at as string).toLocaleTimeString(undefined, {
+                            hour: "2-digit",
+                            minute: "2-digit",
+                          })}
+                        </span>
+                        <span>{f.court_label}</span>
+                      </div>
+                      <p className="truncate font-medium text-slate-700">
+                        {cardTitle(f, entrantNames, feedLabels)}
+                      </p>
+                      {multi && (
+                        <p className="truncate text-[10px] text-slate-500">
+                          {divisionNames[f.division_id]}
+                        </p>
+                      )}
+                      {f.status !== "scheduled" && (
+                        <span className="text-[10px] text-sky-600">{f.status}</span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          );
+        })}
       </div>
-      <p className="text-[11px] text-slate-400">
-        Blackouts and session windows are honoured by the auto pass and validator; multi-court,
-        rest, blackout and session constraints need the Pro constraint solver.
-      </p>
-    </section>
+    </div>
   );
 }

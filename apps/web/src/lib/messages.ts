@@ -93,6 +93,42 @@ export const messages = {
   // ── Mobile primitives (v3/02) ──
   "sheet.close": "Close",
   "table.actions": "Actions",
+
+  // ── Schedule board v3 (v3/04 §2, PROMPT-33) ──
+  "board.density.board": "Board",
+  "board.density.agenda": "Agenda",
+  "board.density.lanes": "By division",
+  "board.stale": "Schedule changed by someone else — board refreshed.",
+
+  // ── Division schedule page (v3/04 §3) ──
+  "schedule.tz.caption": "Times shown in {tz}",
+  "schedule.nowPlaying": "Now playing",
+  "schedule.unscheduled.title": "Not scheduled yet",
+  "schedule.unscheduled.cta": "Auto-schedule remaining",
+  "schedule.bye": "{name} has a bye",
+  "schedule.undo": "Undo",
+  "schedule.rescheduled": "Match moved. ",
+
+  // ── Registration v2 (v3/05, PROMPT-34) ──
+  "register.capacity.taken": "{taken} of {capacity} spots taken",
+  "register.capacity.left": "{n} spots left",
+  "register.full.title": "This division is full",
+  "register.full.waitlist": "Join the waitlist",
+  "register.full.dashboard": "Follow the live dashboard",
+  "register.closed.title": "Registration is closed",
+  "register.closed.dashboard": "See the live dashboard",
+  "register.section.identity": "Who's entering",
+  "register.section.questions": "Event questions",
+  "register.section.consent": "Consent",
+  "register.submit.free": "Enter the competition",
+  "register.submit.fee": "Enter — {fee}",
+  "register.ticket.title": "You're registered",
+  "register.ticket.refLabel": "Your reference",
+  "register.ticket.keep": "Keep this reference — it's how you check your status and how the organiser finds you on the day.",
+  "register.ticket.status": "Check status",
+  "register.ticket.calendar": "Add to calendar",
+  "register.ticket.save": "Save ticket",
+  "register.guardian.title": "Under-18 entry — guardian consent",
 } as const;
 
 export type MessageKey = keyof typeof messages;

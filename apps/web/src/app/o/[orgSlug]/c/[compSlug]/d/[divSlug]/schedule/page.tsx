@@ -127,7 +127,7 @@ export default async function DivisionSchedulePage({
               </div>
             )}
             <ScheduleBoard
-              divisions={[{ id: division.id, name: division.name, status: division.status, color: "#7c3aed" }]}
+              divisions={[{ id: division.id, name: division.name, slug: division.slug, status: division.status, seq: Number(division.seq) }]}
               stages={stages.map((s) => ({ id: s.id, division_id: id, seq: s.seq, kind: s.kind, name: s.name, status: s.status }))}
               fixtures={fixtures}
               entrantNames={Object.fromEntries(entrants.map((e) => [e.id, e.display_name]))}

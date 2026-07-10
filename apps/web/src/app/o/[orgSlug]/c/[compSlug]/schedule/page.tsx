@@ -17,8 +17,6 @@ import { ScheduleBoard } from "@/components/v2/schedule-board";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
-const PALETTE = ["#7c3aed", "#0ea5e9", "#f59e0b", "#10b981", "#ef4444", "#ec4899", "#64748b"];
-
 export default async function CompetitionSchedulePage({
   params,
 }: {
@@ -113,11 +111,12 @@ export default async function CompetitionSchedulePage({
         </div>
 
         <ScheduleBoard
-          divisions={perDivision.map(({ division }, i) => ({
+          divisions={perDivision.map(({ division }) => ({
             id: division.id,
             name: division.name,
+            slug: division.slug,
             status: division.status,
-            color: PALETTE[i % PALETTE.length] as string,
+            seq: Number(division.seq),
           }))}
           stages={perDivision.flatMap(({ division, stages }) =>
             stages.map((s) => ({
