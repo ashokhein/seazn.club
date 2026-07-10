@@ -4,8 +4,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
+import { ChevronRight } from "lucide-react";
 import { getPublicCompetition } from "@/server/public-site/data";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
+import { publicThemeStyle } from "@/lib/public-theme";
 
 export const revalidate = 30;
 
@@ -53,14 +55,17 @@ export default async function CompetitionHomePage({ params }: Props) {
   const totalEntrants = divisions.reduce((n, d) => n + d.entrant_count, 0);
 
   return (
-    <div>
-      <nav className="mb-4 text-xs text-zinc-500">
-        <Link href={`/shared/${org.slug}`} className="hover:underline">
+    // Pro orgs with branding.colors.primary re-theme this whole subtree —
+    // the contrast guard in publicThemeStyle falls back to violet.
+    <div style={publicThemeStyle(competition.branding)}>
+      <nav className="mb-4 text-xs text-ink-muted">
+        <Link href={`/shared/${org.slug}`} className="hover:text-accent-strong hover:underline">
           ← {org.name}
         </Link>
       </nav>
-      {/* Hero — banner photo when branded (Pro), gradient otherwise */}
-      <section className="relative mb-6 overflow-hidden rounded-2xl bg-gradient-to-br from-purple-700 via-purple-600 to-fuchsia-600 text-white shadow-lg">
+
+      {/* Hero — court slab; banner photo (Pro) sits under a slab-tinted wash */}
+      <section className="relative mb-6 overflow-hidden rounded-2xl bg-court text-court-ink shadow-lg">
         {branding.banner ? (
           <>
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -69,61 +74,67 @@ export default async function CompetitionHomePage({ params }: Props) {
               alt=""
               className="absolute inset-0 h-full w-full object-cover"
             />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-slate-950/40 to-slate-950/20" />
+            <div className="absolute inset-0 bg-gradient-to-t from-court via-court/75 to-court/40" />
           </>
         ) : (
           <div
             aria-hidden
-            className="absolute inset-0 opacity-40"
+            className="absolute inset-0 opacity-50"
             style={{
               backgroundImage:
-                "radial-gradient(600px 200px at 85% 0%, rgba(255,255,255,0.25), transparent), radial-gradient(400px 300px at 0% 100%, rgba(255,255,255,0.12), transparent)",
+                "radial-gradient(560px 220px at 88% -20%, color-mix(in oklab, var(--ps-accent) 55%, transparent), transparent), radial-gradient(420px 260px at -8% 110%, color-mix(in oklab, var(--ps-accent) 30%, transparent), transparent)",
             }}
           />
         )}
-        <div className="relative flex flex-col gap-4 p-6 sm:p-8">
-          <div className="flex items-start gap-4">
+        <div className="relative flex flex-col gap-5 p-6 sm:p-8">
+          <div className="flex flex-wrap items-start gap-4">
             {branding.logo ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={branding.logo}
                 alt=""
-                className="h-14 w-14 rounded-xl bg-white/90 object-contain p-1 shadow"
+                className="h-14 w-14 rounded-xl bg-white/95 object-contain p-1 shadow"
               />
             ) : null}
             <div className="min-w-0 flex-1">
-              <h1 className="text-3xl font-bold tracking-tight">{competition.name}</h1>
-              {dateLine ? <p className="mt-1 text-sm text-white/80">{dateLine}</p> : null}
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-court-muted">
+                {org.name}
+              </p>
+              <h1 className="mt-1 font-display text-4xl font-bold uppercase leading-none tracking-tight sm:text-5xl">
+                {competition.name}
+              </h1>
+              {dateLine ? <p className="mt-2 text-sm text-court-muted">{dateLine}</p> : null}
             </div>
             {registrationOpen ? (
               <Link
                 href={`/shared/${org.slug}/${competition.slug}/register`}
-                className="shrink-0 rounded-lg bg-white px-4 py-2 text-sm font-semibold text-purple-700 shadow hover:bg-purple-50"
+                className="shrink-0 rounded-lg bg-surface px-4 py-2 text-sm font-semibold text-accent-strong shadow transition hover:bg-accent-soft"
               >
                 Register now
               </Link>
             ) : null}
           </div>
           <div className="flex flex-wrap gap-2 text-xs font-medium">
-            <span className="rounded-full bg-white/15 px-3 py-1 backdrop-blur">
+            <span className="rounded-full bg-white/12 px-3 py-1 backdrop-blur">
               {divisions.length} division{divisions.length === 1 ? "" : "s"}
             </span>
-            <span className="rounded-full bg-white/15 px-3 py-1 backdrop-blur">
+            <span className="rounded-full bg-white/12 px-3 py-1 backdrop-blur">
               {totalEntrants} entrant{totalEntrants === 1 ? "" : "s"}
             </span>
             {liveNow.length > 0 ? (
-              <span className="flex items-center gap-1.5 rounded-full bg-emerald-400/20 px-3 py-1 text-emerald-100 backdrop-blur">
+              <span className="flex items-center gap-1.5 rounded-full bg-emerald-400/20 px-3 py-1 text-emerald-200 backdrop-blur">
                 <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-300" />
                 {liveNow.length} live now
               </span>
             ) : null}
           </div>
         </div>
+        <div aria-hidden className="h-1 bg-accent" />
       </section>
 
       {liveNow.length > 0 ? (
         <section className="mb-6">
-          <h2 className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">
+          <h2 className="mb-2 flex items-center gap-2 font-display text-sm font-semibold uppercase tracking-[0.18em] text-emerald-700">
             <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-500" />
             Live now
           </h2>
@@ -131,13 +142,15 @@ export default async function CompetitionHomePage({ params }: Props) {
             {liveNow.map((f) => {
               const division = divisions.find((d) => d.id === f.division_id);
               return (
-                <li key={f.id} className="min-w-56 shrink-0">
+                <li key={f.id} className="min-w-60 shrink-0">
                   <Link
                     href={`/shared/${org.slug}/${competition.slug}/${division?.slug}/fixtures/${f.id}`}
-                    className="block rounded-xl border border-emerald-200 bg-gradient-to-br from-emerald-50 to-white p-3 text-sm shadow-sm transition hover:-translate-y-0.5 hover:border-emerald-400 hover:shadow"
+                    className="block rounded-xl bg-court p-3.5 text-sm text-court-ink shadow-md ring-1 ring-emerald-400/40 transition hover:-translate-y-0.5 hover:ring-emerald-400"
                   >
-                    <p className="text-xs text-zinc-500">{division?.name}</p>
-                    <p className="mt-1 font-semibold tabular-nums text-zinc-800">
+                    <p className="text-[11px] uppercase tracking-wide text-court-muted">
+                      {division?.name}
+                    </p>
+                    <p className="mt-1.5 font-display text-xl font-semibold tabular-nums leading-tight">
                       {f.summary?.headline ?? "In play"}
                     </p>
                   </Link>
@@ -155,26 +168,39 @@ export default async function CompetitionHomePage({ params }: Props) {
       ) : null}
 
       <section>
-        <h2 className="mb-3 text-lg font-semibold">Divisions</h2>
+        <h2 className="mb-3 font-display text-2xl font-semibold uppercase tracking-wide text-ink">
+          Divisions
+        </h2>
         {divisions.length === 0 ? (
-          <p className="text-sm text-zinc-500">No divisions published yet.</p>
+          <p className="rounded-xl border border-dashed border-zinc-300 bg-surface p-6 text-center text-sm text-ink-muted">
+            No divisions published yet.
+          </p>
         ) : (
           <ul className="grid gap-3 sm:grid-cols-2">
             {divisions.map((d) => (
               <li key={d.id}>
                 <Link
                   href={`/shared/${org.slug}/${competition.slug}/${d.slug}`}
-                  className="group block rounded-xl border border-purple-100 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md"
+                  className="group flex h-full flex-col justify-between rounded-xl border border-zinc-200/80 bg-surface p-4 shadow-sm transition hover:-translate-y-0.5 hover:border-accent-line hover:shadow-md"
                 >
-                  <p className="flex items-center justify-between font-semibold">
-                    {d.name}
-                    <span className="text-purple-300 transition group-hover:translate-x-0.5 group-hover:text-purple-500">
-                      →
+                  <div className="flex items-start gap-3">
+                    <span
+                      aria-hidden
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-soft font-display text-base font-bold uppercase text-accent-strong"
+                    >
+                      {(d.sport_name ?? d.sport_key).slice(0, 1)}
                     </span>
-                  </p>
-                  <p className="mt-2 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+                    <p className="min-w-0 flex-1 font-display text-xl font-semibold leading-tight text-ink">
+                      {d.name}
+                    </p>
+                    <ChevronRight
+                      aria-hidden
+                      className="mt-1 h-4 w-4 shrink-0 text-zinc-300 transition group-hover:translate-x-0.5 group-hover:text-accent"
+                    />
+                  </div>
+                  <p className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
                     <span>{d.sport_name ?? d.sport_key}</span>
-                    <span className="rounded-full bg-purple-50 px-2 py-0.5 uppercase text-purple-700">
+                    <span className="rounded-full bg-accent-soft px-2 py-0.5 uppercase text-accent-strong">
                       {d.variant_key}
                     </span>
                     <span>{d.entrant_count} entrants</span>
@@ -196,14 +222,14 @@ export default async function CompetitionHomePage({ params }: Props) {
       </section>
 
       {branding.sponsors && branding.sponsors.length > 0 ? (
-        <section className="mt-8 border-t border-purple-100 pt-4">
-          <h2 className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-400">
+        <section className="mt-10 border-t border-zinc-200 pt-4">
+          <h2 className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-ink-muted">
             Sponsors
           </h2>
           <ul className="flex flex-wrap items-center gap-3">
             {branding.sponsors.map((s) => {
               const inner = (
-                <span className="flex items-center gap-2 rounded-lg border border-purple-100 bg-white px-3 py-2 text-sm text-zinc-600 shadow-sm">
+                <span className="flex items-center gap-2 rounded-lg border border-zinc-200/80 bg-surface px-3 py-2 text-sm text-zinc-600 shadow-sm">
                   {s.logo ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={s.logo} alt="" className="h-6 w-6 object-contain" />

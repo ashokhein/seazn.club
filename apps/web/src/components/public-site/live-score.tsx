@@ -6,20 +6,16 @@
 // because the public page authenticates with a public token endpoint instead
 // of the org-member one.
 import { useCallback, useEffect, useState } from "react";
-import { api } from "@/lib/client";
 import { setBreakdown, stripLiveSetPoints } from "@/lib/public-site";
+import {
+  fetchLiveFixture,
+  fetchPublicRealtimeToken,
+  type LiveFixtureData,
+} from "./live-score-data";
 
 const POLL_MS = 15_000;
 
-export interface LiveFixtureData {
-  status: string;
-  summary: {
-    headline?: string;
-    perSide?: { entrantId: string; line: string }[];
-    detail?: unknown;
-  } | null;
-  outcome: { kind?: string; winner?: string } | null;
-}
+export type { LiveFixtureData };
 
 interface Props {
   fixtureId: string;
@@ -34,8 +30,7 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
 
   const refresh = useCallback(async () => {
     try {
-      const res = await api<{ data: LiveFixtureData }>(`/api/v1/public/fixtures/${fixtureId}`);
-      setData(res.data);
+      setData(await fetchLiveFixture(fixtureId));
     } catch {
       // transient — keep the last known score
     }
@@ -57,11 +52,7 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
     (async () => {
       let token: { token: string; channel: string };
       try {
-        token = (
-          await api<{ data: { token: string; channel: string } }>(
-            `/api/v1/public/fixtures/${fixtureId}/realtime-token`,
-          )
-        ).data;
+        token = await fetchPublicRealtimeToken(fixtureId);
       } catch {
         return; // not entitled or server error → polling
       }
@@ -96,57 +87,66 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
   }, [live, subscribed, refresh]);
 
   const inPlay = data.status === "in_play";
+  const decided = data.status === "decided" || data.status === "finalized";
   const breakdown = setBreakdown(data.summary, sportKey);
   // Kernel perSide order is [home, away]; row labels come from it.
   const sideIds = data.summary?.perSide?.map((s) => s.entrantId) ?? [];
   const showBreakdown = breakdown !== null && sideIds.length === 2;
   return (
     <div className="space-y-4">
-      <div
-        className={`rounded-2xl border p-5 shadow-sm ${
-          inPlay
-            ? "border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-white"
-            : "border-purple-100 bg-white"
-        }`}
-      >
-        {inPlay ? (
-          <p className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-emerald-700">
-            <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-500" />
-            Live{subscribed ? " · realtime" : ""}
+      {/* Court-slab scorebug — the broadcast moment of the page. */}
+      <div className="overflow-hidden rounded-2xl bg-court text-court-ink shadow-lg">
+        <div className="p-5 sm:p-6">
+          {inPlay ? (
+            <p className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-300">
+              <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-400" />
+              Live{subscribed ? " · realtime" : ""}
+            </p>
+          ) : (
+            <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-court-muted">
+              {decided ? "Final" : data.status.replace("_", " ")}
+            </p>
+          )}
+          <p className="font-display text-5xl font-bold tabular-nums leading-none tracking-tight sm:text-6xl">
+            {data.summary?.headline
+              ? showBreakdown
+                ? stripLiveSetPoints(data.summary.headline)
+                : data.summary.headline
+              : "Not started"}
           </p>
-        ) : (
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-zinc-500">
-            {data.status.replace("_", " ")}
-          </p>
-        )}
-        <p className="text-4xl font-black tabular-nums tracking-tight text-zinc-900">
-          {data.summary?.headline
-            ? showBreakdown
-              ? stripLiveSetPoints(data.summary.headline)
-              : data.summary.headline
-            : "Not started"}
-        </p>
-        {!showBreakdown && data.summary?.perSide ? (
-          <ul className="mt-3 space-y-1.5 text-sm text-zinc-700">
-            {data.summary.perSide.map((side) => (
-              <li key={side.entrantId} className="flex items-center gap-2 tabular-nums">
-                <span className="font-medium">{entrantNames[side.entrantId] ?? "—"}</span>
-                <span className="rounded-full bg-purple-50 px-2 py-0.5 text-xs font-semibold text-purple-700">
-                  {side.line}
-                </span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
-        {data.outcome?.winner ? (
-          <p className="mt-3 flex items-center gap-1.5 text-sm text-zinc-600">
-            <span className="animate-trophy">🏆</span>
-            Winner:{" "}
-            <strong className="text-zinc-900">
-              {entrantNames[data.outcome.winner] ?? data.outcome.winner}
-            </strong>
-          </p>
-        ) : null}
+          {!showBreakdown && data.summary?.perSide ? (
+            <ul className="mt-5 space-y-2">
+              {data.summary.perSide.map((side) => {
+                const isWinner = data.outcome?.winner === side.entrantId;
+                return (
+                  <li
+                    key={side.entrantId}
+                    className={`flex items-baseline justify-between gap-3 tabular-nums ${
+                      data.outcome?.winner && !isWinner ? "opacity-60" : ""
+                    }`}
+                  >
+                    <span className="truncate font-display text-xl font-semibold uppercase tracking-wide sm:text-2xl">
+                      {entrantNames[side.entrantId] ?? "—"}
+                    </span>
+                    <span className="shrink-0 font-display text-xl font-bold sm:text-2xl">
+                      {side.line}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : null}
+          {data.outcome?.winner ? (
+            <p className="mt-4 flex items-center gap-1.5 text-sm text-court-muted">
+              <span className="animate-trophy">🏆</span>
+              Winner:{" "}
+              <strong className="text-amber-300">
+                {entrantNames[data.outcome.winner] ?? data.outcome.winner}
+              </strong>
+            </p>
+          ) : null}
+        </div>
+        <div aria-hidden className={`h-1 ${inPlay ? "bg-emerald-400" : "bg-accent"}`} />
       </div>
 
       {showBreakdown ? (
@@ -169,8 +169,8 @@ function SetScoreboard({
 }) {
   const sides = ["home", "away"] as const;
   return (
-    <div className="rounded-2xl border border-purple-100 bg-white p-5 shadow-sm">
-      <p className="mb-3 text-xs font-medium uppercase tracking-wide text-zinc-500">
+    <div className="rounded-2xl border border-zinc-200/80 bg-surface p-5 shadow-sm">
+      <p className="mb-3 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
         Score by {breakdown.unit.toLowerCase()}
       </p>
       <div className="overflow-x-auto">
@@ -213,13 +213,13 @@ function SetScoreboard({
                   return (
                     <td
                       key={i}
-                      className={`px-3 py-2 text-center text-xl ${
+                      className={`px-3 py-2 text-center font-display text-2xl ${
                         row === 0 ? "border-b border-zinc-100" : ""
                       } ${row === 1 && liveCell ? "rounded-b-lg" : ""} ${
                         liveCell
                           ? "bg-emerald-50 font-bold text-emerald-700"
                           : wonSet
-                            ? "font-bold text-zinc-900"
+                            ? "font-bold text-ink"
                             : "font-medium text-zinc-400"
                       }`}
                     >

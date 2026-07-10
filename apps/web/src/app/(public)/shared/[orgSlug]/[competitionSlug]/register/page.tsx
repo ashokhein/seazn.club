@@ -25,14 +25,19 @@ export default async function RegisterPage({ params }: Props) {
 
   return (
     <div className="mx-auto max-w-2xl">
-      <p className="text-xs text-zinc-400">
-        <Link href={`/shared/${orgSlug}/${competitionSlug}`} className="hover:underline">
+      <p className="text-xs text-ink-muted">
+        <Link
+          href={`/shared/${orgSlug}/${competitionSlug}`}
+          className="hover:text-accent-strong hover:underline"
+        >
           {info.competition.name}
         </Link>{" "}
         / Register
       </p>
-      <h1 className="mt-1 text-3xl font-bold tracking-tight">Register</h1>
-      <p className="mt-1 text-sm text-zinc-500">
+      <h1 className="mt-1 font-display text-4xl font-bold uppercase tracking-tight text-ink">
+        Register
+      </h1>
+      <p className="mt-1 text-sm text-ink-muted">
         Pick a division, fill in your details — takes under a minute.
       </p>
       {info.divisions.length === 0 ? (

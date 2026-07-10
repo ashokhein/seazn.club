@@ -32,8 +32,11 @@ export default async function PlayerCardPage({ params }: Props) {
 
   return (
     <div>
-      <nav className="mb-4 text-xs text-zinc-500">
-        <Link href={`/shared/${org.slug}/${competition.slug}`} className="underline">
+      <nav className="mb-4 text-xs text-ink-muted">
+        <Link
+          href={`/shared/${org.slug}/${competition.slug}`}
+          className="hover:text-accent-strong hover:underline"
+        >
           {competition.name}
         </Link>
       </nav>
@@ -43,12 +46,12 @@ export default async function PlayerCardPage({ params }: Props) {
           <img
             src={player.photo}
             alt={player.name}
-            className="h-24 w-24 rounded-lg object-cover"
+            className="h-24 w-24 rounded-xl object-cover shadow-sm"
           />
         ) : (
           <div
             aria-hidden
-            className="flex h-24 w-24 items-center justify-center rounded-lg bg-zinc-200 text-2xl font-semibold text-zinc-500"
+            className="flex h-24 w-24 items-center justify-center rounded-xl bg-accent-soft font-display text-3xl font-bold text-accent-strong"
           >
             {player.name
               .split(/\s+/)
@@ -58,22 +61,29 @@ export default async function PlayerCardPage({ params }: Props) {
           </div>
         )}
         <div>
-          <h1 className="text-2xl font-semibold">{player.name}</h1>
-          <p className="text-sm text-zinc-500">{org.name}</p>
+          <h1 className="font-display text-3xl font-bold uppercase leading-none tracking-tight text-ink">
+            {player.name}
+          </h1>
+          <p className="mt-1 text-sm text-ink-muted">{org.name}</p>
         </div>
       </div>
 
       <section className="mt-6">
-        <h2 className="mb-2 text-sm font-medium text-zinc-700">In this competition</h2>
+        <h2 className="mb-2 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
+          In this competition
+        </h2>
         {memberships.length === 0 ? (
-          <p className="text-sm text-zinc-500">No current squad entries.</p>
+          <p className="text-sm text-ink-muted">No current squad entries.</p>
         ) : (
           <ul className="space-y-2">
             {memberships.map((m, i) => (
-              <li key={i} className="rounded border border-zinc-200 bg-white p-3 text-sm">
+              <li
+                key={i}
+                className="rounded-xl border border-zinc-200/80 bg-surface p-3 text-sm shadow-sm"
+              >
                 <Link
                   href={`/shared/${org.slug}/${competition.slug}/${m.division_slug}`}
-                  className="font-medium underline underline-offset-2"
+                  className="font-medium text-accent-strong underline decoration-accent-line underline-offset-2 hover:decoration-accent"
                 >
                   {m.division_name}
                 </Link>{" "}

@@ -2,6 +2,8 @@
 // Minimal tab switcher for the division home (Schedule / Standings /
 // Entrants — doc 09 §2). All panels are server-rendered and shipped in the
 // ISR payload; this only toggles visibility (fast + crawlable).
+// Styled as a segmented pill bar, sticky under the court masthead so a
+// spectator can hop tabs from anywhere in a long schedule.
 import { useState, type ReactNode } from "react";
 
 interface Props {
@@ -13,22 +15,27 @@ export function Tabs({ labels, children }: Props) {
   const [active, setActive] = useState(0);
   return (
     <div>
-      <div role="tablist" className="mb-6 flex gap-1 border-b border-purple-100 sm:gap-4">
-        {labels.map((label, i) => (
-          <button
-            key={label}
-            role="tab"
-            aria-selected={i === active}
-            onClick={() => setActive(i)}
-            className={
-              i === active
-                ? "-mb-px border-b-2 border-purple-600 px-3 pb-2.5 pt-1.5 text-sm font-semibold text-purple-700"
-                : "-mb-px border-b-2 border-transparent px-3 pb-2.5 pt-1.5 text-sm font-medium text-zinc-500 transition hover:border-purple-200 hover:text-zinc-800"
-            }
-          >
-            {label}
-          </button>
-        ))}
+      <div className="sticky top-[54px] z-30 -mx-4 mb-5 bg-canvas/90 px-4 py-2 backdrop-blur">
+        <div
+          role="tablist"
+          className="inline-flex max-w-full gap-1 overflow-x-auto rounded-full border border-zinc-200/80 bg-surface p-1 shadow-sm"
+        >
+          {labels.map((label, i) => (
+            <button
+              key={label}
+              role="tab"
+              aria-selected={i === active}
+              onClick={() => setActive(i)}
+              className={
+                i === active
+                  ? "shrink-0 rounded-full bg-accent px-4 py-1.5 text-sm font-semibold text-accent-ink shadow-sm"
+                  : "shrink-0 rounded-full px-4 py-1.5 text-sm font-medium text-ink-muted transition hover:bg-accent-soft hover:text-accent-strong"
+              }
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       {children.map((panel, i) => (
         <div key={labels[i]} role="tabpanel" hidden={i !== active}>

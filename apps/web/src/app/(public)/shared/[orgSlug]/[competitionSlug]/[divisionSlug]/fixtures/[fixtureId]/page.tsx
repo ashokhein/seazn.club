@@ -6,6 +6,7 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getPublicFixture } from "@/server/public-site/data";
 import { sportsEventJsonLd } from "@/lib/public-site";
+import { publicThemeStyle } from "@/lib/public-theme";
 import { LiveScore } from "@/components/public-site/live-score";
 
 export const revalidate = 30;
@@ -64,22 +65,25 @@ export default async function FixturePage({ params }: Props) {
   });
 
   return (
-    <div>
+    <div style={publicThemeStyle(competition.branding)}>
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: jsonLd }} />
-      <nav className="mb-4 text-xs text-zinc-500">
-        <Link href={`/shared/${org.slug}/${competition.slug}`} className="underline">
+      <nav className="mb-4 text-xs text-ink-muted">
+        <Link
+          href={`/shared/${org.slug}/${competition.slug}`}
+          className="hover:text-accent-strong hover:underline"
+        >
           {competition.name}
         </Link>{" "}
         /{" "}
-        <Link href={basePath} className="underline">
+        <Link href={basePath} className="hover:text-accent-strong hover:underline">
           {division.name}
         </Link>
       </nav>
 
-      <h1 className="mb-1 text-xl font-semibold">
-        {home} <span className="text-zinc-400">vs</span> {away}
+      <h1 className="mb-1 font-display text-2xl font-semibold text-ink">
+        {home} <span className="text-ink-muted">vs</span> {away}
       </h1>
-      <p className="mb-4 text-sm text-zinc-500">
+      <p className="mb-4 text-sm text-ink-muted">
         {fixture.scheduled_at
           ? new Date(fixture.scheduled_at).toLocaleString("en-GB", {
               weekday: "long",

@@ -8,6 +8,7 @@ import type { Metadata } from "next";
 import { resolveModule } from "@/server/engine-db";
 import type { StandingsRow } from "@seazn/engine/competition";
 import { getPublicDivision } from "@/server/public-site/data";
+import { publicThemeStyle } from "@/lib/public-theme";
 import { Tabs } from "@/components/public-site/tabs";
 import { Schedule } from "@/components/public-site/schedule";
 import { StandingsTable } from "@/components/public-site/standings-table";
@@ -95,14 +96,20 @@ export default async function DivisionHomePage({ params }: Props) {
 
   // Rendered at the very top of the division page (above the tabs) so the
   // winner is visible on Schedule/Standings/Entrants alike — v1 parity.
+  // Gold is fixed podium vocabulary, deliberately outside the org theme.
   const championBanner = championId ? (
-    <div className="mb-6 flex items-center gap-4 rounded-xl border border-amber-200 bg-gradient-to-r from-amber-50 via-amber-50/40 to-transparent p-4 shadow-sm">
-      <span className="animate-trophy text-4xl" aria-hidden>🏆</span>
-      <div className="min-w-0">
-        <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">Champion</p>
-        <p className="truncate text-xl font-black tracking-tight text-zinc-900">
-          {entrantNames[championId] ?? "—"}
-        </p>
+    <div className="relative mb-6 overflow-hidden rounded-xl bg-court p-4 text-court-ink shadow-md">
+      <span aria-hidden className="absolute inset-y-0 left-0 w-1 bg-amber-400" />
+      <div className="flex items-center gap-4 pl-2">
+        <span className="animate-trophy text-4xl" aria-hidden>🏆</span>
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-amber-300">
+            Champion
+          </p>
+          <p className="truncate font-display text-3xl font-bold uppercase leading-tight tracking-tight">
+            {entrantNames[championId] ?? "—"}
+          </p>
+        </div>
       </div>
     </div>
   ) : null;
@@ -115,7 +122,7 @@ export default async function DivisionHomePage({ params }: Props) {
           if (stageFixtures.length === 0) return null;
           return (
             <section key={stage.id}>
-              <h3 className="mb-3 font-medium">{stage.name}</h3>
+              <h3 className="mb-3 font-display text-lg font-semibold text-ink">{stage.name}</h3>
               <Bracket
                 kind={stage.kind as "knockout" | "double_elim" | "stepladder"}
                 fixtures={stageFixtures}
@@ -150,7 +157,9 @@ export default async function DivisionHomePage({ params }: Props) {
         );
       })}
       {standings.length === 0 && !stages.some((s) => BRACKET_KINDS.has(s.kind)) ? (
-        <p className="text-sm text-zinc-500">Standings appear after the first results.</p>
+        <p className="rounded-xl border border-dashed border-zinc-300 bg-surface p-6 text-center text-sm text-ink-muted">
+          Standings appear after the first results.
+        </p>
       ) : null}
     </div>
   );
@@ -158,24 +167,31 @@ export default async function DivisionHomePage({ params }: Props) {
   const entrantsPanel = (
     <ul className="grid gap-3 sm:grid-cols-2">
       {entrants.map((e) => (
-        <li key={e.id} className="rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
-          <p className="font-medium">
-            {e.display_name}
-            {e.seed ? <span className="ml-2 text-xs text-zinc-400">Seed {e.seed}</span> : null}
+        <li
+          key={e.id}
+          className="rounded-xl border border-zinc-200/80 bg-surface p-4 shadow-sm"
+        >
+          <p className="flex items-baseline justify-between gap-2 font-display text-lg font-semibold text-ink">
+            <span className="truncate">{e.display_name}</span>
+            {e.seed ? (
+              <span className="shrink-0 rounded-full bg-accent-soft px-2 py-0.5 font-sans text-[11px] font-medium text-accent-strong">
+                Seed {e.seed}
+              </span>
+            ) : null}
           </p>
           {e.members.length > 0 ? (
             <ul className="mt-2 space-y-1 text-sm text-zinc-600">
               {e.members.map((m, i) => (
                 <li key={i} className="flex items-center gap-2">
                   {m.squad_number != null ? (
-                    <span className="w-6 text-right text-xs tabular-nums text-zinc-400">
+                    <span className="w-6 text-right font-display text-xs font-semibold tabular-nums text-ink-muted">
                       {m.squad_number}
                     </span>
                   ) : null}
                   {m.person_id ? (
                     <Link
                       href={`/shared/${org.slug}/${competition.slug}/players/${m.person_id}`}
-                      className="underline underline-offset-2"
+                      className="underline decoration-accent-line underline-offset-2 hover:text-accent-strong hover:decoration-accent"
                     >
                       {m.name}
                     </Link>
@@ -184,7 +200,7 @@ export default async function DivisionHomePage({ params }: Props) {
                     <span>{m.name}</span>
                   )}
                   {m.position ? (
-                    <span className="text-xs text-zinc-400">{m.position}</span>
+                    <span className="text-xs text-ink-muted">{m.position}</span>
                   ) : null}
                 </li>
               ))}
@@ -193,28 +209,33 @@ export default async function DivisionHomePage({ params }: Props) {
         </li>
       ))}
       {entrants.length === 0 ? (
-        <p className="text-sm text-zinc-500">No entrants yet.</p>
+        <p className="text-sm text-ink-muted">No entrants yet.</p>
       ) : null}
     </ul>
   );
 
   return (
-    <div>
-      <nav className="mb-4 text-xs text-zinc-500">
-        <Link href={`/shared/${org.slug}`} className="underline">
+    <div style={publicThemeStyle(competition.branding)}>
+      <nav className="mb-4 text-xs text-ink-muted">
+        <Link href={`/shared/${org.slug}`} className="hover:text-accent-strong hover:underline">
           {org.name}
         </Link>{" "}
         /{" "}
-        <Link href={`/shared/${org.slug}/${competition.slug}`} className="underline">
+        <Link
+          href={`/shared/${org.slug}/${competition.slug}`}
+          className="hover:text-accent-strong hover:underline"
+        >
           {competition.name}
         </Link>
       </nav>
-      <h1 className="mb-2 text-3xl font-bold tracking-tight">{division.name}</h1>
-      <p className="mb-6 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+      <h1 className="mb-2 font-display text-4xl font-bold uppercase leading-none tracking-tight text-ink sm:text-5xl">
+        {division.name}
+      </h1>
+      <p className="mb-6 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <span className="font-medium text-zinc-600">
           {division.sport_name ?? division.sport_key}
         </span>
-        <span className="rounded-full bg-purple-50 px-2 py-0.5 uppercase text-purple-700">
+        <span className="rounded-full bg-accent-soft px-2 py-0.5 uppercase text-accent-strong">
           {division.variant_key}
         </span>
         {stages.map((s) => (
