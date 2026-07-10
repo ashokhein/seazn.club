@@ -101,12 +101,16 @@ export async function createAssignment(
 
 export interface AssignedFixture {
   id: string;
+  fixture_no: number;
   org_id: string;
   org_name: string;
+  org_slug: string;
   competition_id: string;
   competition_name: string;
+  competition_slug: string;
   division_id: string;
   division_name: string;
+  division_slug: string;
   division_status: string;
   sport_key: string;
   module_version: string;
@@ -133,9 +137,10 @@ export async function listAssignedFixtures(
   const dayTo = dayFrom ? new Date(dayFrom.getTime() + 24 * 60 * 60 * 1000) : null;
   return sql<AssignedFixture[]>`
     select distinct on (f.scheduled_at, f.id)
-           f.id, f.org_id, o.name as org_name,
-           c.id as competition_id, c.name as competition_name,
-           d.id as division_id, d.name as division_name, d.status as division_status,
+           f.id, f.fixture_no, f.org_id, o.name as org_name, o.slug as org_slug,
+           c.id as competition_id, c.name as competition_name, c.slug as competition_slug,
+           d.id as division_id, d.name as division_name, d.slug as division_slug,
+           d.status as division_status,
            d.sport_key, d.module_version, f.round_no,
            f.home_entrant_id, f.away_entrant_id,
            he.display_name as home_name, ae.display_name as away_name,

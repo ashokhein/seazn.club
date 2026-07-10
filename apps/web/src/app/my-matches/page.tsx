@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 // and upcoming, straight into the scoring pad. Deliberately NO org nav and no
 // admin surface — a parent volunteer gets a link, taps winners, done.
 import Link from "next/link";
+import { routes } from "@/lib/routes";
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { listAssignedFixtures } from "@/server/usecases/scorers";
@@ -71,7 +72,7 @@ function Section({ title, fixtures }: { title: string; fixtures: Assigned[] }) {
         {fixtures.map((f) => (
           <li key={f.id}>
             <Link
-              href={`/fixtures/${f.id}`}
+              href={routes.fixture(f.org_slug, f.competition_slug, f.division_slug, f.fixture_no)}
               className="card flex flex-wrap items-center gap-3 p-4 hover:border-purple-300"
             >
               <div className="min-w-0 flex-1">

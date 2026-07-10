@@ -9,14 +9,18 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { routes } from "@/lib/routes";
 
 interface Props {
   divisionId: string;
+  orgSlug: string;
+  compSlug: string;
+  divSlug: string;
   status: string;
   canEdit: boolean;
 }
 
-export function LaunchActions({ divisionId, status, canEdit }: Props) {
+export function LaunchActions({ divisionId, orgSlug, compSlug, divSlug, status, canEdit }: Props) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -57,7 +61,7 @@ export function LaunchActions({ divisionId, status, canEdit }: Props) {
           {busy ? "Starting…" : "Start tournament"}
         </button>
       )}
-      <Link href={`/divisions/${divisionId}/schedule`} className="btn btn-ghost px-3 py-1.5 text-xs">
+      <Link href={routes.divisionSchedule(orgSlug, compSlug, divSlug)} className="btn btn-ghost px-3 py-1.5 text-xs">
         Schedule
       </Link>
       {paywall && <UpgradeGate feature={paywall} compact />}

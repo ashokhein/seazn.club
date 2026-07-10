@@ -38,15 +38,9 @@ export class ScoringErrorBoundary extends Component<Props, State> {
         <p className="mt-1">
           The score is safe: every entry is already saved. Reload to continue scoring.
         </p>
-        {this.props.fixtureId ? (
-          <a href={`/fixtures/${this.props.fixtureId}`} className={ACTION_CLASS}>
-            Reload scoring
-          </a>
-        ) : (
-          <button type="button" onClick={() => window.location.reload()} className={ACTION_CLASS}>
-            Reload scoring
-          </button>
-        )}
+        <button type="button" onClick={() => window.location.reload()} className={ACTION_CLASS}>
+          Reload scoring
+        </button>
       </div>
     );
   }

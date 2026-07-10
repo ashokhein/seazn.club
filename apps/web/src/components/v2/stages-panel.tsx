@@ -6,6 +6,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { routes } from "@/lib/routes";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
@@ -27,6 +28,7 @@ interface FixtureRow {
   pool_id: string | null;
   round_no: number;
   seq_in_round: number;
+  fixture_no: number;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
   scheduled_at: string | null;
@@ -38,6 +40,9 @@ interface FixtureRow {
 
 interface Props {
   divisionId: string;
+  orgSlug: string;
+  compSlug: string;
+  divSlug: string;
   stages: StageRow[];
   fixtures: FixtureRow[];
   entrantNames: Record<string, string>;
@@ -54,7 +59,7 @@ const FIXTURE_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-slate-100 text-slate-400",
 };
 
-export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdit }: Props) {
+export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fixtures, entrantNames, canEdit }: Props) {
   const confirmDialog = useConfirm();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -219,6 +224,7 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
                           <FixtureLine
                             key={f.id}
                             fixture={f}
+                            href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
                             entrantNames={entrantNames}
                             canEdit={canEdit}
                           />
@@ -245,6 +251,7 @@ export function StagesPanel({ divisionId, stages, fixtures, entrantNames, canEdi
                       <FixtureLine
                         key={f.id}
                         fixture={f}
+                        href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
                         entrantNames={entrantNames}
                         canEdit={canEdit}
                       />
@@ -424,10 +431,12 @@ function outcomeText(outcome: unknown, entrantNames: Record<string, string>): st
 
 function FixtureLine({
   fixture,
+  href,
   entrantNames,
   canEdit,
 }: {
   fixture: FixtureRow;
+  href: string;
   entrantNames: Record<string, string>;
   canEdit: boolean;
 }) {
@@ -480,7 +489,7 @@ function FixtureLine({
     <li className="px-4 py-2">
       <div className="flex flex-wrap items-center gap-3">
         <Link
-          href={`/fixtures/${fixture.id}`}
+          href={href}
           className="min-w-0 flex-1 text-sm text-slate-800 hover:text-purple-700"
         >
           <span className="font-medium">{home}</span>
@@ -505,7 +514,7 @@ function FixtureLine({
           </span>
         )}
         {/* Scoring pad. */}
-        <Link href={`/fixtures/${fixture.id}`} className="btn btn-ghost px-3 py-1 text-xs">
+        <Link href={href} className="btn btn-ghost px-3 py-1 text-xs">
           {decided ? "View" : fixture.status === "in_play" ? "Score ●" : "Score"}
         </Link>
         {canEdit && (

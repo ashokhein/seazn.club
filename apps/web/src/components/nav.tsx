@@ -106,7 +106,7 @@ export async function Nav() {
           <Link href="/login" className="btn btn-primary">Sign in</Link>
         )}
       </div>
-      {canTour && <ProductTour autoStart={tourPending} />}
+      {canTour && activeOrg && <ProductTour autoStart={tourPending} orgSlug={activeOrg.slug} />}
     </header>
   );
 }

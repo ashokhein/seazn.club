@@ -128,7 +128,14 @@ export default async function DivisionPage({
                 officialLabel={sportModule.officialLabel.scorer}
               />
             )}
-            <LaunchActions divisionId={id} status={division.status} canEdit={editable} />
+            <LaunchActions
+              divisionId={id}
+              orgSlug={orgSlug}
+              compSlug={compSlug}
+              divSlug={divSlug}
+              status={division.status}
+              canEdit={editable}
+            />
           </div>
         </div>
 
@@ -182,6 +189,9 @@ export default async function DivisionPage({
               ))}
             <StagesPanel
               divisionId={id}
+              orgSlug={orgSlug}
+              compSlug={compSlug}
+              divSlug={divSlug}
               stages={stages}
               fixtures={fixtures}
               entrantNames={entrantNames}
