@@ -6,8 +6,12 @@ engine**: mobile, navigation, pricing/packaging, self-serve growth, documentatio
 handful of correctness fixes. Intake: the 9 Jul 2026 organiser/founder list (31 items,
 captured verbatim in [00-intake-backlog.md](00-intake-backlog.md)).
 
-> **Status: designed, not implemented.** Prompts numbered PROMPT-30…39 (continuing
-> Jul3's 21–29). Numbering of design docs is independent of `engine/` docs.
+> **Status: designed; PROMPT-38 implemented** (2026-07-10, branch
+> `feat/engine-fixes-prompt-38`) — badminton headline + set-end matrix, cricket
+> undo/status coherence + scoring error boundary, sim-replay v2 (matrix +
+> `sim-report.json` + CI profile), division delete/archive/restore. The rest are
+> designed, not implemented. Prompts numbered PROMPT-30…39 (continuing Jul3's
+> 21–29). Numbering of design docs is independent of `engine/` docs.
 
 ## Theme
 
