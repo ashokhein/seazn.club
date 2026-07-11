@@ -76,7 +76,7 @@ export function buildPassCheckoutParams(args: {
 /**
  * In-app downgrade to Community for orgs WITHOUT a Stripe subscription
  * (admin-comped / dev-granted Pro). A Stripe-billed org must cancel through the
- * customer portal instead, so paid state never desyncs. Idempotent.
+ * in-app Cancel (period-end) flow instead, so paid state never desyncs. Idempotent.
  */
 export async function downgradeToCommunity(orgId: string): Promise<void> {
   const [sub] = await sql<{ stripe_subscription_id: string | null }[]>`
@@ -84,7 +84,7 @@ export async function downgradeToCommunity(orgId: string): Promise<void> {
   if (sub?.stripe_subscription_id) {
     throw new HttpError(
       400,
-      "This organization is billed through Stripe — cancel via Manage billing.",
+      "This organization is billed through Stripe — use “Cancel subscription” on this page.",
     );
   }
   await sql`
@@ -107,12 +107,12 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 /**
- * Label for the portal button on the billing page. A trialing Pro org has a
- * Stripe customer but no card yet (14-day no-card trial), so the primary ask is
- * "add a card"; once active it becomes ordinary billing management.
+ * Label for the primary billing CTA. A trialing Pro org has a Stripe customer
+ * but no card yet (14-day no-card trial), so the primary ask is "add a card";
+ * once active it's ordinary card management — both in-app now (v3/11).
  */
 export function billingCtaLabel(status: string): string {
-  return status === "trialing" ? "Add a card to keep Pro →" : "Manage billing →";
+  return status === "trialing" ? "Add a card to keep Pro →" : "Manage payment methods";
 }
 
 /** Look up our plan_key from a Stripe price ID. */

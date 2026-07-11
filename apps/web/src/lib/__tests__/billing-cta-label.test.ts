@@ -1,6 +1,6 @@
 // A trialing Pro org has a Stripe customer but no card (14-day no-card trial),
-// so the billing-page portal button must ask for a card — not read as generic
-// "Manage billing". Regression for the "Add a card to keep Pro" CTA.
+// so the primary billing CTA must ask for a card — not read as generic card
+// management. Since v3/11 both targets are in-app (no portal).
 import { describe, expect, it } from "vitest";
 import { billingCtaLabel } from "@/lib/billing";
 
@@ -9,8 +9,8 @@ describe("billingCtaLabel", () => {
     expect(billingCtaLabel("trialing")).toBe("Add a card to keep Pro →");
   });
 
-  it("is generic billing management once active or past due", () => {
-    expect(billingCtaLabel("active")).toBe("Manage billing →");
-    expect(billingCtaLabel("past_due")).toBe("Manage billing →");
+  it("is card management once active or past due (in-app, not portal)", () => {
+    expect(billingCtaLabel("active")).toBe("Manage payment methods");
+    expect(billingCtaLabel("past_due")).toBe("Manage payment methods");
   });
 });
