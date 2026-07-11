@@ -10,7 +10,7 @@ Every competition has a **public dashboard**: live scores, schedules, standings 
 
 1. Set the competition's visibility to **Link only** or **Public** ([what these mean](/help/sharing/visibility)).
 2. Copy the link from the sharing panel — or share straight to WhatsApp with one tap.
-3. Print the **QR poster** and stick it at the venue; a scan opens the live dashboard.
+3. Print the **QR PDF** and stick it at the venue; a scan opens the live dashboard.
 
 ## At the venue
 

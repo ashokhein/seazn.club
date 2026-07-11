@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Division console (PROMPT-15 task 1): entrants & rosters, fixture console
 // (per stage: generate/complete/schedule), standings with the cascade trace.
 import Link from "next/link";
-import { ClipboardList, MonitorPlay, Printer } from "lucide-react";
+import { ClipboardList, MonitorPlay, QrCode } from "lucide-react";
 import { StatusChip, divisionChipState } from "@/components/ui/status-chip";
 import { routes } from "@/lib/routes";
 import { requireDivisionPage } from "@/server/page-auth";
@@ -130,15 +130,16 @@ export default async function DivisionPage({
               <span className="hidden sm:inline">Registrations</span>
             </Link>
             {competition.visibility !== "private" && (
-              // v3/10 #3: division-scoped QR poster PDF for the venue wall.
+              // v3/10 #3: division-scoped QR PDF for the venue wall.
+              // ("Poster" is reserved for the future designed poster.)
               <a
                 href={`/shared/${orgSlug}/${competition.slug}/poster.pdf?division=${divSlug}`}
                 target="_blank"
-                aria-label="Print Poster (PDF, opens in a new tab)"
+                aria-label="QR PDF (opens in a new tab)"
                 className="btn btn-ghost gap-1.5"
               >
-                <Printer className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">Print Poster</span>
+                <QrCode className="h-4 w-4" strokeWidth={1.75} />
+                <span className="hidden sm:inline">QR PDF</span>
               </a>
             )}
             {editable && (

@@ -19,4 +19,4 @@ Org logo, brand colour and competition banner theme the whole public tree — an
 
 ## Making it findable
 
-Visibility is the switch ([details](/help/sharing/visibility)); the [QR poster](/help/getting-started/share-your-dashboard) bridges the venue to the page; the [slideshow](/help/sharing/slideshow) puts it on the venue TV.
+Visibility is the switch ([details](/help/sharing/visibility)); the [QR PDF](/help/getting-started/share-your-dashboard) bridges the venue to the page; the [slideshow](/help/sharing/slideshow) puts it on the venue TV.

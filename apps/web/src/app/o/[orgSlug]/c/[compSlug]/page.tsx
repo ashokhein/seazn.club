@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Competition overview: divisions as match-day cards (v3/03 §2); settings
 // live on their own page.
 import Link from "next/link";
-import { CalendarRange, Globe, MonitorPlay, Printer, Settings } from "lucide-react";
+import { CalendarRange, Globe, MonitorPlay, QrCode, Settings } from "lucide-react";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
@@ -75,15 +75,16 @@ export default async function CompetitionPage({
             )}
             {publicPath && (
               // v3/10 #3: A4 PDF with a big QR to the dashboard — print it,
-              // tape it to the venue door.
+              // tape it to the venue door. ("Poster" is reserved for the
+              // future designed poster with the full colour palette.)
               <a
                 href={`${publicPath}/poster.pdf`}
                 target="_blank"
-                aria-label="Print Poster (PDF, opens in a new tab)"
+                aria-label="QR PDF (opens in a new tab)"
                 className="btn btn-ghost gap-1.5"
               >
-                <Printer className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">Print Poster</span>
+                <QrCode className="h-4 w-4" strokeWidth={1.75} />
+                <span className="hidden sm:inline">QR PDF</span>
               </a>
             )}
             <Link
