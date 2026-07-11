@@ -15,6 +15,8 @@ export const routes = {
   competitionNew: (org: Slug) => `/o/${org}/c/new`,
   competition: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}`,
   competitionSettings: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}/settings`,
+  /** Event Pass purchase page — embedded one-time checkout (v3/07 §3). */
+  competitionUpgrade: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}/upgrade`,
   competitionSchedule: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}/schedule`,
   divisionNew: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}/d/new`,
   division: (org: Slug, comp: Slug, div: Slug, tab?: string) =>

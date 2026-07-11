@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
-import { syncSubscription } from "@/lib/billing";
+import { recordPassPurchase, syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { handleRegistrationCheckoutCompleted } from "@/server/usecases/registrations";
 import { syncConnectAccount } from "@/server/usecases/stripe-connect";
@@ -29,6 +29,21 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   }
   const orgId = session.metadata?.org_id;
   if (!orgId) return;
+
+  // Event Pass one-time purchase (v3/07 §3) — reconcile-on-return usually
+  // lands first; recordPassPurchase is idempotent either way.
+  if (session.metadata?.pass_key === "event_pass") {
+    const competitionId = session.metadata.competition_id;
+    if (competitionId && session.payment_status === "paid") {
+      await recordPassPurchase({
+        orgId,
+        competitionId,
+        paymentIntent:
+          typeof session.payment_intent === "string" ? session.payment_intent : null,
+      });
+    }
+    return;
+  }
 
   // Link the Stripe customer to this org
   if (session.customer) {

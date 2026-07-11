@@ -6,6 +6,7 @@ import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
 import { checkoutSchema } from "@/lib/types";
 import { buildEmbeddedCheckoutParams } from "@/lib/billing";
+import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 
 /** POST /api/billing/checkout — start an EMBEDDED Stripe Checkout session and
@@ -43,6 +44,7 @@ export async function POST(req: Request) {
         priceId: plan.price_id,
         orgId,
         returnUrl: `${baseUrl(req)}${routes.billing(org.slug)}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        currency: await preferredCurrency(orgId, req),
         customerId: sub?.stripe_customer_id ?? undefined,
         customerEmail: user.email,
       }),
