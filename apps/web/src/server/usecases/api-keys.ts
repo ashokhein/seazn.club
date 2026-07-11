@@ -12,12 +12,15 @@ export interface ApiKeyRow {
   id: string;
   name: string;
   scopes: string[];
+  competition_id: string | null;
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
 }
 
-const COLS = ["id", "name", "scopes", "last_used_at", "revoked_at", "created_at"] as const;
+const COLS = [
+  "id", "name", "scopes", "competition_id", "last_used_at", "revoked_at", "created_at",
+] as const;
 
 function requireSession(auth: AuthCtx): void {
   if (auth.via !== "session") {
@@ -37,14 +40,24 @@ export async function createApiKey(
 ): Promise<ApiKeyRow & { secret: string }> {
   requireSession(auth);
   await requireFeature(auth.orgId, "api.access"); // 402 for non-Pro orgs
-  // Doc 10 §1 Pro→Business ladder: write scopes need `api.write` — Business only.
-  if (input.scopes.includes("write")) await requireFeature(auth.orgId, "api.write");
+  // v3/08 §2: scopes are read | score | manage (legacy "write" ⇒ manage).
+  // The Business-only api.write rung died with the v3 Business scrub — any
+  // Pro org chooses its scopes; new keys default to read (schema default).
+  const scopes = [...new Set(input.scopes.map((s) => (s === "write" ? "manage" : s)))];
+  const pin = input.competition_id ?? null;
   const secret = mintApiKeySecret();
   const row = await withTenant(auth.orgId, async (tx) => {
+    if (pin) {
+      // The pin must be the org's own competition — a foreign id would mint
+      // a key that can never authenticate anyway, but fail loudly now.
+      const [comp] = await tx<{ id: string }[]>`
+        select id from competitions where id = ${pin}`;
+      if (!comp) throw new HttpError(404, "Competition not found");
+    }
     const [created] = await tx<ApiKeyRow[]>`
-      insert into api_keys (org_id, name, key_hash, scopes, created_by)
+      insert into api_keys (org_id, name, key_hash, scopes, competition_id, created_by)
       values (${auth.orgId}, ${input.name}, ${hashApiKey(secret)},
-              ${tx.json(input.scopes as never)}, ${auth.userId})
+              ${tx.json(scopes as never)}, ${pin}, ${auth.userId})
       returning ${tx(COLS)}`;
     return created;
   });

@@ -48,6 +48,21 @@
       "name": "registration"
     },
     {
+      "name": "clubs"
+    },
+    {
+      "name": "officials"
+    },
+    {
+      "name": "history"
+    },
+    {
+      "name": "exports"
+    },
+    {
+      "name": "stats"
+    },
+    {
       "name": "public"
     }
   ],
@@ -61,7 +76,7 @@
       "apiKey": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Pro API key: `Authorization: Bearer sc_…` (entitlement api.access)"
+        "description": "Pro API key: `Authorization: Bearer sc_…` (entitlement api.access). Scopes: read < score < manage; see x-required-scope per operation."
       },
       "deviceLink": {
         "type": "http",
@@ -77,6 +92,7 @@
         "tags": [
           "competitions"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "cursor",
@@ -294,6 +310,35 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "items": [
+                      {
+                        "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "name": "example",
+                        "slug": "example",
+                        "description": "example",
+                        "starts_on": "example",
+                        "ends_on": "example",
+                        "visibility": "private",
+                        "branding": {},
+                        "status": "draft",
+                        "created_at": "example",
+                        "discoverable": true,
+                        "discovery": {
+                          "city": "example",
+                          "country": "example",
+                          "tagline": "example",
+                          "hero_image_path": "example"
+                        }
+                      }
+                    ],
+                    "nextCursor": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -445,6 +490,7 @@
         "tags": [
           "competitions"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -468,7 +514,7 @@
                     "anyOf": [
                       {
                         "type": "string",
-                        "maxLength": 5000
+                        "maxLength": 20000
                       },
                       {
                         "type": "null"
@@ -523,6 +569,14 @@
                   "branding"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "slug": "example",
+                "description": "example",
+                "starts_on": "2026-08-01",
+                "visibility": "private",
+                "branding": {}
               }
             }
           }
@@ -699,6 +753,30 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "starts_on": "example",
+                    "ends_on": "example",
+                    "visibility": "private",
+                    "branding": {},
+                    "status": "draft",
+                    "created_at": "example",
+                    "discoverable": true,
+                    "discovery": {
+                      "city": "example",
+                      "country": "example",
+                      "tagline": "example",
+                      "hero_image_path": "example"
+                    }
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -896,6 +974,7 @@
         "tags": [
           "competitions"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -1079,6 +1158,30 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "starts_on": "example",
+                    "ends_on": "example",
+                    "visibility": "private",
+                    "branding": {},
+                    "status": "draft",
+                    "created_at": "example",
+                    "discoverable": true,
+                    "discovery": {
+                      "city": "example",
+                      "country": "example",
+                      "tagline": "example",
+                      "hero_image_path": "example"
+                    }
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -1230,6 +1333,7 @@
         "tags": [
           "competitions"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -1263,7 +1367,7 @@
                     "anyOf": [
                       {
                         "type": "string",
-                        "maxLength": 5000
+                        "maxLength": 20000
                       },
                       {
                         "type": "null"
@@ -1374,6 +1478,12 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "slug": "example",
+                "description": "example",
+                "starts_on": "2026-08-01"
               }
             }
           }
@@ -1550,6 +1660,30 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "starts_on": "example",
+                    "ends_on": "example",
+                    "visibility": "private",
+                    "branding": {},
+                    "status": "draft",
+                    "created_at": "example",
+                    "discoverable": true,
+                    "discovery": {
+                      "city": "example",
+                      "country": "example",
+                      "tagline": "example",
+                      "hero_image_path": "example"
+                    }
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -1745,6 +1879,7 @@
         "tags": [
           "competitions"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -1789,6 +1924,13 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "deleted": true
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -1986,6 +2128,7 @@
         "tags": [
           "divisions"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -2033,6 +2176,16 @@
                           },
                           "slug": {
                             "type": "string"
+                          },
+                          "description": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "sport_key": {
                             "type": "string"
@@ -2102,6 +2255,7 @@
                           "competition_id",
                           "name",
                           "slug",
+                          "description",
                           "sport_key",
                           "variant_key",
                           "config",
@@ -2123,6 +2277,35 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "name": "example",
+                      "slug": "example",
+                      "description": "example",
+                      "sport_key": "example",
+                      "variant_key": "example",
+                      "config": null,
+                      "module_version": "example",
+                      "eligibility": [
+                        null
+                      ],
+                      "tiebreakers": [
+                        "example"
+                      ],
+                      "status": "setup",
+                      "officials_hide_names": true,
+                      "scheduling_mode": "timed",
+                      "auto_progress": true,
+                      "archived_at": "example",
+                      "created_at": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -2274,6 +2457,7 @@
         "tags": [
           "divisions"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -2352,6 +2536,16 @@
                   "eligibility"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "slug": "example",
+                "sport_key": "example",
+                "variant_key": "example",
+                "config": {},
+                "eligibility": [
+                  {}
+                ]
               }
             }
           }
@@ -2390,6 +2584,16 @@
                         },
                         "slug": {
                           "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "sport_key": {
                           "type": "string"
@@ -2459,6 +2663,7 @@
                         "competition_id",
                         "name",
                         "slug",
+                        "description",
                         "sport_key",
                         "variant_key",
                         "config",
@@ -2479,6 +2684,33 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "sport_key": "example",
+                    "variant_key": "example",
+                    "config": null,
+                    "module_version": "example",
+                    "eligibility": [
+                      null
+                    ],
+                    "tiebreakers": [
+                      "example"
+                    ],
+                    "status": "setup",
+                    "officials_hide_names": true,
+                    "scheduling_mode": "timed",
+                    "auto_progress": true,
+                    "archived_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -2720,6 +2952,7 @@
         "tags": [
           "divisions"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -2765,6 +2998,16 @@
                         },
                         "slug": {
                           "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "sport_key": {
                           "type": "string"
@@ -2834,6 +3077,7 @@
                         "competition_id",
                         "name",
                         "slug",
+                        "description",
                         "sport_key",
                         "variant_key",
                         "config",
@@ -2854,6 +3098,33 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "sport_key": "example",
+                    "variant_key": "example",
+                    "config": null,
+                    "module_version": "example",
+                    "eligibility": [
+                      null
+                    ],
+                    "tiebreakers": [
+                      "example"
+                    ],
+                    "status": "setup",
+                    "officials_hide_names": true,
+                    "scheduling_mode": "timed",
+                    "auto_progress": true,
+                    "archived_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -3005,6 +3276,7 @@
         "tags": [
           "divisions"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -3027,6 +3299,17 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 200
+                  },
+                  "description": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 20000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   },
                   "eligibility": {
                     "type": "array",
@@ -3092,6 +3375,16 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "description": "example",
+                "eligibility": [
+                  {}
+                ],
+                "tiebreakers": [
+                  "example"
+                ]
               }
             }
           }
@@ -3130,6 +3423,16 @@
                         },
                         "slug": {
                           "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "sport_key": {
                           "type": "string"
@@ -3199,6 +3502,7 @@
                         "competition_id",
                         "name",
                         "slug",
+                        "description",
                         "sport_key",
                         "variant_key",
                         "config",
@@ -3219,6 +3523,33 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "sport_key": "example",
+                    "variant_key": "example",
+                    "config": null,
+                    "module_version": "example",
+                    "eligibility": [
+                      null
+                    ],
+                    "tiebreakers": [
+                      "example"
+                    ],
+                    "status": "setup",
+                    "officials_hide_names": true,
+                    "scheduling_mode": "timed",
+                    "auto_progress": true,
+                    "archived_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -3370,6 +3701,7 @@
         "tags": [
           "divisions"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -3403,6 +3735,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -3600,6 +3937,7 @@
         "tags": [
           "divisions"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -3645,6 +3983,16 @@
                         },
                         "slug": {
                           "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "sport_key": {
                           "type": "string"
@@ -3714,6 +4062,7 @@
                         "competition_id",
                         "name",
                         "slug",
+                        "description",
                         "sport_key",
                         "variant_key",
                         "config",
@@ -3734,6 +4083,33 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "sport_key": "example",
+                    "variant_key": "example",
+                    "config": null,
+                    "module_version": "example",
+                    "eligibility": [
+                      null
+                    ],
+                    "tiebreakers": [
+                      "example"
+                    ],
+                    "status": "setup",
+                    "officials_hide_names": true,
+                    "scheduling_mode": "timed",
+                    "auto_progress": true,
+                    "archived_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -3929,6 +4305,7 @@
         "tags": [
           "divisions"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -3974,6 +4351,16 @@
                         },
                         "slug": {
                           "type": "string"
+                        },
+                        "description": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "sport_key": {
                           "type": "string"
@@ -4043,6 +4430,7 @@
                         "competition_id",
                         "name",
                         "slug",
+                        "description",
                         "sport_key",
                         "variant_key",
                         "config",
@@ -4063,6 +4451,33 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "slug": "example",
+                    "description": "example",
+                    "sport_key": "example",
+                    "variant_key": "example",
+                    "config": null,
+                    "module_version": "example",
+                    "eligibility": [
+                      null
+                    ],
+                    "tiebreakers": [
+                      "example"
+                    ],
+                    "status": "setup",
+                    "officials_hide_names": true,
+                    "scheduling_mode": "timed",
+                    "auto_progress": true,
+                    "archived_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -4260,6 +4675,7 @@
         "tags": [
           "entrants"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -4368,6 +4784,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "kind": "team",
+                      "team_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "display_name": "example",
+                      "seed": -9007199254740991,
+                      "status": "registered",
+                      "created_at": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -4519,6 +4951,7 @@
         "tags": [
           "entrants"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -4766,6 +5199,23 @@
                     }
                   }
                 ]
+              },
+              "example": {
+                "kind": "team",
+                "display_name": "example",
+                "team_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "seed": 1,
+                "members": [
+                  {
+                    "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "squad_number": 0,
+                    "default_position_key": "example",
+                    "is_captain": true,
+                    "roles": [
+                      "example"
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -4944,6 +5394,20 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "kind": "team",
+                    "team_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "display_name": "example",
+                    "seed": -9007199254740991,
+                    "status": "registered",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -5141,6 +5605,7 @@
         "tags": [
           "entrants"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -5246,6 +5711,20 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "kind": "team",
+                    "team_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "display_name": "example",
+                    "seed": -9007199254740991,
+                    "status": "registered",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -5397,6 +5876,7 @@
         "tags": [
           "entrants"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -5495,6 +5975,22 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "display_name": "example",
+                "seed": 1,
+                "status": "registered",
+                "members": [
+                  {
+                    "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "squad_number": 0,
+                    "default_position_key": "example",
+                    "is_captain": true,
+                    "roles": [
+                      "example"
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -5593,6 +6089,20 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "kind": "team",
+                    "team_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "display_name": "example",
+                    "seed": -9007199254740991,
+                    "status": "registered",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -5790,6 +6300,7 @@
         "tags": [
           "entrants"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -5823,6 +6334,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -6064,6 +6580,7 @@
         "tags": [
           "entrants"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -6097,6 +6614,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -6250,6 +6772,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "cursor",
@@ -6384,6 +6907,24 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "items": [
+                      {
+                        "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "full_name": "example",
+                        "dob": "example",
+                        "gender": "m",
+                        "consent": {},
+                        "external_ref": "example",
+                        "created_at": "example"
+                      }
+                    ],
+                    "nextCursor": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -6535,6 +7076,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -6605,6 +7147,15 @@
                   "consent"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "full_name": "example",
+                "dob": "2026-08-01",
+                "gender": "m",
+                "consent": {
+                  "public_name": true,
+                  "public_photo": true
+                }
               }
             }
           }
@@ -6698,6 +7249,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "full_name": "example",
+                    "dob": "example",
+                    "gender": "m",
+                    "consent": {},
+                    "external_ref": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -6851,6 +7415,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -6951,6 +7516,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "full_name": "example",
+                    "dob": "example",
+                    "gender": "m",
+                    "consent": {},
+                    "external_ref": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -7102,6 +7680,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -7177,6 +7756,15 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "full_name": "example",
+                "dob": "2026-08-01",
+                "gender": "m",
+                "consent": {
+                  "public_name": true,
+                  "public_photo": true
+                }
               }
             }
           }
@@ -7270,6 +7858,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "full_name": "example",
+                    "dob": "example",
+                    "gender": "m",
+                    "consent": {},
+                    "external_ref": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -7423,6 +8024,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -7451,6 +8053,9 @@
                   "duplicate_id"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "duplicate_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
               }
             }
           }
@@ -7544,6 +8149,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "full_name": "example",
+                    "dob": "example",
+                    "gender": "m",
+                    "consent": {},
+                    "external_ref": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -7741,6 +8359,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -7841,6 +8460,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "full_name": "example",
+                    "dob": "example",
+                    "gender": "m",
+                    "consent": {},
+                    "external_ref": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -8082,6 +8714,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -8123,6 +8756,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -8274,6 +8912,7 @@
         "tags": [
           "persons"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -8312,6 +8951,9 @@
                   "attributes"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "attributes": {}
               }
             }
           }
@@ -8338,6 +8980,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -8535,6 +9182,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -8646,6 +9294,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "seq": -9007199254740991,
+                      "kind": "league",
+                      "name": "example",
+                      "config": {},
+                      "qualification": {},
+                      "status": "pending"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -8797,6 +9461,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -8934,6 +9599,12 @@
                     }
                   }
                 ]
+              },
+              "example": {
+                "seq": 1,
+                "kind": "league",
+                "name": "example",
+                "config": {}
               }
             }
           }
@@ -9118,6 +9789,20 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "seq": -9007199254740991,
+                    "kind": "league",
+                    "name": "example",
+                    "config": {},
+                    "qualification": {},
+                    "status": "pending"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -9315,6 +10000,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -9525,6 +10211,37 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "created": -9007199254740991,
+                    "existing": -9007199254740991,
+                    "fixtures": [
+                      {
+                        "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "stage_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "pool_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "round_no": -9007199254740991,
+                        "seq_in_round": -9007199254740991,
+                        "home_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "away_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "scheduled_at": "example",
+                        "venue": "example",
+                        "court_label": "example",
+                        "officials": [
+                          null
+                        ],
+                        "status": "scheduled",
+                        "outcome": null,
+                        "schedule_source": "none",
+                        "schedule_locked": true,
+                        "created_at": "example"
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -9722,6 +10439,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -9800,6 +10518,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "completed": true,
+                    "events": [
+                      {}
+                    ],
+                    "qualified": {
+                      "stage_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "entrants": [
+                        "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                      ]
+                    }
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -9997,6 +10731,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -10039,6 +10774,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -10192,6 +10932,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -10236,6 +10977,13 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "deleted": true
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -10433,6 +11181,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "read",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -10489,6 +11238,17 @@
                   "stages"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "count": 2,
+                "stages": [
+                  {
+                    "kind": "example",
+                    "name": "example",
+                    "config": {},
+                    "qualification": null
+                  }
+                ]
               }
             }
           }
@@ -10577,6 +11337,29 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "phases": [
+                      {
+                        "title": "example",
+                        "note": "example",
+                        "sections": [
+                          {
+                            "title": "example",
+                            "matches": [
+                              {
+                                "home": null,
+                                "away": null
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -10730,6 +11513,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -11023,6 +11807,38 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "config": {
+                      "startAt": "2026-08-01T09:00:00Z",
+                      "endAt": "2026-08-01T09:00:00Z",
+                      "matchMinutes": 1,
+                      "gapMinutes": 0,
+                      "courts": [
+                        "example"
+                      ],
+                      "perEntrantMinRest": 0,
+                      "blackouts": [
+                        {
+                          "court": "example",
+                          "from": "2026-08-01T09:00:00Z",
+                          "to": "2026-08-01T09:00:00Z"
+                        }
+                      ],
+                      "sessionWindows": [
+                        {
+                          "from": "2026-08-01T09:00:00Z",
+                          "to": "2026-08-01T09:00:00Z"
+                        }
+                      ]
+                    },
+                    "tz": "example",
+                    "updated_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -11174,6 +11990,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -11442,6 +12259,32 @@
                   "tz"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "config": {
+                  "startAt": "2026-08-01T09:00:00Z",
+                  "endAt": "2026-08-01T09:00:00Z",
+                  "matchMinutes": 1,
+                  "gapMinutes": 0,
+                  "courts": [
+                    "example"
+                  ],
+                  "perEntrantMinRest": 0,
+                  "blackouts": [
+                    {
+                      "court": "example",
+                      "from": "2026-08-01T09:00:00Z",
+                      "to": "2026-08-01T09:00:00Z"
+                    }
+                  ],
+                  "sessionWindows": [
+                    {
+                      "from": "2026-08-01T09:00:00Z",
+                      "to": "2026-08-01T09:00:00Z"
+                    }
+                  ]
+                },
+                "tz": "example"
               }
             }
           }
@@ -11728,6 +12571,38 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "config": {
+                      "startAt": "2026-08-01T09:00:00Z",
+                      "endAt": "2026-08-01T09:00:00Z",
+                      "matchMinutes": 1,
+                      "gapMinutes": 0,
+                      "courts": [
+                        "example"
+                      ],
+                      "perEntrantMinRest": 0,
+                      "blackouts": [
+                        {
+                          "court": "example",
+                          "from": "2026-08-01T09:00:00Z",
+                          "to": "2026-08-01T09:00:00Z"
+                        }
+                      ],
+                      "sessionWindows": [
+                        {
+                          "from": "2026-08-01T09:00:00Z",
+                          "to": "2026-08-01T09:00:00Z"
+                        }
+                      ]
+                    },
+                    "tz": "example",
+                    "updated_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -11925,6 +12800,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -11952,6 +12828,9 @@
                   "only_unlocked"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "only_unlocked": true
               }
             }
           }
@@ -12053,6 +12932,28 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "assignments": [
+                      {
+                        "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "scheduled_at": "example",
+                        "ends_at": "example",
+                        "court_label": "example"
+                      }
+                    ],
+                    "conflicts": [
+                      {
+                        "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "code": "conflict.court",
+                        "blocking": true,
+                        "detail": "example"
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -12206,6 +13107,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -12288,6 +13190,18 @@
                   "source"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "assignments": [
+                  {
+                    "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "scheduled_at": "2026-08-01T09:00:00Z",
+                    "court_label": "example",
+                    "venue": "example"
+                  }
+                ],
+                "source": "auto",
+                "expected_seq": 0
               }
             }
           }
@@ -12365,6 +13279,21 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "applied": -9007199254740991,
+                    "conflicts": [
+                      {
+                        "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "code": "conflict.court",
+                        "blocking": true,
+                        "detail": "example"
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -12650,6 +13579,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -12728,6 +13658,20 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "conflicts": [
+                      {
+                        "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "code": "conflict.court",
+                        "blocking": true,
+                        "detail": "example"
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -12881,6 +13825,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -12941,6 +13886,15 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "setup",
+                    "published": true
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -13138,6 +14092,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "score",
         "parameters": [
           {
             "name": "id",
@@ -13204,6 +14159,16 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "setup",
+                    "started": true,
+                    "generated": -9007199254740991
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -13401,6 +14366,7 @@
         "tags": [
           "fixtures"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -13587,6 +14553,31 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "stage_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "pool_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "round_no": -9007199254740991,
+                    "seq_in_round": -9007199254740991,
+                    "home_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "away_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "scheduled_at": "example",
+                    "venue": "example",
+                    "court_label": "example",
+                    "officials": [
+                      null
+                    ],
+                    "status": "scheduled",
+                    "outcome": null,
+                    "schedule_source": "none",
+                    "schedule_locked": true,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -13738,6 +14729,7 @@
         "tags": [
           "fixtures"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -13810,6 +14802,14 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "scheduled_at": "2026-08-01T09:00:00Z",
+                "venue": "example",
+                "court_label": "example",
+                "officials": [
+                  {}
+                ]
               }
             }
           }
@@ -13989,6 +14989,31 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "stage_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "pool_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "round_no": -9007199254740991,
+                    "seq_in_round": -9007199254740991,
+                    "home_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "away_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "scheduled_at": "example",
+                    "venue": "example",
+                    "court_label": "example",
+                    "officials": [
+                      null
+                    ],
+                    "status": "scheduled",
+                    "outcome": null,
+                    "schedule_source": "none",
+                    "schedule_locked": true,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -14274,6 +15299,7 @@
         "tags": [
           "fixtures"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -14316,6 +15342,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -14467,6 +15498,7 @@
         "tags": [
           "fixtures"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -14556,6 +15588,19 @@
                   "slots"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "slots": [
+                  {
+                    "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "slot": "starting",
+                    "position_key": "example",
+                    "order_no": 1,
+                    "roles": [
+                      "example"
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -14582,6 +15627,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -14779,6 +15829,7 @@
         "tags": [
           "scoring"
         ],
+        "x-required-scope": "score",
         "parameters": [
           {
             "name": "id",
@@ -14820,6 +15871,12 @@
                   "payload"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "expected_seq": 0,
+                "type": "example",
+                "payload": null,
+                "idempotency_key": "example"
               }
             }
           }
@@ -14874,6 +15931,16 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "seq": -9007199254740991,
+                    "state_summary": null,
+                    "outcome": null,
+                    "status": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -15157,6 +16224,7 @@
         "tags": [
           "scoring"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -15271,6 +16339,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "seq": -9007199254740991,
+                      "type": "example",
+                      "payload": null,
+                      "recorded_at": "example",
+                      "recorded_by": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "voids_event_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "device_link_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -15424,6 +16508,7 @@
         "tags": [
           "scoring"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -15493,6 +16578,18 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "example",
+                    "last_seq": -9007199254740991,
+                    "summary": null,
+                    "state": null,
+                    "outcome": null
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -15646,6 +16743,7 @@
         "tags": [
           "scoring"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -15674,6 +16772,9 @@
                   "expected_seq"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "expected_seq": 0
               }
             }
           }
@@ -15728,6 +16829,16 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "seq": -9007199254740991,
+                    "state_summary": null,
+                    "outcome": null,
+                    "status": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -15969,6 +17080,7 @@
         "tags": [
           "device-links"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -16001,6 +17113,9 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "label": "example"
               }
             }
           }
@@ -16086,6 +17201,20 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "label": "example",
+                    "issued_by": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "expires_at": "example",
+                    "revoked_at": "example",
+                    "created_at": "example",
+                    "secret": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -16369,6 +17498,7 @@
         "tags": [
           "device-links"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -16464,6 +17594,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "label": "example",
+                    "issued_by": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "expires_at": "example",
+                    "revoked_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -16617,6 +17760,7 @@
         "tags": [
           "device-links"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -16714,6 +17858,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "label": "example",
+                    "issued_by": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "expires_at": "example",
+                    "revoked_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -16867,6 +18024,7 @@
         "tags": [
           "scorers"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "date",
@@ -17050,6 +18208,33 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "org_name": "example",
+                      "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "competition_name": "example",
+                      "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "division_name": "example",
+                      "division_status": "example",
+                      "sport_key": "example",
+                      "module_version": "example",
+                      "round_no": -9007199254740991,
+                      "home_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "away_entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "home_name": "example",
+                      "away_name": "example",
+                      "scheduled_at": "example",
+                      "venue": "example",
+                      "court_label": "example",
+                      "status": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -17203,6 +18388,7 @@
         "tags": [
           "api-keys"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -17249,9 +18435,23 @@
                               "type": "string",
                               "enum": [
                                 "read",
+                                "score",
+                                "manage",
                                 "write"
                               ]
                             }
+                          },
+                          "competition_id": {
+                            "anyOf": [
+                              {
+                                "type": "string",
+                                "format": "uuid",
+                                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           },
                           "last_used_at": {
                             "anyOf": [
@@ -17281,6 +18481,7 @@
                           "id",
                           "name",
                           "scopes",
+                          "competition_id",
                           "last_used_at",
                           "revoked_at",
                           "created_at"
@@ -17293,6 +18494,23 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "name": "example",
+                      "scopes": [
+                        "read"
+                      ],
+                      "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "last_used_at": "example",
+                      "revoked_at": "example",
+                      "created_at": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -17444,6 +18662,7 @@
         "tags": [
           "api-keys"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -17477,9 +18696,23 @@
                       "type": "string",
                       "enum": [
                         "read",
+                        "score",
+                        "manage",
                         "write"
                       ]
                     }
+                  },
+                  "competition_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -17487,6 +18720,13 @@
                   "scopes"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "scopes": [
+                  "read"
+                ],
+                "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
               }
             }
           }
@@ -17524,9 +18764,23 @@
                             "type": "string",
                             "enum": [
                               "read",
+                              "score",
+                              "manage",
                               "write"
                             ]
                           }
+                        },
+                        "competition_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "last_used_at": {
                           "anyOf": [
@@ -17559,6 +18813,7 @@
                         "id",
                         "name",
                         "scopes",
+                        "competition_id",
                         "last_used_at",
                         "revoked_at",
                         "created_at",
@@ -17571,6 +18826,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "scopes": [
+                      "read"
+                    ],
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "last_used_at": "example",
+                    "revoked_at": "example",
+                    "created_at": "example",
+                    "secret": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -17768,6 +19039,7 @@
         "tags": [
           "api-keys"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -17821,9 +19093,23 @@
                             "type": "string",
                             "enum": [
                               "read",
+                              "score",
+                              "manage",
                               "write"
                             ]
                           }
+                        },
+                        "competition_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         },
                         "last_used_at": {
                           "anyOf": [
@@ -17853,6 +19139,7 @@
                         "id",
                         "name",
                         "scopes",
+                        "competition_id",
                         "last_used_at",
                         "revoked_at",
                         "created_at"
@@ -17864,6 +19151,21 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "name": "example",
+                    "scopes": [
+                      "read"
+                    ],
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "last_used_at": "example",
+                    "revoked_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -18057,6 +19359,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -18207,6 +19514,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -18357,6 +19669,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -18507,6 +19824,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -18642,6 +19964,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -18777,6 +20104,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -18957,6 +20289,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -19059,6 +20396,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -19238,6 +20576,34 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "enabled": true,
+                    "entrant_kind": "team",
+                    "opens_at": "example",
+                    "closes_at": "example",
+                    "capacity": -9007199254740991,
+                    "fee_cents": -9007199254740991,
+                    "currency": "example",
+                    "refund_lock_at": "example",
+                    "form_fields": [
+                      {
+                        "key": "example",
+                        "label": "example",
+                        "kind": "text",
+                        "options": [
+                          "example"
+                        ],
+                        "required": true
+                      }
+                    ],
+                    "charges_enabled": true,
+                    "updated_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -19389,6 +20755,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -19538,6 +20905,25 @@
                   "form_fields"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "enabled": true,
+                "entrant_kind": "team",
+                "opens_at": "2026-08-01T09:00:00Z",
+                "closes_at": "2026-08-01T09:00:00Z",
+                "fee_cents": 0,
+                "currency": "example",
+                "form_fields": [
+                  {
+                    "key": "example",
+                    "label": "example",
+                    "kind": "text",
+                    "options": [
+                      "example"
+                    ],
+                    "required": true
+                  }
+                ]
               }
             }
           }
@@ -19710,6 +21096,34 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "enabled": true,
+                    "entrant_kind": "team",
+                    "opens_at": "example",
+                    "closes_at": "example",
+                    "capacity": -9007199254740991,
+                    "fee_cents": -9007199254740991,
+                    "currency": "example",
+                    "refund_lock_at": "example",
+                    "form_fields": [
+                      {
+                        "key": "example",
+                        "label": "example",
+                        "kind": "text",
+                        "options": [
+                          "example"
+                        ],
+                        "required": true
+                      }
+                    ],
+                    "charges_enabled": true,
+                    "updated_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -19951,6 +21365,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -20169,6 +21584,33 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "status": "pending",
+                      "display_name": "example",
+                      "contact_email": "example",
+                      "dob": "example",
+                      "gender": "example",
+                      "guardian_name": "example",
+                      "guardian_consent": true,
+                      "answers": {},
+                      "amount_cents": -9007199254740991,
+                      "currency": "example",
+                      "payment_intent_id": "example",
+                      "refunded_cents": -9007199254740991,
+                      "refunded_at": "example",
+                      "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "promoted_at": "example",
+                      "withdrawn_at": "example",
+                      "created_at": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -20322,6 +21764,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -20355,6 +21798,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -20552,6 +22000,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -20752,6 +22201,31 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "display_name": "example",
+                    "contact_email": "example",
+                    "dob": "example",
+                    "gender": "example",
+                    "guardian_name": "example",
+                    "guardian_consent": true,
+                    "answers": {},
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "payment_intent_id": "example",
+                    "refunded_cents": -9007199254740991,
+                    "refunded_at": "example",
+                    "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "promoted_at": "example",
+                    "withdrawn_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -20949,6 +22423,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -21149,6 +22624,31 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "display_name": "example",
+                    "contact_email": "example",
+                    "dob": "example",
+                    "gender": "example",
+                    "guardian_name": "example",
+                    "guardian_consent": true,
+                    "answers": {},
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "payment_intent_id": "example",
+                    "refunded_cents": -9007199254740991,
+                    "refunded_at": "example",
+                    "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "promoted_at": "example",
+                    "withdrawn_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -21346,6 +22846,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -21546,6 +23047,31 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "display_name": "example",
+                    "contact_email": "example",
+                    "dob": "example",
+                    "gender": "example",
+                    "guardian_name": "example",
+                    "guardian_consent": true,
+                    "answers": {},
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "payment_intent_id": "example",
+                    "refunded_cents": -9007199254740991,
+                    "refunded_at": "example",
+                    "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "promoted_at": "example",
+                    "withdrawn_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -21699,6 +23225,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -21724,6 +23251,9 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "amount_cents": 1
               }
             }
           }
@@ -21917,6 +23447,31 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "display_name": "example",
+                    "contact_email": "example",
+                    "dob": "example",
+                    "gender": "example",
+                    "guardian_name": "example",
+                    "guardian_consent": true,
+                    "answers": {},
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "payment_intent_id": "example",
+                    "refunded_cents": -9007199254740991,
+                    "refunded_at": "example",
+                    "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "promoted_at": "example",
+                    "withdrawn_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -22114,6 +23669,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -22158,6 +23714,13 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "sent": true
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -22355,6 +23918,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -22425,6 +23989,15 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "connected": true,
+                    "charges_enabled": true,
+                    "details_submitted": true
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -22576,6 +24149,7 @@
         "tags": [
           "registration"
         ],
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
@@ -22605,6 +24179,9 @@
                   "return_path"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "return_path": "example"
               }
             }
           }
@@ -22642,6 +24219,13 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "url": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -23134,6 +24718,55 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "competition": {
+                      "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "name": "example",
+                      "slug": "example",
+                      "starts_on": "example",
+                      "ends_on": "example"
+                    },
+                    "org": {
+                      "name": "example",
+                      "slug": "example",
+                      "logo_url": "example"
+                    },
+                    "divisions": [
+                      {
+                        "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                        "name": "example",
+                        "slug": "example",
+                        "sport_key": "example",
+                        "entrant_kind": "team",
+                        "fee_cents": -9007199254740991,
+                        "currency": "example",
+                        "opens_at": "example",
+                        "closes_at": "example",
+                        "capacity": -9007199254740991,
+                        "remaining": -9007199254740991,
+                        "taken": -9007199254740991,
+                        "open": true,
+                        "closed_reason": "example",
+                        "requires_dob": true,
+                        "youth": true,
+                        "form_fields": [
+                          {
+                            "key": "example",
+                            "label": "example",
+                            "kind": "text",
+                            "options": [
+                              "example"
+                            ],
+                            "required": true
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -23383,6 +25016,21 @@
                   "players"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "display_name": "example",
+                "contact_email": "example",
+                "dob": "2026-08-01",
+                "guardian_consent": true,
+                "answers": {},
+                "players": [
+                  {
+                    "name": "example",
+                    "dob": "2026-08-01",
+                    "squad_number": 0
+                  }
+                ]
               }
             }
           }
@@ -23459,6 +25107,17 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "registration_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "ref_code": "example",
+                    "access_token": "example",
+                    "checkout_url": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -23844,6 +25503,29 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "ref_code": "example",
+                    "display_name": "example",
+                    "division_name": "example",
+                    "competition_name": "example",
+                    "competition_slug": "example",
+                    "org_slug": "example",
+                    "org_name": "example",
+                    "starts_on": "example",
+                    "ends_on": "example",
+                    "fee_cents": -9007199254740991,
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "refunded_cents": -9007199254740991,
+                    "payment_due": true,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -24018,6 +25700,9 @@
                   "token"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "token": "example"
               }
             }
           }
@@ -24162,6 +25847,29 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "ref_code": "example",
+                    "display_name": "example",
+                    "division_name": "example",
+                    "competition_name": "example",
+                    "competition_slug": "example",
+                    "org_slug": "example",
+                    "org_name": "example",
+                    "starts_on": "example",
+                    "ends_on": "example",
+                    "fee_cents": -9007199254740991,
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "refunded_cents": -9007199254740991,
+                    "payment_due": true,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -24292,6 +26000,9 @@
                   "token"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "token": "example"
               }
             }
           }
@@ -24318,6 +26029,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -24541,6 +26257,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -24715,6 +26436,9 @@
                   "token"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "token": "example"
               }
             }
           }
@@ -24741,6 +26465,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -24843,6 +26572,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "read",
         "parameters": [],
         "responses": {
           "200": {
@@ -24938,6 +26668,21 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "example",
+                      "name": "example",
+                      "short_name": "example",
+                      "logo_path": "example",
+                      "colors": {},
+                      "external_ref": "example",
+                      "created_at": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -25089,6 +26834,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -25126,6 +26872,12 @@
                   "name"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "short_name": "example",
+                "colors": {},
+                "external_ref": "example"
               }
             }
           }
@@ -25221,6 +26973,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "name": "example",
+                    "short_name": "example",
+                    "logo_path": "example",
+                    "colors": {},
+                    "external_ref": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -25462,6 +27227,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -25634,6 +27400,35 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "name": "example",
+                    "short_name": "example",
+                    "logo_path": "example",
+                    "colors": {},
+                    "external_ref": "example",
+                    "created_at": "example",
+                    "teams": [
+                      {
+                        "id": "example",
+                        "name": "example",
+                        "short_name": "example",
+                        "logo_path": "example",
+                        "entries": [
+                          {
+                            "division_id": "example",
+                            "entrant_id": "example",
+                            "division_name": "example",
+                            "competition_id": "example"
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -25785,6 +27580,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -25860,6 +27656,12 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "short_name": "example",
+                "colors": {},
+                "external_ref": "example"
               }
             }
           }
@@ -25955,6 +27757,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "name": "example",
+                    "short_name": "example",
+                    "logo_path": "example",
+                    "colors": {},
+                    "external_ref": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -26150,6 +27965,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -26183,6 +27999,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -26380,6 +28201,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -26419,6 +28241,10 @@
                   "name"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "short_name": "example"
               }
             }
           }
@@ -26445,6 +28271,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -26686,6 +28517,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "read",
         "parameters": [],
         "responses": {
           "200": {
@@ -26709,6 +28541,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -26862,6 +28699,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -26895,6 +28733,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -27046,6 +28889,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -27122,6 +28966,19 @@
                   "members"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "members": [
+                  {
+                    "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "squad_number": 0,
+                    "default_position_key": "example",
+                    "is_captain": true,
+                    "roles": [
+                      "example"
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -27148,6 +29005,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -27345,6 +29207,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -27378,6 +29241,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -27573,6 +29441,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -27606,6 +29475,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -27759,6 +29633,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "responses": {
           "200": {
@@ -27845,6 +29720,19 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "filename": "example",
+                      "clubId": "example",
+                      "clubName": "example",
+                      "matchedBy": "filename",
+                      "logoPath": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -28086,6 +29974,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "responses": {
           "201": {
@@ -28243,6 +30132,37 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "importId": "example",
+                    "filename": "example",
+                    "status": "planned",
+                    "rowCount": -9007199254740991,
+                    "plan": {
+                      "ops": [
+                        {}
+                      ],
+                      "stats": {
+                        "clubs": -9007199254740991,
+                        "teams": -9007199254740991,
+                        "persons": -9007199254740991,
+                        "entrants": -9007199254740991,
+                        "rosters": -9007199254740991
+                      },
+                      "issues": [
+                        {
+                          "rowNo": -9007199254740991,
+                          "column": "example",
+                          "severity": "error",
+                          "code": "example",
+                          "message": "example"
+                        }
+                      ]
+                    }
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -28528,6 +30448,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -28695,6 +30616,37 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "importId": "example",
+                    "filename": "example",
+                    "status": "planned",
+                    "rowCount": -9007199254740991,
+                    "plan": {
+                      "ops": [
+                        {}
+                      ],
+                      "stats": {
+                        "clubs": -9007199254740991,
+                        "teams": -9007199254740991,
+                        "persons": -9007199254740991,
+                        "entrants": -9007199254740991,
+                        "rosters": -9007199254740991
+                      },
+                      "issues": [
+                        {
+                          "rowNo": -9007199254740991,
+                          "column": "example",
+                          "severity": "error",
+                          "code": "example",
+                          "message": "example"
+                        }
+                      ]
+                    }
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -28848,6 +30800,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -28938,6 +30891,23 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "importId": "example",
+                    "stats": {
+                      "clubs": -9007199254740991,
+                      "teams": -9007199254740991,
+                      "persons": -9007199254740991,
+                      "entrants": -9007199254740991,
+                      "rosters": -9007199254740991
+                    },
+                    "divisionIds": [
+                      "example"
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -29179,6 +31149,7 @@
         "tags": [
           "clubs"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "format",
@@ -29231,6 +31202,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -29428,6 +31404,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "read",
         "parameters": [],
         "responses": {
           "200": {
@@ -29526,6 +31503,24 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "example",
+                      "person_id": "example",
+                      "entrant_id": "example",
+                      "display_name": "example",
+                      "role_keys": [
+                        "example"
+                      ],
+                      "home_pool_id": "example",
+                      "max_per_day": -9007199254740991,
+                      "created_at": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -29677,6 +31672,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -29741,6 +31737,14 @@
                   "role_keys"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "display_name": "example",
+                "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "role_keys": [
+                  "example"
+                ]
               }
             }
           }
@@ -29839,6 +31843,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "person_id": "example",
+                    "entrant_id": "example",
+                    "display_name": "example",
+                    "role_keys": [
+                      "example"
+                    ],
+                    "home_pool_id": "example",
+                    "max_per_day": -9007199254740991,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -30036,6 +32056,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -30141,6 +32162,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "person_id": "example",
+                    "entrant_id": "example",
+                    "display_name": "example",
+                    "role_keys": [
+                      "example"
+                    ],
+                    "home_pool_id": "example",
+                    "max_per_day": -9007199254740991,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -30292,6 +32329,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -30362,6 +32400,14 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "display_name": "example",
+                "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "role_keys": [
+                  "example"
+                ]
               }
             }
           }
@@ -30460,6 +32506,22 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "person_id": "example",
+                    "entrant_id": "example",
+                    "display_name": "example",
+                    "role_keys": [
+                      "example"
+                    ],
+                    "home_pool_id": "example",
+                    "max_per_day": -9007199254740991,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -30655,6 +32717,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -30688,6 +32751,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -30841,6 +32909,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "responses": {
           "201": {
@@ -30864,6 +32933,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -31061,6 +33135,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -31144,6 +33219,20 @@
                   "rng_seed"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "policy": {
+                  "roles": [
+                    "example"
+                  ],
+                  "poolLock": true,
+                  "blockStay": true,
+                  "fairness": "tournament",
+                  "teamRefKeepDivision": true,
+                  "restMinMinutes": 0,
+                  "blockGapMinutes": 1
+                },
+                "rng_seed": "example"
               }
             }
           }
@@ -31240,6 +33329,28 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "assignments": [
+                      {
+                        "fixtureId": "example",
+                        "officialId": "example",
+                        "roleKey": "example",
+                        "locked": true
+                      }
+                    ],
+                    "conflicts": [
+                      {
+                        "kind": "example",
+                        "severity": "block",
+                        "fixtureId": "example",
+                        "officialId": "example"
+                      }
+                    ]
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -31437,6 +33548,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -31493,6 +33605,16 @@
                   "assignments"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "assignments": [
+                  {
+                    "fixture_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "official_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "role_key": "example",
+                    "locked": true
+                  }
+                ]
               }
             }
           }
@@ -31519,6 +33641,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -31760,6 +33887,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -31810,6 +33938,15 @@
                   "set"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "set": [
+                  {
+                    "official_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "role_key": "example",
+                    "locked": true
+                  }
+                ]
               }
             }
           }
@@ -31836,6 +33973,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -32033,6 +34175,7 @@
         "tags": [
           "officials"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -32127,6 +34270,20 @@
                   "sources"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "sources": [
+                  {
+                    "kind": "rank",
+                    "fromStage": "example",
+                    "take": [
+                      {
+                        "poolId": "example",
+                        "rank": 1
+                      }
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -32153,6 +34310,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -32350,6 +34512,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -32375,6 +34538,9 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "expected_seq": -9007199254740991
               }
             }
           }
@@ -32401,6 +34567,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -32642,6 +34813,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -32667,6 +34839,9 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "expected_seq": -9007199254740991
               }
             }
           }
@@ -32693,6 +34868,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -32934,6 +35114,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -32967,6 +35148,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -33120,6 +35306,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -33153,6 +35340,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -33304,6 +35496,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -33332,6 +35525,9 @@
                   "label"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "label": "example"
               }
             }
           }
@@ -33358,6 +35554,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -33555,6 +35756,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -33588,6 +35790,10 @@
                   "confirm"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "checkpoint_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "confirm": true
               }
             }
           }
@@ -33614,6 +35820,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -33811,6 +36022,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -33861,6 +36073,22 @@
                   }
                 },
                 "additionalProperties": false
+              },
+              "example": {
+                "schedule_locked": true,
+                "locked_scopes": [
+                  {
+                    "courts": [
+                      "example"
+                    ],
+                    "venues": [
+                      "example"
+                    ],
+                    "pool_ids": [
+                      "example"
+                    ]
+                  }
+                ]
               }
             }
           }
@@ -33887,6 +36115,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -34084,6 +36317,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -34147,6 +36381,23 @@
                   "confirm"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "scope": {
+                  "stageId": "example",
+                  "poolIds": [
+                    "example"
+                  ],
+                  "rounds": [
+                    -9007199254740991
+                  ],
+                  "courts": [
+                    "example"
+                  ],
+                  "excludeLocked": true
+                },
+                "confirm": true
               }
             }
           }
@@ -34173,6 +36424,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -34370,6 +36626,7 @@
         "tags": [
           "history"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -34397,6 +36654,9 @@
                   "confirm"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "confirm": true
               }
             }
           }
@@ -34423,6 +36683,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -34620,6 +36885,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "manage",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -34676,6 +36942,20 @@
                   "delta_minutes"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "scope": {
+                  "stageId": "example",
+                  "poolIds": [
+                    "example"
+                  ],
+                  "courts": [
+                    "example"
+                  ],
+                  "excludeLocked": true
+                },
+                "delta_minutes": -1440
               }
             }
           }
@@ -34702,6 +36982,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -34899,6 +37184,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -34932,6 +37218,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -35085,6 +37376,7 @@
         "tags": [
           "scheduling"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -35113,6 +37405,9 @@
                   "prose"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "prose": "example"
               }
             }
           }
@@ -35139,6 +37434,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -35380,6 +37680,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -35434,6 +37735,15 @@
                   "rows"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "rows": [
+                  {
+                    "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "rank": 1,
+                    "reason": "example"
+                  }
+                ]
               }
             }
           }
@@ -35460,6 +37770,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -35701,6 +38016,7 @@
         "tags": [
           "exports"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -35791,6 +38107,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -35988,6 +38309,7 @@
         "tags": [
           "exports"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -36032,6 +38354,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -36229,6 +38556,7 @@
         "tags": [
           "stats"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -36282,6 +38610,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -36479,6 +38812,7 @@
         "tags": [
           "stats"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -36521,6 +38855,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -36766,6 +39105,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -36868,6 +39212,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
@@ -36902,6 +39247,10 @@
                   "opponent_id"
                 ],
                 "additionalProperties": false
+              },
+              "example": {
+                "challenger_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "opponent_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
               }
             }
           }
@@ -36928,6 +39277,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }
@@ -37169,6 +39523,7 @@
         "tags": [
           "stages"
         ],
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
@@ -37202,6 +39557,11 @@
                       "format": "uuid"
                     }
                   }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
               }
             }

@@ -8,6 +8,7 @@
 // and the vitest route-coverage test.
 import { z, type ZodType } from "zod";
 import * as S from "./schemas.ts";
+import { matchKeyRoute } from "./key-scopes.ts";
 
 // ---------------------------------------------------------------------------
 // Route registry — one row per (path, method). The coverage test asserts this
@@ -244,7 +245,65 @@ function pathParams(path: string): object[] {
   }));
 }
 
+// ---------------------------------------------------------------------------
+// Examples — deterministic sample values derived from the JSON schema so
+// every operation ships with at least one example (v3/08 §3) without
+// hand-maintaining ~100 of them.
+// ---------------------------------------------------------------------------
+
+function exampleOf(schema: unknown, depth = 0): unknown {
+  if (depth > 6 || typeof schema !== "object" || schema === null) return null;
+  const s = schema as Record<string, unknown>;
+  if ("const" in s) return s.const;
+  if (Array.isArray(s.enum) && s.enum.length > 0) return s.enum[0];
+  if (Array.isArray(s.examples) && s.examples.length > 0) return s.examples[0];
+  const first = (k: "anyOf" | "oneOf" | "allOf") =>
+    Array.isArray(s[k]) && (s[k] as unknown[]).length > 0 ? (s[k] as unknown[])[0] : null;
+  const union = first("anyOf") ?? first("oneOf") ?? first("allOf");
+  if (union) return exampleOf(union, depth + 1);
+  const type = Array.isArray(s.type) ? s.type[0] : s.type;
+  switch (type) {
+    case "object": {
+      const out: Record<string, unknown> = {};
+      const props = (s.properties ?? {}) as Record<string, unknown>;
+      const required = new Set((s.required as string[]) ?? []);
+      for (const [name, prop] of Object.entries(props)) {
+        // Keep examples focused: required fields plus the first few optionals.
+        if (required.has(name) || Object.keys(out).length < 4) {
+          out[name] = exampleOf(prop, depth + 1);
+        }
+      }
+      return out;
+    }
+    case "array":
+      return [exampleOf(s.items, depth + 1)];
+    case "string":
+      if (s.format === "uuid") return "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b";
+      if (s.format === "date") return "2026-08-01";
+      if (s.format === "date-time") return "2026-08-01T09:00:00Z";
+      return "example";
+    case "integer":
+    case "number":
+      return typeof s.minimum === "number" ? s.minimum : 1;
+    case "boolean":
+      return true;
+    case "null":
+      return null;
+    default:
+      return null;
+  }
+}
+
+/** The key scope this operation needs, from the SAME allowlist the auth
+ *  wrapper enforces (key-scopes.ts) — spec and door cannot disagree. */
+function requiredScope(route: RouteSpec): string | null {
+  if (route.public) return null;
+  const concrete = route.path.replace(/\{[^}]+\}/g, "seg");
+  return matchKeyRoute(route.method.toUpperCase(), `/api/v1${concrete}`)?.scope ?? null;
+}
+
 function operation(route: RouteSpec): Record<string, unknown> {
+  const scope = requiredScope(route);
   const responses: Record<string, unknown> = {
     [String(route.status ?? 200)]: {
       description: "Success",
@@ -262,9 +321,23 @@ function operation(route: RouteSpec): Record<string, unknown> {
       content: { "application/json": { schema: ERROR_ENVELOPE } },
     };
   }
+  // Response example: success envelope around a data sample.
+  const success = responses[String(route.status ?? 200)] as {
+    content?: { "application/json": { schema: unknown; example?: unknown } };
+  };
+  if (success?.content) {
+    success.content["application/json"].example = {
+      ok: true,
+      data: route.response ? exampleOf(toSchema(route.response)) : {},
+      requestId: "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+    };
+  }
   return {
     summary: route.summary,
     tags: [route.tag],
+    // x-required-scope (v3/08 §3): which API-key scope unlocks this
+    // operation; "none" = session-only, never key-accessible.
+    ...(route.public ? {} : { "x-required-scope": scope ?? "none" }),
     parameters: [
       ...pathParams(route.path),
       ...Object.entries(route.query ?? {}).map(([name, q]) => ({
@@ -279,7 +352,12 @@ function operation(route: RouteSpec): Record<string, unknown> {
       ? {
           requestBody: {
             required: true,
-            content: { "application/json": { schema: toSchema(route.request) } },
+            content: {
+              "application/json": {
+                schema: toSchema(route.request),
+                example: exampleOf(toSchema(route.request)),
+              },
+            },
           },
         }
       : {}),
@@ -288,13 +366,29 @@ function operation(route: RouteSpec): Record<string, unknown> {
   };
 }
 
-export function buildOpenApiDocument(): Record<string, unknown> {
+export function buildOpenApiDocument(
+  opts: { published?: boolean } = {},
+): Record<string, unknown> {
+  // Published spec (v3/08 §3): exactly the key-scoped surface plus the
+  // public read API — session-only/internal operations stay out of it.
+  const routes = opts.published
+    ? ROUTES.filter((r) => r.public || requiredScope(r) !== null)
+    : ROUTES;
   const paths: Record<string, Record<string, unknown>> = {};
-  for (const route of ROUTES) {
+  for (const route of routes) {
     const full = `/api/v1${route.path}`;
     paths[full] = paths[full] ?? {};
     paths[full][route.method] = operation(route);
   }
+  const usedTags = new Set(routes.map((r) => r.tag));
+  const tags = [
+    { name: "competitions" }, { name: "divisions" }, { name: "entrants" },
+    { name: "persons" }, { name: "stages" }, { name: "fixtures" },
+    { name: "scoring" }, { name: "scheduling" }, { name: "scorers" },
+    { name: "device-links" }, { name: "api-keys" }, { name: "registration" },
+    { name: "clubs" }, { name: "officials" }, { name: "history" },
+    { name: "exports" }, { name: "stats" }, { name: "public" },
+  ].filter((t) => usedTags.has(t.name));
   return {
     openapi: "3.1.0",
     info: {
@@ -303,22 +397,27 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       description:
         "Versioned REST API (design doc engine/08). Every response is " +
         "`{ ok, data | error, requestId }`. Additive changes land in place; " +
-        "breaking changes move to /api/v2 with Sunset headers on deprecation.",
+        "breaking changes move to /api/v2 with Sunset headers on deprecation." +
+        (opts.published
+          ? "\n\nAuthenticate with an API key (`Authorization: Bearer sc_…`, " +
+            "created in org settings — Pro). Keys carry a scope — `read`, " +
+            "`score` or `manage`; each operation lists its requirement as " +
+            "`x-required-scope`. Keys are rate-limited per minute (60 rpm, " +
+            "300 rpm on Pro) with `X-RateLimit-*` headers on every response. " +
+            "The `public` tag needs no key at all."
+          : ""),
     },
     servers: [{ url: "https://seazn.club" }],
-    tags: [
-      { name: "competitions" }, { name: "divisions" }, { name: "entrants" },
-      { name: "persons" }, { name: "stages" }, { name: "fixtures" },
-      { name: "scoring" }, { name: "scheduling" }, { name: "scorers" },
-      { name: "device-links" }, { name: "api-keys" }, { name: "registration" }, { name: "public" },
-    ],
+    tags,
     components: {
       securitySchemes: {
         sessionCookie: { type: "apiKey", in: "cookie", name: "seazn_session" },
         apiKey: {
           type: "http",
           scheme: "bearer",
-          description: "Pro API key: `Authorization: Bearer sc_…` (entitlement api.access)",
+          description:
+            "Pro API key: `Authorization: Bearer sc_…` (entitlement api.access). " +
+            "Scopes: read < score < manage; see x-required-scope per operation.",
         },
         deviceLink: {
           type: "http",

@@ -8,7 +8,8 @@ import { UpgradeGate } from "@/components/upgrade-gate";
 import { BrandColorPicker } from "@/components/brand-color-picker";
 import { VisibilityPicker } from "@/components/ui/visibility-picker";
 import { Tip } from "@/components/ui/tip";
-import { publicBrandColor } from "@/lib/public-theme";
+import { publicBrandColor, publicThemeStyleChain } from "@/lib/public-theme";
+import { ProseEditor } from "@/components/prose-editor";
 
 interface CompetitionLite {
   id: string;
@@ -45,6 +46,7 @@ const SHOWCASE_CONSENT_COPY =
 
 export function CompetitionSettings({
   competition,
+  orgId,
   canEdit,
   discoveryBranding,
   themeBranding = false,
@@ -56,6 +58,8 @@ export function CompetitionSettings({
   hasYouthDivisions = false,
 }: {
   competition: CompetitionLite;
+  /** Owning org — the description editor uploads images under it. */
+  orgId: string;
   canEdit: boolean;
   discoveryBranding: boolean;
   /** Public path for the share-URL row of the visibility picker (v3/03 §7). */
@@ -232,16 +236,22 @@ export function CompetitionSettings({
                 />
               </label>
 
-              <label className="block">
+              <div>
                 <span className="label">Description</span>
-                <textarea
-                  disabled={readOnly}
-                  rows={3}
-                  value={form.description}
-                  onChange={(e) => setForm({ ...form, description: e.target.value })}
-                  className="textarea"
-                />
-              </label>
+                {readOnly ? (
+                  <textarea disabled rows={3} value={form.description} className="textarea" />
+                ) : (
+                  // v3/06 §2: Markdown editor with Write/Preview — Preview is
+                  // the public renderer with this competition's branding.
+                  <ProseEditor
+                    value={form.description}
+                    onChange={(md) => setForm({ ...form, description: md })}
+                    orgId={orgId}
+                    placeholder="Competition description"
+                    previewStyle={publicThemeStyleChain(competition.branding, orgBranding)}
+                  />
+                )}
+              </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">

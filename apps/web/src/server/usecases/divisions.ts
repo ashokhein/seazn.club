@@ -20,6 +20,8 @@ export interface DivisionRow {
   competition_id: string;
   name: string;
   slug: string;
+  /** Markdown (v3/06 §2), rendered on the public division page. */
+  description: string | null;
   sport_key: string;
   variant_key: string;
   config: unknown;
@@ -41,7 +43,7 @@ export interface DivisionRow {
 }
 
 const COLS = [
-  "id", "competition_id", "name", "slug", "sport_key", "variant_key", "config",
+  "id", "competition_id", "name", "slug", "description", "sport_key", "variant_key", "config",
   "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
   "scheduling_mode", "auto_progress", "schedule_locked", "archived_at", "created_at",
   "seq", "youth", "player_name_display",

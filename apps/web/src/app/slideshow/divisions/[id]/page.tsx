@@ -9,6 +9,7 @@ import { routes } from "@/lib/routes";
 import { buildDivisionSlides, orgBoardChrome } from "@/server/slideshow-data";
 import { hasFeature } from "@/lib/entitlements";
 import { publicThemeStyleChain } from "@/lib/public-theme";
+import { brandingSponsors } from "@/lib/org-branding";
 import { Slideshow } from "@/components/v2/slideshow";
 
 export default async function DivisionSlideshowPage({
@@ -42,6 +43,9 @@ export default async function DivisionSlideshowPage({
         chrome.branding,
       )}
       logo={chrome.logo}
+      // Sponsor slots (v3/10 #5): chrome.branding is already entitlement-
+      // gated, so Community boards render none.
+      sponsors={brandingSponsors(chrome.branding)}
     />
   );
 }

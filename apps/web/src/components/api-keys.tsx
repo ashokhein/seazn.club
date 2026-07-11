@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { Copy, Check, KeyRound } from "lucide-react";
-import { PlanBadge } from "@/components/plan-badge";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
 import { msg } from "@/lib/messages";
@@ -11,10 +10,14 @@ interface ApiKeyRow {
   id: string;
   name: string;
   scopes: string[];
+  competition_id: string | null;
   last_used_at: string | null;
   revoked_at: string | null;
   created_at: string;
 }
+
+const SCOPES = ["read", "score", "manage"] as const;
+type ScopeChoice = (typeof SCOPES)[number];
 
 /** /api/v1 fetch helper: unwraps the {ok, data} envelope and surfaces
  *  error.message (v1 errors are objects, unlike the /api/orgs endpoints). */
@@ -45,17 +48,18 @@ function fmt(iso: string | null): string {
  *  exactly once, right after minting — it can never be retrieved again. */
 export function ApiKeysPanel({
   orgId,
-  canWriteScope,
+  competitions,
 }: {
   orgId: string;
-  /** api.write entitlement (above Pro): allows minting write-scoped keys. */
-  canWriteScope: boolean;
+  /** Org competitions offered as an optional key pin (v3/08 §2). */
+  competitions: { id: string; name: string }[];
 }) {
   const confirmDialog = useConfirm();
   const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [wantWrite, setWantWrite] = useState(false);
+  const [scope, setScope] = useState<ScopeChoice>("read");
+  const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [minted, setMinted] = useState<{ name: string; secret: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -76,15 +80,22 @@ export function ApiKeysPanel({
     setBusy(true);
     setError(null);
     try {
-      const scopes = wantWrite ? ["read", "write"] : ["read"];
       const key = await v1<ApiKeyRow & { secret: string }>(
         `/api/v1/orgs/${orgId}/api-keys`,
-        { method: "POST", json: { name: name.trim(), scopes } },
+        {
+          method: "POST",
+          json: {
+            name: name.trim(),
+            scopes: [scope],
+            competition_id: pin || undefined,
+          },
+        },
       );
       setMinted({ name: key.name, secret: key.secret });
       setCopied(false);
       setName("");
-      setWantWrite(false);
+      setScope("read");
+      setPin("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create API key");
@@ -157,7 +168,7 @@ export function ApiKeysPanel({
       )}
 
       {/* Create */}
-      <div>
+      <div className="space-y-3">
         <div className="flex gap-2">
           <input
             value={name}
@@ -175,22 +186,62 @@ export function ApiKeysPanel({
             {busy ? "Creating…" : "Create key"}
           </button>
         </div>
-        <label className="mt-2 flex items-center gap-2 text-sm text-slate-600">
-          <input
-            type="checkbox"
-            checked={wantWrite}
-            onChange={(e) => setWantWrite(e.target.checked)}
-            disabled={!canWriteScope}
-          />
-          Allow writes
-          <Tip id="api.key-scopes" />
-          {!canWriteScope && (
-            <>
-              <PlanBadge feature="api.write" />
-              <span className="text-xs text-slate-500">(read-only on Pro)</span>
-            </>
-          )}
-        </label>
+
+        {/* Scope choice — one radio per scope, consequence line under each
+            (v3/03 §7 pattern: say what it lets the holder do, plainly). */}
+        <fieldset>
+          <legend className="label flex items-center gap-1.5">
+            What can this key do? <Tip id="api.key-scopes" />
+          </legend>
+          <div className="mt-1 grid gap-2 sm:grid-cols-3">
+            {SCOPES.map((s) => (
+              <label
+                key={s}
+                className={`cursor-pointer rounded-xl border p-3 transition ${
+                  scope === s
+                    ? "border-purple-400 bg-purple-50/60 ring-1 ring-purple-200"
+                    : "border-slate-200 hover:border-slate-300"
+                }`}
+              >
+                <span className="flex items-center gap-2 text-sm font-medium text-slate-800">
+                  <input
+                    type="radio"
+                    name="key-scope"
+                    value={s}
+                    checked={scope === s}
+                    onChange={() => setScope(s)}
+                  />
+                  {msg(`apiKeys.scope.${s}.label`)}
+                </span>
+                <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+                  {msg(`apiKeys.scope.${s}.line`)}
+                </span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+
+        {competitions.length > 0 && (
+          <div>
+            <label className="label" htmlFor="key-pin">
+              {msg("apiKeys.pin.label")}
+            </label>
+            <select
+              id="key-pin"
+              value={pin}
+              onChange={(e) => setPin(e.target.value)}
+              className="select mt-1 w-full sm:max-w-sm"
+            >
+              <option value="">{msg("apiKeys.pin.any")}</option>
+              {competitions.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-slate-500">{msg("apiKeys.pin.line")}</p>
+          </div>
+        )}
       </div>
 
       {/* Active keys */}
@@ -203,27 +254,59 @@ export function ApiKeysPanel({
         </p>
       ) : (
         <ul className="divide-y divide-slate-100">
-          {active.map((key) => (
-            <li key={key.id} className="flex items-center gap-3 py-3">
-              <KeyRound className="h-4 w-4 shrink-0 text-purple-400" strokeWidth={1.75} />
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium text-slate-800">{key.name}</p>
-                <p className="text-xs text-slate-500">
-                  {key.scopes.join(" + ")} · created {fmt(key.created_at)} · last used{" "}
-                  {fmt(key.last_used_at)}
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => revoke(key)}
-                className="btn btn-ghost shrink-0 text-xs text-red-600"
-              >
-                Revoke
-              </button>
-            </li>
-          ))}
+          {active.map((key) => {
+            const scopes = key.scopes.map((s) => (s === "write" ? "manage" : s));
+            const pinned = competitions.find((c) => c.id === key.competition_id);
+            return (
+              <li key={key.id} className="flex items-center gap-3 py-3">
+                <KeyRound className="h-4 w-4 shrink-0 text-purple-400" strokeWidth={1.75} />
+                <div className="min-w-0 flex-1">
+                  <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-800">
+                    <span className="truncate">{key.name}</span>
+                    {scopes.map((s) => (
+                      <span
+                        key={s}
+                        className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          s === "manage"
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-slate-100 text-slate-600"
+                        }`}
+                      >
+                        {s}
+                      </span>
+                    ))}
+                    {pinned && (
+                      <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700">
+                        {pinned.name} only
+                      </span>
+                    )}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    created {fmt(key.created_at)} · last used {fmt(key.last_used_at)}
+                  </p>
+                  {scopes.includes("manage") && (
+                    <p className="mt-0.5 text-xs text-amber-600">{msg("apiKeys.manage.nudge")}</p>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => revoke(key)}
+                  className="btn btn-ghost shrink-0 text-xs text-red-600"
+                >
+                  Revoke
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
+
+      <p className="text-xs text-slate-500">
+        Full reference, guides and a try-it console:{" "}
+        <a href="/developers" className="font-medium text-purple-600 hover:underline">
+          {msg("apiKeys.docs.link")} →
+        </a>
+      </p>
 
       {revoked.length > 0 && (
         <details className="text-sm text-slate-500">

@@ -201,6 +201,64 @@ body {
     @apply border border-red-200 bg-white text-red-600 hover:bg-red-50;
   }
 
+  /* Organiser prose (v3/06 §2) — output of lib/prose renderProse. Lives on
+     public pages AND the editor Preview, inside the --ps-* themed subtree,
+     so links/buttons pick up the org accent automatically. */
+  .competition-prose {
+    @apply max-w-none text-[15px] leading-relaxed text-zinc-700;
+  }
+  .competition-prose h2 {
+    @apply mt-6 mb-2 font-display text-2xl font-semibold uppercase tracking-wide text-ink first:mt-0;
+  }
+  .competition-prose h3 {
+    @apply mt-5 mb-1.5 font-display text-lg font-semibold text-ink first:mt-0;
+  }
+  .competition-prose p {
+    @apply my-3 first:mt-0 last:mb-0;
+  }
+  .competition-prose ul {
+    @apply my-3 list-disc space-y-1 pl-6;
+  }
+  .competition-prose ol {
+    @apply my-3 list-decimal space-y-1 pl-6;
+  }
+  .competition-prose a {
+    @apply font-medium text-accent-strong underline underline-offset-2 hover:opacity-80;
+  }
+  .competition-prose blockquote {
+    @apply my-4 border-l-4 border-accent-line bg-accent-soft/50 px-4 py-2 text-zinc-600;
+  }
+  .competition-prose hr {
+    @apply my-6 border-zinc-200;
+  }
+  .competition-prose img {
+    @apply my-4 max-h-96 max-w-full rounded-xl shadow-sm;
+  }
+  /* Help articles additionally use inline code, code blocks and tables. */
+  .competition-prose code {
+    @apply rounded bg-purple-50 px-1.5 py-0.5 font-mono text-[13px] text-purple-800;
+  }
+  .competition-prose pre {
+    @apply my-4 overflow-x-auto rounded-xl bg-slate-950 p-4 text-[13px] leading-relaxed text-slate-100;
+  }
+  .competition-prose pre code {
+    @apply bg-transparent p-0 text-inherit;
+  }
+  .competition-prose table {
+    @apply my-4 w-full border-collapse text-sm;
+  }
+  .competition-prose th {
+    @apply border-b-2 border-purple-100 px-3 py-2 text-left font-semibold text-slate-800;
+  }
+  .competition-prose td {
+    @apply border-b border-zinc-100 px-3 py-2;
+  }
+
+  /* Sponsor/CTA button: a paragraph that is only a bold link. */
+  .competition-prose a.prose-cta {
+    @apply my-2 inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 font-display text-sm font-semibold uppercase tracking-wide text-white no-underline shadow transition hover:opacity-90;
+  }
+
   .badge {
     @apply rounded-full px-2.5 py-0.5 text-xs font-medium capitalize;
   }

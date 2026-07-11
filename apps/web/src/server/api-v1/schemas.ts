@@ -23,7 +23,9 @@ export const DivisionStatus = z.enum(["setup", "scheduled", "active", "completed
 export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder", "americano", "ladder"]);
 export const EntrantKind = z.enum(["team", "individual", "pair"]);
 export const EntrantStatus = z.enum(["registered", "confirmed", "withdrawn", "disqualified"]);
-export const ApiKeyScope = z.enum(["read", "write"]);
+// v3/08 §2: ranked scopes — read < score < manage. "write" is the legacy
+// name for manage; still accepted on input, stored as manage.
+export const ApiKeyScope = z.enum(["read", "score", "manage", "write"]);
 
 // ---------------------------------------------------------------------------
 // Competitions
@@ -32,7 +34,8 @@ export const ApiKeyScope = z.enum(["read", "write"]);
 export const CreateCompetition = z.object({
   name: z.string().min(1).max(200),
   slug: Slug.optional(), // derived from name when omitted
-  description: z.string().max(5000).nullish(),
+  /** Markdown (v3/06 §2) — rendered through lib/prose on every surface. */
+  description: z.string().max(20_000).nullish(),
   starts_on: z.iso.date().nullish(),
   ends_on: z.iso.date().nullish(),
   visibility: Visibility.default("private"),
@@ -56,7 +59,7 @@ export const PatchCompetition = z
   .object({
     name: z.string().min(1).max(200),
     slug: Slug,
-    description: z.string().max(5000).nullable(),
+    description: z.string().max(20_000).nullable(),
     starts_on: z.iso.date().nullable(),
     ends_on: z.iso.date().nullable(),
     visibility: Visibility,
@@ -107,6 +110,8 @@ export type CreateDivision = z.infer<typeof CreateDivision>;
 export const PatchDivision = z
   .object({
     name: z.string().min(1).max(200),
+    /** Markdown (v3/06 §2), shown on the public division page. */
+    description: z.string().max(20_000).nullable(),
     eligibility: z.array(z.record(z.string(), z.unknown())),
     tiebreakers: z.array(z.string()).nullable(),
     status: DivisionStatus,
@@ -131,6 +136,7 @@ export const Division = z.object({
   competition_id: Uuid,
   name: z.string(),
   slug: z.string(),
+  description: z.string().nullable(),
   sport_key: z.string(),
   variant_key: z.string(),
   config: z.unknown(),
@@ -395,6 +401,8 @@ export const StandingsRowOut = z.object({
 export const CreateApiKey = z.object({
   name: z.string().min(1).max(100),
   scopes: z.array(ApiKeyScope).min(1).default(["read"]),
+  /** Optional pin: the key only works inside this competition (v3/08 §2). */
+  competition_id: Uuid.nullish(),
 });
 export type CreateApiKey = z.infer<typeof CreateApiKey>;
 
@@ -402,6 +410,7 @@ export const ApiKey = z.object({
   id: Uuid,
   name: z.string(),
   scopes: z.array(ApiKeyScope),
+  competition_id: Uuid.nullable(),
   last_used_at: z.string().nullable(),
   revoked_at: z.string().nullable(),
   created_at: z.string(),

@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { describeEvent, EVENT_TONE_STYLE } from "@/lib/event-copy";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { ShareButton } from "@/components/share-button";
 import { LineupEditor } from "@/components/v2/lineup-editor";
 import { ScoringErrorBoundary } from "@/components/v2/scoring-error-boundary";
 import { GenericPad } from "@/components/v2/pads/generic-pad";
@@ -94,6 +95,9 @@ interface Props {
   canEdit: boolean;
   /** recorded_by → display name for Activity attribution. */
   recorderNames?: Record<string, string>;
+  /** Public fixture path — enables the share action once decided (v3/10 #2).
+   *  Null when the competition isn't shared. */
+  publicPath?: string | null;
 }
 
 export type SendEvent = (type: string, payload: unknown) => Promise<boolean>;
@@ -119,6 +123,7 @@ export function FixtureConsole({
   initialEvents,
   canEdit,
   recorderNames = {},
+  publicPath = null,
 }: Props) {
   const router = useRouter();
   const [live, setLive] = useState<LiveState>(initialState);
@@ -231,14 +236,25 @@ export function FixtureConsole({
             </button>
           )}
           {decided && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => send("core.finalize", {})}
-              className="btn btn-primary"
-            >
-              Finalize (lock ledger)
-            </button>
+            <>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => send("core.finalize", {})}
+                className="btn btn-primary"
+              >
+                Finalize (lock ledger)
+              </button>
+              {publicPath && home && away && (
+                // v3/10 #2: result decided → one tap to the club group chat.
+                <ShareButton
+                  title={`${home.name} vs ${away.name}`}
+                  text={`Full-time: ${home.name} vs ${away.name} — ${summary?.headline ?? "result in"}. Details:`}
+                  url={publicPath}
+                  className="btn btn-ghost"
+                />
+              )}
+            </>
           )}
           {!decided && (
             <>

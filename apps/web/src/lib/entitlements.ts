@@ -40,17 +40,26 @@ async function resolve(orgId: string, featureKey: string): Promise<Resolved | nu
 }
 
 async function resolveFromDb(orgId: string, featureKey: string): Promise<Resolved | null> {
+  // Expired overrides are dead (v3/08 §1 admin expiry) — ignored here; the
+  // admin panel shows and sweeps them.
   const [ov] = await sql<Resolved[]>`
     select bool_value, int_value
     from org_entitlement_overrides
-    where org_id = ${orgId} and feature_key = ${featureKey}`;
+    where org_id = ${orgId} and feature_key = ${featureKey}
+      and (expires_at is null or expires_at > now())`;
   if (ov) return ov;
 
+  // A comped plan past its end date resolves as community at read time —
+  // no scheduler flips it, the resolution does (bounded by the 5-min cache).
   const [pe] = await sql<Resolved[]>`
     select pe.bool_value, pe.int_value
     from plan_entitlements pe
     join (
-      select coalesce(s.plan_key, 'community') as plan_key
+      select case
+        when s.comped_until is not null and s.comped_until <= now()
+             and s.stripe_subscription_id is null then 'community'
+        else coalesce(s.plan_key, 'community')
+      end as plan_key
       from organizations o
       left join subscriptions s on s.org_id = o.id
       where o.id = ${orgId}

@@ -37,6 +37,8 @@ export interface PublicOrg {
   branding: unknown;
   /** Resolved logo URL — null without the branding entitlement or a logo. */
   logo: string | null;
+  /** Org "about" Markdown (v3/06 §2) — render via lib/prose only. */
+  about: string | null;
 }
 
 export interface PublicCompetition {
@@ -57,6 +59,8 @@ export interface PublicDivision {
   competition_id: string;
   name: string;
   slug: string;
+  /** Organiser Markdown (v3/06 §2) — render via lib/prose only. */
+  description: string | null;
   sport_key: string;
   variant_key: string;
   status: string;
@@ -158,7 +162,7 @@ async function loadOrg(orgSlug: string): Promise<PublicOrg | null> {
   const [row] = await sql<
     (Omit<PublicOrg, "logo"> & { logo_url: string | null; logo_storage_path: string | null })[]
   >`
-    select o.id, o.name, o.slug, org_has_feature(o.id, 'branding') as branded,
+    select o.id, o.name, o.slug, o.about, org_has_feature(o.id, 'branding') as branded,
            case when org_has_feature(o.id, 'dashboard.branding')
                 then o.branding else '{}'::jsonb end as branding,
            case when org_has_feature(o.id, 'branding') then o.logo_url end as logo_url,
@@ -222,7 +226,8 @@ export async function getPublicCompetition(
         where org_id = ${org.id} and slug = ${compSlug} limit 1`;
       if (!competition) return null;
       const divisions = await sql<PublicDivision[]>`
-        select d.id, d.competition_id, d.name, d.slug, d.sport_key, d.variant_key,
+        select d.id, d.competition_id, d.name, d.slug, d.description,
+               d.sport_key, d.variant_key,
                d.status, d.module_version, d.tiebreakers, s.name as sport_name,
                (select count(*)::int from public_entrants_v e
                  where e.division_id = d.id) as entrant_count

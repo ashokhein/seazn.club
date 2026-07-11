@@ -6,8 +6,45 @@ engine**: mobile, navigation, pricing/packaging, self-serve growth, documentatio
 handful of correctness fixes. Intake: the 9 Jul 2026 organiser/founder list (31 items,
 captured verbatim in [00-intake-backlog.md](00-intake-backlog.md)).
 
-> **Status: designed; PROMPT-38, PROMPT-32, PROMPT-31, PROMPT-30, PROMPT-33 and
-> PROMPT-34 implemented.**
+> **Status: designed; PROMPT-38, PROMPT-32, PROMPT-31, PROMPT-30, PROMPT-33,
+> PROMPT-34, PROMPT-35, PROMPT-37 and PROMPT-39 implemented (PROMPT-36 remains).**
+> PROMPT-35 + PROMPT-37 + PROMPT-39 (2026-07-11, branch
+> `feat/v3-help-admin-growth-35-37-39`) —
+> content: `lib/prose.ts` (ONE sanitize pipeline; CTA = paragraph that is only
+> a bold link — chosen over a TipTap custom node so stored Markdown stays
+> portable), TipTap editor (`prose-editor.tsx`, Write/Preview where Preview IS
+> the public renderer + org theme), wired into competition settings + org
+> About (V267; division description ships column+API+public render, editor UI
+> deferred — no natural settings home yet); `/help` centre (31 Markdown
+> articles under `apps/web/content/help/**`, registry in `lib/help.ts`,
+> stale-doc gate test, FlexSearch over `/api/help-index`, console `?` menu,
+> `help-shots.ts` + weekly workflow, PR-checklist line); format gallery
+> (`config/format-gallery.tsx`: 8 families × SVG mind-map + engine-real
+> preview at `/help/formats/*` + marketing `/formats`; picker "How this
+> works →" panel + pure `recommendFormats` strip, enumeration test pins every
+> StageKind).
+> admin/API: key scopes read<score<manage + competition pin (V265; legacy
+> write→manage, api.write Business rung retired — Pro under api.access),
+> route→scope allowlist DEFAULT-DENY in `api-v1/key-scopes.ts` (enumeration
+> test walks route files), per-key 60/300 rpm + `X-RateLimit-*` via ALS,
+> curated published spec (`openapi/v1.public.json`, `x-required-scope`,
+> auto-examples) + self-hosted Scalar `/developers` + 3 guides + changelog;
+> admin plan panel (comp-to-Pro with read-time `comped_until` expiry,
+> downgrade-with-freeze-preview + typedName, trial extend syncing Stripe,
+> override editor with `expires_at` — V266; Event-Pass grant deferred to
+> PROMPT-36 which owns `competition_passes`; Stripe-test-clock e2e skipped —
+> covered at DB level).
+> growth: OG cards (comp hero/division standings/fixture) via next/og on the
+> shared `server/og/` model — youth rule + contrast guard unit-tested; share
+> buttons (Web Share + wa.me) on fixture/division/ticket/console-decided;
+> `poster.pdf` (pdfkit direct — DocModel has no image vocabulary) + console
+> buttons; `/embed/divisions/[id]/{standings,schedule,bracket}` (frame-
+> ancestors relaxed for /embed only, visibility-honouring `embed-data.ts`,
+> auto-height postMessage, snippet UI gated on new `embeds.enabled` V269);
+> org sponsor slots in `organizations.branding.sponsors` (merge-safe writes —
+> V-fixed the color-wipes-sponsors bug; dashboard footer + registration
+> masthead + persistent slideshow strip, entitlement-gated reads).
+> smoke: `v3ContentApiSuite` (35 checks, pro + free). V265–V269.
 > PROMPT-33 + PROMPT-34 (2026-07-10, branch `feat/v3-sched-reg-prompt-33-34`) —
 > board v3 (`components/v2/board/*`: hue-chip blocks, legend-as-filter `?d=`,
 > Board/Agenda/By-division density, conflicts side panel, unscheduled tray with

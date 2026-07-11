@@ -6,6 +6,8 @@ import type { Metadata } from "next";
 import { ChevronRight } from "lucide-react";
 import { getPublicOrg } from "@/server/public-site/data";
 import { competitionChip } from "@/lib/public-site";
+import { renderProse } from "@/lib/prose";
+import { CompetitionProse } from "@/components/public-site/competition-prose";
 
 export const revalidate = 30;
 
@@ -83,6 +85,15 @@ export default async function OrgLandingPage({ params }: Props) {
         </div>
         <div aria-hidden className="h-1 bg-accent" />
       </section>
+
+      {org.about ? (
+        <section className="mb-8">
+          <h2 className="mb-3 font-display text-2xl font-semibold uppercase tracking-wide text-ink">
+            About
+          </h2>
+          <CompetitionProse html={await renderProse(org.about)} />
+        </section>
+      ) : null}
 
       <h2 className="mb-3 font-display text-2xl font-semibold uppercase tracking-wide text-ink">
         Competitions

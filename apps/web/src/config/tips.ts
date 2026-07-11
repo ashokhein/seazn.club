@@ -63,7 +63,7 @@ export const TIPS = {
   },
   "api.key-scopes": {
     title: "Key scopes",
-    body: "Read keys can only fetch data. Write keys can change it — treat them like passwords and revoke any key you no longer use.",
+    body: "Read keys only fetch data. Score keys can also push live scores. Manage keys can change anything — treat them like passwords and revoke any key you no longer use.",
     helpSlug: "api/keys",
   },
   "slideshow.url": {

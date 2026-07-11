@@ -115,6 +115,13 @@ export default async function FixturePage({
           }))}
           canEdit={canScore && !(competition.frozen ?? false)}
           recorderNames={recorderNames}
+          publicPath={
+            // Share needs a page strangers can open (v3/10 #2) — private
+            // competitions have none.
+            competition.visibility !== "private"
+              ? `/shared/${orgSlug}/${competition.slug}/${division.slug}/fixtures/${fixture.id}`
+              : null
+          }
         />
 
         {/* Day-of device link (doc 13 §7): editors only — scorers never mint. */}

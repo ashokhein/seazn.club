@@ -4,7 +4,8 @@ import { posthogIngestHosts } from "./src/lib/posthog-proxy.mjs";
 
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
-  { key: "X-Frame-Options", value: "SAMEORIGIN" },
+  // X-Frame-Options lives in its own rule below — /embed/* must be frameable
+  // by other sites (v3/10 #4), everything else stays SAMEORIGIN.
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   {
     key: "Permissions-Policy",
@@ -35,10 +36,11 @@ const nextConfig = {
   // exports); bundling it breaks that path resolution, so load it — and
   // exceljs, likewise native-ish — from node_modules on the server.
   serverExternalPackages: ["pdfkit", "exceljs"],
-  // Email HTML templates are read from disk at runtime (lib/email-templates/
-  // compose.ts) — make sure they land in the standalone trace for every route.
+  // Email HTML templates and /help Markdown are read from disk at runtime
+  // (lib/email-templates/compose.ts, server/help-content.ts) — make sure
+  // they land in the standalone trace for every route.
   outputFileTracingIncludes: {
-    "/*": ["src/lib/email-templates/html/**/*"],
+    "/*": ["src/lib/email-templates/html/**/*", "content/help/**/*"],
   },
   // PostHog reverse proxy: front analytics through our own origin so
   // ad-blockers don't drop events. Client posts to /ingest (see
@@ -59,6 +61,18 @@ const nextConfig = {
       {
         source: "/(.*)",
         headers: securityHeaders,
+      },
+      {
+        // Everything except /embed keeps the clickjacking guard; embeds are
+        // read-only widgets designed to be framed by club websites.
+        source: "/((?!embed).*)",
+        headers: [{ key: "X-Frame-Options", value: "SAMEORIGIN" }],
+      },
+      {
+        source: "/embed/:path*",
+        headers: [
+          { key: "Content-Security-Policy", value: "frame-ancestors *" },
+        ],
       },
     ];
   },

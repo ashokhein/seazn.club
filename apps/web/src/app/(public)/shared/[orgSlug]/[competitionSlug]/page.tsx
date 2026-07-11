@@ -9,6 +9,9 @@ import { getPublicCompetition } from "@/server/public-site/data";
 import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
 import { publicThemeStyle } from "@/lib/public-theme";
+import { brandingSponsors } from "@/lib/org-branding";
+import { renderProse } from "@/lib/prose";
+import { CompetitionProse } from "@/components/public-site/competition-prose";
 
 export const revalidate = 30;
 
@@ -45,6 +48,12 @@ export default async function CompetitionHomePage({ params }: Props) {
   }
   const { org, competition, divisions, liveNow } = data;
   const branding = (competition.branding ?? {}) as Branding;
+  // Sponsor slots (v3/10 #5): competition-level first, then org-level —
+  // org.branding is already entitlement-gated (Pro / Event Pass) upstream.
+  const sponsorSeen = new Set<string>();
+  const sponsors = [...(branding.sponsors ?? []), ...brandingSponsors(org.branding)].filter(
+    (s) => !sponsorSeen.has(s.name) && sponsorSeen.add(s.name),
+  );
   // Register CTA (doc 16 §1.1): shown while any division accepts submissions.
   const registration = await publicRegistrationInfo(orgSlug, competitionSlug).catch(() => null);
   const registrationOpen = registration?.divisions.some((d) => d.open) ?? false;
@@ -167,8 +176,10 @@ export default async function CompetitionHomePage({ params }: Props) {
       ) : null}
 
       {competition.description ? (
-        <section className="prose-sm mb-6 max-w-none whitespace-pre-line text-sm text-zinc-700">
-          {competition.description}
+        <section className="mb-6">
+          {/* Markdown → sanitized HTML — the editor's Preview runs this
+              exact pipeline, so what organisers saw is what ships. */}
+          <CompetitionProse html={await renderProse(competition.description)} />
         </section>
       ) : null}
 
@@ -226,13 +237,13 @@ export default async function CompetitionHomePage({ params }: Props) {
         )}
       </section>
 
-      {branding.sponsors && branding.sponsors.length > 0 ? (
+      {sponsors.length > 0 ? (
         <section className="mt-10 border-t border-zinc-200 pt-4">
           <h2 className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-ink-muted">
             Sponsors
           </h2>
           <ul className="flex flex-wrap items-center gap-3">
-            {branding.sponsors.map((s) => {
+            {sponsors.map((s) => {
               const inner = (
                 <span className="flex items-center gap-2 rounded-lg border border-zinc-200/80 bg-surface px-3 py-2 text-sm text-zinc-600 shadow-sm">
                   {s.logo ? (

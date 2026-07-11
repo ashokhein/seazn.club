@@ -44,6 +44,16 @@ export function MarketingFooter() {
                   Start free
                 </Link>
               </li>
+              <li>
+                <Link href="/help" className="text-slate-600 hover:text-purple-700">
+                  Help centre
+                </Link>
+              </li>
+              <li>
+                <Link href="/developers" className="text-slate-600 hover:text-purple-700">
+                  Developers
+                </Link>
+              </li>
             </ul>
           </div>
           <div>

@@ -141,6 +141,29 @@ export const messages = {
   "register.ticket.calendar": "Add to calendar",
   "register.ticket.save": "Save ticket",
   "register.guardian.title": "Under-18 entry — guardian consent",
+
+  // ── API key scopes (v3/08 §2, PROMPT-37) ──
+  "apiKeys.scope.read.label": "Read",
+  "apiKeys.scope.read.line": "Fetch competitions, fixtures, standings and registrations. Can't change anything.",
+  "apiKeys.scope.score.label": "Score",
+  "apiKeys.scope.score.line": "Everything Read does, plus push live scores and start divisions — for scoreboard integrations.",
+  "apiKeys.scope.manage.label": "Manage",
+  "apiKeys.scope.manage.line": "Full access: create competitions, generate fixtures, moderate registrations. Treat like a password.",
+  "apiKeys.pin.label": "Limit to one competition",
+  "apiKeys.pin.any": "All competitions (no limit)",
+  "apiKeys.pin.line": "A limited key only works inside the chosen competition — hand it to a vendor without exposing the rest.",
+  "apiKeys.manage.nudge": "This key has full access — consider replacing it with a narrower one.",
+  "apiKeys.docs.link": "Developer docs",
+
+  // ── Sharing & embeds (v3/10, PROMPT-39) ──
+  "share.whatsapp": "Share on WhatsApp",
+  "share.generic": "Share",
+  "share.copied": "Link copied",
+  "embed.title": "Embed on your website",
+  "embed.line": "Paste this snippet into your club site — it stays in sync by itself.",
+  "embed.copy": "Copy snippet",
+  "sponsors.title": "Sponsors",
+  "sponsors.line": "Sponsor logos appear on your public pages, the registration page and the TV slideshow.",
 } as const;
 
 export type MessageKey = keyof typeof messages;

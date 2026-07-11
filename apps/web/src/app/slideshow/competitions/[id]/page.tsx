@@ -10,6 +10,7 @@ import { listDivisions } from "@/server/usecases/divisions";
 import { buildDivisionSlides, orgBoardChrome, type Slide } from "@/server/slideshow-data";
 import { hasFeature } from "@/lib/entitlements";
 import { publicThemeStyleChain } from "@/lib/public-theme";
+import { brandingSponsors } from "@/lib/org-branding";
 import { Slideshow } from "@/components/v2/slideshow";
 
 export default async function CompetitionSlideshowPage({
@@ -54,6 +55,7 @@ export default async function CompetitionSlideshowPage({
         chrome.branding,
       )}
       logo={chrome.logo}
+      sponsors={brandingSponsors(chrome.branding)}
     />
   );
 }

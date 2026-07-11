@@ -2,7 +2,8 @@ import { test, expect } from "@playwright/test";
 import { TAG, apiJson, activeOrg } from "./helpers";
 
 // Platform API keys (Pro): mint → use with Bearer auth → revoke → rejected.
-// Write scope stays Business-only; community lacks api.access entirely.
+// Scopes are read < score < manage (v3/08 §2, PROMPT-37); a read key 403s on
+// manage routes; community lacks api.access entirely.
 
 const BASE = process.env.PLAYWRIGHT_BASE ?? "http://localhost:3000";
 
@@ -38,12 +39,19 @@ test.describe.serial("api keys", () => {
     }
   });
 
-  test("write scope is Business-only", async ({ page }) => {
-    const res = await apiJson(page.request, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
-      name: `e2e-write ${TAG}`,
-      scopes: ["read", "write"],
+  test("a read key is refused on manage routes (scope enforcement)", async ({ playwright }) => {
+    const keyApi = await playwright.request.newContext({
+      baseURL: BASE,
+      extraHTTPHeaders: { Authorization: `Bearer ${secret}` },
     });
-    expect(res.status).toBe(402);
+    try {
+      const res = await keyApi.post("/api/v1/competitions", { data: { name: `Nope ${TAG}` } });
+      expect(res.status()).toBe(403);
+      const body = (await res.json()) as { error?: { message?: string } };
+      expect(body.error?.message ?? "").toContain("manage");
+    } finally {
+      await keyApi.dispose();
+    }
   });
 
   test("community orgs lack api.access", async ({ browser }) => {

@@ -11,6 +11,8 @@ import { routes } from "@/lib/routes";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { venueNoun, venueLabel } from "@/lib/venue";
 import { defaultMatchMinutes } from "@/lib/match-length";
+import { FormatExplainerPanel } from "@/components/v2/format-explainer-panel";
+import { FormatRecommendStrip } from "@/components/v2/format-recommend-strip";
 
 export interface SportOption {
   key: string;
@@ -35,6 +37,30 @@ interface StageDraft {
   config: Record<string, unknown>;
   qualification: Record<string, unknown> | null;
 }
+
+// Wizard template → format-gallery family (v3/06 §4 "How this works →").
+const TEMPLATE_FAMILY: Record<string, string> = {
+  league: "league",
+  league_ko: "league",
+  groups_ko: "groups-knockout",
+  group_stepladder: "stepladder",
+  swiss: "swiss",
+  knockout: "knockout",
+  double_elim: "double_elim",
+  triple_rr: "league",
+  americano: "americano",
+  mexicano: "americano",
+  ladder: "ladder",
+};
+
+// Recommendation slug → wizard template key (strip picks land here).
+const FAMILY_TEMPLATE: Record<string, string> = {
+  league: "league",
+  "groups-knockout": "groups_ko",
+  swiss: "swiss",
+  knockout: "knockout",
+  double_elim: "double_elim",
+};
 
 // Mirror of the server preview response (src/server/usecases/stages.ts).
 interface PreviewMatch {
@@ -334,6 +360,7 @@ export function DivisionBuilder({
 
   // "Show example" fixture preview (runs the real engine draw server-side).
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [explainOpen, setExplainOpen] = useState(false);
   const [previewCount, setPreviewCount] = useState(8);
   const [preview, setPreview] = useState<PreviewPhase[] | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
@@ -738,6 +765,15 @@ export function DivisionBuilder({
 
       <section className={`card space-y-4 p-6 ${tab === "format" ? "" : "hidden"}`}>
         <h2 className="text-sm font-semibold text-slate-700">Format (stage graph)</h2>
+
+        {/* v3/06 §4: entrants + courts + hours → the formats that fit. */}
+        <FormatRecommendStrip
+          onPick={(slug) => {
+            const key = FAMILY_TEMPLATE[slug];
+            if (key) setTemplate(key);
+          }}
+        />
+
         <div className="grid gap-2 sm:grid-cols-3">
           {STAGE_TEMPLATES.map((t) => (
             <label
@@ -828,11 +864,28 @@ export function DivisionBuilder({
             </label>
           )}
         </div>
-        {templateInfo && (
-          <p className="text-xs text-slate-400">
-            Fixtures are generated per stage from the division console — nothing is
-            locked in until you generate.
-          </p>
+        <div className="flex flex-wrap items-center gap-3">
+          {TEMPLATE_FAMILY[template] && (
+            <button
+              type="button"
+              onClick={() => setExplainOpen(true)}
+              className="text-sm font-medium text-purple-700 underline underline-offset-2 hover:text-purple-900"
+            >
+              How this works →
+            </button>
+          )}
+          {templateInfo && (
+            <p className="text-xs text-slate-400">
+              Fixtures are generated per stage from the division console — nothing is
+              locked in until you generate.
+            </p>
+          )}
+        </div>
+        {explainOpen && TEMPLATE_FAMILY[template] && (
+          <FormatExplainerPanel
+            familySlug={TEMPLATE_FAMILY[template]}
+            onClose={() => setExplainOpen(false)}
+          />
         )}
 
         {/* Show example — runs the real engine draw over placeholder entrants. */}
