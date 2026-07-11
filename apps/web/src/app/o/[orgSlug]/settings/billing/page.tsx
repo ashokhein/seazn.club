@@ -10,6 +10,8 @@ import { type Subscription } from "@/lib/types";
 import { getLimit } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
+import { formatMinor, proPrice } from "@/lib/currency";
+import { preferredCurrency } from "@/lib/currency-server";
 
 function fmt(iso: string | null) {
   if (!iso) return null;
@@ -84,6 +86,7 @@ export default async function BillingPage({
   ]);
 
   const trialDays = daysUntil(sub?.trial_end ?? null);
+  const currency = await preferredCurrency(orgId);
 
   return (
     <>
@@ -190,8 +193,8 @@ export default async function BillingPage({
                   Free
                 </p>
                 <ul className="mt-3 space-y-1 text-slate-500">
-                  <li>✓ 2 active competitions</li>
-                  <li>✓ 16 entrants per division</li>
+                  <li>✓ 1 active competition</li>
+                  <li>✓ 2 divisions, 16 entrants each</li>
                   <li>✓ 1 public dashboard</li>
                   <li>✓ Free-event registration</li>
                   <li className="text-slate-300">✗ Entry fees (Stripe payouts)</li>
@@ -202,13 +205,13 @@ export default async function BillingPage({
               <div className="rounded-xl border-2 border-purple-500 bg-purple-50 p-4">
                 <p className="mb-1 font-semibold text-purple-700">Pro</p>
                 <p className="text-2xl font-bold text-slate-800">
-                  $20
+                  {formatMinor(proPrice("monthly", currency), currency)}
                   <span className="text-base font-normal text-slate-500">/mo</span>
                 </p>
                 <ul className="mt-3 space-y-1 text-slate-700">
-                  <li>✓ Unlimited competitions</li>
-                  <li>✓ Multi-division, 64 entrants each</li>
-                  <li>✓ Online registration + entry fees</li>
+                  <li>✓ Unlimited competitions & divisions</li>
+                  <li>✓ 256 entrants per division</li>
+                  <li>✓ Online registration + entry fees (2%)</li>
                   <li>✓ Ball-by-ball & rally scoring</li>
                   <li>✓ Custom branding</li>
                   <li>✓ CSV / PDF exports</li>
@@ -219,9 +222,24 @@ export default async function BillingPage({
             <p className="mb-4 text-xs text-slate-500">
               14-day free trial · no card required · cancel anytime
             </p>
-            <div className="flex flex-wrap gap-3">
-              <UpgradeButton interval="monthly" label="Start free trial — $20/mo" />
+            {/* Annual leads (v3/07 §4): 12 for the price of 10, said plainly. */}
+            <div className="flex flex-wrap items-center gap-3">
+              <UpgradeButton
+                interval="annual"
+                label={`Start free trial — ${formatMinor(
+                  Math.round(proPrice("annual", currency) / 12),
+                  currency,
+                )}/mo billed yearly`}
+              />
+              <UpgradeButton
+                interval="monthly"
+                label={`or ${formatMinor(proPrice("monthly", currency), currency)} monthly`}
+                ghost
+              />
             </div>
+            <p className="mt-2 text-xs text-emerald-600">
+              Annual saves 17% — two months free.
+            </p>
           </section>
         )}
       </main>

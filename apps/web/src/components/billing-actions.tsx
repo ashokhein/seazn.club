@@ -19,9 +19,12 @@ const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY 
 export function UpgradeButton({
   interval,
   label,
+  ghost = false,
 }: {
   interval: "monthly" | "annual";
   label: string;
+  /** Secondary styling when the button is the non-default interval. */
+  ghost?: boolean;
 }) {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -67,7 +70,7 @@ export function UpgradeButton({
       <button
         onClick={start}
         disabled={loading}
-        className="btn btn-primary disabled:opacity-60"
+        className={`btn ${ghost ? "btn-ghost" : "btn-primary"} disabled:opacity-60`}
       >
         {loading ? "Loading checkout…" : label}
       </button>
