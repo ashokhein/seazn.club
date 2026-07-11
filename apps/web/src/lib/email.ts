@@ -12,6 +12,9 @@ import {
   type RegistrationEmailArgs,
   paymentReminderTemplate,
   type PaymentReminderArgs,
+  funnelClaimTemplate,
+  funnelReminderTemplate,
+  type FunnelEmailArgs,
 } from "@/lib/email-templates";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -118,6 +121,19 @@ export async function sendPasswordResetEmail(to: string, link: string): Promise<
 
 export async function sendMagicLinkEmail(to: string, link: string): Promise<boolean> {
   return send({ to, transactional: true, ...magicLinkTemplate(link) });
+}
+
+/** Funnel claim link (v3/07 §6) — transactional: it doubles as sign-in. */
+export async function sendFunnelClaimEmail(to: string, args: FunnelEmailArgs): Promise<boolean> {
+  return send({ to, transactional: true, ...funnelClaimTemplate(args) });
+}
+
+/** One-shot +24h funnel reminder (v3/07 §6). */
+export async function sendFunnelReminderEmail(
+  to: string,
+  args: FunnelEmailArgs,
+): Promise<boolean> {
+  return send({ to, transactional: true, ...funnelReminderTemplate(args) });
 }
 
 export async function sendEmailChangeConfirmation(to: string, link: string): Promise<boolean> {

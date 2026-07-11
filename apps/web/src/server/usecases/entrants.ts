@@ -163,7 +163,12 @@ export async function createEntrants(
     // must fit; count in the same tx as the inserts (doc 10 §2 rule 1).
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from entrants where division_id = ${divisionId}`;
-    const quota = await withinLimit(auth.orgId, "entrants.per_division.max", n + inputs.length);
+    const quota = await withinLimit(
+      auth.orgId,
+      "entrants.per_division.max",
+      n + inputs.length,
+      division.competition_id,
+    );
     if (!quota.ok) throw new PaymentRequiredError("entrants.per_division.max");
 
     const rows: CreatedEntrant[] = [];

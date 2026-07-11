@@ -225,11 +225,17 @@ jobs:
     concurrency:
       group: deploy-staging
       cancel-in-progress: false
+    env:
+      # Job-level mapping so the sync step's `if:` can see whether the secret
+      # exists (the secrets context isn't readable from step conditionals).
+      STAGING_STRIPE_SECRET_KEY: ${{ secrets.STAGING_STRIPE_SECRET_KEY }}
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5 # scripts/flyway.sh parses DATABASE_URL with node
         with:
           node-version: 22
+          cache: npm
+      - run: npm ci # stripe-sync.ts imports postgres + stripe
 
       - name: Cache Flyway CLI
         uses: actions/cache@v4
@@ -246,6 +252,21 @@ jobs:
         run: bash scripts/flyway.sh migrate
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+      # Idempotent by design: prices matched by lookup_key, currency_options
+      # re-asserted, resulting ids written into `plans` (checkout 503s when
+      # unsynced, so this must land before the app). Skips with a notice
+      # until the STAGING_STRIPE_SECRET_KEY secret (test-mode key) exists —
+      # a missing secret must not brick every main deploy.
+      - name: Sync Stripe products/prices
+        if: env.STAGING_STRIPE_SECRET_KEY != ''
+        run: npm run stripe:sync
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          STRIPE_SECRET_KEY: ${{ secrets.STAGING_STRIPE_SECRET_KEY }}
+      - name: Stripe sync skipped
+        if: env.STAGING_STRIPE_SECRET_KEY == ''
+        run: echo "::warning::STAGING_STRIPE_SECRET_KEY not set — Stripe prices not synced; checkout will 503 until 'npm run stripe:sync' runs against staging."
 
       - uses: superfly/flyctl-actions/setup-flyctl@master
       - run: flyctl deploy -c fly.stg.toml --remote-only

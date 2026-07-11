@@ -6,6 +6,8 @@ import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
 import { getDiscoveryLive, getDiscoveryThisWeek } from "@/server/public-site/discovery";
 import { LiveNowStrip, ThisWeekSection } from "@/components/discovery-cards";
+import { StartFunnelForm } from "@/components/start-funnel-form";
+import { HeroFixtureDemo } from "@/components/hero-fixture-demo";
 
 export const metadata: Metadata = {
   title: "Seazn Club — Run multi-sport community tournaments",
@@ -84,28 +86,27 @@ export default async function HomePage() {
             />
           </div>
           <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700">
-            14-day Pro trial · No card required
+            Free to start · No account needed for the first 60 seconds
           </div>
           <h1 className="mx-auto max-w-3xl text-4xl font-extrabold tracking-tight text-purple-950 sm:text-5xl lg:text-6xl">
-            Run any tournament,{" "}
-            <span className="text-purple-600">any sport</span>, in minutes
+            Create → generate →{" "}
+            <span className="text-purple-600">live in minutes</span>
           </h1>
           <p className="mx-auto mt-5 max-w-xl text-lg text-slate-600">
-            Swiss brackets, knockouts, round-robins, stepladders — Seazn Club
-            handles the draw, standings, and results so you can
-            focus on the game.
+            Tell us the sport, the field and the date — Seazn Club recommends a
+            format, draws the fixtures and puts your scoreboard live.
           </p>
-          <div className="mt-8 flex flex-wrap justify-center gap-3">
-            <Link href="/login?tab=signup" className="btn btn-primary px-6 py-3 text-base">
-              Start free →
-            </Link>
-            <Link href="/pricing" className="btn btn-ghost px-6 py-3 text-base">
-              See pricing
-            </Link>
+          {/* The funnel IS the CTA (v3/07 §6): invest first, sign in later. */}
+          <div className="mt-8">
+            <StartFunnelForm />
           </div>
           <p className="mt-4 text-xs text-slate-400">
-            Free forever for small clubs · Upgrade when you need more
+            Free forever for small clubs ·{" "}
+            <Link href="/pricing" className="underline hover:text-purple-500">
+              Upgrade a single event or go Pro
+            </Link>
           </p>
+          <HeroFixtureDemo />
         </section>
 
         {/* Live discoverable fixtures (collapses when empty) */}
@@ -192,26 +193,40 @@ export default async function HomePage() {
           </div>
         </section>
 
-        {/* Pricing teaser */}
-        <section className="mx-auto max-w-3xl px-4 py-20 text-center">
+        {/* Pricing teaser — all three offers (v3/07 §5) */}
+        <section className="mx-auto max-w-4xl px-4 py-20 text-center">
           <h2 className="mb-3 text-3xl font-bold text-purple-900">
-            Simple pricing
+            Pay for the event, or the whole season
           </h2>
           <p className="mb-8 text-slate-500">
-            Free for small clubs. Pro for clubs that need unlimited everything.
+            Free for small clubs. A one-time pass for the yearly tournament.
+            Pro when you run competitions all year.
           </p>
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-4 sm:grid-cols-3">
             <div className="card p-6 text-left">
               <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Community
               </p>
               <p className="mb-3 text-3xl font-bold text-slate-900">Free</p>
               <ul className="space-y-2 text-sm text-slate-600">
-                <li>✓ 2 active competitions</li>
-                <li>✓ 16 entrants per division</li>
+                <li>✓ 1 active competition</li>
+                <li>✓ 2 divisions, 16 entrants each</li>
                 <li>✓ Free-event registration</li>
-                <li>✓ League, groups, knockout & swiss</li>
                 <li>✓ Live standings & public page</li>
+              </ul>
+            </div>
+            <div className="card border-amber-300 bg-amber-50/60 p-6 text-left">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-amber-600">
+                Event Pass
+              </p>
+              <p className="mb-3 text-3xl font-bold text-slate-900">
+                $39<span className="text-base font-normal text-slate-500"> once</span>
+              </p>
+              <ul className="space-y-2 text-sm text-slate-600">
+                <li>✓ Upgrades one event, forever</li>
+                <li>✓ 10 divisions, 32 entrants each</li>
+                <li>✓ Entry fees (5% platform fee)</li>
+                <li>✓ Branding, exports & realtime</li>
               </ul>
             </div>
             <div className="card border-purple-400 bg-purple-50 p-6 text-left">
@@ -223,9 +238,8 @@ export default async function HomePage() {
               </p>
               <ul className="space-y-2 text-sm text-slate-600">
                 <li>✓ Unlimited competitions</li>
-                <li>✓ Entry fees paid to your club</li>
-                <li>✓ Realtime scoreboards</li>
-                <li>✓ Ball-by-ball & rally scoring</li>
+                <li>✓ Entry fees at 2%</li>
+                <li>✓ Ball-by-ball & player stats</li>
                 <li>✓ 14-day free trial</li>
               </ul>
             </div>

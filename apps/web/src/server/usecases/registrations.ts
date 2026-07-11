@@ -49,6 +49,14 @@ export function platformFeePercent(): number {
   return Number.isFinite(raw) && raw >= 0 && raw <= 100 ? raw : 5;
 }
 
+/** The platform cut for THIS org + competition (v3/07 §2 fee row): the
+ *  `registration.fee_percent` entitlement (pro 2, event-pass 5), falling back
+ *  to the env default for plans without a row. */
+export async function feePercentFor(orgId: string, competitionId?: string): Promise<number> {
+  const pct = await getLimit(orgId, "registration.fee_percent", competitionId);
+  return pct == null || pct <= 0 ? platformFeePercent() : pct;
+}
+
 /** application_fee_amount for a destination charge. Never exceeds the fee. */
 export function applicationFeeCents(feeCents: number, percent: number): number {
   return Math.min(feeCents, Math.round((feeCents * percent) / 100));
@@ -411,17 +419,21 @@ export async function putRegistrationSettings(
   // free on every plan; only collecting online via Stripe Connect is Pro, and
   // that gate lives at Connect onboarding (stripe-connect). So a fee only needs
   // registration.paid here when the org actually has online charges enabled.
+  const [regDiv] = await sql<{ competition_id: string }[]>`
+    select competition_id from divisions where id = ${divisionId}`;
   if (input.fee_cents > 0) {
     const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
       select stripe_charges_enabled as charges_enabled from organizations
       where id = ${auth.orgId}`;
-    if (charges_enabled) await requireFeature(auth.orgId, "registration.paid");
+    if (charges_enabled) {
+      await requireFeature(auth.orgId, "registration.paid", regDiv?.competition_id);
+    }
   }
 
   // Capacity can't promise more than the plan's entrant quota (doc 10 §1) —
   // confirm would hit the wall after money changed hands.
   if (input.capacity != null) {
-    const limit = await getLimit(auth.orgId, "entrants.per_division.max");
+    const limit = await getLimit(auth.orgId, "entrants.per_division.max", regDiv?.competition_id);
     if (limit !== null && input.capacity > limit) {
       throw new HttpError(
         422,
@@ -778,7 +790,10 @@ async function createRegistrationCheckout(
       },
     ],
     payment_intent_data: {
-      application_fee_amount: applicationFeeCents(settings.fee_cents, platformFeePercent()),
+      application_fee_amount: applicationFeeCents(
+        settings.fee_cents,
+        await feePercentFor(ctx.org_id, ctx.competition_id),
+      ),
       transfer_data: { destination: org.stripe_account_id },
       metadata: { registration_id: reg.id, org_id: ctx.org_id },
     },

@@ -64,12 +64,15 @@ export async function listCompetitions(
 }
 
 // Doc 10 §1: `competitions.max_active` — draft/published/live competitions
-// count; completed/archived don't. Enforced at the write (doc 10 §2 rule 1).
+// count; completed/archived don't, and neither do Event-Passed comps (a pass
+// buys its competition out of the quota, v3/07 §3). Enforced at the write
+// (doc 10 §2 rule 1).
 async function assertActiveQuota(auth: AuthCtx): Promise<void> {
   const count = await withTenant(auth.orgId, async (tx) => {
     const [{ n }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from competitions
-      where status in ${tx([...ACTIVE_COMPETITION_STATUSES])}`;
+      select count(*)::int as n from competitions c
+      where c.status in ${tx([...ACTIVE_COMPETITION_STATUSES])}
+        and not exists (select 1 from competition_passes cp where cp.competition_id = c.id)`;
     return n;
   });
   const { ok } = await withinLimit(auth.orgId, "competitions.max_active", count + 1);

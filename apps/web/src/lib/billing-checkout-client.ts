@@ -11,17 +11,16 @@ export type CheckoutSecretResult =
 
 const FALLBACK_ERROR = "Checkout is unavailable right now. Please try again.";
 
-/** POST /api/billing/checkout and return the client_secret, or a display error.
- *  Never throws — a rejected fetch or a non-ok body maps to `{ ok: false }`. */
-export async function fetchCheckoutClientSecret(
-  interval: "monthly" | "annual",
-  fetchFn: typeof fetch = fetch,
+async function fetchClientSecret(
+  path: string,
+  body: unknown,
+  fetchFn: typeof fetch,
 ): Promise<CheckoutSecretResult> {
   try {
-    const res = await fetchFn("/api/billing/checkout", {
+    const res = await fetchFn(path, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ plan_key: "pro", interval }),
+      body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => null);
     const clientSecret = data?.data?.client_secret;
@@ -32,4 +31,25 @@ export async function fetchCheckoutClientSecret(
   } catch {
     return { ok: false, error: FALLBACK_ERROR };
   }
+}
+
+/** POST /api/billing/checkout and return the client_secret, or a display error.
+ *  Never throws — a rejected fetch or a non-ok body maps to `{ ok: false }`. */
+export async function fetchCheckoutClientSecret(
+  interval: "monthly" | "annual",
+  fetchFn: typeof fetch = fetch,
+): Promise<CheckoutSecretResult> {
+  return fetchClientSecret("/api/billing/checkout", { plan_key: "pro", interval }, fetchFn);
+}
+
+/** POST /api/billing/pass-checkout for a one-time Event Pass (v3/07 §3). */
+export async function fetchPassCheckoutClientSecret(
+  competitionId: string,
+  fetchFn: typeof fetch = fetch,
+): Promise<CheckoutSecretResult> {
+  return fetchClientSecret(
+    "/api/billing/pass-checkout",
+    { competition_id: competitionId },
+    fetchFn,
+  );
 }

@@ -161,7 +161,10 @@ async function main() {
     call(newSession(), `/api/invites/${viewerInvite.token}/accept`, "POST"),
   );
 
-  // Admin invite -> a second user joins and CAN create a competition.
+  // Admin invite -> a second user joins and CAN create a competition. Retire
+  // the viewer probe first: the check is about the ROLE, and the v3 free cap
+  // (1 active competition) would 402 the create on quota instead.
+  await v1(admin, `/api/v1/competitions/${probeId}`, "PATCH", { status: "archived" });
   const adminInvite = (await call(
     admin,
     `/api/orgs/${org.id}/invites`,
@@ -237,10 +240,158 @@ async function main() {
   // /help + /developers, scoped keys, OG/poster/embed/sponsors — pro + free.
   await v3ContentApiSuite(admin, org2.id, renamed.slug);
 
+  // --- PROMPT-36 pricing v3: free caps, Event Pass lift + scope isolation,
+  // pro interplay, pass survival after downgrade — and the /start funnel
+  // end-to-end (draft → claim link → inside the created competition).
+  await pricingV3Suite();
+  await funnelSuite();
+
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
   await gapSuite(admin, org.id, org2.id);
+}
+
+/** Insert an Event Pass row directly (v3/07 §3) — smoke targets a disposable
+ *  DB and the one-time Stripe checkout can't run without Stripe; the same
+ *  SQL-flip convention as setPlan. */
+async function grantPass(orgId: string, competitionId: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to grant a pass in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    await sql`
+      insert into competition_passes (competition_id, org_id)
+      values (${competitionId}, ${orgId})
+      on conflict (competition_id) do nothing`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** PROMPT-36 (v3/07 §2–3): the plan matrix v3 + Event Pass, free → pass →
+ *  pro → downgrade, on a fresh community owner. */
+async function pricingV3Suite(): Promise<void> {
+  const genericDivision = {
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  };
+  const buyer = newSession();
+  const who = await signIn(buyer, `pass_${tag}@example.com`);
+  const orgId = who.org_id;
+
+  // Free caps (v3 matrix): 1 active competition, 2 divisions inside it.
+  const compA = v1data<{ id: string; slug: string }>(
+    await v1(buyer, "/api/v1/competitions", "POST", { name: `Pass Cup ${tag}` }),
+  );
+  const blockedComp = await v1(buyer, "/api/v1/competitions", "POST", {
+    name: `Second Cup ${tag}`,
+  });
+  check("p36: 2nd active competition blocked on free (402)", blockedComp.status === 402);
+  for (const name of ["Div 1", "Div 2"]) {
+    const d = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+      name,
+      ...genericDivision,
+    });
+    check(`p36: free org creates ${name.toLowerCase()}`, d.status === 201);
+  }
+  const div3Blocked = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+    name: "Div 3",
+    ...genericDivision,
+  });
+  check("p36: 3rd division blocked on free (402)", div3Blocked.status === 402);
+
+  // Event Pass on comp A lifts ITS caps and frees the active-comp slot…
+  await grantPass(orgId, compA.id);
+  const div3 = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+    name: "Div 3",
+    ...genericDivision,
+  });
+  check("p36: pass lifts division cap on the passed comp", div3.status === 201);
+  const compB = v1data<{ id: string }>(
+    await v1(buyer, "/api/v1/competitions", "POST", { name: `Sibling Cup ${tag}` }),
+  );
+  check("p36: passed comp leaves the active-comp quota", !!compB.id);
+
+  // …while the sibling competition stays on community limits.
+  for (const name of ["S1", "S2"]) {
+    await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
+      name,
+      ...genericDivision,
+    });
+  }
+  const sibBlocked = await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
+    name: "S3",
+    ...genericDivision,
+  });
+  check("p36: sibling comp still community-capped (402)", sibBlocked.status === 402);
+
+  // Pro org buying a pass is pointless — the route refuses before Stripe.
+  await setPlan(orgId, "pro");
+  const proBuy = await raw(buyer, "/api/billing/pass-checkout", "POST", {
+    competition_id: compB.id,
+  });
+  check("p36: pass purchase blocked on Pro (400)", proBuy.status === 400);
+  const sibUnderPro = await v1(buyer, `/api/v1/competitions/${compB.id}/divisions`, "POST", {
+    name: "S3",
+    ...genericDivision,
+  });
+  check("p36: pro lifts the sibling comp", sibUnderPro.status === 201);
+
+  // Downgrade: the pass survives — comp A keeps its 10-division headroom.
+  await setPlan(orgId, "community");
+  const afterDowngrade = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
+    name: "Div 4",
+    ...genericDivision,
+  });
+  check("p36: pass survives downgrade (comp A still lifted)", afterDowngrade.status === 201);
+
+  // The upgrade page reflects the pass state.
+  const [orgRow] = (await call(buyer, "/api/orgs")) as { id: string; slug: string }[];
+  const upgradePage = await html(buyer, `/o/${orgRow.slug}/c/${compA.slug}/upgrade`);
+  check(
+    "p36: upgrade page shows pass active",
+    upgradePage.status === 200 && upgradePage.body.includes("data-pass-active"),
+  );
+}
+
+/** PROMPT-36 (v3/07 §6): /start funnel — draft → dev claim link → signed in
+ *  inside the created competition; the token is single-use. */
+async function funnelSuite(): Promise<void> {
+  const visitor = newSession();
+  const started = (await call(visitor, "/api/funnel/start", "POST", {
+    email: `funnel_${tag}@example.com`,
+    name: `Funnel Fiesta ${tag}`,
+    sport: "Badminton",
+    entrants: 8,
+  })) as { claim_url?: string };
+  check("funnel: draft created with dev claim_url", !!started.claim_url);
+
+  const token = new URL(started.claim_url ?? "").searchParams.get("token");
+  const claimed = (await call(visitor, "/api/funnel/claim", "POST", { token })) as {
+    redirect: string;
+  };
+  check(
+    "funnel: claim lands inside the competition (entrants tab)",
+    /^\/o\/[^/]+\/c\/funnel-fiesta[^/]*\/d\/[^/?]+\?tab=entrants$/.test(claimed.redirect),
+  );
+  check("funnel: claim started a session", !!visitor.cookies["seazn_session"]);
+  const landing = await html(visitor, claimed.redirect);
+  check(
+    "funnel: landing page renders the new competition",
+    landing.status === 200 && landing.body.includes(`Funnel Fiesta ${tag}`),
+  );
+
+  // Single-use: a second consume fails cleanly.
+  const again = await raw(visitor, "/api/funnel/claim", "POST", { token });
+  check("funnel: claim token is single-use", again.json.ok === false);
 }
 
 /** Fetch a page WITHOUT following redirects — for 301 assertions (PROMPT-30). */
@@ -899,8 +1050,8 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   };
 
   // --- Free path: a fresh org (no subscription row) is community — the
-  // divisions.per_competition quota is 1, and DELETE frees the slot. Creating
-  // the org switches the active-org cookie onto it.
+  // divisions.per_competition quota is 2 (v3 matrix), and DELETE frees a
+  // slot. Creating the org switches the active-org cookie onto it.
   await call(admin, "/api/orgs", "POST", { name: `Del Org ${tag}` });
   const comp = await v1(admin, "/api/v1/competitions", "POST", { name: `Del Cup ${tag}` });
   const compId = v1data<{ id: string }>(comp).id;
@@ -910,11 +1061,15 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   });
   check("del: free org creates division 1", first.status === 201);
   const firstId = v1data<{ id: string }>(first).id;
+  await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
+    name: "Filler",
+    ...genericDivision,
+  });
   const blocked = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
     name: "Second",
     ...genericDivision,
   });
-  check("del: division 2 blocked on free (402)", blocked.status === 402);
+  check("del: division 3 blocked on free (402)", blocked.status === 402);
 
   // Open registration blocks delete; closing it unblocks.
   await v1(admin, `/api/v1/divisions/${firstId}/registration-settings`, "PUT", {
@@ -1453,6 +1608,8 @@ async function cleanup(tag: string): Promise<void> {
     `free_${tag}@example.com`,
     `walkin_${tag}@example.com`,
     `ui_free_${tag}@example.com`,
+    `pass_${tag}@example.com`,
+    `funnel_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {

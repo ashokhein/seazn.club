@@ -1,0 +1,47 @@
+# Funnel draft reminders (v3/07 §6): POST the sweep endpoint once an hour.
+# The endpoint is idempotent (reminded_at marks each draft, one reminder ever,
+# drafts expire at 7 days) so the schedule can be dumb — hourly means a
+# reminder lands 24–25h after the draft, which is close enough for a nudge.
+#
+# Auth: the x-cron-secret header must match the app's CRON_SECRET env — set
+# the same value in BOTH places:
+#   gh secret set CRON_SECRET                      # this workflow
+#   flyctl secrets set -c fly.stg.toml CRON_SECRET=<same>  # the app
+#
+# Skips with a warning until the GitHub secret exists (a missing secret must
+# not fill the Actions tab with red), and fails loud on any non-200 so a
+# mismatch or a broken endpoint is visible.
+name: Funnel reminders
+
+on:
+  schedule:
+    - cron: "17 * * * *" # hourly, off the top-of-hour rush
+  workflow_dispatch: {} # manual run for testing
+
+permissions: {}
+
+concurrency:
+  group: funnel-reminders
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    name: Sweep unclaimed drafts (staging)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      BASE_URL: https://seazn-club-stg.fly.dev
+    steps:
+      - name: Secret missing — skip
+        if: env.CRON_SECRET == ''
+        run: echo "::warning::CRON_SECRET not set — funnel reminders not swept. Set it with 'gh secret set CRON_SECRET' and mirror it into the Fly app."
+
+      - name: POST /api/funnel/remind
+        if: env.CRON_SECRET != ''
+        run: |
+          body=$(curl --silent --show-error --fail-with-body \
+            --max-time 60 --retry 2 --retry-all-errors \
+            -X POST "$BASE_URL/api/funnel/remind" \
+            -H "x-cron-secret: $CRON_SECRET")
+          echo "response: $body"

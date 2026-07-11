@@ -19,12 +19,16 @@ export function buildEmbeddedCheckoutParams(args: {
   returnUrl: string;
   customerId?: string;
   customerEmail?: string;
+  /** ISO currency picking one of the price's currency_options (v3/07 §4);
+   *  omit for the price's default (usd). */
+  currency?: string;
 }): Stripe.Checkout.SessionCreateParams {
   return {
     // stripe-node v22 names the embedded UI mode "embedded_page".
     ui_mode: "embedded_page",
     mode: "subscription",
     ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
+    ...(args.currency && args.currency !== "usd" ? { currency: args.currency } : {}),
     metadata: { org_id: args.orgId },
     payment_method_collection: "if_required",
     subscription_data: {
@@ -32,6 +36,35 @@ export function buildEmbeddedCheckoutParams(args: {
       trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
       metadata: { org_id: args.orgId },
     },
+    line_items: [{ price: args.priceId, quantity: 1 }],
+    return_url: args.returnUrl,
+    allow_promotion_codes: true,
+    tax_id_collection: { enabled: true },
+    automatic_tax: { enabled: true },
+  };
+}
+
+/**
+ * Params for an EMBEDDED one-time Event Pass checkout (v3/07 §3). Same
+ * embedded_page/return_url contract as the subscription flow, but
+ * mode:"payment" and competition-scoped metadata — the reconcile/webhook path
+ * turns a paid session into a competition_passes row. Pure, unit-tested.
+ */
+export function buildPassCheckoutParams(args: {
+  priceId: string;
+  orgId: string;
+  competitionId: string;
+  returnUrl: string;
+  customerId?: string;
+  customerEmail?: string;
+  currency?: string;
+}): Stripe.Checkout.SessionCreateParams {
+  return {
+    ui_mode: "embedded_page",
+    mode: "payment",
+    ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
+    ...(args.currency && args.currency !== "usd" ? { currency: args.currency } : {}),
+    metadata: { org_id: args.orgId, competition_id: args.competitionId, pass_key: "event_pass" },
     line_items: [{ price: args.priceId, quantity: 1 }],
     return_url: args.returnUrl,
     allow_promotion_codes: true,
@@ -108,13 +141,14 @@ export async function syncSubscription(
   await sql`
     insert into subscriptions
       (org_id, plan_key, status, stripe_subscription_id,
-       current_period_end, trial_end, cancel_at_period_end, updated_at)
+       current_period_end, trial_end, cancel_at_period_end, currency, updated_at)
     values
       (${orgId}, ${planKey ?? "community"}, ${status},
        ${stripeSub.id},
        ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
        ${stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null},
        ${stripeSub.cancel_at_period_end},
+       ${stripeSub.currency ?? null},
        now())
     on conflict (org_id) do update set
       plan_key               = excluded.plan_key,
@@ -123,7 +157,52 @@ export async function syncSubscription(
       current_period_end     = excluded.current_period_end,
       trial_end              = excluded.trial_end,
       cancel_at_period_end   = excluded.cancel_at_period_end,
+      currency               = coalesce(excluded.currency, subscriptions.currency),
       updated_at             = now()`;
+}
+
+/**
+ * Record an Event Pass purchase (v3/07 §3). Idempotent — shared by the
+ * webhook and the reconcile-on-return path. Invalidates the org's cached
+ * entitlements so the pass takes effect immediately.
+ */
+export async function recordPassPurchase(args: {
+  orgId: string;
+  competitionId: string;
+  paymentIntent?: string | null;
+}): Promise<void> {
+  await sql`
+    insert into competition_passes (competition_id, org_id, stripe_payment_intent)
+    values (${args.competitionId}, ${args.orgId}, ${args.paymentIntent ?? null})
+    on conflict (competition_id) do nothing`;
+  await invalidateOrgEntitlements(args.orgId);
+}
+
+/**
+ * Reconcile a completed Event Pass checkout directly from Stripe (same
+ * webhook-optional contract as reconcileCheckout). Returns true once the pass
+ * is recorded. Best-effort and idempotent; never throws.
+ */
+export async function reconcilePassCheckout(
+  orgId: string,
+  sessionId: string,
+): Promise<boolean> {
+  try {
+    const session = await getStripe().checkout.sessions.retrieve(sessionId);
+    // Only trust a paid, pass-shaped session that belongs to this org.
+    if (session.metadata?.pass_key !== "event_pass") return false;
+    if (session.metadata.org_id !== orgId) return false;
+    const competitionId = session.metadata.competition_id;
+    if (!competitionId || session.payment_status !== "paid") return false;
+    await recordPassPurchase({
+      orgId,
+      competitionId,
+      paymentIntent: typeof session.payment_intent === "string" ? session.payment_intent : null,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**

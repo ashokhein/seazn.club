@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { football } from "@seazn/engine/sports/football";
 import { cricket } from "@seazn/engine/sports/cricket";
 import { sql } from "@/lib/db";
-import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { getLimit, invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, patchCompetition, listCompetitions, getCompetition } from "../competitions";
 import { createDivision } from "../divisions";
@@ -19,6 +19,7 @@ import { createStages, generateStageFixtures } from "../stages";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { createApiKey } from "../api-keys";
+import { feePercentFor, platformFeePercent } from "../registrations";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -133,18 +134,27 @@ const MATRIX: { feature: string; plan: Plan; allowed: boolean }[] = [
 async function probe(feature: string, auth: AuthCtx): Promise<() => Promise<unknown>> {
   switch (feature) {
     case "competitions.max_active": {
-      await makeCompetition(auth, "C1");
-      await makeCompetition(auth, "C2");
-      return () => makeCompetition(auth, "C3"); // 3rd active
+      // Fill to the plan's cap (v3: community 1), then try one more.
+      const limit = (await getLimit(auth.orgId, "competitions.max_active")) ?? 2;
+      for (let i = 1; i <= limit; i++) await makeCompetition(auth, `C${i}`);
+      return () => makeCompetition(auth, "C over"); // one past the cap
     }
     case "dashboard.public.max": {
+      // The v3 active-comp cap (community: 1) would fire first; lift it via
+      // override so this probe isolates the public-dashboard quota.
+      await sql`
+        insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+        values (${auth.orgId}, 'competitions.max_active', 10, 'test probe')`;
+      await invalidateOrgEntitlements(auth.orgId);
       await makeCompetition(auth, "P1", "public");
       return () => makeCompetition(auth, "P2", "public"); // 2nd public
     }
     case "divisions.per_competition.max": {
+      // Fill to the plan's cap (v3: community 2, pro unlimited), one more.
       const comp = await makeCompetition(auth, "D");
-      await makeDivision(auth, comp.id, "generic", GENERIC_CONFIG);
-      return () => makeDivision(auth, comp.id, "generic", GENERIC_CONFIG); // 2nd division
+      const limit = (await getLimit(auth.orgId, "divisions.per_competition.max")) ?? 2;
+      for (let i = 1; i <= limit; i++) await makeDivision(auth, comp.id, "generic", GENERIC_CONFIG);
+      return () => makeDivision(auth, comp.id, "generic", GENERIC_CONFIG); // one past the cap
     }
     case "stages.per_division.max": {
       const comp = await makeCompetition(auth, "S");
@@ -283,13 +293,14 @@ describe.skipIf(!HAS_DB)("downgrade simulation (doc 10 §2.4)", () => {
 
     await setPlan(auth.orgId, "community");
 
-    // Nothing deleted; the least recently active competition freezes.
+    // Nothing deleted; only the most recently active competition survives
+    // the v3 community cap of 1 — the two least recently active freeze.
     const { items } = await listCompetitions(auth, { cursor: null, limit: 50 });
     expect(items).toHaveLength(3);
     const byId = new Map(items.map((c) => [c.id, c]));
     expect(byId.get(compA.id)?.frozen).toBe(true);
     expect(byId.get(compB.id)?.frozen).toBe(false);
-    expect(byId.get(compC.id)?.frozen).toBe(false);
+    expect(byId.get(compC.id)?.frozen).toBe(true);
     expect((await getCompetition(auth, compA.id)).frozen).toBe(true);
 
     // Frozen = read-only: no new structure, no renames…
@@ -315,9 +326,146 @@ describe.skipIf(!HAS_DB)("downgrade simulation (doc 10 §2.4)", () => {
       }),
     ).rejects.toMatchObject({ status: 402, featureKey: "scoring.match_timeline" });
 
-    // Retiring a frozen competition is the sanctioned way back under quota.
+    // Retiring frozen competitions is the sanctioned way back under quota.
     await patchCompetition(auth, compA.id, { status: "archived" });
+    await patchCompetition(auth, compC.id, { status: "archived" });
     const after = await listCompetitions(auth, { cursor: null, limit: 50 });
     expect(after.items.every((c) => !c.frozen)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Event Pass (v3/07 §3): a one-time purchase upgrades ONE competition to the
+// event_pass column of the matrix. Resolution: override → pass (community
+// orgs only) → plan → deny; passed comps leave the active-comp quota.
+// ---------------------------------------------------------------------------
+
+async function grantPass(orgId: string, competitionId: string): Promise<void> {
+  await sql`
+    insert into competition_passes (competition_id, org_id)
+    values (${competitionId}, ${orgId})
+    on conflict (competition_id) do nothing`;
+  await invalidateOrgEntitlements(orgId);
+}
+
+describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
+  it("lifts per-comp caps on the passed competition only", async () => {
+    const { auth } = await seedOrg("community");
+    const passed = await makeCompetition(auth, "Passed");
+    await grantPass(auth.orgId, passed.id);
+
+    // Passed comp: divisions cap is the pass's 10, not community's 2.
+    await makeDivision(auth, passed.id, "generic", GENERIC_CONFIG);
+    await makeDivision(auth, passed.id, "generic", GENERIC_CONFIG);
+    await expect(
+      makeDivision(auth, passed.id, "generic", GENERIC_CONFIG), // 3rd — beyond community
+    ).resolves.toBeDefined();
+
+    // A passed comp stops counting toward competitions.max_active, so the
+    // free slot opens for a sibling…
+    const sibling = await makeCompetition(auth, "Sibling");
+    // …which stays on community caps: 3rd division 402s.
+    await makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG);
+    await makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG);
+    await expect(
+      makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG),
+    ).rejects.toMatchObject({ status: 402, featureKey: "divisions.per_competition.max" });
+  });
+
+  it("entrants: 32 on the passed comp, 33rd still 402s with the same key", async () => {
+    const { auth } = await seedOrg("community");
+    const comp = await makeCompetition(auth, "PE");
+    await grantPass(auth.orgId, comp.id);
+    const division = await makeDivision(auth, comp.id, "generic", GENERIC_CONFIG);
+    await createEntrants(
+      auth,
+      division.id,
+      Array.from({ length: 32 }, (_, i) => ({
+        kind: "individual" as const, display_name: `E${i}`, seed: i + 1, members: [],
+      })) as never,
+    );
+    await expect(
+      createEntrants(auth, division.id, [
+        { kind: "individual", display_name: "E33", seed: 33, members: [] },
+      ] as never),
+    ).rejects.toMatchObject({ status: 402, featureKey: "entrants.per_division.max" });
+  });
+
+  it("unlocks advanced formats on the passed comp; Pro-only features stay Pro", async () => {
+    const { auth } = await seedOrg("community");
+    const comp = await makeCompetition(auth, "PF");
+    await grantPass(auth.orgId, comp.id);
+    const division = await makeDivision(auth, comp.id, "generic", GENERIC_CONFIG);
+    await expect(
+      createStages(auth, division.id, {
+        seq: 1, kind: "double_elim", name: "DE", config: {},
+      } as never),
+    ).resolves.toBeDefined();
+
+    // Keys missing from the pass matrix fall through to the community plan:
+    // fine-grained scoring remains a Pro upsell even on a passed comp.
+    const rig = await makeFixture(auth, comp.id, "football", {});
+    await expect(
+      scoreEvent(auth, rig.fixtureId, {
+        expected_seq: 0,
+        type: "football.card",
+        payload: { by: rig.entrants[0].id, color: "yellow" },
+      }),
+    ).rejects.toMatchObject({ status: 402, featureKey: "scoring.match_timeline" });
+  });
+
+  it("is moot under Pro and revives after a downgrade", async () => {
+    const { auth } = await seedOrg("pro");
+    const comp = await makeCompetition(auth, "PM");
+    await grantPass(auth.orgId, comp.id);
+    // Pro's matrix wins while the plan is paid…
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(256);
+    // …and the pass takes back over when the org drops to community.
+    await setPlan(auth.orgId, "community");
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(32);
+  });
+
+  it("org override beats the pass", async () => {
+    const { auth } = await seedOrg("community");
+    const comp = await makeCompetition(auth, "PO");
+    await grantPass(auth.orgId, comp.id);
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+      values (${auth.orgId}, 'entrants.per_division.max', 40, 'test')`;
+    await invalidateOrgEntitlements(auth.orgId);
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(40);
+  });
+
+  it("purchase invalidates the cached community value", async () => {
+    const { auth } = await seedOrg("community");
+    const comp = await makeCompetition(auth, "PC");
+    // Prime the comp-scoped cache with the community value…
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(16);
+    // …then grantPass (insert + invalidate) must surface the pass value.
+    await grantPass(auth.orgId, comp.id);
+    expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(32);
+  });
+
+  it("fee percent: pass comps pay 5%, pro orgs 2%, community falls back to env", async () => {
+    const { auth } = await seedOrg("community");
+    const comp = await makeCompetition(auth, "Fee");
+    expect(await feePercentFor(auth.orgId, comp.id)).toBe(platformFeePercent());
+    await grantPass(auth.orgId, comp.id);
+    expect(await feePercentFor(auth.orgId, comp.id)).toBe(5);
+    await setPlan(auth.orgId, "pro");
+    expect(await feePercentFor(auth.orgId, comp.id)).toBe(2);
+  });
+
+  it("passed competitions never freeze", async () => {
+    const { auth } = await seedOrg("community");
+    const old = await makeCompetition(auth, "Old passed");
+    await grantPass(auth.orgId, old.id);
+    await sql`update competitions set created_at = now() - interval '2 hours' where id = ${old.id}`;
+    const fresh = await makeCompetition(auth, "Fresh free");
+    const { items } = await listCompetitions(auth, { cursor: null, limit: 50 });
+    const byId = new Map(items.map((c) => [c.id, c]));
+    // Without the pass exemption the older comp would freeze (cap 1).
+    expect(byId.get(old.id)?.frozen).toBe(false);
+    expect(byId.get(fresh.id)?.frozen).toBe(false);
   });
 });

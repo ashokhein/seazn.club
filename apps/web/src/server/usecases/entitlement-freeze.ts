@@ -38,6 +38,9 @@ export function selectFrozen(
 }
 
 // Activity = latest score event anywhere in the competition, else created_at.
+// Passed competitions (v3/07 §3) are excluded here AND from the count below:
+// an Event Pass buys that competition out of the active-comp quota for its
+// lifetime, so it neither freezes nor occupies a free slot.
 async function loadCandidates(tx: Tx): Promise<FreezeCandidate[]> {
   const rows = await tx<{ id: string; last_active: string }[]>`
     select c.id,
@@ -47,6 +50,7 @@ async function loadCandidates(tx: Tx): Promise<FreezeCandidate[]> {
     left join fixtures f on f.division_id = d.id
     left join score_events e on e.fixture_id = f.id
     where c.status in ${tx([...ACTIVE_COMPETITION_STATUSES])}
+      and not exists (select 1 from competition_passes cp where cp.competition_id = c.id)
     group by c.id, c.created_at`;
   return rows.map((r) => ({ id: r.id, lastActiveAt: r.last_active }));
 }
@@ -61,8 +65,9 @@ export async function frozenCompetitionIds(orgId: string, tx?: Tx): Promise<Set<
   if (limit === null) return new Set();
   const run = async (t: Tx): Promise<Set<string>> => {
     const [{ n }] = await t<{ n: number }[]>`
-      select count(*)::int as n from competitions
-      where status in ${t([...ACTIVE_COMPETITION_STATUSES])}`;
+      select count(*)::int as n from competitions c
+      where c.status in ${t([...ACTIVE_COMPETITION_STATUSES])}
+        and not exists (select 1 from competition_passes cp where cp.competition_id = c.id)`;
     if (n <= limit) return new Set();
     return selectFrozen(await loadCandidates(t), limit);
   };

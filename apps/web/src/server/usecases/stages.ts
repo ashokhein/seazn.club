@@ -4,7 +4,7 @@ import "server-only";
 // generator's stable ids), guarded completion, standings reads.
 import { randomUUID } from "node:crypto";
 import type postgres from "postgres";
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
@@ -103,9 +103,13 @@ export async function createStages(
   input: CreateStages,
 ): Promise<StageRow[]> {
   const inputs: StageInput[] = Array.isArray(input) ? input : [input];
+  // Format gates honour an Event Pass on this division's competition
+  // (v3/07 §3), so resolve the competition before gating.
+  const [divComp] = await sql<{ competition_id: string }[]>`
+    select competition_id from divisions where id = ${divisionId}`;
   // Doc 10 §1: `formats.double_elim` is Pro — gate before any insert.
   if (inputs.some((s) => s.kind === "double_elim")) {
-    await requireFeature(auth.orgId, "formats.double_elim");
+    await requireFeature(auth.orgId, "formats.double_elim", divComp?.competition_id);
   }
   // Jul3/08 §8: new kinds + custom byes + cross-stage feeds + placements are
   // the advanced-formats Pro layer; basic RR/KO/group+KO stays Community.
@@ -119,7 +123,7 @@ export async function createStages(
       cfg?.placements !== undefined
     );
   });
-  if (advanced) await requireFeature(auth.orgId, "formats.advanced");
+  if (advanced) await requireFeature(auth.orgId, "formats.advanced", divComp?.competition_id);
   // Jul3/08 §9: the cross-stage feed graph must be a DAG (fail closed).
   {
     const edges: { from: string; to: string }[] = [];
@@ -1296,7 +1300,11 @@ export async function issueChallenge(
   stageId: string,
   input: { challenger_id: string; opponent_id: string },
 ): Promise<{ fixture_id: string; ladder_order: string[] }> {
-  await requireFeature(auth.orgId, "formats.advanced");
+  const [ladderComp] = await sql<{ competition_id: string }[]>`
+    select d.competition_id from stages s
+    join divisions d on d.id = s.division_id
+    where s.id = ${stageId}`;
+  await requireFeature(auth.orgId, "formats.advanced", ladderComp?.competition_id);
   return withTenant(auth.orgId, async (tx) => {
     const [stage] = await tx<{ division_id: string; kind: string; config: Record<string, unknown> }[]>`
       select division_id, kind, config from stages where id = ${stageId}`;
