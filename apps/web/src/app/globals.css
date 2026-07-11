@@ -477,3 +477,9 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .mk-ticker { animation: none; }
 }
+
+/* Draw rows cascade in when their section reveals. */
+.mk-in .mk-draw-row { animation: mk-rise 0.4s cubic-bezier(0.22, 1.2, 0.36, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .mk-in .mk-draw-row { animation: none; }
+}
