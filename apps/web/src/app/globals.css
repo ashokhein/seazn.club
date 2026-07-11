@@ -468,3 +468,12 @@ body {
   .mk-vignette .mk-star { animation: none; opacity: 0; }
   .mk-live-dot { animation: none; }
 }
+
+/* LIVE ticker marquee — duplicated row scrolls 50%; pause on hover/focus. */
+.mk-ticker { animation: mk-ticker-scroll 28s linear infinite; }
+.mk-ticker:hover,
+.mk-ticker:focus-within { animation-play-state: paused; }
+@keyframes mk-ticker-scroll { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-ticker { animation: none; }
+}
