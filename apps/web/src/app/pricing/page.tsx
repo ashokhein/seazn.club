@@ -6,6 +6,7 @@ import { MarketingFooter } from "@/components/marketing-footer";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
 import { buildPricingRows, type MatrixData } from "@/lib/pricing-matrix";
+import { FREE_FEATURES, PASS_FEATURES, PRO_FEATURES } from "@/lib/pricing-cards";
 import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { CurrencySwitcher } from "@/components/currency-switcher";
@@ -19,33 +20,6 @@ export const metadata: Metadata = {
   description:
     "Free forever for small clubs. Upgrade a single event for $39, or go Pro at $20/month for unlimited competitions, entry fees, and realtime scoreboards. 14-day trial, no card required.",
 };
-
-const FREE_FEATURES = [
-  "1 active competition, 2 divisions",
-  "16 entrants per division",
-  "League, groups + knockout & swiss formats",
-  "Free-event online registration",
-  "Live standings & public dashboard",
-  "Listed on the seazn.club showcase",
-];
-
-const PASS_FEATURES = [
-  "Upgrades ONE competition, forever",
-  "10 divisions, 32 entrants each",
-  "Advanced formats — double elim, ladders",
-  "Entry fees via Stripe (5% platform fee)",
-  "Custom branding & PDF/XLSX exports",
-  "Realtime scoreboard & slideshow",
-];
-
-const PRO_FEATURES = [
-  "Unlimited competitions & divisions",
-  "256 entrants per division",
-  "Entry fees at a 2% platform fee",
-  "Ball-by-ball & rally scoring, player stats",
-  "Officials, exports, API keys, device links",
-  "Remove the “Powered by Seazn” badge",
-];
 
 const FAQS = [
   {

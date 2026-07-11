@@ -387,3 +387,33 @@ body {
   .mk-reveal { opacity: 1; transform: none; }
   .mk-reveal.mk-in { animation: none; }
 }
+
+/* Ticket-stub chrome (floodlit finale, design/v3/12 §4.8) */
+.mk-stub::before,
+.mk-stub::after {
+  content: "";
+  position: absolute;
+  right: 3.25rem;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--mk-night);
+}
+.mk-stub::before { top: -8px; }
+.mk-stub::after { bottom: -8px; }
+.mk-stub-tear {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  right: 3.625rem;
+  border-right: 2px dashed #4a3885;
+}
+.mk-stub-admit {
+  position: absolute;
+  top: 50%;
+  right: 0.875rem;
+  transform: translateY(-50%) rotate(90deg);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: #8d7fc0;
+}
