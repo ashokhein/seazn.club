@@ -48,3 +48,5 @@ next-env.d.ts
 scripts/.seed-demo-state.json
 packages/engine/sim-report.json
 .playwright-mcp/
+# Superpowers visual-companion brainstorm sessions
+.superpowers/

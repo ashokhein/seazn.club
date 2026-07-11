@@ -98,6 +98,7 @@ and a **marketing-page → competition funnel** that converts visitors before th
 | 09 | [09-engine-fixes-and-sim.md](09-engine-fixes-and-sim.md) | Badminton scoring correctness, cricket undo regression, sim-replay refresh, safe division delete | PROMPT-38 |
 | 10 | [10-roi-features-and-suggestions.md](10-roi-features-and-suggestions.md) | Out-of-the-box ROI features + market research, impact×effort ranked | PROMPT-39 (wave 1 only) |
 | 11 | [11-gaps-and-decisions.md](11-gaps-and-decisions.md) | Self-review: 16 gaps with decided defaults (Event Pass quota/tax, i18n layer, analytics, jobs, youth privacy, a11y bar, …) — **read before implementing any prompt** | patches inline |
+| 12 | [12-marketing-redesign.md](12-marketing-redesign.md) | Home/marketing redesign: "stadium night / matchday arc" identity, object-relay hero, The Draw configurator (`/api/public/format-preview`), ticket-stub pricing finale, `/scheduling` attract-mode board — approved 12 Jul brainstorm | branch `feat/marketing-matchday` |
 
 ## Prompt index (`prompts/`)
 
