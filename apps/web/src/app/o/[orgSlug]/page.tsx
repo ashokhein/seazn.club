@@ -108,7 +108,7 @@ export default async function OrgHomePage({
                     <CardMenu
                       name={c.name}
                       items={[
-                        { label: "Schedule board", href: routes.competitionSchedule(orgSlug, c.slug) },
+                        { label: "Schedule Board", href: routes.competitionSchedule(orgSlug, c.slug) },
                         { label: "Settings", href: routes.competitionSettings(orgSlug, c.slug) },
                         { label: "Slideshow", href: routes.slideshowCompetition(c.id), external: true },
                       ]}

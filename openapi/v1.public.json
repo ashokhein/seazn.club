@@ -552,6 +552,9 @@
                       "type": "string"
                     },
                     "additionalProperties": {}
+                  },
+                  "discoverable": {
+                    "type": "boolean"
                   }
                 },
                 "required": [

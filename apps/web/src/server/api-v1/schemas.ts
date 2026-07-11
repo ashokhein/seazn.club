@@ -40,6 +40,9 @@ export const CreateCompetition = z.object({
   ends_on: z.iso.date().nullish(),
   visibility: Visibility.default("private"),
   branding: z.record(z.string(), z.unknown()).default({}),
+  /** Doc 15 §1 "Showcase on seazn.club" — opt-in at create time; requires
+   *  public visibility, same rule as PATCH. Omitted = false. */
+  discoverable: z.boolean().optional(),
 });
 export type CreateCompetition = z.infer<typeof CreateCompetition>;
 

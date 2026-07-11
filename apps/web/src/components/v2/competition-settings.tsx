@@ -10,6 +10,7 @@ import { VisibilityPicker } from "@/components/ui/visibility-picker";
 import { Tip } from "@/components/ui/tip";
 import { publicBrandColor, publicThemeStyleChain } from "@/lib/public-theme";
 import { ProseEditor } from "@/components/prose-editor";
+import { msg } from "@/lib/messages";
 
 interface CompetitionLite {
   id: string;
@@ -36,13 +37,8 @@ const STATUS_HINT: Record<string, string> = {
   completed: "Every match is decided — mark it completed?",
 };
 
-// Doc 15 §1 — the exact consent copy for "Showcase on seazn.club".
-const SHOWCASE_CONSENT_COPY =
-  "By turning this on, this competition's name, your organisation's name, its sport(s), " +
-  "dates, location (if given), live scores and standings may appear on seazn.club's home, " +
-  "discovery and sport pages, and in marketing/social material. Requires public visibility — " +
-  "it switches off automatically if visibility drops. You can opt out any time; past " +
-  "marketing use is permitted, no new use after opt-out.";
+// Doc 15 §1 consent copy lives in lib/messages ("showcase.*") — shared with
+// the create wizard so the two surfaces can never drift.
 
 export function CompetitionSettings({
   competition,
@@ -336,10 +332,10 @@ export function CompetitionSettings({
                   />
                   <span>
                     <span className="text-sm font-semibold text-slate-700">
-                      Showcase on seazn.club
+                      {msg("showcase.label")}
                     </span>
                     <span className="mt-1 block text-xs leading-relaxed text-slate-500">
-                      {SHOWCASE_CONSENT_COPY}
+                      {msg("showcase.consent")}
                     </span>
                   </span>
                 </label>

@@ -142,6 +142,17 @@ export const messages = {
   "register.ticket.save": "Save ticket",
   "register.guardian.title": "Under-18 entry — guardian consent",
 
+  // ── Showcase opt-in (doc 15 §1) — exact consent copy, shared by the
+  // create wizard and competition settings ──
+  "showcase.label": "Showcase on seazn.club",
+  "showcase.consent":
+    "By turning this on, this competition's name, your organisation's name, its sport(s), " +
+    "dates, location (if given), live scores and standings may appear on seazn.club's home, " +
+    "discovery and sport pages, and in marketing/social material. Requires public visibility — " +
+    "it switches off automatically if visibility drops. You can opt out any time; past " +
+    "marketing use is permitted, no new use after opt-out.",
+  "showcase.needsPublic": "Set visibility to public to enable showcasing.",
+
   // ── API key scopes (v3/08 §2, PROMPT-37) ──
   "apiKeys.scope.read.label": "Read",
   "apiKeys.scope.read.line": "Fetch competitions, fixtures, standings and registrations. Can't change anything.",
