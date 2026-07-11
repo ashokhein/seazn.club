@@ -11,6 +11,7 @@ import { publicRegistrationStatusByRef } from "@/server/usecases/registrations";
 import { HttpError } from "@/lib/errors";
 import { TearOffTicket } from "@/components/public-site/ticket";
 import { WithdrawByRef } from "@/components/public-site/withdraw-by-ref";
+import { ShareButton } from "@/components/share-button";
 import { baseUrlFromHeaders } from "@/lib/base-url";
 
 export const metadata: Metadata = { robots: { index: false, follow: false } };
@@ -67,6 +68,13 @@ export default async function RefStatusPage({ params, searchParams }: Props) {
               >
                 View the live dashboard
               </Link>
+              {/* v3/10 #2 — "I'm in!" straight to the family group chat. */}
+              <ShareButton
+                title={view.competition_name}
+                text={`I'm registered for ${view.division_name} at ${view.competition_name} (ref ${view.ref_code}). Follow it live:`}
+                url={divisionHref}
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 px-4 py-2 text-sm hover:border-zinc-500"
+              />
               {view.can_withdraw && token && (
                 <WithdrawByRef refCode={view.ref_code} token={token} />
               )}

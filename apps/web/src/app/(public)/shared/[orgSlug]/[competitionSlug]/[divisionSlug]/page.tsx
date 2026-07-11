@@ -10,6 +10,9 @@ import type { StandingsRow } from "@seazn/engine/competition";
 import { getPublicDivision, resolveLogoUrl } from "@/server/public-site/data";
 import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicThemeStyle } from "@/lib/public-theme";
+import { renderProse } from "@/lib/prose";
+import { CompetitionProse } from "@/components/public-site/competition-prose";
+import { ShareButton } from "@/components/share-button";
 import { Tabs } from "@/components/public-site/tabs";
 import { Schedule } from "@/components/public-site/schedule";
 import { StandingsTable } from "@/components/public-site/standings-table";
@@ -238,9 +241,17 @@ export default async function DivisionHomePage({ params }: Props) {
           {competition.name}
         </Link>
       </nav>
-      <h1 className="mb-2 font-display text-4xl font-bold uppercase leading-none tracking-tight text-ink sm:text-5xl">
-        {division.name}
-      </h1>
+      <div className="mb-2 flex flex-wrap items-start justify-between gap-3">
+        <h1 className="font-display text-4xl font-bold uppercase leading-none tracking-tight text-ink sm:text-5xl">
+          {division.name}
+        </h1>
+        {/* Standings share (v3/10 #2) — the link unfurls into the OG card. */}
+        <ShareButton
+          title={`${division.name} — ${competition.name}`}
+          text={`${division.name} standings & fixtures — ${competition.name}:`}
+          url={`/shared/${org.slug}/${competition.slug}/${division.slug}`}
+        />
+      </div>
       <p className="mb-6 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <span className="font-medium text-zinc-600">
           {division.sport_name ?? division.sport_key}
@@ -264,6 +275,12 @@ export default async function DivisionHomePage({ params }: Props) {
       </p>
 
       {championBanner}
+
+      {division.description ? (
+        <section className="mb-6">
+          <CompetitionProse html={await renderProse(division.description)} />
+        </section>
+      ) : null}
 
       <Tabs labels={["Schedule", "Standings", "Entrants"]}>
         {[

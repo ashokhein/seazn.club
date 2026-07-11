@@ -2,8 +2,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { AdminOrgActions } from "@/components/admin-org-actions";
+import { AdminPlanPanel } from "@/components/admin-plan-panel";
 import { AdminDiscoveryActions } from "@/components/admin-discovery-actions";
 import { hasFeature } from "@/lib/entitlements";
+import { planPanel } from "@/server/usecases/admin-plan";
 
 export default async function AdminOrgPage({
   params,
@@ -18,12 +20,7 @@ export default async function AdminOrgPage({
   }[]>`select id, name, slug, status, created_at, deleted_at from organizations where id = ${id}`;
   if (!org) notFound();
 
-  const [sub] = await sql<{
-    plan_key: string; status: string; trial_end: string | null;
-    current_period_end: string | null; stripe_customer_id: string | null;
-    stripe_subscription_id: string | null;
-  }[]>`select plan_key, status, trial_end, current_period_end, stripe_customer_id, stripe_subscription_id
-       from subscriptions where org_id = ${id}`;
+  const plan = await planPanel(id);
 
   const members = await sql<{
     user_id: string; email: string; display_name: string; role: string; joined_at: string;
@@ -43,9 +40,12 @@ export default async function AdminOrgPage({
     order by created_at desc limit 50`;
   const featureEligible = await hasFeature(id, "discovery.featured");
 
-  const overrides = await sql<{ feature_key: string; bool_value: boolean | null; int_value: number | null; reason: string | null }[]>`
-    select feature_key, bool_value, int_value, reason
-    from org_entitlement_overrides where org_id = ${id}`;
+  const overrides = await sql<{
+    feature_key: string; bool_value: boolean | null; int_value: number | null;
+    expires_at: string | null; reason: string | null;
+  }[]>`
+    select feature_key, bool_value, int_value, expires_at, reason
+    from org_entitlement_overrides where org_id = ${id} order by feature_key`;
 
   const auditLog = await sql<{ id: string; actor_email: string; action: string; created_at: string }[]>`
     select s.id, u.email as actor_email, s.action, s.created_at
@@ -69,19 +69,11 @@ export default async function AdminOrgPage({
         }`}>{org.status}</span>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
-        {/* Subscription */}
-        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
-          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Subscription</h2>
-          <p className="text-white font-medium">{sub?.plan_key ?? "community"}</p>
-          <p className="text-sm text-slate-400">Status: {sub?.status ?? "—"}</p>
-          {sub?.trial_end && <p className="text-sm text-slate-400">Trial ends: {new Date(sub.trial_end).toLocaleDateString()}</p>}
-          {sub?.current_period_end && <p className="text-sm text-slate-400">Renews: {new Date(sub.current_period_end).toLocaleDateString()}</p>}
-          {sub?.stripe_customer_id && (
-            <p className="text-xs text-slate-500 font-mono truncate">{sub.stripe_customer_id}</p>
-          )}
-        </div>
+      {/* Plan panel (v3/08 §1): plan + source + Stripe links + all plan
+          actions — comp, trial, downgrade, overrides. */}
+      <AdminPlanPanel orgId={id} orgName={org.name} plan={plan} overrides={overrides} />
 
+      <div className="grid gap-4 lg:grid-cols-2">
         {/* Stats */}
         <div className="rounded-lg bg-slate-800 p-4 space-y-2">
           <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Usage</h2>
@@ -164,35 +156,6 @@ export default async function AdminOrgPage({
                         featureEligible={featureEligible}
                       />
                     </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      )}
-
-      {/* Entitlement overrides */}
-      {overrides.length > 0 && (
-        <section>
-          <h2 className="mb-2 text-sm font-semibold text-slate-400">Entitlement overrides</h2>
-          <div className="rounded-lg border border-slate-800 overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-800 text-xs text-slate-400">
-                <tr>
-                  <th className="px-3 py-2 text-left">Feature</th>
-                  <th className="px-3 py-2 text-left">Value</th>
-                  <th className="px-3 py-2 text-left">Reason</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-800">
-                {overrides.map((o) => (
-                  <tr key={o.feature_key}>
-                    <td className="px-3 py-2 font-mono text-xs text-purple-300">{o.feature_key}</td>
-                    <td className="px-3 py-2 text-slate-300">
-                      {o.bool_value != null ? String(o.bool_value) : o.int_value ?? "—"}
-                    </td>
-                    <td className="px-3 py-2 text-slate-400 text-xs">{o.reason ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>

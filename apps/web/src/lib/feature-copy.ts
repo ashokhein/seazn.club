@@ -4,6 +4,7 @@
 
 const FEATURE_REASONS: Record<string, string> = {
   // Structure & scale
+  "embeds.enabled": "Embedding live widgets on your own website is a Pro feature.",
   "orgs.max_owned": "You've reached the number of clubs your plan can own.",
   "members.max": "You've reached your plan's team-member seats.",
   "scorers.max": "You've reached your plan's scorer seats.",

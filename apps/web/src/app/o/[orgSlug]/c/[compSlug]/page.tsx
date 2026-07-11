@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Competition overview: divisions as match-day cards (v3/03 §2); settings
 // live on their own page.
 import Link from "next/link";
-import { CalendarRange, Globe, MonitorPlay, Settings } from "lucide-react";
+import { CalendarRange, Globe, MonitorPlay, Printer, Settings } from "lucide-react";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listDivisions } from "@/server/usecases/divisions";
@@ -56,22 +56,35 @@ export default async function CompetitionPage({
             </Link>
             <Link
               href={routes.competitionSchedule(orgSlug, compSlug)}
-              aria-label="Schedule board"
+              aria-label="Schedule Board"
               className="btn btn-ghost gap-1.5"
             >
               <CalendarRange className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Schedule board</span>
+              <span className="hidden sm:inline">Schedule Board</span>
             </Link>
             {publicPath && (
               <Link
                 href={publicPath}
                 target="_blank"
-                aria-label="View public page (opens in a new tab)"
+                aria-label="View Public Page (opens in a new tab)"
                 className="btn btn-ghost gap-1.5"
               >
                 <Globe className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">View public page ↗</span>
+                <span className="hidden sm:inline">View Public Page ↗</span>
               </Link>
+            )}
+            {publicPath && (
+              // v3/10 #3: A4 PDF with a big QR to the dashboard — print it,
+              // tape it to the venue door.
+              <a
+                href={`${publicPath}/poster.pdf`}
+                target="_blank"
+                aria-label="Print Poster (PDF, opens in a new tab)"
+                className="btn btn-ghost gap-1.5"
+              >
+                <Printer className="h-4 w-4" strokeWidth={1.75} />
+                <span className="hidden sm:inline">Print Poster</span>
+              </a>
             )}
             <Link
               href={routes.competitionSettings(orgSlug, compSlug)}

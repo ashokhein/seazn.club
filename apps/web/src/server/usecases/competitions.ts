@@ -98,6 +98,14 @@ export async function createCompetition(
 ): Promise<CompetitionRow> {
   await assertActiveQuota(auth);
   if (input.visibility === "public") await assertPublicQuota(auth);
+  // Showcase at create time follows the exact PATCH rules (doc 15 §1):
+  // gate key server-side, and never let a non-public competition opt in.
+  if (input.discoverable === true) {
+    await requireFeature(auth.orgId, "discovery.listed");
+    if (input.visibility !== "public") {
+      throw new HttpError(422, "Only public competitions can be showcased on seazn.club");
+    }
+  }
   const row = await withTenant(auth.orgId, async (tx) => {
     // Explicit slugs are the caller's choice — collisions 409. Generated
     // slugs dedupe with "-2" suffixes; "new" is reserved (static /c/new).
@@ -117,13 +125,25 @@ export async function createCompetition(
     }
     const [created] = await tx<CompetitionRow[]>`
       insert into competitions (org_id, name, slug, description, starts_on, ends_on,
-                                visibility, branding, created_by)
+                                visibility, branding, discoverable, created_by)
       values (${auth.orgId}, ${input.name}, ${slug}, ${input.description ?? null},
               ${input.starts_on ?? null}, ${input.ends_on ?? null}, ${input.visibility},
-              ${tx.json(input.branding as never)}, ${auth.userId})
+              ${tx.json(input.branding as never)}, ${input.discoverable === true},
+              ${auth.userId})
       returning ${tx(COLS)}`;
+    // Opt-in is audited exactly like the PATCH path (doc 15 §1 "who/when").
+    if (created.discoverable) {
+      await tx`
+        insert into competition_events (competition_id, org_id, type, payload, actor_id)
+        values (${created.id}, ${auth.orgId}, 'discovery.opt_in',
+                ${tx.json({ auto: false } as never)}, ${auth.userId})`;
+    }
     return created;
   });
+  if (row.discoverable) {
+    await invalidateDiscoveryCache();
+    fireDiscoveryRevalidate();
+  }
   // Activation event (feature 1) — first competition is the "aha" moment.
   await captureServer({
     event: EVENTS.COMPETITION_CREATED,

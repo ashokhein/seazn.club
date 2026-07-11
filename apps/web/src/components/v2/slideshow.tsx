@@ -40,6 +40,7 @@ export function Slideshow({
   realtime = false,
   themeStyle,
   logo = null,
+  sponsors = [],
 }: {
   title: string;
   slides: Slide[];
@@ -52,6 +53,9 @@ export function Slideshow({
   themeStyle?: CSSProperties;
   /** Org logo URL (Pro branding), resolved server-side. */
   logo?: string | null;
+  /** Org sponsor slots (v3/10 #5) — persistent strip above the footer, so
+   *  sponsors are on screen the whole session, not one slide in N. */
+  sponsors?: { name: string; logo?: string | null }[];
 }) {
   const router = useRouter();
   const [index, setIndex] = useState(0);
@@ -335,6 +339,28 @@ export function Slideshow({
           </div>
         )}
       </main>
+
+      {/* Sponsor strip (v3/10 #5) — quiet, always on, venue-advertising. */}
+      {sponsors.length > 0 && (
+        <div className="relative z-10 flex items-center justify-center gap-8 px-10 pb-3">
+          <span className="text-[11px] font-semibold uppercase tracking-[0.3em] text-court-muted">
+            Sponsors
+          </span>
+          {sponsors.slice(0, 6).map((s) => (
+            <span key={s.name} className="flex items-center gap-2 text-sm text-court-muted">
+              {s.logo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={s.logo}
+                  alt=""
+                  className="h-6 w-6 rounded bg-white/90 object-contain p-0.5"
+                />
+              ) : null}
+              {s.name}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Footer — slide counter, per-slide progress rail, jump dots. */}
       {slides.length > 1 && (

@@ -8,6 +8,7 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { VisibilityPicker } from "@/components/ui/visibility-picker";
 import { routes } from "@/lib/routes";
+import { msg } from "@/lib/messages";
 
 
 export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
@@ -15,6 +16,7 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [visibility, setVisibility] = useState<string>("private");
+  const [discoverable, setDiscoverable] = useState(false);
   const [startsOn, setStartsOn] = useState("");
   const [endsOn, setEndsOn] = useState("");
   const [accent, setAccent] = useState("");
@@ -34,6 +36,8 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           name,
           description: description.trim() || null,
           visibility,
+          // Same hard coupling as settings (doc 15 §1): showcase only public.
+          discoverable: visibility === "public" && discoverable,
           starts_on: startsOn || null,
           ends_on: endsOn || null,
           branding: accent ? { accent } : {},
@@ -84,6 +88,31 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
       {/* v3/03 §7: the one visibility component everywhere. No share URL at
           create time (the competition has no public page yet). */}
       <VisibilityPicker value={visibility} onChange={setVisibility} />
+
+      {/* Showcase opt-in (doc 15 §1) — same checkbox + consent copy as
+          settings, gated on public visibility. */}
+      <fieldset className="space-y-2 rounded-lg border border-purple-100 bg-purple-50/50 p-3">
+        <label className="flex items-start gap-2">
+          <input
+            type="checkbox"
+            disabled={visibility !== "public"}
+            checked={discoverable && visibility === "public"}
+            onChange={(e) => setDiscoverable(e.target.checked)}
+            className="mt-0.5"
+          />
+          <span>
+            <span className="text-sm font-semibold text-slate-700">
+              {msg("showcase.label")}
+            </span>
+            <span className="mt-1 block text-xs leading-relaxed text-slate-500">
+              {msg("showcase.consent")}
+            </span>
+          </span>
+        </label>
+        {visibility !== "public" && (
+          <p className="text-xs text-amber-600">{msg("showcase.needsPublic")}</p>
+        )}
+      </fieldset>
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">

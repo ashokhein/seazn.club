@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Division console (PROMPT-15 task 1): entrants & rosters, fixture console
 // (per stage: generate/complete/schedule), standings with the cascade trace.
 import Link from "next/link";
-import { ClipboardList, MonitorPlay } from "lucide-react";
+import { ClipboardList, MonitorPlay, Printer } from "lucide-react";
 import { StatusChip, divisionChipState } from "@/components/ui/status-chip";
 import { routes } from "@/lib/routes";
 import { requireDivisionPage } from "@/server/page-auth";
@@ -17,6 +17,7 @@ import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { resolveModule } from "@/server/engine-db";
 import { withTenant } from "@/lib/db";
 import { DivisionDangerZone } from "@/components/v2/division-danger-zone";
+import { EmbedSnippet } from "@/components/v2/embed-snippet";
 import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
@@ -128,6 +129,18 @@ export default async function DivisionPage({
               <ClipboardList className="h-4 w-4" strokeWidth={1.75} />
               <span className="hidden sm:inline">Registrations</span>
             </Link>
+            {competition.visibility !== "private" && (
+              // v3/10 #3: division-scoped QR poster PDF for the venue wall.
+              <a
+                href={`/shared/${orgSlug}/${competition.slug}/poster.pdf?division=${divSlug}`}
+                target="_blank"
+                aria-label="Print Poster (PDF, opens in a new tab)"
+                className="btn btn-ghost gap-1.5"
+              >
+                <Printer className="h-4 w-4" strokeWidth={1.75} />
+                <span className="hidden sm:inline">Print Poster</span>
+              </a>
+            )}
             {editable && (
               <InviteScorer
                 orgId={auth.orgId}
@@ -248,6 +261,17 @@ export default async function DivisionPage({
         )}
 
         {tab === "stats" && <StatsPanel divisionId={id} />}
+
+        {/* Embed snippet (v3/10 #4) — editors of shareable competitions get
+            the copy-paste widget; free plans see the upgrade gate. */}
+        {canEdit && competition.visibility !== "private" && (
+          <div className="mt-8">
+            <EmbedSnippet
+              divisionId={id}
+              entitled={await hasFeature(auth.orgId, "embeds.enabled")}
+            />
+          </div>
+        )}
 
         {/* Delete/archive (v3/09 §4) — owners/admins, even on frozen comps:
             reducing usage is the honest way out of an over-quota freeze. */}

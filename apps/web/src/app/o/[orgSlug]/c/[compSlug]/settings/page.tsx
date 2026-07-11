@@ -88,6 +88,7 @@ export default async function CompetitionSettingsPage({
             discovery: (competition.discovery ?? {}) as Record<string, string | null>,
             branding: competition.branding,
           }}
+          orgId={org.id}
           canEdit={canEdit}
           discoveryBranding={discoveryBranding}
           themeBranding={themeBranding}

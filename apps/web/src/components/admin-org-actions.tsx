@@ -13,7 +13,6 @@ export function AdminOrgActions({
   const router = useRouter();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [trialDays, setTrialDays] = useState("14");
   const [suspendReason, setSuspendReason] = useState("");
 
   async function post(path: string, body: Record<string, unknown>) {
@@ -39,29 +38,7 @@ export function AdminOrgActions({
 
   return (
     <div className="space-y-3">
-      {/* Grant trial */}
-      <div className="space-y-1">
-        <p className="text-xs text-slate-500">Extend trial</p>
-        <div className="flex gap-2">
-          <input
-            type="number"
-            value={trialDays}
-            onChange={(e) => setTrialDays(e.target.value)}
-            className="w-16 rounded border border-slate-600 bg-slate-700 px-2 py-1 text-sm text-white"
-            min={1}
-            max={365}
-          />
-          <span className="text-xs text-slate-400 self-center">days</span>
-          <button
-            onClick={() => post("grant-trial", { days: Number(trialDays) })}
-            disabled={loading === "grant-trial"}
-            className="rounded bg-purple-700 px-3 py-1 text-xs text-white hover:bg-purple-600 disabled:opacity-50"
-          >
-            {loading === "grant-trial" ? "…" : "Grant"}
-          </button>
-        </div>
-      </div>
-
+      {/* Trial/plan actions live in AdminPlanPanel (v3/08 §1). */}
       {/* Suspend / reactivate */}
       <div className="space-y-1">
         <p className="text-xs text-slate-500">

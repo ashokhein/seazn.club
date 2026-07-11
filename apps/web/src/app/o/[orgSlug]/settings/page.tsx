@@ -3,7 +3,7 @@ import Link from "next/link";
 import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Palette,
-  User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, Cookie,
+  User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, BookOpen, Cookie, Handshake,
   type LucideIcon,
 } from "lucide-react";
 import { getUserOrgs } from "@/lib/auth";
@@ -18,6 +18,10 @@ import { OrgRename } from "@/components/org-rename";
 import { OrgLogo } from "@/components/org-logo";
 import { OrgBrandColor } from "@/components/org-brand-color";
 import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
+import { OrgAbout } from "@/components/org-about";
+import { OrgSponsors } from "@/components/org-sponsors";
+import { brandingSponsors } from "@/lib/org-branding";
+import { msg } from "@/lib/messages";
 import {
   DisplayNameForm,
   ChangeEmailForm,
@@ -92,16 +96,25 @@ export default async function SettingsPage({
   // Per-tab lazy data loading
   const canBrand =
     tab === "organization" ? await hasFeature(active.id, "branding") : false;
+  let orgAbout: string | null = null;
+  if (tab === "organization") {
+    const [row] = await sql<{ about: string | null }[]>`
+      select about from organizations where id = ${active.id}`;
+    orgAbout = row?.about ?? null;
+  }
 
-  // Platform API tab (doc 10 §1): api.access = Pro; api.write sits above Pro
-  // (hidden plan key — v3/03 §6 scrub).
+  // Platform API tab: api.access = Pro. Scope choice (read/score/manage) is
+  // the org's own call (v3/08 §2 — the above-Pro api.write rung is retired).
   let hasApiAccess = false;
-  let hasApiWrite = false;
+  let pinnableCompetitions: { id: string; name: string }[] = [];
   if (tab === "api") {
-    [hasApiAccess, hasApiWrite] = await Promise.all([
-      hasFeature(active.id, "api.access"),
-      hasFeature(active.id, "api.write"),
-    ]);
+    hasApiAccess = await hasFeature(active.id, "api.access");
+    if (hasApiAccess) {
+      pinnableCompetitions = await sql<{ id: string; name: string }[]>`
+        select id, name from competitions
+        where org_id = ${active.id}
+        order by created_at desc limit 100`;
+    }
   }
 
   // Account tab data
@@ -248,6 +261,33 @@ export default async function SettingsPage({
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
+                    <SubSection icon={BookOpen} label="About (public page)" />
+                    <OrgAbout orgId={active.id} initialValue={orgAbout} branding={active.branding} />
+                  </div>
+                )}
+
+                {canEdit && (
+                  <div className="mt-5 border-t border-slate-100 pt-5">
+                    <SubSection icon={Handshake} label={msg("sponsors.title")} />
+                    {canBrand ? (
+                      <OrgSponsors
+                        orgId={active.id}
+                        initialSponsors={brandingSponsors(active.branding)}
+                      />
+                    ) : (
+                      <p className="flex items-center gap-2 text-sm text-slate-500">
+                        <PlanBadge feature="branding" />
+                        Sponsor slots require{" "}
+                        <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
+                          an upgrade
+                        </Link>
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {canEdit && (
+                  <div className="mt-5 border-t border-slate-100 pt-5">
                     <SubSection icon={Banknote} label="Payment details" />
                     <OrgPaymentInstructions
                       orgId={active.id}
@@ -287,7 +327,7 @@ export default async function SettingsPage({
                     Only owners and admins can manage API keys.
                   </p>
                 ) : hasApiAccess ? (
-                  <ApiKeysPanel orgId={active.id} canWriteScope={hasApiWrite} />
+                  <ApiKeysPanel orgId={active.id} competitions={pinnableCompetitions} />
                 ) : (
                   <p className="flex items-center gap-2 text-sm text-slate-500">
                     <PlanBadge feature="api.access" />

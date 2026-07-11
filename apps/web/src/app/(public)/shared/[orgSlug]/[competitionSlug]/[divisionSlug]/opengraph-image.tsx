@@ -1,10 +1,14 @@
-// Dynamic OG image: standings snapshot for the division (doc 09 §3).
-// ImageResponse supports flexbox only — keep the layout simple.
+// Division standings share card (v3/10 #1): the top of the table as a
+// branded mini-scoreboard. Youth rule (v3/11 gap 8): individual/pair youth
+// divisions never print player names — the model decides, this renders.
 import { ImageResponse } from "next/og";
+import { sql } from "@/lib/db";
 import { getPublicDivision } from "@/server/public-site/data";
+import { standingsCardModel } from "@/server/og/model";
+import { CardFrame, OG_SIZE } from "@/server/og/card";
 import type { StandingsSnapshotRow } from "@/server/public-site/data";
 
-export const size = { width: 1200, height: 630 };
+export const size = OG_SIZE;
 export const contentType = "image/png";
 export const revalidate = 300;
 
@@ -16,64 +20,106 @@ export default async function Image({ params }: Props) {
   const { orgSlug, competitionSlug, divisionSlug } = await params;
   const data = await getPublicDivision(orgSlug, competitionSlug, divisionSlug);
 
-  const rows: StandingsSnapshotRow[] = (data?.standings[0]?.rows ?? [])
-    .slice()
-    .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
-    .slice(0, 6);
-  const names = Object.fromEntries((data?.entrants ?? []).map((e) => [e.id, e.display_name]));
+  // Youth flag lives outside the public views on purpose — read it directly.
+  const [priv] = data
+    ? await sql<{ youth: boolean }[]>`select youth from divisions where id = ${data.division.id}`
+    : [];
+
+  const rows = (data?.standings[0]?.rows ?? []) as StandingsSnapshotRow[];
+  const model = standingsCardModel({
+    orgName: data?.org.name ?? "seazn.club",
+    competitionName: data?.competition.name ?? "",
+    divisionName: data?.division.name ?? "Division",
+    logo: data?.org.logo ?? null,
+    branding: [data?.competition.branding, data?.org.branding],
+    youth: priv?.youth ?? false,
+    entrantKind: data?.entrants[0]?.kind ?? null,
+    rows: rows.map((r) => ({
+      rank: r.rank ?? null,
+      entrantId: r.entrantId,
+      played: r.played,
+      points: r.points,
+    })),
+    names: Object.fromEntries((data?.entrants ?? []).map((e) => [e.id, e.display_name])),
+  });
+  const theme = model.theme;
 
   return new ImageResponse(
     (
-      <div
-        style={{
-          width: "100%",
-          height: "100%",
-          display: "flex",
-          flexDirection: "column",
-          background: "#fafafa",
-          padding: 64,
-          fontSize: 28,
-          color: "#18181b",
-        }}
-      >
-        <div style={{ display: "flex", flexDirection: "column", marginBottom: 32 }}>
-          <div style={{ fontSize: 44, fontWeight: 700 }}>
-            {data?.division.name ?? "Division"}
+      <CardFrame theme={theme} orgName={model.orgName} logo={model.logo}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div
+            style={{
+              display: "flex",
+              fontSize: 54,
+              fontWeight: 800,
+              textTransform: "uppercase",
+              lineHeight: 1.05,
+            }}
+          >
+            {model.divisionName}
           </div>
-          <div style={{ fontSize: 28, color: "#71717a", marginTop: 8 }}>
-            {data ? `${data.competition.name} · ${data.org.name}` : "seazn.club"}
+          <div style={{ display: "flex", fontSize: 26, color: theme.muted }}>
+            {model.competitionName}
           </div>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", flexGrow: 1 }}>
-          {rows.length === 0 ? (
-            <div style={{ color: "#71717a" }}>Fixtures & standings on seazn.club</div>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            flexGrow: 1,
+            marginTop: 22,
+          }}
+        >
+          {model.fallbackLine ? (
+            <div
+              style={{
+                display: "flex",
+                flexGrow: 1,
+                alignItems: "center",
+                fontSize: 34,
+                color: theme.muted,
+              }}
+            >
+              {model.fallbackLine}
+            </div>
           ) : (
-            rows.map((row) => (
+            model.rows.map((row, i) => (
               <div
-                key={row.entrantId}
+                key={i}
                 style={{
                   display: "flex",
                   justifyContent: "space-between",
-                  padding: "10px 0",
-                  borderBottom: "1px solid #e4e4e7",
+                  alignItems: "center",
+                  padding: "9px 0",
+                  borderBottom: "1px solid rgba(255,255,255,0.14)",
+                  fontSize: 28,
                 }}
               >
-                <div style={{ display: "flex", gap: 24 }}>
-                  <div style={{ width: 40, color: "#a1a1aa" }}>{row.rank}</div>
-                  <div style={{ fontWeight: 600 }}>
-                    {names[row.entrantId] ?? row.entrantId}
+                <div style={{ display: "flex", gap: 24, alignItems: "center" }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      width: 44,
+                      color: i === 0 ? theme.accent : theme.muted,
+                      fontWeight: 800,
+                    }}
+                  >
+                    {row.rank ?? "–"}
                   </div>
+                  <div style={{ display: "flex", fontWeight: 700 }}>{row.name}</div>
                 </div>
-                <div style={{ display: "flex", gap: 32, color: "#52525b" }}>
-                  <div>P {row.played}</div>
-                  <div>Pts {row.points}</div>
+                <div style={{ display: "flex", gap: 36, color: theme.muted }}>
+                  <div style={{ display: "flex" }}>{`P ${row.played}`}</div>
+                  <div style={{ display: "flex", color: theme.ink, fontWeight: 700 }}>
+                    {`Pts ${row.points}`}
+                  </div>
                 </div>
               </div>
             ))
           )}
         </div>
-        <div style={{ display: "flex", color: "#a1a1aa", fontSize: 24 }}>seazn.club</div>
-      </div>
+      </CardFrame>
     ),
     size,
   );

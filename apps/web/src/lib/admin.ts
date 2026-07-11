@@ -37,9 +37,11 @@ export async function logStaffAction(
   targetId: string,
   detail?: Record<string, unknown>,
 ): Promise<void> {
+  // sql.json → real jsonb object (a pre-stringified value lands as a jsonb
+  // *string* and detail->>'reason' style reads come back empty).
   await sql`
     insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
-    values (${actorId}, ${action}, ${targetType}, ${targetId}, ${detail ? JSON.stringify(detail) : null})`;
+    values (${actorId}, ${action}, ${targetType}, ${targetId}, ${detail ? sql.json(detail as never) : null})`;
 }
 
 /** Create a time-boxed impersonation token (1 hour). */

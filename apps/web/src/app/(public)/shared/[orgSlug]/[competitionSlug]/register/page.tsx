@@ -6,6 +6,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
+import { getPublicOrg } from "@/server/public-site/data";
+import { brandingSponsors } from "@/lib/org-branding";
 import { HttpError } from "@/lib/errors";
 import { RegisterForm } from "@/components/public-site/register-form";
 
@@ -22,6 +24,9 @@ export default async function RegisterPage({ params }: Props) {
     if (err instanceof HttpError && err.status === 404) notFound();
     throw err;
   }
+  // Org sponsors, entitlement-gated by the public org read (v3/10 #5).
+  const pub = await getPublicOrg(orgSlug);
+  const sponsors = brandingSponsors(pub?.org.branding);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -40,6 +45,21 @@ export default async function RegisterPage({ params }: Props) {
       <p className="mt-1 text-sm text-ink-muted">
         Pick a division, fill in your details — takes under a minute.
       </p>
+      {/* Sponsor masthead line (v3/10 #5): entitlement-gated upstream. */}
+      {sponsors.length > 0 ? (
+        <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
+          <span className="font-semibold uppercase tracking-[0.18em]">Supported by</span>
+          {sponsors.slice(0, 5).map((s) => (
+            <span key={s.name} className="inline-flex items-center gap-1.5">
+              {s.logo ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={s.logo} alt="" className="h-4 w-4 rounded-sm object-contain" />
+              ) : null}
+              {s.name}
+            </span>
+          ))}
+        </p>
+      ) : null}
       {info.divisions.length === 0 ? (
         <p className="mt-4 text-sm text-zinc-500">
           Registration is not open for this competition.

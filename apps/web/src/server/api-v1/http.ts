@@ -10,6 +10,7 @@ import * as Sentry from "@sentry/nextjs";
 import { EngineError, type EngineErrorCode } from "@seazn/engine/core";
 import { AuthError, HttpError, PaymentRequiredError } from "@/lib/errors";
 import { featureReason } from "@/lib/feature-copy";
+import { rateLimitHeaders, runV1Context } from "./context";
 
 // EngineError.code → HTTP status (doc 08 §1, spec 03 §7). Central map — the
 // only place engine codes meet HTTP. SEQ_CONFLICT is the optimistic-concurrency
@@ -68,7 +69,7 @@ function errorResponse(
   extra?: Record<string, unknown>,
 ): NextResponse {
   const body: ErrorBody = { ok: false, error: { code, message, ...extra }, requestId };
-  return NextResponse.json(body, { status });
+  return NextResponse.json(body, { status, headers: rateLimitHeaders() });
 }
 
 /**
@@ -80,19 +81,29 @@ function errorResponse(
  */
 export async function v1<T>(fn: () => Promise<T | Reply<T>>): Promise<NextResponse> {
   const requestId = randomUUID();
+  // ALS context so deep layers (API-key auth) can surface X-RateLimit-*
+  // counters onto whatever response this request ends up with (v3/08 §2).
+  return runV1Context(() => v1Inner(requestId, fn));
+}
+
+async function v1Inner<T>(
+  requestId: string,
+  fn: () => Promise<T | Reply<T>>,
+): Promise<NextResponse> {
   try {
     const result = await fn();
+    const rate = rateLimitHeaders();
     if (result instanceof Reply) {
       // 204 carries no body by definition (v3/09 §4 — DELETE division).
       if (result.status === 204) {
-        return new NextResponse(null, { status: 204, headers: result.headers });
+        return new NextResponse(null, { status: 204, headers: { ...rate, ...result.headers } });
       }
       return NextResponse.json(
         { ok: true, data: result.data, requestId },
-        { status: result.status, headers: result.headers },
+        { status: result.status, headers: { ...rate, ...result.headers } },
       );
     }
-    return NextResponse.json({ ok: true, data: result, requestId });
+    return NextResponse.json({ ok: true, data: result, requestId }, { headers: rate });
   } catch (err: unknown) {
     if (err instanceof ZodError) {
       return errorResponse(requestId, 400, "VALIDATION", "Invalid input", {

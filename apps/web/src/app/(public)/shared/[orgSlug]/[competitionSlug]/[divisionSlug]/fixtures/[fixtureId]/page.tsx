@@ -8,6 +8,7 @@ import { getPublicFixture } from "@/server/public-site/data";
 import { sportsEventJsonLd } from "@/lib/public-site";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { LiveScore } from "@/components/public-site/live-score";
+import { ShareButton } from "@/components/share-button";
 
 export const revalidate = 30;
 
@@ -80,9 +81,21 @@ export default async function FixturePage({ params }: Props) {
         </Link>
       </nav>
 
-      <h1 className="mb-1 font-display text-2xl font-semibold text-ink">
-        {home} <span className="text-ink-muted">vs</span> {away}
-      </h1>
+      <div className="mb-1 flex flex-wrap items-start justify-between gap-3">
+        <h1 className="font-display text-2xl font-semibold text-ink">
+          {home} <span className="text-ink-muted">vs</span> {away}
+        </h1>
+        {/* One-tap share (v3/10 #2) — the message reads like a human wrote it. */}
+        <ShareButton
+          title={`${home} vs ${away}`}
+          text={
+            fixture.status === "decided" || fixture.status === "finalized"
+              ? `${home} vs ${away} — ${fixture.summary?.headline ?? "full-time"} (${division.name}, ${competition.name})`
+              : `${home} vs ${away} — ${division.name}, ${competition.name}. Follow it live:`
+          }
+          url={`${basePath}/fixtures/${fixture.id}`}
+        />
+      </div>
       <p className="mb-4 text-sm text-ink-muted">
         {fixture.scheduled_at
           ? new Date(fixture.scheduled_at).toLocaleString("en-GB", {

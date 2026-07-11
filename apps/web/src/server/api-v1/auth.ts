@@ -7,8 +7,11 @@ import { sql } from "@/lib/db";
 import { getOrgRole, requireUser, resolveActiveOrg } from "@/lib/auth";
 import { AuthError, HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
+import { cacheEnabled, incrWindow } from "@/lib/cache";
 import { rateLimit } from "@/lib/rate-limit";
 import { EDITOR_ROLES, READ_ROLES, type OrgRole } from "@/lib/types";
+import { matchKeyRoute, scopeSatisfies, type PinKind } from "./key-scopes";
+import { setRateLimitInfo } from "./context";
 
 export type Scope = "read" | "write";
 
@@ -44,22 +47,120 @@ interface ApiKeyRow {
   id: string;
   org_id: string;
   scopes: string[];
+  competition_id: string | null;
 }
 
-// Pro sustained rate (doc 08 §6): 10 rps per key, enforced on a 10 s window so
-// courtside bursts don't trip it.
-const API_KEY_LIMIT = { max: 100, windowSeconds: 10 };
+// Per-key rate limit (v3/08 §2): 60 rpm baseline, 300 rpm on Pro, counted on
+// a one-minute window. Redis owns the counter in prod; the in-process map
+// keeps the limit real (and testable) when no Redis is configured.
+const KEY_RATE = { free: 60, pro: 300, windowSeconds: 60 };
+const localWindows = new Map<string, { count: number; resetAt: number }>();
 
-async function apiKeyAuth(token: string, orgId: string | null, scope: Scope): Promise<AuthCtx> {
+async function keyWindowCount(keyId: string, windowSeconds: number): Promise<number> {
+  const fromRedis = await incrWindow(`rlk:${keyId}`, windowSeconds);
+  if (fromRedis !== null) return fromRedis;
+  if (cacheEnabled()) return 0; // Redis blip: fail open, same policy as lib/rate-limit
+  const now = Date.now();
+  const bucket = localWindows.get(keyId);
+  if (!bucket || bucket.resetAt <= now) {
+    if (localWindows.size > 10_000) localWindows.clear();
+    localWindows.set(keyId, { count: 1, resetAt: now + windowSeconds * 1000 });
+    return 1;
+  }
+  bucket.count += 1;
+  return bucket.count;
+}
+
+async function apiKeyRateLimit(key: ApiKeyRow): Promise<void> {
+  const [sub] = await sql<{ plan_key: string }[]>`
+    select plan_key from subscriptions where org_id = ${key.org_id}`;
+  const limit = sub?.plan_key === "pro" ? KEY_RATE.pro : KEY_RATE.free;
+  const count = await keyWindowCount(key.id, KEY_RATE.windowSeconds);
+  const reset = Math.ceil(Date.now() / 1000 / KEY_RATE.windowSeconds) * KEY_RATE.windowSeconds;
+  setRateLimitInfo({ limit, remaining: limit - count, reset });
+  if (count > limit) {
+    throw new HttpError(429, "Rate limit exceeded for this API key — retry after the window resets.");
+  }
+}
+
+// Pinned keys (api_keys.competition_id): resolve the owning competition of
+// the addressed resource. A missing row falls through — the handler 404s it
+// with its usual message, so the pin adds no existence oracle.
+async function resolvePinCompetition(pin: PinKind, id: string): Promise<string | null> {
+  if (!UUID_RE.test(id)) return null;
+  switch (pin) {
+    case "competition":
+      return id;
+    case "division": {
+      const [r] = await sql<{ competition_id: string }[]>`
+        select competition_id from divisions where id = ${id}`;
+      return r?.competition_id ?? null;
+    }
+    case "stage": {
+      const [r] = await sql<{ competition_id: string }[]>`
+        select d.competition_id from stages s join divisions d on d.id = s.division_id
+        where s.id = ${id}`;
+      return r?.competition_id ?? null;
+    }
+    case "fixture": {
+      const [r] = await sql<{ competition_id: string }[]>`
+        select d.competition_id from fixtures f join divisions d on d.id = f.division_id
+        where f.id = ${id}`;
+      return r?.competition_id ?? null;
+    }
+    case "entrant": {
+      const [r] = await sql<{ competition_id: string }[]>`
+        select d.competition_id from entrants e join divisions d on d.id = e.division_id
+        where e.id = ${id}`;
+      return r?.competition_id ?? null;
+    }
+    case "registration": {
+      const [r] = await sql<{ competition_id: string }[]>`
+        select d.competition_id from registrations r join divisions d on d.id = r.division_id
+        where r.id = ${id}`;
+      return r?.competition_id ?? null;
+    }
+    case "pool": {
+      const [r] = await sql<{ competition_id: string }[]>`
+        select d.competition_id from pools p
+        join stages s on s.id = p.stage_id join divisions d on d.id = s.division_id
+        where p.id = ${id}`;
+      return r?.competition_id ?? null;
+    }
+  }
+}
+
+async function apiKeyAuth(req: Request, token: string, orgId: string | null): Promise<AuthCtx> {
   const [key] = await sql<ApiKeyRow[]>`
-    select id, org_id, scopes from api_keys
+    select id, org_id, scopes, competition_id from api_keys
     where key_hash = ${hashApiKey(token)} and revoked_at is null limit 1`;
   if (!key || (orgId !== null && key.org_id !== orgId)) throw new AuthError("Invalid API key");
   await requireFeature(key.org_id, "api.access");
-  // write scope implies read.
-  const granted = key.scopes.includes(scope) || (scope === "read" && key.scopes.includes("write"));
-  if (!granted) throw new HttpError(403, `API key lacks the '${scope}' scope`);
-  await rateLimit(`apikeyv1:${key.id}`, API_KEY_LIMIT);
+  // Route allowlist (v3/08 §2): the map is the single authority for keys —
+  // unlisted (method, path) pairs are denied outright, whatever the scope.
+  const match = matchKeyRoute(req.method, req.url);
+  if (!match) {
+    throw new HttpError(403, "API keys cannot access this endpoint — use a session login.");
+  }
+  if (!scopeSatisfies(key.scopes, match.scope)) {
+    throw new HttpError(
+      403,
+      `This key is limited to '${key.scopes.join("', '")}' — this endpoint needs the '${match.scope}' scope. Create a key with the right scope in org settings.`,
+    );
+  }
+  if (key.competition_id) {
+    if (!match.pin || !match.resourceId) {
+      throw new HttpError(
+        403,
+        "This key is pinned to one competition and cannot call org-wide endpoints.",
+      );
+    }
+    const owner = await resolvePinCompetition(match.pin, match.resourceId);
+    if (owner !== null && owner !== key.competition_id) {
+      throw new HttpError(403, "This key is pinned to a different competition.");
+    }
+  }
+  await apiKeyRateLimit(key);
   // Observability only — never block the request on it.
   void sql`update api_keys set last_used_at = now() where id = ${key.id}`.catch(() => null);
   return { orgId: key.org_id, via: "api_key", userId: null, role: null, keyId: key.id };
@@ -98,7 +199,7 @@ function rejectDeviceLink(req: Request): void {
 export async function requireOrgAuth(req: Request, orgId: string, scope: Scope): Promise<AuthCtx> {
   rejectDeviceLink(req);
   const token = bearerToken(req);
-  if (token) return apiKeyAuth(token, orgId, scope);
+  if (token) return apiKeyAuth(req, token, orgId);
   const user = await requireUser();
   const role = await getOrgRole(orgId, user.id);
   if (!role) throw new AuthError("You are not a member of this organization");
@@ -152,7 +253,7 @@ export async function requireFixtureActor(
   }
   const orgId = await resourceOrg("fixture", fixtureId);
   const token = bearerToken(req);
-  if (token) return apiKeyAuth(token, orgId, intent === "read" ? "read" : "write");
+  if (token) return apiKeyAuth(req, token, orgId);
   const user = await requireUser();
   const role = await getOrgRole(orgId, user.id);
   if (!role) throw new AuthError("You are not a member of this organization");
@@ -174,7 +275,7 @@ export async function requireFixtureActor(
 export async function requireAuth(req: Request, scope: Scope): Promise<AuthCtx> {
   rejectDeviceLink(req);
   const token = bearerToken(req);
-  if (token) return apiKeyAuth(token, null, scope);
+  if (token) return apiKeyAuth(req, token, null);
   const user = await requireUser();
   const org = await resolveActiveOrg(user);
   if (!org) throw new AuthError("No organization for this account");

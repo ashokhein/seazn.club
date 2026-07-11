@@ -119,6 +119,45 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
     expect(audit[0].actor_id).toBe(ownerId);
   });
 
+  it("create-time opt-in: wizard checkbox persists, audits, and 422s non-public", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const owner = asOwner(orgId, ownerId);
+
+    // Public + discoverable at create → persisted and audited (opt_in).
+    const created = await createCompetition(owner, {
+      name: "Born Showcased " + randomUUID().slice(0, 6),
+      visibility: "public",
+      discoverable: true,
+      branding: {},
+    });
+    expect(created.discoverable).toBe(true);
+    const audit = await sql<{ type: string; actor_id: string | null }[]>`
+      select type, actor_id from competition_events
+      where competition_id = ${created.id} and type like 'discovery.%'`;
+    expect(audit).toHaveLength(1);
+    expect(audit[0].type).toBe("discovery.opt_in");
+    expect(audit[0].actor_id).toBe(ownerId);
+
+    // Same hard coupling as PATCH: non-public + discoverable → 422.
+    await expect(
+      createCompetition(owner, {
+        name: "Private Sneak " + randomUUID().slice(0, 6),
+        visibility: "private",
+        discoverable: true,
+        branding: {},
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    // Default stays off (unlisted — the org's one public-dashboard slot is
+    // taken by the showcased competition above).
+    const plain = await createCompetition(owner, {
+      name: "Plain " + randomUUID().slice(0, 6),
+      visibility: "unlisted",
+      branding: {},
+    });
+    expect(plain.discoverable).toBe(false);
+  });
+
   it("hard coupling: opt-in on a non-public competition → 422", async () => {
     const { orgId, ownerId } = await seedOrg();
     const owner = asOwner(orgId, ownerId);

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { LayoutDashboard, Settings, Users } from "lucide-react";
+import { HelpMenu } from "@/components/help-menu";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
 import { needsTourAfterOnboarding } from "@/lib/activation";
@@ -97,6 +98,8 @@ export async function Nav() {
                 <span className="hidden sm:inline">Settings</span>
               </Link>
             </nav>
+            {/* The console "?" menu (v3/06 §3): closes on outside click/Esc. */}
+            <HelpMenu />
             <span className="mx-1 hidden text-sm font-medium text-slate-700 sm:block">
               {user.display_name}
             </span>

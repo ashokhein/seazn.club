@@ -1,0 +1,95 @@
+name: Help screenshots
+
+# Weekly regeneration of the /help screenshot set (v3/06 §3, v3/11 gap 14):
+# seeded demo data + Playwright drive the real UI, and the fresh shots land
+# as an artifact for the founder to review and commit. Manual runs welcome.
+on:
+  schedule:
+    - cron: "43 4 * * 1" # Mondays 04:43 UTC
+  workflow_dispatch:
+
+jobs:
+  shots:
+    name: Regenerate help screenshots
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DATABASE_SSL: disable
+      AUTH_SECRET: ci-only-insecure-secret-please-change-in-prod-0123456789
+      NEXT_PUBLIC_SUPABASE_URL: ""
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      - name: Cache Flyway CLI
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/seazn-flyway
+          key: flyway-cli-10.22.0-linux-x64
+
+      - name: Bootstrap database
+        run: |
+          npm run db:apply
+          npm run sync:sports
+
+      - name: Start dev server
+        run: |
+          npm run dev > dev-server.log 2>&1 &
+          for i in $(seq 1 90); do
+            if curl -sf http://localhost:3000/api/health >/dev/null; then exit 0; fi
+            sleep 2
+          done
+          echo "server did not become healthy"; cat dev-server.log; exit 1
+
+      - name: Seed demo data
+        run: |
+          node --experimental-strip-types scripts/seed-demo.ts --phase=setup
+          node --experimental-strip-types scripts/seed-demo.ts --phase=seed
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/package-lock.json', 'package-lock.json') }}
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+
+      - name: Generate screenshots
+        run: node --experimental-strip-types scripts/help-shots.ts
+        env:
+          SHOTS_BASE: http://localhost:3000
+          SHOTS_EMAIL: ashokhein+demo1@gmail.com
+
+      - name: Upload screenshot set
+        uses: actions/upload-artifact@v4
+        with:
+          name: help-shots
+          path: apps/web/public/help-shots
+          retention-days: 30
+
+      - name: Dev server log (on failure)
+        if: failure()
+        run: cat dev-server.log || true

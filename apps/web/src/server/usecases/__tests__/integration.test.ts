@@ -345,16 +345,12 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
       values (${auth.orgId}, 'api.access', true)
       on conflict (org_id, feature_key) do update set bool_value = true`;
-    // Write scopes are the Business rung (doc 10 §1 api.write, PROMPT-13).
-    await expect(
-      createApiKey(auth, { name: "ci", scopes: ["read", "write"] }),
-    ).rejects.toMatchObject({ featureKey: "api.write" });
-    await sql`
-      insert into org_entitlement_overrides (org_id, feature_key, bool_value)
-      values (${auth.orgId}, 'api.write', true)
-      on conflict (org_id, feature_key) do update set bool_value = true`;
+    // v3/08 §2 (V265): scope choice is the org's own — legacy "write" input
+    // is accepted and stored as manage; no Business api.write rung anymore.
     const key = await createApiKey(auth, { name: "ci", scopes: ["read", "write"] });
     expect(key.secret.startsWith("sc_")).toBe(true);
+    expect(key.scopes).toContain("manage");
+    expect(key.scopes).not.toContain("write");
     const [stored] = await sql<{ key_hash: string }[]>`
       select key_hash from api_keys where id = ${key.id}`;
     expect(stored.key_hash).not.toContain(key.secret.slice(3)); // only the hash at rest

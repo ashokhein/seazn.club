@@ -1,0 +1,412 @@
+"use client";
+
+// Admin plan panel (v3/08 §1): comp-to-Pro, downgrade-with-freeze-preview,
+// extend trial, entitlement overrides with expiry. Every action demands a
+// reason (audited); the destructive one (downgrade) is a typed-name confirm.
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { useConfirm } from "@/components/ui/confirm-provider";
+
+interface Plan {
+  plan_key: string;
+  status: string;
+  source: "stripe" | "comped" | "none";
+  trial_end: string | null;
+  comped_until: string | null;
+  current_period_end: string | null;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+}
+
+interface Override {
+  feature_key: string;
+  bool_value: boolean | null;
+  int_value: number | null;
+  expires_at: string | null;
+  reason: string | null;
+}
+
+const inputCls =
+  "rounded border border-slate-600 bg-slate-700 px-2 py-1 text-sm text-white placeholder:text-slate-500";
+
+function fmtDate(iso: string | null): string {
+  return iso ? new Date(iso).toLocaleDateString("en-GB") : "—";
+}
+
+export function AdminPlanPanel({
+  orgId,
+  orgName,
+  plan,
+  overrides,
+}: {
+  orgId: string;
+  orgName: string;
+  plan: Plan;
+  overrides: Override[];
+}) {
+  const router = useRouter();
+  const confirmDialog = useConfirm();
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState("");
+
+  // form state
+  const [compUntil, setCompUntil] = useState("");
+  const [compReason, setCompReason] = useState("");
+  const [trialDays, setTrialDays] = useState("14");
+  const [trialReason, setTrialReason] = useState("");
+  const [downReason, setDownReason] = useState("");
+  const [ov, setOv] = useState({ key: "", value: "", expires: "", reason: "" });
+
+  async function call(path: string, init: RequestInit, tag: string) {
+    setBusy(tag);
+    setError("");
+    try {
+      const res = await fetch(`/api/admin/orgs/${orgId}/${path}`, {
+        headers: { "Content-Type": "application/json" },
+        ...init,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error ?? `Failed (${res.status})`);
+      router.refresh();
+      return data;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+      return null;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function downgrade() {
+    setBusy("preview");
+    setError("");
+    let preview: { frozen: { name: string }[]; active: number; limit: number | null } | null =
+      null;
+    try {
+      const res = await fetch(`/api/admin/orgs/${orgId}/downgrade`);
+      preview = await res.json();
+      if (!res.ok) throw new Error("Preview failed");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error");
+      setBusy(null);
+      return;
+    }
+    setBusy(null);
+    const frozenNames = preview?.frozen.map((f) => f.name) ?? [];
+    const ok = await confirmDialog({
+      title: "Downgrade to Free — immediately?",
+      body:
+        frozenNames.length > 0
+          ? `These competitions become read-only until the org upgrades or archives something: ${frozenNames.join(", ")}. Nothing is deleted.`
+          : "The org is within Free limits — nothing will freeze. Pro features switch off immediately.",
+      confirmLabel: "Downgrade org",
+      tone: "danger",
+      typedName: orgName,
+    });
+    if (!ok) return;
+    await call("downgrade", { method: "POST", body: JSON.stringify({ reason: downReason }) }, "downgrade");
+  }
+
+  async function saveOverride() {
+    const trimmed = ov.value.trim().toLowerCase();
+    const body: Record<string, unknown> = {
+      feature_key: ov.key.trim(),
+      reason: ov.reason,
+      expires_at: ov.expires || null,
+    };
+    if (trimmed === "true" || trimmed === "false") body.bool_value = trimmed === "true";
+    else if (/^-?\d+$/.test(trimmed)) body.int_value = Number(trimmed);
+    else {
+      setError("Value must be true, false or an integer.");
+      return;
+    }
+    const done = await call(
+      "entitlement-override",
+      { method: "POST", body: JSON.stringify(body) },
+      "override",
+    );
+    if (done) setOv({ key: "", value: "", expires: "", reason: "" });
+  }
+
+  const stripeBilled = !!plan.stripe_subscription_id;
+
+  return (
+    <div className="space-y-6">
+      {error && (
+        <p className="rounded bg-red-950/60 px-3 py-2 text-xs text-red-300">{error}</p>
+      )}
+
+      {/* ── Plan summary ── */}
+      <div className="rounded-lg bg-slate-800 p-4">
+        <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Plan
+        </h2>
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="rounded bg-purple-900/70 px-2.5 py-1 text-sm font-semibold text-purple-200">
+            {plan.plan_key}
+          </span>
+          <span className="text-sm text-slate-300">status: {plan.status}</span>
+          <span className="rounded bg-slate-700 px-2 py-0.5 text-xs text-slate-300">
+            source: {plan.source}
+          </span>
+          {plan.comped_until && (
+            <span className="text-xs text-amber-300">comped until {fmtDate(plan.comped_until)}</span>
+          )}
+          {plan.trial_end && (
+            <span className="text-xs text-slate-400">trial ends {fmtDate(plan.trial_end)}</span>
+          )}
+        </div>
+        <div className="mt-2 flex gap-3 text-xs">
+          {plan.stripe_customer_id && (
+            <a
+              className="text-purple-300 hover:text-white"
+              href={`https://dashboard.stripe.com/customers/${plan.stripe_customer_id}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Stripe customer ↗
+            </a>
+          )}
+          {plan.stripe_subscription_id && (
+            <a
+              className="text-purple-300 hover:text-white"
+              href={`https://dashboard.stripe.com/subscriptions/${plan.stripe_subscription_id}`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              Stripe subscription ↗
+            </a>
+          )}
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        {/* Comp to Pro */}
+        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Comp to Pro
+          </h3>
+          {stripeBilled ? (
+            <p className="text-xs text-slate-500">
+              Stripe-billed — adjust the subscription in Stripe instead.
+            </p>
+          ) : (
+            <>
+              <label className="block text-xs text-slate-400">
+                Until (empty = forever)
+                <input
+                  type="date"
+                  value={compUntil}
+                  onChange={(e) => setCompUntil(e.target.value)}
+                  className={`${inputCls} mt-1 w-full`}
+                />
+              </label>
+              <input
+                value={compReason}
+                onChange={(e) => setCompReason(e.target.value)}
+                placeholder="Reason (required)"
+                className={`${inputCls} w-full`}
+              />
+              <button
+                onClick={() =>
+                  call(
+                    "comp-to-pro",
+                    {
+                      method: "POST",
+                      body: JSON.stringify({ until: compUntil || null, reason: compReason }),
+                    },
+                    "comp",
+                  )
+                }
+                disabled={!compReason || busy === "comp"}
+                className="rounded bg-purple-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-600 disabled:opacity-50"
+              >
+                {busy === "comp" ? "…" : plan.plan_key === "pro" ? "Update comp" : "Comp to Pro"}
+              </button>
+            </>
+          )}
+        </div>
+
+        {/* Extend trial */}
+        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Extend trial
+          </h3>
+          <div className="flex gap-1.5">
+            {[7, 14].map((d) => (
+              <button
+                key={d}
+                onClick={() => setTrialDays(String(d))}
+                className={`rounded px-2 py-1 text-xs ${
+                  trialDays === String(d)
+                    ? "bg-purple-700 text-white"
+                    : "bg-slate-700 text-slate-300 hover:bg-slate-600"
+                }`}
+              >
+                +{d}d
+              </button>
+            ))}
+            <input
+              type="number"
+              min={1}
+              max={365}
+              value={trialDays}
+              onChange={(e) => setTrialDays(e.target.value)}
+              className={`${inputCls} w-16`}
+            />
+          </div>
+          <input
+            value={trialReason}
+            onChange={(e) => setTrialReason(e.target.value)}
+            placeholder="Reason (required)"
+            className={`${inputCls} w-full`}
+          />
+          <button
+            onClick={() =>
+              call(
+                "grant-trial",
+                {
+                  method: "POST",
+                  body: JSON.stringify({ days: Number(trialDays), reason: trialReason }),
+                },
+                "trial",
+              )
+            }
+            disabled={!trialReason || busy === "trial"}
+            className="rounded bg-purple-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-600 disabled:opacity-50"
+          >
+            {busy === "trial" ? "…" : "Extend trial"}
+          </button>
+          {stripeBilled && (
+            <p className="text-[11px] text-slate-500">Also updates trial_end in Stripe.</p>
+          )}
+        </div>
+
+        {/* Downgrade */}
+        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Downgrade to Free
+          </h3>
+          {stripeBilled ? (
+            <p className="text-xs text-slate-500">
+              Stripe-billed — cancellation must go through the subscription.
+            </p>
+          ) : (
+            <>
+              <p className="text-[11px] text-slate-500">
+                Shows what will freeze before anything happens.
+              </p>
+              <input
+                value={downReason}
+                onChange={(e) => setDownReason(e.target.value)}
+                placeholder="Reason (required)"
+                className={`${inputCls} w-full`}
+              />
+              <button
+                onClick={downgrade}
+                disabled={!downReason || busy === "preview" || busy === "downgrade"}
+                className="rounded bg-red-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+              >
+                {busy === "preview" || busy === "downgrade" ? "…" : "Preview & downgrade"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* ── Entitlement overrides ── */}
+      <div className="rounded-lg bg-slate-800 p-4">
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-400">
+          Entitlement overrides
+        </h3>
+        {overrides.length > 0 && (
+          <table className="mb-3 w-full text-sm">
+            <thead className="text-left text-xs text-slate-500">
+              <tr>
+                <th className="py-1 pr-3">Feature</th>
+                <th className="py-1 pr-3">Value</th>
+                <th className="py-1 pr-3">Expires</th>
+                <th className="py-1 pr-3">Reason</th>
+                <th className="py-1" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-700/60">
+              {overrides.map((o) => {
+                const lapsed = o.expires_at && new Date(o.expires_at).getTime() <= Date.now();
+                return (
+                  <tr key={o.feature_key} className={lapsed ? "opacity-50" : ""}>
+                    <td className="py-1.5 pr-3 font-mono text-xs text-purple-300">
+                      {o.feature_key}
+                    </td>
+                    <td className="py-1.5 pr-3 text-slate-300">
+                      {o.bool_value != null ? String(o.bool_value) : (o.int_value ?? "—")}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs text-slate-400">
+                      {fmtDate(o.expires_at)}
+                      {lapsed && <span className="ml-1 text-amber-400">(lapsed)</span>}
+                    </td>
+                    <td className="py-1.5 pr-3 text-xs text-slate-400">{o.reason ?? "—"}</td>
+                    <td className="py-1.5 text-right">
+                      <button
+                        onClick={() =>
+                          call(
+                            "entitlement-override",
+                            {
+                              method: "DELETE",
+                              body: JSON.stringify({ feature_key: o.feature_key }),
+                            },
+                            `del-${o.feature_key}`,
+                          )
+                        }
+                        className="text-xs text-red-400 hover:text-red-300"
+                      >
+                        Remove
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <input
+            value={ov.key}
+            onChange={(e) => setOv({ ...ov, key: e.target.value })}
+            placeholder="feature_key"
+            className={`${inputCls} w-44 font-mono text-xs`}
+          />
+          <input
+            value={ov.value}
+            onChange={(e) => setOv({ ...ov, value: e.target.value })}
+            placeholder="true / false / 5"
+            className={`${inputCls} w-28`}
+          />
+          <input
+            type="date"
+            value={ov.expires}
+            onChange={(e) => setOv({ ...ov, expires: e.target.value })}
+            title="Expiry (optional)"
+            className={inputCls}
+          />
+          <input
+            value={ov.reason}
+            onChange={(e) => setOv({ ...ov, reason: e.target.value })}
+            placeholder="Reason (required)"
+            className={`${inputCls} min-w-40 flex-1`}
+          />
+          <button
+            onClick={saveOverride}
+            disabled={!ov.key.trim() || !ov.reason.trim() || busy === "override"}
+            className="rounded bg-purple-700 px-3 py-1 text-xs font-medium text-white hover:bg-purple-600 disabled:opacity-50"
+          >
+            {busy === "override" ? "…" : "Set override"}
+          </button>
+        </div>
+      </div>
+
+      {/* Event passes: lands with PROMPT-36 (competition_passes doesn't exist
+          yet) — deliberate gap, tracked in design/v3/README. */}
+    </div>
+  );
+}
