@@ -9,3 +9,4 @@ export { accountDeletionTemplate } from "./account-deletion";
 export { inviteTemplate } from "./invite";
 export { registrationTemplate, type RegistrationEmailArgs } from "./registration";
 export { paymentReminderTemplate, type PaymentReminderArgs } from "./payment-reminder";
+export { funnelClaimTemplate, funnelReminderTemplate, type FunnelEmailArgs } from "./funnel";

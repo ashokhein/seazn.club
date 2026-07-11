@@ -13,6 +13,10 @@ export const EVENTS = {
   PRICING_VIEWED: "pricing_viewed",
   BILLING_VIEWED: "billing_viewed",
   CHECKOUT_STARTED: "checkout_started",
+  // Start-a-competition funnel (v3/07 §6): draft-created → claimed, then
+  // COMPETITION_CREATED continues into the activation funnel below.
+  FUNNEL_DRAFT_CREATED: "funnel_draft_created",
+  FUNNEL_CLAIMED: "funnel_claimed",
   COMPETITION_CREATED: "competition_created",
   DIVISION_CREATED: "division_created",
   SCHEDULE_GENERATED: "schedule_generated",
