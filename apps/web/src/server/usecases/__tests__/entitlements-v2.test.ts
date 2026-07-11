@@ -19,6 +19,7 @@ import { createStages, generateStageFixtures } from "../stages";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { createApiKey } from "../api-keys";
+import { feePercentFor, platformFeePercent } from "../registrations";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -443,6 +444,16 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     // …then grantPass (insert + invalidate) must surface the pass value.
     await grantPass(auth.orgId, comp.id);
     expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(32);
+  });
+
+  it("fee percent: pass comps pay 5%, pro orgs 2%, community falls back to env", async () => {
+    const { auth } = await seedOrg("community");
+    const comp = await makeCompetition(auth, "Fee");
+    expect(await feePercentFor(auth.orgId, comp.id)).toBe(platformFeePercent());
+    await grantPass(auth.orgId, comp.id);
+    expect(await feePercentFor(auth.orgId, comp.id)).toBe(5);
+    await setPlan(auth.orgId, "pro");
+    expect(await feePercentFor(auth.orgId, comp.id)).toBe(2);
   });
 
   it("passed competitions never freeze", async () => {

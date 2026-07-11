@@ -78,7 +78,11 @@ export async function createConnectOnboardingLink(
   returnPath: string,
 ): Promise<{ url: string }> {
   requireOwnerSession(auth, orgId);
-  await requireFeature(orgId, "registration.paid");
+  // Connect is org-wide plumbing: any Event Pass in the org unlocks it too,
+  // since the pass's competition is entitled to charge fees (v3/07 §3).
+  const [anyPass] = await sql<{ ok: number }[]>`
+    select 1 as ok from competition_passes where org_id = ${orgId} limit 1`;
+  if (!anyPass) await requireFeature(orgId, "registration.paid");
   const stripe = getStripe();
 
   let { stripe_account_id: accountId } = await orgConnect(orgId);
