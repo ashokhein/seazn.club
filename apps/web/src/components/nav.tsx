@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { CircleHelp, LayoutDashboard, Settings, Users } from "lucide-react";
+import { LayoutDashboard, Settings, Users } from "lucide-react";
+import { HelpMenu } from "@/components/help-menu";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
 import { needsTourAfterOnboarding } from "@/lib/activation";
@@ -97,32 +98,8 @@ export async function Nav() {
                 <span className="hidden sm:inline">Settings</span>
               </Link>
             </nav>
-            {/* The console "?" menu (v3/06 §3): help + contact, zero JS. */}
-            <details className="relative">
-              <summary
-                aria-label="Help"
-                className="flex cursor-pointer list-none items-center rounded-md px-2 py-1.5 text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900 [&::-webkit-details-marker]:hidden"
-              >
-                <CircleHelp className="h-4 w-4" strokeWidth={1.75} />
-              </summary>
-              <div className="absolute right-0 top-9 z-30 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg">
-                <Link href="/help" className="block px-3 py-2 text-slate-700 hover:bg-purple-50">
-                  Help centre
-                </Link>
-                <Link
-                  href="/developers"
-                  className="block px-3 py-2 text-slate-700 hover:bg-purple-50"
-                >
-                  Developer docs
-                </Link>
-                <a
-                  href="mailto:support@seazn.club"
-                  className="block px-3 py-2 text-slate-700 hover:bg-purple-50"
-                >
-                  Contact support
-                </a>
-              </div>
-            </details>
+            {/* The console "?" menu (v3/06 §3): closes on outside click/Esc. */}
+            <HelpMenu />
             <span className="mx-1 hidden text-sm font-medium text-slate-700 sm:block">
               {user.display_name}
             </span>
