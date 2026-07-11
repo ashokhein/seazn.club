@@ -6,7 +6,10 @@ engine**: mobile, navigation, pricing/packaging, self-serve growth, documentatio
 handful of correctness fixes. Intake: the 9 Jul 2026 organiser/founder list (31 items,
 captured verbatim in [00-intake-backlog.md](00-intake-backlog.md)).
 
-> **Status: designed, not implemented.** Prompts numbered PROMPT-30…39 (continuing
+> **Status: implemented — all ten prompts landed.** PROMPT-30…35/37/38/39 merged
+> via PRs #62–66; PROMPT-36 (pricing v3, Event Pass, multi-currency, marketing,
+> /start funnel) on feat/v3-pricing-prompt-36 (V270–272), 2026-07-11. Prompts
+> numbered PROMPT-30…39 (continuing
 > Jul3's 21–29). Numbering of design docs is independent of `engine/` docs.
 
 ## Theme
