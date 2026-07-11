@@ -1,0 +1,79 @@
+"use client";
+
+import { useRouter } from "next/navigation";
+import { useState } from "react";
+
+export const FUNNEL_SPORTS = [
+  "Badminton",
+  "Table Tennis",
+  "Tennis",
+  "Chess",
+  "Carrom",
+  "Football",
+  "Cricket",
+  "Volleyball",
+  "Other",
+] as const;
+
+/** Hero funnel form (v3/07 §6): sport + field size + date, no auth — the
+ *  visitor invests first, authenticates later on /start. */
+export function StartFunnelForm({ compact = false }: { compact?: boolean }) {
+  const router = useRouter();
+  const [sport, setSport] = useState<string>("Badminton");
+  const [entrants, setEntrants] = useState("16");
+  const [date, setDate] = useState("");
+
+  function go(e: React.FormEvent) {
+    e.preventDefault();
+    const params = new URLSearchParams({ sport, entrants });
+    if (date) params.set("date", date);
+    router.push(`/start?${params.toString()}`);
+  }
+
+  return (
+    <form
+      onSubmit={go}
+      data-start-funnel
+      className={`mx-auto flex w-full max-w-2xl flex-col gap-2 sm:flex-row sm:items-end ${compact ? "" : "rounded-2xl border border-purple-200 bg-white/80 p-3 shadow-sm backdrop-blur"}`}
+    >
+      <label className="flex-1 text-left">
+        <span className="label mb-1 block text-xs">Sport</span>
+        <select
+          value={sport}
+          onChange={(e) => setSport(e.target.value)}
+          className="input w-full"
+          name="sport"
+        >
+          {FUNNEL_SPORTS.map((s) => (
+            <option key={s}>{s}</option>
+          ))}
+        </select>
+      </label>
+      <label className="w-full text-left sm:w-32">
+        <span className="label mb-1 block text-xs">Players / teams</span>
+        <input
+          type="number"
+          min={2}
+          max={256}
+          value={entrants}
+          onChange={(e) => setEntrants(e.target.value)}
+          className="input w-full"
+          name="entrants"
+        />
+      </label>
+      <label className="w-full text-left sm:w-40">
+        <span className="label mb-1 block text-xs">Start date</span>
+        <input
+          type="date"
+          value={date}
+          onChange={(e) => setDate(e.target.value)}
+          className="input w-full"
+          name="date"
+        />
+      </label>
+      <button type="submit" className="btn btn-primary whitespace-nowrap px-5 py-2.5">
+        Set up my competition →
+      </button>
+    </form>
+  );
+}

@@ -1,5 +1,5 @@
 import "server-only";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { sql } from "@/lib/db";
 import {
   CURRENCY_COOKIE,
@@ -25,5 +25,7 @@ export async function preferredCurrency(
   const jar = await cookies();
   const fromCookie = jar.get(CURRENCY_COOKIE)?.value;
   if (isSupportedCurrency(fromCookie)) return fromCookie;
-  return currencyFromAcceptLanguage(req?.headers.get("accept-language") ?? null);
+  const acceptLanguage =
+    req?.headers.get("accept-language") ?? (await headers()).get("accept-language");
+  return currencyFromAcceptLanguage(acceptLanguage);
 }
