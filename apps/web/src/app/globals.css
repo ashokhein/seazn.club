@@ -359,3 +359,31 @@ body {
 .ecard-list .ecard .ecard-next {
   @apply mt-0.5;
 }
+
+/* ── Marketing "stadium night" system (design/v3/12) ─────────────────────── */
+:root {
+  --mk-night: #150b36;
+  --mk-night-2: #1d1145;
+  --mk-cream: #f5f0e8;
+  --mk-lime: #a3e635;
+  --mk-purple: #7c3aed;
+  --mk-light-violet: #f6f3ff;
+  --mk-light-warm: #fffdf7;
+  --mk-orange: #fb923c;
+  --mk-live: #ef4444;
+}
+
+.mk-display {
+  font-family: var(--mk-font-display, var(--font-geist-sans));
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.mk-reveal { opacity: 0; transform: translateY(18px); }
+.mk-reveal.mk-in { animation: mk-rise 0.6s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+@keyframes mk-rise { to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-reveal { opacity: 1; transform: none; }
+  .mk-reveal.mk-in { animation: none; }
+}
