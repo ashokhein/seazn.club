@@ -3,7 +3,7 @@ import "server-only";
 // variant config and PINS the sport module version (doc 02 §4) so a running
 // division always replays under the rules it started with.
 import type postgres from "postgres";
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { withinLimit, requireFeature } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
@@ -91,7 +91,7 @@ export async function createDivision(
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from divisions
       where competition_id = ${competitionId} and archived_at is null`;
-    const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1);
+    const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1, competitionId);
     if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
 
     // Sport catalog carries the latest shipped module version; the division
@@ -323,7 +323,12 @@ export async function restoreDivision(auth: AuthCtx, id: string): Promise<Divisi
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from divisions
       where competition_id = ${existing.competition_id} and archived_at is null`;
-    const quota = await withinLimit(auth.orgId, "divisions.per_competition.max", n + 1);
+    const quota = await withinLimit(
+      auth.orgId,
+      "divisions.per_competition.max",
+      n + 1,
+      existing.competition_id,
+    );
     if (!quota.ok) throw new PaymentRequiredError("divisions.per_competition.max");
 
     const [row] = await tx<DivisionRow[]>`
@@ -344,9 +349,12 @@ export async function patchDivision(
   id: string,
   patch: PatchDivision,
 ): Promise<DivisionRow> {
-  // Jul3/08 §8: auto-advance is part of the advanced-formats Pro layer.
+  // Jul3/08 §8: auto-advance is part of the advanced-formats Pro layer (or
+  // an Event Pass on this division's competition, v3/07 §3).
   if (patch.auto_progress === true) {
-    await requireFeature(auth.orgId, "formats.advanced");
+    const [d] = await sql<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${id}`;
+    await requireFeature(auth.orgId, "formats.advanced", d?.competition_id);
   }
   return withTenant(auth.orgId, async (tx) => {
     const effective: Record<string, unknown> = { ...patch };

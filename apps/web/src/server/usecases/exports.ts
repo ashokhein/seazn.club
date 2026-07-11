@@ -16,7 +16,7 @@ import {
   type PageBreaks,
 } from "@seazn/engine/exports";
 import type { StandingsRow } from "@seazn/engine/competition";
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { hasFeature, requireFeature } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -127,7 +127,10 @@ export async function buildDivisionDocModel(
   kind: "timetable" | "standings" | "roster" | "participants" | "scoresheet",
   opts: ExportOpts,
 ): Promise<DocModel> {
-  await requireFeature(auth.orgId, "exports");
+  // Exports unlock via plan or an Event Pass on this competition (v3/07 §3).
+  const [expComp] = await sql<{ competition_id: string }[]>`
+    select competition_id from divisions where id = ${divisionId}`;
+  await requireFeature(auth.orgId, "exports", expComp?.competition_id);
   return withTenant(auth.orgId, async (tx) => {
     const meta = await divisionMeta(tx, divisionId);
     const branding = await brandingFor(auth, meta);
@@ -268,7 +271,7 @@ export async function buildCompetitionTimetable(
   competitionId: string,
   opts: ExportOpts,
 ): Promise<DocModel> {
-  await requireFeature(auth.orgId, "exports");
+  await requireFeature(auth.orgId, "exports", competitionId);
   return withTenant(auth.orgId, async (tx) => {
     const [comp] = await tx<{ name: string }[]>`
       select name from competitions where id = ${competitionId}`;
