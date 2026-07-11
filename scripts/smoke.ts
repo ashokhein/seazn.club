@@ -161,7 +161,10 @@ async function main() {
     call(newSession(), `/api/invites/${viewerInvite.token}/accept`, "POST"),
   );
 
-  // Admin invite -> a second user joins and CAN create a competition.
+  // Admin invite -> a second user joins and CAN create a competition. Retire
+  // the viewer probe first: the check is about the ROLE, and the v3 free cap
+  // (1 active competition) would 402 the create on quota instead.
+  await v1(admin, `/api/v1/competitions/${probeId}`, "PATCH", { status: "archived" });
   const adminInvite = (await call(
     admin,
     `/api/orgs/${org.id}/invites`,

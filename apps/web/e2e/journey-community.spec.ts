@@ -21,6 +21,7 @@ test.describe.serial("community lifecycle", () => {
   let divisionId: string;
   let divisionSlug: string;
   let crowdedDivisionId: string; // created in the limits test; never started
+  let limitsCompetitionId: string; // the limits test's own competition
   let fixtureIds: string[] = [];
 
   test("run a full small tournament on the free plan", async ({ page, request }) => {
@@ -131,6 +132,7 @@ test.describe.serial("community lifecycle", () => {
       name: `Limits ${TAG}`,
       visibility: "private",
     });
+    limitsCompetitionId = comp.data!.id;
     const div = await apiJson<{ id: string }>(
       request,
       `/api/v1/competitions/${comp.data!.id}/divisions`,
@@ -171,24 +173,33 @@ test.describe.serial("community lifecycle", () => {
     });
   });
 
-  test("2nd division in a competition is Pro-only", async ({ request }) => {
+  test("3rd division in a competition is Pro-only (free cap: 2)", async ({ request }) => {
+    const GENERIC = {
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    };
+    // The limits competition holds one division; the 2nd fits the v3 cap…
     const second = await apiJson(
       request,
-      `/api/v1/competitions/${competitionId}/divisions`,
+      `/api/v1/competitions/${limitsCompetitionId}/divisions`,
       "POST",
-      {
-        name: "Reserves",
-        sport_key: "generic",
-        variant_key: "score",
-        config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
-      },
+      { name: "Reserves", ...GENERIC },
     );
-    expect(second.status).toBe(402);
-    expect(second.error?.code).toBe("PAYMENT_REQUIRED");
+    expect(second.status).toBe(201);
+    // …the 3rd is the paid layer.
+    const third = await apiJson(
+      request,
+      `/api/v1/competitions/${limitsCompetitionId}/divisions`,
+      "POST",
+      { name: "Thirds", ...GENERIC },
+    );
+    expect(third.status).toBe(402);
+    expect(third.error?.code).toBe("PAYMENT_REQUIRED");
   });
 
-  test("3rd active competition hits the ceiling in the wizard", async ({ page, request }) => {
-    // Two are active already (tests above). The API says 402…
+  test("2nd active competition hits the ceiling in the wizard", async ({ page, request }) => {
+    // The limits competition holds the single free slot (v3). The API says 402…
     const third = await apiJson(request, "/api/v1/competitions", "POST", {
       name: `Ceiling ${TAG}`,
       visibility: "private",

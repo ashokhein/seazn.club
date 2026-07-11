@@ -1,0 +1,250 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - link [ref=e4] [cursor=pointer]:
+        - /url: /
+        - img "Seazn Club" [ref=e5]
+      - navigation [ref=e6]:
+        - link "Log in" [ref=e7] [cursor=pointer]:
+          - /url: /login
+        - link "Start free" [ref=e8] [cursor=pointer]:
+          - /url: /login?tab=signup
+  - main [ref=e9]:
+    - generic [ref=e10]:
+      - img "Seazn Club" [ref=e12]
+      - generic [ref=e13]: Free to start · No account needed for the first 60 seconds
+      - heading "Create → generate → live in minutes" [level=1] [ref=e14]
+      - paragraph [ref=e15]: Tell us the sport, the field and the date — Seazn Club recommends a format, draws the fixtures and puts your scoreboard live.
+      - generic [ref=e17]:
+        - generic [ref=e18]:
+          - generic [ref=e19]: Sport
+          - combobox "Sport" [ref=e20]:
+            - option "Badminton" [selected]
+            - option "Table Tennis"
+            - option "Tennis"
+            - option "Chess"
+            - option "Carrom"
+            - option "Football"
+            - option "Cricket"
+            - option "Volleyball"
+            - option "Other"
+        - generic [ref=e21]:
+          - generic [ref=e22]: Players / teams
+          - spinbutton "Players / teams" [ref=e23]: "16"
+        - generic [ref=e24]:
+          - generic [ref=e25]: Start date
+          - textbox "Start date" [ref=e26]
+        - button "Set up my competition →" [ref=e27] [cursor=pointer]
+      - paragraph [ref=e28]:
+        - text: Free forever for small clubs ·
+        - link "Upgrade a single event or go Pro" [ref=e29] [cursor=pointer]:
+          - /url: /pricing
+      - generic [ref=e30]:
+        - generic [ref=e31]:
+          - generic [ref=e32]: You name it
+          - generic [ref=e33]:
+            - generic [ref=e34]: →
+            - text: We draw it
+          - generic [ref=e35]:
+            - generic [ref=e36]: →
+            - text: It goes live
+        - generic [ref=e37]:
+          - generic [ref=e38]:
+            - generic [ref=e39]:
+              - paragraph [ref=e40]: Riverside A vs Northside
+              - paragraph [ref=e41]: Court 1 · Badminton · Group A
+            - generic [ref=e42]:
+              - generic [ref=e43]: 21–18
+              - generic [ref=e44]: Live
+          - generic [ref=e46]:
+            - generic [ref=e47]:
+              - paragraph [ref=e48]: Falcons vs Comets
+              - paragraph [ref=e49]: Court 2 · Badminton · Group A
+            - generic [ref=e50]:
+              - generic [ref=e51]: 19–21
+              - generic [ref=e52]: Final
+          - generic [ref=e53]:
+            - generic [ref=e54]:
+              - paragraph [ref=e55]: Riverside B vs Southpaw
+              - paragraph [ref=e56]: Court 3 · Badminton · Group A
+            - generic [ref=e57]:
+              - generic [ref=e58]: 11–9
+              - generic [ref=e59]: Up next
+    - generic [ref=e61]:
+      - heading [level=2] [ref=e62]
+      - generic [ref=e66]:
+        - link "🏸 test001 0 — 0" [ref=e67] [cursor=pointer]:
+          - /url: /shared/org-446dae10ca/test001/tes01/fixtures/fdf93686-0ef0-4a81-9db5-0b59ff0a5585
+          - paragraph [ref=e68]:
+            - generic [ref=e69]: 🏸
+            - generic [ref=e70]: test001
+          - paragraph [ref=e71]: 0 — 0
+        - link "🏏 Summer 2026 1/2 (1) — —" [ref=e72] [cursor=pointer]:
+          - /url: /shared/onryde/summer-2026/u16/fixtures/46c1f522-917d-4b90-8627-3541f6b6ba5f
+          - paragraph [ref=e73]:
+            - generic [ref=e74]: 🏏
+            - generic [ref=e75]: Summer 2026
+          - paragraph [ref=e76]: 1/2 (1) — —
+        - link "🏸 test001 0 — 0" [ref=e77] [cursor=pointer]:
+          - /url: /shared/org-446dae10ca/test001/tes01/fixtures/e5070779-0613-48fb-865a-796d41f6ba8b
+          - paragraph [ref=e78]:
+            - generic [ref=e79]: 🏸
+            - generic [ref=e80]: test001
+          - paragraph [ref=e81]: 0 — 0
+        - link "🏏 test001 — — —" [ref=e82] [cursor=pointer]:
+          - /url: /shared/org-446dae10ca/test001/sdasd/fixtures/e62f9c67-4349-4883-9223-cef43daa2ee9
+          - paragraph [ref=e83]:
+            - generic [ref=e84]: 🏏
+            - generic [ref=e85]: test001
+          - paragraph [ref=e86]: — — —
+    - generic [ref=e88]:
+      - paragraph [ref=e89]: Supported sports
+      - generic [ref=e90]:
+        - generic [ref=e91]: Chess
+        - generic [ref=e92]: Carrom
+        - generic [ref=e93]: Football
+        - generic [ref=e94]: Cricket
+        - generic [ref=e95]: Volleyball
+        - generic [ref=e96]: Table Tennis
+        - generic [ref=e97]: Badminton
+        - generic [ref=e98]: Tennis
+        - generic [ref=e99]: + any sport you add
+    - generic [ref=e100]:
+      - heading "Everything your club needs" [level=2] [ref=e101]
+      - paragraph [ref=e102]: Built for community clubs, academies, and school sports programs.
+      - generic [ref=e103]:
+        - generic [ref=e104]:
+          - generic [ref=e105]: ⚡
+          - heading "Any format" [level=3] [ref=e106]
+          - paragraph [ref=e107]: Leagues, groups + knockout, swiss, double elimination, stepladders — mix formats across sports and divisions in one competition.
+        - generic [ref=e108]:
+          - generic [ref=e109]: 🏅
+          - heading "Live standings" [level=3] [ref=e110]
+          - paragraph [ref=e111]: Standings update the moment a result is recorded. Share the live view with players on any device.
+        - generic [ref=e112]:
+          - generic [ref=e113]: 📝
+          - heading "Registration & entry fees" [level=3] [ref=e114]
+          - paragraph [ref=e115]: Players sign up from your public page — capacity, waitlists and age-group eligibility handled. Charge entry fees straight to your club with Stripe.
+        - generic [ref=e116]:
+          - generic [ref=e117]: 👥
+          - heading "Multi-role teams" [level=3] [ref=e118]
+          - paragraph [ref=e119]: Owners, admins, viewers — plus scorer seats and hand-over device links for courtside volunteers.
+        - generic [ref=e120]:
+          - generic [ref=e121]: 🖨️
+          - heading "Print & slideshow" [level=3] [ref=e122]
+          - paragraph [ref=e123]: Bracket and standings export to print or full-screen slideshow — perfect for club noticeboards.
+        - generic [ref=e124]:
+          - generic [ref=e125]: 🔒
+          - heading "Secure by default" [level=3] [ref=e126]
+          - paragraph [ref=e127]: Every org is fully isolated. HSTS, CSRF protection, and per-tenant row-level security out of the box.
+    - generic [ref=e129]:
+      - heading "Who runs on Seazn Club?" [level=2] [ref=e130]
+      - generic [ref=e131]:
+        - link "🏢 Sports clubs & academies Weekly round-robins, internal ladders, seasonal championships. One org, all your sports. Learn more →" [ref=e132] [cursor=pointer]:
+          - /url: /use-cases/clubs
+          - generic [ref=e133]: 🏢
+          - heading "Sports clubs & academies" [level=3] [ref=e134]
+          - paragraph [ref=e135]: Weekly round-robins, internal ladders, seasonal championships. One org, all your sports.
+          - paragraph [ref=e136]: Learn more →
+        - link "📅 One-day events Open tournaments, charity cups, local derbies. Set up in 5 minutes, run all day smoothly. Learn more →" [ref=e137] [cursor=pointer]:
+          - /url: /use-cases/events
+          - generic [ref=e138]: 📅
+          - heading "One-day events" [level=3] [ref=e139]
+          - paragraph [ref=e140]: Open tournaments, charity cups, local derbies. Set up in 5 minutes, run all day smoothly.
+          - paragraph [ref=e141]: Learn more →
+        - link "🎓 Schools & youth programs Inter-house competitions, lunchtime leagues, end-of-term championships. Kids love the live scoreboard. Learn more →" [ref=e142] [cursor=pointer]:
+          - /url: /use-cases/schools
+          - generic [ref=e143]: 🎓
+          - heading "Schools & youth programs" [level=3] [ref=e144]
+          - paragraph [ref=e145]: Inter-house competitions, lunchtime leagues, end-of-term championships. Kids love the live scoreboard.
+          - paragraph [ref=e146]: Learn more →
+    - generic [ref=e147]:
+      - heading "Pay for the event, or the whole season" [level=2] [ref=e148]
+      - paragraph [ref=e149]: Free for small clubs. A one-time pass for the yearly tournament. Pro when you run competitions all year.
+      - generic [ref=e150]:
+        - generic [ref=e151]:
+          - paragraph [ref=e152]: Community
+          - paragraph [ref=e153]: Free
+          - list [ref=e154]:
+            - listitem [ref=e155]: ✓ 1 active competition
+            - listitem [ref=e156]: ✓ 2 divisions, 16 entrants each
+            - listitem [ref=e157]: ✓ Free-event registration
+            - listitem [ref=e158]: ✓ Live standings & public page
+        - generic [ref=e159]:
+          - paragraph [ref=e160]: Event Pass
+          - paragraph [ref=e161]: $39 once
+          - list [ref=e162]:
+            - listitem [ref=e163]: ✓ Upgrades one event, forever
+            - listitem [ref=e164]: ✓ 10 divisions, 32 entrants each
+            - listitem [ref=e165]: ✓ Entry fees (5% platform fee)
+            - listitem [ref=e166]: ✓ Branding, exports & realtime
+        - generic [ref=e167]:
+          - paragraph [ref=e168]: Pro
+          - paragraph [ref=e169]: $20/mo
+          - list [ref=e170]:
+            - listitem [ref=e171]: ✓ Unlimited competitions
+            - listitem [ref=e172]: ✓ Entry fees at 2%
+            - listitem [ref=e173]: ✓ Ball-by-ball & player stats
+            - listitem [ref=e174]: ✓ 14-day free trial
+      - link "Compare plans in detail →" [ref=e175] [cursor=pointer]:
+        - /url: /pricing
+    - generic [ref=e176]:
+      - heading "Ready to run your first tournament?" [level=2] [ref=e177]
+      - paragraph [ref=e178]: Free forever for small clubs. No credit card needed to start.
+      - link "Create your free account →" [ref=e179] [cursor=pointer]:
+        - /url: /login?tab=signup
+  - contentinfo [ref=e180]:
+    - generic [ref=e181]:
+      - generic [ref=e182]:
+        - generic [ref=e183]:
+          - img "Seazn Club" [ref=e185]
+          - paragraph [ref=e186]: Run multi-sport community tournaments — from setup to trophy in minutes.
+        - generic [ref=e187]:
+          - paragraph [ref=e188]: Product
+          - list [ref=e189]:
+            - listitem [ref=e190]:
+              - link "Pricing" [ref=e191] [cursor=pointer]:
+                - /url: /pricing
+            - listitem [ref=e192]:
+              - link "Start free" [ref=e193] [cursor=pointer]:
+                - /url: /login?tab=signup
+            - listitem [ref=e194]:
+              - link "Help centre" [ref=e195] [cursor=pointer]:
+                - /url: /help
+            - listitem [ref=e196]:
+              - link "Developers" [ref=e197] [cursor=pointer]:
+                - /url: /developers
+        - generic [ref=e198]:
+          - paragraph [ref=e199]: Use cases
+          - list [ref=e200]:
+            - listitem [ref=e201]:
+              - link "Sports clubs" [ref=e202] [cursor=pointer]:
+                - /url: /use-cases/clubs
+            - listitem [ref=e203]:
+              - link "Tournaments & events" [ref=e204] [cursor=pointer]:
+                - /url: /use-cases/events
+            - listitem [ref=e205]:
+              - link "Schools & youth" [ref=e206] [cursor=pointer]:
+                - /url: /use-cases/schools
+        - generic [ref=e207]:
+          - paragraph [ref=e208]: Legal
+          - list [ref=e209]:
+            - listitem [ref=e210]:
+              - link "Privacy" [ref=e211] [cursor=pointer]:
+                - /url: /legal/privacy
+            - listitem [ref=e212]:
+              - link "Terms" [ref=e213] [cursor=pointer]:
+                - /url: /legal/terms
+            - listitem [ref=e214]:
+              - link "Cookie policy" [ref=e215] [cursor=pointer]:
+                - /url: /legal/cookie-policy
+            - listitem [ref=e216]:
+              - link "DPA" [ref=e217] [cursor=pointer]:
+                - /url: /legal/dpa
+            - listitem [ref=e218]:
+              - link "Sub-processors" [ref=e219] [cursor=pointer]:
+                - /url: /legal/sub-processors
+            - listitem [ref=e220]:
+              - button "Cookie settings" [ref=e221]
+      - generic [ref=e222]: © 2026 Seazn Club. All rights reserved.
+  - button "Open Next.js Dev Tools" [ref=e228] [cursor=pointer]

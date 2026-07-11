@@ -92,10 +92,16 @@ test.describe.serial("event pass gate (community org)", () => {
     });
     expect(gated.status).toBe(402);
 
-    // The gate inside the competition offers BOTH paths (v3/07 §3): the
+    // The gate renders where the limit bites: submitting a 3rd division in
+    // the builder 402s and the paywall offers BOTH paths (v3/07 §3) — the
     // one-time pass CTA links to this competition's upgrade page.
     await page.goto(`/competitions/${compId}`);
     await page.waitForURL(/\/o\/[^/]+\/c\/[^/]+/, { timeout: 20_000 });
+    await page.goto(`${new URL(page.url()).pathname}/d/new`);
+    await page.getByPlaceholder("U16 Boys T20").fill("Gate Trigger");
+    // The builder is a stepped wizard — submit lives on the last tab.
+    await page.getByRole("button", { name: "Scheduling" }).click();
+    await page.getByRole("button", { name: "Create division" }).click();
     const gate = page.locator("[data-pass-gate]").first();
     await expect(gate).toBeVisible({ timeout: 20_000 });
     await expect(gate.locator("[data-pass-cta]")).toContainText("$39");

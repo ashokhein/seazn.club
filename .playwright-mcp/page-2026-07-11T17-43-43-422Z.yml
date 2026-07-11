@@ -1,0 +1,282 @@
+- generic [active] [ref=f1e1]:
+  - banner [ref=f1e2]:
+    - generic [ref=f1e3]:
+      - link [ref=f1e4] [cursor=pointer]:
+        - /url: /
+        - img "Seazn Club" [ref=f1e5]
+      - navigation [ref=f1e6]:
+        - link "Pricing" [ref=f1e7] [cursor=pointer]:
+          - /url: /pricing
+        - link "Use cases" [ref=f1e8] [cursor=pointer]:
+          - /url: /use-cases/clubs
+        - link "Log in" [ref=f1e9] [cursor=pointer]:
+          - /url: /login
+        - link "Start free" [ref=f1e10] [cursor=pointer]:
+          - /url: /login?tab=signup
+  - main [ref=f1e11]:
+    - generic [ref=f1e12]:
+      - heading "Pay for the event, or the whole season" [level=1] [ref=f1e13]
+      - paragraph [ref=f1e14]: Free for small clubs. One-time Event Pass for the yearly tournament. Pro when you run competitions all year.
+      - generic [ref=f1e16]:
+        - generic [ref=f1e17]: Currency
+        - combobox "Currency" [ref=f1e18]:
+          - option "$ USD" [selected]
+          - option "€ EUR"
+          - option "£ GBP"
+          - option "₹ INR"
+          - option "A$ AUD"
+    - generic [ref=f1e19]:
+      - generic [ref=f1e20]:
+        - generic [ref=f1e21]:
+          - paragraph [ref=f1e22]: Community
+          - paragraph [ref=f1e23]: Free
+          - paragraph [ref=f1e24]: Forever, no card needed.
+          - list [ref=f1e25]:
+            - listitem [ref=f1e26]:
+              - generic [ref=f1e27]: ✓
+              - text: 1 active competition, 2 divisions
+            - listitem [ref=f1e28]:
+              - generic [ref=f1e29]: ✓
+              - text: 16 entrants per division
+            - listitem [ref=f1e30]:
+              - generic [ref=f1e31]: ✓
+              - text: League, groups + knockout & swiss formats
+            - listitem [ref=f1e32]:
+              - generic [ref=f1e33]: ✓
+              - text: Free-event online registration
+            - listitem [ref=f1e34]:
+              - generic [ref=f1e35]: ✓
+              - text: Live standings & public dashboard
+            - listitem [ref=f1e36]:
+              - generic [ref=f1e37]: ✓
+              - text: Listed on the seazn.club showcase
+          - link "Get started free" [ref=f1e38] [cursor=pointer]:
+            - /url: /login?tab=signup
+        - generic [ref=f1e39]:
+          - paragraph [ref=f1e40]: Event Pass
+          - paragraph [ref=f1e41]: $39 / event
+          - paragraph [ref=f1e42]: One-time. No subscription. Yours for the event’s lifetime.
+          - list [ref=f1e43]:
+            - listitem [ref=f1e44]:
+              - generic [ref=f1e45]: ✓
+              - text: Upgrades ONE competition, forever
+            - listitem [ref=f1e46]:
+              - generic [ref=f1e47]: ✓
+              - text: 10 divisions, 32 entrants each
+            - listitem [ref=f1e48]:
+              - generic [ref=f1e49]: ✓
+              - text: Advanced formats — double elim, ladders
+            - listitem [ref=f1e50]:
+              - generic [ref=f1e51]: ✓
+              - text: Entry fees via Stripe (5% platform fee)
+            - listitem [ref=f1e52]:
+              - generic [ref=f1e53]: ✓
+              - text: Custom branding & PDF/XLSX exports
+            - listitem [ref=f1e54]:
+              - generic [ref=f1e55]: ✓
+              - text: Realtime scoreboard & slideshow
+          - link "Start free, upgrade in-app" [ref=f1e56] [cursor=pointer]:
+            - /url: /login?tab=signup
+        - generic [ref=f1e57]:
+          - paragraph [ref=f1e58]: Pro
+          - paragraph [ref=f1e59]: $16.67/month
+          - paragraph [ref=f1e60]: $200 billed yearly — save 17%
+          - generic [ref=f1e61] [cursor=pointer]:
+            - switch "Annual billing" [checked] [ref=f1e62]
+            - text: Annual billing
+          - list [ref=f1e64]:
+            - listitem [ref=f1e65]:
+              - generic [ref=f1e66]: ✓
+              - text: Unlimited competitions & divisions
+            - listitem [ref=f1e67]:
+              - generic [ref=f1e68]: ✓
+              - text: 256 entrants per division
+            - listitem [ref=f1e69]:
+              - generic [ref=f1e70]: ✓
+              - text: Entry fees at a 2% platform fee
+            - listitem [ref=f1e71]:
+              - generic [ref=f1e72]: ✓
+              - text: Ball-by-ball & rally scoring, player stats
+            - listitem [ref=f1e73]:
+              - generic [ref=f1e74]: ✓
+              - text: Officials, exports, API keys, device links
+            - listitem [ref=f1e75]:
+              - generic [ref=f1e76]: ✓
+              - text: Remove the “Powered by Seazn” badge
+          - link "Start 14-day trial →" [ref=f1e77] [cursor=pointer]:
+            - /url: /login?tab=signup
+      - table [ref=f1e79]:
+        - rowgroup [ref=f1e80]:
+          - row [ref=f1e81]:
+            - columnheader "Feature" [ref=f1e82]
+            - columnheader "Community" [ref=f1e83]
+            - columnheader "Event Pass" [ref=f1e84]
+            - columnheader "Pro" [ref=f1e85]
+        - rowgroup [ref=f1e86]:
+          - row [ref=f1e87]:
+            - cell "Active competitions" [ref=f1e88]
+            - cell "1" [ref=f1e89]
+            - cell "The passed event" [ref=f1e90]
+            - cell "Unlimited" [ref=f1e91]
+          - row [ref=f1e92]:
+            - cell "Divisions per competition" [ref=f1e93]
+            - cell "2" [ref=f1e94]
+            - cell "10" [ref=f1e95]
+            - cell "Unlimited" [ref=f1e96]
+          - row [ref=f1e97]:
+            - cell "Entrants per division" [ref=f1e98]
+            - cell "16" [ref=f1e99]
+            - cell "32" [ref=f1e100]
+            - cell "256" [ref=f1e101]
+          - row [ref=f1e102]:
+            - cell "Team members" [ref=f1e103]
+            - cell "3" [ref=f1e104]
+            - cell "5" [ref=f1e105]
+            - cell "15" [ref=f1e106]
+          - row [ref=f1e107]:
+            - cell "Entry fees paid out to your club" [ref=f1e108]
+            - cell "—" [ref=f1e109]
+            - cell "✓ 5% fee" [ref=f1e110]
+            - cell "✓ 2% fee" [ref=f1e111]
+          - row [ref=f1e112]:
+            - cell "Online registration" [ref=f1e113]
+            - cell "✓" [ref=f1e114]
+            - cell "✓" [ref=f1e115]
+            - cell "✓" [ref=f1e116]
+          - row [ref=f1e117]:
+            - cell "Advanced formats — double elim, ladders, americano" [ref=f1e118]
+            - cell "—" [ref=f1e119]
+            - cell "✓" [ref=f1e120]
+            - cell "✓" [ref=f1e121]
+          - row [ref=f1e122]:
+            - cell "Custom branding" [ref=f1e123]
+            - cell "—" [ref=f1e124]
+            - cell "✓" [ref=f1e125]
+            - cell "✓" [ref=f1e126]
+          - row [ref=f1e127]:
+            - cell "PDF / XLSX exports & print packs" [ref=f1e128]
+            - cell "—" [ref=f1e129]
+            - cell "✓" [ref=f1e130]
+            - cell "✓" [ref=f1e131]
+          - row [ref=f1e132]:
+            - cell "Realtime scoreboard & slideshow" [ref=f1e133]
+            - cell "—" [ref=f1e134]
+            - cell "✓" [ref=f1e135]
+            - cell "✓" [ref=f1e136]
+          - row [ref=f1e137]:
+            - cell "Remove the “Powered by Seazn” badge" [ref=f1e138]
+            - cell "—" [ref=f1e139]
+            - cell "—" [ref=f1e140]
+            - cell "✓" [ref=f1e141]
+          - row [ref=f1e142]:
+            - cell "Player stats & MOTM" [ref=f1e143]
+            - cell "—" [ref=f1e144]
+            - cell "—" [ref=f1e145]
+            - cell "✓" [ref=f1e146]
+          - row [ref=f1e147]:
+            - cell "Officials & referee assignment" [ref=f1e148]
+            - cell "—" [ref=f1e149]
+            - cell "—" [ref=f1e150]
+            - cell "✓" [ref=f1e151]
+          - row [ref=f1e152]:
+            - cell "Scheduling constraints" [ref=f1e153]
+            - cell "—" [ref=f1e154]
+            - cell "—" [ref=f1e155]
+            - cell "✓" [ref=f1e156]
+          - row [ref=f1e157]:
+            - cell "API keys & integrations" [ref=f1e158]
+            - cell "—" [ref=f1e159]
+            - cell "—" [ref=f1e160]
+            - cell "✓" [ref=f1e161]
+      - paragraph [ref=f1e162]:
+        - text: Need more than Pro — federations, leagues at scale, SSO?
+        - link "Talk to us" [ref=f1e163] [cursor=pointer]:
+          - /url: mailto:hello@seazn.club
+        - text: .
+    - generic [ref=f1e165]:
+      - heading "Frequently asked questions" [level=2] [ref=f1e166]
+      - generic [ref=f1e167]:
+        - generic [ref=f1e168]:
+          - heading "Do I need a credit card to start?" [level=3] [ref=f1e169]
+          - paragraph [ref=f1e170]: No. The Community plan is free forever and requires no payment details. The Pro trial also starts without a card.
+        - generic [ref=f1e171]:
+          - heading "What exactly does an Event Pass cover?" [level=3] [ref=f1e172]
+          - paragraph [ref=f1e173]: One competition, for its lifetime. That competition gets 10 divisions, 32 entrants per division, advanced formats, entry fees, branding, exports and realtime — and it stops counting against your free active-competition slot. Other competitions in your org stay on Community limits.
+        - generic [ref=f1e174]:
+          - heading "I bought an Event Pass and later went Pro — what happens?" [level=3] [ref=f1e175]
+          - paragraph [ref=f1e176]: Pro covers everything the pass does, org-wide, so the pass sits dormant. If you ever cancel Pro, passed competitions stay upgraded — passes never expire.
+        - generic [ref=f1e177]:
+          - heading "What happens when my Pro trial or subscription ends?" [level=3] [ref=f1e178]
+          - paragraph [ref=f1e179]: Your org drops back to Community limits automatically. Nothing is deleted — competitions over the limit become read-only until you archive down to quota or upgrade again.
+        - generic [ref=f1e180]:
+          - heading "Can I charge entry fees?" [level=3] [ref=f1e181]
+          - paragraph [ref=f1e182]: Yes — with an Event Pass (5% platform fee on that competition) or on Pro (2% org-wide). Connect your club's Stripe account and fees from online registration are paid out directly to the club. Free-event registration works on every plan.
+        - generic [ref=f1e183]:
+          - heading "Which currencies can I pay in?" [level=3] [ref=f1e184]
+          - paragraph [ref=f1e185]: USD, EUR, GBP, INR and AUD — use the switcher above. Your first checkout pins the currency for future renewals.
+        - generic [ref=f1e186]:
+          - heading "Is there an annual discount?" [level=3] [ref=f1e187]
+          - paragraph [ref=f1e188]: Yes — annual billing is two months free (17% off), and it's the default on the Pro card above.
+        - generic [ref=f1e189]:
+          - heading "Can I cancel any time?" [level=3] [ref=f1e190]
+          - paragraph [ref=f1e191]: Yes. Cancel from Settings → Billing. Your Pro access continues until the end of the billing period.
+    - generic [ref=f1e192]:
+      - heading "Start for free today" [level=2] [ref=f1e193]
+      - paragraph [ref=f1e194]: No card required. Upgrade a single event, or the whole club, when it grows.
+      - link "Create your free account →" [ref=f1e195] [cursor=pointer]:
+        - /url: /login?tab=signup
+  - contentinfo [ref=f1e196]:
+    - generic [ref=f1e197]:
+      - generic [ref=f1e198]:
+        - generic [ref=f1e199]:
+          - img "Seazn Club" [ref=f1e201]
+          - paragraph [ref=f1e202]: Run multi-sport community tournaments — from setup to trophy in minutes.
+        - generic [ref=f1e203]:
+          - paragraph [ref=f1e204]: Product
+          - list [ref=f1e205]:
+            - listitem [ref=f1e206]:
+              - link "Pricing" [ref=f1e207] [cursor=pointer]:
+                - /url: /pricing
+            - listitem [ref=f1e208]:
+              - link "Start free" [ref=f1e209] [cursor=pointer]:
+                - /url: /login?tab=signup
+            - listitem [ref=f1e210]:
+              - link "Help centre" [ref=f1e211] [cursor=pointer]:
+                - /url: /help
+            - listitem [ref=f1e212]:
+              - link "Developers" [ref=f1e213] [cursor=pointer]:
+                - /url: /developers
+        - generic [ref=f1e214]:
+          - paragraph [ref=f1e215]: Use cases
+          - list [ref=f1e216]:
+            - listitem [ref=f1e217]:
+              - link "Sports clubs" [ref=f1e218] [cursor=pointer]:
+                - /url: /use-cases/clubs
+            - listitem [ref=f1e219]:
+              - link "Tournaments & events" [ref=f1e220] [cursor=pointer]:
+                - /url: /use-cases/events
+            - listitem [ref=f1e221]:
+              - link "Schools & youth" [ref=f1e222] [cursor=pointer]:
+                - /url: /use-cases/schools
+        - generic [ref=f1e223]:
+          - paragraph [ref=f1e224]: Legal
+          - list [ref=f1e225]:
+            - listitem [ref=f1e226]:
+              - link "Privacy" [ref=f1e227] [cursor=pointer]:
+                - /url: /legal/privacy
+            - listitem [ref=f1e228]:
+              - link "Terms" [ref=f1e229] [cursor=pointer]:
+                - /url: /legal/terms
+            - listitem [ref=f1e230]:
+              - link "Cookie policy" [ref=f1e231] [cursor=pointer]:
+                - /url: /legal/cookie-policy
+            - listitem [ref=f1e232]:
+              - link "DPA" [ref=f1e233] [cursor=pointer]:
+                - /url: /legal/dpa
+            - listitem [ref=f1e234]:
+              - link "Sub-processors" [ref=f1e235] [cursor=pointer]:
+                - /url: /legal/sub-processors
+            - listitem [ref=f1e236]:
+              - button "Cookie settings" [ref=f1e237]
+      - generic [ref=f1e238]: © 2026 Seazn Club. All rights reserved.
+  - button "Open Next.js Dev Tools" [ref=f1e244] [cursor=pointer]
