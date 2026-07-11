@@ -104,7 +104,7 @@ export default async function SettingsPage({
   }
 
   // Platform API tab: api.access = Pro. Scope choice (read/score/manage) is
-  // the org's own call (v3/08 §2 — the Business api.write rung is gone).
+  // the org's own call (v3/08 §2 — the above-Pro api.write rung is retired).
   let hasApiAccess = false;
   let pinnableCompetitions: { id: string; name: string }[] = [];
   if (tab === "api") {
