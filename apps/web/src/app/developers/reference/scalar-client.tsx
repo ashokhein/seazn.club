@@ -2,7 +2,10 @@
 
 // Self-hosted Scalar (v3/08 §3): MIT, bundled from node_modules — no CDN,
 // no external fonts (withDefaultFonts: false keeps the CSP story clean).
-// Vue-under-the-hood, so it must only ever mount client-side.
+// Vue-under-the-hood, so it must only ever mount client-side. The stylesheet
+// is a separate package export — without it the reference renders as a bare
+// unstyled document (bitten 2026-07-11).
+import "@scalar/api-reference-react/style.css";
 import dynamic from "next/dynamic";
 
 const ApiReferenceReact = dynamic(
