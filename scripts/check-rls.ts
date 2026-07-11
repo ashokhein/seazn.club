@@ -19,6 +19,7 @@ const SUPERUSER_ONLY = new Set([
   "billing_events",
   "impersonation_sessions",
   "activation_events",
+  "competition_passes",
 ]);
 
 const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
