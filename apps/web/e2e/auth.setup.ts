@@ -1,5 +1,10 @@
 import { test as setup, expect, type Page } from "@playwright/test";
-import { proEmail, communityEmail, setOrgPlanBySql } from "./helpers";
+import {
+  proEmail,
+  communityEmail,
+  setOrgPlanBySql,
+  setEntitlementOverrideSql,
+} from "./helpers";
 
 const PRO_STATE = "e2e/.auth/pro.json";
 const COMMUNITY_STATE = "e2e/.auth/community.json";
@@ -62,6 +67,14 @@ setup("authenticate as a fresh Pro org", async ({ page }) => {
   await provision(page, email);
   // Pro plan → advanced entitlements resolve like a paying org.
   await setOrgPlanBySql({ email }, "pro");
+  // The e2e run budgets 5 owned orgs for this shared user (see
+  // playwright.config); the v3 pro cap is 3, so lift it via override —
+  // exactly the grandfathering tool real over-cap owners get.
+  const orgs = (await (
+    await page.request.get("/api/orgs")
+  ).json()) as { data?: { id: string }[] };
+  const setupOrgId = orgs.data?.[0]?.id;
+  if (setupOrgId) await setEntitlementOverrideSql(setupOrgId, "orgs.max_owned", 5);
   await capture(page, PRO_STATE);
 });
 

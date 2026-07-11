@@ -28,8 +28,13 @@ test("deleting a setup division lifts the free-plan divisions gate", async ({ pa
   );
   expect(first.status).toBe(201);
   const divisionId = first.data!.id;
+  const filler = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
+    name: "Filler",
+    ...GENERIC,
+  });
+  expect(filler.status).toBe(201);
 
-  // Community divisions.per_competition.max = 1: the second is 402-gated.
+  // Community divisions.per_competition.max = 2 (v3): the third is 402-gated.
   const gated = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
     name: "Second",
     ...GENERIC,

@@ -172,7 +172,12 @@ describe.skipIf(!HAS_DB)("division delete (v3/09 §4)", () => {
 
 describe.skipIf(!HAS_DB)("division archive / restore (v3/09 §4)", () => {
   it("archive hides from the console list, the public view, and frees the plan slot", async () => {
-    const { auth } = await seedOrg("community"); // divisions.per_competition.max = 1
+    // Pin the division quota at 1 via override — the test exercises the
+    // freeing/restore arithmetic, not the (v3: 2) community number.
+    const { auth } = await seedOrg("community");
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+      values (${auth.orgId}, 'divisions.per_competition.max', 1, 'test probe')`;
     const comp = await createCompetition(auth, {
       name: `Arch ${randomUUID().slice(0, 6)}`,
       visibility: "public",

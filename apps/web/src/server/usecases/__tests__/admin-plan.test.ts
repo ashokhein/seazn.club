@@ -85,12 +85,12 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     }
 
     const preview = await downgradeFreezePreview(orgId);
-    expect(preview.limit).toBe(2); // community quota
+    expect(preview.limit).toBe(1); // community quota (v3 matrix)
     expect(preview.active).toBe(3);
-    expect(preview.frozen).toHaveLength(1); // stalest one
+    expect(preview.frozen).toHaveLength(2); // the two stalest
 
     const result = await adminDowngrade(actorId, orgId, "abuse of comp");
-    expect(result.frozen).toHaveLength(1);
+    expect(result.frozen).toHaveLength(2);
     const [row] = await sql<{ plan_key: string }[]>`
       select plan_key from subscriptions where org_id = ${orgId}`;
     expect(row.plan_key).toBe("community");
@@ -99,7 +99,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
       select detail from staff_audit_log
       where target_id = ${orgId} and action = 'admin_downgrade' limit 1`;
     expect(audit.detail.reason).toBe("abuse of comp");
-    expect(audit.detail.after.frozen).toHaveLength(1);
+    expect(audit.detail.after.frozen).toHaveLength(2);
   });
 
   it("extendTrial moves trial_end forward from now (no Stripe sub) and audits", async () => {

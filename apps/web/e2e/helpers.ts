@@ -125,6 +125,36 @@ export async function setOrgPlanBySql(
   });
 }
 
+/** Lift an org-level entitlement via override (v3/08 admin tool analogue).
+ *  auth.setup.ts uses it to keep the shared Pro user's 5-org e2e budget now
+ *  that the v3 pro cap is 3 — the creation check honours overrides. */
+export async function setEntitlementOverrideSql(
+  orgId: string,
+  featureKey: string,
+  intValue: number,
+): Promise<void> {
+  await withDb(async (sql) => {
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+      values (${orgId}, ${featureKey}, ${intValue}, 'e2e budget')
+      on conflict (org_id, feature_key) do update set int_value = ${intValue}`;
+  });
+}
+
+/** Grant an Event Pass (v3/07 §3) directly — the one-time Stripe checkout
+ *  can't run in e2e, same SQL-flip convention as plans. */
+export async function grantCompetitionPassSql(
+  orgId: string,
+  competitionId: string,
+): Promise<void> {
+  await withDb(async (sql) => {
+    await sql`
+      insert into competition_passes (competition_id, org_id)
+      values (${competitionId}, ${orgId})
+      on conflict (competition_id) do nothing`;
+  });
+}
+
 /** Force a subscription lifecycle state (trialing / past_due / …) for banner
  *  and CTA assertions — states Stripe would otherwise own. */
 export async function setOrgSubscriptionSql(

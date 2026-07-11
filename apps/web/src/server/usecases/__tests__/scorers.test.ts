@@ -62,6 +62,11 @@ async function seedOrg(): Promise<{ orgId: string; ownerId: string; slug: string
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(DIVISION_CONFIG)}, true)
     on conflict do nothing`;
+  // Role tests rig several competitions per org; the v3 free cap (1 active)
+  // is not under test here — lift it via override.
+  await sql`
+    insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+    values (${orgId}, 'competitions.max_active', 10, 'test probe')`;
   return { orgId, ownerId, slug: "org-" + suffix };
 }
 

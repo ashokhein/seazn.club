@@ -119,7 +119,14 @@ test.describe.serial("community lifecycle", () => {
   });
 
   test("17th entrant is blocked: 402 + contextual upgrade gate", async ({ page, request }) => {
-    // Second competition (community allows 2 active) with its own division.
+    // The v3 free plan allows 1 active competition — retire the Village Cup
+    // before this test's own competition, or the create itself 402s.
+    if (competitionId) {
+      await apiJson(request, `/api/v1/competitions/${competitionId}`, "PATCH", {
+        status: "archived",
+        visibility: "private",
+      });
+    }
     const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
       name: `Limits ${TAG}`,
       visibility: "private",

@@ -209,6 +209,11 @@ describe.skipIf(!HAS_DB)("entitlement split (doc 09 §4, doc 10)", () => {
 
   it("community orgs hold at most one public competition (dashboard.public.max)", async () => {
     const { auth } = await seedOrg();
+    // The v3 active-comp cap (1) would fire first — lift it via override so
+    // this test isolates the public-dashboard quota.
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+      values (${auth.orgId}, 'competitions.max_active', 10, 'test probe')`;
     await createCompetition(auth, { name: "First", visibility: "public", branding: {} });
     await expect(
       createCompetition(auth, { name: "Second", visibility: "public", branding: {} }),

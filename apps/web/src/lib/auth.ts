@@ -200,10 +200,17 @@ async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
     left join subscriptions s on s.org_id = m.org_id
     where m.user_id = ${userId} and m.role = 'owner'`;
   if (owned.length === 0) return;
+  // Overrides on any owned org lift the user too (v3 grandfathering: the pro
+  // cap dropped 5 → 3, existing owners keep their headroom via override).
   const limits = await sql<{ int_value: number | null }[]>`
     select int_value from plan_entitlements
     where feature_key = 'orgs.max_owned'
-      and plan_key in ${sql([...new Set(owned.map((o) => o.plan_key))])}`;
+      and plan_key in ${sql([...new Set(owned.map((o) => o.plan_key))])}
+    union all
+    select o.int_value from org_entitlement_overrides o
+    join org_members m on m.org_id = o.org_id and m.user_id = ${userId} and m.role = 'owner'
+    where o.feature_key = 'orgs.max_owned'
+      and (o.expires_at is null or o.expires_at > now())`;
   // Best plan wins; a NULL int_value = unlimited; no rows = community default 1.
   if (limits.some((l) => l.int_value === null) && limits.length > 0) return;
   const limit = limits.length > 0 ? Math.max(...limits.map((l) => l.int_value as number)) : 1;

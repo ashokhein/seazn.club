@@ -63,7 +63,7 @@ async function resolveFromDb(
 
   // A comped plan past its end date resolves as community at read time —
   // no scheduler flips it, the resolution does (bounded by the 5-min cache).
-  const [{ plan_key: planKey }] = await sql<{ plan_key: string }[]>`
+  const [orgPlan] = await sql<{ plan_key: string }[]>`
     select case
       when s.comped_until is not null and s.comped_until <= now()
            and s.stripe_subscription_id is null then 'community'
@@ -72,6 +72,7 @@ async function resolveFromDb(
     from organizations o
     left join subscriptions s on s.org_id = o.id
     where o.id = ${orgId}`;
+  const planKey = orgPlan?.plan_key ?? "community";
 
   // Event Pass (v3/07 §3): lifts a single competition for community orgs
   // only — under any paid plan the pass is deliberately moot (Pro's matrix is

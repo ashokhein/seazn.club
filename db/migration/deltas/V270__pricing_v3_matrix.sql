@@ -62,3 +62,17 @@ where coalesce(s.plan_key, 'community') = 'community'
 group by o.id
 having count(c.id) > 1
 on conflict (org_id, feature_key) do nothing;
+
+-- Pro's orgs.max_owned drops 5 → 3: owners already past the new cap keep the
+-- old headroom via an override on ONE of their paid orgs (the creation check
+-- in lib/auth.ts honours overrides on any owned org).
+insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+select distinct on (m.user_id) m.org_id, 'orgs.max_owned', 5,
+       'v3 pricing grandfather (2026-07)'
+from org_members m
+join subscriptions s on s.org_id = m.org_id and coalesce(s.plan_key, 'community') <> 'community'
+where m.role = 'owner'
+  and (select count(*) from org_members m2
+       where m2.user_id = m.user_id and m2.role = 'owner') > 3
+order by m.user_id, m.org_id
+on conflict (org_id, feature_key) do nothing;

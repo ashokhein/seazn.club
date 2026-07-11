@@ -122,6 +122,11 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
   it("create-time opt-in: wizard checkbox persists, audits, and 422s non-public", async () => {
     const { orgId, ownerId } = await seedOrg();
     const owner = asOwner(orgId, ownerId);
+    // Two creates in this test; the v3 free cap (1 active) would 402 the
+    // second before the 422 under test — lift the comp quota via override.
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+      values (${orgId}, 'competitions.max_active', 10, 'test probe')`;
 
     // Public + discoverable at create → persisted and audited (opt_in).
     const created = await createCompetition(owner, {
