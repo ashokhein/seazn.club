@@ -417,3 +417,54 @@ body {
   letter-spacing: 0.3em;
   color: #8d7fc0;
 }
+
+/* Hero vignette choreography (~2.6s once, then idle). Transform/opacity only. */
+.mk-vignette .mk-ball {
+  animation:
+    mk-ball-toss 1.1s cubic-bezier(0.3, 0, 0.4, 1) forwards,
+    mk-ball-fly 0.9s 1.5s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  transform: translate(302px, 250px);
+}
+@keyframes mk-ball-toss {
+  40% { transform: translate(302px, 96px); }
+  100% { transform: translate(302px, 148px); }
+}
+@keyframes mk-ball-fly {
+  60% { transform: translate(120px, 90px); }
+  100% { transform: translate(58px, 246px); opacity: 0; }
+}
+.mk-vignette .mk-bat {
+  transform-origin: 301px 226px;
+  animation:
+    mk-bat-swing 0.5s 1.25s cubic-bezier(0.3, 0, 0.2, 1.4) forwards,
+    mk-bat-sway 8s 3s ease-in-out infinite;
+  transform: rotate(8deg);
+}
+@keyframes mk-bat-swing {
+  0% { transform: rotate(8deg); }
+  60% { transform: rotate(-52deg); }
+  100% { transform: rotate(-38deg); }
+}
+@keyframes mk-bat-sway {
+  0%, 100% { transform: rotate(-38deg); }
+  50% { transform: rotate(-34deg); }
+}
+.mk-vignette .mk-star {
+  opacity: 0;
+  transform-origin: 308px 148px;
+  animation: mk-star-pop 0.5s 1.5s cubic-bezier(0.2, 1.6, 0.4, 1) forwards;
+}
+@keyframes mk-star-pop {
+  0% { opacity: 0; transform: scale(0.2); }
+  60% { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 0; transform: scale(0.9); }
+}
+.mk-live-dot { animation: mk-pulse 1.6s 2.4s ease-in-out infinite; }
+@keyframes mk-pulse { 50% { opacity: 0.35; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-vignette .mk-ball { animation: none; opacity: 0; }
+  .mk-vignette .mk-bat { animation: none; transform: rotate(-38deg); }
+  .mk-vignette .mk-star { animation: none; opacity: 0; }
+  .mk-live-dot { animation: none; }
+}
