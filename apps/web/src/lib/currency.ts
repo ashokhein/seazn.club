@@ -13,6 +13,13 @@ export function isSupportedCurrency(value: unknown): value is Currency {
   return typeof value === "string" && (SUPPORTED_CURRENCIES as readonly string[]).includes(value);
 }
 
+/** Narrow Stripe's plain-string currency (any case) for display helpers; usd
+ *  fallback keeps formatting total even if an unexpected currency appears. */
+export function asCurrency(value: unknown): Currency {
+  const lower = typeof value === "string" ? value.toLowerCase() : value;
+  return isSupportedCurrency(lower) ? lower : "usd";
+}
+
 interface PriceSpec {
   unit_amount: number;
   currency_options?: Record<string, number>;

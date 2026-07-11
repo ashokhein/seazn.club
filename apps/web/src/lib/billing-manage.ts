@@ -16,6 +16,24 @@ export function buildSetupIntentParams(customerId: string): Stripe.SetupIntentCr
   };
 }
 
+export type BillingInterval = "monthly" | "annual";
+
+/** Response of GET /api/billing/interval/preview — everything the confirm
+ *  panel shows, plus the pinned prorationDate the apply call must echo. */
+export interface IntervalPreview {
+  interval: BillingInterval;
+  trialing: boolean;
+  dueTodayMinor: number;
+  creditMinor: number;
+  currency: string;
+  /** When the next full charge lands (new period end; trial end while trialing). */
+  newPeriodEnd: string | null;
+  /** The recurring amount at the new interval (SET price point, sub currency). */
+  renewalAmountMinor: number | null;
+  /** Echo back to POST /api/billing/interval so actual == previewed. */
+  prorationDate: number;
+}
+
 export interface IntervalChangeArgs {
   customerId: string;
   subscriptionId: string;

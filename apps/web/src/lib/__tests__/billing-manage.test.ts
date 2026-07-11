@@ -3,6 +3,7 @@
 // interval switch with its pinned proration_date (preview == actual), the
 // invoice/payment-method display rows and the lazy renewal re-sync predicate.
 import { describe, expect, it } from "vitest";
+import { asCurrency } from "@/lib/currency";
 import {
   buildSetupIntentParams,
   buildIntervalPreviewParams,
@@ -173,6 +174,15 @@ describe("paymentMethodRows", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].isDefault).toBe(false);
+  });
+});
+
+describe("asCurrency", () => {
+  it("narrows Stripe's plain-string currency to a supported one, usd fallback", () => {
+    expect(asCurrency("gbp")).toBe("gbp");
+    expect(asCurrency("GBP")).toBe("gbp");
+    expect(asCurrency("jpy")).toBe("usd");
+    expect(asCurrency(null)).toBe("usd");
   });
 });
 

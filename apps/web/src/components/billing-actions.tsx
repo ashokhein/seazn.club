@@ -1,15 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { loadStripe } from "@stripe/stripe-js";
 import { EmbeddedCheckoutProvider, EmbeddedCheckout } from "@stripe/react-stripe-js";
 import { track, EVENTS } from "@/lib/analytics";
 import { fetchCheckoutClientSecret } from "@/lib/billing-checkout-client";
+import { stripePromise } from "@/lib/stripe-browser";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { msg } from "@/lib/messages";
-
-// Load Stripe.js once for the whole app (publishable key is public).
-const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY ?? "");
 
 /** In-page upgrade via Stripe Embedded Checkout — reveals the checkout inline
  *  (no redirect out) and only returns to the billing page on completion. We
@@ -118,43 +115,5 @@ export function DowngradeButton() {
   );
 }
 
-export function ManageBillingButton({
-  label = "Manage billing →",
-  primary = false,
-}: {
-  label?: string;
-  primary?: boolean;
-} = {}) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function go() {
-    setLoading(true);
-    setError(null);
-    const res = await fetch("/api/billing/portal", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: "{}",
-    });
-    const data = await res.json();
-    if (data.ok && data.data?.url) {
-      window.location.href = data.data.url;
-    } else {
-      setError(data.error ?? "Something went wrong");
-      setLoading(false);
-    }
-  }
-
-  return (
-    <div>
-      <button
-        onClick={go}
-        disabled={loading}
-        className={`btn ${primary ? "btn-primary" : "btn-ghost"} disabled:opacity-60`}
-      >
-        {loading ? "Opening portal…" : label}
-      </button>
-      {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
-    </div>
-  );
-}
+// ManageBillingButton (Stripe Customer Portal redirect) died in v3/11 — card,
+// plan and invoice management live in-app now (components/billing-manage.tsx).

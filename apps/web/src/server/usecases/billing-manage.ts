@@ -15,9 +15,12 @@ import {
   needsRenewalResync,
   paymentMethodRows,
   summarizeIntervalPreview,
+  type BillingInterval,
+  type IntervalPreview,
   type InvoiceRow,
   type PaymentMethodRow,
 } from "@/lib/billing-manage";
+export type { BillingInterval, IntervalPreview };
 import { proPrice, type Currency } from "@/lib/currency";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
@@ -27,8 +30,6 @@ import { EVENTS } from "@/lib/analytics-events";
  * portal-replacement routes and the billing page share. Pure decisions live in
  * lib/billing-manage; this file owns the Stripe/DB round trips.
  */
-
-export type BillingInterval = "monthly" | "annual";
 
 interface SubRow {
   plan_key: string;
@@ -261,20 +262,6 @@ async function resolveIntervalChange(
     planKey: sub.plan_key,
     trialEnd: sub.trial_end,
   };
-}
-
-export interface IntervalPreview {
-  interval: BillingInterval;
-  trialing: boolean;
-  dueTodayMinor: number;
-  creditMinor: number;
-  currency: string;
-  /** When the next full charge lands (new period end; trial end while trialing). */
-  newPeriodEnd: string | null;
-  /** The recurring amount at the new interval (SET price point, sub currency). */
-  renewalAmountMinor: number | null;
-  /** Echo back to POST /api/billing/interval so actual == previewed. */
-  prorationDate: number;
 }
 
 export async function previewIntervalChange(
