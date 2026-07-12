@@ -10,9 +10,12 @@ export function MotifDivider({ kind }: { kind: "shuttle" | "knight" }) {
         <line x1="24" y1="46" x2="776" y2="46" stroke="var(--mk-lime)" strokeWidth="2" opacity="0.35" strokeLinecap="round" />
         {kind === "shuttle" ? (
           <g className="mk-shuttle">
-            {/* shuttlecock: cork nose + feather cone */}
-            <path d="M6 0 L26 -9 L26 9 Z" fill="var(--mk-lime)" stroke="#1e1b2e" strokeWidth="2" strokeLinejoin="round" />
-            <circle cx="4" cy="0" r="4.5" fill="var(--mk-cream)" stroke="#1e1b2e" strokeWidth="2" />
+            {/* shuttlecock: cork nose + feather cone; inner group flips so
+                the cork leads in whichever direction the rally travels */}
+            <g className="mk-shuttle-glyph">
+              <path d="M6 0 L26 -9 L26 9 Z" fill="var(--mk-lime)" stroke="#1e1b2e" strokeWidth="2" strokeLinejoin="round" />
+              <circle cx="4" cy="0" r="4.5" fill="var(--mk-cream)" stroke="#1e1b2e" strokeWidth="2" />
+            </g>
           </g>
         ) : (
           <>
