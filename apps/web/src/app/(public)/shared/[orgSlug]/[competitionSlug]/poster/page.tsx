@@ -37,6 +37,8 @@ export default async function PosterPage({ params }: Props) {
         <div aria-hidden className="h-1 bg-accent" />
         <div className="flex flex-col items-center gap-5 px-8 py-8">
           <div className="rounded-2xl border border-zinc-200 p-3 shadow-sm">
+            {/* data: URI QR code — generated in-memory, not storage-served; next/image
+                optimizer doesn't apply, stays <img> */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src={qr} alt={`QR code for ${url}`} className="h-72 w-72" />
           </div>

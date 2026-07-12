@@ -8,6 +8,7 @@
 // Youth divisions (v3/11 gap 8) always include the guardian-consent preset.
 import { useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { apiV1 } from "@/lib/client-v1";
 import { msg } from "@/lib/messages";
 import { Tip } from "@/components/ui/tip";
@@ -391,8 +392,8 @@ export function RegisterForm({
       <header className="overflow-hidden rounded-2xl border border-zinc-200 bg-surface">
         <div className="flex items-center gap-4 px-5 py-4">
           {org.logo_url ? (
-            /* eslint-disable-next-line @next/next/no-img-element -- org asset */
-            <img
+            // resolveLogoUrl(...) output — storage-served, covered by remotePatterns.
+            <Image
               src={org.logo_url}
               alt=""
               width={48}

@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 // confirmation. Uncached — remaining capacity is live.
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import Image from "next/image";
 import type { Metadata } from "next";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
 import { getPublicOrg } from "@/server/public-site/data";
@@ -52,8 +53,8 @@ export default async function RegisterPage({ params }: Props) {
           {sponsors.slice(0, 5).map((s) => (
             <span key={s.name} className="inline-flex items-center gap-1.5">
               {s.logo ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={s.logo} alt="" className="h-4 w-4 rounded-sm object-contain" />
+                // sponsor logo — uploaded via content-upload, always a storage URL.
+                <Image src={s.logo} alt="" width={16} height={16} className="h-4 w-4 rounded-sm object-contain" />
               ) : null}
               {s.name}
             </span>

@@ -42,6 +42,7 @@ export default async function PlayerCardPage({ params }: Props) {
       </nav>
       <div className="flex items-start gap-4">
         {player.photo ? (
+          // arbitrary-host avatar — not in remotePatterns, stays <img>
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={player.photo}

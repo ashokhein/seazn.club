@@ -76,7 +76,29 @@ const nextConfig = {
       },
     ];
   },
+  // next/image: only Supabase Storage public objects are optimizable —
+  // arbitrary avatar URLs stay on plain <img> (can't enumerate the internet
+  // in remotePatterns). Long minimumCacheTTL: logos change rarely and the
+  // optimizer output is CPU we don't want to respend (spec 2026-07-12 P2).
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: process.env.NEXT_PUBLIC_SUPABASE_URL
+          ? new URL(process.env.NEXT_PUBLIC_SUPABASE_URL).hostname
+          : "*.supabase.co",
+        pathname: "/storage/v1/object/public/**",
+      },
+    ],
+    minimumCacheTTL: 86400,
+  },
 };
+
+// Pre-wrap config, re-exported by name: withSentryConfig's returned object
+// isn't guaranteed to expose `images` in a stable, typed shape, so tests (and
+// anything else needing the raw Next config) should import this instead of
+// the default export.
+export { nextConfig };
 
 export default withSentryConfig(nextConfig, {
   // Source map upload — set SENTRY_AUTH_TOKEN + SENTRY_ORG + SENTRY_PROJECT in CI
