@@ -84,6 +84,10 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
       attributes: {
         class:
           "competition-prose min-h-40 max-w-none rounded-b-lg px-3 py-2 outline-none",
+        // A bare contenteditable <div> is role=generic, where aria-label is
+        // prohibited (axe: aria-prohibited-attr). Declare what it really is.
+        role: "textbox",
+        "aria-multiline": "true",
         "aria-label": placeholder ?? "Description",
       },
     },

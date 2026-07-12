@@ -14,10 +14,10 @@ export const metadata: Metadata = {
 export default function FormatGalleryPage() {
   return (
     <div>
-      <p className="font-mono text-xs uppercase tracking-[0.25em] text-purple-600">
+      <p className="mk-eyebrow">
         Format gallery
       </p>
-      <h1 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">
+      <h1 className="mk-display mt-3 text-4xl font-bold text-purple-950">
         Pick the right shape for your day
       </h1>
       <p className="mt-3 max-w-2xl text-slate-600">

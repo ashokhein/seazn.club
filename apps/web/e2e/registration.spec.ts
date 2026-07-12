@@ -47,7 +47,8 @@ test("public registration: open → register → confirm to entrant", async ({
     await anon.getByText("Singles").first().click(); // division radio card
     await anon.getByLabel(/full name/i).fill(`Reg Runner ${TAG}`);
     await anon.getByLabel(/contact email/i).fill(`e2e-reg-${TAG}@example.com`);
-    await anon.getByRole("button", { name: /submit registration/i }).click();
+    // Registration v2 (PROMPT-34) renamed the submit CTA.
+    await anon.getByRole("button", { name: "Enter the competition" }).click();
 
     // Free registrations land on the tokenised status page.
     await anon.waitForURL(/\/register\/status\?/, { timeout: 20_000 });

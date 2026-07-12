@@ -4,8 +4,7 @@
 // filter combination.
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 import {
   getDiscoveryDirectory,
   listDiscoverySports,
@@ -47,9 +46,9 @@ export default async function DiscoverPage({
 
   return (
     <>
-      <MarketingNav />
+      <MarketingShell>
       <main className="mx-auto max-w-5xl px-4 py-12">
-        <h1 className="text-3xl font-extrabold tracking-tight text-purple-950">
+        <h1 className="mk-display text-4xl font-bold text-purple-950">
           Discover tournaments
         </h1>
         <p className="mt-2 max-w-xl text-slate-600">
@@ -125,7 +124,7 @@ export default async function DiscoverPage({
           </Link>
         </section>
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </>
   );
 }

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 
 export const metadata: Metadata = {
   title: { default: "Developers — Seazn Club", template: "%s — Seazn Club Developers" },
@@ -19,7 +18,7 @@ const NAV = [
 export default function DevelopersLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-white">
-      <MarketingNav />
+      <MarketingShell>
       <div className="border-b border-purple-100 bg-purple-50/40">
         <nav
           aria-label="Developer docs"
@@ -37,7 +36,7 @@ export default function DevelopersLayout({ children }: { children: React.ReactNo
         </nav>
       </div>
       <main className="flex-1">{children}</main>
-      <MarketingFooter />
+      </MarketingShell>
     </div>
   );
 }

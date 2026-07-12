@@ -1,11 +1,11 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { sql } from "@/lib/db";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
 import { buildPricingRows, type MatrixData } from "@/lib/pricing-matrix";
+import { FREE_FEATURES, PASS_FEATURES, PRO_FEATURES } from "@/lib/pricing-cards";
 import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { CurrencySwitcher } from "@/components/currency-switcher";
@@ -19,33 +19,6 @@ export const metadata: Metadata = {
   description:
     "Free forever for small clubs. Upgrade a single event for $39, or go Pro at $20/month for unlimited competitions, entry fees, and realtime scoreboards. 14-day trial, no card required.",
 };
-
-const FREE_FEATURES = [
-  "1 active competition, 2 divisions",
-  "16 entrants per division",
-  "League, groups + knockout & swiss formats",
-  "Free-event online registration",
-  "Live standings & public dashboard",
-  "Listed on the seazn.club showcase",
-];
-
-const PASS_FEATURES = [
-  "Upgrades ONE competition, forever",
-  "10 divisions, 32 entrants each",
-  "Advanced formats — double elim, ladders",
-  "Entry fees via Stripe (5% platform fee)",
-  "Custom branding & PDF/XLSX exports",
-  "Realtime scoreboard & slideshow",
-];
-
-const PRO_FEATURES = [
-  "Unlimited competitions & divisions",
-  "256 entrants per division",
-  "Entry fees at a 2% platform fee",
-  "Ball-by-ball & rally scoring, player stats",
-  "Officials, exports, API keys, device links",
-  "Remove the “Powered by Seazn” badge",
-];
 
 const FAQS = [
   {
@@ -112,10 +85,11 @@ export default async function PricingPage() {
   return (
     <>
       <TrackOnMount event={EVENTS.PRICING_VIEWED} />
-      <MarketingNav />
+      <MarketingShell>
       <main>
         <section className="mx-auto max-w-5xl px-4 pb-14 pt-16 text-center">
-          <h1 className="mb-3 text-4xl font-extrabold tracking-tight text-purple-950 sm:text-5xl">
+          <p className="mk-eyebrow mb-3 justify-center">Pricing</p>
+          <h1 className="mk-display mb-3 text-5xl font-bold text-purple-950 sm:text-6xl">
             Pay for the event, or the whole season
           </h1>
           <p className="text-lg text-slate-600">
@@ -151,8 +125,8 @@ export default async function PricingPage() {
             </div>
 
             {/* Event Pass */}
-            <div className="card flex flex-col border-amber-300 bg-amber-50/60 p-8">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-amber-600">
+            <div className="card flex flex-col border-[#b5d977] bg-[#f7fce9] p-8">
+              <p className="mk-display mb-1 text-xs font-semibold tracking-[0.18em] text-[#4d7c0f]">
                 Event Pass
               </p>
               <p className="mb-1 text-4xl font-bold text-slate-900">
@@ -165,7 +139,7 @@ export default async function PricingPage() {
               <ul className="mb-8 flex-1 space-y-2.5 text-sm text-slate-600">
                 {PASS_FEATURES.map((f) => (
                   <li key={f} className="flex items-start gap-2">
-                    <span className="mt-0.5 text-amber-500">✓</span>
+                    <span className="mt-0.5 text-[#4d7c0f]">✓</span>
                     {f}
                   </li>
                 ))}
@@ -201,7 +175,7 @@ export default async function PricingPage() {
                     <tr key={r.label}>
                       <td className="font-medium text-slate-700">{r.label}</td>
                       <td className="text-center text-slate-500">{r.free}</td>
-                      <td className="text-center text-amber-700">{r.pass}</td>
+                      <td className="text-center text-[#4d7c0f]">{r.pass}</td>
                       <td className="text-center font-medium text-purple-700">{r.pro}</td>
                     </tr>
                   ))}
@@ -246,7 +220,7 @@ export default async function PricingPage() {
           </Link>
         </section>
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </>
   );
 }

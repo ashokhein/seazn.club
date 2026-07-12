@@ -40,7 +40,7 @@ test.describe.serial("community lifecycle", () => {
       "/api/v1/competitions",
     );
     for (const c of leftovers.data?.items ?? []) {
-      if (c.name.startsWith("Village Cup ")) {
+      if (c.name.startsWith("Village Cup ") || c.name.startsWith("Limits ")) {
         await apiJson(request, `/api/v1/competitions/${c.id}`, "PATCH", {
           status: "archived",
           visibility: "private",

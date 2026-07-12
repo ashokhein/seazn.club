@@ -53,18 +53,20 @@ test.describe.serial("event pass gate (community org)", () => {
     page,
     request,
   }) => {
-    // Retire leftovers from earlier attempts — both free ceilings are shared.
+    // This test owns the community org's whole quota story, and earlier
+    // serial specs legitimately leave active competitions behind (journey-
+    // community's `Limits …` comp keeps serving its later gating tests).
+    // Sweep EVERY active competition — not just our own leftovers — so the
+    // free max_active slot is provably empty before we count against it.
     const leftovers = await apiJson<{ items: { id: string; name: string }[] }>(
       request,
       "/api/v1/competitions",
     );
     for (const c of leftovers.data?.items ?? []) {
-      if (c.name.startsWith("Pass Gate ")) {
-        await apiJson(request, `/api/v1/competitions/${c.id}`, "PATCH", {
-          status: "archived",
-          visibility: "private",
-        });
-      }
+      await apiJson(request, `/api/v1/competitions/${c.id}`, "PATCH", {
+        status: "archived",
+        visibility: "private",
+      });
     }
 
     const comp = await apiJson<{ id: string; slug: string }>(

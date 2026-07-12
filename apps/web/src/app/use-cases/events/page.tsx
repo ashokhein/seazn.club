@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 
 export const metadata: Metadata = {
   title: "For Tournaments & Events — Seazn Club",
@@ -12,18 +11,13 @@ export const metadata: Metadata = {
 export default function EventsPage() {
   return (
     <>
-      <MarketingNav />
+      <MarketingShell>
       <main>
         <section className="mx-auto max-w-4xl px-4 pb-16 pt-16">
-          <div className="mb-4">
-            <Link href="/" className="text-sm text-purple-600 hover:underline">
-              ← Back
-            </Link>
-          </div>
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700">
+          <div className="mk-display mb-4 inline-flex items-center gap-2 rounded-full bg-[var(--mk-lime)] px-3 py-1 text-xs font-semibold tracking-[0.14em] text-[var(--mk-night)]">
             Use case: Tournaments & events
           </div>
-          <h1 className="mb-4 text-4xl font-extrabold tracking-tight text-purple-950 sm:text-5xl">
+          <h1 className="mk-display mb-4 text-5xl font-bold text-purple-950 sm:text-6xl">
             One-day tournaments, stress-free
           </h1>
           <p className="mb-8 max-w-2xl text-lg text-slate-600">
@@ -84,7 +78,7 @@ export default function EventsPage() {
           </Link>
         </section>
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </>
   );
 }

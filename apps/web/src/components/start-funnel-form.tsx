@@ -15,11 +15,25 @@ export const FUNNEL_SPORTS = [
   "Other",
 ] as const;
 
+/** Wrapper classes for the funnel form; exported for the night-variant
+ *  regression test (the component itself needs the app router mounted). */
+export function funnelFormClasses(compact: boolean, variant: "light" | "night"): string {
+  return `mx-auto flex w-full max-w-2xl flex-col gap-2 sm:flex-row sm:items-end ${
+    compact ? "" : "rounded-2xl border p-3 shadow-sm backdrop-blur"
+  } ${variant === "night" ? "mk-funnel-night" : compact ? "" : "border-purple-200 bg-white/80"}`;
+}
+
 /** Hero funnel form (v3/07 §6): sport + field size + date, no auth — the
  *  visitor invests first, authenticates later on /start. */
-export function StartFunnelForm({ compact = false }: { compact?: boolean }) {
+export function StartFunnelForm({
+  compact = false,
+  variant = "light",
+}: {
+  compact?: boolean;
+  variant?: "light" | "night";
+}) {
   const router = useRouter();
-  const [sport, setSport] = useState<string>("Badminton");
+  const [sport, setSport] = useState<string>("Football");
   const [entrants, setEntrants] = useState("16");
   const [date, setDate] = useState("");
 
@@ -34,9 +48,9 @@ export function StartFunnelForm({ compact = false }: { compact?: boolean }) {
     <form
       onSubmit={go}
       data-start-funnel
-      className={`mx-auto flex w-full max-w-2xl flex-col gap-2 sm:flex-row sm:items-end ${compact ? "" : "rounded-2xl border border-purple-200 bg-white/80 p-3 shadow-sm backdrop-blur"}`}
+      className={funnelFormClasses(compact, variant)}
     >
-      <label className="flex-1 text-left">
+      <label className="min-w-44 flex-1 text-left">
         <span className="label mb-1 block text-xs">Sport</span>
         <select
           value={sport}
@@ -71,8 +85,8 @@ export function StartFunnelForm({ compact = false }: { compact?: boolean }) {
           name="date"
         />
       </label>
-      <button type="submit" className="btn btn-primary whitespace-nowrap px-5 py-2.5">
-        Set up my competition →
+      <button type="submit" className="btn btn-primary whitespace-nowrap px-4 py-2.5">
+        Setup →
       </button>
     </form>
   );

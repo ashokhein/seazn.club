@@ -65,8 +65,8 @@ export function CookieConsent() {
     <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-xl rounded-2xl border border-purple-100 bg-white p-4 shadow-xl sm:left-6 sm:right-auto sm:max-w-sm">
       <p className="text-sm text-slate-600">
         We use essential cookies to keep you logged in. With your consent, we
-        also use PostHog analytics to understand product usage and improve Seazn
-        Club. No advertising cookies.{" "}
+        also use a third-party analytics tool to understand product usage and
+        improve Seazn Club. No advertising cookies.{" "}
         <Link href="/legal/cookie-policy" className="text-purple-600 underline">
           Cookie policy
         </Link>

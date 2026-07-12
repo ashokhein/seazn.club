@@ -359,3 +359,262 @@ body {
 .ecard-list .ecard .ecard-next {
   @apply mt-0.5;
 }
+
+/* ── Marketing "stadium night" system (design/v3/12) ─────────────────────── */
+:root {
+  --mk-night: #150b36;
+  --mk-night-2: #1d1145;
+  --mk-cream: #f5f0e8;
+  --mk-lime: #a3e635;
+  --mk-purple: #7c3aed;
+  --mk-light-violet: #f6f3ff;
+  --mk-light-warm: #fffdf7;
+  --mk-orange: #fb923c;
+  --mk-live: #ef4444;
+}
+
+.mk-display {
+  font-family: var(--mk-font-display, var(--font-geist-sans));
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.mk-reveal { opacity: 0; transform: translateY(18px); }
+.mk-reveal.mk-in { animation: mk-rise 0.6s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+@keyframes mk-rise { to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-reveal { opacity: 1; transform: none; }
+  .mk-reveal.mk-in { animation: none; }
+}
+
+/* Ticket-stub chrome (floodlit finale, design/v3/12 §4.8) */
+.mk-stub::before,
+.mk-stub::after {
+  content: "";
+  position: absolute;
+  right: 3.25rem;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--mk-night);
+}
+.mk-stub::before { top: -8px; }
+.mk-stub::after { bottom: -8px; }
+.mk-stub-tear {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  right: 3.625rem;
+  border-right: 2px dashed #4a3885;
+}
+.mk-stub-admit {
+  position: absolute;
+  top: 50%;
+  right: 0.875rem;
+  transform: translateY(-50%) rotate(90deg);
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  color: #8d7fc0;
+}
+
+/* Hero vignette choreography (~2.6s once, then idle). Transform/opacity only.
+   Geometry: bat pivots at the grip (310,230); the blade's sweet spot passes
+   (282,152) when the swing crosses ~-20deg — the toss parks the ball exactly
+   there at 1.5s, so contact reads mid-blade, never on the handle. */
+.mk-vignette .mk-ball {
+  animation:
+    mk-ball-toss 1.1s cubic-bezier(0.3, 0, 0.4, 1) forwards,
+    mk-ball-fly 0.9s 1.5s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  transform: translate(322px, 252px);
+}
+@keyframes mk-ball-toss {
+  40% { transform: translate(286px, 100px); }
+  100% { transform: translate(282px, 152px); }
+}
+@keyframes mk-ball-fly {
+  60% { transform: translate(120px, 90px); }
+  100% { transform: translate(58px, 246px); opacity: 0; }
+}
+.mk-vignette .mk-bat {
+  transform-origin: 310px 230px;
+  animation:
+    mk-bat-swing 0.38s 1.31s cubic-bezier(0.3, 0, 0.2, 1.4) forwards,
+    mk-bat-sway 3s 3s ease-in-out infinite;
+  transform: rotate(35deg);
+}
+@keyframes mk-bat-swing {
+  0% { transform: rotate(35deg); }
+  50% { transform: rotate(-20deg); }
+  75% { transform: rotate(-45deg); }
+  100% { transform: rotate(-32deg); }
+}
+@keyframes mk-bat-sway {
+  0%, 100% { transform: rotate(-32deg); }
+  50% { transform: rotate(-28deg); }
+}
+.mk-vignette .mk-star {
+  opacity: 0;
+  transform-origin: 282px 152px;
+  animation: mk-star-pop 0.5s 1.5s cubic-bezier(0.2, 1.6, 0.4, 1) forwards;
+}
+@keyframes mk-star-pop {
+  0% { opacity: 0; transform: scale(0.2); }
+  60% { opacity: 1; transform: scale(1.15); }
+  100% { opacity: 0; transform: scale(0.9); }
+}
+.mk-live-dot { animation: mk-pulse 1.6s 2.4s ease-in-out infinite; }
+@keyframes mk-pulse { 50% { opacity: 0.35; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .mk-vignette .mk-ball { animation: none; opacity: 0; }
+  .mk-vignette .mk-bat { animation: none; transform: rotate(-32deg); }
+  .mk-vignette .mk-star { animation: none; opacity: 0; }
+  .mk-live-dot { animation: none; }
+}
+
+/* LIVE ticker marquee — duplicated row scrolls 50%; pause on hover/focus. */
+.mk-ticker { animation: mk-ticker-scroll 28s linear infinite; }
+.mk-ticker:hover,
+.mk-ticker:focus-within { animation-play-state: paused; }
+@keyframes mk-ticker-scroll { to { transform: translateX(-50%); } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-ticker { animation: none; }
+}
+
+/* Draw mind-map: nodes pop, edges draw themselves (design/v3/12 §4.4). */
+.mk-map-node { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.mk-in .mk-map-node { animation: mk-map-pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+@keyframes mk-map-pop {
+  0% { opacity: 0; transform: scale(0.7); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.mk-map-edge { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.mk-in .mk-map-edge { animation: mk-map-draw 0.6s 0.15s ease-out both; }
+@keyframes mk-map-draw { to { stroke-dashoffset: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-map-node { opacity: 1; }
+  .mk-map-edge { stroke-dashoffset: 0; }
+  .mk-in .mk-map-node, .mk-in .mk-map-edge { animation: none; }
+}
+
+/* Motif dividers: play once after Reveal adds .mk-in, then REST visible.
+   Hidden until then so no half-state flashes; reduced motion = end state. */
+.mk-shuttle, .mk-knight { opacity: 0; }
+/* Badminton rally: three passes, cork leading each way (design/v3/12 §4.6,
+   revised 12 Jul). Outer group travels; inner glyph flips per direction. */
+.mk-in .mk-shuttle { animation: mk-shuttle-rally 3.6s 0.1s cubic-bezier(0.4, 0, 0.4, 1) both; }
+@keyframes mk-shuttle-rally {
+  0% { opacity: 1; transform: translate(40px, 34px); }
+  15% { opacity: 1; transform: translate(300px, 9px); }
+  33% { opacity: 1; transform: translate(640px, 30px); }
+  48% { opacity: 1; transform: translate(340px, 10px); }
+  66% { opacity: 1; transform: translate(80px, 31px); }
+  81% { opacity: 1; transform: translate(420px, 9px); }
+  100% { opacity: 1; transform: translate(700px, 34px); }
+}
+.mk-shuttle-glyph { transform-box: fill-box; transform-origin: center; }
+.mk-in .mk-shuttle-glyph { animation: mk-shuttle-flip 3.6s 0.1s step-end both; }
+@keyframes mk-shuttle-flip {
+  0% { transform: scaleX(-1); }
+  33% { transform: scaleX(1); }
+  66% { transform: scaleX(-1); }
+  100% { transform: scaleX(-1); }
+}
+.mk-in .mk-knight { animation: mk-knight-tour 2.4s 0.1s cubic-bezier(0.45, 0, 0.3, 1) both; }
+/* Three chess-legal jumps: each traces an L — up 1, across 2, down 1. */
+@keyframes mk-knight-tour {
+  0% { opacity: 1; transform: translate(250px, 12px); }
+  6% { opacity: 1; transform: translate(250px, -10px); }
+  16% { opacity: 1; transform: translate(334px, -10px); }
+  22% { opacity: 1; transform: translate(334px, 12px); }
+  34% { opacity: 1; transform: translate(334px, 12px); }
+  40% { opacity: 1; transform: translate(334px, -10px); }
+  50% { opacity: 1; transform: translate(418px, -10px); }
+  56% { opacity: 1; transform: translate(418px, 12px); }
+  68% { opacity: 1; transform: translate(418px, 12px); }
+  74% { opacity: 1; transform: translate(418px, -10px); }
+  84% { opacity: 1; transform: translate(502px, -10px); }
+  90% { opacity: 1; transform: translate(502px, 12px); }
+  100% { opacity: 1; transform: translate(502px, 12px); }
+}
+.mk-in .mk-knight-sq-1 { animation: mk-square-in 0.3s 0.6s ease both; }
+.mk-in .mk-knight-sq-2 { animation: mk-square-in 0.3s 1.45s ease both; }
+.mk-in .mk-knight-sq-3 { animation: mk-square-in 0.3s 2.25s ease both; }
+@keyframes mk-square-in { to { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-shuttle { opacity: 1; transform: translate(700px, 34px); }
+  .mk-shuttle-glyph { transform: scaleX(-1); }
+  .mk-in .mk-shuttle-glyph { animation: none; }
+  .mk-knight { opacity: 1; transform: translate(502px, 12px); }
+  .mk-knight-sq { opacity: 0.45; }
+  .mk-in .mk-shuttle, .mk-in .mk-knight, .mk-in .mk-knight-sq-1, .mk-in .mk-knight-sq-2, .mk-in .mk-knight-sq-3 { animation: none; }
+}
+/* Matchday tools micro-animations */
+.mk-in .mk-lane-block { animation: mk-lane-in 0.5s cubic-bezier(0.22, 1.2, 0.36, 1) both; }
+@keyframes mk-lane-in { from { opacity: 0; transform: translateX(-24px); } }
+.mk-odometer { height: 1em; }
+.mk-in .mk-odometer-reel { animation: mk-odometer-roll 0.9s 0.3s cubic-bezier(0.3, 0, 0.2, 1) both; }
+@keyframes mk-odometer-roll { to { transform: translateY(-2em); } }
+.mk-in .mk-swap-a { animation: mk-swap-down 0.7s 0.4s ease both; }
+.mk-in .mk-swap-b { animation: mk-swap-up 0.7s 0.4s ease both; }
+@keyframes mk-swap-down { to { transform: translateY(1.1em); } }
+@keyframes mk-swap-up { to { transform: translateY(-1.1em); } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-in .mk-lane-block, .mk-in .mk-odometer-reel, .mk-in .mk-swap-a, .mk-in .mk-swap-b { animation: none; }
+}
+
+/* Nav variants — one component, class-flipped by NavScrollFlip. */
+.mk-nav { transition: background-color 0.25s ease, border-color 0.25s ease; }
+.mk-nav-solid { background: rgb(255 255 255 / 0.9); border-bottom: 1px solid #f3e8ff; backdrop-filter: blur(8px); }
+.mk-nav-solid .mk-nav-link { color: #475069; }
+.mk-nav-solid .mk-nav-link:hover { background: #faf5ff; color: #7e22ce; }
+.mk-nav-solid .mk-nav-cta { background: var(--mk-purple); color: #fff; }
+.mk-nav-night { background: transparent; border-bottom: 1px solid transparent; }
+.mk-nav-night .mk-nav-link { color: var(--mk-cream); opacity: 0.85; }
+.mk-nav-night .mk-nav-link:hover { opacity: 1; background: rgb(245 240 232 / 0.08); }
+.mk-nav-night .mk-nav-link.btn-ghost { background: transparent; border-color: #3b2a6e; color: var(--mk-cream); }
+.mk-nav-night .mk-nav-cta { background: var(--mk-lime); color: var(--mk-night); }
+.mk-nav-night .mk-nav-logo-img { display: none; }
+.mk-nav-night .mk-nav-logo-text { color: var(--mk-cream); }
+.mk-nav-solid .mk-nav-logo-text { display: none; }
+/* Dark funnel form variant */
+.mk-funnel-night { border-color: #3b2a6e; background: rgb(26 15 62 / 0.75); }
+.mk-funnel-night .label { color: #b7aede; }
+.mk-funnel-night .input { background: #241650; border-color: #3b2a6e; color: var(--mk-cream); }
+.mk-funnel-night .btn-primary,
+.mk-funnel-night button[type="submit"] { background: var(--mk-lime); color: var(--mk-night); }
+
+/* /scheduling attract-mode replay (~3.2s once) */
+.mk-replay-chip { width: 26%; left: 108%; }
+.mk-replay-chip-0 { animation: mk-replay-in 0.6s 0.3s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+.mk-replay-chip-1 { animation: mk-replay-in 0.6s 0.9s cubic-bezier(0.22, 1.2, 0.36, 1) forwards, mk-replay-clash 0.35s 1.7s ease 2; }
+.mk-replay-chip-2 { animation: mk-replay-in 0.6s 1.3s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+@keyframes mk-replay-in { to { left: 6%; } }
+@keyframes mk-replay-clash { 50% { box-shadow: 0 0 0 3px var(--mk-live); } }
+.mk-replay-fix { width: 22%; left: 108%; opacity: 0; animation: mk-replay-resolve 0.7s 2.5s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+@keyframes mk-replay-resolve { to { left: 40%; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-replay-chip, .mk-replay-fix { animation: none; }
+}
+
+/* Marketing eyebrow for light sections: lime tick + condensed violet label.
+   (Lime is decorative only on light backgrounds — never lime text on white.) */
+.mk-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--mk-font-display, var(--font-geist-sans));
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--mk-purple);
+}
+.mk-eyebrow::before {
+  content: "";
+  width: 1.5rem;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--mk-lime);
+}

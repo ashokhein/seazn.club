@@ -98,6 +98,7 @@ and a **marketing-page → competition funnel** that converts visitors before th
 | 09 | [09-engine-fixes-and-sim.md](09-engine-fixes-and-sim.md) | Badminton scoring correctness, cricket undo regression, sim-replay refresh, safe division delete | PROMPT-38 |
 | 10 | [10-roi-features-and-suggestions.md](10-roi-features-and-suggestions.md) | Out-of-the-box ROI features + market research, impact×effort ranked | PROMPT-39 (wave 1 only) |
 | 11 | [11-gaps-and-decisions.md](11-gaps-and-decisions.md) | Self-review: 16 gaps with decided defaults (Event Pass quota/tax, i18n layer, analytics, jobs, youth privacy, a11y bar, …) — **read before implementing any prompt** | patches inline |
+| 12 | [12-marketing-redesign.md](12-marketing-redesign.md) | Home/marketing redesign: "stadium night / matchday arc" identity, object-relay hero, The Draw configurator (`/api/public/format-preview`), ticket-stub pricing finale, `/scheduling` attract-mode board — approved 12 Jul brainstorm | branch `feat/marketing-matchday` |
 
 ## Prompt index (`prompts/`)
 
@@ -117,6 +118,7 @@ extended for every feature (pro + free paths); `tsc` + unit tests before push.
 | [PROMPT-37](prompts/PROMPT-37-admin-and-developer-api.md) | Admin v2 + published API docs + key scopes | — |
 | [PROMPT-38](prompts/PROMPT-38-engine-fixes-and-sim.md) | Badminton/cricket fixes, sim-replay v2, division delete | — (do FIRST) |
 | [PROMPT-39](prompts/PROMPT-39-roi-quick-wins.md) | Share cards, QR poster, embeds, sponsor slots | 32 |
+| [PROMPT-40](prompts/PROMPT-40-marketing-redesign.md) | Stadium-night marketing redesign: matchday-arc home, The Draw configurator, `/scheduling` attract board (spec: [12-marketing-redesign.md](../12-marketing-redesign.md)) — ✅ implemented (branch `feat/marketing-matchday`) | 30 (routes), 36 (funnel/pricing) |
 
 ## Build order (canonical — see v3/11 gap 3)
 

@@ -5,8 +5,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { ArrowRight } from "lucide-react";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { FORMAT_FAMILIES, FormatDiagram } from "@/config/format-gallery";
 
 export const revalidate = 3600;
@@ -20,12 +19,12 @@ export const metadata: Metadata = {
 export default function FormatsMarketingPage() {
   return (
     <div className="flex min-h-screen flex-col bg-white">
-      <MarketingNav />
+      <MarketingShell>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12">
-        <p className="font-mono text-xs uppercase tracking-[0.25em] text-purple-600">
+        <p className="mk-eyebrow">
           Tournament formats
         </p>
-        <h1 className="mt-2 max-w-2xl text-4xl font-bold tracking-tight text-slate-900">
+        <h1 className="mk-display mt-3 max-w-2xl text-5xl font-bold text-purple-950">
           Every format, explained — then generated for you
         </h1>
         <p className="mt-4 max-w-2xl text-lg text-slate-600">
@@ -56,8 +55,8 @@ export default function FormatsMarketingPage() {
           ))}
         </div>
 
-        <div className="mt-12 rounded-2xl bg-court p-8 text-center text-court-ink">
-          <h2 className="font-display text-2xl font-bold uppercase tracking-wide">
+        <div className="mt-12 rounded-2xl bg-[linear-gradient(160deg,var(--mk-night-2),var(--mk-night))] p-8 text-center text-[var(--mk-cream)]">
+          <h2 className="mk-display text-3xl font-bold">
             Stop drawing brackets by hand
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm opacity-80">
@@ -66,13 +65,13 @@ export default function FormatsMarketingPage() {
           </p>
           <Link
             href="/login?tab=signup"
-            className="mt-5 inline-block rounded-lg bg-white px-5 py-2.5 text-sm font-semibold text-purple-700 shadow transition hover:bg-purple-50"
+            className="mk-display mt-5 inline-block rounded-xl bg-[var(--mk-lime)] px-6 py-2.5 text-sm font-bold text-[var(--mk-night)] transition hover:opacity-90"
           >
             Start free
           </Link>
         </div>
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </div>
   );
 }
