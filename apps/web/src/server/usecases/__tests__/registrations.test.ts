@@ -35,7 +35,6 @@ import {
   applicationFeeCents,
   eligibilityIssues,
   isMinor,
-  platformFeePercent,
   validateAnswers,
   putRegistrationSettings,
   getRegistrationSettings,
@@ -76,17 +75,6 @@ describe("fee math (pure)", () => {
     expect(applicationFeeCents(1, 100)).toBe(1);
   });
 
-  it("defaults to 5% when PLATFORM_FEE_PERCENT is unset/garbage", () => {
-    const prev = process.env.PLATFORM_FEE_PERCENT;
-    delete process.env.PLATFORM_FEE_PERCENT;
-    expect(platformFeePercent()).toBe(5);
-    process.env.PLATFORM_FEE_PERCENT = "nonsense";
-    expect(platformFeePercent()).toBe(5);
-    process.env.PLATFORM_FEE_PERCENT = "12";
-    expect(platformFeePercent()).toBe(12);
-    if (prev === undefined) delete process.env.PLATFORM_FEE_PERCENT;
-    else process.env.PLATFORM_FEE_PERCENT = prev;
-  });
 });
 
 describe("age & eligibility (pure, doc 06 §2)", () => {

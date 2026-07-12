@@ -18,6 +18,7 @@ import type Stripe from "stripe";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getLimit, requireFeature } from "@/lib/entitlements";
+import { platformFeeDefault } from "@/lib/platform-settings";
 import { getStripe } from "@/lib/stripe";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
@@ -42,19 +43,12 @@ type Tx = postgres.TransactionSql;
 
 export const REGISTRATION_TOKEN_PREFIX = "rg_";
 
-/** Platform's cut of an entry fee, in percent (doc 16 §1.1 second revenue
- *  line). Config, not code: PLATFORM_FEE_PERCENT, default 5. */
-export function platformFeePercent(): number {
-  const raw = Number(process.env.PLATFORM_FEE_PERCENT ?? "5");
-  return Number.isFinite(raw) && raw >= 0 && raw <= 100 ? raw : 5;
-}
-
-/** The platform cut for THIS org + competition (v3/07 §2 fee row): the
- *  `registration.fee_percent` entitlement (pro 2, event-pass 5), falling back
- *  to the env default for plans without a row. */
+/** The platform cut for THIS org + competition (v3/07 §2 fee row): per-org
+ *  override → `registration.fee_percent` entitlement (pro 2, event-pass 5) →
+ *  the admin-set platform default (spec §1). */
 export async function feePercentFor(orgId: string, competitionId?: string): Promise<number> {
   const pct = await getLimit(orgId, "registration.fee_percent", competitionId);
-  return pct == null || pct <= 0 ? platformFeePercent() : pct;
+  return pct == null || pct <= 0 ? platformFeeDefault() : pct;
 }
 
 /** application_fee_amount for a destination charge. Never exceeds the fee. */
