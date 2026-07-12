@@ -141,6 +141,22 @@ export async function setEntitlementOverrideSql(
   });
 }
 
+/** Flip Stripe Connect readiness (spec 2026-07-12) — Express onboarding can't
+ *  run in e2e, same SQL-flip convention as plans. A fake acct id satisfies
+ *  the account-exists checks; checkout itself is never driven here. */
+export async function setOrgConnectSql(
+  orgId: string,
+  chargesEnabled: boolean,
+): Promise<void> {
+  await withDb(async (sql) => {
+    await sql`
+      update organizations
+      set stripe_charges_enabled = ${chargesEnabled},
+          stripe_account_id = coalesce(stripe_account_id, ${"acct_e2e_" + orgId.slice(0, 8)})
+      where id = ${orgId}`;
+  });
+}
+
 /** Grant an Event Pass (v3/07 §3) directly — the one-time Stripe checkout
  *  can't run in e2e, same SQL-flip convention as plans. */
 export async function grantCompetitionPassSql(

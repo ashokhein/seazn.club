@@ -255,6 +255,30 @@ async function main() {
   await gapSuite(admin, org.id, org2.id);
 }
 
+/** Flip Stripe Connect readiness (spec 2026-07-12) — Express onboarding can't
+ *  run headless; a fake acct id satisfies account-exists checks. Same SQL-flip
+ *  convention as setPlan/grantPass. */
+async function setConnect(orgId: string, chargesEnabled: boolean): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to flip Connect in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    await sql`
+      update organizations
+      set stripe_charges_enabled = ${chargesEnabled},
+          stripe_account_id = coalesce(stripe_account_id, ${"acct_smoke_" + orgId.slice(0, 8)})
+      where id = ${orgId}`;
+  } finally {
+    await sql.end();
+  }
+}
+
 /** Insert an Event Pass row directly (v3/07 §3) — smoke targets a disposable
  *  DB and the one-time Stripe checkout can't run without Stripe; the same
  *  SQL-flip convention as setPlan. */
@@ -647,6 +671,69 @@ async function schedRegV3Suite(
   });
   check("reg honeypot rejects bots (400)", honey.status === 400);
 
+  // --- Dual payments (spec 2026-07-12): offline mark-paid + card gates (pro) ---
+  const orgsList = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const proOrgId = orgsList.find((o) => o.slug === proOrgSlug)!.id;
+  const payDiv = v1data<{ id: string; slug: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Paid Offline",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await v1(admin, `/api/v1/divisions/${payDiv.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 1500, currency: "gbp",
+    form_fields: [], payment_method: "offline",
+    payment_instructions: `Cash desk ${tag}`,
+  });
+  const offReg = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
+    division_id: payDiv.id,
+    display_name: `Cash Payer ${tag}`,
+    contact_email: `cash_${tag}@example.com`,
+  });
+  const offRegData = v1data<{ registration_id: string; checkout_url: string | null }>(offReg);
+  check(
+    "pay offline submit: pending, no checkout",
+    offReg.status === 201 && offRegData.checkout_url === null,
+  );
+  const confirmEarly = await v1(admin, `/api/v1/registrations/${offRegData.registration_id}/confirm`, "POST", {});
+  check("pay unpaid confirm blocked (422)", confirmEarly.status === 422);
+  const markPaid = await v1(admin, `/api/v1/registrations/${offRegData.registration_id}/mark-paid`, "POST", {});
+  const markPaidData = v1data<{ status: string; offline_marked_paid_at: string | null }>(markPaid);
+  check(
+    "pay mark-paid confirms entry",
+    markPaid.status === 200 && markPaidData.status === "confirmed" && !!markPaidData.offline_marked_paid_at,
+  );
+
+  // Card method gates: rejected without Connect, accepted once flipped.
+  const cardPutNoConnect = await v1(admin, `/api/v1/divisions/${payDiv.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
+    form_fields: [], payment_method: "stripe",
+  });
+  check("pay card method needs Connect (422)", cardPutNoConnect.status === 422);
+  await setConnect(proOrgId, true);
+  const cardPut = await v1(admin, `/api/v1/divisions/${payDiv.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
+    form_fields: [], payment_method: "stripe",
+  });
+  check("pay card method saves with Connect", cardPut.status === 200);
+  const cardReg = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
+    division_id: payDiv.id,
+    display_name: `Card Payer ${tag}`,
+    contact_email: `card_${tag}@example.com`,
+  });
+  const cardRegData = v1data<{ registration_id: string; status: string }>(cardReg);
+  // No Stripe key in smoke: the session mint fails gracefully — the row still
+  // lands pending with a 48h window (pay-later from the status page).
+  check("pay card submit holds a pending spot", cardReg.status === 201 && cardRegData.status === "pending");
+  const waived = await v1(admin, `/api/v1/registrations/${cardRegData.registration_id}/waive`, "POST", {});
+  check(
+    "pay waive confirms without payment",
+    waived.status === 200 && v1data<{ status: string }>(waived).status === "confirmed",
+  );
+  await setConnect(proOrgId, false);
+
   // --- Free path: fresh community owner, registration + ref lookup ---
   const free = newSession();
   const freeVer = await signIn(free, `sched_free_${tag}@example.com`);
@@ -684,6 +771,21 @@ async function schedRegV3Suite(
   // Community sees the division fixtures page (schedule list) fine.
   const fFixtures = await html(free, `/o/${freeOrg.slug}/c/${fComp.slug}/d/${fDiv.slug}?tab=fixtures`);
   check("division fixtures page renders (free)", fFixtures.status === 200);
+
+  // Dual payments on community (spec 2026-07-12): offline fees stay plan-free;
+  // the card method is the paid layer even with Connect flipped on.
+  const fOffline = await v1(free, `/api/v1/divisions/${fDiv.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
+    form_fields: [], payment_method: "offline",
+  });
+  check("pay offline fee allowed on community", fOffline.status === 200);
+  await setConnect(freeVer.org_id, true);
+  const fCard = await v1(free, `/api/v1/divisions/${fDiv.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
+    form_fields: [], payment_method: "stripe",
+  });
+  check("pay card method is Pro-gated on community (402)", fCard.status === 402);
+  await setConnect(freeVer.org_id, false);
 }
 
 // v1 responses: { ok, data | error: {code, message, …}, requestId }.
