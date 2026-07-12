@@ -10,6 +10,12 @@ describe("HeroVignette", () => {
     expect(html).toContain('aria-label="Replay animation"');
     expect(html).toContain("LIVE");
   });
+  it("scorebug reads as cricket — batting side with runs/wicket", () => {
+    // 142/3 is the SSR state; the +4 boundary tick on ball-landing is client
+    // behaviour (covered visually), so the static markup pins the base score.
+    const html = renderToStaticMarkup(<HeroVignette />);
+    expect(html).toContain("Falcons CC 142/3");
+  });
   it("keeps a fixed-height box so the hero cannot shift layout", () => {
     const html = renderToStaticMarkup(<HeroVignette />);
     expect(html).toMatch(/h-64|h-72/);
