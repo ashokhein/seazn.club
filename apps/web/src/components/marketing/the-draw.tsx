@@ -9,7 +9,7 @@ import {
   type MarketingFormat,
 } from "@/lib/marketing/formats";
 import { clubNames } from "@/lib/marketing/club-names";
-import { DrawRenderer } from "./draw-renderer";
+import { DrawMindmap } from "./draw-mindmap";
 
 /** The Draw (design/v3/12 §4.4): the visitor's first real interaction. SSR
  *  passes the default groups-knockout/8 draw so the section works without JS;
@@ -104,13 +104,13 @@ export function TheDraw({ initialPhases }: { initialPhases: PreviewPhase[] }) {
       </div>
 
       <div aria-busy={busy}>
-        <DrawRenderer phases={phases} names={names} />
+        <DrawMindmap phases={phases} names={names} />
       </div>
 
       <p className="mt-8 text-center">
         <Link
           data-testid="make-it-real"
-          href={`/start?sport=Badminton&entrants=${entrants}&format=${format}`}
+          href={`/start?sport=Football&entrants=${entrants}&format=${format}`}
           className="btn btn-primary px-6 py-2.5 text-base"
         >
           Make it real →

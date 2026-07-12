@@ -14,11 +14,6 @@ export default function SchoolsPage() {
       <MarketingShell>
       <main>
         <section className="mx-auto max-w-4xl px-4 pb-16 pt-16">
-          <div className="mb-4">
-            <Link href="/" className="text-sm text-purple-600 hover:underline">
-              ← Back
-            </Link>
-          </div>
           <div className="mk-display mb-4 inline-flex items-center gap-2 rounded-full bg-[var(--mk-lime)] px-3 py-1 text-xs font-semibold tracking-[0.14em] text-[var(--mk-night)]">
             Use case: Schools & youth
           </div>

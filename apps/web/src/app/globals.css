@@ -418,40 +418,44 @@ body {
   color: #8d7fc0;
 }
 
-/* Hero vignette choreography (~2.6s once, then idle). Transform/opacity only. */
+/* Hero vignette choreography (~2.6s once, then idle). Transform/opacity only.
+   Geometry: bat pivots at the grip (310,230); the blade's sweet spot passes
+   (282,152) when the swing crosses ~-20deg — the toss parks the ball exactly
+   there at 1.5s, so contact reads mid-blade, never on the handle. */
 .mk-vignette .mk-ball {
   animation:
     mk-ball-toss 1.1s cubic-bezier(0.3, 0, 0.4, 1) forwards,
     mk-ball-fly 0.9s 1.5s cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
-  transform: translate(302px, 250px);
+  transform: translate(322px, 252px);
 }
 @keyframes mk-ball-toss {
-  40% { transform: translate(302px, 96px); }
-  100% { transform: translate(302px, 148px); }
+  40% { transform: translate(286px, 100px); }
+  100% { transform: translate(282px, 152px); }
 }
 @keyframes mk-ball-fly {
   60% { transform: translate(120px, 90px); }
   100% { transform: translate(58px, 246px); opacity: 0; }
 }
 .mk-vignette .mk-bat {
-  transform-origin: 301px 226px;
+  transform-origin: 310px 230px;
   animation:
-    mk-bat-swing 0.5s 1.25s cubic-bezier(0.3, 0, 0.2, 1.4) forwards,
+    mk-bat-swing 0.38s 1.31s cubic-bezier(0.3, 0, 0.2, 1.4) forwards,
     mk-bat-sway 8s 3s ease-in-out infinite;
-  transform: rotate(8deg);
+  transform: rotate(35deg);
 }
 @keyframes mk-bat-swing {
-  0% { transform: rotate(8deg); }
-  60% { transform: rotate(-52deg); }
-  100% { transform: rotate(-38deg); }
+  0% { transform: rotate(35deg); }
+  50% { transform: rotate(-20deg); }
+  75% { transform: rotate(-45deg); }
+  100% { transform: rotate(-32deg); }
 }
 @keyframes mk-bat-sway {
-  0%, 100% { transform: rotate(-38deg); }
-  50% { transform: rotate(-34deg); }
+  0%, 100% { transform: rotate(-32deg); }
+  50% { transform: rotate(-28deg); }
 }
 .mk-vignette .mk-star {
   opacity: 0;
-  transform-origin: 308px 148px;
+  transform-origin: 282px 152px;
   animation: mk-star-pop 0.5s 1.5s cubic-bezier(0.2, 1.6, 0.4, 1) forwards;
 }
 @keyframes mk-star-pop {
@@ -464,7 +468,7 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .mk-vignette .mk-ball { animation: none; opacity: 0; }
-  .mk-vignette .mk-bat { animation: none; transform: rotate(-38deg); }
+  .mk-vignette .mk-bat { animation: none; transform: rotate(-32deg); }
   .mk-vignette .mk-star { animation: none; opacity: 0; }
   .mk-live-dot { animation: none; }
 }
@@ -478,28 +482,45 @@ body {
   .mk-ticker { animation: none; }
 }
 
-/* Draw rows cascade in when their section reveals. */
-.mk-in .mk-draw-row { animation: mk-rise 0.4s cubic-bezier(0.22, 1.2, 0.36, 1) both; }
+/* Draw mind-map: nodes pop, edges draw themselves (design/v3/12 §4.4). */
+.mk-map-node { opacity: 0; transform-box: fill-box; transform-origin: center; }
+.mk-in .mk-map-node { animation: mk-map-pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both; }
+@keyframes mk-map-pop {
+  0% { opacity: 0; transform: scale(0.7); }
+  100% { opacity: 1; transform: scale(1); }
+}
+.mk-map-edge { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.mk-in .mk-map-edge { animation: mk-map-draw 0.6s 0.15s ease-out both; }
+@keyframes mk-map-draw { to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .mk-in .mk-draw-row { animation: none; }
+  .mk-map-node { opacity: 1; }
+  .mk-map-edge { stroke-dashoffset: 0; }
+  .mk-in .mk-map-node, .mk-in .mk-map-edge { animation: none; }
 }
 
-/* Motif dividers: play only after their Reveal adds .mk-in. */
-.mk-in .mk-shuttle { animation: mk-shuttle-arc 1.1s cubic-bezier(0.3, 0, 0.3, 1) both; }
+/* Motif dividers: play once after Reveal adds .mk-in, then REST visible.
+   Hidden until then so no half-state flashes; reduced motion = end state. */
+.mk-shuttle, .mk-knight { opacity: 0; }
+.mk-in .mk-shuttle { animation: mk-shuttle-arc 1.2s 0.1s cubic-bezier(0.3, 0, 0.3, 1) both; }
 @keyframes mk-shuttle-arc {
-  0% { transform: translate(0, 34px) rotate(-8deg); }
-  50% { transform: translate(390px, 0px) rotate(0deg); }
-  100% { transform: translate(780px, 30px) rotate(8deg); }
+  0% { opacity: 1; transform: translate(30px, 34px) rotate(-24deg); }
+  45% { opacity: 1; transform: translate(380px, 8px) rotate(4deg); }
+  100% { opacity: 1; transform: translate(700px, 28px) rotate(30deg); }
 }
-.mk-in .mk-knight { animation: mk-knight-hop 1s cubic-bezier(0.3, 0, 0.2, 1.2) both; }
+.mk-in .mk-knight { animation: mk-knight-hop 1s 0.1s cubic-bezier(0.3, 0, 0.2, 1.15) both; }
 @keyframes mk-knight-hop {
-  0% { transform: translate(330px, 6px); }
-  45% { transform: translate(330px, -4px); }
-  55% { transform: translate(410px, -4px); }
-  100% { transform: translate(410px, 26px); }
+  0% { opacity: 1; transform: translate(320px, 12px); }
+  40% { opacity: 1; transform: translate(320px, -4px); }
+  60% { opacity: 1; transform: translate(423px, -4px); }
+  100% { opacity: 1; transform: translate(423px, 12px); }
 }
+.mk-in .mk-knight-square { animation: mk-square-in 0.4s 0.75s ease both; }
+@keyframes mk-square-in { to { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) {
-  .mk-in .mk-shuttle, .mk-in .mk-knight { animation: none; }
+  .mk-shuttle { opacity: 1; transform: translate(700px, 28px) rotate(30deg); }
+  .mk-knight { opacity: 1; transform: translate(423px, 12px); }
+  .mk-knight-square { opacity: 0.45; }
+  .mk-in .mk-shuttle, .mk-in .mk-knight, .mk-in .mk-knight-square { animation: none; }
 }
 /* Matchday tools micro-animations */
 .mk-in .mk-lane-block { animation: mk-lane-in 0.5s cubic-bezier(0.22, 1.2, 0.36, 1) both; }

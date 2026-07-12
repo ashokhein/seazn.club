@@ -33,7 +33,7 @@ export function StartFunnelForm({
   variant?: "light" | "night";
 }) {
   const router = useRouter();
-  const [sport, setSport] = useState<string>("Badminton");
+  const [sport, setSport] = useState<string>("Football");
   const [entrants, setEntrants] = useState("16");
   const [date, setDate] = useState("");
 
@@ -50,7 +50,7 @@ export function StartFunnelForm({
       data-start-funnel
       className={funnelFormClasses(compact, variant)}
     >
-      <label className="flex-1 text-left">
+      <label className="min-w-44 flex-1 text-left">
         <span className="label mb-1 block text-xs">Sport</span>
         <select
           value={sport}
@@ -85,8 +85,8 @@ export function StartFunnelForm({
           name="date"
         />
       </label>
-      <button type="submit" className="btn btn-primary whitespace-nowrap px-5 py-2.5">
-        Set up my competition →
+      <button type="submit" className="btn btn-primary whitespace-nowrap px-4 py-2.5">
+        Setup →
       </button>
     </form>
   );

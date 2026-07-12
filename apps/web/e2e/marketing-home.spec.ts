@@ -8,9 +8,10 @@ test.describe("marketing home (design/v3/12)", () => {
   test("default draw renders without any interaction", async ({ page }) => {
     await page.goto("/");
     const draw = page.locator("#the-draw");
-    await expect(draw.getByText("Group stage")).toBeVisible();
-    await expect(draw.getByRole("heading", { name: "Knockout" })).toBeVisible();
-    await expect(draw.getByText("vs").first()).toBeVisible();
+    await expect(draw.locator("svg[role=img]")).toBeVisible();
+    await expect(draw.getByText("GROUP STAGE")).toBeVisible();
+    await expect(draw.getByText("QUALIFIERS ADVANCE ↓")).toBeVisible();
+    await expect(draw.getByText("🏆")).toBeVisible();
   });
 
   test("format switch redraws via the public API", async ({ page }) => {
@@ -18,13 +19,13 @@ test.describe("marketing home (design/v3/12)", () => {
     const api = page.waitForResponse("**/api/public/format-preview");
     await page.getByRole("radio", { name: "League", exact: true }).click();
     expect((await api).status()).toBe(200);
-    await expect(page.locator("#the-draw").getByText(/Round 1/).first()).toBeVisible();
+    await expect(page.locator("#the-draw").getByText("Everyone plays everyone")).toBeVisible();
   });
 
   test("Make it real carries choices into /start", async ({ page }) => {
     await page.goto("/");
     await page.getByTestId("make-it-real").click();
-    await expect(page).toHaveURL(/\/start\?sport=Badminton&entrants=8&format=groups-knockout/);
+    await expect(page).toHaveURL(/\/start\?sport=Football&entrants=8&format=groups-knockout/);
   });
 
   test("hero funnel still routes to /start with sport + entrants", async ({ page }) => {
@@ -51,7 +52,7 @@ test.describe("marketing home (design/v3/12)", () => {
     const page = await ctx.newPage();
     await page.goto("/");
     await expect(page.getByTestId("scorebug")).toBeVisible();
-    await expect(page.locator("#the-draw").getByText("Group stage")).toBeVisible();
+    await expect(page.locator("#the-draw").getByText("GROUP STAGE")).toBeVisible();
     await ctx.close();
   });
 

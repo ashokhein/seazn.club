@@ -3,6 +3,7 @@
 // the --ps-* public theme layer stays untouched.
 import { Barlow_Condensed } from "next/font/google";
 import { MarketingNav } from "@/components/marketing-nav";
+import { BackButton } from "@/components/marketing/back-button";
 import { MarketingFooter } from "@/components/marketing-footer";
 
 const displayFont = Barlow_Condensed({
@@ -21,6 +22,11 @@ export function MarketingShell({
   return (
     <div className={`${displayFont.variable} flex min-h-screen flex-col`}>
       <MarketingNav variant={variant} />
+      {variant === "light" ? (
+        <div className="mx-auto w-full max-w-6xl px-4 pt-4">
+          <BackButton />
+        </div>
+      ) : null}
       <div className="flex-1">{children}</div>
       <MarketingFooter />
     </div>

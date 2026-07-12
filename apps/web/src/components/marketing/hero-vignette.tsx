@@ -1,12 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 /** Object-relay hero animation (design/v3/12 §4.2). No humans — ball is the
- *  protagonist. Fixed-height container so CLS stays 0; under
- *  prefers-reduced-motion the CSS shows the end state (ball on scorebug). */
+ *  protagonist. Plays three times on load, then rests (manual replay stays).
+ *  Fixed-height container so CLS stays 0; under prefers-reduced-motion the
+ *  CSS shows the end state (ball on scorebug). */
+const AUTO_PLAYS = 3;
+
 export function HeroVignette() {
   const [run, setRun] = useState(0);
+
+  useEffect(() => {
+    if (run >= AUTO_PLAYS - 1) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const t = setTimeout(() => setRun((n) => n + 1), 3300);
+    return () => clearTimeout(t);
+  }, [run]);
 
   return (
     <div className="relative h-64 w-full max-w-md sm:h-72">
@@ -28,15 +38,15 @@ export function HeroVignette() {
             strokeLinecap="round"
             opacity="0.55"
           />
-          {/* bat: chunky outline, swings once */}
+          {/* bat: grip at the bottom pivot, blade up — contact lands mid-blade */}
           <g className="mk-bat">
-            <rect x="288" y="130" width="26" height="96" rx="12" fill="#d9b98a" stroke="#1e1b2e" strokeWidth="3" />
-            <rect x="294" y="98" width="14" height="40" rx="7" fill="#8a6a3f" stroke="#1e1b2e" strokeWidth="3" />
+            <rect x="297" y="100" width="26" height="96" rx="12" fill="#d9b98a" stroke="#1e1b2e" strokeWidth="3" />
+            <rect x="304" y="192" width="12" height="40" rx="6" fill="#8a6a3f" stroke="#1e1b2e" strokeWidth="3" />
           </g>
-          {/* impact star — pops at strike time */}
+          {/* impact star — pops at the blade's sweet spot */}
           <g className="mk-star">
             <path
-              d="M300 150 l10 -22 6 20 20 -8 -14 18 22 6 -24 6 10 20 -20 -12 -6 22 -8 -22z"
+              d="M282 152 l10 -22 6 20 20 -8 -14 18 22 6 -24 6 10 20 -20 -12 -6 22 -8 -22z"
               fill="var(--mk-orange)"
               stroke="#1e1b2e"
               strokeWidth="3"

@@ -375,7 +375,7 @@ async function marketingSuite(): Promise<void> {
   check("marketing: home 200", home.status === 200);
   check("marketing: home has The Draw", html.includes("The Draw"));
   check("marketing: home has funnel form", html.includes("data-start-funnel"));
-  check("marketing: home SSR default draw", html.includes("Group stage"));
+  check("marketing: home SSR default draw", html.includes("GROUP STAGE"));
 
   const preview = await fetch(`${BASE}/api/public/format-preview`, {
     method: "POST",
