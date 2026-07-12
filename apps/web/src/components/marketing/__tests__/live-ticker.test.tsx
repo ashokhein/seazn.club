@@ -28,4 +28,9 @@ describe("LiveTicker", () => {
     expect(html).toContain('aria-hidden="true"');
     expect(html).toContain('tabindex="-1"');
   });
+  it("tails into /live so a busy day never floods the home strip", () => {
+    const html = renderToStaticMarkup(<LiveTicker fixtures={[fx(1)]} />);
+    expect(html).toContain('href="/live"');
+    expect(html).toContain("All live");
+  });
 });
