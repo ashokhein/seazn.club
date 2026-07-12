@@ -2,15 +2,18 @@ import "server-only";
 import { after } from "next/server";
 
 /**
- * Run non-critical tail work AFTER the response streams (Next `after()`),
- * falling back to inline fire-and-forget outside a request scope (vitest,
- * scripts) — same contract as fire*Revalidate's try/catch. Never throws,
- * never delays the caller.
+ * Register non-critical tail work. Registration itself never delays the
+ * caller: in a Next request scope, `after()` receives the real work promise
+ * and awaits it in its after-window (so it genuinely finishes before the
+ * window closes, even on error/redirect/notFound); outside a request scope
+ * (vitest, scripts) it falls back to inline fire-and-forget. Either way the
+ * work's own errors are swallowed, not thrown — same contract as
+ * fire*Revalidate's try/catch.
  */
 export function deferred(fn: () => Promise<unknown> | unknown): void {
-  const run = () => {
+  const run = async () => {
     try {
-      void Promise.resolve(fn()).catch((err) => console.warn("[deferred] task failed:", err));
+      await fn();
     } catch (err) {
       console.warn("[deferred] task failed:", err);
     }
@@ -18,6 +21,6 @@ export function deferred(fn: () => Promise<unknown> | unknown): void {
   try {
     after(run);
   } catch {
-    run(); // outside a request scope
+    void run(); // outside a request scope
   }
 }
