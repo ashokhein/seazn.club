@@ -68,7 +68,7 @@ export function MarketingFooter() {
             </div>
           ))}
         </div>
-        <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t border-[#2b1d5c] pt-6 text-xs text-[#6a5da0] sm:flex-row">
+        <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t border-[#2b1d5c] pt-6 text-xs text-[#8d7fc0] sm:flex-row">
           <span>© {new Date().getFullYear()} Seazn Club. All rights reserved.</span>
           <span className="mk-display tracking-[0.2em]">ANY SPORT · LIVE IN MINUTES</span>
         </div>

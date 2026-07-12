@@ -7,7 +7,7 @@ import {
   MARKETING_FORMATS,
   MARKETING_FORMAT_LABELS,
   type MarketingFormat,
-} from "@/lib/marketing/format-preview";
+} from "@/lib/marketing/formats";
 import { clubNames } from "@/lib/marketing/club-names";
 import { DrawRenderer } from "./draw-renderer";
 
