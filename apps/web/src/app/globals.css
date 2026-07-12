@@ -507,20 +507,32 @@ body {
   45% { opacity: 1; transform: translate(380px, 8px) rotate(4deg); }
   100% { opacity: 1; transform: translate(700px, 28px) rotate(30deg); }
 }
-.mk-in .mk-knight { animation: mk-knight-hop 1s 0.1s cubic-bezier(0.3, 0, 0.2, 1.15) both; }
-@keyframes mk-knight-hop {
-  0% { opacity: 1; transform: translate(320px, 8px); }
-  40% { opacity: 1; transform: translate(320px, -8px); }
-  60% { opacity: 1; transform: translate(418px, -8px); }
-  100% { opacity: 1; transform: translate(418px, 8px); }
+.mk-in .mk-knight { animation: mk-knight-tour 2.4s 0.1s cubic-bezier(0.45, 0, 0.3, 1) both; }
+/* Three chess-legal jumps: each traces an L — up 1, across 2, down 1. */
+@keyframes mk-knight-tour {
+  0% { opacity: 1; transform: translate(250px, 12px); }
+  6% { opacity: 1; transform: translate(250px, -10px); }
+  16% { opacity: 1; transform: translate(334px, -10px); }
+  22% { opacity: 1; transform: translate(334px, 12px); }
+  34% { opacity: 1; transform: translate(334px, 12px); }
+  40% { opacity: 1; transform: translate(334px, -10px); }
+  50% { opacity: 1; transform: translate(418px, -10px); }
+  56% { opacity: 1; transform: translate(418px, 12px); }
+  68% { opacity: 1; transform: translate(418px, 12px); }
+  74% { opacity: 1; transform: translate(418px, -10px); }
+  84% { opacity: 1; transform: translate(502px, -10px); }
+  90% { opacity: 1; transform: translate(502px, 12px); }
+  100% { opacity: 1; transform: translate(502px, 12px); }
 }
-.mk-in .mk-knight-square { animation: mk-square-in 0.4s 0.75s ease both; }
+.mk-in .mk-knight-sq-1 { animation: mk-square-in 0.3s 0.6s ease both; }
+.mk-in .mk-knight-sq-2 { animation: mk-square-in 0.3s 1.45s ease both; }
+.mk-in .mk-knight-sq-3 { animation: mk-square-in 0.3s 2.25s ease both; }
 @keyframes mk-square-in { to { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) {
   .mk-shuttle { opacity: 1; transform: translate(700px, 28px) rotate(30deg); }
-  .mk-knight { opacity: 1; transform: translate(418px, 8px); }
-  .mk-knight-square { opacity: 0.45; }
-  .mk-in .mk-shuttle, .mk-in .mk-knight, .mk-in .mk-knight-square { animation: none; }
+  .mk-knight { opacity: 1; transform: translate(502px, 12px); }
+  .mk-knight-sq { opacity: 0.45; }
+  .mk-in .mk-shuttle, .mk-in .mk-knight, .mk-in .mk-knight-sq-1, .mk-in .mk-knight-sq-2, .mk-in .mk-knight-sq-3 { animation: none; }
 }
 /* Matchday tools micro-animations */
 .mk-in .mk-lane-block { animation: mk-lane-in 0.5s cubic-bezier(0.22, 1.2, 0.36, 1) both; }

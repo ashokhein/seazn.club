@@ -16,8 +16,10 @@ export function MotifDivider({ kind }: { kind: "shuttle" | "knight" }) {
           </g>
         ) : (
           <>
-            {/* landing square appears where the hop ends */}
-            <rect className="mk-knight-square" x="422" y="34" width="30" height="12" rx="3" fill="var(--mk-lime)" opacity="0" />
+            {/* landing squares light up jump by jump */}
+            <rect className="mk-knight-sq mk-knight-sq-1" x="338" y="38" width="30" height="10" rx="3" fill="var(--mk-lime)" opacity="0" />
+            <rect className="mk-knight-sq mk-knight-sq-2" x="422" y="38" width="30" height="10" rx="3" fill="var(--mk-lime)" opacity="0" />
+            <rect className="mk-knight-sq mk-knight-sq-3" x="506" y="38" width="30" height="10" rx="3" fill="var(--mk-lime)" opacity="0" />
             <g className="mk-knight">
               {/* the real chess glyph — unmistakably a knight at any size */}
               <text x="0" y="34" fontSize="38" fill="var(--mk-purple)">
