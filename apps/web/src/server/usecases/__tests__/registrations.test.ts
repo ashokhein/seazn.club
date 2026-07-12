@@ -566,12 +566,22 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     }, "http://t.local");
     expect(res.registration.status).toBe("pending");
 
-    // Turn on online charges → collecting a fee via Stripe now needs Pro.
+    // Since spec 2026-07-12 the Pro gate rides the chosen METHOD, not the
+    // Connect flag: an offline fee stays allowed even with charges enabled
+    // (the org may take cards elsewhere but run this division in cash)…
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+    const offlineStill = await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+    expect(offlineStill.fee_cents).toBe(500);
+
+    // …while explicitly choosing the card method still needs Pro.
     await expect(
       putRegistrationSettings(owner, division.id, {
         enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
         form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+        payment_method: "stripe",
       }),
     ).rejects.toThrow(PaymentRequiredError);
   });
@@ -685,5 +695,84 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const { division } = await rig(owner);
     expect(division.youth).toBe(false);
     expect(resolveNameDisplay(division.player_name_display, division.youth)).toBe("full");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Payment method settings (spec 2026-07-12 §3)
+// ---------------------------------------------------------------------------
+
+const SETTINGS_BASE = {
+  enabled: true,
+  entrant_kind: "individual" as const,
+  opens_at: null,
+  closes_at: null,
+  capacity: null,
+  currency: "gbp",
+  refund_lock_at: null,
+  form_fields: [],
+};
+
+describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
+  it("stripe method requires charges_enabled and a viable minimum fee", async () => {
+    const { orgId, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { division } = await rig(owner);
+
+    // No Connect account yet → card method rejected outright.
+    await expect(
+      putRegistrationSettings(owner, division.id, {
+        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+
+    // Below Stripe's minimum charge (100 minor units) — rejected.
+    await expect(
+      putRegistrationSettings(owner, division.id, {
+        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 50,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    const ok = await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+    });
+    expect(ok.payment_method).toBe("stripe");
+    expect(ok.charges_enabled).toBe(true);
+  });
+
+  it("community org cannot pick the card method (registration.paid gate)", async () => {
+    const { orgId, ownerId } = await seedOrg("community");
+    const owner = asOwner(orgId, ownerId);
+    const { division } = await rig(owner);
+    await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+    await expect(
+      putRegistrationSettings(owner, division.id, {
+        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+      }),
+    ).rejects.toThrow(PaymentRequiredError);
+  });
+
+  it("offline fees stay plan-free and store a per-division instructions override", async () => {
+    const { orgId, ownerId } = await seedOrg("community");
+    const owner = asOwner(orgId, ownerId);
+    const { division } = await rig(owner);
+    const s = await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 1500,
+      payment_instructions: "Cash to the front desk before round 1",
+    });
+    expect(s.payment_method).toBe("offline");
+    expect(s.payment_instructions).toBe("Cash to the front desk before round 1");
+
+    // GET returns the org fallback + default method for the settings UI.
+    await sql`update organizations
+              set payment_instructions = 'Org-wide bank details',
+                  default_payment_method = 'stripe'
+              where id = ${orgId}`;
+    const got = await getRegistrationSettings(owner, division.id);
+    expect(got.org_payment_instructions).toBe("Org-wide bank details");
+    expect(got.org_default_payment_method).toBe("stripe");
+    expect(got.payment_instructions).toBe("Cash to the front desk before round 1");
   });
 });

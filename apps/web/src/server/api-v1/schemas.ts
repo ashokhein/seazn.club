@@ -644,8 +644,11 @@ export const StartDivisionResult = z.object({
 // ---------------------------------------------------------------------------
 
 export const RegistrationStatus = z.enum([
-  "pending", "paid", "confirmed", "waitlisted", "withdrawn",
+  "pending", "paid", "confirmed", "waitlisted", "withdrawn", "expired",
 ]);
+
+/** How a division collects its entry fee (spec 2026-07-12 §3). */
+export const RegistrationPaymentMethod = z.enum(["offline", "stripe"]);
 
 /** Bounded form-field builder (doc 16 §1.1): text/select/checkbox only. */
 export const RegistrationFormField = z
@@ -673,6 +676,9 @@ export const PutRegistrationSettings = z
     currency: z.string().length(3).toLowerCase().default("gbp"),
     refund_lock_at: z.iso.datetime({ offset: true }).nullish(),
     form_fields: z.array(RegistrationFormField).max(12).default([]),
+    payment_method: RegistrationPaymentMethod.default("offline"),
+    /** Per-division override of the org's offline payment instructions. */
+    payment_instructions: z.string().max(2000).nullish(),
   })
   .superRefine((s, ctx) => {
     const keys = s.form_fields.map((f) => f.key);
@@ -680,7 +686,9 @@ export const PutRegistrationSettings = z
       ctx.addIssue({ code: "custom", message: "duplicate form field keys" });
     }
   });
-export type PutRegistrationSettings = z.infer<typeof PutRegistrationSettings>;
+/** Input shape (pre-parse): defaulted fields stay optional so direct callers
+ *  (tests, scripts) can omit them; the usecase normalises like the route. */
+export type PutRegistrationSettings = z.input<typeof PutRegistrationSettings>;
 
 export const RegistrationSettings = z.object({
   division_id: Uuid,
@@ -693,6 +701,11 @@ export const RegistrationSettings = z.object({
   currency: z.string(),
   refund_lock_at: z.string().nullable(),
   form_fields: z.array(RegistrationFormField),
+  payment_method: RegistrationPaymentMethod,
+  payment_instructions: z.string().nullable(),
+  /** Org fallbacks for the settings UI (spec §3). */
+  org_payment_instructions: z.string().nullable(),
+  org_default_payment_method: z.string(),
   /** Paid registration readiness (org-level): Stripe Connect charges enabled. */
   charges_enabled: z.boolean(),
   updated_at: z.string().nullable(),
@@ -703,6 +716,7 @@ export const Registration = z.object({
   id: Uuid,
   division_id: Uuid,
   status: RegistrationStatus,
+  ref_code: z.string().nullable(),
   display_name: z.string(),
   contact_email: z.string(),
   dob: z.string().nullable(),
@@ -712,9 +726,13 @@ export const Registration = z.object({
   answers: z.record(z.string(), z.unknown()),
   amount_cents: z.number().int(),
   currency: z.string().nullable(),
+  payment_method: z.string().nullable(),
   payment_intent_id: z.string().nullable(),
   refunded_cents: z.number().int(),
   refunded_at: z.string().nullable(),
+  expires_at: z.string().nullable(),
+  offline_marked_paid_at: z.string().nullable(),
+  disputed_at: z.string().nullable(),
   entrant_id: Uuid.nullable(),
   promoted_at: z.string().nullable(),
   withdrawn_at: z.string().nullable(),
@@ -738,6 +756,7 @@ export const PublicRegistrationDivision = z.object({
   entrant_kind: EntrantKind,
   fee_cents: z.number().int(),
   currency: z.string(),
+  payment_method: RegistrationPaymentMethod,
   opens_at: z.string().nullable(),
   closes_at: z.string().nullable(),
   capacity: z.number().int().nullable(),

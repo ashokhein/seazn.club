@@ -186,6 +186,9 @@ export interface RegistrationSettingsRow {
   currency: string;
   refund_lock_at: Date | null;
   form_fields: RegistrationFormField[];
+  payment_method: "offline" | "stripe";
+  /** Per-division override; null → org.payment_instructions. */
+  payment_instructions: string | null;
   updated_at: Date | null;
 }
 
@@ -193,7 +196,7 @@ export interface RegistrationRow {
   id: string;
   division_id: string;
   org_id: string;
-  status: "pending" | "paid" | "confirmed" | "waitlisted" | "withdrawn";
+  status: "pending" | "paid" | "confirmed" | "waitlisted" | "withdrawn" | "expired";
   /** Human-quotable reference (v3/05 §3); null on pre-v2 rows. */
   ref_code: string | null;
   display_name: string;
@@ -206,10 +209,17 @@ export interface RegistrationRow {
   roster: { name: string; dob?: string | null; squad_number?: number | null }[];
   amount_cents: number;
   currency: string | null;
+  payment_method: "offline" | "stripe" | null;
   checkout_session_id: string | null;
   payment_intent_id: string | null;
   refunded_cents: number;
   refunded_at: Date | null;
+  /** Card pendings only: pay-by deadline (spec §2, 48h). */
+  expires_at: Date | null;
+  reminded_at: Date | null;
+  offline_marked_paid_at: Date | null;
+  disputed_at: Date | null;
+  dispute_id: string | null;
   entrant_id: string | null;
   promoted_at: Date | null;
   withdrawn_at: Date | null;
@@ -219,15 +229,16 @@ export interface RegistrationRow {
 const REG_COLS = [
   "id", "division_id", "org_id", "status", "ref_code", "display_name",
   "contact_email", "dob", "gender", "guardian_name", "guardian_consent",
-  "answers", "roster", "amount_cents", "currency", "checkout_session_id",
-  "payment_intent_id", "refunded_cents", "refunded_at", "entrant_id",
-  "promoted_at", "withdrawn_at", "created_at",
+  "answers", "roster", "amount_cents", "currency", "payment_method",
+  "checkout_session_id", "payment_intent_id", "refunded_cents", "refunded_at",
+  "expires_at", "reminded_at", "offline_marked_paid_at", "disputed_at",
+  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "created_at",
 ] as const;
 
 const SETTINGS_COLS = [
   "division_id", "enabled", "entrant_kind", "opens_at", "closes_at",
   "capacity", "fee_cents", "currency", "refund_lock_at", "form_fields",
-  "updated_at",
+  "payment_method", "payment_instructions", "updated_at",
 ] as const;
 
 /** Statuses that hold a capacity spot. */
@@ -385,21 +396,37 @@ const DEFAULT_SETTINGS: Omit<RegistrationSettingsRow, "division_id"> = {
   currency: "gbp",
   refund_lock_at: null,
   form_fields: [],
+  payment_method: "offline",
+  payment_instructions: null,
   updated_at: null,
 };
+
+export interface OrgPaymentDefaults {
+  charges_enabled: boolean;
+  org_payment_instructions: string | null;
+  org_default_payment_method: string;
+}
+
+async function orgPaymentDefaults(orgId: string): Promise<OrgPaymentDefaults> {
+  const [row] = await sql<OrgPaymentDefaults[]>`
+    select stripe_charges_enabled as charges_enabled,
+           payment_instructions as org_payment_instructions,
+           default_payment_method as org_default_payment_method
+    from organizations where id = ${orgId}`;
+  if (!row) throw new HttpError(404, "organization not found");
+  return row;
+}
 
 export async function getRegistrationSettings(
   auth: AuthCtx,
   divisionId: string,
-): Promise<RegistrationSettingsRow & { charges_enabled: boolean }> {
-  const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
-    select stripe_charges_enabled as charges_enabled from organizations
-    where id = ${auth.orgId}`;
+): Promise<RegistrationSettingsRow & OrgPaymentDefaults> {
+  const org = await orgPaymentDefaults(auth.orgId);
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     const row = await loadSettings(tx, divisionId);
-    return { division_id: divisionId, ...DEFAULT_SETTINGS, ...(row ?? {}), charges_enabled };
+    return { division_id: divisionId, ...DEFAULT_SETTINGS, ...(row ?? {}), ...org };
   });
 }
 
@@ -407,20 +434,33 @@ export async function putRegistrationSettings(
   auth: AuthCtx,
   divisionId: string,
   input: PutRegistrationSettings,
-): Promise<RegistrationSettingsRow & { charges_enabled: boolean }> {
+): Promise<RegistrationSettingsRow & OrgPaymentDefaults> {
   await requireFeature(auth.orgId, "registration.enabled");
-  // Entry fees are the paid layer (doc 16 §1.1). Offline (cash/bank) fees are
-  // free on every plan; only collecting online via Stripe Connect is Pro, and
-  // that gate lives at Connect onboarding (stripe-connect). So a fee only needs
-  // registration.paid here when the org actually has online charges enabled.
   const [regDiv] = await sql<{ competition_id: string }[]>`
     select competition_id from divisions where id = ${divisionId}`;
-  if (input.fee_cents > 0) {
-    const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
-      select stripe_charges_enabled as charges_enabled from organizations
-      where id = ${auth.orgId}`;
-    if (charges_enabled) {
-      await requireFeature(auth.orgId, "registration.paid", regDiv?.competition_id);
+  const org = await orgPaymentDefaults(auth.orgId);
+
+  // Offline (cash/bank) fees are free on every plan — they fill the funnel.
+  // Card collection is the paid layer (doc 16 §1.1): it needs a live Connect
+  // account AND the registration.paid entitlement, and the fee must clear
+  // Stripe's minimum charge (spec issue #13).
+  // Zod defaults apply on the route; direct callers (tests, scripts) may omit
+  // defaulted fields, so normalise exactly like the schema does.
+  const method = input.payment_method ?? "offline";
+  const feeCents = input.fee_cents ?? 0;
+  const currency = input.currency ?? "gbp";
+  const entrantKind = input.entrant_kind ?? "individual";
+  const formFields = input.form_fields ?? [];
+  if (method === "stripe") {
+    if (!org.charges_enabled) {
+      throw new HttpError(
+        422,
+        "Connect Stripe under Settings → Payments before choosing card payments",
+      );
+    }
+    await requireFeature(auth.orgId, "registration.paid", regDiv?.competition_id);
+    if (feeCents > 0 && feeCents < 100) {
+      throw new HttpError(422, "Card entry fees must be at least 1.00 (or 0 for free)");
     }
   }
 
@@ -439,10 +479,6 @@ export async function putRegistrationSettings(
     throw new HttpError(422, "closes_at must be after opens_at");
   }
 
-  const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
-    select stripe_charges_enabled as charges_enabled from organizations
-    where id = ${auth.orgId}`;
-
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
@@ -450,25 +486,29 @@ export async function putRegistrationSettings(
     const [row] = await tx<RegistrationSettingsRow[]>`
       insert into registration_settings
         (division_id, enabled, entrant_kind, opens_at, closes_at, capacity,
-         fee_cents, currency, refund_lock_at, form_fields, updated_at)
+         fee_cents, currency, refund_lock_at, form_fields,
+         payment_method, payment_instructions, updated_at)
       values
-        (${divisionId}, ${input.enabled}, ${input.entrant_kind},
+        (${divisionId}, ${input.enabled}, ${entrantKind},
          ${input.opens_at ?? null}, ${input.closes_at ?? null},
-         ${input.capacity ?? null}, ${input.fee_cents}, ${input.currency},
-         ${input.refund_lock_at ?? null}, ${tx.json(input.form_fields as never)}, now())
+         ${input.capacity ?? null}, ${feeCents}, ${currency},
+         ${input.refund_lock_at ?? null}, ${tx.json(formFields as never)},
+         ${method}, ${input.payment_instructions?.trim() || null}, now())
       on conflict (division_id) do update set
-        enabled        = excluded.enabled,
-        entrant_kind   = excluded.entrant_kind,
-        opens_at       = excluded.opens_at,
-        closes_at      = excluded.closes_at,
-        capacity       = excluded.capacity,
-        fee_cents      = excluded.fee_cents,
-        currency       = excluded.currency,
-        refund_lock_at = excluded.refund_lock_at,
-        form_fields    = excluded.form_fields,
-        updated_at     = now()
+        enabled              = excluded.enabled,
+        entrant_kind         = excluded.entrant_kind,
+        opens_at             = excluded.opens_at,
+        closes_at            = excluded.closes_at,
+        capacity             = excluded.capacity,
+        fee_cents            = excluded.fee_cents,
+        currency             = excluded.currency,
+        refund_lock_at       = excluded.refund_lock_at,
+        form_fields          = excluded.form_fields,
+        payment_method       = excluded.payment_method,
+        payment_instructions = excluded.payment_instructions,
+        updated_at           = now()
       returning ${sql(SETTINGS_COLS as unknown as string[])}`;
-    return { ...row, charges_enabled };
+    return { ...row, ...org };
   });
 }
 
