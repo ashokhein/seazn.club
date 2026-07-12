@@ -483,3 +483,34 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .mk-in .mk-draw-row { animation: none; }
 }
+
+/* Motif dividers: play only after their Reveal adds .mk-in. */
+.mk-in .mk-shuttle { animation: mk-shuttle-arc 1.1s cubic-bezier(0.3, 0, 0.3, 1) both; }
+@keyframes mk-shuttle-arc {
+  0% { transform: translate(0, 34px) rotate(-8deg); }
+  50% { transform: translate(390px, 0px) rotate(0deg); }
+  100% { transform: translate(780px, 30px) rotate(8deg); }
+}
+.mk-in .mk-knight { animation: mk-knight-hop 1s cubic-bezier(0.3, 0, 0.2, 1.2) both; }
+@keyframes mk-knight-hop {
+  0% { transform: translate(330px, 6px); }
+  45% { transform: translate(330px, -4px); }
+  55% { transform: translate(410px, -4px); }
+  100% { transform: translate(410px, 26px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .mk-in .mk-shuttle, .mk-in .mk-knight { animation: none; }
+}
+/* Matchday tools micro-animations */
+.mk-in .mk-lane-block { animation: mk-lane-in 0.5s cubic-bezier(0.22, 1.2, 0.36, 1) both; }
+@keyframes mk-lane-in { from { opacity: 0; transform: translateX(-24px); } }
+.mk-odometer { height: 1em; }
+.mk-in .mk-odometer-reel { animation: mk-odometer-roll 0.9s 0.3s cubic-bezier(0.3, 0, 0.2, 1) both; }
+@keyframes mk-odometer-roll { to { transform: translateY(-2em); } }
+.mk-in .mk-swap-a { animation: mk-swap-down 0.7s 0.4s ease both; }
+.mk-in .mk-swap-b { animation: mk-swap-up 0.7s 0.4s ease both; }
+@keyframes mk-swap-down { to { transform: translateY(1.1em); } }
+@keyframes mk-swap-up { to { transform: translateY(-1.1em); } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-in .mk-lane-block, .mk-in .mk-odometer-reel, .mk-in .mk-swap-a, .mk-in .mk-swap-b { animation: none; }
+}
