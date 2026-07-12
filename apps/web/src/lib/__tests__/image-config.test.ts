@@ -8,6 +8,9 @@ describe("next/image remotePatterns", () => {
   it("allows the Supabase storage public-object path and nothing broader", () => {
     const patterns =
       (nextConfig as { images?: { remotePatterns?: unknown[] } }).images?.remotePatterns ?? [];
+    // Exactly one entry — "nothing broader" only holds if broadening (a second
+    // pattern, or widening this one) can't sneak in unnoticed (review finding 2).
+    expect(patterns).toHaveLength(1);
     expect(patterns).toContainEqual(
       expect.objectContaining({
         protocol: "https",
