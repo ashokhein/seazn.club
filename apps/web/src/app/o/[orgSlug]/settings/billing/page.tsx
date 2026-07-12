@@ -166,11 +166,18 @@ export default async function BillingPage({
               )}
             </div>
 
-            {isOwner && isPro && status === "trialing" && (
-              <a href="#payment-methods" className="btn btn-primary">
-                {billingCtaLabel(status)}
-              </a>
-            )}
+            {isOwner &&
+              isPro &&
+              status === "trialing" &&
+              ((overview?.paymentMethods.length ?? 0) === 0 ? (
+                <a href="#payment-methods" className="btn btn-primary">
+                  {billingCtaLabel(status)}
+                </a>
+              ) : (
+                <p className="text-sm text-emerald-600">
+                  Card on file — Pro continues after the trial.
+                </p>
+              ))}
             {isOwner && isPro && !hasStripeSubscription && <DowngradeButton />}
           </div>
 

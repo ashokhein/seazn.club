@@ -461,6 +461,39 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   check("visibility flips to Link only (free)", freeFlip.status === 200);
   const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
   check("link-only page serves + noindex (free)", freeShared.status === 200 && freeShared.body.includes("noindex"));
+
+  // --- v3/11 in-app billing: the portal is dead by default, the manage
+  // endpoints exist behind owner auth and degrade cleanly without a Stripe
+  // customer, and the billing page renders with no portal button. ---
+  const portalDead = await raw(admin, "/api/billing/portal", "POST", {});
+  check("v3/11 portal route 404s without the fallback flag (pro)", portalDead.status === 404);
+  const proSetup = await raw(admin, "/api/billing/setup-intent", "POST", {});
+  check(
+    "v3/11 setup-intent wants a Stripe customer first (comped pro)",
+    proSetup.status === 400 && !!proSetup.json.error?.includes("billing account"),
+  );
+  const proPreview = await raw(admin, "/api/billing/interval/preview?interval=annual");
+  check("v3/11 interval preview wants a Stripe customer first (pro)", proPreview.status === 400);
+  const proBilling = await html(admin, `/o/${proOrgSlug}/settings/billing`);
+  check(
+    "v3/11 billing page renders without the portal button (pro)",
+    proBilling.status === 200 &&
+      proBilling.body.includes("Plan &amp; Billing") &&
+      !proBilling.body.includes("Manage billing →"),
+  );
+  check(
+    "v3/11 manage sections stay hidden without a Stripe customer (pro)",
+    !proBilling.body.includes("Payment methods"),
+  );
+  const freeCancel = await raw(free, "/api/billing/cancel", "POST", {});
+  check("v3/11 cancel wants a Stripe customer first (free)", freeCancel.status === 400);
+  const freeBilling = await html(free, `/o/${freeOrg.slug}/settings/billing`);
+  check(
+    "v3/11 billing page renders upgrade path, no portal (free)",
+    freeBilling.status === 200 &&
+      freeBilling.body.includes("Upgrade to Pro") &&
+      !freeBilling.body.includes("Manage billing →"),
+  );
 }
 
 /** PROMPT-33/34 smoke: board v3 renders + a seq-tokened reschedule lands and
