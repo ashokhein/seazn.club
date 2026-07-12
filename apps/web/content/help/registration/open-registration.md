@@ -13,7 +13,7 @@ In the division's **registration settings**:
 - **Capacity** — cap entries; beyond it, new entries join the [waitlist](/help/registration/waitlist).
 - **Entry fees** — pick how each division collects:
   - **Pay the organiser** (any plan) — cash or bank transfer. Set instructions once under *Settings → Payments*, or override them per division. Entries stay pending until you press **Mark paid**.
-  - **Card at sign-up** (Pro / Event Pass) — Stripe checkout during registration, settling straight to your connected Stripe account. Paid entries are **confirmed automatically**; unpaid ones hold their spot for **48 hours** (reminder at 24h) and then expire, promoting the waitlist.
+  - **Card at sign-up** (Pro / Event Pass) — Stripe checkout during registration, settling straight to your connected Stripe account. Connect Stripe first under *Settings → Payments* (a short one-time onboarding). Paid entries are **confirmed automatically**; unpaid ones hold their spot for **48 hours** (reminder at 24h) and then expire, promoting the waitlist.
 - **Custom questions** — shirt size, dietary needs, emergency contact; answers export with the entrant list.
 
 ## After someone registers

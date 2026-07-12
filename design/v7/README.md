@@ -1,21 +1,28 @@
-# v7 — Platform Revenue Report
+# v7 — Payments Follow-ups: Revenue Report · Registration Console Redesign
 
-> **Status (2026-07-12):** not started. PROMPT-51 ⏳.
-> Branch (planned): `feat/v7-platform-revenue`. Migrations: none expected — Stripe is the
-> source of truth for collected fees; the app only caches.
+> **Status (2026-07-12):** not started. PROMPT-51 ⏳ · PROMPT-52 ⏳.
+> Branches (planned): `feat/v7-platform-revenue`, `feat/v7-reg-console`. Migrations: none
+> expected in either — Stripe stays the source of truth for fees; console counts derive
+> from existing rows.
 
 ## Theme
 
-One admin surface answering "what has the platform actually earned from entry fees?" —
-the sum of Stripe **application fees** (the platform cut of card registrations shipped in
-PR #72), rolled up by month and by organisation, straight from the Stripe API.
+Two follow-ups to the dual-payments wave (PR #72):
 
-Deliberately NOT a general ledger: no per-payment bookkeeping tables, no double-entry,
-no reconciliation jobs. `application_fees` on the platform Stripe account already carries
-every collected/refunded fee with its connected account; the report reads, groups and
-caches it.
+1. **Platform revenue** — one admin surface answering "what has the platform actually
+   earned from entry fees?": Stripe **application fees** rolled up by month and by
+   organisation, straight from the API. Deliberately NOT a general ledger — no
+   bookkeeping tables, no reconciliation jobs; `application_fees` already carries every
+   collected/refunded fee with its connected account. Read, group, cache.
+2. **Registration console redesign** — the organiser side of registrations grew features
+   faster than hierarchy: waitlist has no numbers, refund-vs-withdraw reads ambiguous,
+   capacity is a bare input, settings are one long column. Brainstorm-first redesign of
+   presentation with the PR #72 status machine held fixed.
 
 ## Prompts
 
 - `prompts/PROMPT-51-platform-revenue-report.md` — `/admin/revenue`: monthly + per-org
   fee rollups from the Stripe API, cached, CSV export, linked from `/admin/settings`.
+- `prompts/PROMPT-52-registration-settings-redesign.md` — registration pulse strip,
+  waitlist-as-queue (counts + position), withdraw/refund action clarity, settings
+  hierarchy, duplicate-entry hints; superpowers:brainstorming → frontend-design.
