@@ -12,6 +12,8 @@ import {
   type RegistrationEmailArgs,
   paymentReminderTemplate,
   type PaymentReminderArgs,
+  registrationPromotedTemplate,
+  type RegistrationPromotedArgs,
   funnelClaimTemplate,
   funnelReminderTemplate,
   type FunnelEmailArgs,
@@ -175,10 +177,22 @@ export interface PaymentReminderEmail extends PaymentReminderArgs {
   to: string;
 }
 
-/** Organiser-triggered payment reminder for an unpaid offline entry fee. */
+/** Payment reminder for an unpaid entry fee (offline nudge or card T-24h). */
 export async function sendPaymentReminderEmail(opts: PaymentReminderEmail): Promise<boolean> {
   const { to, ...args } = opts;
   return send({ to, ...paymentReminderTemplate(args) });
+}
+
+export interface RegistrationPromotedEmail extends RegistrationPromotedArgs {
+  to: string;
+}
+
+/** Waitlist promotion (spec §2): spot opened — pay window / instructions. */
+export async function sendRegistrationPromotedEmail(
+  opts: RegistrationPromotedEmail,
+): Promise<boolean> {
+  const { to, ...args } = opts;
+  return send({ to, ...registrationPromotedTemplate(args) });
 }
 
 /** True when Resend is configured. */

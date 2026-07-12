@@ -22,7 +22,11 @@ import { platformFeeDefault } from "@/lib/platform-settings";
 import { getStripe } from "@/lib/stripe";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
-import { sendRegistrationEmail, sendPaymentReminderEmail } from "@/lib/email";
+import {
+  sendRegistrationEmail,
+  sendPaymentReminderEmail,
+  sendRegistrationPromotedEmail,
+} from "@/lib/email";
 import { generateRefCode, isValidRefCode, normalizeRefCode } from "@/lib/ref-code";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -313,6 +317,16 @@ function seasonStartYear(ctx: DivisionCtx): number {
     : new Date().getUTCFullYear();
 }
 
+/** Origin for emails fired from request-less paths (withdraw promotions):
+ *  same override order as lib/base-url, localhost as the dev fallback. */
+function fallbackOrigin(): string {
+  return (
+    process.env.OAUTH_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
+}
+
 function windowOpen(s: RegistrationSettingsRow, now: Date): boolean {
   if (!s.enabled) return false;
   if (s.opens_at && now < new Date(s.opens_at)) return false;
@@ -364,16 +378,24 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
   return entrant.id;
 }
 
-/** Oldest waitlisted → pending (doc 16 §1.1 auto-promotion). The promoted
- *  registrant re-enters the normal flow: free = organiser confirm, paid =
- *  pay from the status page. Returns the promoted row when one existed. */
+/** Oldest waitlisted → pending (doc 16 §1.1 auto-promotion). Waitlisted rows
+ *  hold amount 0, so promotion SNAPSHOTS the current fee + method (spec §2);
+ *  card divisions get a fresh 48h pay window. Returns the promoted row. */
 async function promoteOldestWaitlisted(
   tx: Tx,
   divisionId: string,
+  settings: RegistrationSettingsRow | null,
 ): Promise<RegistrationRow | null> {
+  const feeCents = settings?.fee_cents ?? 0;
+  const method = settings?.payment_method ?? "offline";
+  const stripeWindow = method === "stripe" && feeCents > 0;
   const [row] = await tx<RegistrationRow[]>`
     update registrations
-    set status = 'pending', promoted_at = now(), updated_at = now()
+    set status = 'pending', promoted_at = now(), updated_at = now(),
+        amount_cents = ${feeCents},
+        currency = ${settings?.currency ?? "gbp"},
+        payment_method = ${method},
+        expires_at = ${stripeWindow ? tx`now() + interval '48 hours'` : null}
     where id = (
       select id from registrations
       where division_id = ${divisionId} and status = 'waitlisted'
@@ -381,6 +403,44 @@ async function promoteOldestWaitlisted(
       for update skip locked)
     returning ${sql(REG_COLS as unknown as string[])}`;
   return row ?? null;
+}
+
+/** Post-tx promoted email (fire-and-forget): card entries get a fresh
+ *  token-free checkout link, offline entries the resolved instructions. */
+async function notifyPromoted(
+  promoted: RegistrationRow,
+  ctx: DivisionCtx,
+  settings: RegistrationSettingsRow | null,
+  origin: string,
+): Promise<void> {
+  try {
+    let payUrl: string | null = null;
+    if (promoted.payment_method === "stripe" && promoted.amount_cents > 0 && ctx.charges_enabled) {
+      try {
+        payUrl = await createRegistrationCheckout(promoted, ctx, origin, null);
+      } catch {
+        /* the reminder sweep mints another */
+      }
+    }
+    await sendRegistrationPromotedEmail({
+      to: promoted.contact_email,
+      orgName: ctx.org_name,
+      competitionName: ctx.comp_name,
+      displayName: promoted.display_name,
+      feeCents: promoted.amount_cents,
+      currency: promoted.currency ?? settings?.currency ?? "gbp",
+      payUrl,
+      payDeadline: promoted.expires_at,
+      paymentInstructions:
+        promoted.payment_method === "offline" && promoted.amount_cents > 0
+          ? (settings?.payment_instructions ?? ctx.payment_instructions)
+          : null,
+      refCode: promoted.ref_code,
+      refStatusUrl: promoted.ref_code ? `${origin}/r/${promoted.ref_code}` : null,
+    });
+  } catch {
+    /* fire-and-forget */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,7 +1318,9 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
     if (locked.entrant_id) {
       await tx`update entrants set status = 'withdrawn' where id = ${locked.entrant_id}`;
     }
-    const promoted = freedSpot ? await promoteOldestWaitlisted(tx, reg.division_id) : null;
+    const promoted = freedSpot
+      ? await promoteOldestWaitlisted(tx, reg.division_id, settings)
+      : null;
     await audit(tx, ctx.competition_id, ctx.org_id, "registration.withdrawn", {
       registration_id: reg.id,
       by: actorId ? "organiser" : "registrant",
@@ -1275,6 +1337,9 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
   if (!outcome) return;
 
   fireDivisionRevalidate(reg.division_id, ctx.competition_id);
+  if (outcome.promoted) {
+    void notifyPromoted(outcome.promoted, ctx, settings, fallbackOrigin());
+  }
 
   // Auto-refund policy (doc 16 §1.1): full refund when withdrawal lands
   // before refund_lock_at (or no lock set). After the lock it's organiser
@@ -1305,6 +1370,111 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
       }, actorId);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pay-window sweep (spec §6) — cron-shaped: /api/cron/registrations, hourly
+// ---------------------------------------------------------------------------
+
+/**
+ * Two passes over card pendings: (1) T-24h payment reminders carrying a fresh
+ * token-free checkout link, exactly once per registration (reminded_at);
+ * (2) expire rows past their deadline and promote the oldest waitlisted with
+ * a new window. Each expiry runs in its own row-locked tx, so a racing
+ * webhook serialises: webhook first → paid wins; sweep first → the late
+ * payment auto-refunds (confirmPaidRegistration).
+ */
+export async function sweepRegistrations(
+  origin: string,
+): Promise<{ reminded: number; expired: number; promoted: number }> {
+  let reminded = 0;
+  let expired = 0;
+  let promotedCount = 0;
+
+  const due = await sql<RegistrationRow[]>`
+    select ${sql(REG_COLS as unknown as string[])} from registrations
+    where status = 'pending' and payment_method = 'stripe'
+      and expires_at is not null
+      and expires_at < now() + interval '24 hours'
+      and expires_at > now()
+      and reminded_at is null
+    order by expires_at
+    limit 200`;
+  for (const reg of due) {
+    try {
+      const ctx = await divisionCtx(sql, reg.division_id);
+      if (!ctx.charges_enabled) continue; // Connect broke — nothing to link to
+      const url = await createRegistrationCheckout(reg, ctx, origin, null);
+      await sendPaymentReminderEmail({
+        to: reg.contact_email,
+        orgName: ctx.org_name,
+        competitionName: ctx.comp_name,
+        displayName: reg.display_name,
+        feeCents: reg.amount_cents,
+        currency: reg.currency ?? "gbp",
+        paymentInstructions: null,
+        checkoutUrl: url,
+        payDeadline: reg.expires_at,
+      });
+    } catch {
+      continue; // reminded_at stays null — the next sweep retries
+    }
+    await sql`update registrations set reminded_at = now(), updated_at = now()
+              where id = ${reg.id}`;
+    reminded++;
+  }
+
+  const overdue = await sql<{ id: string; division_id: string }[]>`
+    select id, division_id from registrations
+    where status = 'pending' and expires_at is not null and expires_at < now()
+    order by expires_at
+    limit 200`;
+  for (const { id, division_id } of overdue) {
+    const outcome = (await sql.begin(async (tx) => {
+      const [locked] = await tx<RegistrationRow[]>`
+        select ${sql(REG_COLS as unknown as string[])} from registrations
+        where id = ${id} for update`;
+      if (
+        !locked ||
+        locked.status !== "pending" ||
+        !locked.expires_at ||
+        new Date(locked.expires_at) > new Date()
+      ) {
+        return null; // a webhook won the race, or the deadline moved
+      }
+      await tx`update registrations set status = 'expired', updated_at = now()
+               where id = ${id}`;
+      const settings = await loadSettings(tx, division_id);
+      const [div] = await tx<{ competition_id: string; org_id: string }[]>`
+        select competition_id, org_id from divisions where id = ${division_id}`;
+      const promoted = await promoteOldestWaitlisted(tx, division_id, settings);
+      await audit(tx, div.competition_id, div.org_id, "registration.expired", {
+        registration_id: id,
+        promoted_registration_id: promoted?.id ?? null,
+      }, null);
+      if (promoted) {
+        await audit(tx, div.competition_id, div.org_id, "registration.promoted", {
+          registration_id: promoted.id,
+          from: "waitlist",
+        }, null);
+      }
+      return { promoted, settings, competitionId: div.competition_id };
+    })) as unknown as {
+      promoted: RegistrationRow | null;
+      settings: RegistrationSettingsRow | null;
+      competitionId: string;
+    } | null;
+    if (!outcome) continue;
+    expired++;
+    fireDivisionRevalidate(division_id, outcome.competitionId);
+    if (outcome.promoted) {
+      promotedCount++;
+      const ctx = await divisionCtx(sql, division_id);
+      await notifyPromoted(outcome.promoted, ctx, outcome.settings, origin);
+    }
+  }
+
+  return { reminded, expired, promoted: promotedCount };
 }
 
 // ---------------------------------------------------------------------------

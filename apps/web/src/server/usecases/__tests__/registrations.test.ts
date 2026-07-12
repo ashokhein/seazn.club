@@ -45,6 +45,7 @@ import {
   withdrawRegistrationByRef,
   handleRegistrationCheckoutCompleted,
   reconcileRegistrationBySession,
+  sweepRegistrations,
   withdrawRegistrationPublic,
   confirmRegistration,
   confirmRegistrationWaived,
@@ -968,6 +969,71 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     stripeMock.refundCreate.mockClear();
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
     expect(stripeMock.refundCreate).not.toHaveBeenCalled();
+  });
+
+  it("promotion snapshots the current fee and opens a 48h window for card divisions", async () => {
+    const { orgSlug, owner, competition, division } = await stripeRig({ capacity: 1 });
+    const a = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    const b = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id, contact_email: "b@test.local",
+    }, "http://test.local");
+    expect(b.registration.status).toBe("waitlisted");
+    expect(b.registration.amount_cents).toBe(0);
+
+    // Organiser raises the fee while B waits — promotion charges the NEW fee.
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 700, capacity: 1,
+    });
+    await withdrawRegistrationPublic(a.registration.id, a.access_token);
+
+    const [bRow] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${b.registration.id}`;
+    expect(bRow.status).toBe("pending");
+    expect(bRow.amount_cents).toBe(700);
+    expect(bRow.payment_method).toBe("stripe");
+    expect(bRow.expires_at).not.toBeNull();
+  });
+
+  it("sweep reminds once inside the last 24h, then expires and promotes", async () => {
+    const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
+    const a = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    const b = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id, contact_email: "b@test.local",
+    }, "http://test.local");
+    expect(b.registration.status).toBe("waitlisted");
+
+    // Inside the last 24h → one reminder, exactly once.
+    await sql`update registrations set expires_at = now() + interval '10 hours'
+              where id = ${a.registration.id}`;
+    stripeMock.checkoutCreate.mockClear();
+    const first = await sweepRegistrations("http://test.local");
+    expect(first.reminded).toBe(1);
+    expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1); // fresh session for the email
+    const second = await sweepRegistrations("http://test.local");
+    expect(second.reminded).toBe(0); // reminded_at guard
+
+    // Past the deadline → expired + waitlist promoted with a fresh window.
+    await sql`update registrations set expires_at = now() - interval '1 hour'
+              where id = ${a.registration.id}`;
+    const res = await sweepRegistrations("http://test.local");
+    expect(res.expired).toBe(1);
+    expect(res.promoted).toBe(1);
+    const [aRow] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${a.registration.id}`;
+    expect(aRow.status).toBe("expired");
+    const [bRow] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${b.registration.id}`;
+    expect(bRow.status).toBe("pending");
+    expect(bRow.amount_cents).toBe(500);
+    expect(bRow.expires_at).not.toBeNull();
+
+    // A sweep with nothing due is a no-op.
+    const idle = await sweepRegistrations("http://test.local");
+    expect(idle).toEqual({ reminded: 0, expired: 0, promoted: 0 });
   });
 
   it("reconciles by session from /r/[ref] (token-free return)", async () => {
