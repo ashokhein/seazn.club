@@ -3,7 +3,7 @@ import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { getActiveOrgId, requireOrgRole } from "@/lib/auth";
+import { getActiveOrgId, requireOrgRole, requireUser } from "@/lib/auth";
 import { syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import {
@@ -50,8 +50,12 @@ async function subRow(orgId: string): Promise<SubRow | null> {
   return sub ?? null;
 }
 
-/** Owner-gated org context shared by every manage route. */
+/** Owner-gated org context shared by every manage route. Session auth comes
+ *  FIRST so an unauthenticated caller (e.g. a developer API key — these
+ *  routes never read Authorization) gets a clean 401, not a 400 about org
+ *  state. */
 export async function requireBillingOwner(): Promise<{ orgId: string }> {
+  await requireUser();
   const orgId = await getActiveOrgId();
   if (!orgId) throw new HttpError(400, "No active organization");
   await requireOrgRole(orgId, ["owner"]);

@@ -474,6 +474,15 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   );
   const proPreview = await raw(admin, "/api/billing/interval/preview?interval=annual");
   check("v3/11 interval preview wants a Stripe customer first (pro)", proPreview.status === 400);
+  // Developer API keys must never reach billing: /api/billing/* is session-
+  // cookie auth only (never reads Authorization), lives outside /api/v1 and
+  // the OpenAPI surface. A Bearer token without a session is a plain 401.
+  const bearerOnly = await fetch(`${BASE}/api/billing/setup-intent`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", authorization: "Bearer sc_smoke_fake_key" },
+    body: "{}",
+  });
+  check("v3/11 API keys can't touch billing routes (401, header ignored)", bearerOnly.status === 401);
   const proBilling = await html(admin, `/o/${proOrgSlug}/settings/billing`);
   check(
     "v3/11 billing page renders without the portal button (pro)",
