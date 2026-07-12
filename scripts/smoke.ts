@@ -496,6 +496,12 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   );
   const freeCancel = await raw(free, "/api/billing/cancel", "POST", {});
   check("v3/11 cancel wants a Stripe customer first (free)", freeCancel.status === 400);
+  const proAddress = await raw(admin, "/api/billing/address", "POST", {
+    address: { line1: "1 Test Way", city: "London", postal_code: "SW1A 1AA", country: "GB" },
+  });
+  check("v3/11 address update wants a Stripe customer first (pro)", proAddress.status === 400);
+  const freePromo = await raw(free, "/api/billing/promo", "POST", { code: "NOPE" });
+  check("v3/11 promo apply wants a Stripe customer first (free)", freePromo.status === 400);
   const freeBilling = await html(free, `/o/${freeOrg.slug}/settings/billing`);
   check(
     "v3/11 billing page renders upgrade path, no portal (free)",

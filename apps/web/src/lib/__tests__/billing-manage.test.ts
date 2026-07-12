@@ -5,6 +5,10 @@
 import { describe, expect, it } from "vitest";
 import { asCurrency } from "@/lib/currency";
 import {
+  buildAddressUpdateParams,
+  buildApplyPromoParams,
+  discountSummary,
+  taxIdRows,
   buildSetupIntentParams,
   buildIntervalPreviewParams,
   buildIntervalChangeParams,
@@ -194,6 +198,117 @@ describe("intervalForPrice", () => {
     expect(intervalForPrice("price_y", plan)).toBe("annual");
     expect(intervalForPrice("price_other", plan)).toBeNull();
     expect(intervalForPrice(null, plan)).toBeNull();
+  });
+});
+
+describe("buildAddressUpdateParams (billing details v3/11)", () => {
+  it("maps name + address and drops empty optional lines", () => {
+    const p = buildAddressUpdateParams({
+      name: "Riverside Club",
+      address: {
+        line1: "10 Downing St",
+        line2: "",
+        city: "London",
+        state: "",
+        postal_code: "SW1A 1AA",
+        country: "GB",
+      },
+    });
+    expect(p).toEqual({
+      name: "Riverside Club",
+      address: { line1: "10 Downing St", city: "London", postal_code: "SW1A 1AA", country: "GB" },
+    });
+  });
+
+  it("omits name when not provided", () => {
+    const p = buildAddressUpdateParams({
+      address: { line1: "1 Main St", city: "Delhi", postal_code: "110001", country: "IN" },
+    });
+    expect("name" in p).toBe(false);
+    expect(p.address).toMatchObject({ country: "IN" });
+  });
+});
+
+describe("taxIdRows", () => {
+  it("maps id/type/value and verification status, unverified fallback", () => {
+    const rows = taxIdRows([
+      { id: "txi_1", type: "gb_vat", value: "GB123456789", verification: { status: "verified" } },
+      { id: "txi_2", type: "in_gst", value: "22AAAAA0000A1Z5", verification: null },
+    ]);
+    expect(rows).toEqual([
+      { id: "txi_1", type: "gb_vat", value: "GB123456789", status: "verified" },
+      { id: "txi_2", type: "in_gst", value: "22AAAAA0000A1Z5", status: "unverified" },
+    ]);
+  });
+});
+
+describe("discountSummary", () => {
+  it("describes a percent-forever coupon with its promo code", () => {
+    const s = discountSummary([
+      {
+        id: "di_1",
+        coupon: { id: "co_1", name: "Launch deal", percent_off: 10, duration: "forever" },
+        promotion_code: { id: "promo_1", code: "LAUNCH10" },
+      },
+    ]);
+    expect(s).toEqual({
+      id: "di_1",
+      label: "Launch deal (LAUNCH10)",
+      description: "10% off forever",
+    });
+  });
+
+  it("describes an amount-off repeating coupon without a code", () => {
+    const s = discountSummary([
+      {
+        id: "di_2",
+        coupon: {
+          id: "co_2",
+          name: null,
+          amount_off: 500,
+          currency: "gbp",
+          duration: "repeating",
+          duration_in_months: 3,
+        },
+        promotion_code: null,
+      },
+    ]);
+    expect(s?.label).toBe("co_2");
+    expect(s?.description).toBe("£5 off for 3 months");
+  });
+
+  it("reads the dahlia shape: coupon nested under discount.source", () => {
+    // stripe-node v22 pins API 2026-06-24.dahlia, where discount.coupon moved
+    // to discount.source.coupon (expand: "discounts.source.coupon").
+    const s = discountSummary([
+      {
+        id: "di_3",
+        source: {
+          type: "coupon",
+          coupon: { id: "co_3", name: null, percent_off: 10, duration: "forever" },
+        },
+        promotion_code: { id: "promo_3", code: "SEAZN10TEST" },
+      },
+    ]);
+    expect(s).toEqual({
+      id: "di_3",
+      label: "co_3 (SEAZN10TEST)",
+      description: "10% off forever",
+    });
+  });
+
+  it("returns null for empty or string-only discount lists", () => {
+    expect(discountSummary([])).toBeNull();
+    expect(discountSummary(["di_x"])).toBeNull();
+    expect(discountSummary(undefined)).toBeNull();
+  });
+});
+
+describe("buildApplyPromoParams", () => {
+  it("targets the promotion code id in the discounts array", () => {
+    expect(buildApplyPromoParams("promo_123")).toEqual({
+      discounts: [{ promotion_code: "promo_123" }],
+    });
   });
 });
 

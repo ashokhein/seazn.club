@@ -2,11 +2,23 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
+import {
+  AddressElement,
+  Elements,
+  PaymentElement,
+  useElements,
+  useStripe,
+} from "@stripe/react-stripe-js";
 import { stripeAppearance, stripePromise } from "@/lib/stripe-browser";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
-import type { IntervalPreview, PaymentMethodRow } from "@/lib/billing-manage";
+import {
+  TAX_ID_TYPES,
+  type DiscountSummary,
+  type IntervalPreview,
+  type PaymentMethodRow,
+  type TaxIdRow,
+} from "@/lib/billing-manage";
 
 /**
  * In-app billing management (v3/11) — the client half of the portal
@@ -466,6 +478,336 @@ export function RetryPaymentButton() {
         {loading ? "Paying…" : "Retry payment"}
       </button>
       {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Billing details: address + tax IDs (drive automatic_tax) — v3/11 follow-up
+// ---------------------------------------------------------------------------
+
+const TAX_ID_LABEL: Record<string, string> = {
+  eu_vat: "EU VAT",
+  gb_vat: "UK VAT",
+  in_gst: "India GST",
+  au_abn: "Australia ABN",
+  nz_gst: "NZ GST",
+  us_ein: "US EIN",
+};
+
+export function BillingDetailsCard({
+  name,
+  address,
+  taxIds,
+}: {
+  name: string | null;
+  address: {
+    line1?: string | null;
+    line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postal_code?: string | null;
+    country?: string | null;
+  } | null;
+  taxIds: TaxIdRow[];
+}) {
+  const router = useRouter();
+  const [editing, setEditing] = useState(false);
+
+  const summary = address?.line1
+    ? [address.line1, address.line2, address.city, address.postal_code, address.country]
+        .filter(Boolean)
+        .join(", ")
+    : null;
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <p className="mb-1 text-sm font-medium text-slate-700">Billing address</p>
+        {!editing && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-sm text-slate-600">
+              {summary ?? "No billing address yet — tax is estimated until one is set."}
+            </p>
+            <button className="btn btn-ghost text-xs" onClick={() => setEditing(true)}>
+              {summary ? "Edit address" : "Add address"}
+            </button>
+          </div>
+        )}
+        {editing && (
+          <div className="mt-2 rounded-xl border border-purple-200 bg-purple-50/40 p-4">
+            <Elements stripe={stripePromise} options={{ appearance: stripeAppearance }}>
+              <AddressForm
+                defaultName={name}
+                defaultAddress={address}
+                onDone={() => {
+                  setEditing(false);
+                  router.refresh();
+                }}
+                onCancel={() => setEditing(false)}
+              />
+            </Elements>
+            <p className="mt-2 text-xs text-slate-500">
+              VAT/GST is recalculated from this address on your next invoice.
+            </p>
+          </div>
+        )}
+      </div>
+
+      <TaxIdManager taxIds={taxIds} />
+    </div>
+  );
+}
+
+function AddressForm({
+  defaultName,
+  defaultAddress,
+  onDone,
+  onCancel,
+}: {
+  defaultName: string | null;
+  defaultAddress: Record<string, string | null | undefined> | null;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const elements = useElements();
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function save() {
+    const el = elements?.getElement(AddressElement);
+    if (!el) return;
+    setSaving(true);
+    setError(null);
+    const { complete, value } = await el.getValue();
+    if (!complete) {
+      setError("Complete the address first.");
+      setSaving(false);
+      return;
+    }
+    const data = await post("/api/billing/address", {
+      name: value.name || undefined,
+      address: {
+        line1: value.address.line1,
+        line2: value.address.line2 || undefined,
+        city: value.address.city,
+        state: value.address.state || undefined,
+        postal_code: value.address.postal_code,
+        country: value.address.country,
+      },
+    });
+    if (!data.ok) {
+      setError(data.error ?? "Could not save the address");
+      setSaving(false);
+      return;
+    }
+    onDone();
+  }
+
+  return (
+    <div>
+      <AddressElement
+        options={{
+          mode: "billing",
+          display: { name: "organization" },
+          defaultValues: {
+            name: defaultName ?? undefined,
+            address: defaultAddress?.line1
+              ? {
+                  line1: defaultAddress.line1 ?? undefined,
+                  line2: defaultAddress.line2 ?? undefined,
+                  city: defaultAddress.city ?? undefined,
+                  state: defaultAddress.state ?? undefined,
+                  postal_code: defaultAddress.postal_code ?? undefined,
+                  country: defaultAddress.country ?? "GB",
+                }
+              : undefined,
+          },
+        }}
+      />
+      <div className="mt-3 flex items-center gap-3">
+        <button className="btn btn-primary" onClick={save} disabled={saving}>
+          {saving ? "Saving…" : "Save address"}
+        </button>
+        <button className="btn btn-ghost" onClick={onCancel} disabled={saving}>
+          Cancel
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+function TaxIdManager({ taxIds }: { taxIds: TaxIdRow[] }) {
+  const router = useRouter();
+  const [type, setType] = useState<string>("gb_vat");
+  const [value, setValue] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function add() {
+    if (!value.trim()) return;
+    setBusy(true);
+    setError(null);
+    const data = await post("/api/billing/tax-id", { type, value });
+    if (!data.ok) {
+      setError(data.error ?? "Could not add the tax ID");
+      setBusy(false);
+      return;
+    }
+    setValue("");
+    setBusy(false);
+    router.refresh();
+  }
+
+  async function remove(id: string) {
+    setBusy(true);
+    setError(null);
+    const data = await post("/api/billing/tax-id/remove", { tax_id: id });
+    if (!data.ok) setError(data.error ?? "Could not remove the tax ID");
+    setBusy(false);
+    router.refresh();
+  }
+
+  return (
+    <div>
+      <p className="mb-1 text-sm font-medium text-slate-700">VAT / GST ID</p>
+      {taxIds.length > 0 && (
+        <ul className="mb-2 space-y-1">
+          {taxIds.map((t) => (
+            <li key={t.id} className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+              <span className="font-medium">{TAX_ID_LABEL[t.type] ?? t.type}</span>
+              <span>{t.value}</span>
+              <span
+                className={`badge ${
+                  t.status === "verified"
+                    ? "bg-green-100 text-green-700"
+                    : t.status === "pending"
+                      ? "bg-amber-100 text-amber-700"
+                      : "bg-slate-100 text-slate-500"
+                }`}
+              >
+                {t.status}
+              </span>
+              <button
+                className="text-xs text-red-600 hover:underline"
+                disabled={busy}
+                onClick={() => remove(t.id)}
+              >
+                Remove
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      {taxIds.length === 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <select
+            className="select w-auto"
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            aria-label="Tax ID type"
+          >
+            {TAX_ID_TYPES.map((t) => (
+              <option key={t} value={t}>
+                {TAX_ID_LABEL[t] ?? t}
+              </option>
+            ))}
+          </select>
+          <input
+            className="input w-52"
+            placeholder="e.g. GB123456789"
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            aria-label="Tax ID value"
+          />
+          <button className="btn btn-ghost" onClick={add} disabled={busy || !value.trim()}>
+            {busy ? "Adding…" : "Add"}
+          </button>
+        </div>
+      )}
+      {taxIds.length === 0 && (
+        <p className="mt-1 text-xs text-slate-500">
+          Shown on every invoice; EU business IDs switch invoices to reverse charge.
+        </p>
+      )}
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Promotion code on the live subscription
+// ---------------------------------------------------------------------------
+
+export function PromoCodeBox({ discount }: { discount: DiscountSummary | null }) {
+  const router = useRouter();
+  const [code, setCode] = useState("");
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function apply() {
+    setBusy(true);
+    setError(null);
+    const data = await post("/api/billing/promo", { code });
+    if (!data.ok) {
+      setError(data.error ?? "Could not apply the code");
+      setBusy(false);
+      return;
+    }
+    setCode("");
+    setOpen(false);
+    setBusy(false);
+    router.refresh();
+  }
+
+  async function remove() {
+    setBusy(true);
+    setError(null);
+    const data = await post("/api/billing/promo", { remove: true });
+    if (!data.ok) setError(data.error ?? "Could not remove the discount");
+    setBusy(false);
+    router.refresh();
+  }
+
+  if (discount) {
+    return (
+      <div className="flex flex-wrap items-center gap-2 text-sm">
+        <span className="badge bg-emerald-100 text-emerald-700">{discount.label}</span>
+        <span className="text-slate-600">{discount.description} — applies to upcoming invoices.</span>
+        <button className="text-xs text-red-600 hover:underline" onClick={remove} disabled={busy}>
+          Remove
+        </button>
+        {error && <p className="w-full text-xs text-red-500">{error}</p>}
+      </div>
+    );
+  }
+
+  if (!open) {
+    return (
+      <button className="text-xs text-purple-600 hover:underline" onClick={() => setOpen(true)}>
+        Have a promo code?
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <input
+        className="input w-44"
+        placeholder="Promo code"
+        value={code}
+        onChange={(e) => setCode(e.target.value.toUpperCase())}
+        aria-label="Promotion code"
+      />
+      <button className="btn btn-ghost" onClick={apply} disabled={busy || !code.trim()}>
+        {busy ? "Applying…" : "Apply"}
+      </button>
+      <button className="btn btn-ghost text-xs" onClick={() => setOpen(false)} disabled={busy}>
+        Never mind
+      </button>
+      {error && <p className="w-full text-xs text-red-500">{error}</p>}
     </div>
   );
 }

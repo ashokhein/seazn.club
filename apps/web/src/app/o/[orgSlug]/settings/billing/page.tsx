@@ -7,9 +7,11 @@ import { routes } from "@/lib/routes";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, DowngradeButton } from "@/components/billing-actions";
 import {
+  BillingDetailsCard,
   CancelSubscriptionButton,
   PaymentMethodsManager,
   PlanIntervalSwitcher,
+  PromoCodeBox,
   ResumeSubscriptionButton,
   RetryPaymentButton,
 } from "@/components/billing-manage";
@@ -204,6 +206,7 @@ export default async function BillingPage({
                   )
                 )}
               </div>
+              {overview && <PromoCodeBox discount={overview.discount} />}
             </div>
           )}
         </section>
@@ -217,6 +220,21 @@ export default async function BillingPage({
             <PaymentMethodsManager
               methods={overview.paymentMethods}
               autoOpen={status === "trialing" && overview.paymentMethods.length === 0}
+            />
+          </section>
+        )}
+
+        {/* Billing details — address drives automatic_tax; VAT/GST id prints
+            on invoices and flips EU B2B to reverse charge. */}
+        {isOwner && overview && (
+          <section className="card mb-6 p-5">
+            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
+              Billing details
+            </h2>
+            <BillingDetailsCard
+              name={overview.billingName}
+              address={overview.billingAddress}
+              taxIds={overview.taxIds}
             />
           </section>
         )}

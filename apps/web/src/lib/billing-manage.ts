@@ -195,6 +195,134 @@ export function intervalForPrice(
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// Billing details: address, tax IDs, coupons (v3/11 follow-up)
+// ---------------------------------------------------------------------------
+
+/** Tax-ID types we offer, matched to the currencies we sell in. */
+export const TAX_ID_TYPES = ["eu_vat", "gb_vat", "in_gst", "au_abn", "nz_gst", "us_ein"] as const;
+export type TaxIdType = (typeof TAX_ID_TYPES)[number];
+
+export interface BillingAddressInput {
+  name?: string;
+  address: {
+    line1: string;
+    line2?: string;
+    city: string;
+    state?: string;
+    postal_code: string;
+    country: string;
+  };
+}
+
+/** customers.update params; empty optional lines are dropped, not sent as ""
+ *  (a garbage address can fail invoice finalization under automatic_tax). */
+export function buildAddressUpdateParams(input: BillingAddressInput): {
+  name?: string;
+  address: Record<string, string>;
+} {
+  const address: Record<string, string> = {};
+  for (const [k, v] of Object.entries(input.address)) {
+    if (typeof v === "string" && v.trim() !== "") address[k] = v;
+  }
+  return { ...(input.name ? { name: input.name } : {}), address };
+}
+
+export interface TaxIdRow {
+  id: string;
+  type: string;
+  value: string;
+  /** Stripe verification: verified | pending | unavailable — "unverified" when absent. */
+  status: string;
+}
+
+export function taxIdRows(
+  taxIds: Array<{
+    id: string;
+    type: string;
+    value: string;
+    verification?: { status?: string | null } | null;
+  }>,
+): TaxIdRow[] {
+  return taxIds.map((t) => ({
+    id: t.id,
+    type: t.type,
+    value: t.value,
+    status: t.verification?.status ?? "unverified",
+  }));
+}
+
+export interface DiscountSummary {
+  id: string;
+  /** Coupon name plus the customer-facing code when one was used. */
+  label: string;
+  /** e.g. "10% off forever", "£5 off for 3 months". */
+  description: string;
+}
+
+const DISCOUNT_SYMBOL: Record<string, string> = { usd: "$", eur: "€", gbp: "£", aud: "A$", inr: "₹" };
+
+interface CouponShape {
+  id: string;
+  name?: string | null;
+  percent_off?: number | null;
+  amount_off?: number | null;
+  currency?: string | null;
+  duration?: string | null;
+  duration_in_months?: number | null;
+}
+
+/** First expanded discount on a subscription, humanized; null when none.
+ *  Reads both API shapes: classic `discount.coupon` and 2026-06-24.dahlia's
+ *  `discount.source.coupon` (expand: "discounts.source.coupon"). */
+export function discountSummary(
+  discounts:
+    | Array<
+        | string
+        | {
+            id: string;
+            coupon?: CouponShape | null;
+            source?: { type?: string; coupon?: string | CouponShape | null } | null;
+            promotion_code?: string | { id: string; code?: string } | null;
+          }
+      >
+    | undefined
+    | null,
+): DiscountSummary | null {
+  const d = discounts?.find((x): x is Exclude<typeof x, string> => typeof x !== "string");
+  if (!d) return null;
+  const sourceCoupon = typeof d.source?.coupon === "object" ? d.source.coupon : null;
+  const c = d.coupon ?? sourceCoupon;
+  if (!c) return null;
+
+  const code = typeof d.promotion_code === "object" ? d.promotion_code?.code : undefined;
+  const label = `${c.name ?? c.id}${code ? ` (${code})` : ""}`;
+
+  let off = "";
+  if (typeof c.percent_off === "number") off = `${c.percent_off}% off`;
+  else if (typeof c.amount_off === "number") {
+    const cur = c.currency ?? "usd";
+    const symbol = DISCOUNT_SYMBOL[cur] ?? `${cur.toUpperCase()} `;
+    off = `${symbol}${c.amount_off / 100} off`;
+  }
+  const duration =
+    c.duration === "forever"
+      ? "forever"
+      : c.duration === "once"
+        ? "once"
+        : c.duration === "repeating" && c.duration_in_months
+          ? `for ${c.duration_in_months} month${c.duration_in_months === 1 ? "" : "s"}`
+          : "";
+  return { id: d.id, label, description: [off, duration].filter(Boolean).join(" ") };
+}
+
+/** subscriptions.update params applying a validated promotion code. */
+export function buildApplyPromoParams(promotionCodeId: string): {
+  discounts: Array<{ promotion_code: string }>;
+} {
+  return { discounts: [{ promotion_code: promotionCodeId }] };
+}
+
 /**
  * Lazy renewal self-heal (webhook-optional, same philosophy as
  * reconcileCheckout): pull the sub live when the mirror looks stale — the

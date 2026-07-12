@@ -7,18 +7,26 @@ import { getActiveOrgId, requireOrgRole, requireUser } from "@/lib/auth";
 import { syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import {
+  buildAddressUpdateParams,
+  buildApplyPromoParams,
   buildIntervalChangeParams,
   buildIntervalPreviewParams,
   buildSetupIntentParams,
+  discountSummary,
   intervalForPrice,
   invoiceRows,
   needsRenewalResync,
   paymentMethodRows,
   summarizeIntervalPreview,
+  taxIdRows,
+  type BillingAddressInput,
   type BillingInterval,
+  type DiscountSummary,
   type IntervalPreview,
   type InvoiceRow,
   type PaymentMethodRow,
+  type TaxIdRow,
+  type TaxIdType,
 } from "@/lib/billing-manage";
 export type { BillingInterval, IntervalPreview };
 import { proPrice, type Currency } from "@/lib/currency";
@@ -88,6 +96,18 @@ export interface BillingOverview {
   currency: string;
   interval: BillingInterval | null;
   hasOpenInvoice: boolean;
+  /** Billing details (v3/11 follow-up): drive automatic_tax + invoice header. */
+  billingName: string | null;
+  billingAddress: {
+    line1?: string | null;
+    line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    postal_code?: string | null;
+    country?: string | null;
+  } | null;
+  taxIds: TaxIdRow[];
+  discount: DiscountSummary | null;
 }
 
 /**
@@ -111,13 +131,17 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
     }
 
     const customerId = sub.stripe_customer_id;
-    const [customer, pms, invoices, stripeSub] = await Promise.all([
+    const [customer, pms, invoices, stripeSub, taxIds] = await Promise.all([
       stripe.customers.retrieve(customerId),
       stripe.customers.listPaymentMethods(customerId, { type: "card", limit: 10 }),
       stripe.invoices.list({ customer: customerId, limit: 24 }),
       sub.stripe_subscription_id
-        ? stripe.subscriptions.retrieve(sub.stripe_subscription_id)
+        ? stripe.subscriptions.retrieve(sub.stripe_subscription_id, {
+            // dahlia moved discount.coupon under discount.source.
+            expand: ["discounts.source.coupon", "discounts.promotion_code"],
+          })
         : Promise.resolve(null),
+      stripe.customers.listTaxIds(customerId, { limit: 10 }),
     ]);
 
     if (customer.deleted) return null;
@@ -139,6 +163,10 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
       currency: sub.currency ?? "usd",
       interval: plan ? intervalForPrice(priceId, plan) : null,
       hasOpenInvoice: rows.some((r) => r.isOpen),
+      billingName: customer.name ?? null,
+      billingAddress: customer.address ?? null,
+      taxIds: taxIdRows(taxIds.data),
+      discount: discountSummary(stripeSub?.discounts),
     };
   } catch {
     return null;
@@ -425,4 +453,82 @@ export async function retryOpenInvoice(orgId: string): Promise<RetryInvoiceResul
     await invalidateOrgEntitlements(orgId);
   }
   return { paid: true };
+}
+
+// ---------------------------------------------------------------------------
+// Billing details: address, tax IDs, coupons (v3/11 follow-up)
+// ---------------------------------------------------------------------------
+
+/** Update the customer's billing name/address — automatic_tax recalculates
+ *  from the new location on every invoice from now on (never retroactive). */
+export async function updateBillingAddress(
+  orgId: string,
+  input: BillingAddressInput,
+): Promise<void> {
+  const { customerId } = await requireCustomer(orgId);
+  await getStripe().customers.update(customerId, buildAddressUpdateParams(input));
+}
+
+export async function addTaxId(
+  orgId: string,
+  type: TaxIdType,
+  value: string,
+): Promise<TaxIdRow> {
+  const { customerId } = await requireCustomer(orgId);
+  try {
+    const created = await getStripe().customers.createTaxId(customerId, { type, value });
+    return taxIdRows([created])[0];
+  } catch (err) {
+    // Stripe rejects malformed ids with a helpful message — surface it.
+    if ((err as Stripe.errors.StripeError)?.type === "StripeInvalidRequestError")
+      throw new HttpError(400, (err as Error).message);
+    throw err;
+  }
+}
+
+export async function removeTaxId(orgId: string, taxIdId: string): Promise<void> {
+  const { customerId } = await requireCustomer(orgId);
+  const stripe = getStripe();
+  // Only detach ids that actually belong to this org's customer.
+  const existing = await stripe.customers.listTaxIds(customerId, { limit: 10 });
+  if (!existing.data.some((t) => t.id === taxIdId))
+    throw new HttpError(400, "That tax ID does not belong to this account.");
+  await stripe.customers.deleteTaxId(customerId, taxIdId);
+}
+
+/** Validate a customer-facing promotion code and apply it to the live
+ *  subscription — the discount lands on every following invoice. */
+export async function applyPromoCode(
+  orgId: string,
+  code: string,
+): Promise<DiscountSummary | null> {
+  const { sub } = await requireCustomer(orgId);
+  if (!sub.stripe_subscription_id)
+    throw new HttpError(400, "This organization has no Stripe subscription.");
+  const stripe = getStripe();
+
+  const found = await stripe.promotionCodes.list({ code, active: true, limit: 1 });
+  const promo = found.data[0];
+  if (!promo) throw new HttpError(400, "That code isn’t valid or has expired.");
+
+  try {
+    const updated = await stripe.subscriptions.update(sub.stripe_subscription_id, {
+      ...buildApplyPromoParams(promo.id),
+      expand: ["discounts.source.coupon", "discounts.promotion_code"],
+    });
+    return discountSummary(updated.discounts);
+  } catch (err) {
+    // Eligibility rules (first-purchase-only, minimum amount, currency…) are
+    // enforced by Stripe at apply time — pass the reason through.
+    if ((err as Stripe.errors.StripeError)?.type === "StripeInvalidRequestError")
+      throw new HttpError(400, (err as Error).message);
+    throw err;
+  }
+}
+
+export async function removePromoCode(orgId: string): Promise<void> {
+  const { sub } = await requireCustomer(orgId);
+  if (!sub.stripe_subscription_id)
+    throw new HttpError(400, "This organization has no Stripe subscription.");
+  await getStripe().subscriptions.deleteDiscount(sub.stripe_subscription_id);
 }
