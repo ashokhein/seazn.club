@@ -19,7 +19,12 @@ vi.mock("@/lib/db", () => ({
   sql: vi.fn(() => Promise.resolve(results.shift() ?? [])),
 }));
 
-import { orgBySlugUncached, invalidateSlugCache } from "@/server/slug-resolve";
+import {
+  orgBySlugUncached,
+  compBySlugUncached,
+  divBySlugUncached,
+  invalidateSlugCache,
+} from "@/server/slug-resolve";
 import { cacheSet, cacheDelPattern } from "@/lib/cache";
 import { sql } from "@/lib/db";
 
@@ -48,9 +53,84 @@ describe("slug resolution cache", () => {
     expect(cacheSet).not.toHaveBeenCalled();
   });
 
-  it("invalidateSlugCache deletes old and new slug keys", async () => {
+  // Review finding 2: the test above only ever drove the plain double-miss
+  // (live miss + history miss -> null) — the actual `{ renamedTo }` branch
+  // (live miss -> history HIT -> target HIT) was never exercised, so a
+  // regression that started caching that branch would have gone undetected.
+  it("never caches a renamedTo fallback", async () => {
+    results.push([], [{ entity_id: "org-2" }], [{ slug: "riverside-new" }]);
+    expect(await orgBySlugUncached("riverside-old")).toEqual({ renamedTo: "riverside-new" });
+    expect(sql).toHaveBeenCalledTimes(3); // live miss, slug_history hit, target lookup
+    expect(cacheSet).not.toHaveBeenCalled();
+  });
+
+  it("invalidateSlugCache deletes old and new slug keys for org, competition and division", async () => {
     await invalidateSlugCache("org", null, "riverside", "riverside-united");
     expect(cacheDelPattern).toHaveBeenCalledWith("slug:org:riverside");
     expect(cacheDelPattern).toHaveBeenCalledWith("slug:org:riverside-united");
+
+    await invalidateSlugCache("competition", "org-1", "spring-open", "autumn-open");
+    expect(cacheDelPattern).toHaveBeenCalledWith("slug:comp:org-1:spring-open");
+    expect(cacheDelPattern).toHaveBeenCalledWith("slug:comp:org-1:autumn-open");
+
+    await invalidateSlugCache("division", "comp-1", "u16-boys", "u18-boys");
+    expect(cacheDelPattern).toHaveBeenCalledWith("slug:div:comp-1:u16-boys");
+    expect(cacheDelPattern).toHaveBeenCalledWith("slug:div:comp-1:u18-boys");
+  });
+});
+
+describe("slug resolution cache — competition", () => {
+  const live = { id: "comp-1", name: "Summer Smash", slug: "summer-smash" };
+  const orgId = "org-1";
+
+  it("caches a live resolution and serves the repeat from Redis", async () => {
+    results.push([live]); // first call: DB answers
+    expect(await compBySlugUncached(orgId, "summer-smash")).toEqual(live);
+    expect(cacheSet).toHaveBeenCalledWith(`slug:comp:${orgId}:summer-smash`, live, 60);
+
+    // second call: no DB result queued — must come from cache
+    expect(await compBySlugUncached(orgId, "summer-smash")).toEqual(live);
+    expect(sql).toHaveBeenCalledTimes(1);
+  });
+
+  it("never caches a miss", async () => {
+    results.push([], []); // live miss, history miss
+    expect(await compBySlugUncached(orgId, "ghost")).toBeNull();
+    expect(cacheSet).not.toHaveBeenCalled();
+  });
+
+  it("never caches a renamedTo fallback", async () => {
+    results.push([], [{ entity_id: "comp-2" }], [{ slug: "autumn-open" }]);
+    expect(await compBySlugUncached(orgId, "spring-open")).toEqual({ renamedTo: "autumn-open" });
+    expect(sql).toHaveBeenCalledTimes(3);
+    expect(cacheSet).not.toHaveBeenCalled();
+  });
+});
+
+describe("slug resolution cache — division", () => {
+  const live = { id: "div-1", name: "U16 Boys", slug: "u16-boys" };
+  const compId = "comp-1";
+
+  it("caches a live resolution and serves the repeat from Redis", async () => {
+    results.push([live]); // first call: DB answers
+    expect(await divBySlugUncached(compId, "u16-boys")).toEqual(live);
+    expect(cacheSet).toHaveBeenCalledWith(`slug:div:${compId}:u16-boys`, live, 60);
+
+    // second call: no DB result queued — must come from cache
+    expect(await divBySlugUncached(compId, "u16-boys")).toEqual(live);
+    expect(sql).toHaveBeenCalledTimes(1);
+  });
+
+  it("never caches a miss", async () => {
+    results.push([], []); // live miss, history miss
+    expect(await divBySlugUncached(compId, "ghost")).toBeNull();
+    expect(cacheSet).not.toHaveBeenCalled();
+  });
+
+  it("never caches a renamedTo fallback", async () => {
+    results.push([], [{ entity_id: "div-2" }], [{ slug: "u18-boys" }]);
+    expect(await divBySlugUncached(compId, "u16-boys-old")).toEqual({ renamedTo: "u18-boys" });
+    expect(sql).toHaveBeenCalledTimes(3);
+    expect(cacheSet).not.toHaveBeenCalled();
   });
 });
