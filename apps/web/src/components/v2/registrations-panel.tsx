@@ -472,7 +472,7 @@ export function RegistrationsPanel({
                     entries expire after 48h and the waitlist moves up.
                   </span>
                   {!settings.charges_enabled && (
-                    <a href="/settings" className="mt-1 block font-medium text-purple-700 underline">
+                    <a href="/settings/payments" className="mt-1 block font-medium text-purple-700 underline">
                       Connect Stripe in Settings → Payments first
                     </a>
                   )}
@@ -504,7 +504,7 @@ export function RegistrationsPanel({
         {settings.payment_method === "stripe" && !settings.charges_enabled && (
           <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
             Card payments are offline — registrants can&apos;t pay until Stripe is reconnected
-            under <a href="/settings" className="underline">Settings → Payments</a>. The public
+            under <a href="/settings/payments" className="underline">Settings → Payments</a>. The public
             page shows the division as temporarily unavailable.
           </div>
         )}
