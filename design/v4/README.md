@@ -1,0 +1,46 @@
+# v4 — AI Schedule Architect
+
+> **Status (2026-07-12):** not started. PROMPT-41 ⏳ · PROMPT-42 ⏳ · PROMPT-43 ⏳.
+> Branch (planned): `feat/v4-ai-schedule`. Migrations: V-next (schedule_source `ai`).
+
+## Theme
+
+Replace the weak first-cut schedule AI (`aiConstraintsForDivision` — prose→constraints only,
+UI already withdrawn) with a full **AI Schedule Architect**: the organiser types an
+instruction in plain language ("finish by 6pm, juniors before 2pm, marquee match last on
+Court 1, keep the Smith brothers apart") and the system produces a complete, legal,
+applicable schedule — then refines it in follow-up turns and repairs it after mid-season
+disruptions. Pro-only (`scheduling.ai`). Token spend is acceptable: a couple of runs per
+division, quality over cost.
+
+**Architecture in one line: solver drafts → AI plans → engine referees.** The LLM is never
+trusted for legality; `validateAssignments` re-checks every proposal server-side and feeds
+conflicts back for repair rounds. Output is the existing `applySchedule` shape, so apply,
+undo, checkpoints, seq-concurrency and the ledger all work unchanged.
+
+## Document index
+
+| # | File | Contents | Prompt |
+|---|------|----------|--------|
+| 00 | `00-ai-schedule-architect.md` | Normative spec: removal of old feature, modes, pipeline, API, data, gating, failure modes, decisions | 41, 42, 43 |
+| 01 | `01-llm-contract.md` | The LLM contract: model/params, context-pack format, output schema, verbatim system prompt, repair/refine protocol, eval fixtures | 41, 42 |
+
+## Prompt index (prompts/)
+
+| Prompt | Delivers | Depends on |
+|--------|----------|------------|
+| PROMPT-41 | Core engine: context pack, Anthropic call, verify/repair loop, `POST /divisions/{id}/schedule/ai-plan`, removal of old ai-constraints feature, `schedule_source='ai'` migration | — |
+| PROMPT-42 | Refine + repair modes, competition-level multi-division planning, constraint-suggestion accept path | PROMPT-41 |
+| PROMPT-43 | Board UX: instruction panel, ghost preview, diff + explanations, accept→apply, follow-up chat | PROMPT-41 (42 for follow-up) |
+
+## Build order (canonical)
+
+41 → 42 → 43. Do not run 42/43 alongside 41 (shared files: `schedule-plus.ts`,
+`openapi.ts`, `constraints-panel.tsx`).
+
+## House rules
+
+PROMPT-00 conventions apply. Every change ships a failing-without-it regression test;
+`scripts/smoke.ts` extended per feature (pro + free paths); `tsc` + unit tests green before
+push; new v1 routes registered in `server/api-v1/openapi.ts` ROUTES (coverage test enforces).
+Read `v3/11-gaps-and-decisions.md` for still-binding cross-cutting defaults.
