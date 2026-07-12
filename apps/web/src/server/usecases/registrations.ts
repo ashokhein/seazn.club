@@ -358,7 +358,8 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
   }
   await tx`
     update registrations
-    set entrant_id = ${entrant.id}, status = 'confirmed', updated_at = now()
+    set entrant_id = ${entrant.id}, status = 'confirmed', expires_at = null,
+        updated_at = now()
     where id = ${reg.id}`;
   return entrant.id;
 }
@@ -899,29 +900,48 @@ export async function handleRegistrationCheckoutCompleted(
   await confirmPaidRegistration(regId, paymentIntent, session.amount_total ?? null);
 }
 
+type PayOutcome =
+  | { kind: "confirmed"; divisionId: string; competitionId: string }
+  | { kind: "late" | "duplicate"; reg: RegistrationRow; competitionId: string; intent: string }
+  | null;
+
 async function confirmPaidRegistration(
   regId: string,
   paymentIntentId: string | null,
   amountTotal: number | null,
 ): Promise<void> {
-  const done = (await sql.begin(async (tx) => {
+  const outcome = (await sql.begin(async (tx) => {
     const [reg] = await tx<RegistrationRow[]>`
       select ${sql(REG_COLS as unknown as string[])} from registrations
       where id = ${regId} for update`;
     if (!reg) return null;
-    // Idempotency + a late payment on a withdrawn registration: record the
-    // intent (so refund tooling can find it) but never resurrect the row.
-    if (reg.status === "confirmed" || reg.status === "paid") return null;
-    if (reg.status === "withdrawn") {
+    const [div] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${reg.division_id}`;
+    // Already paid/confirmed: a replay of the SAME session is a no-op, but a
+    // DIFFERENT intent means the registrant paid twice (two open checkout
+    // tabs, spec issue #2) — refund the duplicate, keep the original.
+    if (reg.status === "confirmed" || reg.status === "paid") {
+      if (paymentIntentId && reg.payment_intent_id && paymentIntentId !== reg.payment_intent_id) {
+        return { kind: "duplicate", reg, competitionId: div.competition_id, intent: paymentIntentId };
+      }
+      return null;
+    }
+    // Money landing on a dead registration (withdrawn/expired, spec issue #1):
+    // record the intent for the audit trail and send it straight back.
+    if (reg.status === "withdrawn" || reg.status === "expired") {
       await tx`update registrations
                set payment_intent_id = coalesce(payment_intent_id, ${paymentIntentId}),
                    updated_at = now()
                where id = ${regId}`;
-      return null;
+      if (!paymentIntentId && !reg.payment_intent_id) return null;
+      return {
+        kind: "late",
+        reg,
+        competitionId: div.competition_id,
+        intent: (reg.payment_intent_id ?? paymentIntentId) as string,
+      };
     }
     const settings = await loadSettings(tx, reg.division_id);
-    const [div] = await tx<{ competition_id: string }[]>`
-      select competition_id from divisions where id = ${reg.division_id}`;
     await tx`
       update registrations
       set status = 'paid',
@@ -940,9 +960,37 @@ async function confirmPaidRegistration(
       paid: true,
       amount_cents: amountTotal ?? reg.amount_cents,
     }, null);
-    return { divisionId: reg.division_id, competitionId: div.competition_id };
-  })) as unknown as { divisionId: string; competitionId: string } | null;
-  if (done) fireDivisionRevalidate(done.divisionId, done.competitionId);
+    return { kind: "confirmed", divisionId: reg.division_id, competitionId: div.competition_id };
+  })) as unknown as PayOutcome;
+
+  if (!outcome) return;
+  if (outcome.kind === "confirmed") {
+    fireDivisionRevalidate(outcome.divisionId, outcome.competitionId);
+    return;
+  }
+  // Refunds happen OUTSIDE the tx (network). A failure surfaces on the
+  // organiser console via the audit trail, never blocks the webhook ACK.
+  try {
+    const refund = await stripeRefund(outcome.intent, undefined);
+    if (outcome.kind === "late") {
+      await sql`
+        update registrations
+        set refunded_cents = ${amountTotal ?? outcome.reg.amount_cents},
+            refunded_at = now(), updated_at = now()
+        where id = ${regId}`;
+    }
+    await audit(sql, outcome.competitionId, outcome.reg.org_id, "registration.refunded", {
+      registration_id: regId,
+      amount_cents: amountTotal ?? outcome.reg.amount_cents,
+      mode: outcome.kind === "late" ? "late_payment" : "duplicate",
+      stripe_refund_id: refund.id,
+    }, null);
+  } catch {
+    await audit(sql, outcome.competitionId, outcome.reg.org_id, "registration.refund_failed", {
+      registration_id: regId,
+      mode: outcome.kind,
+    }, null);
+  }
 }
 
 /**

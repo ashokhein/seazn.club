@@ -852,6 +852,62 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     expect(div.payment_method).toBe("stripe");
   });
 
+  it("late payment on a withdrawn registration is auto-refunded", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await withdrawRegistrationPublic(res.registration.id, res.access_token);
+
+    // The abandoned checkout completes AFTER the withdrawal.
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.status).toBe("withdrawn");
+    expect(row.entrant_id).toBeNull();
+    expect(row.refunded_cents).toBe(500);
+    expect(stripeMock.refundCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_intent: "pi_test_" + res.registration.id.slice(0, 8),
+        reverse_transfer: true,
+        refund_application_fee: true,
+      }),
+    );
+  });
+
+  it("a second completed session refunds the duplicate intent, state untouched", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const [confirmed] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(confirmed.status).toBe("confirmed");
+    expect(confirmed.expires_at).toBeNull(); // pay window cleared on confirm
+
+    // Second tab pays with a DIFFERENT intent → refund the duplicate.
+    const dup = {
+      ...fakeSession(res.registration.id, 500),
+      payment_intent: "pi_dup_1",
+    } as unknown as Stripe.Checkout.Session;
+    await handleRegistrationCheckoutCompleted(dup);
+    const [after] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(after.status).toBe("confirmed");
+    expect(after.payment_intent_id).toBe(confirmed.payment_intent_id); // original kept
+    expect(after.refunded_cents).toBe(0); // the CONFIRMED payment is untouched
+    expect(stripeMock.refundCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ payment_intent: "pi_dup_1" }),
+    );
+
+    // Pure replay of the SAME session refunds nothing.
+    stripeMock.refundCreate.mockClear();
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    expect(stripeMock.refundCreate).not.toHaveBeenCalled();
+  });
+
   it("waitlisted card submits take no window and no payment", async () => {
     const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
     await submitRegistration(orgSlug, competition.slug, {
