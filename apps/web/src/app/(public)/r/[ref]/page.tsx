@@ -7,7 +7,10 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import QRCode from "qrcode";
-import { publicRegistrationStatusByRef } from "@/server/usecases/registrations";
+import {
+  publicRegistrationStatusByRef,
+  reconcileRegistrationBySession,
+} from "@/server/usecases/registrations";
 import { HttpError } from "@/lib/errors";
 import { TearOffTicket } from "@/components/public-site/ticket";
 import { WithdrawByRef } from "@/components/public-site/withdraw-by-ref";
@@ -18,7 +21,7 @@ export const metadata: Metadata = { robots: { index: false, follow: false } };
 
 type Props = {
   params: Promise<{ ref: string }>;
-  searchParams: Promise<{ token?: string }>;
+  searchParams: Promise<{ token?: string; checkout?: string; session_id?: string }>;
 };
 
 const STATUS_LINE: Record<string, string> = {
@@ -27,13 +30,20 @@ const STATUS_LINE: Record<string, string> = {
   confirmed: "Confirmed — on the entrant list.",
   waitlisted: "On the waitlist — promoted automatically if a spot opens.",
   withdrawn: "This registration has been withdrawn.",
+  expired: "The pay window passed — this registration expired. Register again if spots remain.",
 };
 
 export default async function RefStatusPage({ params, searchParams }: Props) {
-  const [{ ref }, { token }] = await Promise.all([params, searchParams]);
+  const [{ ref }, { token, checkout, session_id }] = await Promise.all([params, searchParams]);
+  const refCode = decodeURIComponent(ref);
+  // Token-free checkout return (email-minted sessions): reconcile before the
+  // read so the paid state shows even ahead of the webhook. Best-effort.
+  if (checkout === "success" && session_id) {
+    await reconcileRegistrationBySession(refCode, session_id);
+  }
   let view;
   try {
-    view = await publicRegistrationStatusByRef(decodeURIComponent(ref), token ?? null);
+    view = await publicRegistrationStatusByRef(refCode, token ?? null);
   } catch (err) {
     if (err instanceof HttpError && err.status === 404) notFound();
     throw err;

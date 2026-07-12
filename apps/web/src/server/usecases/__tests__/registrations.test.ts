@@ -35,7 +35,6 @@ import {
   applicationFeeCents,
   eligibilityIssues,
   isMinor,
-  platformFeePercent,
   validateAnswers,
   putRegistrationSettings,
   getRegistrationSettings,
@@ -45,8 +44,14 @@ import {
   publicRegistrationStatusByRef,
   withdrawRegistrationByRef,
   handleRegistrationCheckoutCompleted,
+  handleRegistrationDispute,
+  syncRegistrationRefund,
+  reconcileRegistrationBySession,
+  sweepRegistrations,
   withdrawRegistrationPublic,
   confirmRegistration,
+  confirmRegistrationWaived,
+  markRegistrationPaidOffline,
   waitlistRegistration,
   refundRegistration,
   listRegistrations,
@@ -76,17 +81,6 @@ describe("fee math (pure)", () => {
     expect(applicationFeeCents(1, 100)).toBe(1);
   });
 
-  it("defaults to 5% when PLATFORM_FEE_PERCENT is unset/garbage", () => {
-    const prev = process.env.PLATFORM_FEE_PERCENT;
-    delete process.env.PLATFORM_FEE_PERCENT;
-    expect(platformFeePercent()).toBe(5);
-    process.env.PLATFORM_FEE_PERCENT = "nonsense";
-    expect(platformFeePercent()).toBe(5);
-    process.env.PLATFORM_FEE_PERCENT = "12";
-    expect(platformFeePercent()).toBe(12);
-    if (prev === undefined) delete process.env.PLATFORM_FEE_PERCENT;
-    else process.env.PLATFORM_FEE_PERCENT = prev;
-  });
 });
 
 describe("age & eligibility (pure, doc 06 §2)", () => {
@@ -578,12 +572,22 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     }, "http://t.local");
     expect(res.registration.status).toBe("pending");
 
-    // Turn on online charges → collecting a fee via Stripe now needs Pro.
+    // Since spec 2026-07-12 the Pro gate rides the chosen METHOD, not the
+    // Connect flag: an offline fee stays allowed even with charges enabled
+    // (the org may take cards elsewhere but run this division in cash)…
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+    const offlineStill = await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+    expect(offlineStill.fee_cents).toBe(500);
+
+    // …while explicitly choosing the card method still needs Pro.
     await expect(
       putRegistrationSettings(owner, division.id, {
         enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
         form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+        payment_method: "stripe",
       }),
     ).rejects.toThrow(PaymentRequiredError);
   });
@@ -697,5 +701,458 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const { division } = await rig(owner);
     expect(division.youth).toBe(false);
     expect(resolveNameDisplay(division.player_name_display, division.youth)).toBe("full");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Payment method settings (spec 2026-07-12 §3)
+// ---------------------------------------------------------------------------
+
+const SETTINGS_BASE = {
+  enabled: true,
+  entrant_kind: "individual" as const,
+  opens_at: null,
+  closes_at: null,
+  capacity: null,
+  currency: "gbp",
+  refund_lock_at: null,
+  form_fields: [],
+};
+
+describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
+  it("stripe method requires charges_enabled and a viable minimum fee", async () => {
+    const { orgId, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { division } = await rig(owner);
+
+    // No Connect account yet → card method rejected outright.
+    await expect(
+      putRegistrationSettings(owner, division.id, {
+        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+
+    // Below Stripe's minimum charge (100 minor units) — rejected.
+    await expect(
+      putRegistrationSettings(owner, division.id, {
+        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 50,
+      }),
+    ).rejects.toMatchObject({ status: 422 });
+
+    const ok = await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+    });
+    expect(ok.payment_method).toBe("stripe");
+    expect(ok.charges_enabled).toBe(true);
+  });
+
+  it("community org cannot pick the card method (registration.paid gate)", async () => {
+    const { orgId, ownerId } = await seedOrg("community");
+    const owner = asOwner(orgId, ownerId);
+    const { division } = await rig(owner);
+    await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+    await expect(
+      putRegistrationSettings(owner, division.id, {
+        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+      }),
+    ).rejects.toThrow(PaymentRequiredError);
+  });
+
+  it("offline fees stay plan-free and store a per-division instructions override", async () => {
+    const { orgId, ownerId } = await seedOrg("community");
+    const owner = asOwner(orgId, ownerId);
+    const { division } = await rig(owner);
+    const s = await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 1500,
+      payment_instructions: "Cash to the front desk before round 1",
+    });
+    expect(s.payment_method).toBe("offline");
+    expect(s.payment_instructions).toBe("Cash to the front desk before round 1");
+
+    // GET returns the org fallback + default method for the settings UI.
+    await sql`update organizations
+              set payment_instructions = 'Org-wide bank details',
+                  default_payment_method = 'stripe'
+              where id = ${orgId}`;
+    const got = await getRegistrationSettings(owner, division.id);
+    expect(got.org_payment_instructions).toBe("Org-wide bank details");
+    expect(got.org_default_payment_method).toBe("stripe");
+    expect(got.payment_instructions).toBe("Cash to the front desk before round 1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Organiser payment actions (spec T7): mark paid (offline) + waive
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("organiser payment actions (spec T7)", () => {
+  async function offlinePaidRig() {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 1500,
+    });
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    return { owner, ownerId, division, reg: res.registration };
+  }
+
+  it("mark-paid confirms an offline registrant and records the actor", async () => {
+    const { owner, ownerId, reg } = await offlinePaidRig();
+    // Plain confirm still refuses while unpaid…
+    await expect(confirmRegistration(owner, reg.id)).rejects.toMatchObject({ status: 422 });
+    // …mark-paid is the money-received path.
+    const row = await markRegistrationPaidOffline(owner, reg.id);
+    expect(row.status).toBe("confirmed");
+    expect(row.entrant_id).not.toBeNull();
+    expect(row.offline_marked_paid_at).not.toBeNull();
+    const [audited] = await sql<{ actor_id: string }[]>`
+      select actor_id from competition_events
+      where type = 'registration.offline_paid'
+        and payload->>'registration_id' = ${reg.id}`;
+    expect(audited.actor_id).toBe(ownerId);
+    // Idempotence guard: a second mark-paid 422s (no longer pending).
+    await expect(markRegistrationPaidOffline(owner, reg.id)).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("mark-paid rejects card-paid and free registrations", async () => {
+    const { orgSlug, competition, division, owner } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    await expect(markRegistrationPaidOffline(owner, res.registration.id))
+      .rejects.toMatchObject({ status: 422 });
+  });
+
+  it("waive confirms without payment and audits the waiver", async () => {
+    const { owner, reg } = await offlinePaidRig();
+    const row = await confirmRegistrationWaived(owner, reg.id);
+    expect(row.status).toBe("confirmed");
+    expect(row.offline_marked_paid_at).toBeNull();
+    const [audited] = await sql<{ id: string }[]>`
+      select id from competition_events
+      where type = 'registration.fee_waived'
+        and payload->>'registration_id' = ${reg.id}`;
+    expect(audited).toBeTruthy();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Card submit path (spec §3): checkout at submit + 48h pay window
+// ---------------------------------------------------------------------------
+
+async function stripeRig(opts: { capacity?: number | null; feeCents?: number } = {}) {
+  const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+  const owner = asOwner(orgId, ownerId);
+  await sql`update organizations
+            set stripe_charges_enabled = true, stripe_account_id = ${"acct_" + randomUUID().slice(0, 8)}
+            where id = ${orgId}`;
+  const { competition, division } = await rig(owner);
+  await putRegistrationSettings(owner, division.id, {
+    ...SETTINGS_BASE, payment_method: "stripe",
+    fee_cents: opts.feeCents ?? 500, capacity: opts.capacity ?? null,
+  });
+  return { orgId, orgSlug, ownerId, owner, competition, division };
+}
+
+describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
+  it("snapshots the method, opens a 48h window, returns a checkout URL", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    expect(res.checkout_url).toBe("https://checkout.stripe.test/session");
+    expect(res.registration.payment_method).toBe("stripe");
+    expect(res.registration.expires_at).not.toBeNull();
+    expect(res.registration.amount_cents).toBe(500);
+    // The line item charges the snapshot, and the fee rides the chain (pro 2%).
+    const args = stripeMock.checkoutCreate.mock.calls[0][0];
+    expect(args.line_items[0].price_data.unit_amount).toBe(500);
+    expect(args.payment_intent_data.application_fee_amount).toBe(10);
+  });
+
+  it("a failed checkout mint keeps the registration (pay from status page)", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    stripeMock.checkoutCreate.mockRejectedValueOnce(new Error("stripe down"));
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    expect(res.checkout_url).toBeNull();
+    expect(res.registration.status).toBe("pending");
+  });
+
+  it("offline submits keep no expiry and no checkout", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 500,
+    });
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    expect(res.checkout_url).toBeNull();
+    expect(res.registration.expires_at).toBeNull();
+    expect(res.registration.payment_method).toBe("offline");
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
+  });
+
+  it("blocks card submits when Connect breaks, and the public panel says why", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+    await sql`update organizations set stripe_charges_enabled = false where id = ${orgId}`;
+    await expect(
+      submitRegistration(orgSlug, competition.slug, {
+        ...SUBMIT_BASE, division_id: division.id,
+      }, "http://test.local"),
+    ).rejects.toMatchObject({ status: 503 });
+    const info = await publicRegistrationInfo(orgSlug, competition.slug);
+    const div = info.divisions.find((d) => d.division_id === division.id)!;
+    expect(div.open).toBe(false);
+    expect(div.closed_reason).toBe("payments_unavailable");
+    expect(div.payment_method).toBe("stripe");
+  });
+
+  it("late payment on a withdrawn registration is auto-refunded", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await withdrawRegistrationPublic(res.registration.id, res.access_token);
+
+    // The abandoned checkout completes AFTER the withdrawal.
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.status).toBe("withdrawn");
+    expect(row.entrant_id).toBeNull();
+    expect(row.refunded_cents).toBe(500);
+    expect(stripeMock.refundCreate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payment_intent: "pi_test_" + res.registration.id.slice(0, 8),
+        reverse_transfer: true,
+        refund_application_fee: true,
+      }),
+    );
+  });
+
+  it("a second completed session refunds the duplicate intent, state untouched", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const [confirmed] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(confirmed.status).toBe("confirmed");
+    expect(confirmed.expires_at).toBeNull(); // pay window cleared on confirm
+
+    // Second tab pays with a DIFFERENT intent → refund the duplicate.
+    const dup = {
+      ...fakeSession(res.registration.id, 500),
+      payment_intent: "pi_dup_1",
+    } as unknown as Stripe.Checkout.Session;
+    await handleRegistrationCheckoutCompleted(dup);
+    const [after] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(after.status).toBe("confirmed");
+    expect(after.payment_intent_id).toBe(confirmed.payment_intent_id); // original kept
+    expect(after.refunded_cents).toBe(0); // the CONFIRMED payment is untouched
+    expect(stripeMock.refundCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ payment_intent: "pi_dup_1" }),
+    );
+
+    // Pure replay of the SAME session refunds nothing.
+    stripeMock.refundCreate.mockClear();
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    expect(stripeMock.refundCreate).not.toHaveBeenCalled();
+  });
+
+  it("promotion snapshots the current fee and opens a 48h window for card divisions", async () => {
+    const { orgSlug, owner, competition, division } = await stripeRig({ capacity: 1 });
+    const a = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    const b = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id, contact_email: "b@test.local",
+    }, "http://test.local");
+    expect(b.registration.status).toBe("waitlisted");
+    expect(b.registration.amount_cents).toBe(0);
+
+    // Organiser raises the fee while B waits — promotion charges the NEW fee.
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 700, capacity: 1,
+    });
+    await withdrawRegistrationPublic(a.registration.id, a.access_token);
+
+    const [bRow] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${b.registration.id}`;
+    expect(bRow.status).toBe("pending");
+    expect(bRow.amount_cents).toBe(700);
+    expect(bRow.payment_method).toBe("stripe");
+    expect(bRow.expires_at).not.toBeNull();
+  });
+
+  it("sweep reminds once inside the last 24h, then expires and promotes", async () => {
+    const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
+    const a = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    const b = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id, contact_email: "b@test.local",
+    }, "http://test.local");
+    expect(b.registration.status).toBe("waitlisted");
+
+    // Inside the last 24h → one reminder, exactly once.
+    await sql`update registrations set expires_at = now() + interval '10 hours'
+              where id = ${a.registration.id}`;
+    stripeMock.checkoutCreate.mockClear();
+    const first = await sweepRegistrations("http://test.local");
+    expect(first.reminded).toBe(1);
+    expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1); // fresh session for the email
+    const second = await sweepRegistrations("http://test.local");
+    expect(second.reminded).toBe(0); // reminded_at guard
+
+    // Past the deadline → expired + waitlist promoted with a fresh window.
+    await sql`update registrations set expires_at = now() - interval '1 hour'
+              where id = ${a.registration.id}`;
+    const res = await sweepRegistrations("http://test.local");
+    expect(res.expired).toBe(1);
+    expect(res.promoted).toBe(1);
+    const [aRow] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${a.registration.id}`;
+    expect(aRow.status).toBe("expired");
+    const [bRow] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${b.registration.id}`;
+    expect(bRow.status).toBe("pending");
+    expect(bRow.amount_cents).toBe(500);
+    expect(bRow.expires_at).not.toBeNull();
+
+    // A sweep with nothing due is a no-op.
+    const idle = await sweepRegistrations("http://test.local");
+    expect(idle).toEqual({ reminded: 0, expired: 0, promoted: 0 });
+  });
+
+  it("reconciles by session from /r/[ref] (token-free return)", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    const ref = res.registration.ref_code as string;
+    const session = fakeSession(res.registration.id, 500);
+
+    // Mismatched session (different registration) → no-op.
+    stripeMock.checkoutRetrieve.mockResolvedValueOnce({
+      ...session, metadata: { kind: "registration", registration_id: randomUUID() },
+    });
+    expect(await reconcileRegistrationBySession(ref, session.id)).toBe(false);
+
+    stripeMock.checkoutRetrieve.mockResolvedValueOnce(session);
+    expect(await reconcileRegistrationBySession(ref, session.id)).toBe(true);
+    const [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.status).toBe("confirmed");
+  });
+
+  it("status view drives the pay CTA: card pendings can pay, offline sees instructions", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    let view = await publicRegistrationStatus(res.registration.id, res.access_token);
+    expect(view.can_pay_online).toBe(true);
+    expect(view.payment_method).toBe("stripe");
+    expect(view.expires_at).not.toBeNull();
+    expect(view.payment_instructions).toBeNull(); // card entries never show bank details
+
+    // Connect breaks → CTA hides (resume would 503 anyway).
+    await sql`update organizations set stripe_charges_enabled = false where id = ${orgId}`;
+    view = await publicRegistrationStatus(res.registration.id, res.access_token);
+    expect(view.can_pay_online).toBe(false);
+  });
+
+  it("dispute lifecycle: created flags + audits, lost writes the money off", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const intent = "pi_test_" + res.registration.id.slice(0, 8);
+
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "needs_response" } as unknown as Stripe.Dispute,
+      "created",
+    );
+    let [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.disputed_at).not.toBeNull();
+    expect(row.dispute_id).toBe("dp_1");
+
+    // Won → flag clears, id stays for the audit trail.
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "won" } as unknown as Stripe.Dispute,
+      "closed",
+    );
+    [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.disputed_at).toBeNull();
+    expect(row.dispute_id).toBe("dp_1");
+
+    // Lost → money is gone: refunded_cents mirrors the full amount.
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "needs_response" } as unknown as Stripe.Dispute,
+      "created",
+    );
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "lost" } as unknown as Stripe.Dispute,
+      "closed",
+    );
+    [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.refunded_cents).toBe(500);
+  });
+
+  it("charge.refunded from the Stripe dashboard syncs refunded_cents", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const intent = "pi_test_" + res.registration.id.slice(0, 8);
+
+    await syncRegistrationRefund(
+      { payment_intent: intent, amount_refunded: 300 } as unknown as Stripe.Charge,
+    );
+    const [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.refunded_cents).toBe(300);
+
+    // Never regresses below what we already recorded.
+    await syncRegistrationRefund(
+      { payment_intent: intent, amount_refunded: 100 } as unknown as Stripe.Charge,
+    );
+    const [after] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(after.refunded_cents).toBe(300);
+  });
+
+  it("waitlisted card submits take no window and no payment", async () => {
+    const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
+    await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    stripeMock.checkoutCreate.mockClear();
+    const second = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id, contact_email: "second@test.local",
+    }, "http://test.local");
+    expect(second.registration.status).toBe("waitlisted");
+    expect(second.checkout_url).toBeNull();
+    expect(second.registration.expires_at).toBeNull();
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
   });
 });

@@ -18296,6 +18296,36 @@
                             "additionalProperties": false
                           }
                         },
+                        "payment_method": {
+                          "type": "string",
+                          "enum": [
+                            "offline",
+                            "stripe"
+                          ]
+                        },
+                        "payment_instructions": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "org_payment_instructions": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "org_default_payment_method": {
+                          "type": "string"
+                        },
                         "charges_enabled": {
                           "type": "boolean"
                         },
@@ -18321,6 +18351,10 @@
                         "currency",
                         "refund_lock_at",
                         "form_fields",
+                        "payment_method",
+                        "payment_instructions",
+                        "org_payment_instructions",
+                        "org_default_payment_method",
                         "charges_enabled",
                         "updated_at"
                       ],
@@ -18355,6 +18389,10 @@
                         "required": true
                       }
                     ],
+                    "payment_method": "offline",
+                    "payment_instructions": "example",
+                    "org_payment_instructions": "example",
+                    "org_default_payment_method": "example",
                     "charges_enabled": true,
                     "updated_at": "example"
                   },
@@ -18650,6 +18688,25 @@
                       ],
                       "additionalProperties": false
                     }
+                  },
+                  "payment_method": {
+                    "default": "offline",
+                    "type": "string",
+                    "enum": [
+                      "offline",
+                      "stripe"
+                    ]
+                  },
+                  "payment_instructions": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
@@ -18657,7 +18714,8 @@
                   "entrant_kind",
                   "fee_cents",
                   "currency",
-                  "form_fields"
+                  "form_fields",
+                  "payment_method"
                 ],
                 "additionalProperties": false
               },
@@ -18678,7 +18736,8 @@
                     ],
                     "required": true
                   }
-                ]
+                ],
+                "payment_method": "offline"
               }
             }
           }
@@ -18816,6 +18875,36 @@
                             "additionalProperties": false
                           }
                         },
+                        "payment_method": {
+                          "type": "string",
+                          "enum": [
+                            "offline",
+                            "stripe"
+                          ]
+                        },
+                        "payment_instructions": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "org_payment_instructions": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "org_default_payment_method": {
+                          "type": "string"
+                        },
                         "charges_enabled": {
                           "type": "boolean"
                         },
@@ -18841,6 +18930,10 @@
                         "currency",
                         "refund_lock_at",
                         "form_fields",
+                        "payment_method",
+                        "payment_instructions",
+                        "org_payment_instructions",
+                        "org_default_payment_method",
                         "charges_enabled",
                         "updated_at"
                       ],
@@ -18875,6 +18968,10 @@
                         "required": true
                       }
                     ],
+                    "payment_method": "offline",
+                    "payment_instructions": "example",
+                    "org_payment_instructions": "example",
+                    "org_default_payment_method": "example",
                     "charges_enabled": true,
                     "updated_at": "example"
                   },
@@ -19185,7 +19282,18 @@
                               "paid",
                               "confirmed",
                               "waitlisted",
-                              "withdrawn"
+                              "withdrawn",
+                              "expired"
+                            ]
+                          },
+                          "ref_code": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
                             ]
                           },
                           "display_name": {
@@ -19249,6 +19357,16 @@
                               }
                             ]
                           },
+                          "payment_method": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "payment_intent_id": {
                             "anyOf": [
                               {
@@ -19265,6 +19383,36 @@
                             "maximum": 9007199254740991
                           },
                           "refunded_at": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "expires_at": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "offline_marked_paid_at": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "disputed_at": {
                             "anyOf": [
                               {
                                 "type": "string"
@@ -19314,6 +19462,7 @@
                           "id",
                           "division_id",
                           "status",
+                          "ref_code",
                           "display_name",
                           "contact_email",
                           "dob",
@@ -19323,9 +19472,13 @@
                           "answers",
                           "amount_cents",
                           "currency",
+                          "payment_method",
                           "payment_intent_id",
                           "refunded_cents",
                           "refunded_at",
+                          "expires_at",
+                          "offline_marked_paid_at",
+                          "disputed_at",
                           "entrant_id",
                           "promoted_at",
                           "withdrawn_at",
@@ -19347,6 +19500,7 @@
                       "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                       "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                       "status": "pending",
+                      "ref_code": "example",
                       "display_name": "example",
                       "contact_email": "example",
                       "dob": "example",
@@ -19356,9 +19510,13 @@
                       "answers": {},
                       "amount_cents": -9007199254740991,
                       "currency": "example",
+                      "payment_method": "example",
                       "payment_intent_id": "example",
                       "refunded_cents": -9007199254740991,
                       "refunded_at": "example",
+                      "expires_at": "example",
+                      "offline_marked_paid_at": "example",
+                      "disputed_at": "example",
                       "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                       "promoted_at": "example",
                       "withdrawn_at": "example",
@@ -19803,7 +19961,18 @@
                             "paid",
                             "confirmed",
                             "waitlisted",
-                            "withdrawn"
+                            "withdrawn",
+                            "expired"
+                          ]
+                        },
+                        "ref_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "display_name": {
@@ -19867,6 +20036,16 @@
                             }
                           ]
                         },
+                        "payment_method": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "payment_intent_id": {
                           "anyOf": [
                             {
@@ -19883,6 +20062,36 @@
                           "maximum": 9007199254740991
                         },
                         "refunded_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "expires_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "offline_marked_paid_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "disputed_at": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -19932,6 +20141,7 @@
                         "id",
                         "division_id",
                         "status",
+                        "ref_code",
                         "display_name",
                         "contact_email",
                         "dob",
@@ -19941,9 +20151,13 @@
                         "answers",
                         "amount_cents",
                         "currency",
+                        "payment_method",
                         "payment_intent_id",
                         "refunded_cents",
                         "refunded_at",
+                        "expires_at",
+                        "offline_marked_paid_at",
+                        "disputed_at",
                         "entrant_id",
                         "promoted_at",
                         "withdrawn_at",
@@ -19963,6 +20177,7 @@
                     "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "status": "pending",
+                    "ref_code": "example",
                     "display_name": "example",
                     "contact_email": "example",
                     "dob": "example",
@@ -19972,9 +20187,981 @@
                     "answers": {},
                     "amount_cents": -9007199254740991,
                     "currency": "example",
+                    "payment_method": "example",
                     "payment_intent_id": "example",
                     "refunded_cents": -9007199254740991,
                     "refunded_at": "example",
+                    "expires_at": "example",
+                    "offline_marked_paid_at": "example",
+                    "disputed_at": "example",
+                    "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "promoted_at": "example",
+                    "withdrawn_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/registrations/{id}/mark-paid": {
+      "post": {
+        "summary": "Record an offline (cash/bank) payment — confirms the entry",
+        "tags": [
+          "registration"
+        ],
+        "x-required-scope": "manage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "division_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "paid",
+                            "confirmed",
+                            "waitlisted",
+                            "withdrawn",
+                            "expired"
+                          ]
+                        },
+                        "ref_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "display_name": {
+                          "type": "string"
+                        },
+                        "contact_email": {
+                          "type": "string"
+                        },
+                        "dob": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "gender": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "guardian_name": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "guardian_consent": {
+                          "type": "boolean"
+                        },
+                        "answers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "amount_cents": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "currency": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "payment_method": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "payment_intent_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refunded_cents": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "refunded_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "expires_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "offline_marked_paid_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "disputed_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "entrant_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "promoted_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "withdrawn_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "division_id",
+                        "status",
+                        "ref_code",
+                        "display_name",
+                        "contact_email",
+                        "dob",
+                        "gender",
+                        "guardian_name",
+                        "guardian_consent",
+                        "answers",
+                        "amount_cents",
+                        "currency",
+                        "payment_method",
+                        "payment_intent_id",
+                        "refunded_cents",
+                        "refunded_at",
+                        "expires_at",
+                        "offline_marked_paid_at",
+                        "disputed_at",
+                        "entrant_id",
+                        "promoted_at",
+                        "withdrawn_at",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "ref_code": "example",
+                    "display_name": "example",
+                    "contact_email": "example",
+                    "dob": "example",
+                    "gender": "example",
+                    "guardian_name": "example",
+                    "guardian_consent": true,
+                    "answers": {},
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "payment_method": "example",
+                    "payment_intent_id": "example",
+                    "refunded_cents": -9007199254740991,
+                    "refunded_at": "example",
+                    "expires_at": "example",
+                    "offline_marked_paid_at": "example",
+                    "disputed_at": "example",
+                    "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "promoted_at": "example",
+                    "withdrawn_at": "example",
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/registrations/{id}/waive": {
+      "post": {
+        "summary": "Confirm without payment (fee waived, audited)",
+        "tags": [
+          "registration"
+        ],
+        "x-required-scope": "manage",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "division_id": {
+                          "type": "string",
+                          "format": "uuid",
+                          "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "pending",
+                            "paid",
+                            "confirmed",
+                            "waitlisted",
+                            "withdrawn",
+                            "expired"
+                          ]
+                        },
+                        "ref_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "display_name": {
+                          "type": "string"
+                        },
+                        "contact_email": {
+                          "type": "string"
+                        },
+                        "dob": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "gender": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "guardian_name": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "guardian_consent": {
+                          "type": "boolean"
+                        },
+                        "answers": {
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "amount_cents": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "currency": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "payment_method": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "payment_intent_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "refunded_cents": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "refunded_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "expires_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "offline_marked_paid_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "disputed_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "entrant_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "promoted_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "withdrawn_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "division_id",
+                        "status",
+                        "ref_code",
+                        "display_name",
+                        "contact_email",
+                        "dob",
+                        "gender",
+                        "guardian_name",
+                        "guardian_consent",
+                        "answers",
+                        "amount_cents",
+                        "currency",
+                        "payment_method",
+                        "payment_intent_id",
+                        "refunded_cents",
+                        "refunded_at",
+                        "expires_at",
+                        "offline_marked_paid_at",
+                        "disputed_at",
+                        "entrant_id",
+                        "promoted_at",
+                        "withdrawn_at",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "status": "pending",
+                    "ref_code": "example",
+                    "display_name": "example",
+                    "contact_email": "example",
+                    "dob": "example",
+                    "gender": "example",
+                    "guardian_name": "example",
+                    "guardian_consent": true,
+                    "answers": {},
+                    "amount_cents": -9007199254740991,
+                    "currency": "example",
+                    "payment_method": "example",
+                    "payment_intent_id": "example",
+                    "refunded_cents": -9007199254740991,
+                    "refunded_at": "example",
+                    "expires_at": "example",
+                    "offline_marked_paid_at": "example",
+                    "disputed_at": "example",
                     "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "promoted_at": "example",
                     "withdrawn_at": "example",
@@ -20226,7 +21413,18 @@
                             "paid",
                             "confirmed",
                             "waitlisted",
-                            "withdrawn"
+                            "withdrawn",
+                            "expired"
+                          ]
+                        },
+                        "ref_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "display_name": {
@@ -20290,6 +21488,16 @@
                             }
                           ]
                         },
+                        "payment_method": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "payment_intent_id": {
                           "anyOf": [
                             {
@@ -20306,6 +21514,36 @@
                           "maximum": 9007199254740991
                         },
                         "refunded_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "expires_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "offline_marked_paid_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "disputed_at": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -20355,6 +21593,7 @@
                         "id",
                         "division_id",
                         "status",
+                        "ref_code",
                         "display_name",
                         "contact_email",
                         "dob",
@@ -20364,9 +21603,13 @@
                         "answers",
                         "amount_cents",
                         "currency",
+                        "payment_method",
                         "payment_intent_id",
                         "refunded_cents",
                         "refunded_at",
+                        "expires_at",
+                        "offline_marked_paid_at",
+                        "disputed_at",
                         "entrant_id",
                         "promoted_at",
                         "withdrawn_at",
@@ -20386,6 +21629,7 @@
                     "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "status": "pending",
+                    "ref_code": "example",
                     "display_name": "example",
                     "contact_email": "example",
                     "dob": "example",
@@ -20395,9 +21639,13 @@
                     "answers": {},
                     "amount_cents": -9007199254740991,
                     "currency": "example",
+                    "payment_method": "example",
                     "payment_intent_id": "example",
                     "refunded_cents": -9007199254740991,
                     "refunded_at": "example",
+                    "expires_at": "example",
+                    "offline_marked_paid_at": "example",
+                    "disputed_at": "example",
                     "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "promoted_at": "example",
                     "withdrawn_at": "example",
@@ -20649,7 +21897,18 @@
                             "paid",
                             "confirmed",
                             "waitlisted",
-                            "withdrawn"
+                            "withdrawn",
+                            "expired"
+                          ]
+                        },
+                        "ref_code": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
                           ]
                         },
                         "display_name": {
@@ -20713,6 +21972,16 @@
                             }
                           ]
                         },
+                        "payment_method": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "payment_intent_id": {
                           "anyOf": [
                             {
@@ -20729,6 +21998,36 @@
                           "maximum": 9007199254740991
                         },
                         "refunded_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "expires_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "offline_marked_paid_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "disputed_at": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -20778,6 +22077,7 @@
                         "id",
                         "division_id",
                         "status",
+                        "ref_code",
                         "display_name",
                         "contact_email",
                         "dob",
@@ -20787,9 +22087,13 @@
                         "answers",
                         "amount_cents",
                         "currency",
+                        "payment_method",
                         "payment_intent_id",
                         "refunded_cents",
                         "refunded_at",
+                        "expires_at",
+                        "offline_marked_paid_at",
+                        "disputed_at",
                         "entrant_id",
                         "promoted_at",
                         "withdrawn_at",
@@ -20809,6 +22113,7 @@
                     "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "status": "pending",
+                    "ref_code": "example",
                     "display_name": "example",
                     "contact_email": "example",
                     "dob": "example",
@@ -20818,9 +22123,13 @@
                     "answers": {},
                     "amount_cents": -9007199254740991,
                     "currency": "example",
+                    "payment_method": "example",
                     "payment_intent_id": "example",
                     "refunded_cents": -9007199254740991,
                     "refunded_at": "example",
+                    "expires_at": "example",
+                    "offline_marked_paid_at": "example",
+                    "disputed_at": "example",
                     "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "promoted_at": "example",
                     "withdrawn_at": "example",
@@ -21372,6 +22681,13 @@
                               "currency": {
                                 "type": "string"
                               },
+                              "payment_method": {
+                                "type": "string",
+                                "enum": [
+                                  "offline",
+                                  "stripe"
+                                ]
+                              },
                               "opens_at": {
                                 "anyOf": [
                                   {
@@ -21497,6 +22813,7 @@
                               "entrant_kind",
                               "fee_cents",
                               "currency",
+                              "payment_method",
                               "opens_at",
                               "closes_at",
                               "capacity",
@@ -21549,6 +22866,7 @@
                         "entrant_kind": "team",
                         "fee_cents": -9007199254740991,
                         "currency": "example",
+                        "payment_method": "offline",
                         "opens_at": "example",
                         "closes_at": "example",
                         "capacity": -9007199254740991,
@@ -21872,7 +23190,8 @@
                             "paid",
                             "confirmed",
                             "waitlisted",
-                            "withdrawn"
+                            "withdrawn",
+                            "expired"
                           ]
                         },
                         "ref_code": {
@@ -22200,7 +23519,8 @@
                             "paid",
                             "confirmed",
                             "waitlisted",
-                            "withdrawn"
+                            "withdrawn",
+                            "expired"
                           ]
                         },
                         "ref_code": {
@@ -22544,7 +23864,8 @@
                             "paid",
                             "confirmed",
                             "waitlisted",
-                            "withdrawn"
+                            "withdrawn",
+                            "expired"
                           ]
                         },
                         "ref_code": {

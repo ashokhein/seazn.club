@@ -31,7 +31,12 @@ interface Settings {
   currency: string;
   refund_lock_at: string | null;
   form_fields: FormField[];
+  payment_method: "offline" | "stripe";
+  payment_instructions: string | null;
+  org_payment_instructions: string | null;
+  org_default_payment_method: string;
   charges_enabled: boolean;
+  updated_at: string | null;
 }
 
 interface Registration {
@@ -45,8 +50,12 @@ interface Registration {
   answers: Record<string, unknown>;
   amount_cents: number;
   currency: string | null;
+  payment_method: "offline" | "stripe" | null;
   payment_intent_id: string | null;
   refunded_cents: number;
+  expires_at: string | null;
+  offline_marked_paid_at: string | null;
+  disputed_at: string | null;
   entrant_id: string | null;
   created_at: string;
 }
@@ -57,7 +66,38 @@ const STATUS_STYLE: Record<string, string> = {
   confirmed: "bg-emerald-100 text-emerald-700",
   waitlisted: "bg-sky-100 text-sky-700",
   withdrawn: "bg-slate-100 text-slate-500",
+  expired: "bg-zinc-100 text-zinc-500",
 };
+
+/** Payment chip per row (spec §8): one glanceable money state. */
+function paymentChip(r: Registration): { label: string; cls: string } | null {
+  if (r.amount_cents <= 0 && !r.payment_intent_id) return null;
+  if (r.disputed_at) return { label: "⚠ disputed", cls: "bg-rose-100 text-rose-700" };
+  const partiallyRefunded = r.refunded_cents > 0 && r.refunded_cents < r.amount_cents;
+  if (r.refunded_cents >= r.amount_cents && r.refunded_cents > 0)
+    return { label: "refunded", cls: "bg-slate-100 text-slate-600" };
+  if (r.status === "withdrawn" && r.payment_intent_id && r.refunded_cents < r.amount_cents)
+    return { label: "refund incomplete", cls: "bg-amber-100 text-amber-800" };
+  if (partiallyRefunded)
+    return { label: "partly refunded", cls: "bg-amber-100 text-amber-700" };
+  if (r.offline_marked_paid_at) return { label: "paid · cash", cls: "bg-emerald-100 text-emerald-700" };
+  if (r.payment_intent_id && (r.status === "paid" || r.status === "confirmed"))
+    return { label: "paid · card", cls: "bg-emerald-100 text-emerald-700" };
+  if (r.status === "pending") {
+    return r.payment_method === "stripe"
+      ? { label: `due · card${hoursLeft(r.expires_at)}`, cls: "bg-amber-100 text-amber-700" }
+      : { label: "due · cash", cls: "bg-amber-100 text-amber-700" };
+  }
+  return null;
+}
+
+function hoursLeft(iso: string | null): string {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime() - Date.now();
+  if (ms <= 0) return " · expiring";
+  const h = Math.round(ms / 3_600_000);
+  return h >= 48 ? "" : ` · ${h}h left`;
+}
 
 function toLocalInput(iso: string | null): string {
   if (!iso) return "";
@@ -119,7 +159,10 @@ export function RegistrationsPanel({
       apiV1<Settings>(`/api/v1/divisions/${divisionId}/registration-settings`),
       apiV1<Registration[]>(`/api/v1/divisions/${divisionId}/registrations`),
     ]);
-    setSettings(s);
+    // Never-saved divisions preselect the org's default method (spec §3).
+    const preselectStripe =
+      s.updated_at === null && s.org_default_payment_method === "stripe" && s.charges_enabled;
+    setSettings(preselectStripe ? { ...s, payment_method: "stripe" } : s);
     setRegs(r);
   }, [divisionId]);
 
@@ -185,30 +228,43 @@ export function RegistrationsPanel({
           currency: settings.currency,
           refund_lock_at: settings.refund_lock_at,
           form_fields,
+          payment_method: settings.payment_method,
+          payment_instructions: settings.payment_instructions?.trim() || null,
         },
       });
       setSaved(true);
     });
   }
 
-  async function action(id: string, verb: "confirm" | "waitlist" | "withdraw" | "refund") {
-    if (verb === "withdraw" || verb === "refund") {
-      const ok = await confirmDialog(
-        verb === "withdraw"
-          ? {
-              title: msg("confirm.withdrawRegistration.title"),
-              body: msg("confirm.withdrawRegistration.body"),
-              confirmLabel: msg("confirm.withdrawRegistration.label"),
-              tone: "danger",
-            }
-          : {
-              title: msg("confirm.refundRegistration.title"),
-              body: msg("confirm.refundRegistration.body"),
-              confirmLabel: msg("confirm.refundRegistration.label"),
-            },
-      );
-      if (!ok) return;
-    }
+  async function action(
+    id: string,
+    verb: "confirm" | "waitlist" | "withdraw" | "refund" | "mark-paid" | "waive",
+  ) {
+    const dialogFor: Partial<Record<typeof verb, Parameters<typeof confirmDialog>[0]>> = {
+      withdraw: {
+        title: msg("confirm.withdrawRegistration.title"),
+        body: msg("confirm.withdrawRegistration.body"),
+        confirmLabel: msg("confirm.withdrawRegistration.label"),
+        tone: "danger",
+      },
+      refund: {
+        title: msg("confirm.refundRegistration.title"),
+        body: msg("confirm.refundRegistration.body"),
+        confirmLabel: msg("confirm.refundRegistration.label"),
+      },
+      "mark-paid": {
+        title: msg("confirm.markPaidRegistration.title"),
+        body: msg("confirm.markPaidRegistration.body"),
+        confirmLabel: msg("confirm.markPaidRegistration.label"),
+      },
+      waive: {
+        title: msg("confirm.waiveRegistration.title"),
+        body: msg("confirm.waiveRegistration.body"),
+        confirmLabel: msg("confirm.waiveRegistration.label"),
+      },
+    };
+    const dialog = dialogFor[verb];
+    if (dialog && !(await confirmDialog(dialog))) return;
     void run(() => apiV1(`/api/v1/registrations/${id}/${verb}`, { method: "POST", json: {} }));
   }
 
@@ -342,15 +398,87 @@ export function RegistrationsPanel({
           </div>
 
           {paidConfigured && (
-            <div className="rounded-md border border-purple-200 bg-purple-50 p-3 text-xs text-purple-800">
-              <p className="font-medium">Entry fees are collected offline</p>
-              <p className="mt-1">
-                Registrations are accepted immediately and marked pending. Registrants see
-                your cash / bank-transfer instructions on their confirmation page and email —
-                set these once under{" "}
-                <a href="/settings" className="underline">Settings → Payment details</a>.
-              </p>
-            </div>
+            <fieldset className="space-y-2">
+              <legend className="text-xs text-slate-500">How is the fee collected?</legend>
+              <label
+                className={`flex items-start gap-2.5 rounded-md border p-3 text-xs transition ${
+                  settings.payment_method === "offline"
+                    ? "border-purple-300 bg-purple-50"
+                    : "border-slate-200 bg-white hover:border-slate-300"
+                } ${canEdit ? "cursor-pointer" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="payment_method"
+                  className="mt-0.5"
+                  disabled={!canEdit}
+                  checked={settings.payment_method === "offline"}
+                  onChange={() => set({ payment_method: "offline" })}
+                />
+                <span>
+                  <span className="block font-medium text-slate-800">Pay the organiser</span>
+                  <span className="mt-0.5 block text-slate-500">
+                    Cash or bank transfer. Entries are pending until you mark them paid.
+                  </span>
+                </span>
+              </label>
+              {settings.payment_method === "offline" && (
+                <label className="block text-xs text-slate-500">
+                  Payment instructions for this division
+                  <textarea
+                    disabled={!canEdit}
+                    value={settings.payment_instructions ?? ""}
+                    onChange={(e) =>
+                      set({ payment_instructions: e.target.value || null })
+                    }
+                    rows={3}
+                    maxLength={2000}
+                    placeholder={
+                      settings.org_payment_instructions
+                        ? "Leave blank to use your organisation's instructions"
+                        : "e.g. bank details or “pay cash on the day” — or set organisation-wide instructions in Settings → Payments"
+                    }
+                    className="input mt-1 w-full font-mono text-xs"
+                  />
+                  {!settings.payment_instructions && settings.org_payment_instructions && (
+                    <span className="mt-1 block text-[11px] text-slate-400">
+                      Using your organisation&apos;s instructions.
+                    </span>
+                  )}
+                </label>
+              )}
+              <label
+                className={`flex items-start gap-2.5 rounded-md border p-3 text-xs transition ${
+                  settings.payment_method === "stripe"
+                    ? "border-purple-300 bg-purple-50"
+                    : "border-slate-200 bg-white hover:border-slate-300"
+                } ${!settings.charges_enabled ? "opacity-60" : canEdit ? "cursor-pointer" : ""}`}
+              >
+                <input
+                  type="radio"
+                  name="payment_method"
+                  className="mt-0.5"
+                  disabled={!canEdit || !settings.charges_enabled}
+                  checked={settings.payment_method === "stripe"}
+                  onChange={() => set({ payment_method: "stripe" })}
+                />
+                <span>
+                  <span className="flex items-center gap-1.5 font-medium text-slate-800">
+                    Card payment at sign-up
+                    {!paidAllowed && <PlanBadge feature="registration.paid" />}
+                  </span>
+                  <span className="mt-0.5 block text-slate-500">
+                    Paid via Stripe when they register · confirmed automatically · unpaid
+                    entries expire after 48h and the waitlist moves up.
+                  </span>
+                  {!settings.charges_enabled && (
+                    <a href="/settings/payments" className="mt-1 block font-medium text-purple-700 underline">
+                      Connect Stripe in Settings → Payments first
+                    </a>
+                  )}
+                </span>
+              </label>
+            </fieldset>
           )}
 
           {canEdit && (
@@ -373,6 +501,19 @@ export function RegistrationsPanel({
       </aside>
 
       <section>
+        {settings.payment_method === "stripe" && !settings.charges_enabled && (
+          <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
+            Card payments are offline — registrants can&apos;t pay until Stripe is reconnected
+            under <a href="/settings/payments" className="underline">Settings → Payments</a>. The public
+            page shows the division as temporarily unavailable.
+          </div>
+        )}
+        {regs.some((r) => r.disputed_at) && (
+          <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
+            {regs.filter((r) => r.disputed_at).length} payment(s) disputed — check your email
+            and Stripe dashboard. Disputed rows are flagged below.
+          </div>
+        )}
         <div className="mb-3 flex items-center justify-between">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
             Registrations <span className="text-slate-500">({regs.length})</span>
@@ -412,9 +553,15 @@ export function RegistrationsPanel({
             {shownRegs.map((r) => {
               const refundable =
                 r.payment_intent_id !== null && r.refunded_cents < r.amount_cents;
+              const chip = paymentChip(r);
               return (
                 <li key={r.id} className="card flex flex-wrap items-center gap-3 p-3 text-sm">
                   <span className={`badge ${STATUS_STYLE[r.status] ?? ""}`}>{r.status}</span>
+                  {chip && (
+                    <span className={`badge ${chip.cls}`} data-testid="payment-chip">
+                      {chip.label}
+                    </span>
+                  )}
                   {r.ref_code && (
                     <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-slate-700">
                       {r.ref_code}
@@ -438,29 +585,45 @@ export function RegistrationsPanel({
                   </span>
                   {canEdit && (
                     <span className="flex gap-1">
-                      {(r.status === "pending" || r.status === "waitlisted") && (
-                        <button type="button" disabled={busy} onClick={() => action(r.id, "confirm")} className="btn btn-ghost text-xs">
-                          Approve
+                      {r.status === "pending" && r.amount_cents > 0 && !r.payment_intent_id && (
+                        <button type="button" disabled={busy} onClick={() => action(r.id, "mark-paid")} className="btn btn-ghost text-xs font-medium text-emerald-700" title="Record a cash/bank payment and confirm the entry">
+                          Mark paid
                         </button>
                       )}
+                      {(r.status === "pending" || r.status === "waitlisted") &&
+                        (r.amount_cents > 0 && !r.payment_intent_id ? (
+                          <button type="button" disabled={busy} onClick={() => action(r.id, "waive")} className="btn btn-ghost text-xs" title="Confirm without payment (fee waived, logged)">
+                            Waive fee
+                          </button>
+                        ) : (
+                          <button type="button" disabled={busy} onClick={() => action(r.id, "confirm")} className="btn btn-ghost text-xs">
+                            Approve
+                          </button>
+                        ))}
                       {r.status === "pending" && (
                         <button type="button" disabled={busy} onClick={() => action(r.id, "waitlist")} className="btn btn-ghost text-xs">
                           Waitlist
                         </button>
                       )}
-                      {r.status === "pending" && r.amount_cents > 0 && (
+                      {r.status === "pending" && r.amount_cents > 0 && r.payment_method !== "stripe" && (
                         <button type="button" disabled={busy} onClick={() => remind(r.id)} className="btn btn-ghost text-xs" title="Email the registrant a payment reminder">
                           Send reminder
                         </button>
                       )}
-                      {r.status !== "withdrawn" && (
+                      {r.status !== "withdrawn" && r.status !== "expired" && (
                         <button type="button" disabled={busy} onClick={() => action(r.id, "withdraw")} className="btn btn-ghost text-xs text-red-600">
                           Withdraw
                         </button>
                       )}
                       {refundable && (
-                        <button type="button" disabled={busy} onClick={() => action(r.id, "refund")} className="btn btn-ghost text-xs">
-                          Refund
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => action(r.id, "refund")}
+                          className={`btn btn-ghost text-xs ${chip?.label === "refund incomplete" ? "font-medium text-amber-700" : ""}`}
+                          title={chip?.label === "refund incomplete" ? "The automatic refund failed — retry it" : "Refund the remaining amount"}
+                        >
+                          {chip?.label === "refund incomplete" ? "Retry refund" : "Refund"}
                         </button>
                       )}
                     </span>

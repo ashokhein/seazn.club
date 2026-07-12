@@ -119,6 +119,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/registrations", method: "get", summary: "Organiser registration list (?status=)", tag: "registration", response: z.array(S.Registration), query: { status: { schema: { type: "string", enum: ["pending", "paid", "confirmed", "waitlisted", "withdrawn"] } } } },
   { path: "/divisions/{id}/registrations/export", method: "get", summary: "CSV export of registrations (Pro `exports`)", tag: "registration", errors: [402] },
   { path: "/registrations/{id}/confirm", method: "post", summary: "Approve: materialise the entrant (idempotent)", tag: "registration", response: S.Registration, errors: [422] },
+  { path: "/registrations/{id}/mark-paid", method: "post", summary: "Record an offline (cash/bank) payment — confirms the entry", tag: "registration", response: S.Registration, errors: [422] },
+  { path: "/registrations/{id}/waive", method: "post", summary: "Confirm without payment (fee waived, audited)", tag: "registration", response: S.Registration, errors: [422] },
   { path: "/registrations/{id}/waitlist", method: "post", summary: "Move a pending registration to the waitlist", tag: "registration", response: S.Registration, errors: [422] },
   { path: "/registrations/{id}/withdraw", method: "post", summary: "Withdraw: frees the spot, auto-promotes, auto-refunds pre-lock", tag: "registration", response: S.Registration },
   { path: "/registrations/{id}/refund", method: "post", summary: "Manual refund (post-lock discretion; partial allowed; audited)", tag: "registration", request: S.RefundRegistration, response: S.Registration, errors: [422] },

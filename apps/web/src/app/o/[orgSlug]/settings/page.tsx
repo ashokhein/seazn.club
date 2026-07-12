@@ -17,7 +17,6 @@ import { OrgSwitcher } from "@/components/org-switcher";
 import { OrgRename } from "@/components/org-rename";
 import { OrgLogo } from "@/components/org-logo";
 import { OrgBrandColor } from "@/components/org-brand-color";
-import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
 import { OrgAbout } from "@/components/org-about";
 import { OrgSponsors } from "@/components/org-sponsors";
 import { brandingSponsors } from "@/lib/org-branding";
@@ -78,6 +77,7 @@ const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon; href?: string }[] 
 ];
 
 const BILLING_NAV = { label: "Plan & billing", icon: CreditCard } as const;
+const PAYMENTS_NAV = { label: "Payments", icon: Banknote } as const;
 
 export default async function SettingsPage({
   params,
@@ -174,7 +174,15 @@ export default async function SettingsPage({
                   </Link>
                 );
               })}
-              {/* Plan & billing is its own route (owns Stripe reconciliation). */}
+              {/* Payments + Plan & billing are their own routes (each owns a
+                  Stripe reconcile-on-return round trip). */}
+              <Link
+                href={routes.payments(orgSlug)}
+                className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
+              >
+                <PAYMENTS_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
+                {PAYMENTS_NAV.label}
+              </Link>
               <Link
                 href={routes.billing(orgSlug)}
                 className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
@@ -283,16 +291,6 @@ export default async function SettingsPage({
                         </Link>
                       </p>
                     )}
-                  </div>
-                )}
-
-                {canEdit && (
-                  <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Banknote} label="Payment details" />
-                    <OrgPaymentInstructions
-                      orgId={active.id}
-                      initialValue={active.payment_instructions}
-                    />
                   </div>
                 )}
 

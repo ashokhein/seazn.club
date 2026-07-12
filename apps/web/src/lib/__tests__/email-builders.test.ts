@@ -5,12 +5,15 @@
 import { describe, expect, it } from "vitest";
 import {
   accountDeletionTemplate,
+  disputeAlertTemplate,
   emailChangeConfirmTemplate,
   emailChangeNoticeTemplate,
   inviteTemplate,
   magicLinkTemplate,
   passwordResetTemplate,
   paymentReminderTemplate,
+  refundIssuedTemplate,
+  registrationPromotedTemplate,
   registrationTemplate,
   verificationTemplate,
 } from "../email-templates";
@@ -39,6 +42,38 @@ const allBuilders: [string, { subject: string; html: string; text: string }][] =
   ["invite", inviteTemplate("Riverside Racquets", LINK)],
   ["registration", registrationTemplate(registrationArgs)],
   ["payment-reminder", paymentReminderTemplate(registrationArgs)],
+  [
+    "registration-promoted",
+    registrationPromotedTemplate({
+      ...registrationArgs,
+      payUrl: LINK,
+      payDeadline: "2026-08-01T12:00:00Z",
+      refCode: "SZ-ABCD-EFGH",
+      refStatusUrl: "https://seazn.club/r/SZ-ABCD-EFGH",
+    }),
+  ],
+  [
+    "refund-issued",
+    refundIssuedTemplate({
+      orgName: "Riverside Racquets",
+      competitionName: "Spring Open 2026",
+      displayName: "Alex",
+      amountCents: 2500,
+      currency: "gbp",
+      refCode: "SZ-ABCD-EFGH",
+    }),
+  ],
+  [
+    "dispute-alert",
+    disputeAlertTemplate({
+      orgName: "Riverside Racquets",
+      competitionName: "Spring Open 2026",
+      displayName: "Alex",
+      amountCents: 2500,
+      currency: "gbp",
+      refCode: "SZ-ABCD-EFGH",
+    }),
+  ],
 ];
 
 describe("email builders compose from the html templates", () => {
@@ -56,6 +91,44 @@ describe("email builders compose from the html templates", () => {
       expect(out.subject.length).toBeGreaterThan(5);
     });
   }
+
+  it("card registration carries a Pay now button and the deadline", () => {
+    const out = registrationTemplate({
+      ...registrationArgs,
+      paymentInstructions: null,
+      payUrl: "https://checkout.stripe.test/cs_1",
+      payDeadline: "2026-08-01T12:00:00Z",
+    });
+    expect(out.html).toContain("https://checkout.stripe.test/cs_1");
+    expect(out.html).toContain("Pay now");
+    expect(out.text).toContain("https://checkout.stripe.test/cs_1");
+  });
+
+  it("card payment reminder links the fresh checkout, offline keeps instructions", () => {
+    const card = paymentReminderTemplate({
+      ...registrationArgs,
+      paymentInstructions: null,
+      checkoutUrl: "https://checkout.stripe.test/cs_2",
+      payDeadline: "2026-08-01T12:00:00Z",
+    });
+    expect(card.html).toContain("https://checkout.stripe.test/cs_2");
+    const offline = paymentReminderTemplate(registrationArgs);
+    expect(offline.html).toContain("Bank transfer");
+  });
+
+  it("refund email states the amount; dispute alert warns the organiser", () => {
+    const refund = refundIssuedTemplate({
+      orgName: "O", competitionName: "C", displayName: "D",
+      amountCents: 1234, currency: "gbp", refCode: null,
+    });
+    expect(refund.text).toContain("12.34");
+    const dispute = disputeAlertTemplate({
+      orgName: "O", competitionName: "C", displayName: "D",
+      amountCents: 1234, currency: "gbp", refCode: "SZ-XXXX-YYYY",
+    });
+    expect(dispute.subject.toLowerCase()).toContain("dispute");
+    expect(dispute.text).toContain("SZ-XXXX-YYYY");
+  });
 
   it("CTA builders carry the link in a button href", () => {
     for (const t of [

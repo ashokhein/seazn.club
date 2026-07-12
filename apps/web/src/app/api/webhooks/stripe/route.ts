@@ -4,7 +4,11 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { recordPassPurchase, syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
-import { handleRegistrationCheckoutCompleted } from "@/server/usecases/registrations";
+import {
+  handleRegistrationCheckoutCompleted,
+  handleRegistrationDispute,
+  syncRegistrationRefund,
+} from "@/server/usecases/registrations";
 import { syncConnectAccount } from "@/server/usecases/stripe-connect";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
@@ -174,6 +178,17 @@ export async function POST(req: Request) {
         // Connect Express onboarding progress (PROMPT-20a): mirror the
         // charges_enabled flag that gates entry-fee checkout.
         await syncConnectAccount(event.data.object as Stripe.Account);
+        break;
+      case "charge.dispute.created":
+        // Entry-fee chargeback (spec issue #5): flag + alert the organiser.
+        await handleRegistrationDispute(event.data.object as Stripe.Dispute, "created");
+        break;
+      case "charge.dispute.closed":
+        await handleRegistrationDispute(event.data.object as Stripe.Dispute, "closed");
+        break;
+      case "charge.refunded":
+        // Refunds made in the Stripe dashboard still show on the console.
+        await syncRegistrationRefund(event.data.object as Stripe.Charge);
         break;
       // Unhandled events are silently ACKed
     }

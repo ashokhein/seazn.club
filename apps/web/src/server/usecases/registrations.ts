@@ -18,10 +18,17 @@ import type Stripe from "stripe";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getLimit, requireFeature } from "@/lib/entitlements";
+import { platformFeeDefault } from "@/lib/platform-settings";
 import { getStripe } from "@/lib/stripe";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
-import { sendRegistrationEmail, sendPaymentReminderEmail } from "@/lib/email";
+import {
+  sendRegistrationEmail,
+  sendPaymentReminderEmail,
+  sendRegistrationPromotedEmail,
+  sendRefundIssuedEmail,
+  sendDisputeAlertEmail,
+} from "@/lib/email";
 import { generateRefCode, isValidRefCode, normalizeRefCode } from "@/lib/ref-code";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -42,19 +49,12 @@ type Tx = postgres.TransactionSql;
 
 export const REGISTRATION_TOKEN_PREFIX = "rg_";
 
-/** Platform's cut of an entry fee, in percent (doc 16 §1.1 second revenue
- *  line). Config, not code: PLATFORM_FEE_PERCENT, default 5. */
-export function platformFeePercent(): number {
-  const raw = Number(process.env.PLATFORM_FEE_PERCENT ?? "5");
-  return Number.isFinite(raw) && raw >= 0 && raw <= 100 ? raw : 5;
-}
-
-/** The platform cut for THIS org + competition (v3/07 §2 fee row): the
- *  `registration.fee_percent` entitlement (pro 2, event-pass 5), falling back
- *  to the env default for plans without a row. */
+/** The platform cut for THIS org + competition (v3/07 §2 fee row): per-org
+ *  override → `registration.fee_percent` entitlement (pro 2, event-pass 5) →
+ *  the admin-set platform default (spec §1). */
 export async function feePercentFor(orgId: string, competitionId?: string): Promise<number> {
   const pct = await getLimit(orgId, "registration.fee_percent", competitionId);
-  return pct == null || pct <= 0 ? platformFeePercent() : pct;
+  return pct == null || pct <= 0 ? platformFeeDefault() : pct;
 }
 
 /** application_fee_amount for a destination charge. Never exceeds the fee. */
@@ -192,6 +192,9 @@ export interface RegistrationSettingsRow {
   currency: string;
   refund_lock_at: Date | null;
   form_fields: RegistrationFormField[];
+  payment_method: "offline" | "stripe";
+  /** Per-division override; null → org.payment_instructions. */
+  payment_instructions: string | null;
   updated_at: Date | null;
 }
 
@@ -199,7 +202,7 @@ export interface RegistrationRow {
   id: string;
   division_id: string;
   org_id: string;
-  status: "pending" | "paid" | "confirmed" | "waitlisted" | "withdrawn";
+  status: "pending" | "paid" | "confirmed" | "waitlisted" | "withdrawn" | "expired";
   /** Human-quotable reference (v3/05 §3); null on pre-v2 rows. */
   ref_code: string | null;
   display_name: string;
@@ -212,10 +215,17 @@ export interface RegistrationRow {
   roster: { name: string; dob?: string | null; squad_number?: number | null }[];
   amount_cents: number;
   currency: string | null;
+  payment_method: "offline" | "stripe" | null;
   checkout_session_id: string | null;
   payment_intent_id: string | null;
   refunded_cents: number;
   refunded_at: Date | null;
+  /** Card pendings only: pay-by deadline (spec §2, 48h). */
+  expires_at: Date | null;
+  reminded_at: Date | null;
+  offline_marked_paid_at: Date | null;
+  disputed_at: Date | null;
+  dispute_id: string | null;
   entrant_id: string | null;
   promoted_at: Date | null;
   withdrawn_at: Date | null;
@@ -225,15 +235,16 @@ export interface RegistrationRow {
 const REG_COLS = [
   "id", "division_id", "org_id", "status", "ref_code", "display_name",
   "contact_email", "dob", "gender", "guardian_name", "guardian_consent",
-  "answers", "roster", "amount_cents", "currency", "checkout_session_id",
-  "payment_intent_id", "refunded_cents", "refunded_at", "entrant_id",
-  "promoted_at", "withdrawn_at", "created_at",
+  "answers", "roster", "amount_cents", "currency", "payment_method",
+  "checkout_session_id", "payment_intent_id", "refunded_cents", "refunded_at",
+  "expires_at", "reminded_at", "offline_marked_paid_at", "disputed_at",
+  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "created_at",
 ] as const;
 
 const SETTINGS_COLS = [
   "division_id", "enabled", "entrant_kind", "opens_at", "closes_at",
   "capacity", "fee_cents", "currency", "refund_lock_at", "form_fields",
-  "updated_at",
+  "payment_method", "payment_instructions", "updated_at",
 ] as const;
 
 /** Statuses that hold a capacity spot. */
@@ -308,6 +319,16 @@ function seasonStartYear(ctx: DivisionCtx): number {
     : new Date().getUTCFullYear();
 }
 
+/** Origin for emails fired from request-less paths (withdraw promotions):
+ *  same override order as lib/base-url, localhost as the dev fallback. */
+function fallbackOrigin(): string {
+  return (
+    process.env.OAUTH_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
+}
+
 function windowOpen(s: RegistrationSettingsRow, now: Date): boolean {
   if (!s.enabled) return false;
   if (s.opens_at && now < new Date(s.opens_at)) return false;
@@ -353,21 +374,30 @@ async function materialise(tx: Tx, reg: RegistrationRow, entrantKind: string): P
   }
   await tx`
     update registrations
-    set entrant_id = ${entrant.id}, status = 'confirmed', updated_at = now()
+    set entrant_id = ${entrant.id}, status = 'confirmed', expires_at = null,
+        updated_at = now()
     where id = ${reg.id}`;
   return entrant.id;
 }
 
-/** Oldest waitlisted → pending (doc 16 §1.1 auto-promotion). The promoted
- *  registrant re-enters the normal flow: free = organiser confirm, paid =
- *  pay from the status page. Returns the promoted row when one existed. */
+/** Oldest waitlisted → pending (doc 16 §1.1 auto-promotion). Waitlisted rows
+ *  hold amount 0, so promotion SNAPSHOTS the current fee + method (spec §2);
+ *  card divisions get a fresh 48h pay window. Returns the promoted row. */
 async function promoteOldestWaitlisted(
   tx: Tx,
   divisionId: string,
+  settings: RegistrationSettingsRow | null,
 ): Promise<RegistrationRow | null> {
+  const feeCents = settings?.fee_cents ?? 0;
+  const method = settings?.payment_method ?? "offline";
+  const stripeWindow = method === "stripe" && feeCents > 0;
   const [row] = await tx<RegistrationRow[]>`
     update registrations
-    set status = 'pending', promoted_at = now(), updated_at = now()
+    set status = 'pending', promoted_at = now(), updated_at = now(),
+        amount_cents = ${feeCents},
+        currency = ${settings?.currency ?? "gbp"},
+        payment_method = ${method},
+        expires_at = ${stripeWindow ? tx`now() + interval '48 hours'` : null}
     where id = (
       select id from registrations
       where division_id = ${divisionId} and status = 'waitlisted'
@@ -375,6 +405,44 @@ async function promoteOldestWaitlisted(
       for update skip locked)
     returning ${sql(REG_COLS as unknown as string[])}`;
   return row ?? null;
+}
+
+/** Post-tx promoted email (fire-and-forget): card entries get a fresh
+ *  token-free checkout link, offline entries the resolved instructions. */
+async function notifyPromoted(
+  promoted: RegistrationRow,
+  ctx: DivisionCtx,
+  settings: RegistrationSettingsRow | null,
+  origin: string,
+): Promise<void> {
+  try {
+    let payUrl: string | null = null;
+    if (promoted.payment_method === "stripe" && promoted.amount_cents > 0 && ctx.charges_enabled) {
+      try {
+        payUrl = await createRegistrationCheckout(promoted, ctx, origin, null);
+      } catch {
+        /* the reminder sweep mints another */
+      }
+    }
+    await sendRegistrationPromotedEmail({
+      to: promoted.contact_email,
+      orgName: ctx.org_name,
+      competitionName: ctx.comp_name,
+      displayName: promoted.display_name,
+      feeCents: promoted.amount_cents,
+      currency: promoted.currency ?? settings?.currency ?? "gbp",
+      payUrl,
+      payDeadline: promoted.expires_at,
+      paymentInstructions:
+        promoted.payment_method === "offline" && promoted.amount_cents > 0
+          ? (settings?.payment_instructions ?? ctx.payment_instructions)
+          : null,
+      refCode: promoted.ref_code,
+      refStatusUrl: promoted.ref_code ? `${origin}/r/${promoted.ref_code}` : null,
+    });
+  } catch {
+    /* fire-and-forget */
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -391,21 +459,37 @@ const DEFAULT_SETTINGS: Omit<RegistrationSettingsRow, "division_id"> = {
   currency: "gbp",
   refund_lock_at: null,
   form_fields: [],
+  payment_method: "offline",
+  payment_instructions: null,
   updated_at: null,
 };
+
+export interface OrgPaymentDefaults {
+  charges_enabled: boolean;
+  org_payment_instructions: string | null;
+  org_default_payment_method: string;
+}
+
+async function orgPaymentDefaults(orgId: string): Promise<OrgPaymentDefaults> {
+  const [row] = await sql<OrgPaymentDefaults[]>`
+    select stripe_charges_enabled as charges_enabled,
+           payment_instructions as org_payment_instructions,
+           default_payment_method as org_default_payment_method
+    from organizations where id = ${orgId}`;
+  if (!row) throw new HttpError(404, "organization not found");
+  return row;
+}
 
 export async function getRegistrationSettings(
   auth: AuthCtx,
   divisionId: string,
-): Promise<RegistrationSettingsRow & { charges_enabled: boolean }> {
-  const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
-    select stripe_charges_enabled as charges_enabled from organizations
-    where id = ${auth.orgId}`;
+): Promise<RegistrationSettingsRow & OrgPaymentDefaults> {
+  const org = await orgPaymentDefaults(auth.orgId);
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx`select 1 from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     const row = await loadSettings(tx, divisionId);
-    return { division_id: divisionId, ...DEFAULT_SETTINGS, ...(row ?? {}), charges_enabled };
+    return { division_id: divisionId, ...DEFAULT_SETTINGS, ...(row ?? {}), ...org };
   });
 }
 
@@ -413,20 +497,33 @@ export async function putRegistrationSettings(
   auth: AuthCtx,
   divisionId: string,
   input: PutRegistrationSettings,
-): Promise<RegistrationSettingsRow & { charges_enabled: boolean }> {
+): Promise<RegistrationSettingsRow & OrgPaymentDefaults> {
   await requireFeature(auth.orgId, "registration.enabled");
-  // Entry fees are the paid layer (doc 16 §1.1). Offline (cash/bank) fees are
-  // free on every plan; only collecting online via Stripe Connect is Pro, and
-  // that gate lives at Connect onboarding (stripe-connect). So a fee only needs
-  // registration.paid here when the org actually has online charges enabled.
   const [regDiv] = await sql<{ competition_id: string }[]>`
     select competition_id from divisions where id = ${divisionId}`;
-  if (input.fee_cents > 0) {
-    const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
-      select stripe_charges_enabled as charges_enabled from organizations
-      where id = ${auth.orgId}`;
-    if (charges_enabled) {
-      await requireFeature(auth.orgId, "registration.paid", regDiv?.competition_id);
+  const org = await orgPaymentDefaults(auth.orgId);
+
+  // Offline (cash/bank) fees are free on every plan — they fill the funnel.
+  // Card collection is the paid layer (doc 16 §1.1): it needs a live Connect
+  // account AND the registration.paid entitlement, and the fee must clear
+  // Stripe's minimum charge (spec issue #13).
+  // Zod defaults apply on the route; direct callers (tests, scripts) may omit
+  // defaulted fields, so normalise exactly like the schema does.
+  const method = input.payment_method ?? "offline";
+  const feeCents = input.fee_cents ?? 0;
+  const currency = input.currency ?? "gbp";
+  const entrantKind = input.entrant_kind ?? "individual";
+  const formFields = input.form_fields ?? [];
+  if (method === "stripe") {
+    if (!org.charges_enabled) {
+      throw new HttpError(
+        422,
+        "Connect Stripe under Settings → Payments before choosing card payments",
+      );
+    }
+    await requireFeature(auth.orgId, "registration.paid", regDiv?.competition_id);
+    if (feeCents > 0 && feeCents < 100) {
+      throw new HttpError(422, "Card entry fees must be at least 1.00 (or 0 for free)");
     }
   }
 
@@ -445,10 +542,6 @@ export async function putRegistrationSettings(
     throw new HttpError(422, "closes_at must be after opens_at");
   }
 
-  const [{ charges_enabled }] = await sql<{ charges_enabled: boolean }[]>`
-    select stripe_charges_enabled as charges_enabled from organizations
-    where id = ${auth.orgId}`;
-
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${divisionId}`;
@@ -456,25 +549,29 @@ export async function putRegistrationSettings(
     const [row] = await tx<RegistrationSettingsRow[]>`
       insert into registration_settings
         (division_id, enabled, entrant_kind, opens_at, closes_at, capacity,
-         fee_cents, currency, refund_lock_at, form_fields, updated_at)
+         fee_cents, currency, refund_lock_at, form_fields,
+         payment_method, payment_instructions, updated_at)
       values
-        (${divisionId}, ${input.enabled}, ${input.entrant_kind},
+        (${divisionId}, ${input.enabled}, ${entrantKind},
          ${input.opens_at ?? null}, ${input.closes_at ?? null},
-         ${input.capacity ?? null}, ${input.fee_cents}, ${input.currency},
-         ${input.refund_lock_at ?? null}, ${tx.json(input.form_fields as never)}, now())
+         ${input.capacity ?? null}, ${feeCents}, ${currency},
+         ${input.refund_lock_at ?? null}, ${tx.json(formFields as never)},
+         ${method}, ${input.payment_instructions?.trim() || null}, now())
       on conflict (division_id) do update set
-        enabled        = excluded.enabled,
-        entrant_kind   = excluded.entrant_kind,
-        opens_at       = excluded.opens_at,
-        closes_at      = excluded.closes_at,
-        capacity       = excluded.capacity,
-        fee_cents      = excluded.fee_cents,
-        currency       = excluded.currency,
-        refund_lock_at = excluded.refund_lock_at,
-        form_fields    = excluded.form_fields,
-        updated_at     = now()
+        enabled              = excluded.enabled,
+        entrant_kind         = excluded.entrant_kind,
+        opens_at             = excluded.opens_at,
+        closes_at            = excluded.closes_at,
+        capacity             = excluded.capacity,
+        fee_cents            = excluded.fee_cents,
+        currency             = excluded.currency,
+        refund_lock_at       = excluded.refund_lock_at,
+        form_fields          = excluded.form_fields,
+        payment_method       = excluded.payment_method,
+        payment_instructions = excluded.payment_instructions,
+        updated_at           = now()
       returning ${sql(SETTINGS_COLS as unknown as string[])}`;
-    return { ...row, charges_enabled };
+    return { ...row, ...org };
   });
 }
 
@@ -490,6 +587,8 @@ export interface PublicDivisionInfo {
   entrant_kind: string;
   fee_cents: number;
   currency: string;
+  /** How the entry fee is collected (spec §3). */
+  payment_method: "offline" | "stripe";
   opens_at: string | null;
   closes_at: string | null;
   capacity: number | null;
@@ -497,6 +596,7 @@ export interface PublicDivisionInfo {
   /** Spots already taken — drives the masthead capacity meter (v3/05 §2). */
   taken: number;
   open: boolean;
+  /** 'window' | 'full' | 'payments_unavailable' | null */
   closed_reason: string | null;
   requires_dob: boolean;
   /** Youth division (v3/11 gap 8): the form always adds guardian consent. */
@@ -559,10 +659,12 @@ export async function publicRegistrationInfo(
   const divisions: PublicDivisionInfo[] = rows.map((r) => {
     const remaining =
       r.capacity === null ? null : Math.max(0, r.capacity - r.active);
-    const open = windowOpen(r, now);
-    // Paid divisions stay open without Stripe — entry fees are collected
-    // offline (cash / bank transfer) while Connect is disabled.
-    let reason: string | null = open ? null : "window";
+    // A card division with Connect broken can't take submissions — closing it
+    // with an honest reason beats accepting money we can't collect (spec #9).
+    const paymentsBroken =
+      r.payment_method === "stripe" && r.fee_cents > 0 && !comp.charges_enabled;
+    const open = windowOpen(r, now) && !paymentsBroken;
+    let reason: string | null = open ? null : paymentsBroken ? "payments_unavailable" : "window";
     if (open && remaining === 0) reason = "full"; // still open — joins the waitlist
     return {
       division_id: r.division_id,
@@ -572,6 +674,7 @@ export async function publicRegistrationInfo(
       entrant_kind: r.entrant_kind,
       fee_cents: r.fee_cents,
       currency: r.currency,
+      payment_method: r.payment_method,
       opens_at: r.opens_at ? new Date(r.opens_at).toISOString() : null,
       closes_at: r.closes_at ? new Date(r.closes_at).toISOString() : null,
       capacity: r.capacity,
@@ -656,10 +759,17 @@ export async function submitRegistration(
   const answers = validateAnswers(settings.form_fields ?? [], input.answers);
   const secret = mintRegistrationToken();
 
-  // Stripe Connect is disabled for now: paid divisions collect the entry fee
-  // offline (cash / bank transfer). The submission is accepted immediately and
-  // the organiser's payment instructions are shown + emailed to the registrant.
+  // Payment path is the division's choice (spec §3): offline entries are
+  // accepted immediately with the organiser's instructions; card entries mint
+  // a Stripe Checkout session at submit and hold the spot for 48 hours.
   const paid = settings.fee_cents > 0;
+  const useStripe = paid && settings.payment_method === "stripe";
+  if (useStripe && !ctx.charges_enabled) {
+    throw new HttpError(
+      503,
+      "Card payments are temporarily unavailable for this event — try again shortly or contact the organiser",
+    );
+  }
 
   // postgres types begin() as UnwrapPromiseArray (db.ts note) — safe cast.
   const reg = (await sql.begin(async (tx) => {
@@ -691,7 +801,7 @@ export async function submitRegistration(
               insert into registrations
                 (division_id, status, ref_code, display_name, contact_email, dob, gender,
                  guardian_name, guardian_consent, answers, roster, amount_cents, currency,
-                 access_token_hash)
+                 payment_method, expires_at, access_token_hash)
               values
                 (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"}, ${ref},
                  ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
@@ -699,6 +809,8 @@ export async function submitRegistration(
                  ${input.guardian_consent}, ${sp.json(answers as never)},
                  ${sp.json(roster as never)},
                  ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
+                 ${settings.payment_method},
+                 ${useStripe && !waitlisted ? sp`now() + interval '48 hours'` : null},
                  ${hashRegistrationToken(secret)})
               returning ${sql(REG_COLS as unknown as string[])}`;
             return r;
@@ -721,11 +833,25 @@ export async function submitRegistration(
       return row;
     })) as unknown as RegistrationRow;
 
-  // Confirmation email (offline flow) — includes the cash/bank instructions
-  // for paid entries. Fire-and-forget: a mail hiccup must not fail the signup.
+  // Card path: mint the Checkout session AFTER the tx (network call). A mint
+  // failure must not lose the registration — the status page offers Pay and
+  // the T-24h reminder carries a fresh link.
+  let checkoutUrl: string | null = null;
+  if (useStripe && reg.status === "pending") {
+    try {
+      checkoutUrl = await createRegistrationCheckout(reg, ctx, origin, secret);
+    } catch {
+      /* pay-later path stays available */
+    }
+  }
+
+  // Confirmation email — offline entries carry the resolved cash/bank
+  // instructions (division override → org); card entries carry the pay link
+  // and deadline. Fire-and-forget: a mail hiccup must not fail the signup.
   const statusUrl =
     `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
     `?rid=${reg.id}&token=${encodeURIComponent(secret)}`;
+  const offlineInstructions = settings.payment_instructions ?? ctx.payment_instructions;
   void sendRegistrationEmail({
     to: reg.contact_email,
     orgName: ctx.org_name,
@@ -734,7 +860,10 @@ export async function submitRegistration(
     status: reg.status,
     feeCents: paid ? settings.fee_cents : 0,
     currency: settings.currency,
-    paymentInstructions: paid && reg.status !== "waitlisted" ? ctx.payment_instructions : null,
+    paymentInstructions:
+      paid && !useStripe && reg.status !== "waitlisted" ? offlineInstructions : null,
+    payUrl: useStripe && reg.status === "pending" ? (checkoutUrl ?? statusUrl) : null,
+    payDeadline: reg.expires_at,
     statusUrl,
     refCode: reg.ref_code,
     refStatusUrl: reg.ref_code ? `${origin}/r/${reg.ref_code}` : null,
@@ -754,27 +883,30 @@ export async function submitRegistration(
     },
   });
 
-  // Stripe checkout is disabled — offline payment only.
-  return { registration: reg, access_token: secret, checkout_url: null };
+  return { registration: reg, access_token: secret, checkout_url: checkoutUrl };
 }
 
 /** Destination charge on the org's Connect account; the platform keeps
- *  application_fee_amount (doc 16 §1.1). */
+ *  application_fee_amount (doc 16 §1.1). Always charges the SNAPSHOTTED
+ *  reg.amount_cents (spec issue #8), never live settings. `token` builds the
+ *  status-page return URLs; null falls back to the token-free /r/[ref] pair
+ *  (email-minted sessions — the reminder can't recover the hashed token). */
 async function createRegistrationCheckout(
   reg: RegistrationRow,
-  settings: RegistrationSettingsRow,
   ctx: DivisionCtx,
-  token: string,
   origin: string,
+  token: string | null,
 ): Promise<string> {
+  if (reg.amount_cents <= 0) throw new HttpError(422, "This registration has no entry fee");
   const [org] = await sql<{ stripe_account_id: string | null }[]>`
     select stripe_account_id from organizations where id = ${ctx.org_id}`;
   if (!org?.stripe_account_id) {
     throw new HttpError(503, "Payments are not set up for this organiser yet");
   }
-  const statusUrl =
-    `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
-    `?rid=${reg.id}&token=${encodeURIComponent(token)}`;
+  const returnBase = token
+    ? `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
+      `?rid=${reg.id}&token=${encodeURIComponent(token)}`
+    : `${origin}/r/${reg.ref_code}?src=email`;
   const session = await getStripe().checkout.sessions.create({
     mode: "payment",
     customer_email: reg.contact_email,
@@ -783,22 +915,22 @@ async function createRegistrationCheckout(
       {
         quantity: 1,
         price_data: {
-          currency: settings.currency,
-          unit_amount: settings.fee_cents,
+          currency: reg.currency ?? "gbp",
+          unit_amount: reg.amount_cents,
           product_data: { name: `${ctx.comp_name} — entry fee (${reg.display_name})` },
         },
       },
     ],
     payment_intent_data: {
       application_fee_amount: applicationFeeCents(
-        settings.fee_cents,
+        reg.amount_cents,
         await feePercentFor(ctx.org_id, ctx.competition_id),
       ),
       transfer_data: { destination: org.stripe_account_id },
       metadata: { registration_id: reg.id, org_id: ctx.org_id },
     },
-    success_url: `${statusUrl}&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${statusUrl}&checkout=cancelled`,
+    success_url: `${returnBase}&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${returnBase}&checkout=cancelled`,
   });
   if (!session.url) throw new HttpError(502, "Stripe did not return a checkout URL");
   await sql`
@@ -830,29 +962,48 @@ export async function handleRegistrationCheckoutCompleted(
   await confirmPaidRegistration(regId, paymentIntent, session.amount_total ?? null);
 }
 
+type PayOutcome =
+  | { kind: "confirmed"; divisionId: string; competitionId: string }
+  | { kind: "late" | "duplicate"; reg: RegistrationRow; competitionId: string; intent: string }
+  | null;
+
 async function confirmPaidRegistration(
   regId: string,
   paymentIntentId: string | null,
   amountTotal: number | null,
 ): Promise<void> {
-  const done = (await sql.begin(async (tx) => {
+  const outcome = (await sql.begin(async (tx) => {
     const [reg] = await tx<RegistrationRow[]>`
       select ${sql(REG_COLS as unknown as string[])} from registrations
       where id = ${regId} for update`;
     if (!reg) return null;
-    // Idempotency + a late payment on a withdrawn registration: record the
-    // intent (so refund tooling can find it) but never resurrect the row.
-    if (reg.status === "confirmed" || reg.status === "paid") return null;
-    if (reg.status === "withdrawn") {
+    const [div] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${reg.division_id}`;
+    // Already paid/confirmed: a replay of the SAME session is a no-op, but a
+    // DIFFERENT intent means the registrant paid twice (two open checkout
+    // tabs, spec issue #2) — refund the duplicate, keep the original.
+    if (reg.status === "confirmed" || reg.status === "paid") {
+      if (paymentIntentId && reg.payment_intent_id && paymentIntentId !== reg.payment_intent_id) {
+        return { kind: "duplicate", reg, competitionId: div.competition_id, intent: paymentIntentId };
+      }
+      return null;
+    }
+    // Money landing on a dead registration (withdrawn/expired, spec issue #1):
+    // record the intent for the audit trail and send it straight back.
+    if (reg.status === "withdrawn" || reg.status === "expired") {
       await tx`update registrations
                set payment_intent_id = coalesce(payment_intent_id, ${paymentIntentId}),
                    updated_at = now()
                where id = ${regId}`;
-      return null;
+      if (!paymentIntentId && !reg.payment_intent_id) return null;
+      return {
+        kind: "late",
+        reg,
+        competitionId: div.competition_id,
+        intent: (reg.payment_intent_id ?? paymentIntentId) as string,
+      };
     }
     const settings = await loadSettings(tx, reg.division_id);
-    const [div] = await tx<{ competition_id: string }[]>`
-      select competition_id from divisions where id = ${reg.division_id}`;
     await tx`
       update registrations
       set status = 'paid',
@@ -871,9 +1022,119 @@ async function confirmPaidRegistration(
       paid: true,
       amount_cents: amountTotal ?? reg.amount_cents,
     }, null);
-    return { divisionId: reg.division_id, competitionId: div.competition_id };
-  })) as unknown as { divisionId: string; competitionId: string } | null;
-  if (done) fireDivisionRevalidate(done.divisionId, done.competitionId);
+    return { kind: "confirmed", divisionId: reg.division_id, competitionId: div.competition_id };
+  })) as unknown as PayOutcome;
+
+  if (!outcome) return;
+  if (outcome.kind === "confirmed") {
+    fireDivisionRevalidate(outcome.divisionId, outcome.competitionId);
+    return;
+  }
+  // Refunds happen OUTSIDE the tx (network). A failure surfaces on the
+  // organiser console via the audit trail, never blocks the webhook ACK.
+  try {
+    const refund = await stripeRefund(outcome.intent, undefined);
+    if (outcome.kind === "late") {
+      await sql`
+        update registrations
+        set refunded_cents = ${amountTotal ?? outcome.reg.amount_cents},
+            refunded_at = now(), updated_at = now()
+        where id = ${regId}`;
+    }
+    await audit(sql, outcome.competitionId, outcome.reg.org_id, "registration.refunded", {
+      registration_id: regId,
+      amount_cents: amountTotal ?? outcome.reg.amount_cents,
+      mode: outcome.kind === "late" ? "late_payment" : "duplicate",
+      stripe_refund_id: refund.id,
+    }, null);
+    const ctxLate = await divisionCtx(sql, outcome.reg.division_id);
+    notifyRefund(outcome.reg, ctxLate, amountTotal ?? outcome.reg.amount_cents);
+  } catch {
+    await audit(sql, outcome.competitionId, outcome.reg.org_id, "registration.refund_failed", {
+      registration_id: regId,
+      mode: outcome.kind,
+    }, null);
+  }
+}
+
+/**
+ * Dispute lifecycle (spec issue #5 — destination charges make the PLATFORM
+ * liable): `created` flags the registration + alerts the org owner; `closed`
+ * either clears the flag (won) or writes the money off (lost). No automatic
+ * entrant changes — contested entries are the organiser's call.
+ */
+export async function handleRegistrationDispute(
+  dispute: Stripe.Dispute,
+  phase: "created" | "closed",
+): Promise<void> {
+  const intent =
+    typeof dispute.payment_intent === "string"
+      ? dispute.payment_intent
+      : dispute.payment_intent?.id;
+  if (!intent) return;
+  const [reg] = await sql<RegistrationRow[]>`
+    select ${sql(REG_COLS as unknown as string[])} from registrations
+    where payment_intent_id = ${intent}`;
+  if (!reg) return; // not an entry-fee charge
+  const ctx = await divisionCtx(sql, reg.division_id);
+
+  if (phase === "created") {
+    await sql`update registrations
+              set disputed_at = now(), dispute_id = ${dispute.id}, updated_at = now()
+              where id = ${reg.id}`;
+    await audit(sql, ctx.competition_id, reg.org_id, "registration.disputed", {
+      registration_id: reg.id,
+      dispute_id: dispute.id,
+      amount_cents: dispute.amount,
+    }, null);
+    const [owner] = await sql<{ email: string }[]>`
+      select u.email from organizations o join users u on u.id = o.created_by
+      where o.id = ${reg.org_id}`;
+    if (owner) {
+      void sendDisputeAlertEmail({
+        to: owner.email,
+        orgName: ctx.org_name,
+        competitionName: ctx.comp_name,
+        displayName: reg.display_name,
+        amountCents: dispute.amount,
+        currency: reg.currency ?? "gbp",
+        refCode: reg.ref_code,
+      }).catch(() => {});
+    }
+    return;
+  }
+  if (dispute.status === "won") {
+    await sql`update registrations set disputed_at = null, updated_at = now()
+              where id = ${reg.id}`;
+    await audit(sql, ctx.competition_id, reg.org_id, "registration.dispute_won", {
+      registration_id: reg.id,
+      dispute_id: dispute.id,
+    }, null);
+  } else if (dispute.status === "lost") {
+    await sql`update registrations
+              set refunded_cents = amount_cents,
+                  refunded_at = coalesce(refunded_at, now()), updated_at = now()
+              where id = ${reg.id}`;
+    await audit(sql, ctx.competition_id, reg.org_id, "registration.dispute_lost", {
+      registration_id: reg.id,
+      dispute_id: dispute.id,
+    }, null);
+  }
+}
+
+/** Mirror refunds made outside the app (Stripe dashboard) so the console
+ *  never shows money we no longer hold. Monotonic — never regresses. */
+export async function syncRegistrationRefund(charge: Stripe.Charge): Promise<void> {
+  const intent =
+    typeof charge.payment_intent === "string"
+      ? charge.payment_intent
+      : charge.payment_intent?.id;
+  if (!intent) return;
+  await sql`
+    update registrations
+    set refunded_cents = greatest(refunded_cents, ${charge.amount_refunded}),
+        refunded_at = coalesce(refunded_at, now()), updated_at = now()
+    where payment_intent_id = ${intent}`;
 }
 
 /**
@@ -890,6 +1151,28 @@ export async function reconcileRegistration(regId: string, token: string): Promi
     const session = await getStripe().checkout.sessions.retrieve(reg.checkout_session_id);
     if (session.payment_status !== "paid") return false;
     if (session.metadata?.registration_id !== regId) return false;
+    await handleRegistrationCheckoutCompleted(session);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Reconcile-on-return for the token-free /r/[ref] flow (email-minted sessions,
+ * spec T6): the session's own metadata must point at the ref's registration —
+ * the ref is a lookup, the session is the proof. Best-effort; never throws.
+ */
+export async function reconcileRegistrationBySession(
+  ref: string,
+  sessionId: string,
+): Promise<boolean> {
+  try {
+    const reg = await regByRef(ref);
+    if (reg.status !== "pending") return false;
+    const session = await getStripe().checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== "paid") return false;
+    if (session.metadata?.registration_id !== reg.id) return false;
     await handleRegistrationCheckoutCompleted(session);
     return true;
   } catch {
@@ -919,6 +1202,12 @@ export interface PublicStatusView {
   currency: string | null;
   refunded_cents: number;
   payment_due: boolean;
+  /** How this entry pays (snapshot; spec §3). */
+  payment_method: "offline" | "stripe" | null;
+  /** Card pendings: the pay-by deadline (spec §2). */
+  expires_at: string | null;
+  /** Pay CTA gate: card pending + fee due + Connect live. */
+  can_pay_online: boolean;
   payment_instructions: string | null;
   created_at: string;
 }
@@ -940,6 +1229,10 @@ export async function publicRegistrationStatus(
   const settings = await loadSettings(sql, reg.division_id);
   const [div] = await sql<{ name: string }[]>`
     select name from divisions where id = ${reg.division_id}`;
+  // Amount due follows the SNAPSHOT (reg row), not live settings — fee edits
+  // never change what an in-flight registrant owes (spec issue #8).
+  const paymentDue = reg.status === "pending" && reg.amount_cents > 0;
+  const offline = reg.payment_method !== "stripe";
   return {
     id: reg.id,
     status: reg.status,
@@ -956,9 +1249,14 @@ export async function publicRegistrationStatus(
     amount_cents: reg.amount_cents,
     currency: reg.currency,
     refunded_cents: reg.refunded_cents,
-    payment_due: reg.status === "pending" && (settings?.fee_cents ?? 0) > 0,
+    payment_due: paymentDue,
+    payment_method: reg.payment_method,
+    expires_at: reg.expires_at ? new Date(reg.expires_at).toISOString() : null,
+    can_pay_online: paymentDue && !offline && ctx.charges_enabled,
     payment_instructions:
-      reg.status === "pending" && (settings?.fee_cents ?? 0) > 0 ? ctx.payment_instructions : null,
+      paymentDue && offline
+        ? (settings?.payment_instructions ?? ctx.payment_instructions)
+        : null,
     created_at: new Date(reg.created_at).toISOString(),
   };
 }
@@ -1067,15 +1365,17 @@ export async function resumeRegistrationCheckout(
   if (reg.status !== "pending") {
     throw new HttpError(422, `Nothing to pay — registration is ${reg.status}`);
   }
-  const settings = await loadSettings(sql, reg.division_id);
-  if (!settings || settings.fee_cents <= 0) {
+  if (reg.payment_method !== "stripe") {
+    throw new HttpError(422, "This entry fee is paid directly to the organiser");
+  }
+  if (reg.amount_cents <= 0) {
     throw new HttpError(422, "This registration has no entry fee");
   }
   const ctx = await divisionCtx(sql, reg.division_id);
   if (!ctx.charges_enabled) {
     throw new HttpError(503, "Payments are not set up for this organiser yet");
   }
-  const url = await createRegistrationCheckout(reg, settings, ctx, token, origin);
+  const url = await createRegistrationCheckout(reg, ctx, origin, token);
   return { checkout_url: url };
 }
 
@@ -1095,6 +1395,19 @@ async function stripeRefund(
     reverse_transfer: true,
     refund_application_fee: true,
   });
+}
+
+/** Fire-and-forget refund receipt to the registrant (spec T9). */
+function notifyRefund(reg: RegistrationRow, ctx: DivisionCtx, amountCents: number): void {
+  void sendRefundIssuedEmail({
+    to: reg.contact_email,
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    displayName: reg.display_name,
+    amountCents,
+    currency: reg.currency ?? "gbp",
+    refCode: reg.ref_code,
+  }).catch(() => {});
 }
 
 async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promise<void> {
@@ -1117,7 +1430,9 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
     if (locked.entrant_id) {
       await tx`update entrants set status = 'withdrawn' where id = ${locked.entrant_id}`;
     }
-    const promoted = freedSpot ? await promoteOldestWaitlisted(tx, reg.division_id) : null;
+    const promoted = freedSpot
+      ? await promoteOldestWaitlisted(tx, reg.division_id, settings)
+      : null;
     await audit(tx, ctx.competition_id, ctx.org_id, "registration.withdrawn", {
       registration_id: reg.id,
       by: actorId ? "organiser" : "registrant",
@@ -1134,6 +1449,9 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
   if (!outcome) return;
 
   fireDivisionRevalidate(reg.division_id, ctx.competition_id);
+  if (outcome.promoted) {
+    void notifyPromoted(outcome.promoted, ctx, settings, fallbackOrigin());
+  }
 
   // Auto-refund policy (doc 16 §1.1): full refund when withdrawal lands
   // before refund_lock_at (or no lock set). After the lock it's organiser
@@ -1155,6 +1473,7 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
         mode: "auto",
         stripe_refund_id: refund.id,
       }, actorId);
+      notifyRefund(locked, ctx, locked.amount_cents);
     } catch {
       // Refund failure must not undo the withdrawal — surfaces on the
       // organiser console (withdrawn + refunded_cents < amount_cents).
@@ -1164,6 +1483,111 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
       }, actorId);
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Pay-window sweep (spec §6) — cron-shaped: /api/cron/registrations, hourly
+// ---------------------------------------------------------------------------
+
+/**
+ * Two passes over card pendings: (1) T-24h payment reminders carrying a fresh
+ * token-free checkout link, exactly once per registration (reminded_at);
+ * (2) expire rows past their deadline and promote the oldest waitlisted with
+ * a new window. Each expiry runs in its own row-locked tx, so a racing
+ * webhook serialises: webhook first → paid wins; sweep first → the late
+ * payment auto-refunds (confirmPaidRegistration).
+ */
+export async function sweepRegistrations(
+  origin: string,
+): Promise<{ reminded: number; expired: number; promoted: number }> {
+  let reminded = 0;
+  let expired = 0;
+  let promotedCount = 0;
+
+  const due = await sql<RegistrationRow[]>`
+    select ${sql(REG_COLS as unknown as string[])} from registrations
+    where status = 'pending' and payment_method = 'stripe'
+      and expires_at is not null
+      and expires_at < now() + interval '24 hours'
+      and expires_at > now()
+      and reminded_at is null
+    order by expires_at
+    limit 200`;
+  for (const reg of due) {
+    try {
+      const ctx = await divisionCtx(sql, reg.division_id);
+      if (!ctx.charges_enabled) continue; // Connect broke — nothing to link to
+      const url = await createRegistrationCheckout(reg, ctx, origin, null);
+      await sendPaymentReminderEmail({
+        to: reg.contact_email,
+        orgName: ctx.org_name,
+        competitionName: ctx.comp_name,
+        displayName: reg.display_name,
+        feeCents: reg.amount_cents,
+        currency: reg.currency ?? "gbp",
+        paymentInstructions: null,
+        checkoutUrl: url,
+        payDeadline: reg.expires_at,
+      });
+    } catch {
+      continue; // reminded_at stays null — the next sweep retries
+    }
+    await sql`update registrations set reminded_at = now(), updated_at = now()
+              where id = ${reg.id}`;
+    reminded++;
+  }
+
+  const overdue = await sql<{ id: string; division_id: string }[]>`
+    select id, division_id from registrations
+    where status = 'pending' and expires_at is not null and expires_at < now()
+    order by expires_at
+    limit 200`;
+  for (const { id, division_id } of overdue) {
+    const outcome = (await sql.begin(async (tx) => {
+      const [locked] = await tx<RegistrationRow[]>`
+        select ${sql(REG_COLS as unknown as string[])} from registrations
+        where id = ${id} for update`;
+      if (
+        !locked ||
+        locked.status !== "pending" ||
+        !locked.expires_at ||
+        new Date(locked.expires_at) > new Date()
+      ) {
+        return null; // a webhook won the race, or the deadline moved
+      }
+      await tx`update registrations set status = 'expired', updated_at = now()
+               where id = ${id}`;
+      const settings = await loadSettings(tx, division_id);
+      const [div] = await tx<{ competition_id: string; org_id: string }[]>`
+        select competition_id, org_id from divisions where id = ${division_id}`;
+      const promoted = await promoteOldestWaitlisted(tx, division_id, settings);
+      await audit(tx, div.competition_id, div.org_id, "registration.expired", {
+        registration_id: id,
+        promoted_registration_id: promoted?.id ?? null,
+      }, null);
+      if (promoted) {
+        await audit(tx, div.competition_id, div.org_id, "registration.promoted", {
+          registration_id: promoted.id,
+          from: "waitlist",
+        }, null);
+      }
+      return { promoted, settings, competitionId: div.competition_id };
+    })) as unknown as {
+      promoted: RegistrationRow | null;
+      settings: RegistrationSettingsRow | null;
+      competitionId: string;
+    } | null;
+    if (!outcome) continue;
+    expired++;
+    fireDivisionRevalidate(division_id, outcome.competitionId);
+    if (outcome.promoted) {
+      promotedCount++;
+      const ctx = await divisionCtx(sql, division_id);
+      await notifyPromoted(outcome.promoted, ctx, outcome.settings, origin);
+    }
+  }
+
+  return { reminded, expired, promoted: promotedCount };
 }
 
 // ---------------------------------------------------------------------------
@@ -1203,7 +1627,10 @@ export async function confirmRegistration(auth: AuthCtx, regId: string): Promise
     if (reg.status === "withdrawn") throw new HttpError(422, "registration is withdrawn");
     const settings = await loadSettings(tx, reg.division_id);
     if ((settings?.fee_cents ?? 0) > 0 && reg.status !== "paid" && reg.payment_intent_id === null) {
-      throw new HttpError(422, "Awaiting payment — the registrant pays from their status page");
+      throw new HttpError(
+        422,
+        "Awaiting payment — use Mark paid once the fee arrives, or Confirm without payment to waive it",
+      );
     }
     const [div] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${reg.division_id}`;
@@ -1212,6 +1639,70 @@ export async function confirmRegistration(auth: AuthCtx, regId: string): Promise
     await audit(tx, div.competition_id, auth.orgId, "registration.confirmed", {
       registration_id: regId,
       paid: reg.status === "paid",
+    }, auth.userId);
+    return orgRegAfter(tx, regId);
+  });
+  fireDivisionRevalidate(row.division_id);
+  return row;
+}
+
+/** Organiser: record an offline (cash/bank) payment — confirms in the same tx
+ *  (payment = approval, spec §2). Card-paid rows are refused: their money
+ *  trail lives on Stripe and must stay refundable there. */
+export async function markRegistrationPaidOffline(
+  auth: AuthCtx,
+  regId: string,
+): Promise<RegistrationRow> {
+  const row = await withTenant(auth.orgId, async (tx) => {
+    const reg = await orgReg(tx, regId);
+    if (reg.status !== "pending") {
+      throw new HttpError(422, `Only pending registrations can be marked paid (this one is ${reg.status})`);
+    }
+    if (reg.payment_intent_id) {
+      throw new HttpError(422, "This registration was paid by card — refund it on the payments trail instead");
+    }
+    const settings = await loadSettings(tx, reg.division_id);
+    if ((settings?.fee_cents ?? 0) <= 0) {
+      throw new HttpError(422, "This division has no entry fee");
+    }
+    const [div] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${reg.division_id}`;
+    await assertCompetitionNotFrozen(auth.orgId, div.competition_id, tx);
+    await tx`
+      update registrations
+      set status = 'paid', offline_marked_paid_at = now(),
+          offline_marked_paid_by = ${auth.userId}, updated_at = now()
+      where id = ${regId}`;
+    await materialise(tx, { ...reg, status: "paid" }, settings?.entrant_kind ?? "individual");
+    await audit(tx, div.competition_id, auth.orgId, "registration.offline_paid", {
+      registration_id: regId,
+      amount_cents: reg.amount_cents,
+    }, auth.userId);
+    return orgRegAfter(tx, regId);
+  });
+  fireDivisionRevalidate(row.division_id);
+  return row;
+}
+
+/** Organiser: confirm while waiving the fee (comped entry) — audited. */
+export async function confirmRegistrationWaived(
+  auth: AuthCtx,
+  regId: string,
+): Promise<RegistrationRow> {
+  const row = await withTenant(auth.orgId, async (tx) => {
+    const reg = await orgReg(tx, regId);
+    if (reg.status === "confirmed") return orgRegAfter(tx, regId);
+    if (!["pending", "waitlisted"].includes(reg.status)) {
+      throw new HttpError(422, `Cannot confirm a ${reg.status} registration`);
+    }
+    const settings = await loadSettings(tx, reg.division_id);
+    const [div] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${reg.division_id}`;
+    await assertCompetitionNotFrozen(auth.orgId, div.competition_id, tx);
+    await materialise(tx, reg, settings?.entrant_kind ?? "individual");
+    await audit(tx, div.competition_id, auth.orgId, "registration.fee_waived", {
+      registration_id: regId,
+      fee_cents: settings?.fee_cents ?? 0,
     }, auth.userId);
     return orgRegAfter(tx, regId);
   });
@@ -1297,7 +1788,7 @@ export async function refundRegistration(
     throw new HttpError(422, `Refund exceeds the remaining ${remaining} cents`);
   }
   const refund = await stripeRefund(reg.payment_intent_id, amount);
-  return withTenant(auth.orgId, async (tx) => {
+  const row = await withTenant(auth.orgId, async (tx) => {
     const [div] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${reg.division_id}`;
     await tx`
@@ -1312,6 +1803,8 @@ export async function refundRegistration(
     }, auth.userId);
     return orgRegAfter(tx, regId);
   });
+  notifyRefund(reg, await divisionCtx(sql, reg.division_id), amount);
+  return row;
 }
 
 /** CSV export (organiser console; `exports` is the Pro gate, doc 10 §1). */

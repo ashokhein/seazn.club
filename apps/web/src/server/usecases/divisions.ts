@@ -237,6 +237,22 @@ export async function deleteDivision(auth: AuthCtx, id: string): Promise<void> {
     if (!division) throw new HttpError(404, "division not found");
     await assertRegistrationClosed(tx, id, "delete");
 
+    // Money records must outlive mistakes (spec 2026-07-12 issue #10): a hard
+    // delete cascades the registrations away, so block it while any card
+    // payment on this division is not fully refunded. Archive stays open.
+    const [{ live_payments }] = await tx<{ live_payments: number }[]>`
+      select count(*)::int as live_payments from registrations
+      where division_id = ${id} and payment_intent_id is not null
+        and refunded_cents < amount_cents`;
+    if (live_payments > 0) {
+      throw new HttpError(
+        409,
+        "Registrations here hold card payments — refund them before deleting, or archive instead",
+        "REGISTRATION_PAYMENTS",
+        { archive: true },
+      );
+    }
+
     const [{ decided }] = await tx<{ decided: number }[]>`
       select count(*)::int as decided from fixtures
       where division_id = ${id} and status in ('decided', 'finalized', 'forfeited')`;

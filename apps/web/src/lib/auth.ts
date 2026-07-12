@@ -122,7 +122,7 @@ export async function getUserOrgs(userId: string): Promise<OrgMembership[]> {
 
   const orgs = await sql<OrgMembership[]>`
     select o.id, o.name, o.slug, o.created_by, o.created_at,
-           o.logo_url, o.logo_storage_path, o.payment_instructions, o.branding, m.role
+           o.logo_url, o.logo_storage_path, o.payment_instructions, o.default_payment_method, o.branding, m.role
     from org_members m
     join organizations o on o.id = m.org_id
     where m.user_id = ${userId}
@@ -234,7 +234,7 @@ export async function createOrgForUser(
         const [o] = await tx<Organization[]>`
           insert into organizations (name, slug, created_by)
           values (${name}, ${slug}, ${userId})
-          returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, branding`;
+          returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, default_payment_method, branding`;
         await tx`
           insert into org_members (org_id, user_id, role)
           values (${o.id}, ${userId}, 'owner')`;

@@ -168,6 +168,34 @@ describe.skipIf(!HAS_DB)("division delete (v3/09 §4)", () => {
       }
     }
   });
+
+  it("unrefunded card payments block delete until refunded (spec issue #10)", async () => {
+    const { auth } = await seedOrg();
+    const { division } = await seedDivision(auth);
+    // Registration CLOSED (the open-registration guard must not be the one
+    // firing) but money was taken and not returned.
+    const [{ id: regId }] = await sql<{ id: string }[]>`
+      insert into registrations
+        (division_id, status, display_name, contact_email, amount_cents, currency,
+         payment_method, payment_intent_id, access_token_hash)
+      values
+        (${division.id}, 'confirmed', 'Payer', 'payer@test.local', 500, 'gbp',
+         'stripe', ${"pi_" + randomUUID().slice(0, 8)}, ${randomUUID()})
+      returning id`;
+    try {
+      await deleteDivision(auth, division.id);
+      expect.unreachable("expected 409 REGISTRATION_PAYMENTS");
+    } catch (err) {
+      expect(err).toBeInstanceOf(HttpError);
+      expect((err as HttpError).status).toBe(409);
+      expect((err as HttpError).code).toBe("REGISTRATION_PAYMENTS");
+    }
+    // Fully refunded → the money trail is settled → delete proceeds.
+    await sql`update registrations set refunded_cents = amount_cents where id = ${regId}`;
+    await deleteDivision(auth, division.id);
+    const [gone] = await sql`select 1 from divisions where id = ${division.id}`;
+    expect(gone).toBeUndefined();
+  });
 });
 
 describe.skipIf(!HAS_DB)("division archive / restore (v3/09 §4)", () => {

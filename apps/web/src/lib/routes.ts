@@ -12,6 +12,8 @@ export const routes = {
   orgSettings: (org: Slug, tab?: string) =>
     tab ? `/o/${org}/settings?tab=${tab}` : `/o/${org}/settings`,
   billing: (org: Slug) => `/o/${org}/settings/billing`,
+  /** Entry-fee collection: Stripe Connect + offline instructions (spec 2026-07-12). */
+  payments: (org: Slug) => `/o/${org}/settings/payments`,
   competitionNew: (org: Slug) => `/o/${org}/c/new`,
   competition: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}`,
   competitionSettings: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}/settings`,

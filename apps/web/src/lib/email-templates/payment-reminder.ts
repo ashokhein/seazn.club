@@ -1,5 +1,6 @@
-import { panel, paragraph, renderEmail } from "./compose";
+import { button, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
+import { formatDeadline } from "./registration";
 
 export interface PaymentReminderArgs {
   orgName: string;
@@ -8,16 +9,26 @@ export interface PaymentReminderArgs {
   feeCents: number;
   currency: string;
   paymentInstructions: string | null;
+  /** Card entries (sweep T-24h reminder): fresh checkout link + deadline. */
+  checkoutUrl?: string | null;
+  payDeadline?: Date | string | null;
 }
 
-/** Organiser-triggered nudge for an unpaid (offline) entry fee. */
+/** Payment nudge for an unpaid entry fee — organiser-triggered (offline) or
+ *  sweep-triggered at T-24h with a fresh checkout link (card). */
 export function paymentReminderTemplate(
   opts: PaymentReminderArgs,
 ): { subject: string; html: string; text: string } {
   const amount = money(opts.feeCents, opts.currency);
-  const how = opts.paymentInstructions
-    ? panel("How to pay", opts.paymentInstructions)
-    : paragraph(`Please contact ${escapeHtml(opts.orgName)} to arrange payment.`);
+  const deadline = opts.payDeadline ? formatDeadline(opts.payDeadline) : null;
+  const how = opts.checkoutUrl
+    ? panel(
+        "Complete your payment",
+        `Your spot is held${deadline ? ` until ${deadline}` : ""} — after that it's offered to the next in line.`,
+      ) + button(`Pay now — ${amount}`, opts.checkoutUrl)
+    : opts.paymentInstructions
+      ? panel("How to pay", opts.paymentInstructions)
+      : paragraph(`Please contact ${escapeHtml(opts.orgName)} to arrange payment.`);
 
   return {
     subject: `Payment reminder — ${opts.competitionName}`,
@@ -37,7 +48,11 @@ export function paymentReminderTemplate(
     text:
       `Payment reminder for ${opts.competitionName} (${opts.orgName}).\n` +
       `Entry fee: ${amount}.` +
-      (opts.paymentInstructions ? `\nHow to pay:\n${opts.paymentInstructions}` : `\nPlease contact the organiser to arrange payment.`) +
+      (opts.checkoutUrl
+        ? `\nYour spot is held${deadline ? ` until ${deadline}` : ""} — pay here:\n${opts.checkoutUrl}`
+        : opts.paymentInstructions
+          ? `\nHow to pay:\n${opts.paymentInstructions}`
+          : `\nPlease contact the organiser to arrange payment.`) +
       `\n\nIf you've already paid, please ignore this.`,
   };
 }

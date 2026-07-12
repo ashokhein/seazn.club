@@ -13,11 +13,13 @@ export function RegistrationActions({
   token,
   status,
   paymentDue,
+  payLabel,
 }: {
   registrationId: string;
   token: string;
   status: string;
   paymentDue: boolean;
+  payLabel?: string;
 }) {
   const router = useRouter();
   const confirmDialog = useConfirm();
@@ -62,7 +64,7 @@ export function RegistrationActions({
     }
   }
 
-  if (status === "withdrawn") return null;
+  if (status === "withdrawn" || status === "expired") return null;
 
   return (
     <>
@@ -73,7 +75,7 @@ export function RegistrationActions({
           onClick={pay}
           className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
         >
-          Pay entry fee
+          {payLabel ?? "Pay entry fee"}
         </button>
       )}
       <button
