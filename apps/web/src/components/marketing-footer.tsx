@@ -45,7 +45,7 @@ export function MarketingFooter() {
   return (
     <footer className="bg-[var(--mk-night)]">
       <div className="mx-auto max-w-6xl px-4 py-12">
-        <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid gap-8 text-center sm:grid-cols-2 sm:text-left lg:grid-cols-4">
           {COLS.map((col) => (
             <div key={col.head}>
               <p className="mk-display mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--mk-cream)]">
