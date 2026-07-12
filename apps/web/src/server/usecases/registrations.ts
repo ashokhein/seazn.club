@@ -1014,6 +1014,28 @@ export async function reconcileRegistration(regId: string, token: string): Promi
   }
 }
 
+/**
+ * Reconcile-on-return for the token-free /r/[ref] flow (email-minted sessions,
+ * spec T6): the session's own metadata must point at the ref's registration —
+ * the ref is a lookup, the session is the proof. Best-effort; never throws.
+ */
+export async function reconcileRegistrationBySession(
+  ref: string,
+  sessionId: string,
+): Promise<boolean> {
+  try {
+    const reg = await regByRef(ref);
+    if (reg.status !== "pending") return false;
+    const session = await getStripe().checkout.sessions.retrieve(sessionId);
+    if (session.payment_status !== "paid") return false;
+    if (session.metadata?.registration_id !== reg.id) return false;
+    await handleRegistrationCheckoutCompleted(session);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public: status / withdraw / resume payment (token-gated)
 // ---------------------------------------------------------------------------

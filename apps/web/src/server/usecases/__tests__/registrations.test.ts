@@ -44,6 +44,7 @@ import {
   publicRegistrationStatusByRef,
   withdrawRegistrationByRef,
   handleRegistrationCheckoutCompleted,
+  reconcileRegistrationBySession,
   withdrawRegistrationPublic,
   confirmRegistration,
   waitlistRegistration,
@@ -906,6 +907,27 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     stripeMock.refundCreate.mockClear();
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
     expect(stripeMock.refundCreate).not.toHaveBeenCalled();
+  });
+
+  it("reconciles by session from /r/[ref] (token-free return)", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    const ref = res.registration.ref_code as string;
+    const session = fakeSession(res.registration.id, 500);
+
+    // Mismatched session (different registration) → no-op.
+    stripeMock.checkoutRetrieve.mockResolvedValueOnce({
+      ...session, metadata: { kind: "registration", registration_id: randomUUID() },
+    });
+    expect(await reconcileRegistrationBySession(ref, session.id)).toBe(false);
+
+    stripeMock.checkoutRetrieve.mockResolvedValueOnce(session);
+    expect(await reconcileRegistrationBySession(ref, session.id)).toBe(true);
+    const [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.status).toBe("confirmed");
   });
 
   it("waitlisted card submits take no window and no payment", async () => {
