@@ -5,9 +5,11 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 // ISR/CDN-cacheable public surfaces (spec 2026-07-12 P5): nonce CSP forces
 // dynamic rendering, so these trees stay Report-Only permanently — flipping
 // CSP_MODE=enforce hardens the app surface without un-caching spectator pages.
-// /r is the registration-ref tree (/r/[ref]); keep the segment boundary so
-// e.g. /reset-password never matches.
-const CACHEABLE_PUBLIC = /^\/(shared|embed|r)(\/|$)/;
+// Cacheable trees: /shared and /embed. /r (registration-ref tree, /r/[ref]) is
+// deliberately excluded because it is force-dynamic and processes self-withdraw
+// tokens; excluding it from the carve-out costs no caching but keeps enforce
+// active on a token-bearing page.
+const CACHEABLE_PUBLIC = /^\/(shared|embed)(\/|$)/;
 
 export function isCacheablePublicPath(pathname: string): boolean {
   return CACHEABLE_PUBLIC.test(pathname);
