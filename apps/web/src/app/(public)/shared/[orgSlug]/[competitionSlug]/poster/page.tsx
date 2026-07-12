@@ -8,6 +8,12 @@ import { PrintButton } from "@/components/print-button";
 
 export const revalidate = 300;
 
+// ISR (task-8): empty-array generateStaticParams is required for on-demand
+// ISR on a dynamic segment in this Next version — see generate-static-params.md.
+export async function generateStaticParams() {
+  return [];
+}
+
 type Props = { params: Promise<{ orgSlug: string; competitionSlug: string }> };
 
 export const metadata: Metadata = {

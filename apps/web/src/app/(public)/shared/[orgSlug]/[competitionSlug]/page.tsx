@@ -16,6 +16,12 @@ import { CompetitionProse } from "@/components/public-site/competition-prose";
 
 export const revalidate = 30;
 
+// ISR (task-8): empty-array generateStaticParams is required for on-demand
+// ISR on a dynamic segment in this Next version — see generate-static-params.md.
+export async function generateStaticParams() {
+  return [];
+}
+
 type Props = { params: Promise<{ orgSlug: string; competitionSlug: string }> };
 
 interface Branding {

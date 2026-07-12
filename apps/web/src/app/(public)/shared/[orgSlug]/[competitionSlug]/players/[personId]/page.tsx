@@ -8,6 +8,13 @@ import { getPublicPlayer } from "@/server/public-site/data";
 
 export const revalidate = 300; // doc 09 §3: entrant/player pages revalidate 300
 
+// ISR (task-8): empty-array generateStaticParams is required for on-demand
+// ISR on a dynamic segment in this Next version — see generate-static-params.md.
+// REVALIDATE_SLOW (300) above is unchanged, just gaining ISR eligibility.
+export async function generateStaticParams() {
+  return [];
+}
+
 type Props = {
   params: Promise<{ orgSlug: string; competitionSlug: string; personId: string }>;
 };

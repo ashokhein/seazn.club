@@ -1,8 +1,39 @@
 import { sql } from "@/lib/db";
-import { requireUser, destroySession, invalidateUser, invalidateUserOrgs } from "@/lib/auth";
+import {
+  requireUser,
+  resolveActiveOrg,
+  destroySession,
+  invalidateUser,
+  invalidateUserOrgs,
+} from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
 import { deleteAccountSchema, updateProfileSchema } from "@/lib/types";
 import { sendAccountDeletionEmail } from "@/lib/email";
+
+/**
+ * Whoami (task-8): resolves the same identity AnalyticsBootstrap used to read
+ * via getCurrentUser()/cookies() directly in the ROOT layout — moved here so
+ * that read no longer forces every route rendered through the root layout to
+ * go dynamic whenever NEXT_PUBLIC_POSTHOG_KEY is set. The client-side
+ * analytics bootstrap fetches this once (sessionStorage-memoized) instead.
+ * 401 for anonymous callers; org is null for a user with no org membership.
+ */
+export async function GET() {
+  return handler(async () => {
+    const user = await requireUser();
+    const org = await resolveActiveOrg(user);
+    if (!org) return { id: user.id, email: user.email, org: null };
+
+    const [sub] = await sql<{ plan_key: string | null }[]>`
+      select coalesce(plan_key, 'community') as plan_key
+      from subscriptions where org_id = ${org.id}`;
+    return {
+      id: user.id,
+      email: user.email,
+      org: { id: org.id, name: org.name, plan: sub?.plan_key ?? "community" },
+    };
+  });
+}
 
 /** Update the authenticated user's profile (currently just the display name). */
 export async function PATCH(req: Request) {

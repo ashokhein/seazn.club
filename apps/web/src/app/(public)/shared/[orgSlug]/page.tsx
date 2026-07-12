@@ -11,6 +11,15 @@ import { CompetitionProse } from "@/components/public-site/competition-prose";
 
 export const revalidate = 30;
 
+// ISR (task-8): a dynamic-param route with no generateStaticParams never
+// gets ISR treatment in this Next version, regardless of `revalidate` above
+// — empty array + default dynamicParams=true still enables on-demand ISR
+// (first request renders + caches; docs: api-reference/functions/
+// generate-static-params.md).
+export async function generateStaticParams() {
+  return [];
+}
+
 type Props = { params: Promise<{ orgSlug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {

@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AnalyticsBootstrap } from "@/components/analytics-bootstrap";
@@ -59,10 +58,10 @@ export default function RootLayout({
             trees both have destructive actions. */}
         <ConfirmProvider>{children}</ConfirmProvider>
         {/* Identifies the logged-in user for PostHog; a no-op for anon traffic.
-            Suspense keeps its DB reads off the page's render-blocking path. */}
-        <Suspense fallback={null}>
-          <AnalyticsBootstrap />
-        </Suspense>
+            Client-mounted (task-8): fetches identity from /api/users/me
+            instead of reading cookies() here, so this layout's RSC tree stays
+            static/ISR-eligible (see analytics-bootstrap.tsx). */}
+        <AnalyticsBootstrap />
         {/* Global consent banner — analytics stays opted out until Accept. */}
         <CookieConsent />
       </body>
