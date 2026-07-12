@@ -26,6 +26,10 @@ export async function POST(req: NextRequest) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ ok: false }, { status: 400 });
   const { tags, mode } = parsed.data;
+  // Per-tag failures are swallowed (same fail-open contract as fire*Revalidate
+  // in server/public-site/revalidate.ts — staleness is bounded by the 30s ISR
+  // window), so the response below deliberately reports acceptance, not
+  // per-tag success. Callers (lib/peer-revalidate.ts) ignore the body.
   for (const tag of tags) {
     // Same Next 16 semantics as server/public-site/revalidate.ts: 'max' =
     // stale-while-revalidate for scoring pages; expire:0 = read-your-writes
@@ -37,5 +41,5 @@ export async function POST(req: NextRequest) {
       // outside a Next request scope (tests, scripts) — nothing to invalidate
     }
   }
-  return NextResponse.json({ ok: true, applied: tags.length });
+  return NextResponse.json({ ok: true });
 }

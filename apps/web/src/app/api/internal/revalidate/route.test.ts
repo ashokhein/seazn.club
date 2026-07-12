@@ -30,6 +30,6 @@ describe("POST /api/internal/revalidate", () => {
     vi.stubEnv("CRON_SECRET", "s3cret");
     const res = await POST(req({ tags: ["division:d1", "discovery"], mode: "swr" }, "s3cret"));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, applied: 2 });
+    expect(await res.json()).toEqual({ ok: true });
   });
 });

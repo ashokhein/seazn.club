@@ -15,6 +15,8 @@ vi.mock("@/server/public-site/data", () => ({
   orgTag: (slug: string) => `org-public:${slug}`,
   DISCOVERY_TAG: "discovery",
 }));
+const broadcastRevalidate = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@/lib/peer-revalidate", () => ({ broadcastRevalidate }));
 
 import {
   fireDivisionRevalidate,
@@ -22,7 +24,10 @@ import {
   fireDiscoveryRevalidate,
 } from "../revalidate";
 
-beforeEach(() => revalidateTag.mockClear());
+beforeEach(() => {
+  revalidateTag.mockClear();
+  broadcastRevalidate.mockClear();
+});
 
 describe("public-site revalidation profiles", () => {
   it("org chrome expires immediately (read-your-writes)", () => {
@@ -30,15 +35,27 @@ describe("public-site revalidation profiles", () => {
     expect(revalidateTag).toHaveBeenCalledWith("org-public:my-org", { expire: 0 });
   });
 
+  it("org chrome broadcast fans out with expire mode", () => {
+    fireOrgRevalidate("riverside");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["org-public:riverside"], "expire");
+  });
+
   it("division/competition tags keep stale-while-revalidate", () => {
     fireDivisionRevalidate("d1", "c1");
     expect(revalidateTag).toHaveBeenCalledWith("division:d1", "max");
     expect(revalidateTag).toHaveBeenCalledWith("competition:c1", "max");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["division:d1", "competition:c1"], "swr");
+  });
+
+  it("division-only broadcast omits the competition tag when none is passed", () => {
+    fireDivisionRevalidate("d1");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["division:d1"], "swr");
   });
 
   it("discovery tag keeps stale-while-revalidate", () => {
     fireDiscoveryRevalidate();
     expect(revalidateTag).toHaveBeenCalledWith("discovery", "max");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["discovery"], "swr");
   });
 
   it("swallows revalidateTag throwing outside a request scope", () => {
@@ -46,5 +63,8 @@ describe("public-site revalidation profiles", () => {
       throw new Error("static generation store missing");
     });
     expect(() => fireOrgRevalidate("my-org")).not.toThrow();
+    // Broadcast is unconditional — it must still fire even though the local
+    // revalidateTag call above threw (outside-request-scope path).
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["org-public:my-org"], "expire");
   });
 });
