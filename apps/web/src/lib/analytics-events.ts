@@ -27,6 +27,11 @@ export const EVENTS = {
   SUBSCRIPTION_STARTED: "subscription_started",
   SUBSCRIPTION_CANCELED: "subscription_canceled",
   PAYMENT_FAILED: "payment_failed",
+  // In-app billing management (v3/11) — the portal-replacement surface.
+  BILLING_CARD_ADDED: "billing_card_added",
+  BILLING_INTERVAL_CHANGED: "billing_interval_changed",
+  SUBSCRIPTION_CANCEL_SCHEDULED: "subscription_cancel_scheduled",
+  SUBSCRIPTION_RESUMED: "subscription_resumed",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];

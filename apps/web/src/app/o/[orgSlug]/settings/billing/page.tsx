@@ -5,12 +5,22 @@ import { reconcileCheckout, billingCtaLabel } from "@/lib/billing";
 import { requireOrgPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { BillingBanner } from "@/components/billing-banner";
-import { UpgradeButton, ManageBillingButton, DowngradeButton } from "@/components/billing-actions";
+import { UpgradeButton, DowngradeButton } from "@/components/billing-actions";
+import {
+  BillingDetailsCard,
+  CancelSubscriptionButton,
+  PaymentMethodsManager,
+  PlanIntervalSwitcher,
+  PromoCodeBox,
+  ResumeSubscriptionButton,
+  RetryPaymentButton,
+} from "@/components/billing-manage";
+import { getBillingOverview } from "@/server/usecases/billing-manage";
 import { type Subscription } from "@/lib/types";
 import { getLimit } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { formatMinor, proPrice } from "@/lib/currency";
+import { asCurrency, formatMinor, proPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 
 function fmt(iso: string | null) {
@@ -55,15 +65,19 @@ export default async function BillingPage({
     await reconcileCheckout(orgId, sp.session_id);
   }
 
+  // Live Stripe read for the manage sections (owner only). Runs BEFORE the
+  // subscription select because it also performs the lazy renewal re-sync
+  // (missed webhook / past_due self-heal) that may rewrite the row.
+  const overview = isOwner ? await getBillingOverview(orgId) : null;
+
   const [sub] = await sql<Subscription[]>`
     select * from subscriptions where org_id = ${orgId}`;
 
   const planKey = sub?.plan_key ?? "community";
   const status = sub?.status ?? "active";
   const isPro = planKey === "pro";
-  const hasStripeCustomer = !!sub?.stripe_customer_id;
-  // A comped/dev-granted Pro org has no Stripe subscription — it can't use the
-  // portal, so offer an in-app downgrade instead.
+  // A comped/dev-granted Pro org has no Stripe subscription — it gets the
+  // in-app downgrade instead of the cancel-at-period-end flow.
   const hasStripeSubscription = !!sub?.stripe_subscription_id;
 
   // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
@@ -138,21 +152,155 @@ export default async function BillingPage({
               {sub?.current_period_end && status === "active" && (
                 <p className="mt-1 text-sm text-slate-500">
                   {sub.cancel_at_period_end
-                    ? `Cancels on ${fmt(sub.current_period_end)}`
-                    : `Renews ${fmt(sub.current_period_end)}`}
+                    ? `Pro until ${fmt(sub.current_period_end)} — then Community`
+                    : `Renews ${fmt(sub.current_period_end)}${
+                        overview?.interval
+                          ? ` · billed ${overview.interval === "annual" ? "yearly" : "monthly"}`
+                          : ""
+                      }`}
+                </p>
+              )}
+              {overview && overview.creditMinor > 0 && (
+                <p className="mt-1 text-sm text-emerald-600">
+                  {formatMinor(overview.creditMinor, asCurrency(overview.currency))} account credit — pays
+                  future invoices automatically.
                 </p>
               )}
             </div>
 
-            {isOwner && isPro && hasStripeCustomer && (
-              <ManageBillingButton
-                label={billingCtaLabel(status)}
-                primary={status === "trialing"}
-              />
-            )}
+            {isOwner &&
+              isPro &&
+              status === "trialing" &&
+              ((overview?.paymentMethods.length ?? 0) === 0 ? (
+                <a href="#payment-methods" className="btn btn-primary">
+                  {billingCtaLabel(status)}
+                </a>
+              ) : (
+                <p className="text-sm text-emerald-600">
+                  Card on file — Pro continues after the trial.
+                </p>
+              ))}
             {isOwner && isPro && !hasStripeSubscription && <DowngradeButton />}
           </div>
+
+          {/* In-app plan management (v3/11) — no Stripe portal. */}
+          {isOwner && isPro && hasStripeSubscription && (
+            <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4">
+              {status === "past_due" && overview?.hasOpenInvoice && (
+                <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 px-4 py-3">
+                  <p className="text-sm text-amber-800">
+                    Your last payment failed. Fix the card below, then retry.
+                  </p>
+                  <RetryPaymentButton />
+                </div>
+              )}
+              <div className="flex flex-wrap items-center gap-3">
+                {overview?.interval && !sub?.cancel_at_period_end && status !== "past_due" && (
+                  <PlanIntervalSwitcher current={overview.interval} />
+                )}
+                {sub?.cancel_at_period_end ? (
+                  <ResumeSubscriptionButton />
+                ) : (
+                  status !== "past_due" && (
+                    <CancelSubscriptionButton periodEnd={sub?.current_period_end ?? null} />
+                  )
+                )}
+              </div>
+              {overview && <PromoCodeBox discount={overview.discount} />}
+            </div>
+          )}
         </section>
+
+        {/* Payment methods — card entry stays in Stripe's iframe (SAQ A). */}
+        {isOwner && overview && (
+          <section id="payment-methods" className="card mb-6 p-5">
+            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
+              Payment methods
+            </h2>
+            <PaymentMethodsManager
+              methods={overview.paymentMethods}
+              autoOpen={status === "trialing" && overview.paymentMethods.length === 0}
+            />
+          </section>
+        )}
+
+        {/* Billing details — address drives automatic_tax; VAT/GST id prints
+            on invoices and flips EU B2B to reverse charge. */}
+        {isOwner && overview && (
+          <section className="card mb-6 p-5">
+            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
+              Billing details
+            </h2>
+            <BillingDetailsCard
+              name={overview.billingName}
+              address={overview.billingAddress}
+              taxIds={overview.taxIds}
+            />
+          </section>
+        )}
+
+        {/* Invoices — Stripe-hosted view/PDF links; we never render documents. */}
+        {isOwner && overview && overview.invoices.length > 0 && (
+          <section className="card mb-6 p-5">
+            <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
+              Invoices
+            </h2>
+            <ul className="divide-y divide-slate-100">
+              {overview.invoices.map((inv) => (
+                <li
+                  key={inv.id}
+                  className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
+                >
+                  <div className="flex min-w-0 items-center gap-3">
+                    <span className="text-slate-600">{fmt(inv.createdIso)}</span>
+                    {inv.number && <span className="hidden text-slate-400 sm:inline">{inv.number}</span>}
+                    <span className="font-medium text-slate-800">
+                      {formatMinor(inv.totalMinor, asCurrency(inv.currency))}
+                    </span>
+                    <span
+                      className={`badge ${
+                        inv.status === "paid"
+                          ? "bg-green-100 text-green-700"
+                          : inv.isOpen
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-slate-100 text-slate-500"
+                      }`}
+                    >
+                      {inv.status}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-3 text-xs">
+                    {inv.isOpen && inv.hostedUrl && (
+                      <a
+                        href={inv.hostedUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-semibold text-amber-700 hover:underline"
+                      >
+                        Pay now ↗
+                      </a>
+                    )}
+                    {inv.hostedUrl && (
+                      <a
+                        href={inv.hostedUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="text-purple-600 hover:underline"
+                      >
+                        View ↗
+                      </a>
+                    )}
+                    {inv.pdfUrl && (
+                      <a href={inv.pdfUrl} className="text-purple-600 hover:underline">
+                        PDF
+                      </a>
+                    )}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
 
         {/* Usage */}
         <section className="card mb-6 p-5">
