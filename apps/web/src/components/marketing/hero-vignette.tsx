@@ -58,7 +58,7 @@ export function HeroVignette() {
           <span className="mk-display text-xs font-semibold tracking-widest text-[var(--mk-lime)]">
             LIVE
           </span>
-          <span className="mk-display text-sm font-bold tabular-nums text-[var(--mk-cream)]">
+          <span className="mk-display whitespace-nowrap text-sm font-bold tabular-nums text-[var(--mk-cream)]">
             Falcons 21 · Comets 18
           </span>
         </div>

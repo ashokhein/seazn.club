@@ -11,7 +11,7 @@ export function TicketStubs({ currency }: { currency: Currency }) {
       {ticketTiers(currency).map((t, i) => (
         <Reveal
           key={t.tier}
-          className={`mk-stub relative w-60 rounded-xl border p-5 text-left ${
+          className={`mk-stub relative w-64 rounded-xl border p-5 text-left ${
             t.glow
               ? "border-[var(--mk-lime)] shadow-[0_0_34px_rgba(163,230,53,0.22)]"
               : "border-[#3b2a6e]"
@@ -38,7 +38,7 @@ export function TicketStubs({ currency }: { currency: Currency }) {
               <span className="text-base font-medium text-[#b7aede]">{t.period}</span>
             ) : null}
           </p>
-          <ul className="w-44 space-y-1 text-xs leading-relaxed text-[#cfc6ec]">
+          <ul className="w-40 space-y-1 text-xs leading-relaxed text-[#cfc6ec]">
             {t.bullets.map((b) => (
               <li key={b}>
                 <span className="text-[var(--mk-lime)]">✓</span> {b}

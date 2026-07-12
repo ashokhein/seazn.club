@@ -97,7 +97,7 @@ export default async function HomePage() {
                 </Link>
               </p>
             </div>
-            <div className="justify-self-center">
+            <div className="w-full max-w-md justify-self-center">
               <HeroVignette />
             </div>
           </div>

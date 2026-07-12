@@ -524,8 +524,11 @@ body {
 .mk-nav-night { background: transparent; border-bottom: 1px solid transparent; }
 .mk-nav-night .mk-nav-link { color: var(--mk-cream); opacity: 0.85; }
 .mk-nav-night .mk-nav-link:hover { opacity: 1; background: rgb(245 240 232 / 0.08); }
+.mk-nav-night .mk-nav-link.btn-ghost { background: transparent; border-color: #3b2a6e; color: var(--mk-cream); }
 .mk-nav-night .mk-nav-cta { background: var(--mk-lime); color: var(--mk-night); }
-.mk-nav-night .mk-nav-logo { filter: brightness(0) invert(1); }
+.mk-nav-night .mk-nav-logo-img { display: none; }
+.mk-nav-night .mk-nav-logo-text { color: var(--mk-cream); }
+.mk-nav-solid .mk-nav-logo-text { display: none; }
 /* Dark funnel form variant */
 .mk-funnel-night { border-color: #3b2a6e; background: rgb(26 15 62 / 0.75); }
 .mk-funnel-night .label { color: #b7aede; }
