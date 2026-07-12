@@ -776,3 +776,94 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     expect(got.payment_instructions).toBe("Cash to the front desk before round 1");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Card submit path (spec §3): checkout at submit + 48h pay window
+// ---------------------------------------------------------------------------
+
+async function stripeRig(opts: { capacity?: number | null; feeCents?: number } = {}) {
+  const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+  const owner = asOwner(orgId, ownerId);
+  await sql`update organizations
+            set stripe_charges_enabled = true, stripe_account_id = ${"acct_" + randomUUID().slice(0, 8)}
+            where id = ${orgId}`;
+  const { competition, division } = await rig(owner);
+  await putRegistrationSettings(owner, division.id, {
+    ...SETTINGS_BASE, payment_method: "stripe",
+    fee_cents: opts.feeCents ?? 500, capacity: opts.capacity ?? null,
+  });
+  return { orgId, orgSlug, ownerId, owner, competition, division };
+}
+
+describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
+  it("snapshots the method, opens a 48h window, returns a checkout URL", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    expect(res.checkout_url).toBe("https://checkout.stripe.test/session");
+    expect(res.registration.payment_method).toBe("stripe");
+    expect(res.registration.expires_at).not.toBeNull();
+    expect(res.registration.amount_cents).toBe(500);
+    // The line item charges the snapshot, and the fee rides the chain (pro 2%).
+    const args = stripeMock.checkoutCreate.mock.calls[0][0];
+    expect(args.line_items[0].price_data.unit_amount).toBe(500);
+    expect(args.payment_intent_data.application_fee_amount).toBe(10);
+  });
+
+  it("a failed checkout mint keeps the registration (pay from status page)", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    stripeMock.checkoutCreate.mockRejectedValueOnce(new Error("stripe down"));
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    expect(res.checkout_url).toBeNull();
+    expect(res.registration.status).toBe("pending");
+  });
+
+  it("offline submits keep no expiry and no checkout", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 500,
+    });
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    expect(res.checkout_url).toBeNull();
+    expect(res.registration.expires_at).toBeNull();
+    expect(res.registration.payment_method).toBe("offline");
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
+  });
+
+  it("blocks card submits when Connect breaks, and the public panel says why", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+    await sql`update organizations set stripe_charges_enabled = false where id = ${orgId}`;
+    await expect(
+      submitRegistration(orgSlug, competition.slug, {
+        ...SUBMIT_BASE, division_id: division.id,
+      }, "http://test.local"),
+    ).rejects.toMatchObject({ status: 503 });
+    const info = await publicRegistrationInfo(orgSlug, competition.slug);
+    const div = info.divisions.find((d) => d.division_id === division.id)!;
+    expect(div.open).toBe(false);
+    expect(div.closed_reason).toBe("payments_unavailable");
+    expect(div.payment_method).toBe("stripe");
+  });
+
+  it("waitlisted card submits take no window and no payment", async () => {
+    const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
+    await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    stripeMock.checkoutCreate.mockClear();
+    const second = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id, contact_email: "second@test.local",
+    }, "http://test.local");
+    expect(second.registration.status).toBe("waitlisted");
+    expect(second.checkout_url).toBeNull();
+    expect(second.registration.expires_at).toBeNull();
+    expect(stripeMock.checkoutCreate).not.toHaveBeenCalled();
+  });
+});

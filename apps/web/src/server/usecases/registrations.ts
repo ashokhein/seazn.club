@@ -524,6 +524,8 @@ export interface PublicDivisionInfo {
   entrant_kind: string;
   fee_cents: number;
   currency: string;
+  /** How the entry fee is collected (spec §3). */
+  payment_method: "offline" | "stripe";
   opens_at: string | null;
   closes_at: string | null;
   capacity: number | null;
@@ -531,6 +533,7 @@ export interface PublicDivisionInfo {
   /** Spots already taken — drives the masthead capacity meter (v3/05 §2). */
   taken: number;
   open: boolean;
+  /** 'window' | 'full' | 'payments_unavailable' | null */
   closed_reason: string | null;
   requires_dob: boolean;
   /** Youth division (v3/11 gap 8): the form always adds guardian consent. */
@@ -593,10 +596,12 @@ export async function publicRegistrationInfo(
   const divisions: PublicDivisionInfo[] = rows.map((r) => {
     const remaining =
       r.capacity === null ? null : Math.max(0, r.capacity - r.active);
-    const open = windowOpen(r, now);
-    // Paid divisions stay open without Stripe — entry fees are collected
-    // offline (cash / bank transfer) while Connect is disabled.
-    let reason: string | null = open ? null : "window";
+    // A card division with Connect broken can't take submissions — closing it
+    // with an honest reason beats accepting money we can't collect (spec #9).
+    const paymentsBroken =
+      r.payment_method === "stripe" && r.fee_cents > 0 && !comp.charges_enabled;
+    const open = windowOpen(r, now) && !paymentsBroken;
+    let reason: string | null = open ? null : paymentsBroken ? "payments_unavailable" : "window";
     if (open && remaining === 0) reason = "full"; // still open — joins the waitlist
     return {
       division_id: r.division_id,
@@ -606,6 +611,7 @@ export async function publicRegistrationInfo(
       entrant_kind: r.entrant_kind,
       fee_cents: r.fee_cents,
       currency: r.currency,
+      payment_method: r.payment_method,
       opens_at: r.opens_at ? new Date(r.opens_at).toISOString() : null,
       closes_at: r.closes_at ? new Date(r.closes_at).toISOString() : null,
       capacity: r.capacity,
@@ -690,10 +696,17 @@ export async function submitRegistration(
   const answers = validateAnswers(settings.form_fields ?? [], input.answers);
   const secret = mintRegistrationToken();
 
-  // Stripe Connect is disabled for now: paid divisions collect the entry fee
-  // offline (cash / bank transfer). The submission is accepted immediately and
-  // the organiser's payment instructions are shown + emailed to the registrant.
+  // Payment path is the division's choice (spec §3): offline entries are
+  // accepted immediately with the organiser's instructions; card entries mint
+  // a Stripe Checkout session at submit and hold the spot for 48 hours.
   const paid = settings.fee_cents > 0;
+  const useStripe = paid && settings.payment_method === "stripe";
+  if (useStripe && !ctx.charges_enabled) {
+    throw new HttpError(
+      503,
+      "Card payments are temporarily unavailable for this event — try again shortly or contact the organiser",
+    );
+  }
 
   // postgres types begin() as UnwrapPromiseArray (db.ts note) — safe cast.
   const reg = (await sql.begin(async (tx) => {
@@ -725,7 +738,7 @@ export async function submitRegistration(
               insert into registrations
                 (division_id, status, ref_code, display_name, contact_email, dob, gender,
                  guardian_name, guardian_consent, answers, roster, amount_cents, currency,
-                 access_token_hash)
+                 payment_method, expires_at, access_token_hash)
               values
                 (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"}, ${ref},
                  ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
@@ -733,6 +746,8 @@ export async function submitRegistration(
                  ${input.guardian_consent}, ${sp.json(answers as never)},
                  ${sp.json(roster as never)},
                  ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
+                 ${settings.payment_method},
+                 ${useStripe && !waitlisted ? sp`now() + interval '48 hours'` : null},
                  ${hashRegistrationToken(secret)})
               returning ${sql(REG_COLS as unknown as string[])}`;
             return r;
@@ -755,11 +770,25 @@ export async function submitRegistration(
       return row;
     })) as unknown as RegistrationRow;
 
-  // Confirmation email (offline flow) — includes the cash/bank instructions
-  // for paid entries. Fire-and-forget: a mail hiccup must not fail the signup.
+  // Card path: mint the Checkout session AFTER the tx (network call). A mint
+  // failure must not lose the registration — the status page offers Pay and
+  // the T-24h reminder carries a fresh link.
+  let checkoutUrl: string | null = null;
+  if (useStripe && reg.status === "pending") {
+    try {
+      checkoutUrl = await createRegistrationCheckout(reg, ctx, origin, secret);
+    } catch {
+      /* pay-later path stays available */
+    }
+  }
+
+  // Confirmation email — offline entries carry the resolved cash/bank
+  // instructions (division override → org); card entries carry the pay link
+  // and deadline. Fire-and-forget: a mail hiccup must not fail the signup.
   const statusUrl =
     `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
     `?rid=${reg.id}&token=${encodeURIComponent(secret)}`;
+  const offlineInstructions = settings.payment_instructions ?? ctx.payment_instructions;
   void sendRegistrationEmail({
     to: reg.contact_email,
     orgName: ctx.org_name,
@@ -768,7 +797,10 @@ export async function submitRegistration(
     status: reg.status,
     feeCents: paid ? settings.fee_cents : 0,
     currency: settings.currency,
-    paymentInstructions: paid && reg.status !== "waitlisted" ? ctx.payment_instructions : null,
+    paymentInstructions:
+      paid && !useStripe && reg.status !== "waitlisted" ? offlineInstructions : null,
+    payUrl: useStripe && reg.status === "pending" ? (checkoutUrl ?? statusUrl) : null,
+    payDeadline: reg.expires_at,
     statusUrl,
     refCode: reg.ref_code,
     refStatusUrl: reg.ref_code ? `${origin}/r/${reg.ref_code}` : null,
@@ -788,27 +820,30 @@ export async function submitRegistration(
     },
   });
 
-  // Stripe checkout is disabled — offline payment only.
-  return { registration: reg, access_token: secret, checkout_url: null };
+  return { registration: reg, access_token: secret, checkout_url: checkoutUrl };
 }
 
 /** Destination charge on the org's Connect account; the platform keeps
- *  application_fee_amount (doc 16 §1.1). */
+ *  application_fee_amount (doc 16 §1.1). Always charges the SNAPSHOTTED
+ *  reg.amount_cents (spec issue #8), never live settings. `token` builds the
+ *  status-page return URLs; null falls back to the token-free /r/[ref] pair
+ *  (email-minted sessions — the reminder can't recover the hashed token). */
 async function createRegistrationCheckout(
   reg: RegistrationRow,
-  settings: RegistrationSettingsRow,
   ctx: DivisionCtx,
-  token: string,
   origin: string,
+  token: string | null,
 ): Promise<string> {
+  if (reg.amount_cents <= 0) throw new HttpError(422, "This registration has no entry fee");
   const [org] = await sql<{ stripe_account_id: string | null }[]>`
     select stripe_account_id from organizations where id = ${ctx.org_id}`;
   if (!org?.stripe_account_id) {
     throw new HttpError(503, "Payments are not set up for this organiser yet");
   }
-  const statusUrl =
-    `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
-    `?rid=${reg.id}&token=${encodeURIComponent(token)}`;
+  const returnBase = token
+    ? `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
+      `?rid=${reg.id}&token=${encodeURIComponent(token)}`
+    : `${origin}/r/${reg.ref_code}?src=email`;
   const session = await getStripe().checkout.sessions.create({
     mode: "payment",
     customer_email: reg.contact_email,
@@ -817,22 +852,22 @@ async function createRegistrationCheckout(
       {
         quantity: 1,
         price_data: {
-          currency: settings.currency,
-          unit_amount: settings.fee_cents,
+          currency: reg.currency ?? "gbp",
+          unit_amount: reg.amount_cents,
           product_data: { name: `${ctx.comp_name} — entry fee (${reg.display_name})` },
         },
       },
     ],
     payment_intent_data: {
       application_fee_amount: applicationFeeCents(
-        settings.fee_cents,
+        reg.amount_cents,
         await feePercentFor(ctx.org_id, ctx.competition_id),
       ),
       transfer_data: { destination: org.stripe_account_id },
       metadata: { registration_id: reg.id, org_id: ctx.org_id },
     },
-    success_url: `${statusUrl}&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
-    cancel_url: `${statusUrl}&checkout=cancelled`,
+    success_url: `${returnBase}&checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+    cancel_url: `${returnBase}&checkout=cancelled`,
   });
   if (!session.url) throw new HttpError(502, "Stripe did not return a checkout URL");
   await sql`
@@ -1101,15 +1136,17 @@ export async function resumeRegistrationCheckout(
   if (reg.status !== "pending") {
     throw new HttpError(422, `Nothing to pay — registration is ${reg.status}`);
   }
-  const settings = await loadSettings(sql, reg.division_id);
-  if (!settings || settings.fee_cents <= 0) {
+  if (reg.payment_method !== "stripe") {
+    throw new HttpError(422, "This entry fee is paid directly to the organiser");
+  }
+  if (reg.amount_cents <= 0) {
     throw new HttpError(422, "This registration has no entry fee");
   }
   const ctx = await divisionCtx(sql, reg.division_id);
   if (!ctx.charges_enabled) {
     throw new HttpError(503, "Payments are not set up for this organiser yet");
   }
-  const url = await createRegistrationCheckout(reg, settings, ctx, token, origin);
+  const url = await createRegistrationCheckout(reg, ctx, origin, token);
   return { checkout_url: url };
 }
 
