@@ -440,7 +440,7 @@ body {
   transform-origin: 310px 230px;
   animation:
     mk-bat-swing 0.38s 1.31s cubic-bezier(0.3, 0, 0.2, 1.4) forwards,
-    mk-bat-sway 8s 3s ease-in-out infinite;
+    mk-bat-sway 4.5s 3s ease-in-out infinite;
   transform: rotate(35deg);
 }
 @keyframes mk-bat-swing {
