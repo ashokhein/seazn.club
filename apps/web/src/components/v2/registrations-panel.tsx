@@ -159,7 +159,10 @@ export function RegistrationsPanel({
       apiV1<Settings>(`/api/v1/divisions/${divisionId}/registration-settings`),
       apiV1<Registration[]>(`/api/v1/divisions/${divisionId}/registrations`),
     ]);
-    setSettings(s);
+    // Never-saved divisions preselect the org's default method (spec §3).
+    const preselectStripe =
+      s.updated_at === null && s.org_default_payment_method === "stripe" && s.charges_enabled;
+    setSettings(preselectStripe ? { ...s, payment_method: "stripe" } : s);
     setRegs(r);
   }, [divisionId]);
 
@@ -169,19 +172,11 @@ export function RegistrationsPanel({
     );
   }, [refresh]);
 
-  // Seed the pounds field once, from the loaded settings. Never-saved
-  // divisions preselect the org's default payment method (spec §3).
+  // Seed the pounds field once, from the loaded settings.
   useEffect(() => {
     if (settings && !feeInited.current) {
       feeInited.current = true;
       setFeeText((settings.fee_cents / 100).toString());
-      if (
-        settings.updated_at === null &&
-        settings.org_default_payment_method === "stripe" &&
-        settings.charges_enabled
-      ) {
-        setSettings((s) => (s ? { ...s, payment_method: "stripe" } : s));
-      }
     }
   }, [settings]);
 
