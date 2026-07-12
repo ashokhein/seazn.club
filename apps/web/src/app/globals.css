@@ -535,3 +535,16 @@ body {
 .mk-funnel-night .input { background: #241650; border-color: #3b2a6e; color: var(--mk-cream); }
 .mk-funnel-night .btn-primary,
 .mk-funnel-night button[type="submit"] { background: var(--mk-lime); color: var(--mk-night); }
+
+/* /scheduling attract-mode replay (~3.2s once) */
+.mk-replay-chip { width: 26%; left: 108%; }
+.mk-replay-chip-0 { animation: mk-replay-in 0.6s 0.3s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+.mk-replay-chip-1 { animation: mk-replay-in 0.6s 0.9s cubic-bezier(0.22, 1.2, 0.36, 1) forwards, mk-replay-clash 0.35s 1.7s ease 2; }
+.mk-replay-chip-2 { animation: mk-replay-in 0.6s 1.3s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+@keyframes mk-replay-in { to { left: 6%; } }
+@keyframes mk-replay-clash { 50% { box-shadow: 0 0 0 3px var(--mk-live); } }
+.mk-replay-fix { width: 22%; left: 108%; opacity: 0; animation: mk-replay-resolve 0.7s 2.5s cubic-bezier(0.22, 1.2, 0.36, 1) forwards; }
+@keyframes mk-replay-resolve { to { left: 40%; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .mk-replay-chip, .mk-replay-fix { animation: none; }
+}
