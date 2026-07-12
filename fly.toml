@@ -35,7 +35,11 @@ primary_region = "lhr"
   memory = "512mb"
 
 # ── Secrets (set via `fly secrets set KEY=value`) ─────────────────────────────
-# DATABASE_URL             — Supabase transaction pooler URL (port 6543)
+# DATABASE_URL             — Supabase SESSION pooler URL (port 5432, Supavisor).
+#                            The app is an always-on server: session mode keeps
+#                            prepared statements (transaction pooler :6543
+#                            disables them — lib/db.ts auto-detects either).
+# DB_POOL_MAX              — optional, default 5; raise with machine size.
 # AUTH_SECRET              — random 32-byte hex; `openssl rand -hex 32`
 # SUPABASE_SERVICE_ROLE_KEY
 # SUPABASE_JWT_SECRET
