@@ -39,11 +39,11 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "Seazn Club",
-    images: [{ url: "/logo.png", width: 500, height: 500, alt: "Seazn Club" }],
+    // og:image comes from the root opengraph-image.tsx file convention —
+    // per-segment cards (the /shared tree) override it automatically.
   },
   twitter: {
-    card: "summary",
-    images: ["/logo.png"],
+    card: "summary_large_image",
   },
 };
 
