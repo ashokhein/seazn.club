@@ -514,3 +514,21 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .mk-in .mk-lane-block, .mk-in .mk-odometer-reel, .mk-in .mk-swap-a, .mk-in .mk-swap-b { animation: none; }
 }
+
+/* Nav variants — one component, class-flipped by NavScrollFlip. */
+.mk-nav { transition: background-color 0.25s ease, border-color 0.25s ease; }
+.mk-nav-solid { background: rgb(255 255 255 / 0.9); border-bottom: 1px solid #f3e8ff; backdrop-filter: blur(8px); }
+.mk-nav-solid .mk-nav-link { color: #475069; }
+.mk-nav-solid .mk-nav-link:hover { background: #faf5ff; color: #7e22ce; }
+.mk-nav-solid .mk-nav-cta { background: var(--mk-purple); color: #fff; }
+.mk-nav-night { background: transparent; border-bottom: 1px solid transparent; }
+.mk-nav-night .mk-nav-link { color: var(--mk-cream); opacity: 0.85; }
+.mk-nav-night .mk-nav-link:hover { opacity: 1; background: rgb(245 240 232 / 0.08); }
+.mk-nav-night .mk-nav-cta { background: var(--mk-lime); color: var(--mk-night); }
+.mk-nav-night .mk-nav-logo { filter: brightness(0) invert(1); }
+/* Dark funnel form variant */
+.mk-funnel-night { border-color: #3b2a6e; background: rgb(26 15 62 / 0.75); }
+.mk-funnel-night .label { color: #b7aede; }
+.mk-funnel-night .input { background: #241650; border-color: #3b2a6e; color: var(--mk-cream); }
+.mk-funnel-night .btn-primary,
+.mk-funnel-night button[type="submit"] { background: var(--mk-lime); color: var(--mk-night); }

@@ -1,38 +1,55 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
+import { NavScrollFlip } from "@/components/marketing/nav-scroll";
 
-export async function MarketingNav() {
+const LINKS = [
+  { label: "Formats", href: "/formats" },
+  { label: "Scheduling", href: "/scheduling" },
+  { label: "Pricing", href: "/pricing" },
+  { label: "Use cases", href: "/use-cases/clubs" },
+];
+
+/** Marketing nav (design/v3/12 §4.1). `night-scroll` starts transparent over
+ *  the night hero and flips solid when the hero scrolls out; `light` is the
+ *  solid style permanently (all non-home marketing pages). */
+export async function MarketingNav({
+  variant = "light",
+}: {
+  variant?: "night-scroll" | "light";
+}) {
   const user = await getCurrentUser().catch(() => null);
+  const night = variant === "night-scroll";
   return (
-    <header className="sticky top-0 z-40 border-b border-purple-100 bg-white/90 backdrop-blur">
+    <header
+      data-mk-nav
+      className={`sticky top-0 z-40 ${night ? "mk-nav mk-nav-night" : "mk-nav mk-nav-solid"}`}
+    >
+      {night ? <NavScrollFlip /> : null}
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
-        <Link href="/" className="flex items-center">
+        <Link href="/" className="flex items-center gap-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo-wide.png" alt="Seazn Club" className="h-9 w-auto" />
+          <img src="/logo-wide.png" alt="Seazn Club" className="mk-nav-logo h-9 w-auto" />
         </Link>
-        <nav className="flex items-center gap-1 sm:gap-3">
-          <Link
-            href="/pricing"
-            className="hidden rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-purple-50 hover:text-purple-700 sm:inline-flex"
-          >
-            Pricing
-          </Link>
-          <Link
-            href="/use-cases/clubs"
-            className="hidden rounded-lg px-3 py-1.5 text-sm text-slate-600 hover:bg-purple-50 hover:text-purple-700 md:inline-flex"
-          >
-            Use cases
-          </Link>
+        <nav className="flex items-center gap-1 sm:gap-2">
+          {LINKS.map((l) => (
+            <Link
+              key={l.href}
+              href={l.href}
+              className="mk-nav-link hidden rounded-lg px-3 py-1.5 text-sm md:inline-flex"
+            >
+              {l.label}
+            </Link>
+          ))}
           {user ? (
             <Link href="/dashboard" className="btn btn-primary text-sm">
               Dashboard →
             </Link>
           ) : (
             <>
-              <Link href="/login" className="btn btn-ghost text-sm">
+              <Link href="/login" className="mk-nav-link btn btn-ghost text-sm">
                 Log in
               </Link>
-              <Link href="/login?tab=signup" className="btn btn-primary text-sm">
+              <Link href="/login?tab=signup" className="mk-nav-cta btn text-sm font-semibold">
                 Start free
               </Link>
             </>

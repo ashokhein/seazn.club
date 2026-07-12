@@ -1,95 +1,76 @@
 import Link from "next/link";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
 
-const LEGAL = [
-  { label: "Privacy", href: "/legal/privacy" },
-  { label: "Terms", href: "/legal/terms" },
-  { label: "Cookie policy", href: "/legal/cookie-policy" },
-  { label: "DPA", href: "/legal/dpa" },
-  { label: "Sub-processors", href: "/legal/sub-processors" },
-];
-const USE_CASES = [
-  { label: "Sports clubs", href: "/use-cases/clubs" },
-  { label: "Tournaments & events", href: "/use-cases/events" },
-  { label: "Schools & youth", href: "/use-cases/schools" },
+const COLS: Array<{ head: string; links: Array<{ label: string; href: string }> }> = [
+  {
+    head: "Product",
+    links: [
+      { label: "Formats", href: "/formats" },
+      { label: "Scheduling", href: "/scheduling" },
+      { label: "Pricing", href: "/pricing" },
+      { label: "Live now", href: "/discover" },
+    ],
+  },
+  {
+    head: "Who it's for",
+    links: [
+      { label: "Sports clubs", href: "/use-cases/clubs" },
+      { label: "Tournaments & events", href: "/use-cases/events" },
+      { label: "Schools & youth", href: "/use-cases/schools" },
+    ],
+  },
+  {
+    head: "Developers",
+    links: [
+      { label: "API reference", href: "/developers/reference" },
+      { label: "Guides", href: "/developers/guides" },
+      { label: "Changelog", href: "/developers/changelog" },
+      { label: "Help centre", href: "/help" },
+    ],
+  },
+  {
+    head: "Legal",
+    links: [
+      { label: "Privacy", href: "/legal/privacy" },
+      { label: "Terms", href: "/legal/terms" },
+      { label: "Cookie policy", href: "/legal/cookie-policy" },
+      { label: "DPA", href: "/legal/dpa" },
+      { label: "Sub-processors", href: "/legal/sub-processors" },
+    ],
+  },
 ];
 
+/** Night footer (design/v3/12 §4.9) — closes the matchday arc. */
 export function MarketingFooter() {
   return (
-    <footer className="border-t border-purple-100 bg-white">
+    <footer className="bg-[var(--mk-night)]">
       <div className="mx-auto max-w-6xl px-4 py-12">
         <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
-          <div>
-            <div className="mb-3">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/logo-wide.png" alt="Seazn Club" className="h-7 w-auto" />
+          {COLS.map((col) => (
+            <div key={col.head}>
+              <p className="mk-display mb-3 text-xs font-semibold uppercase tracking-[0.16em] text-[var(--mk-cream)]">
+                {col.head}
+              </p>
+              <ul className="space-y-2 text-sm">
+                {col.links.map((l) => (
+                  <li key={l.href}>
+                    <Link href={l.href} className="text-[#8d7fc0] hover:text-[var(--mk-lime)]">
+                      {l.label}
+                    </Link>
+                  </li>
+                ))}
+                {col.head === "Legal" ? (
+                  <li>
+                    <CookieSettingsButton className="text-[#8d7fc0] hover:text-[var(--mk-lime)]" />
+                  </li>
+                ) : null}
+              </ul>
             </div>
-            <p className="text-sm text-slate-500">
-              Run multi-sport community tournaments — from setup to trophy in
-              minutes.
-            </p>
-          </div>
-          <div>
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Product
-            </p>
-            <ul className="space-y-2 text-sm">
-              <li>
-                <Link href="/pricing" className="text-slate-600 hover:text-purple-700">
-                  Pricing
-                </Link>
-              </li>
-              <li>
-                <Link href="/login?tab=signup" className="text-slate-600 hover:text-purple-700">
-                  Start free
-                </Link>
-              </li>
-              <li>
-                <Link href="/help" className="text-slate-600 hover:text-purple-700">
-                  Help centre
-                </Link>
-              </li>
-              <li>
-                <Link href="/developers" className="text-slate-600 hover:text-purple-700">
-                  Developers
-                </Link>
-              </li>
-            </ul>
-          </div>
-          <div>
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Use cases
-            </p>
-            <ul className="space-y-2 text-sm">
-              {USE_CASES.map((l) => (
-                <li key={l.href}>
-                  <Link href={l.href} className="text-slate-600 hover:text-purple-700">
-                    {l.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Legal
-            </p>
-            <ul className="space-y-2 text-sm">
-              {LEGAL.map((l) => (
-                <li key={l.href}>
-                  <Link href={l.href} className="text-slate-600 hover:text-purple-700">
-                    {l.label}
-                  </Link>
-                </li>
-              ))}
-              <li>
-                <CookieSettingsButton className="text-slate-600 hover:text-purple-700" />
-              </li>
-            </ul>
-          </div>
+          ))}
         </div>
-        <div className="mt-10 border-t border-purple-50 pt-6 text-center text-xs text-slate-400">
-          © {new Date().getFullYear()} Seazn Club. All rights reserved.
+        <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t border-[#2b1d5c] pt-6 text-xs text-[#6a5da0] sm:flex-row">
+          <span>© {new Date().getFullYear()} Seazn Club. All rights reserved.</span>
+          <span className="mk-display tracking-[0.2em]">ANY SPORT · LIVE IN MINUTES</span>
         </div>
       </div>
     </footer>
