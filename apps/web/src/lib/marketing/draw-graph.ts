@@ -52,7 +52,19 @@ function bracketLayout(
   yOff: number,
   idp: string,
 ): { nodes: MapNode[]; edges: MapEdge[]; height: number } {
-  const rounds = phase.sections;
+  // Double elim interleaves winners + losers rounds, and the engine titles
+  // rounds by match count alone — two rounds can both say "Semi-finals".
+  // Neutral sequential labels read honestly here; the wizard keeps its own.
+  const relabel = /double/i.test(phase.title);
+  const rounds = relabel
+    ? phase.sections.map((s, i) => ({
+        ...s,
+        title:
+          i === phase.sections.length - 1 && s.matches.length === 1
+            ? "Grand final"
+            : `Round ${i + 1}`,
+      }))
+    : phase.sections;
   const nodes: MapNode[] = [];
   const edges: MapEdge[] = [];
   const m0 = rounds[0]?.matches.length ?? 0;

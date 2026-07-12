@@ -41,6 +41,17 @@ describe("buildDrawGraph", () => {
     expect(matches[0]!.lines[0]).not.toMatch(/^[A-Z]$/);
   });
 
+it("double elim never shows duplicate round names (12 Jul feedback)", () => {
+    const g = buildDrawGraph(marketingPreview("double_elim", 8), names8);
+    const labels = g.nodes
+      .filter((n) => n.kind === "label")
+      .map((n) => n.lines[0]!)
+      .filter((l) => /^(Round \d+|Grand final)$/.test(l));
+    expect(labels.length).toBeGreaterThan(1);
+    expect(new Set(labels).size).toBe(labels.length);
+    expect(labels[labels.length - 1]).toBe("Grand final");
+  });
+
   it("never returns empty output for any marketing format at any size", () => {
     for (const f of ["league", "groups-knockout", "knockout", "double_elim"] as const) {
       for (const n of [4, 8, 16]) {
