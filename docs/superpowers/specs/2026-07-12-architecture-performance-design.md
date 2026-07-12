@@ -189,3 +189,20 @@ rename, CDN purge on revalidate, pooler-mode statement budgets).
 2. Is global (non-EU) spectator traffic actually expected soon? Decides how
    hard to push P1 vs pure backend tuning.
 3. Budget appetite for a second Fly machine (~$5–10/mo) now vs later?
+
+## 7. Ops checklist (post-merge, no code)
+
+1. Custom domain → Cloudflare DNS (proxied). fly.dev cannot sit behind a CDN.
+2. Cloudflare cache rules: cache `/shared/*`, `/embed/*`, `/_next/static/*`,
+   `/_next/image*`; **respect origin Cache-Control**; include the `_rsc` query
+   param in the cache key (bundled guide: cdn-caching.md); never cache `/api/*`,
+   `/o/*`, `/dashboard`. `/r/*` is deliberately left out of the cacheable set —
+   it's `force-dynamic` and processes self-withdraw tokens (Task 5), so it must
+   stay off any CDN cache even though the path looks "public".
+3. Secrets: `fly secrets set DATABASE_URL=<session-pooler :5432 URL> DB_POOL_MAX=10
+   PEER_REVALIDATE=1 CDN_PURGE_URL=<cloudflare purge endpoint> CDN_PURGE_TOKEN=<token>`.
+4. `fly deploy` picks up min 2 machines / 1gb from fly.toml.
+5. Baseline + after: Sentry p50/p75/p95 TTFB for `/shared|/embed` vs `/o/…` vs
+   `/api/v1`; Fly CPU/memory high-water on a matchday; Cloudflare cache-hit ratio.
+6. Verify prepared statements active: `select count(*) from pg_prepared_statements`
+   on the session pooler while browsing the console.

@@ -17,6 +17,11 @@ vi.mock("@/server/public-site/data", () => ({
 }));
 const broadcastRevalidate = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("@/lib/peer-revalidate", () => ({ broadcastRevalidate }));
+// Task 7: CDN purge fires alongside the peer broadcast at the same seam —
+// mocked here purely to assert the wiring, not purgeCdn's own behavior
+// (that's cdn-purge.test.ts's job).
+const purgeCdn = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@/lib/cdn-purge", () => ({ purgeCdn }));
 
 import {
   fireDivisionRevalidate,
@@ -27,6 +32,7 @@ import {
 beforeEach(() => {
   revalidateTag.mockClear();
   broadcastRevalidate.mockClear();
+  purgeCdn.mockClear();
 });
 
 describe("public-site revalidation profiles", () => {
@@ -66,5 +72,27 @@ describe("public-site revalidation profiles", () => {
     // Broadcast is unconditional — it must still fire even though the local
     // revalidateTag call above threw (outside-request-scope path).
     expect(broadcastRevalidate).toHaveBeenCalledWith(["org-public:my-org"], "expire");
+  });
+});
+
+// Task 7 (spec 2026-07-12 §3 A-step 1): a CDN purge must fire alongside the
+// peer broadcast at every revalidation seam — otherwise a stray rendering
+// change can go un-cached (or a purge can silently stop happening) with no
+// test ever catching it. This is a pure wiring check: purgeCdn's own
+// behavior (debounce, fail-open, env-gating) is covered by cdn-purge.test.ts.
+describe("CDN purge fires alongside peer broadcast (Task 7)", () => {
+  it("fireDivisionRevalidate calls purgeCdn", () => {
+    fireDivisionRevalidate("d1", "c1");
+    expect(purgeCdn).toHaveBeenCalledTimes(1);
+  });
+
+  it("fireOrgRevalidate calls purgeCdn", () => {
+    fireOrgRevalidate("riverside");
+    expect(purgeCdn).toHaveBeenCalledTimes(1);
+  });
+
+  it("fireDiscoveryRevalidate calls purgeCdn", () => {
+    fireDiscoveryRevalidate();
+    expect(purgeCdn).toHaveBeenCalledTimes(1);
   });
 });

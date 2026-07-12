@@ -6,6 +6,7 @@ import "server-only";
 import { revalidateTag } from "next/cache";
 import { cacheDelPattern } from "@/lib/cache";
 import { broadcastRevalidate } from "@/lib/peer-revalidate";
+import { purgeCdn } from "@/lib/cdn-purge";
 import { divisionTag, competitionTag, orgTag, DISCOVERY_TAG } from "./data";
 
 export { DISCOVERY_TAG };
@@ -21,6 +22,7 @@ export function fireDivisionRevalidate(divisionId: string, competitionId?: strin
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
   void broadcastRevalidate(tags, "swr");
+  void purgeCdn();
 }
 
 /** Org chrome changes (name, logo, brand color) show on every page of the
@@ -36,6 +38,7 @@ export function fireOrgRevalidate(orgSlug: string): void {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
   void broadcastRevalidate([orgTag(orgSlug)], "expire");
+  void purgeCdn();
 }
 
 /** Fire the shared discovery ISR tag (doc 15, PROMPT-19): home strips,
@@ -48,6 +51,7 @@ export function fireDiscoveryRevalidate(): void {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
   void broadcastRevalidate([DISCOVERY_TAG], "swr");
+  void purgeCdn();
 }
 
 /** Redis layer in front of GET /api/v1/public/discovery (doc 15 §4). */
