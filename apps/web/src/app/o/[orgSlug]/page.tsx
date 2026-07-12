@@ -45,8 +45,9 @@ export default async function OrgHomePage({
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-6">
           <div className="min-w-0">
+            <p className="app-eyebrow mb-1">Matchday console</p>
             <div className="flex items-center gap-3">
-              <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+              <h1 className="page-title">
                 Competitions
               </h1>
               <span className={`badge ${roleBadge(org.role)}`}>{org.role}</span>
@@ -72,8 +73,9 @@ export default async function OrgHomePage({
         {competitions.length === 0 ? (
           canEdit ? (
             <div className="mt-12 flex flex-col items-center gap-6 text-center">
-              <div className="grid h-16 w-16 place-items-center rounded-2xl bg-purple-100">
-                <Trophy className="h-8 w-8 text-purple-500" strokeWidth={1.5} />
+              {/* An unlit stadium waiting for a season (spec §5). */}
+              <div className="app-empty-tile grid h-16 w-16 place-items-center rounded-2xl">
+                <Trophy className="h-8 w-8" strokeWidth={1.5} />
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-slate-800">

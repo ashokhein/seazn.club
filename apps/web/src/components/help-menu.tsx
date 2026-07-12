@@ -40,8 +40,8 @@ export function HelpMenu() {
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}
-        className={`flex items-center rounded-md px-2 py-1.5 transition-colors hover:bg-slate-100 hover:text-slate-900 ${
-          open ? "bg-slate-100 text-slate-900" : "text-slate-600"
+        className={`flex items-center rounded-md px-2 py-1.5 transition-colors hover:bg-cream/10 hover:text-cream ${
+          open ? "bg-cream/10 text-cream" : "text-cream/70"
         }`}
       >
         <CircleHelp className="h-4 w-4" strokeWidth={1.75} />
@@ -49,7 +49,7 @@ export function HelpMenu() {
       {open && (
         <div
           role="menu"
-          className="absolute right-0 top-9 z-30 w-48 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-sm shadow-lg"
+          className="absolute right-0 top-9 z-30 w-48 overflow-hidden rounded-xl border border-cream/10 bg-night-2 py-1 text-sm shadow-xl"
         >
           {ITEMS.map((item) => (
             <Link
@@ -57,7 +57,7 @@ export function HelpMenu() {
               href={item.href}
               role="menuitem"
               onClick={() => setOpen(false)}
-              className="block px-3 py-2 text-slate-700 hover:bg-purple-50"
+              className="block px-3 py-2 text-cream/85 hover:bg-cream/10 hover:text-cream"
             >
               {item.label}
             </Link>
@@ -66,7 +66,7 @@ export function HelpMenu() {
             href="mailto:support@seazn.club"
             role="menuitem"
             onClick={() => setOpen(false)}
-            className="block px-3 py-2 text-slate-700 hover:bg-purple-50"
+            className="block px-3 py-2 text-cream/85 hover:bg-cream/10 hover:text-cream"
           >
             Contact support
           </a>

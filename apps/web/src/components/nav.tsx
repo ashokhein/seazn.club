@@ -41,25 +41,30 @@ export async function Nav() {
   const tourPending = canTour && (await needsTourAfterOnboarding(user!.id));
 
   return (
-    <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/95 backdrop-blur supports-[backdrop-filter]:bg-white/80">
+    // The gantry (floodlit-console spec §4): night chrome closed by the
+    // sticky lime hairline — the one place the chrome touches the pitch.
+    <header className="app-gantry sticky top-0 z-20">
       <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 h-14">
 
-        {/* Left: logo + org name */}
+        {/* Left: wordmark + org scorebug. The light logo image is illegible
+            on night, so the wordmark goes condensed cream (same move as the
+            marketing night nav). */}
         <Link href="/" className="flex shrink-0 items-center gap-2.5">
           {logoUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
-            <img src={logoUrl} alt="Org logo" className="h-7 w-7 rounded-md object-cover ring-1 ring-slate-200" />
+            <img src={logoUrl} alt="Org logo" className="h-7 w-7 rounded-md object-cover ring-1 ring-cream/20" />
           ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src="/logo-wide.png" alt="Seazn Club" className="h-8 w-auto" />
+            <span className="app-display text-lg font-bold leading-none text-cream">
+              Seazn <span className="text-lime-400">Club</span>
+            </span>
           )}
         </Link>
         {user && activeOrg && (
           <span
             data-tour="org-chip"
-            className="hidden items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-medium text-slate-600 sm:flex"
+            className="hidden items-center gap-1.5 rounded-full border border-cream/15 bg-cream/[0.07] px-3 py-1 text-xs font-medium text-cream/85 sm:flex"
           >
-            <span className="h-1.5 w-1.5 rounded-full bg-purple-500" />
+            <span className="h-1.5 w-1.5 rounded-full bg-lime-400" />
             {activeOrg.name}
           </span>
         )}
@@ -76,7 +81,7 @@ export async function Nav() {
               <Link
                 href={activeOrg ? routes.orgHome(activeOrg.slug) : "/orgs/new"}
                 aria-label="Dashboard"
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-cream/85 transition-colors hover:bg-cream/10 hover:text-cream"
               >
                 <LayoutDashboard className="h-4 w-4" strokeWidth={1.75} />
                 <span className="hidden sm:inline">Dashboard</span>
@@ -84,7 +89,7 @@ export async function Nav() {
               <Link
                 href="/directory"
                 aria-label="Directory"
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-cream/85 transition-colors hover:bg-cream/10 hover:text-cream"
               >
                 <Users className="h-4 w-4" strokeWidth={1.75} />
                 <span className="hidden sm:inline">Directory</span>
@@ -92,7 +97,7 @@ export async function Nav() {
               <Link
                 href={activeOrg ? routes.orgSettings(activeOrg.slug) : "/orgs/new"}
                 aria-label="Settings"
-                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-cream/85 transition-colors hover:bg-cream/10 hover:text-cream"
               >
                 <Settings className="h-4 w-4" strokeWidth={1.75} />
                 <span className="hidden sm:inline">Settings</span>
@@ -100,13 +105,18 @@ export async function Nav() {
             </nav>
             {/* The console "?" menu (v3/06 §3): closes on outside click/Esc. */}
             <HelpMenu />
-            <span className="mx-1 hidden text-sm font-medium text-slate-700 sm:block">
+            <span className="mx-1 hidden text-sm font-medium text-cream/85 sm:block">
               {user.display_name}
             </span>
             <LogoutButton />
           </div>
         ) : (
-          <Link href="/login" className="btn btn-primary">Sign in</Link>
+          <Link
+            href="/login"
+            className="btn bg-lime-400 font-semibold text-night hover:bg-lime-300"
+          >
+            Sign in
+          </Link>
         )}
       </div>
       {canTour && activeOrg && <ProductTour autoStart={tourPending} orgSlug={activeOrg.slug} />}

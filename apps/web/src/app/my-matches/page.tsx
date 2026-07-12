@@ -22,19 +22,20 @@ export default async function MyMatchesPage() {
 
   return (
     <>
-      <header className="border-b border-slate-200 bg-white">
+      {/* Scorer console gets the same night gantry as the org chrome. */}
+      <header className="app-gantry">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
-          <span className="text-sm font-semibold tracking-tight text-purple-900">
-            seazn.club
+          <span className="app-display text-base font-bold leading-none text-cream">
+            Seazn <span className="text-lime-400">Club</span>
           </span>
-          <span className="text-sm text-slate-400">My matches</span>
+          <span className="text-sm text-cream/60">My matches</span>
           <div className="flex-1" />
-          <span className="text-xs text-slate-400">{user.display_name}</span>
+          <span className="text-xs text-cream/60">{user.display_name}</span>
           <LogoutButton />
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <h1 className="mb-6 text-xl font-semibold tracking-tight text-slate-900">
+        <h1 className="page-title mb-6">
           My matches
         </h1>
 

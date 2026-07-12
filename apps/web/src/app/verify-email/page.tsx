@@ -1,5 +1,5 @@
-import { Nav } from "@/components/nav";
 import { VerifyEmail } from "@/components/verify-email";
+import { NightStage } from "@/components/night-stage";
 
 export default async function VerifyEmailPage({
   searchParams,
@@ -8,11 +8,8 @@ export default async function VerifyEmailPage({
 }) {
   const { token, next } = await searchParams;
   return (
-    <>
-      <Nav />
-      <main className="mx-auto max-w-md px-4 py-12">
-        <VerifyEmail token={token ?? null} next={next ?? null} />
-      </main>
-    </>
+    <NightStage maxW="max-w-md">
+      <VerifyEmail token={token ?? null} next={next ?? null} />
+    </NightStage>
   );
 }

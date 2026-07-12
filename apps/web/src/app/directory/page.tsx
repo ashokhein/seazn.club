@@ -28,7 +28,8 @@ export default async function DirectoryPage({
       <Nav />
       <main className="mx-auto max-w-4xl px-4 py-8">
         <div className="mb-6">
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">Directory</h1>
+          <p className="app-eyebrow mb-1">People &amp; clubs</p>
+          <h1 className="page-title">Directory</h1>
           <p className="mt-1 text-sm text-slate-500">
             Your organisation&apos;s players and clubs — reused across every competition.
           </p>
