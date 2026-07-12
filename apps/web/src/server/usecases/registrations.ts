@@ -26,6 +26,7 @@ import {
   sendRegistrationEmail,
   sendPaymentReminderEmail,
   sendRegistrationPromotedEmail,
+  sendRefundIssuedEmail,
 } from "@/lib/email";
 import { generateRefCode, isValidRefCode, normalizeRefCode } from "@/lib/ref-code";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
@@ -1045,6 +1046,8 @@ async function confirmPaidRegistration(
       mode: outcome.kind === "late" ? "late_payment" : "duplicate",
       stripe_refund_id: refund.id,
     }, null);
+    const ctxLate = await divisionCtx(sql, outcome.reg.division_id);
+    notifyRefund(outcome.reg, ctxLate, amountTotal ?? outcome.reg.amount_cents);
   } catch {
     await audit(sql, outcome.competitionId, outcome.reg.org_id, "registration.refund_failed", {
       registration_id: regId,
@@ -1298,6 +1301,19 @@ async function stripeRefund(
   });
 }
 
+/** Fire-and-forget refund receipt to the registrant (spec T9). */
+function notifyRefund(reg: RegistrationRow, ctx: DivisionCtx, amountCents: number): void {
+  void sendRefundIssuedEmail({
+    to: reg.contact_email,
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    displayName: reg.display_name,
+    amountCents,
+    currency: reg.currency ?? "gbp",
+    refCode: reg.ref_code,
+  }).catch(() => {});
+}
+
 async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promise<void> {
   if (reg.status === "withdrawn") return; // idempotent
   const settings = await loadSettings(sql, reg.division_id);
@@ -1361,6 +1377,7 @@ async function withdrawCore(reg: RegistrationRow, actorId: string | null): Promi
         mode: "auto",
         stripe_refund_id: refund.id,
       }, actorId);
+      notifyRefund(locked, ctx, locked.amount_cents);
     } catch {
       // Refund failure must not undo the withdrawal — surfaces on the
       // organiser console (withdrawn + refunded_cents < amount_cents).
@@ -1675,7 +1692,7 @@ export async function refundRegistration(
     throw new HttpError(422, `Refund exceeds the remaining ${remaining} cents`);
   }
   const refund = await stripeRefund(reg.payment_intent_id, amount);
-  return withTenant(auth.orgId, async (tx) => {
+  const row = await withTenant(auth.orgId, async (tx) => {
     const [div] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${reg.division_id}`;
     await tx`
@@ -1690,6 +1707,8 @@ export async function refundRegistration(
     }, auth.userId);
     return orgRegAfter(tx, regId);
   });
+  notifyRefund(reg, await divisionCtx(sql, reg.division_id), amount);
+  return row;
 }
 
 /** CSV export (organiser console; `exports` is the Pro gate, doc 10 §1). */

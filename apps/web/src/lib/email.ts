@@ -14,6 +14,10 @@ import {
   type PaymentReminderArgs,
   registrationPromotedTemplate,
   type RegistrationPromotedArgs,
+  refundIssuedTemplate,
+  type RefundIssuedArgs,
+  disputeAlertTemplate,
+  type DisputeAlertArgs,
   funnelClaimTemplate,
   funnelReminderTemplate,
   type FunnelEmailArgs,
@@ -193,6 +197,26 @@ export async function sendRegistrationPromotedEmail(
 ): Promise<boolean> {
   const { to, ...args } = opts;
   return send({ to, ...registrationPromotedTemplate(args) });
+}
+
+export interface RefundIssuedEmail extends RefundIssuedArgs {
+  to: string;
+}
+
+/** Registrant receipt for any refund (auto, manual, late, duplicate). */
+export async function sendRefundIssuedEmail(opts: RefundIssuedEmail): Promise<boolean> {
+  const { to, ...args } = opts;
+  return send({ to, ...refundIssuedTemplate(args) });
+}
+
+export interface DisputeAlertEmail extends DisputeAlertArgs {
+  to: string;
+}
+
+/** Organiser alert: an entry-fee payment was disputed (spec issue #5). */
+export async function sendDisputeAlertEmail(opts: DisputeAlertEmail): Promise<boolean> {
+  const { to, ...args } = opts;
+  return send({ to, ...disputeAlertTemplate(args) });
 }
 
 /** True when Resend is configured. */
