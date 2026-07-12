@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 
 export const metadata: Metadata = {
   title: "For Tournaments & Events — Seazn Club",
@@ -12,7 +11,7 @@ export const metadata: Metadata = {
 export default function EventsPage() {
   return (
     <>
-      <MarketingNav />
+      <MarketingShell>
       <main>
         <section className="mx-auto max-w-4xl px-4 pb-16 pt-16">
           <div className="mb-4">
@@ -84,7 +83,7 @@ export default function EventsPage() {
           </Link>
         </section>
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </>
   );
 }

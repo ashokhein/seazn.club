@@ -548,3 +548,24 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .mk-replay-chip, .mk-replay-fix { animation: none; }
 }
+
+/* Marketing eyebrow for light sections: lime tick + condensed violet label.
+   (Lime is decorative only on light backgrounds — never lime text on white.) */
+.mk-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--mk-font-display, var(--font-geist-sans));
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--mk-purple);
+}
+.mk-eyebrow::before {
+  content: "";
+  width: 1.5rem;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--mk-lime);
+}

@@ -1,8 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { sql } from "@/lib/db";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
 import { buildPricingRows, type MatrixData } from "@/lib/pricing-matrix";
@@ -86,7 +85,7 @@ export default async function PricingPage() {
   return (
     <>
       <TrackOnMount event={EVENTS.PRICING_VIEWED} />
-      <MarketingNav />
+      <MarketingShell>
       <main>
         <section className="mx-auto max-w-5xl px-4 pb-14 pt-16 text-center">
           <h1 className="mb-3 text-4xl font-extrabold tracking-tight text-purple-950 sm:text-5xl">
@@ -220,7 +219,7 @@ export default async function PricingPage() {
           </Link>
         </section>
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </>
   );
 }

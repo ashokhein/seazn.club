@@ -1,7 +1,6 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { helpNav } from "@/server/help-content";
 
 export const metadata: Metadata = {
@@ -14,7 +13,7 @@ export default function HelpLayout({ children }: { children: React.ReactNode }) 
   const nav = helpNav();
   return (
     <div className="flex min-h-screen flex-col bg-white">
-      <MarketingNav />
+      <MarketingShell>
       <div className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 lg:grid lg:grid-cols-[220px_1fr] lg:gap-10">
         <aside className="mb-8 lg:mb-0">
           <Link
@@ -62,7 +61,7 @@ export default function HelpLayout({ children }: { children: React.ReactNode }) 
         </aside>
         <main className="min-w-0">{children}</main>
       </div>
-      <MarketingFooter />
+      </MarketingShell>
     </div>
   );
 }

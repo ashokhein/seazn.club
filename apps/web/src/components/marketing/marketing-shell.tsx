@@ -19,9 +19,9 @@ export function MarketingShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className={displayFont.variable}>
+    <div className={`${displayFont.variable} flex min-h-screen flex-col`}>
       <MarketingNav variant={variant} />
-      {children}
+      <div className="flex-1">{children}</div>
       <MarketingFooter />
     </div>
   );

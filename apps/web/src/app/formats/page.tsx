@@ -5,8 +5,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { ArrowRight } from "lucide-react";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { FORMAT_FAMILIES, FormatDiagram } from "@/config/format-gallery";
 
 export const revalidate = 3600;
@@ -20,7 +19,7 @@ export const metadata: Metadata = {
 export default function FormatsMarketingPage() {
   return (
     <div className="flex min-h-screen flex-col bg-white">
-      <MarketingNav />
+      <MarketingShell>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12">
         <p className="font-mono text-xs uppercase tracking-[0.25em] text-purple-600">
           Tournament formats
@@ -72,7 +71,7 @@ export default function FormatsMarketingPage() {
           </Link>
         </div>
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </div>
   );
 }

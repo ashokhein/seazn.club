@@ -4,8 +4,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { MarketingNav } from "@/components/marketing-nav";
-import { MarketingFooter } from "@/components/marketing-footer";
+import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { sql } from "@/lib/db";
 import { getDiscoveryDirectory } from "@/server/public-site/discovery";
 import { DiscoveryCard, sportEmoji } from "@/components/discovery-cards";
@@ -94,7 +93,7 @@ export default async function DiscoverSportPage({ params }: { params: Promise<Pa
 
   return (
     <>
-      <MarketingNav />
+      <MarketingShell>
       <main className="mx-auto max-w-5xl px-4 py-12">
         <p className="text-xs text-slate-400">
           <Link href="/discover" className="hover:text-purple-600">
@@ -145,7 +144,7 @@ export default async function DiscoverSportPage({ params }: { params: Promise<Pa
           </p>
         )}
       </main>
-      <MarketingFooter />
+      </MarketingShell>
     </>
   );
 }
