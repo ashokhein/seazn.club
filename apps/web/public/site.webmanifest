@@ -4,8 +4,8 @@
   "description": "Run fair, fun, competitive tournaments for your club.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#7c3aed",
+  "background_color": "#150b36",
+  "theme_color": "#150b36",
   "icons": [
     { "src": "/icons/icon-72.png",  "sizes": "72x72",   "type": "image/png" },
     { "src": "/icons/icon-96.png",  "sizes": "96x96",   "type": "image/png" },
