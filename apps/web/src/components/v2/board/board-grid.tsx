@@ -7,6 +7,7 @@
 import { dayKey } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
+import { timeLabel } from "@/lib/day-label";
 import { UNASSIGNED, type BoardConflict, type BoardFixture } from "./types";
 
 const MIN = 60_000;
@@ -53,8 +54,6 @@ export function BoardGrid({
   highlightId: string | null;
 }) {
   const columns: (string | null)[] = courts.length > 0 ? courts : [null];
-  const timeLabel = (t: number) =>
-    new Date(t).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 
   return (
     <div className="scroll-x scroll-x-fade rounded-lg border border-slate-200 bg-white">

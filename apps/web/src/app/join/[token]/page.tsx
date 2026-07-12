@@ -1,8 +1,8 @@
 import { getCurrentUser } from "@/lib/auth";
 import { inviteProblem, loadInvite } from "@/lib/invites";
-import { Nav } from "@/components/nav";
 import { AuthForm } from "@/components/auth-form";
 import { JoinInvite } from "@/components/join-invite";
+import { NightStage } from "@/components/night-stage";
 
 const ROLE_BLURB: Record<string, string> = {
   admin: "Admins can create and manage tournaments, results and members.",
@@ -20,50 +20,47 @@ export default async function JoinPage({
   const problem = invite ? inviteProblem(invite) : "Invite not found";
 
   return (
-    <>
-      <Nav />
-      <main className="mx-auto max-w-md px-4 py-10">
-        {!invite || problem ? (
-          <div className="card p-6 text-center">
-            <h1 className="text-xl font-bold text-purple-900">Invite unavailable</h1>
-            <p className="mt-2 text-sm text-slate-500">
-              {problem ?? "This invite link is not valid."}
+    <NightStage maxW="max-w-md">
+      {!invite || problem ? (
+        <div className="card p-6 text-center">
+          <h1 className="text-xl font-bold text-purple-900">Invite unavailable</h1>
+          <p className="mt-2 text-sm text-slate-500">
+            {problem ?? "This invite link is not valid."}
+          </p>
+        </div>
+      ) : (
+        <>
+          <div className="mb-6 text-center">
+            <h1 className="app-display text-3xl font-bold tracking-tight text-cream">
+              Join {invite.org_name}
+            </h1>
+            <p className="mt-2 text-sm text-cream/70">
+              You&apos;ve been invited as{" "}
+              <span className="font-medium text-lime-400">{invite.role}</span>.{" "}
+              {ROLE_BLURB[invite.role]}
             </p>
           </div>
-        ) : (
-          <>
-            <div className="mb-6 text-center">
-              <h1 className="text-2xl font-bold tracking-tight text-purple-900">
-                Join {invite.org_name}
-              </h1>
-              <p className="mt-1 text-sm text-slate-500">
-                You&apos;ve been invited as{" "}
-                <span className="font-medium text-purple-700">{invite.role}</span>.{" "}
-                {ROLE_BLURB[invite.role]}
+          {user ? (
+            <div className="card p-6">
+              <p className="mb-4 text-sm text-slate-600">
+                Signed in as{" "}
+                <span className="font-medium text-purple-700">
+                  {user.display_name}
+                </span>
+                .
               </p>
+              <JoinInvite token={token} />
             </div>
-            {user ? (
-              <div className="card p-6">
-                <p className="mb-4 text-sm text-slate-600">
-                  Signed in as{" "}
-                  <span className="font-medium text-purple-700">
-                    {user.display_name}
-                  </span>
-                  .
-                </p>
-                <JoinInvite token={token} />
-              </div>
-            ) : (
-              <>
-                <p className="mb-4 text-center text-sm text-slate-500">
-                  Sign in or create an account to join.
-                </p>
-                <AuthForm next={`/join/${token}`} />
-              </>
-            )}
-          </>
-        )}
-      </main>
-    </>
+          ) : (
+            <>
+              <p className="mb-4 text-center text-sm text-cream/70">
+                Sign in or create an account to join.
+              </p>
+              <AuthForm next={`/join/${token}`} />
+            </>
+          )}
+        </>
+      )}
+    </NightStage>
   );
 }

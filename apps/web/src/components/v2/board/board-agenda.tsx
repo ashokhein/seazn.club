@@ -5,6 +5,7 @@
 // per time group keep tap-to-assign working without the grid.
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
+import { timeLabel } from "@/lib/day-label";
 import type { BoardConflict, BoardFixture } from "./types";
 
 export function BoardAgenda({
@@ -41,10 +42,7 @@ export function BoardAgenda({
   );
   const groups = new Map<string, BoardFixture[]>();
   for (const f of sorted) {
-    const key = new Date(f.scheduled_at as string).toLocaleTimeString(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    const key = timeLabel(f.scheduled_at as string);
     (groups.get(key) ?? groups.set(key, []).get(key)!).push(f);
   }
 

@@ -16,7 +16,8 @@ const CHIP_STYLE: Record<ChipState, string> = {
   draft: "bg-slate-100 text-slate-600",
   registration: "border border-purple-300 bg-white text-purple-700",
   scheduled: "border border-purple-200 bg-purple-50 text-purple-700",
-  live: "bg-purple-600 text-white",
+  // Floodlit scorebug (floodlit-console spec §5): lime-on-night 10.7:1.
+  live: "bg-night text-lime-400 ring-1 ring-inset ring-lime-400/40",
   completed: "bg-slate-100 text-slate-500",
   archived: "border border-slate-200 bg-transparent text-slate-400",
   frozen: "bg-sky-100 text-sky-700",
@@ -73,7 +74,7 @@ export function StatusChip({ state, className = "" }: { state: ChipState; classN
       className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${CHIP_STYLE[state]} ${className}`}
     >
       {state === "live" && (
-        <span aria-hidden className="chip-pulse-dot h-1.5 w-1.5 rounded-full bg-white" />
+        <span aria-hidden className="chip-pulse-dot h-1.5 w-1.5 rounded-full bg-lime-400" />
       )}
       {msg(CHIP_KEY[state])}
     </span>

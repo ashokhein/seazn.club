@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
+import { barlowCondensed } from "@/lib/fonts";
 import { AnalyticsBootstrap } from "@/components/analytics-bootstrap";
 import { CookieConsent } from "@/components/cookie-consent";
 import { ConfirmProvider } from "@/components/ui/confirm-provider";
@@ -38,11 +39,11 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "Seazn Club",
-    images: [{ url: "/logo.png", width: 500, height: 500, alt: "Seazn Club" }],
+    // og:image comes from the root opengraph-image.tsx file convention —
+    // per-segment cards (the /shared tree) override it automatically.
   },
   twitter: {
-    card: "summary",
-    images: ["/logo.png"],
+    card: "summary_large_image",
   },
 };
 
@@ -52,7 +53,7 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} ${barlowCondensed.variable} h-full antialiased`}
     >
       <body className="min-h-full font-sans">
         {/* Confirmation dialogs everywhere (v3/03 §3) — console and public

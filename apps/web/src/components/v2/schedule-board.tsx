@@ -14,6 +14,7 @@ import { Tip } from "@/components/ui/tip";
 import { apiV1 } from "@/lib/client-v1";
 import { msg } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
+import { dayLabel, dayWeekday, dayDateShort, timeLabel } from "@/lib/day-label";
 import { BoardAgenda } from "./board/board-agenda";
 import { BoardGrid } from "./board/board-grid";
 import { BoardLanes } from "./board/board-lanes";
@@ -260,7 +261,7 @@ export function ScheduleBoard({
       if (ok) {
         setPickedId(null);
         setAnnounce(
-          `${title} scheduled at ${new Date(atIso).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}${court ? ` on ${court}` : ""}.`,
+          `${title} scheduled at ${timeLabel(atIso)}${court ? ` on ${court}` : ""}.`,
         );
       }
     },
@@ -477,7 +478,7 @@ export function ScheduleBoard({
                 ‹
               </button>
               <span className="min-w-32 text-center text-sm font-semibold text-slate-800">
-                {new Date(`${day}T12:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })}
+                {dayLabel(day)}
               </span>
               <button
                 type="button"
@@ -499,7 +500,7 @@ export function ScheduleBoard({
                     d === day ? "bg-purple-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
-                  {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}
+                  {dayLabel(d)}
                 </button>
               ))}
             </div>
@@ -742,10 +743,10 @@ function WeekView({
               >
                 <div className="leading-tight">
                   <p className="text-xs font-semibold text-slate-700">
-                    {new Date(`${d}T12:00`).toLocaleDateString(undefined, { weekday: "short" })}
+                    {dayWeekday(d)}
                   </p>
                   <p className="text-[11px] text-slate-500">
-                    {new Date(`${d}T12:00`).toLocaleDateString(undefined, { day: "numeric", month: "short" })}
+                    {dayDateShort(d)}
                   </p>
                 </div>
                 <span className="rounded-full bg-white px-1.5 text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">
@@ -775,12 +776,7 @@ function WeekView({
                       data-fixture-id={f.id}
                     >
                       <div className="flex items-center justify-between text-[10px] text-slate-500">
-                        <span>
-                          {new Date(f.scheduled_at as string).toLocaleTimeString(undefined, {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </span>
+                        <span>{timeLabel(f.scheduled_at as string)}</span>
                         <span>{f.court_label}</span>
                       </div>
                       <p className="truncate font-medium text-slate-700">

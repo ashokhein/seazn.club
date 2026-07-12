@@ -79,7 +79,7 @@ export default async function DivisionSchedulePage({
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-4">
           <div className="mt-1 flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+            <h1 className="page-title">
               Schedule — {division.name}
             </h1>
             <span className="ml-auto flex flex-wrap items-center gap-1.5">

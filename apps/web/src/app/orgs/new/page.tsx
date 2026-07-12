@@ -15,7 +15,7 @@ export default async function NewOrgPage() {
       <Nav />
       <main className="mx-auto max-w-md px-4 py-10">
         <div className="mb-6 text-center">
-          <h1 className="text-2xl font-bold tracking-tight text-purple-900">
+          <h1 className="page-title">
             Create an organization
           </h1>
           <p className="mt-1 text-sm text-slate-500">

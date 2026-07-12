@@ -6,6 +6,7 @@ import { useState } from "react";
 import { divisionAccent } from "@/lib/division-hue";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
+import { timeLabel } from "@/lib/day-label";
 import type { BoardConflict, BoardDivision, BoardFixture } from "./types";
 
 export function BoardLanes({
@@ -82,7 +83,7 @@ export function BoardLanes({
                       picked={pickedId === f.id}
                       onPick={() => onPick(f.id)}
                       onTogglePin={() => onTogglePin(f)}
-                      time={`${new Date(f.scheduled_at as string).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}${f.court_label ? ` · ${f.court_label}` : ""}`}
+                      time={`${timeLabel(f.scheduled_at as string)}${f.court_label ? ` · ${f.court_label}` : ""}`}
                     />
                   </div>
                 ))}

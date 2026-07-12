@@ -98,16 +98,20 @@ export function SetbasedPad({
                 type="button"
                 disabled={busy || pre}
                 onClick={() => send(rallyType, { wonBy: side.id })}
-                className="rounded-xl border border-purple-200 bg-white p-6 text-center transition hover:border-purple-400 hover:bg-purple-50 disabled:opacity-50"
+                // touch-manipulation kills the double-tap-zoom delay — this
+                // button is hammered once per rally on a courtside phone.
+                className="select-none touch-manipulation rounded-xl border border-purple-200 bg-white p-4 text-center transition hover:border-purple-400 hover:bg-purple-50 active:scale-[0.97] active:bg-purple-100 disabled:opacity-50 sm:p-6"
               >
                 <span className="block truncate text-sm font-medium text-slate-700">
                   {side.name}
                 </span>
-                <span className="mt-1 block font-mono text-4xl text-slate-900">{score}</span>
+                <span className="mt-1 block font-mono text-5xl tabular-nums text-slate-900">
+                  {score}
+                </span>
                 <span className="mt-1 block text-xs text-slate-400">
                   {unit.toLowerCase()}s won {sets}
                 </span>
-                <span className="mt-2 block text-xs font-medium text-purple-600">
+                <span className="mx-auto mt-3 block w-fit rounded-full bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white">
                   + point
                 </span>
               </button>

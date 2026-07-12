@@ -25,11 +25,19 @@ export function LiveTicker({ fixtures }: { fixtures: DiscoveryLiveFixture[] }) {
   );
 
   return (
-    <section aria-label="Live right now" className="overflow-hidden bg-[var(--mk-lime)] py-2.5">
+    <section aria-label="Live right now" className="relative overflow-hidden bg-[var(--mk-lime)] py-2.5">
       <div className="mk-ticker flex w-max">
         {row(false)}
         {row(true)}
       </div>
+      {/* The strip shows at most 6 (getDiscoveryLive's cap) — the wall at
+          /live holds the rest, so a busy Saturday never floods the home. */}
+      <Link
+        href="/live"
+        className="mk-display absolute inset-y-0 right-0 flex items-center bg-gradient-to-l from-[var(--mk-lime)] via-[var(--mk-lime)] to-transparent pl-10 pr-4 text-sm font-bold text-[var(--mk-night)]"
+      >
+        All live →
+      </Link>
     </section>
   );
 }

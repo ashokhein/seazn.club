@@ -38,7 +38,7 @@ export default async function CompetitionPage({
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <h1 className="mt-1 truncate text-xl font-semibold tracking-tight text-slate-900">
+            <h1 className="page-title mt-1 truncate">
               {competition.name}
             </h1>
           </div>

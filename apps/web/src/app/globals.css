@@ -1,7 +1,9 @@
 @import "tailwindcss";
 
 :root {
-  --background: #faf7ff;
+  /* Floodlit-daylight canvas (docs/superpowers/specs/2026-07-12 §5): warm
+     pitch under the night gantry — replaces the pre-v3 cool lavender. */
+  --background: #fdfcf8;
   --foreground: #2e1065;
   --brand: #7c3aed;
 
@@ -46,6 +48,11 @@
   /* Display face (Barlow Condensed) is only mounted on the public tree;
      everywhere else the utility falls back to the body face. */
   --font-display: var(--ps-font-display, var(--font-geist-sans));
+  /* Stadium-night utilities (floodlit console): bg-night, text-cream, … —
+     lime needs no token, tailwind's lime-400 IS --mk-lime (#a3e635). */
+  --color-night: var(--mk-night);
+  --color-night-2: var(--mk-night-2);
+  --color-cream: var(--mk-cream);
 }
 
 html,
@@ -54,9 +61,11 @@ body {
      `hidden`) so position:sticky descendants keep working; wide widgets
      scroll inside their own .scroll-x containers. */
   overflow-x: clip;
+  /* Two faint violet floodlight beams angle in from the top corners; the old
+     purple blobs die with the lavender canvas. */
   background:
-    radial-gradient(1100px 600px at 90% -10%, rgba(168, 85, 247, 0.14), transparent),
-    radial-gradient(800px 500px at -10% 0%, rgba(124, 58, 237, 0.1), transparent),
+    linear-gradient(115deg, rgba(124, 58, 237, 0.06) 0%, transparent 30%),
+    linear-gradient(245deg, rgba(124, 58, 237, 0.05) 0%, transparent 28%),
     var(--background);
   color: #1e1b2e;
   min-height: 100%;
@@ -360,7 +369,10 @@ body {
   @apply mt-0.5;
 }
 
-/* ── Marketing "stadium night" system (design/v3/12) ─────────────────────── */
+/* ── "Stadium night" system (design/v3/12) ────────────────────────────────
+   Born on marketing; since the floodlit-console pass (docs/superpowers/specs/
+   2026-07-12) the --mk-* palette is the shared night source of truth — the
+   console's .app-* classes below consume the same vars. ─────────────────── */
 :root {
   --mk-night: #150b36;
   --mk-night-2: #1d1145;
@@ -617,4 +629,79 @@ body {
   height: 4px;
   border-radius: 2px;
   background: var(--mk-lime);
+}
+
+/* ── App "floodlit console" (docs/superpowers/specs/2026-07-12) ───────────
+   Night chrome over a daylight work surface. Lime discipline: hairline,
+   LIVE signals, eyebrow ticks, focus-on-night — never lime text on light. */
+
+/* Condensed display face for console titles + wordmark. Falls back to the
+   body face anywhere --font-barlow isn't mounted (it is, at the root). */
+.app-display {
+  font-family: var(--font-barlow, var(--font-geist-sans));
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.page-title {
+  font-family: var(--font-barlow, var(--font-geist-sans));
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+  font-weight: 700;
+  font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.875rem);
+  line-height: 1.1;
+  color: var(--mk-night);
+}
+
+/* Console eyebrow — the .mk-eyebrow recipe on the console's font var. */
+.app-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-family: var(--font-barlow, var(--font-geist-sans));
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--mk-purple);
+}
+.app-eyebrow::before {
+  content: "";
+  width: 1.5rem;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--mk-lime);
+}
+
+/* The gantry: nav row night→night-2 top-to-bottom, closed by the sticky lime
+   floodlight hairline. The breadcrumb apron below continues in night-2. */
+.app-gantry {
+  background: linear-gradient(180deg, var(--mk-night) 0%, var(--mk-night-2) 100%);
+  border-bottom: 2px solid var(--mk-lime);
+}
+.app-crumbs {
+  background: var(--mk-night-2);
+  border-bottom: 1px solid rgb(245 240 232 / 0.08);
+}
+/* Purple focus rings sit at 2.6:1 on night — the gantry flips them lime. */
+.app-gantry :where(a, button):focus-visible,
+.app-crumbs :where(a, button):focus-visible {
+  outline-color: var(--mk-lime);
+}
+/* Auth tunnel (spec §6): full night stage; the white auth card stays — a
+   floodlit ticket window. Lime + violet beams from the top corners. */
+.app-night-stage {
+  background:
+    radial-gradient(700px 420px at 12% -8%, rgba(163, 230, 53, 0.09), transparent 60%),
+    radial-gradient(760px 460px at 88% -8%, rgba(124, 58, 237, 0.24), transparent 62%),
+    linear-gradient(180deg, var(--mk-night-2), var(--mk-night) 58%);
+}
+.app-night-stage :where(a, button):focus-visible {
+  outline-color: var(--mk-lime);
+}
+
+/* Empty state: an unlit stadium waiting for a season. */
+.app-empty-tile {
+  background: linear-gradient(160deg, var(--mk-night-2), var(--mk-night));
+  color: var(--mk-lime);
 }

@@ -10,11 +10,21 @@ const AUTO_PLAYS = 3;
 
 export function HeroVignette() {
   const [run, setRun] = useState(0);
+  // Cricket scorebug: each play is one delivery — the struck ball lands on
+  // the chip and the boundary goes up (+4) as the LIVE dot starts pulsing.
+  const [runs, setRuns] = useState(142);
 
   useEffect(() => {
     if (run >= AUTO_PLAYS - 1) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const t = setTimeout(() => setRun((n) => n + 1), 3300);
+    return () => clearTimeout(t);
+  }, [run]);
+
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // 2.4s = the ball's landing moment in the CSS choreography (globals.css).
+    const t = setTimeout(() => setRuns((r) => r + 4), 2400);
     return () => clearTimeout(t);
   }, [run]);
 
@@ -69,7 +79,7 @@ export function HeroVignette() {
             LIVE
           </span>
           <span className="mk-display whitespace-nowrap text-sm font-bold tabular-nums text-[var(--mk-cream)]">
-            Falcons 21 · Comets 18
+            Falcons CC {runs}/3
           </span>
         </div>
       </div>

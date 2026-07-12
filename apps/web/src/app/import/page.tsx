@@ -14,7 +14,8 @@ export default async function ImportPage() {
       <Nav />
       <main className="mx-auto max-w-4xl px-4 py-8">
         <div className="mb-6">
-          <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+          <p className="app-eyebrow mb-1">Bulk add</p>
+          <h1 className="page-title">
             Import participants
           </h1>
           <p className="mt-1 text-sm text-slate-500">

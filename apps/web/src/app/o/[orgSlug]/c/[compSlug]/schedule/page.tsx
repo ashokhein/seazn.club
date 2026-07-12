@@ -33,7 +33,7 @@ export default async function CompetitionSchedulePage({
     return (
       <>
         <main className="mx-auto max-w-3xl px-4 py-8">
-          <h1 className="mb-4 text-xl font-semibold text-slate-900">
+          <h1 className="page-title mb-4">
             Competition schedule — {competition.name}
           </h1>
           <UpgradeGate feature="scheduling.multi_division" />
@@ -49,7 +49,7 @@ export default async function CompetitionSchedulePage({
     return (
       <>
         <main className="mx-auto max-w-3xl px-4 py-8">
-          <h1 className="mt-1 mb-4 text-xl font-semibold tracking-tight text-slate-900">
+          <h1 className="page-title mt-1 mb-4">
             Competition schedule — {competition.name}
           </h1>
           <div className="card p-6 text-sm text-slate-500">
@@ -105,7 +105,7 @@ export default async function CompetitionSchedulePage({
     <>
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-4">
-          <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
+          <h1 className="page-title mt-1">
             Competition schedule — {competition.name}
           </h1>
         </div>

@@ -47,6 +47,31 @@ export const getDiscoveryLive = unstable_cache(
   { tags: [DISCOVERY_TAG], revalidate: REVALIDATE_FAST },
 );
 
+/** The /live floodlit wall: every in-play fixture across discoverable
+ *  competitions (same shape/filters as the strip, page-sized cap). The home
+ *  ticker keeps its 6; this is where "all of it" lives. */
+export const getDiscoveryLiveAll = unstable_cache(
+  async (): Promise<DiscoveryLiveFixture[]> => {
+    const rows = await sql<
+      (Omit<DiscoveryLiveFixture, "headline"> & {
+        summary: { headline?: string } | null;
+      })[]
+    >`
+      select f.id, d.sport_key, f.summary,
+             disc.name as competition_name, disc.org_slug,
+             disc.slug as comp_slug, d.slug as division_slug
+      from public_discovery_v disc
+      join public_divisions_v d on d.competition_id = disc.id
+      join public_fixtures_v f on f.division_id = d.id
+      where f.status = 'in_play'
+      order by f.scheduled_at nulls last, f.id
+      limit 60`;
+    return rows.map(({ summary, ...r }) => ({ ...r, headline: summary?.headline ?? null }));
+  },
+  ["discovery-live-all"],
+  { tags: [DISCOVERY_TAG], revalidate: REVALIDATE_FAST },
+);
+
 /** "Happening this week" cards (doc 15 §2): upcoming discoverable
  *  competitions — starting within 7 days or with a scheduled fixture ahead. */
 export const getDiscoveryThisWeek = unstable_cache(

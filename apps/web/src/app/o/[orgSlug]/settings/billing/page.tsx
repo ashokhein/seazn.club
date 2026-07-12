@@ -111,7 +111,7 @@ export default async function BillingPage({
       {orgId && <BillingBanner orgId={orgId} />}
       <main className="mx-auto max-w-3xl px-4 py-8">
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-bold tracking-tight text-purple-900">
+          <h1 className="page-title">
             Plan & Billing
           </h1>
           <Link href={routes.orgSettings(orgSlug)} className="btn btn-ghost">

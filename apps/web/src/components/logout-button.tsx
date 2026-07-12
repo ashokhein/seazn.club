@@ -13,7 +13,8 @@ export function LogoutButton() {
         router.push("/login");
         router.refresh();
       }}
-      className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700"
+      // Lives only on night chrome (gantry + my-matches header) — cream it is.
+      className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-cream/70 transition-colors hover:bg-cream/10 hover:text-cream"
       title="Sign out"
     >
       <LogOut className="h-4 w-4" strokeWidth={1.75} />

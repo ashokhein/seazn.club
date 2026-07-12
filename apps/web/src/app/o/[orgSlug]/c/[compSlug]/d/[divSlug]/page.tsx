@@ -102,7 +102,7 @@ export default async function DivisionPage({
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-6">
           <div className="mt-1 flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-semibold tracking-tight text-slate-900">
+            <h1 className="page-title">
               {division.name}
             </h1>
             <span className="chip">

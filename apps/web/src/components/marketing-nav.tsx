@@ -27,12 +27,12 @@ export async function MarketingNav({
       {night ? <NavScrollFlip /> : null}
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
         <Link href="/" aria-label="Seazn Club — home" className="flex items-center gap-2">
-          {/* logo-wide.png has a solid background — the night state uses a
-              cream wordmark instead of inverting the bitmap. */}
+          {/* logo-wide.png is the night-ink wordmark on transparent — right
+              for light navs; the night state swaps to the cream text lockup. */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-wide.png" alt="Seazn Club" className="mk-nav-logo-img h-9 w-auto" />
           <span aria-hidden className="mk-nav-logo-text mk-display text-xl font-bold tracking-[0.08em]">
-            SEAZN CLUB
+            SEAZN <span className="text-lime-400">CLUB</span>
           </span>
         </Link>
         <nav className="flex items-center gap-1 sm:gap-2">

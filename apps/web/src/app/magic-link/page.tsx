@@ -1,5 +1,5 @@
-import { Nav } from "@/components/nav";
 import { MagicLink } from "@/components/magic-link";
+import { NightStage } from "@/components/night-stage";
 
 export default async function MagicLinkPage({
   searchParams,
@@ -8,11 +8,8 @@ export default async function MagicLinkPage({
 }) {
   const { token, next } = await searchParams;
   return (
-    <>
-      <Nav />
-      <main className="mx-auto max-w-md px-4 py-12">
-        <MagicLink token={token ?? null} next={next ?? null} />
-      </main>
-    </>
+    <NightStage maxW="max-w-md">
+      <MagicLink token={token ?? null} next={next ?? null} />
+    </NightStage>
   );
 }
