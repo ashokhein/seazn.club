@@ -193,14 +193,22 @@ export function DeviceScorePad({
             </span>
           )}
         </div>
-        <div className="px-4 py-5 text-center">
+        <div className="px-3 py-4 text-center sm:px-4 sm:py-5">
           <p className="flex items-baseline justify-center gap-3 text-sm font-medium text-slate-200">
             <span className="max-w-[40%] truncate">{home?.name ?? "TBD"}</span>
             <span className="text-[10px] uppercase tracking-widest text-slate-600">vs</span>
             <span className="max-w-[40%] truncate">{away?.name ?? "TBD"}</span>
           </p>
-          <p className="mt-2 font-mono text-5xl font-bold tabular-nums tracking-tight text-emerald-300 [text-shadow:0_0_24px_rgba(52,211,153,0.35)]">
-            {summary?.headline ?? "0 — 0"}
+          {/* Fluid LED numerals: clamp to the phone's width so set-score
+              headlines like "1 — 0 · 21-18 (16-12)" never wrap mid-number —
+              each " · " group is atomic, wraps only between groups. */}
+          <p className="mt-2 font-mono text-[clamp(1.5rem,8.5vw,3rem)] font-bold leading-tight tabular-nums tracking-tight text-emerald-300 [text-shadow:0_0_24px_rgba(52,211,153,0.35)]">
+            {(summary?.headline ?? "0 — 0").split(" · ").map((group, i, all) => (
+              <span key={i} className="inline-block whitespace-nowrap">
+                {group}
+                {i < all.length - 1 && <span className="mx-2 text-slate-600">·</span>}
+              </span>
+            ))}
           </p>
         </div>
         <p className="border-t border-slate-800 px-4 py-2 text-center text-[10px] uppercase tracking-widest text-slate-600">

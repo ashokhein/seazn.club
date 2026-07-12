@@ -673,8 +673,8 @@ body {
   background: var(--mk-lime);
 }
 
-/* The gantry: nav row night-2→night, closed by the sticky lime floodlight
-   hairline. The breadcrumb apron below continues in night-2. */
+/* The gantry: nav row night→night-2 top-to-bottom, closed by the sticky lime
+   floodlight hairline. The breadcrumb apron below continues in night-2. */
 .app-gantry {
   background: linear-gradient(180deg, var(--mk-night) 0%, var(--mk-night-2) 100%);
   border-bottom: 2px solid var(--mk-lime);
