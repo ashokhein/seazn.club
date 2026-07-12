@@ -6,6 +6,7 @@ import { AdminPlanPanel } from "@/components/admin-plan-panel";
 import { AdminDiscoveryActions } from "@/components/admin-discovery-actions";
 import { hasFeature } from "@/lib/entitlements";
 import { planPanel } from "@/server/usecases/admin-plan";
+import { feePercentFor } from "@/server/usecases/registrations";
 
 export default async function AdminOrgPage({
   params,
@@ -72,6 +73,19 @@ export default async function AdminOrgPage({
       {/* Plan panel (v3/08 §1): plan + source + Stripe links + all plan
           actions — comp, trial, downgrade, overrides. */}
       <AdminPlanPanel orgId={id} orgName={org.name} plan={plan} overrides={overrides} />
+
+      {/* Effective entry-fee cut (spec §5): resolution result for THIS org.
+          Per-org deals ride the overrides editor above with feature key
+          registration.fee_percent. */}
+      <p className="text-xs text-slate-400">
+        Entry-fee platform cut for this org:{" "}
+        <span className="font-semibold text-slate-200">{await feePercentFor(id)}%</span>
+        {" — "}override via <code className="text-slate-300">registration.fee_percent</code> in
+        the plan panel; the global default lives under{" "}
+        <Link href="/admin/settings" className="text-purple-300 hover:text-white">
+          Settings
+        </Link>.
+      </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
         {/* Stats */}
