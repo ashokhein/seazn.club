@@ -47,6 +47,8 @@ import {
   reconcileRegistrationBySession,
   withdrawRegistrationPublic,
   confirmRegistration,
+  confirmRegistrationWaived,
+  markRegistrationPaidOffline,
   waitlistRegistration,
   refundRegistration,
   listRegistrations,
@@ -775,6 +777,65 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     expect(got.org_payment_instructions).toBe("Org-wide bank details");
     expect(got.org_default_payment_method).toBe("stripe");
     expect(got.payment_instructions).toBe("Cash to the front desk before round 1");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Organiser payment actions (spec T7): mark paid (offline) + waive
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("organiser payment actions (spec T7)", () => {
+  async function offlinePaidRig() {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 1500,
+    });
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    return { owner, ownerId, division, reg: res.registration };
+  }
+
+  it("mark-paid confirms an offline registrant and records the actor", async () => {
+    const { owner, ownerId, reg } = await offlinePaidRig();
+    // Plain confirm still refuses while unpaid…
+    await expect(confirmRegistration(owner, reg.id)).rejects.toMatchObject({ status: 422 });
+    // …mark-paid is the money-received path.
+    const row = await markRegistrationPaidOffline(owner, reg.id);
+    expect(row.status).toBe("confirmed");
+    expect(row.entrant_id).not.toBeNull();
+    expect(row.offline_marked_paid_at).not.toBeNull();
+    const [audited] = await sql<{ actor_id: string }[]>`
+      select actor_id from competition_events
+      where type = 'registration.offline_paid'
+        and payload->>'registration_id' = ${reg.id}`;
+    expect(audited.actor_id).toBe(ownerId);
+    // Idempotence guard: a second mark-paid 422s (no longer pending).
+    await expect(markRegistrationPaidOffline(owner, reg.id)).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("mark-paid rejects card-paid and free registrations", async () => {
+    const { orgSlug, competition, division, owner } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    await expect(markRegistrationPaidOffline(owner, res.registration.id))
+      .rejects.toMatchObject({ status: 422 });
+  });
+
+  it("waive confirms without payment and audits the waiver", async () => {
+    const { owner, reg } = await offlinePaidRig();
+    const row = await confirmRegistrationWaived(owner, reg.id);
+    expect(row.status).toBe("confirmed");
+    expect(row.offline_marked_paid_at).toBeNull();
+    const [audited] = await sql<{ id: string }[]>`
+      select id from competition_events
+      where type = 'registration.fee_waived'
+        and payload->>'registration_id' = ${reg.id}`;
+    expect(audited).toBeTruthy();
   });
 });
 

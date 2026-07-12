@@ -1344,7 +1344,10 @@ export async function confirmRegistration(auth: AuthCtx, regId: string): Promise
     if (reg.status === "withdrawn") throw new HttpError(422, "registration is withdrawn");
     const settings = await loadSettings(tx, reg.division_id);
     if ((settings?.fee_cents ?? 0) > 0 && reg.status !== "paid" && reg.payment_intent_id === null) {
-      throw new HttpError(422, "Awaiting payment — the registrant pays from their status page");
+      throw new HttpError(
+        422,
+        "Awaiting payment — use Mark paid once the fee arrives, or Confirm without payment to waive it",
+      );
     }
     const [div] = await tx<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${reg.division_id}`;
@@ -1353,6 +1356,70 @@ export async function confirmRegistration(auth: AuthCtx, regId: string): Promise
     await audit(tx, div.competition_id, auth.orgId, "registration.confirmed", {
       registration_id: regId,
       paid: reg.status === "paid",
+    }, auth.userId);
+    return orgRegAfter(tx, regId);
+  });
+  fireDivisionRevalidate(row.division_id);
+  return row;
+}
+
+/** Organiser: record an offline (cash/bank) payment — confirms in the same tx
+ *  (payment = approval, spec §2). Card-paid rows are refused: their money
+ *  trail lives on Stripe and must stay refundable there. */
+export async function markRegistrationPaidOffline(
+  auth: AuthCtx,
+  regId: string,
+): Promise<RegistrationRow> {
+  const row = await withTenant(auth.orgId, async (tx) => {
+    const reg = await orgReg(tx, regId);
+    if (reg.status !== "pending") {
+      throw new HttpError(422, `Only pending registrations can be marked paid (this one is ${reg.status})`);
+    }
+    if (reg.payment_intent_id) {
+      throw new HttpError(422, "This registration was paid by card — refund it on the payments trail instead");
+    }
+    const settings = await loadSettings(tx, reg.division_id);
+    if ((settings?.fee_cents ?? 0) <= 0) {
+      throw new HttpError(422, "This division has no entry fee");
+    }
+    const [div] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${reg.division_id}`;
+    await assertCompetitionNotFrozen(auth.orgId, div.competition_id, tx);
+    await tx`
+      update registrations
+      set status = 'paid', offline_marked_paid_at = now(),
+          offline_marked_paid_by = ${auth.userId}, updated_at = now()
+      where id = ${regId}`;
+    await materialise(tx, { ...reg, status: "paid" }, settings?.entrant_kind ?? "individual");
+    await audit(tx, div.competition_id, auth.orgId, "registration.offline_paid", {
+      registration_id: regId,
+      amount_cents: reg.amount_cents,
+    }, auth.userId);
+    return orgRegAfter(tx, regId);
+  });
+  fireDivisionRevalidate(row.division_id);
+  return row;
+}
+
+/** Organiser: confirm while waiving the fee (comped entry) — audited. */
+export async function confirmRegistrationWaived(
+  auth: AuthCtx,
+  regId: string,
+): Promise<RegistrationRow> {
+  const row = await withTenant(auth.orgId, async (tx) => {
+    const reg = await orgReg(tx, regId);
+    if (reg.status === "confirmed") return orgRegAfter(tx, regId);
+    if (!["pending", "waitlisted"].includes(reg.status)) {
+      throw new HttpError(422, `Cannot confirm a ${reg.status} registration`);
+    }
+    const settings = await loadSettings(tx, reg.division_id);
+    const [div] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${reg.division_id}`;
+    await assertCompetitionNotFrozen(auth.orgId, div.competition_id, tx);
+    await materialise(tx, reg, settings?.entrant_kind ?? "individual");
+    await audit(tx, div.competition_id, auth.orgId, "registration.fee_waived", {
+      registration_id: regId,
+      fee_cents: settings?.fee_cents ?? 0,
     }, auth.userId);
     return orgRegAfter(tx, regId);
   });

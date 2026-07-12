@@ -166,8 +166,11 @@ const RULES: RouteRule[] = [
   { method: "GET", path: "/stages/:id/standings", scope: "read", pin: "stage" },
   { method: "POST", path: "/stages/:id/standings/override", scope: "manage", pin: "stage" },
 
-  // registrations moderation (refund excluded — money moves are billing)
+  // registrations moderation (refund excluded — money moves are billing;
+  // mark-paid records receipt of an OFFLINE fee, no money moves online)
   { method: "POST", path: "/registrations/:id/confirm", scope: "manage", pin: "registration" },
+  { method: "POST", path: "/registrations/:id/mark-paid", scope: "manage", pin: "registration" },
+  { method: "POST", path: "/registrations/:id/waive", scope: "manage", pin: "registration" },
   { method: "POST", path: "/registrations/:id/remind", scope: "manage", pin: "registration" },
   { method: "POST", path: "/registrations/:id/waitlist", scope: "manage", pin: "registration" },
   { method: "POST", path: "/registrations/:id/withdraw", scope: "manage", pin: "registration" },
