@@ -24,6 +24,12 @@
 - If a killed dev server produces phantom 404s on `/api/*`: `rm -rf apps/web/.next` and restart.
 - All paths below are relative to `apps/web/` unless they start with `design/` or `scripts/`.
 
+**Execution deviations (recorded after implementation):**
+- Component tests use `renderToStaticMarkup` from `react-dom/server` (node env) instead of `@testing-library/react` + jsdom — the repo has neither dependency and the "no new dependencies" constraint wins. Render contracts are unit-tested; interactions are covered by the two Playwright specs.
+- `lib/marketing/formats.ts` split out of `format-preview.ts`: the client configurator must not import the engine module graph (stages → posthog-server is server-only and 500s the page).
+- `StartFunnelForm` exports pure `funnelFormClasses()` for the variant regression test (component needs a mounted app router).
+- Visual pass fixed: vignette width classes live on the grid wrapper, night nav uses a cream wordmark (logo-wide.png has a solid background) with `aria-label` on the link, stub width w-64/bullets w-40, footer base text `#8d7fc0` and slate-600 subtitles for WCAG contrast.
+
 **Plan-level refinements of the spec (already justified, don't re-litigate):**
 - Ticket-stub content comes from a new shared `src/lib/pricing-cards.ts` extracted from `/pricing`'s hardcoded bullet arrays, plus `passPrice`/`proPrice` from `src/lib/currency.ts` — single source shared by `/pricing` and the stubs, which is what the spec's "renders from pricing data, drift test" intends. `/pricing` page behavior unchanged (its e2e `pricing-v3.spec.ts` guards that).
 - The public API wraps the same canned stage graphs the `/formats` gallery uses (`FORMAT_FAMILIES[..].cannedStages`) instead of inventing new ones.

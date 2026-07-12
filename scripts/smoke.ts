@@ -246,6 +246,9 @@ async function main() {
   await pricingV3Suite();
   await funnelSuite();
 
+  // --- PROMPT-40 marketing redesign (design/v3/12).
+  await marketingSuite();
+
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
@@ -364,6 +367,34 @@ async function pricingV3Suite(): Promise<void> {
 
 /** PROMPT-36 (v3/07 §6): /start funnel — draft → dev claim link → signed in
  *  inside the created competition; the token is single-use. */
+// --- PROMPT-40 marketing redesign: matchday-arc home, public format-preview
+// API, /scheduling page (free path — no session anywhere).
+async function marketingSuite(): Promise<void> {
+  const home = await fetch(`${BASE}/`, { redirect: "manual" });
+  const html = await home.text();
+  check("marketing: home 200", home.status === 200);
+  check("marketing: home has The Draw", html.includes("The Draw"));
+  check("marketing: home has funnel form", html.includes("data-start-funnel"));
+  check("marketing: home SSR default draw", html.includes("Group stage"));
+
+  const preview = await fetch(`${BASE}/api/public/format-preview`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ format: "groups-knockout", entrants: 8 }),
+  });
+  const body = (await preview.json()) as {
+    ok?: boolean;
+    data?: { phases?: Array<{ sections: unknown[] }> };
+  };
+  check("marketing: format-preview 200", preview.status === 200);
+  check("marketing: format-preview two phases", body.data?.phases?.length === 2);
+
+  const sched = await fetch(`${BASE}/scheduling`);
+  const shtml = await sched.text();
+  check("marketing: /scheduling 200", sched.status === 200);
+  check("marketing: /scheduling has rundown", shtml.includes("Order of play"));
+}
+
 async function funnelSuite(): Promise<void> {
   const visitor = newSession();
   const started = (await call(visitor, "/api/funnel/start", "POST", {

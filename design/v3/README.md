@@ -118,6 +118,7 @@ extended for every feature (pro + free paths); `tsc` + unit tests before push.
 | [PROMPT-37](prompts/PROMPT-37-admin-and-developer-api.md) | Admin v2 + published API docs + key scopes | — |
 | [PROMPT-38](prompts/PROMPT-38-engine-fixes-and-sim.md) | Badminton/cricket fixes, sim-replay v2, division delete | — (do FIRST) |
 | [PROMPT-39](prompts/PROMPT-39-roi-quick-wins.md) | Share cards, QR poster, embeds, sponsor slots | 32 |
+| [PROMPT-40](prompts/PROMPT-40-marketing-redesign.md) | Stadium-night marketing redesign: matchday-arc home, The Draw configurator, `/scheduling` attract board (spec: [12-marketing-redesign.md](../12-marketing-redesign.md)) — ✅ implemented (branch `feat/marketing-matchday`) | 30 (routes), 36 (funnel/pricing) |
 
 ## Build order (canonical — see v3/11 gap 3)
 
