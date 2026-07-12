@@ -14,6 +14,7 @@ import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { slugify, uniqueSlug, recordSlugHistory, RESERVED_ENTITY_SLUGS } from "./slugs";
+import { invalidateSlugCache } from "@/server/slug-resolve";
 
 export interface DivisionRow {
   id: string;
@@ -356,7 +357,9 @@ export async function patchDivision(
       select competition_id from divisions where id = ${id}`;
     await requireFeature(auth.orgId, "formats.advanced", d?.competition_id);
   }
-  return withTenant(auth.orgId, async (tx) => {
+  let previousSlug: string | null = null;
+  let previousCompetitionId: string | null = null;
+  const row = await withTenant(auth.orgId, async (tx) => {
     const effective: Record<string, unknown> = { ...patch };
     // Eligibility edits re-derive the youth flag unless the same patch sets
     // it explicitly (v3/11 gap 8 — auto with organiser override).
@@ -378,6 +381,8 @@ export async function patchDivision(
         if (regenerated !== before.slug) {
           effective.slug = regenerated;
           await recordSlugHistory(tx, "division", before.competition_id, before.slug, id);
+          previousSlug = before.slug;
+          previousCompetitionId = before.competition_id;
         }
       }
     }
@@ -393,4 +398,10 @@ export async function patchDivision(
     if (!row) throw new HttpError(404, "division not found");
     return row;
   });
+  // A rename busts the cached slug resolution (old + new key) — outside the
+  // tx, matching the pattern in patchCompetition.
+  if (previousSlug) {
+    await invalidateSlugCache("division", previousCompetitionId, previousSlug, row.slug);
+  }
+  return row;
 }

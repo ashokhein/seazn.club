@@ -10,6 +10,30 @@ import "server-only";
 import { cache } from "react";
 import { sql } from "@/lib/db";
 import { routes } from "@/lib/routes";
+import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
+
+// Read-through cache for LIVE slug rows only (v3 perf wave). Renames and
+// misses always hit Postgres: they're rare, and the slug_history fallback is
+// correctness-critical. TTL bounds staleness if an invalidation is missed;
+// rename paths call invalidateSlugCache explicitly.
+const SLUG_TTL_SECONDS = 60;
+const slugKey = (
+  kind: "org" | "competition" | "division",
+  parentId: string | null,
+  slug: string,
+): string =>
+  kind === "org" ? `slug:org:${slug}` : `slug:${kind === "competition" ? "comp" : "div"}:${parentId}:${slug}`;
+
+/** Drop cached resolutions for the given slugs (old + new after a rename). */
+export async function invalidateSlugCache(
+  kind: "org" | "competition" | "division",
+  parentId: string | null,
+  ...slugs: (string | null | undefined)[]
+): Promise<void> {
+  await Promise.all(
+    slugs.filter((s): s is string => Boolean(s)).map((s) => cacheDelPattern(slugKey(kind, parentId, s))),
+  );
+}
 
 export interface ResolvedEntity {
   id: string;
@@ -19,10 +43,20 @@ export interface ResolvedEntity {
 
 export type Resolution = ResolvedEntity | { renamedTo: string } | null;
 
-export const orgBySlug = cache(async (slug: string): Promise<Resolution> => {
+// Each `xxxUncached` function holds the actual cache-aside + fallback logic
+// and is exported so tests can assert it directly — React's cache() (below)
+// memoizes per request, which would make a second same-args call in one test
+// skip the body (and the Redis cache we're testing) entirely.
+export async function orgBySlugUncached(slug: string): Promise<Resolution> {
+  const key = slugKey("org", null, slug);
+  const hit = await cacheGet<ResolvedEntity>(key);
+  if (hit) return hit;
   const [live] = await sql<ResolvedEntity[]>`
     select id, name, slug from organizations where slug = ${slug}`;
-  if (live) return live;
+  if (live) {
+    await cacheSet(key, live, SLUG_TTL_SECONDS);
+    return live;
+  }
   const [hist] = await sql<{ entity_id: string }[]>`
     select entity_id from slug_history
     where entity_type = 'org' and parent_id is null and old_slug = ${slug}`;
@@ -30,40 +64,51 @@ export const orgBySlug = cache(async (slug: string): Promise<Resolution> => {
   const [target] = await sql<{ slug: string }[]>`
     select slug from organizations where id = ${hist.entity_id}`;
   return target ? { renamedTo: target.slug } : null;
-});
+}
+export const orgBySlug = cache(orgBySlugUncached);
 
-export const compBySlug = cache(
-  async (orgId: string, slug: string): Promise<Resolution> => {
-    const [live] = await sql<ResolvedEntity[]>`
-      select id, name, slug from competitions
-      where org_id = ${orgId} and slug = ${slug}`;
-    if (live) return live;
-    const [hist] = await sql<{ entity_id: string }[]>`
-      select entity_id from slug_history
-      where entity_type = 'competition' and parent_id = ${orgId} and old_slug = ${slug}`;
-    if (!hist) return null;
-    const [target] = await sql<{ slug: string }[]>`
-      select slug from competitions where id = ${hist.entity_id} and org_id = ${orgId}`;
-    return target ? { renamedTo: target.slug } : null;
-  },
-);
+export async function compBySlugUncached(orgId: string, slug: string): Promise<Resolution> {
+  const key = slugKey("competition", orgId, slug);
+  const hit = await cacheGet<ResolvedEntity>(key);
+  if (hit) return hit;
+  const [live] = await sql<ResolvedEntity[]>`
+    select id, name, slug from competitions
+    where org_id = ${orgId} and slug = ${slug}`;
+  if (live) {
+    await cacheSet(key, live, SLUG_TTL_SECONDS);
+    return live;
+  }
+  const [hist] = await sql<{ entity_id: string }[]>`
+    select entity_id from slug_history
+    where entity_type = 'competition' and parent_id = ${orgId} and old_slug = ${slug}`;
+  if (!hist) return null;
+  const [target] = await sql<{ slug: string }[]>`
+    select slug from competitions where id = ${hist.entity_id} and org_id = ${orgId}`;
+  return target ? { renamedTo: target.slug } : null;
+}
+export const compBySlug = cache(compBySlugUncached);
 
-export const divBySlug = cache(
-  async (competitionId: string, slug: string): Promise<Resolution> => {
-    const [live] = await sql<ResolvedEntity[]>`
-      select id, name, slug from divisions
-      where competition_id = ${competitionId} and slug = ${slug}`;
-    if (live) return live;
-    const [hist] = await sql<{ entity_id: string }[]>`
-      select entity_id from slug_history
-      where entity_type = 'division' and parent_id = ${competitionId} and old_slug = ${slug}`;
-    if (!hist) return null;
-    const [target] = await sql<{ slug: string }[]>`
-      select slug from divisions
-      where id = ${hist.entity_id} and competition_id = ${competitionId}`;
-    return target ? { renamedTo: target.slug } : null;
-  },
-);
+export async function divBySlugUncached(competitionId: string, slug: string): Promise<Resolution> {
+  const key = slugKey("division", competitionId, slug);
+  const hit = await cacheGet<ResolvedEntity>(key);
+  if (hit) return hit;
+  const [live] = await sql<ResolvedEntity[]>`
+    select id, name, slug from divisions
+    where competition_id = ${competitionId} and slug = ${slug}`;
+  if (live) {
+    await cacheSet(key, live, SLUG_TTL_SECONDS);
+    return live;
+  }
+  const [hist] = await sql<{ entity_id: string }[]>`
+    select entity_id from slug_history
+    where entity_type = 'division' and parent_id = ${competitionId} and old_slug = ${slug}`;
+  if (!hist) return null;
+  const [target] = await sql<{ slug: string }[]>`
+    select slug from divisions
+    where id = ${hist.entity_id} and competition_id = ${competitionId}`;
+  return target ? { renamedTo: target.slug } : null;
+}
+export const divBySlug = cache(divBySlugUncached);
 
 export const fixtureByNo = cache(
   async (divisionId: string, no: number): Promise<{ id: string } | null> => {
