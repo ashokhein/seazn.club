@@ -12,6 +12,8 @@ const orgPatchSchema = z.union([
   renameOrgSchema,
   z.object({ logo_storage_path: z.string().max(500).nullable() }).strict(),
   z.object({ payment_instructions: z.string().max(2000).nullable() }).strict(),
+  // Default payment method for NEW division registration settings (spec §3).
+  z.object({ default_payment_method: z.enum(["offline", "stripe"]) }).strict(),
   // Org "about" (v3/06 §2): Markdown, rendered on the public org page.
   z.object({ about: z.string().max(20_000).nullable() }).strict(),
   // Brand color ({ colors: { primary } }, same shape as competitions.branding).
@@ -68,6 +70,7 @@ export async function PATCH(
     }
     if ("logo_storage_path" in body) updates.logo_storage_path = body.logo_storage_path;
     if ("payment_instructions" in body) updates.payment_instructions = body.payment_instructions;
+    if ("default_payment_method" in body) updates.default_payment_method = body.default_payment_method;
     if ("about" in body) updates.about = body.about;
     // Branding writes MERGE into the blob (lib/org-branding): colors and
     // sponsors share the column, and neither may clobber the other.
@@ -88,7 +91,7 @@ export async function PATCH(
       const [row] = await tx<Organization[]>`
         update organizations set ${tx(updates)}
         where id = ${id}
-        returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, branding`;
+        returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, default_payment_method, branding`;
       if (!row) throw new HttpError(404, "Organization not found");
       if (previousSlug) await recordSlugHistory(tx, "org", null, previousSlug, id);
       return row;

@@ -292,6 +292,8 @@ export default async function SettingsPage({
                     <OrgPaymentInstructions
                       orgId={active.id}
                       initialValue={active.payment_instructions}
+                      initialDefaultMethod={active.default_payment_method}
+                      isOwner={active.role === "owner"}
                     />
                   </div>
                 )}

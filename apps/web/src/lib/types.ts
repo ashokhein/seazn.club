@@ -35,6 +35,8 @@ export interface Organization {
   logo_url: string | null;
   logo_storage_path: string | null;
   payment_instructions: string | null;
+  /** Preselect for NEW division registration settings (spec 2026-07-12 §3). */
+  default_payment_method: "offline" | "stripe";
   /** `{ colors: { primary: "#hex" } }` — same shape as competitions.branding. */
   branding: unknown;
 }
