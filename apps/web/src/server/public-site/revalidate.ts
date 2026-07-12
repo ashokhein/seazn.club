@@ -5,19 +5,22 @@ import "server-only";
 // call use-cases outside a request scope where revalidateTag would throw.
 import { revalidateTag } from "next/cache";
 import { cacheDelPattern } from "@/lib/cache";
+import { broadcastRevalidate } from "@/lib/peer-revalidate";
 import { divisionTag, competitionTag, orgTag, DISCOVERY_TAG } from "./data";
 
 export { DISCOVERY_TAG };
 
 export function fireDivisionRevalidate(divisionId: string, competitionId?: string): void {
+  const tags = [divisionTag(divisionId), ...(competitionId ? [competitionTag(competitionId)] : [])];
   try {
     // Next 16 signature: second arg = stale-while-revalidate window ('max' =
     // serve stale while fresh regenerates — right for spectator pages).
-    revalidateTag(divisionTag(divisionId), "max");
+    revalidateTag(tags[0], "max");
     if (competitionId) revalidateTag(competitionTag(competitionId), "max");
   } catch {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
+  void broadcastRevalidate(tags, "swr");
 }
 
 /** Org chrome changes (name, logo, brand color) show on every page of the
@@ -32,6 +35,7 @@ export function fireOrgRevalidate(orgSlug: string): void {
   } catch {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
+  void broadcastRevalidate([orgTag(orgSlug)], "expire");
 }
 
 /** Fire the shared discovery ISR tag (doc 15, PROMPT-19): home strips,
@@ -43,6 +47,7 @@ export function fireDiscoveryRevalidate(): void {
   } catch {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
+  void broadcastRevalidate([DISCOVERY_TAG], "swr");
 }
 
 /** Redis layer in front of GET /api/v1/public/discovery (doc 15 §4). */
