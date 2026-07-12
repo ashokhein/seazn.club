@@ -44,6 +44,8 @@ import {
   publicRegistrationStatusByRef,
   withdrawRegistrationByRef,
   handleRegistrationCheckoutCompleted,
+  handleRegistrationDispute,
+  syncRegistrationRefund,
   reconcileRegistrationBySession,
   sweepRegistrations,
   withdrawRegistrationPublic,
@@ -1055,6 +1057,71 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     const [row] = await sql<RegistrationRow[]>`
       select * from registrations where id = ${res.registration.id}`;
     expect(row.status).toBe("confirmed");
+  });
+
+  it("dispute lifecycle: created flags + audits, lost writes the money off", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const intent = "pi_test_" + res.registration.id.slice(0, 8);
+
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "needs_response" } as unknown as Stripe.Dispute,
+      "created",
+    );
+    let [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.disputed_at).not.toBeNull();
+    expect(row.dispute_id).toBe("dp_1");
+
+    // Won → flag clears, id stays for the audit trail.
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "won" } as unknown as Stripe.Dispute,
+      "closed",
+    );
+    [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.disputed_at).toBeNull();
+    expect(row.dispute_id).toBe("dp_1");
+
+    // Lost → money is gone: refunded_cents mirrors the full amount.
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "needs_response" } as unknown as Stripe.Dispute,
+      "created",
+    );
+    await handleRegistrationDispute(
+      { id: "dp_1", payment_intent: intent, amount: 500, status: "lost" } as unknown as Stripe.Dispute,
+      "closed",
+    );
+    [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.refunded_cents).toBe(500);
+  });
+
+  it("charge.refunded from the Stripe dashboard syncs refunded_cents", async () => {
+    const { orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
+    const intent = "pi_test_" + res.registration.id.slice(0, 8);
+
+    await syncRegistrationRefund(
+      { payment_intent: intent, amount_refunded: 300 } as unknown as Stripe.Charge,
+    );
+    const [row] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(row.refunded_cents).toBe(300);
+
+    // Never regresses below what we already recorded.
+    await syncRegistrationRefund(
+      { payment_intent: intent, amount_refunded: 100 } as unknown as Stripe.Charge,
+    );
+    const [after] = await sql<RegistrationRow[]>`
+      select * from registrations where id = ${res.registration.id}`;
+    expect(after.refunded_cents).toBe(300);
   });
 
   it("waitlisted card submits take no window and no payment", async () => {

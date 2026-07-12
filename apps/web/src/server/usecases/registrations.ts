@@ -27,6 +27,7 @@ import {
   sendPaymentReminderEmail,
   sendRegistrationPromotedEmail,
   sendRefundIssuedEmail,
+  sendDisputeAlertEmail,
 } from "@/lib/email";
 import { generateRefCode, isValidRefCode, normalizeRefCode } from "@/lib/ref-code";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
@@ -1054,6 +1055,86 @@ async function confirmPaidRegistration(
       mode: outcome.kind,
     }, null);
   }
+}
+
+/**
+ * Dispute lifecycle (spec issue #5 — destination charges make the PLATFORM
+ * liable): `created` flags the registration + alerts the org owner; `closed`
+ * either clears the flag (won) or writes the money off (lost). No automatic
+ * entrant changes — contested entries are the organiser's call.
+ */
+export async function handleRegistrationDispute(
+  dispute: Stripe.Dispute,
+  phase: "created" | "closed",
+): Promise<void> {
+  const intent =
+    typeof dispute.payment_intent === "string"
+      ? dispute.payment_intent
+      : dispute.payment_intent?.id;
+  if (!intent) return;
+  const [reg] = await sql<RegistrationRow[]>`
+    select ${sql(REG_COLS as unknown as string[])} from registrations
+    where payment_intent_id = ${intent}`;
+  if (!reg) return; // not an entry-fee charge
+  const ctx = await divisionCtx(sql, reg.division_id);
+
+  if (phase === "created") {
+    await sql`update registrations
+              set disputed_at = now(), dispute_id = ${dispute.id}, updated_at = now()
+              where id = ${reg.id}`;
+    await audit(sql, ctx.competition_id, reg.org_id, "registration.disputed", {
+      registration_id: reg.id,
+      dispute_id: dispute.id,
+      amount_cents: dispute.amount,
+    }, null);
+    const [owner] = await sql<{ email: string }[]>`
+      select u.email from organizations o join users u on u.id = o.created_by
+      where o.id = ${reg.org_id}`;
+    if (owner) {
+      void sendDisputeAlertEmail({
+        to: owner.email,
+        orgName: ctx.org_name,
+        competitionName: ctx.comp_name,
+        displayName: reg.display_name,
+        amountCents: dispute.amount,
+        currency: reg.currency ?? "gbp",
+        refCode: reg.ref_code,
+      }).catch(() => {});
+    }
+    return;
+  }
+  if (dispute.status === "won") {
+    await sql`update registrations set disputed_at = null, updated_at = now()
+              where id = ${reg.id}`;
+    await audit(sql, ctx.competition_id, reg.org_id, "registration.dispute_won", {
+      registration_id: reg.id,
+      dispute_id: dispute.id,
+    }, null);
+  } else if (dispute.status === "lost") {
+    await sql`update registrations
+              set refunded_cents = amount_cents,
+                  refunded_at = coalesce(refunded_at, now()), updated_at = now()
+              where id = ${reg.id}`;
+    await audit(sql, ctx.competition_id, reg.org_id, "registration.dispute_lost", {
+      registration_id: reg.id,
+      dispute_id: dispute.id,
+    }, null);
+  }
+}
+
+/** Mirror refunds made outside the app (Stripe dashboard) so the console
+ *  never shows money we no longer hold. Monotonic — never regresses. */
+export async function syncRegistrationRefund(charge: Stripe.Charge): Promise<void> {
+  const intent =
+    typeof charge.payment_intent === "string"
+      ? charge.payment_intent
+      : charge.payment_intent?.id;
+  if (!intent) return;
+  await sql`
+    update registrations
+    set refunded_cents = greatest(refunded_cents, ${charge.amount_refunded}),
+        refunded_at = coalesce(refunded_at, now()), updated_at = now()
+    where payment_intent_id = ${intent}`;
 }
 
 /**
