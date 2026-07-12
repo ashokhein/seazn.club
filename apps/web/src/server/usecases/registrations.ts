@@ -1202,6 +1202,12 @@ export interface PublicStatusView {
   currency: string | null;
   refunded_cents: number;
   payment_due: boolean;
+  /** How this entry pays (snapshot; spec §3). */
+  payment_method: "offline" | "stripe" | null;
+  /** Card pendings: the pay-by deadline (spec §2). */
+  expires_at: string | null;
+  /** Pay CTA gate: card pending + fee due + Connect live. */
+  can_pay_online: boolean;
   payment_instructions: string | null;
   created_at: string;
 }
@@ -1223,6 +1229,10 @@ export async function publicRegistrationStatus(
   const settings = await loadSettings(sql, reg.division_id);
   const [div] = await sql<{ name: string }[]>`
     select name from divisions where id = ${reg.division_id}`;
+  // Amount due follows the SNAPSHOT (reg row), not live settings — fee edits
+  // never change what an in-flight registrant owes (spec issue #8).
+  const paymentDue = reg.status === "pending" && reg.amount_cents > 0;
+  const offline = reg.payment_method !== "stripe";
   return {
     id: reg.id,
     status: reg.status,
@@ -1239,9 +1249,14 @@ export async function publicRegistrationStatus(
     amount_cents: reg.amount_cents,
     currency: reg.currency,
     refunded_cents: reg.refunded_cents,
-    payment_due: reg.status === "pending" && (settings?.fee_cents ?? 0) > 0,
+    payment_due: paymentDue,
+    payment_method: reg.payment_method,
+    expires_at: reg.expires_at ? new Date(reg.expires_at).toISOString() : null,
+    can_pay_online: paymentDue && !offline && ctx.charges_enabled,
     payment_instructions:
-      reg.status === "pending" && (settings?.fee_cents ?? 0) > 0 ? ctx.payment_instructions : null,
+      paymentDue && offline
+        ? (settings?.payment_instructions ?? ctx.payment_instructions)
+        : null,
     created_at: new Date(reg.created_at).toISOString(),
   };
 }

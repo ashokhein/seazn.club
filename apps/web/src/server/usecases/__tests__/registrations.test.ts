@@ -1059,6 +1059,23 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     expect(row.status).toBe("confirmed");
   });
 
+  it("status view drives the pay CTA: card pendings can pay, offline sees instructions", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(orgSlug, competition.slug, {
+      ...SUBMIT_BASE, division_id: division.id,
+    }, "http://test.local");
+    let view = await publicRegistrationStatus(res.registration.id, res.access_token);
+    expect(view.can_pay_online).toBe(true);
+    expect(view.payment_method).toBe("stripe");
+    expect(view.expires_at).not.toBeNull();
+    expect(view.payment_instructions).toBeNull(); // card entries never show bank details
+
+    // Connect breaks → CTA hides (resume would 503 anyway).
+    await sql`update organizations set stripe_charges_enabled = false where id = ${orgId}`;
+    view = await publicRegistrationStatus(res.registration.id, res.access_token);
+    expect(view.can_pay_online).toBe(false);
+  });
+
   it("dispute lifecycle: created flags + audits, lost writes the money off", async () => {
     const { orgSlug, competition, division } = await stripeRig();
     const res = await submitRegistration(orgSlug, competition.slug, {

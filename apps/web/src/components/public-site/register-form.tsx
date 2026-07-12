@@ -32,6 +32,7 @@ export interface RegisterDivision {
   entrant_kind: string;
   fee_cents: number;
   currency: string;
+  payment_method: "offline" | "stripe";
   opens_at: string | null;
   closes_at: string | null;
   capacity: number | null;
@@ -204,7 +205,10 @@ export function RegisterForm({
   const submitLabel = !division
     ? msg("register.submit.free")
     : division.fee_cents > 0 && !waitlist
-      ? msg("register.submit.fee", { fee: money(division.fee_cents, division.currency) })
+      ? msg(
+          division.payment_method === "stripe" ? "register.submit.card" : "register.submit.fee",
+          { fee: money(division.fee_cents, division.currency) },
+        )
       : waitlist
         ? msg("register.full.waitlist")
         : msg("register.submit.free");
@@ -471,11 +475,17 @@ export function RegisterForm({
                     <span className="block font-medium">{d.name}</span>
                     <span className="mt-0.5 block text-xs text-zinc-500">
                       {d.sport_key} · {d.entrant_kind}
+                      {d.fee_cents > 0
+                        ? ` · ${msg(d.payment_method === "stripe" ? "register.method.card" : "register.method.offline")}`
+                        : ""}
                       {d.remaining !== null && d.remaining > 0
                         ? ` · ${msg("register.capacity.left", { n: d.remaining })}`
                         : ""}
                       {dWaitlist ? " · full — joins the waitlist" : ""}
                       {disabled && d.closed_reason === "window" ? " · registration closed" : ""}
+                      {disabled && d.closed_reason === "payments_unavailable"
+                        ? " · card payments temporarily unavailable"
+                        : ""}
                     </span>
                   </span>
                   <span className="text-sm font-medium tabular-nums">
@@ -491,7 +501,14 @@ export function RegisterForm({
       {/* Full/closed are directions, not dead ends (v3/05 §2). */}
       {division && !division.open && (
         <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4 text-sm text-zinc-600">
-          <p className="font-medium text-zinc-800">{msg("register.closed.title")}</p>
+          <p className="font-medium text-zinc-800">
+            {division.closed_reason === "payments_unavailable"
+              ? msg("register.payments.unavailable.title")
+              : msg("register.closed.title")}
+          </p>
+          {division.closed_reason === "payments_unavailable" && (
+            <p className="mt-0.5">{msg("register.payments.unavailable.body")}</p>
+          )}
           <a
             href={`/shared/${org.slug}/${competition.slug}`}
             className="mt-1 inline-block font-medium text-accent-strong hover:underline"
@@ -503,6 +520,9 @@ export function RegisterForm({
       {waitlist && (
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-800">
           <p className="font-medium">{msg("register.full.title")}</p>
+          {division && division.fee_cents > 0 && (
+            <p className="mt-0.5 font-medium">{msg("register.waitlist.noPayment")}</p>
+          )}
           <p className="mt-0.5">
             Submitting joins the waitlist — you&apos;re promoted automatically if a spot opens. Or{" "}
             <a
