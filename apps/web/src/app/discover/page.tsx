@@ -48,7 +48,7 @@ export default async function DiscoverPage({
     <>
       <MarketingShell>
       <main className="mx-auto max-w-5xl px-4 py-12">
-        <h1 className="text-3xl font-extrabold tracking-tight text-purple-950">
+        <h1 className="mk-display text-4xl font-bold text-purple-950">
           Discover tournaments
         </h1>
         <p className="mt-2 max-w-xl text-slate-600">

@@ -101,7 +101,7 @@ export default async function DiscoverSportPage({ params }: { params: Promise<Pa
           </Link>{" "}
           / {name}
         </p>
-        <h1 className="mt-2 text-3xl font-extrabold tracking-tight text-purple-950">
+        <h1 className="mt-2 mk-display text-4xl font-bold text-purple-950">
           {sportEmoji(sport)} {name} tournaments
         </h1>
         {/* SEO copy block (doc 15 §2: per-sport landing = acquisition page). */}

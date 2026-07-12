@@ -18,7 +18,7 @@ export default function HelpLayout({ children }: { children: React.ReactNode }) 
         <aside className="mb-8 lg:mb-0">
           <Link
             href="/help"
-            className="font-display text-sm font-semibold uppercase tracking-[0.18em] text-purple-700"
+            className="mk-eyebrow"
           >
             Help centre
           </Link>

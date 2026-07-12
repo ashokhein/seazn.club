@@ -19,10 +19,10 @@ export default function EventsPage() {
               ← Back
             </Link>
           </div>
-          <div className="mb-4 inline-flex items-center gap-2 rounded-full bg-purple-100 px-3 py-1 text-xs font-medium text-purple-700">
+          <div className="mk-display mb-4 inline-flex items-center gap-2 rounded-full bg-[var(--mk-lime)] px-3 py-1 text-xs font-semibold tracking-[0.14em] text-[var(--mk-night)]">
             Use case: Tournaments & events
           </div>
-          <h1 className="mb-4 text-4xl font-extrabold tracking-tight text-purple-950 sm:text-5xl">
+          <h1 className="mk-display mb-4 text-5xl font-bold text-purple-950 sm:text-6xl">
             One-day tournaments, stress-free
           </h1>
           <p className="mb-8 max-w-2xl text-lg text-slate-600">

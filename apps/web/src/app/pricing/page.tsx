@@ -88,7 +88,8 @@ export default async function PricingPage() {
       <MarketingShell>
       <main>
         <section className="mx-auto max-w-5xl px-4 pb-14 pt-16 text-center">
-          <h1 className="mb-3 text-4xl font-extrabold tracking-tight text-purple-950 sm:text-5xl">
+          <p className="mk-eyebrow mb-3 justify-center">Pricing</p>
+          <h1 className="mk-display mb-3 text-5xl font-bold text-purple-950 sm:text-6xl">
             Pay for the event, or the whole season
           </h1>
           <p className="text-lg text-slate-600">
@@ -124,8 +125,8 @@ export default async function PricingPage() {
             </div>
 
             {/* Event Pass */}
-            <div className="card flex flex-col border-amber-300 bg-amber-50/60 p-8">
-              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-amber-600">
+            <div className="card flex flex-col border-[#b5d977] bg-[#f7fce9] p-8">
+              <p className="mk-display mb-1 text-xs font-semibold tracking-[0.18em] text-[#4d7c0f]">
                 Event Pass
               </p>
               <p className="mb-1 text-4xl font-bold text-slate-900">
@@ -138,7 +139,7 @@ export default async function PricingPage() {
               <ul className="mb-8 flex-1 space-y-2.5 text-sm text-slate-600">
                 {PASS_FEATURES.map((f) => (
                   <li key={f} className="flex items-start gap-2">
-                    <span className="mt-0.5 text-amber-500">✓</span>
+                    <span className="mt-0.5 text-[#4d7c0f]">✓</span>
                     {f}
                   </li>
                 ))}
@@ -174,7 +175,7 @@ export default async function PricingPage() {
                     <tr key={r.label}>
                       <td className="font-medium text-slate-700">{r.label}</td>
                       <td className="text-center text-slate-500">{r.free}</td>
-                      <td className="text-center text-amber-700">{r.pass}</td>
+                      <td className="text-center text-[#4d7c0f]">{r.pass}</td>
                       <td className="text-center font-medium text-purple-700">{r.pro}</td>
                     </tr>
                   ))}
