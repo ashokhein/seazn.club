@@ -295,7 +295,7 @@ export function FixtureConsole({
 
       {/* Sport pad */}
       {scoring && !decided && home && away && (
-        <section className="card p-5">
+        <section className="card p-5" data-testid="score-pad">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Scoring</h2>
           <ScoringErrorBoundary fixtureId={fixture.id}>
             {sport.key === "cricket" ? (
@@ -380,7 +380,10 @@ export function FixtureConsole({
                     {desc.text}
                     {recorder ? <span className="text-slate-400"> ({recorder})</span> : null}
                   </span>
-                  <span className="shrink-0 text-slate-400">
+                  {/* suppressHydrationWarning: locale time renders differently
+                      on server vs browser (17:59 vs 5:59 PM) — the mismatch
+                      forced a full client re-render that ate early clicks. */}
+                  <span suppressHydrationWarning className="shrink-0 text-slate-400">
                     {new Date(e.recorded_at).toLocaleTimeString()}
                   </span>
                   {scoring && !voided && e.type !== "core.void" && !decidedLock(live.status) && (

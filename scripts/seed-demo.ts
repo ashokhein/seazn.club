@@ -90,6 +90,9 @@ type Ev = { type: string; payload: unknown };
 let iceSeeded = 0;
 let fihSeeded = 0;
 let tennisSeeded = 0;
+// Suspension/card events are tier-2/3 (scoring.match_timeline, Pro) — the
+// community seed keeps its FIH draw but skips the cards.
+let seedIsPro = true;
 function resultEvents(sport: string, variant: string, fx: { home: string; away: string }, homeWins: boolean): Ev[] {
   const w = homeWins ? fx.home : fx.away;
   const l = homeWins ? fx.away : fx.home;
@@ -154,7 +157,8 @@ function resultEvents(sport: string, variant: string, fx: { home: string; away: 
       if (tbSet) {
         set(winnerHome ? 7 : 6, winnerHome ? 6 : 7, winnerHome ? { home: 7, away: 5 } : { home: 5, away: 7 });
       } else {
-        set(winnerHome ? 6 : 2 + rnd(4), winnerHome ? 2 + rnd(4) : 6);
+        // Loser holds 0–4 games: 6–5 is not a terminal score (winBy 2).
+        set(winnerHome ? 6 : rnd(5), winnerHome ? rnd(5) : 6);
       }
       set(winnerHome ? 6 : rnd(5), winnerHome ? rnd(5) : 6);
       return events;
@@ -204,13 +208,13 @@ function resultEvents(sport: string, variant: string, fx: { home: string; away: 
       const adv = (to: string) => events.push({ type: "hockey.period.advance", payload: { to } });
       if (scenario === 0) {
         goal(w, { kind: "pc" });
-        events.push({ type: "hockey.suspension.start", payload: { by: l, class: "green" } });
+        if (seedIsPro) events.push({ type: "hockey.suspension.start", payload: { by: l, class: "green" } });
         adv("Q2");
-        events.push({ type: "hockey.suspension.end", payload: { by: l, class: "green" } });
+        if (seedIsPro) events.push({ type: "hockey.suspension.end", payload: { by: l, class: "green" } });
         goal(l); adv("Q3");
-        events.push({ type: "hockey.suspension.start", payload: { by: l, class: "yellow" } });
+        if (seedIsPro) events.push({ type: "hockey.suspension.start", payload: { by: l, class: "yellow" } });
         adv("Q4");
-        events.push({ type: "hockey.suspension.end", payload: { by: l, class: "yellow" } });
+        if (seedIsPro) events.push({ type: "hockey.suspension.end", payload: { by: l, class: "yellow" } });
         adv("FT"); // level ⇒ draw
         return events;
       }
@@ -310,6 +314,9 @@ const PLAN_PRO: { name: string; divisions: DivPlan[] }[] = [
   // game, a GWS game and a 5v4 power-play goal (v6/00 §5).
   { name: "Winter Ice Classic", divisions: [
     { name: "IIHF Division", sport: "icehockey", variant: "iihf", kind: "team", n: 6, template: "league", ratio: 1 },
+    // FIH with the full card ladder (draw + green/yellow) — cards are Pro
+    // (match_timeline), so the discipline demo lives on this org.
+    { name: "FIH Outdoor Cup", sport: "hockey", variant: "fih-outdoor", kind: "team", n: 6, template: "league", ratio: 0.8 },
   ]},
   { name: "Chess Open 2026", divisions: [
     { name: "Open Swiss", sport: "boardgame", variant: "classical", kind: "individual", n: 10 + rnd(3), template: "swiss", ratio: 0.6 },
@@ -363,6 +370,7 @@ async function main() {
     | "community"
     | "pro";
   const PLAN = account === "community" ? PLAN_COMMUNITY : PLAN_PRO;
+  seedIsPro = account === "pro";
 
   if (phase === "setup") {
     const email = `smoke-${account}-${1000 + rnd(9000)}@example.com`;

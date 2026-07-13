@@ -11,9 +11,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { foldMatch, type EventEnvelope } from "../../core/events.ts";
+import { foldMatch, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import { mulberry32 } from "../../core/rng.ts";
 import type { ModuleEvent } from "../../sport/module.ts";
+import type { FootballEv } from "./football.ts";
 import { defaultLineupPair, makeEnvelope } from "../../testkit/helpers.ts";
 import { football } from "./football.ts";
 
@@ -46,7 +47,7 @@ function generateStream(cfgKey: string, seed: number): { type: string; payload: 
   for (let i = 0; i < 400; i++) {
     const next = football.arbitraryEvent?.(state, rng) as ModuleEvent | null;
     if (next === null || next === undefined) break;
-    const env = makeEnvelope(out.length, next);
+    const env = makeEnvelope(out.length, next) as EventEnvelope<FootballEv | CoreEv>;
     state = football.apply(state, env);
     out.push({ type: env.type, payload: env.payload });
     if (football.outcome(state) !== null) break;

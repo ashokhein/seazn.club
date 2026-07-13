@@ -202,7 +202,7 @@ export function PeriodPad({
               );
             })}
           </ul>
-          <p className="mt-1.5 text-[10px] text-amber-700/80">
+          <p className="mt-1.5 text-[10px] text-amber-800">
             Timers are a hint — release when the clock says so (a minor ends on a
             power-play goal).
           </p>
