@@ -13,6 +13,7 @@ export const HELP_ARTICLE_SLUGS = [
   "getting-started/generate-fixtures",
   "getting-started/start-scoring",
   "getting-started/share-your-dashboard",
+  "getting-started/invite-your-team",
   "entrants/kinds",
   "entrants/withdrawals",
   "entrants/duplicate-players",

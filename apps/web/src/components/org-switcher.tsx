@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { ArrowLeftRight } from "lucide-react";
 import { api } from "@/lib/client";
 import type { OrgMembership } from "@/lib/types";
 import { routes } from "@/lib/routes";
@@ -13,8 +14,9 @@ const ROLE_BADGE: Record<string, string> = {
 };
 
 /**
- * Shows a "Switch" button next to the active org. Clicking it reveals the
- * other organizations to choose from (plus a "create new" shortcut).
+ * Compact "Switch" trigger that sits beside the active org's name in the
+ * settings header. Opens a right-aligned popover listing the other
+ * organizations (plus a "create new" shortcut); closes on outside click.
  */
 export function OrgSwitcher({
   orgs,
@@ -26,6 +28,16 @@ export function OrgSwitcher({
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
 
   async function switchTo(id: string) {
     if (id === activeId) {
@@ -47,17 +59,24 @@ export function OrgSwitcher({
   }
 
   return (
-    <div>
+    <div ref={ref} className="relative shrink-0">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="btn btn-ghost"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Switch organisation"
+        className="btn btn-ghost flex items-center gap-1.5"
       >
-        {open ? "Cancel" : "Switch organization"}
+        <ArrowLeftRight className="h-3.5 w-3.5" strokeWidth={1.75} />
+        Switch
       </button>
 
       {open && (
-        <ul className="mt-3 space-y-2">
+        <ul
+          role="menu"
+          className="absolute right-0 top-full z-30 mt-2 w-72 max-w-[85vw] space-y-1 rounded-xl border border-purple-100 bg-white p-2 shadow-xl"
+        >
           {orgs.map((o) => {
             const isActive = o.id === activeId;
             return (

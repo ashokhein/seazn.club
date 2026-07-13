@@ -161,6 +161,40 @@ async function main() {
     call(newSession(), `/api/invites/${viewerInvite.token}/accept`, "POST"),
   );
 
+  // Invite-by-email (team settings): personal invite, single-use forced,
+  // address stored; email_sent reports the Resend outcome (false with a blank
+  // key — the UI then offers the personal link for manual sharing).
+  const emailInvitee = `emailinvitee_${tag}@example.com`;
+  const emailInvite = (await call(
+    admin,
+    `/api/orgs/${org.id}/invites`,
+    "POST",
+    { role: "viewer", email: emailInvitee },
+  )) as { token: string; email: string | null; max_uses: number; email_sent?: boolean };
+  check("email invite stores address", emailInvite.email === emailInvitee);
+  check("email invite forced single-use", emailInvite.max_uses === 1);
+  check("email invite reports send status", typeof emailInvite.email_sent === "boolean");
+
+  // Invite-by-link (team settings): multi-use with a 30-day expiry — it must
+  // outlive the tab that created it and stay listed for later copying.
+  const linkInvite = (await call(
+    admin,
+    `/api/orgs/${org.id}/invites`,
+    "POST",
+    { role: "viewer", max_uses: 0, expires_in_days: 30 },
+  )) as { token: string; expires_at: string | null };
+  const linkTtlMs = new Date(linkInvite.expires_at ?? 0).getTime() - Date.now();
+  check("link invite lives ~30 days", linkTtlMs > 29 * 864e5 && linkTtlMs < 31 * 864e5);
+  const teamInvites = (await call(admin, `/api/orgs/${org.id}/invites`)) as {
+    token: string;
+    email: string | null;
+  }[];
+  check(
+    "team panel lists both pending invites",
+    teamInvites.some((i) => i.token === emailInvite.token && i.email === emailInvitee) &&
+      teamInvites.some((i) => i.token === linkInvite.token && i.email === null),
+  );
+
   // Admin invite -> a second user joins and CAN create a competition. Retire
   // the viewer probe first: the check is about the ROLE, and the v3 free cap
   // (1 active competition) would 402 the create on quota instead.

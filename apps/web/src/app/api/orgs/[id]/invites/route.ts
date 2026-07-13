@@ -1,7 +1,9 @@
-import crypto from "node:crypto";
 import { sql } from "@/lib/db";
 import { requireOrgRole } from "@/lib/auth";
-import { handler, HttpError } from "@/lib/http";
+import { handler } from "@/lib/http";
+import { baseUrl } from "@/lib/oauth";
+import { sendInviteEmail } from "@/lib/email";
+import { createInvite } from "@/server/usecases/invites";
 import {
   EDITOR_ROLES,
   createInviteSchema,
@@ -17,7 +19,7 @@ export async function GET(
     const { id } = await params;
     await requireOrgRole(id, EDITOR_ROLES);
     return sql<OrgInvite[]>`
-      select id, org_id, role, default_scope, token, expires_at, max_uses,
+      select id, org_id, role, default_scope, email, token, expires_at, max_uses,
              used_count, revoked, created_at
       from org_invites
       where org_id = ${id}
@@ -25,16 +27,10 @@ export async function GET(
   });
 }
 
-// Scope type → table, for validating a scorer invite's default_scope target
-// belongs to this org (doc 13 §4).
-const SCOPE_TABLES = {
-  competition: "competitions",
-  division: "divisions",
-  fixture: "fixtures",
-} as const;
-
-/** Create a shareable invite link (editors only). Scorer invites may carry a
- *  default_scope — accepting then creates the assignment too (doc 13 §4). */
+/** Create an invite (editors only): a shareable link, or — when `email` is
+ *  present — a personal invite emailed to that address. Scorer invites may
+ *  carry a default_scope: accepting then creates the assignment too
+ *  (doc 13 §4). */
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -42,33 +38,19 @@ export async function POST(
   return handler(async () => {
     const { id } = await params;
     const { user } = await requireOrgRole(id, EDITOR_ROLES);
-    const { role, max_uses, default_scope } = createInviteSchema.parse(await req.json());
+    const input = createInviteSchema.parse(await req.json());
+    const invite = await createInvite(id, user.id, input);
+    if (!invite.email) return invite;
 
-    if (default_scope && role !== "scorer") {
-      throw new HttpError(400, "default_scope applies to scorer invites only");
-    }
-    if (default_scope) {
-      const [target] = await sql<{ org_id: string }[]>`
-        select org_id from ${sql(SCOPE_TABLES[default_scope.type])}
-        where id = ${default_scope.id} limit 1`;
-      if (!target || target.org_id !== id) {
-        throw new HttpError(422, `${default_scope.type} not found in this organization`);
-      }
-    }
-
-    const token = crypto.randomBytes(24).toString("base64url");
-    // Invite links are short-lived: valid for one hour from creation.
-    const INVITE_TTL_MS = 60 * 60 * 1000;
-    const expiresAt = new Date(Date.now() + INVITE_TTL_MS).toISOString();
-
-    const [invite] = await sql<OrgInvite[]>`
-      insert into org_invites
-        (org_id, role, default_scope, token, created_by, expires_at, max_uses)
-      values
-        (${id}, ${role}, ${default_scope ? sql.json(default_scope) : null}, ${token},
-         ${user.id}, ${expiresAt}, ${max_uses})
-      returning id, org_id, role, default_scope, token, expires_at, max_uses,
-                used_count, revoked, created_at`;
-    return invite;
+    const [org] = await sql<{ name: string }[]>`
+      select name from organizations where id = ${id}`;
+    const email_sent = await sendInviteEmail(
+      invite.email,
+      org.name,
+      `${baseUrl(req)}/join/${invite.token}`,
+    );
+    // email_sent=false (quota, blank RESEND key) is not an error: the UI
+    // offers the personal link for manual sharing instead.
+    return { ...invite, email_sent };
   });
 }
