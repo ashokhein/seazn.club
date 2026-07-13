@@ -17,7 +17,7 @@ DOB/guardian-consent shapes — reuse vocabulary);
 `apps/web/src/lib/email-templates/compose.ts` (invite email on courtside template);
 `apps/web/src/lib/routes.ts` (register every new page — raw hrefs are lint-banned);
 `apps/web/src/lib/messages.ts` (i18n — all new strings through it).
-**Depends:** nothing pending. Migration **V275**.
+**Depends:** nothing pending. Migration **V276** (V275 = advisor indexes).
 
 ## Context
 
@@ -30,7 +30,7 @@ via QR, and owns their consent flags. Player accounts are **all plans, free incl
 
 ## Task
 
-1. **Schema V275** (`db/migration/deltas/V275__player_accounts.sql`), house RLS/org
+1. **Schema V276** (`db/migration/deltas/V276__player_accounts.sql`), house RLS/org
    pattern:
    - `person_claims`: id, org_id, person_id FK, email, token (unique, hashed at rest
      like device links), invited_by, expires_at, claimed_at, revoked_at. Partial unique
