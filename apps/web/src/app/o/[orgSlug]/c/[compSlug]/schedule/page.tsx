@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Competition-wide multi-division schedule board (doc 12 §2 / doc 06 §4.3):
 // every division's fixtures on one grid, division-coloured cards. Pro only
 // (doc 12 §5 — scheduling.multi_division).
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { getCompetition } from "@/server/usecases/competitions";

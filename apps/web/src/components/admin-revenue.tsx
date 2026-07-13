@@ -5,7 +5,7 @@
 // share one path; amounts stay in minor units until formatMinor renders
 // them. Currencies are never summed — every surface groups by currency.
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { asCurrency, formatMinor } from "@/lib/currency";
 
 interface Bucket {

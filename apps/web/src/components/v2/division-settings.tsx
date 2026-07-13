@@ -5,7 +5,7 @@
 // fixtures exist; patchDivision enforces the same rule (409 FORMAT_LOCKED),
 // so hiding and enforcement can't drift.
 import { useState, type ReactNode } from "react";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 import { divisionAccent, monogram } from "@/lib/division-hue";

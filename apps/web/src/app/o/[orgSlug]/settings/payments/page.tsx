@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 // Stripe Connect onboarding/status, the org's default payment method for new
 // divisions, and the org-wide offline instructions. Returning from Stripe
 // onboarding lands here (?connect=return) and the card re-reads live status.
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
 import { requireOrgPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";

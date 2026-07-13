@@ -5,7 +5,7 @@
 //  B. Schedule — plan-first: opens the drag-and-drop board (generate + auto
 //     pass live there); publish and start follow from the board.
 import { useState } from "react";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";

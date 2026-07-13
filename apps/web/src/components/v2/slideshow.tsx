@@ -13,7 +13,7 @@
 // masthead, and scorebug strips sized for a TV across the hall.
 import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { Slide } from "@/server/slideshow-data";

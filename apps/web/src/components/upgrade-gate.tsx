@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { usePathname } from "next/navigation";
 import { featureReason } from "@/lib/feature-copy";
 import { PlanBadge } from "@/components/plan-badge";

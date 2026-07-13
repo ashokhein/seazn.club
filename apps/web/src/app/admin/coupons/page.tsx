@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { listCoupons } from "@/lib/coupons";
 import {
   AdminCouponCreate,

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
 import type { Subscription } from "@/lib/types";
 

@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 // Drag-and-drop schedule board for one division (doc 12 §2, PROMPT-17).
 // Community renders it view-only (doc 12 §5 — scheduling.board).
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { venueLabel } from "@/lib/venue";
 import { requireDivisionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";

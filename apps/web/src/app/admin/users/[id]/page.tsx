@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { AdminUserActions } from "@/components/admin-user-actions";
