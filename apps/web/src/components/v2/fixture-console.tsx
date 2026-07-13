@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { describeEvent, EVENT_TONE_STYLE } from "@/lib/event-copy";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { ClientTime } from "@/components/client-time";
 import { ShareButton } from "@/components/share-button";
 import { LineupEditor } from "@/components/v2/lineup-editor";
 import { ScoringErrorBoundary } from "@/components/v2/scoring-error-boundary";
@@ -215,9 +216,14 @@ export function FixtureConsole({
         </p>
         <p className="mt-1 text-xs text-slate-400">
           Round {fixture.round_no}
-          {fixture.scheduled_at
-            ? ` · ${new Date(fixture.scheduled_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
-            : ""}
+          {fixture.scheduled_at ? (
+            <>
+              {" · "}
+              <ClientTime value={fixture.scheduled_at} mode="datetime" />
+            </>
+          ) : (
+            ""
+          )}
           {fixture.venue ? ` · ${fixture.venue}` : ""}
           {fixture.court_label ? ` · ${fixture.court_label}` : ""}
           {` · recorded by the ${sport.scorerLabel.toLowerCase()}`}
@@ -380,11 +386,12 @@ export function FixtureConsole({
                     {desc.text}
                     {recorder ? <span className="text-slate-400"> ({recorder})</span> : null}
                   </span>
-                  {/* suppressHydrationWarning: locale time renders differently
-                      on server vs browser (17:59 vs 5:59 PM) — the mismatch
-                      forced a full client re-render that ate early clicks. */}
-                  <span suppressHydrationWarning className="shrink-0 text-slate-400">
-                    {new Date(e.recorded_at).toLocaleTimeString()}
+                  {/* ClientTime: locale time renders differently on server vs
+                      browser (17:59 vs 5:59 PM) — the mismatch forced a full
+                      client re-render that ate early clicks. SSR emits an
+                      empty span; the viewer-local time fills in after mount. */}
+                  <span className="shrink-0 text-slate-400">
+                    <ClientTime value={e.recorded_at} mode="time" />
                   </span>
                   {scoring && !voided && e.type !== "core.void" && !decidedLock(live.status) && (
                     <button
