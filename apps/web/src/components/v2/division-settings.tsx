@@ -4,7 +4,7 @@
 // Danger zone, tap-per-section. The format section renders read-only once
 // fixtures exist; patchDivision enforces the same rule (409 FORMAT_LOCKED),
 // so hiding and enforcement can't drift.
-import { useRef, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
@@ -144,7 +144,7 @@ export function DivisionSettings({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const fileInputId = `division-logo-${division.id}`;
   const hue = divisionAccent(division.id);
 
   async function run(fn: () => Promise<void>, done: string) {
@@ -273,10 +273,11 @@ export function DivisionSettings({
 
         <div className="flex items-center gap-4 border-t border-slate-100 pt-3">
           {/* Live card-tile preview: logo, else monogram in the accent hue. */}
-          <span
+          <label
+            htmlFor={canEdit ? fileInputId : undefined}
             aria-hidden
             data-testid="settings-tile-preview"
-            className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg"
+            className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg ${canEdit ? "cursor-pointer" : ""}`}
             style={
               logoUrl
                 ? undefined
@@ -289,7 +290,7 @@ export function DivisionSettings({
             ) : (
               <span className="text-xl font-bold">{monogram(name || division.name)}</span>
             )}
-          </span>
+          </label>
           <div className="min-w-0 flex-1 text-xs text-slate-500">
             <p className="font-medium text-slate-700">Card logo</p>
             <p className="mt-0.5">
@@ -297,14 +298,9 @@ export function DivisionSettings({
             </p>
             {canEdit && (
               <span className="mt-1 flex gap-3">
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => fileRef.current?.click()}
-                  className="text-purple-700 underline"
-                >
+                <label htmlFor={fileInputId} className="cursor-pointer text-purple-700 underline">
                   Upload image
-                </button>
+                </label>
                 {logoUrl && (
                   <button type="button" disabled={busy} onClick={removeLogo} className="text-red-500 underline">
                     Remove
@@ -314,10 +310,11 @@ export function DivisionSettings({
             )}
           </div>
           <input
-            ref={fileRef}
+            id={fileInputId}
             type="file"
             accept="image/*"
-            className="hidden"
+            disabled={!canEdit || busy}
+            className="sr-only"
             onChange={(e) => uploadLogo(e.target.files?.[0])}
           />
         </div>
