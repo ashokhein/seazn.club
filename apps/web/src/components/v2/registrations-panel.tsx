@@ -12,8 +12,14 @@ import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
 import { msg } from "@/lib/messages";
 import { normalizeRefCode } from "@/lib/ref-code";
-import { registrationPulse } from "@/lib/registration-derive";
+import {
+  duplicateContactIds,
+  registrationPulse,
+  waitlistPositions,
+} from "@/lib/registration-derive";
 import { RegistrationSettings } from "./registration-settings";
+import { RegistrationPulse, type Tab } from "./registration-pulse";
+import { RegistrationList, type ActionVerb } from "./registration-list";
 
 export interface FormField {
   key: string;
@@ -64,46 +70,6 @@ export interface Registration {
   created_at: string;
 }
 
-const STATUS_STYLE: Record<string, string> = {
-  pending: "bg-amber-100 text-amber-700",
-  paid: "bg-emerald-100 text-emerald-700",
-  confirmed: "bg-emerald-100 text-emerald-700",
-  waitlisted: "bg-sky-100 text-sky-700",
-  withdrawn: "bg-slate-100 text-slate-500",
-  expired: "bg-zinc-100 text-zinc-500",
-};
-
-/** Payment chip per row (spec §8): one glanceable money state. */
-function paymentChip(r: Registration): { label: string; cls: string } | null {
-  if (r.amount_cents <= 0 && !r.payment_intent_id) return null;
-  if (r.disputed_at) return { label: "⚠ disputed", cls: "bg-rose-100 text-rose-700" };
-  const partiallyRefunded = r.refunded_cents > 0 && r.refunded_cents < r.amount_cents;
-  if (r.refunded_cents >= r.amount_cents && r.refunded_cents > 0)
-    return { label: "refunded", cls: "bg-slate-100 text-slate-600" };
-  if (r.status === "withdrawn" && r.payment_intent_id && r.refunded_cents < r.amount_cents)
-    return { label: "refund incomplete", cls: "bg-amber-100 text-amber-800" };
-  if (partiallyRefunded)
-    return { label: "partly refunded", cls: "bg-amber-100 text-amber-700" };
-  if (r.offline_marked_paid_at) return { label: "paid · cash", cls: "bg-emerald-100 text-emerald-700" };
-  if (r.payment_intent_id && (r.status === "paid" || r.status === "confirmed"))
-    return { label: "paid · card", cls: "bg-emerald-100 text-emerald-700" };
-  if (r.status === "pending") {
-    return r.payment_method === "stripe"
-      ? { label: `due · card${hoursLeft(r.expires_at)}`, cls: "bg-amber-100 text-amber-700" }
-      : { label: "due · cash", cls: "bg-amber-100 text-amber-700" };
-  }
-  return null;
-}
-
-function hoursLeft(iso: string | null): string {
-  if (!iso) return "";
-  const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return " · expiring";
-  const h = Math.round(ms / 3_600_000);
-  return h >= 48 ? "" : ` · ${h}h left`;
-}
-
-
 export function RegistrationsPanel({
   divisionId,
   canEdit,
@@ -147,6 +113,12 @@ export function RegistrationsPanel({
   // no extra API round trip.
   const capacity = settings?.capacity ?? null;
   const pulse = useMemo(() => registrationPulse(regs, capacity), [regs, capacity]);
+  const positions = useMemo(() => waitlistPositions(regs), [regs]);
+  const duplicates = useMemo(() => duplicateContactIds(regs), [regs]);
+  // Status tab; until the organiser picks one, an empty division opens on
+  // All (nothing to confirm yet) and a busy one on Confirmed.
+  const [pickedTab, setPickedTab] = useState<Tab | null>(null);
+  const tab: Tab = pickedTab ?? (regs.length === 0 ? "all" : "confirmed");
 
   const refresh = useCallback(async () => {
     const [s, r] = await Promise.all([
@@ -230,20 +202,32 @@ export function RegistrationsPanel({
     });
   }
 
-  async function action(
-    id: string,
-    verb: "confirm" | "waitlist" | "withdraw" | "refund" | "mark-paid" | "waive",
-  ) {
+  async function action(r: Registration, verb: ActionVerb) {
+    const id = r.id;
+    // SPOT vs MONEY copy (PROMPT-52): each confirm states exactly what
+    // changes — the spot, the money, or both — under the current refund
+    // lock. Semantics unchanged; endpoints are the same as ever.
+    const lockPassed =
+      settings?.refund_lock_at != null && new Date(settings.refund_lock_at).getTime() < Date.now();
+    const paidCard = r.payment_intent_id !== null && r.refunded_cents < r.amount_cents;
+    const withdrawMoneyLine = !paidCard
+      ? ""
+      : lockPassed
+        ? " The fee will not auto-refund — the refund lock has passed (refund manually if owed)."
+        : " The paid fee refunds automatically (refund lock off).";
     const dialogFor: Partial<Record<typeof verb, Parameters<typeof confirmDialog>[0]>> = {
       withdraw: {
         title: msg("confirm.withdrawRegistration.title"),
-        body: msg("confirm.withdrawRegistration.body"),
+        body: `Frees the spot — the oldest waitlisted entry moves up.${withdrawMoneyLine}`,
         confirmLabel: msg("confirm.withdrawRegistration.label"),
         tone: "danger",
       },
       refund: {
         title: msg("confirm.refundRegistration.title"),
-        body: msg("confirm.refundRegistration.body"),
+        body:
+          r.status === "confirmed" || r.status === "paid"
+            ? `Money only — ${r.display_name} stays confirmed and keeps the spot.`
+            : msg("confirm.refundRegistration.body"),
         confirmLabel: msg("confirm.refundRegistration.label"),
       },
       "mark-paid": {
@@ -314,7 +298,8 @@ export function RegistrationsPanel({
             and Stripe dashboard. Disputed rows are flagged below.
           </div>
         )}
-        <div className="mb-3 flex items-center justify-between">
+        <RegistrationPulse pulse={pulse} currency={settings.currency} onJump={setPickedTab} />
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
             Registrations <span className="text-slate-500">({regs.length})</span>
             <Tip id="registration.ref-number" />
@@ -337,102 +322,19 @@ export function RegistrationsPanel({
             Export CSV
           </a>
         </div>
-
-        {regs.length === 0 ? (
-          <div className="card p-6 text-sm text-slate-500">
-            No registrations yet. Share the public competition page — the Register button
-            appears while a division is open.
-          </div>
-        ) : shownRegs.length === 0 ? (
-          <div className="card p-6 text-sm text-slate-500">
-            Nothing matches “{query}” — check the reference for typos (letters O/I are never
-            used; try 0/1).
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {shownRegs.map((r) => {
-              const refundable =
-                r.payment_intent_id !== null && r.refunded_cents < r.amount_cents;
-              const chip = paymentChip(r);
-              return (
-                <li key={r.id} className="card flex flex-wrap items-center gap-3 p-3 text-sm">
-                  <span className={`badge ${STATUS_STYLE[r.status] ?? ""}`}>{r.status}</span>
-                  {chip && (
-                    <span className={`badge ${chip.cls}`} data-testid="payment-chip">
-                      {chip.label}
-                    </span>
-                  )}
-                  {r.ref_code && (
-                    <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-slate-700">
-                      {r.ref_code}
-                    </span>
-                  )}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium text-slate-800">
-                      {r.display_name}
-                      {r.entrant_id && (
-                        <span className="ml-2 text-xs font-normal text-emerald-600">entrant ✓</span>
-                      )}
-                    </span>
-                    <span className="block truncate text-xs text-slate-500">
-                      {r.contact_email}
-                      {r.guardian_name ? ` · guardian: ${r.guardian_name}` : ""}
-                      {r.amount_cents > 0
-                        ? ` · ${(r.amount_cents / 100).toFixed(2)} ${r.currency ?? ""}` +
-                          (r.refunded_cents > 0 ? ` (refunded ${(r.refunded_cents / 100).toFixed(2)})` : "")
-                        : ""}
-                    </span>
-                  </span>
-                  {canEdit && (
-                    <span className="flex gap-1">
-                      {r.status === "pending" && r.amount_cents > 0 && !r.payment_intent_id && (
-                        <button type="button" disabled={busy} onClick={() => action(r.id, "mark-paid")} className="btn btn-ghost text-xs font-medium text-emerald-700" title="Record a cash/bank payment and confirm the entry">
-                          Mark paid
-                        </button>
-                      )}
-                      {(r.status === "pending" || r.status === "waitlisted") &&
-                        (r.amount_cents > 0 && !r.payment_intent_id ? (
-                          <button type="button" disabled={busy} onClick={() => action(r.id, "waive")} className="btn btn-ghost text-xs" title="Confirm without payment (fee waived, logged)">
-                            Waive fee
-                          </button>
-                        ) : (
-                          <button type="button" disabled={busy} onClick={() => action(r.id, "confirm")} className="btn btn-ghost text-xs">
-                            Approve
-                          </button>
-                        ))}
-                      {r.status === "pending" && (
-                        <button type="button" disabled={busy} onClick={() => action(r.id, "waitlist")} className="btn btn-ghost text-xs">
-                          Waitlist
-                        </button>
-                      )}
-                      {r.status === "pending" && r.amount_cents > 0 && r.payment_method !== "stripe" && (
-                        <button type="button" disabled={busy} onClick={() => remind(r.id)} className="btn btn-ghost text-xs" title="Email the registrant a payment reminder">
-                          Send reminder
-                        </button>
-                      )}
-                      {r.status !== "withdrawn" && r.status !== "expired" && (
-                        <button type="button" disabled={busy} onClick={() => action(r.id, "withdraw")} className="btn btn-ghost text-xs text-red-600">
-                          Withdraw
-                        </button>
-                      )}
-                      {refundable && (
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => action(r.id, "refund")}
-                          className={`btn btn-ghost text-xs ${chip?.label === "refund incomplete" ? "font-medium text-amber-700" : ""}`}
-                          title={chip?.label === "refund incomplete" ? "The automatic refund failed — retry it" : "Refund the remaining amount"}
-                        >
-                          {chip?.label === "refund incomplete" ? "Retry refund" : "Refund"}
-                        </button>
-                      )}
-                    </span>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        <RegistrationList
+          regs={regs}
+          shown={shownRegs}
+          query={query}
+          tab={tab}
+          onTab={setPickedTab}
+          positions={positions}
+          duplicates={duplicates}
+          canEdit={canEdit}
+          busy={busy}
+          onAction={action}
+          onRemind={remind}
+        />
       </section>
     </div>
   );

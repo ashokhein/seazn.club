@@ -22,7 +22,7 @@ function fromLocalInput(v: string): string | null {
 }
 
 const CURRENCY_SYMBOLS: Record<string, string> = { gbp: "£", usd: "$", eur: "€" };
-function currencySymbol(code: string): string {
+export function currencySymbol(code: string): string {
   return CURRENCY_SYMBOLS[code?.toLowerCase()] ?? (code || "").toUpperCase();
 }
 
