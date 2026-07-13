@@ -36,4 +36,9 @@ export const routes = {
   /** Public dashboard — slug-based already, marker-less scheme, unchanged. */
   shared: (orgSlug: Slug, compSlug?: Slug, divSlug?: Slug) =>
     ["/shared", orgSlug, compSlug, divSlug].filter(Boolean).join("/"),
+  /** Player home (PROMPT-53) — cross-org, deliberately NOT under /o. */
+  me: () => "/me",
+  /** Token surfaces (PROMPT-53): the token IS the address, no org in the URL. */
+  claim: (token: string) => `/claim/${token}`,
+  checkin: (token: string) => `/checkin/${token}`,
 } as const;

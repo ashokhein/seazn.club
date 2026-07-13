@@ -54,7 +54,7 @@ export async function createClaimInvite(
   auth: AuthCtx,
   personId: string,
   email: string,
-): Promise<ClaimRow & { secret: string; person_name: string }> {
+): Promise<ClaimRow & { secret: string; person_name: string; org_name: string }> {
   requireSessionEditor(auth);
   const secret = mintClaimSecret();
   const row = await withTenant(auth.orgId, async (tx) => {
@@ -64,6 +64,8 @@ export async function createClaimInvite(
     if (person.user_id) {
       throw new HttpError(409, "This profile is already claimed", "ALREADY_CLAIMED");
     }
+    const [org] = await tx<{ name: string }[]>`
+      select name from organizations where id = ${auth.orgId}`;
     await tx`
       update person_claims set revoked_at = now()
       where person_id = ${personId} and claimed_at is null and revoked_at is null`;
@@ -72,7 +74,7 @@ export async function createClaimInvite(
       values (${auth.orgId}, ${personId}, ${email}, ${hashClaimToken(secret)},
               ${auth.userId}, now() + ${`${CLAIM_DAYS} days`}::interval)
       returning ${tx(COLS)}`;
-    return { ...created, person_name: person.full_name };
+    return { ...created, person_name: person.full_name, org_name: org?.name ?? "" };
   });
   return { ...row, secret };
 }

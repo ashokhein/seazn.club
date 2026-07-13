@@ -280,6 +280,117 @@ export const Person = z.object({
 });
 
 // ---------------------------------------------------------------------------
+// Player accounts (PROMPT-53) — claims, availability, the /me surface
+// ---------------------------------------------------------------------------
+
+export const CreateClaimInvite = z.object({ email: z.email().max(200) });
+export type CreateClaimInvite = z.infer<typeof CreateClaimInvite>;
+
+export const PersonClaim = z.object({
+  id: Uuid,
+  person_id: Uuid,
+  email: z.string(),
+  invited_by: Uuid.nullable(),
+  expires_at: z.string(),
+  claimed_at: z.string().nullable(),
+  revoked_at: z.string().nullable(),
+  created_at: z.string(),
+});
+
+/** POST response only — claim_url embeds the secret, shown exactly once. */
+export const CreatedPersonClaim = PersonClaim.extend({ claim_url: z.string() });
+
+export const PutAvailability = z.object({
+  status: z.enum(["in", "out", "maybe"]),
+  note: z.string().max(280).nullish(),
+});
+export type PutAvailability = z.infer<typeof PutAvailability>;
+
+export const Availability = z.object({
+  fixture_id: Uuid,
+  person_id: Uuid,
+  status: z.enum(["in", "out", "maybe"]),
+  note: z.string().nullable(),
+  checked_in_at: z.string().nullable(),
+  updated_at: z.string(),
+});
+
+export const PatchMyConsent = z
+  .object({ public_name: z.boolean(), public_photo: z.boolean() })
+  .partial()
+  .refine((p) => Object.keys(p).length > 0, "empty patch");
+export type PatchMyConsent = z.infer<typeof PatchMyConsent>;
+
+/** dob never rides out — only the derived guardian lock does. */
+export const MyPerson = z.object({
+  id: Uuid,
+  full_name: z.string(),
+  org_name: z.string(),
+  consent: z.object({ public_name: z.boolean().optional(), public_photo: z.boolean().optional() }),
+  consent_locked: z.boolean(),
+});
+
+export const MyFixture = z.object({
+  id: Uuid,
+  fixture_no: z.number().int(),
+  person_id: Uuid,
+  person_name: z.string(),
+  org_name: z.string(),
+  org_slug: z.string(),
+  competition_name: z.string(),
+  competition_slug: z.string(),
+  competition_visibility: z.string(),
+  division_name: z.string(),
+  division_slug: z.string(),
+  sport_key: z.string(),
+  round_no: z.number().int(),
+  entrant_name: z.string().nullable(),
+  opponent_name: z.string().nullable(),
+  scheduled_at: z.string().nullable(),
+  venue: z.string().nullable(),
+  court_label: z.string().nullable(),
+  status: z.string(),
+  availability: z
+    .object({ status: z.enum(["in", "out", "maybe"]), note: z.string().nullable() })
+    .nullable(),
+  checked_in_at: z.string().nullable(),
+});
+
+export const MyResult = z.object({
+  id: Uuid,
+  fixture_no: z.number().int(),
+  competition_name: z.string(),
+  competition_slug: z.string(),
+  competition_visibility: z.string(),
+  division_name: z.string(),
+  division_slug: z.string(),
+  org_name: z.string(),
+  org_slug: z.string(),
+  entrant_name: z.string().nullable(),
+  opponent_name: z.string().nullable(),
+  scheduled_at: z.string().nullable(),
+  summary: z.unknown().nullable(),
+  outcome: z.unknown().nullable(),
+});
+
+export const MyTeam = z.object({
+  entrant_id: Uuid,
+  entrant_name: z.string(),
+  division_name: z.string(),
+  competition_name: z.string(),
+  org_name: z.string(),
+  sport_key: z.string(),
+});
+
+export const MyFixtures = z.object({
+  upcoming: z.array(MyFixture),
+  results: z.array(MyResult),
+  teams: z.array(MyTeam),
+});
+
+export const CheckinLink = z.object({ url: z.string(), expires_at: z.string() });
+
+// ---------------------------------------------------------------------------
 // Stages
 // ---------------------------------------------------------------------------
 
