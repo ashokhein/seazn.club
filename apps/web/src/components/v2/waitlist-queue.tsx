@@ -40,21 +40,25 @@ export function WaitlistQueue({
       {queue.map((r) => {
         const feeDue = r.amount_cents > 0 && !r.payment_intent_id;
         return (
-          <li key={r.id} className="card flex flex-wrap items-center gap-3 p-3 text-sm">
-            <span
-              className="w-8 text-center font-mono text-sm font-bold text-sky-700"
-              data-testid="queue-position"
-            >
-              #{positions.get(r.id) ?? "?"}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate font-medium text-slate-800">{r.display_name}</span>
-              <span className="block truncate text-xs text-slate-500">
-                {r.contact_email} · joined {new Date(r.created_at).toLocaleDateString()}
+          // Card on mobile (position + identity, actions below), inline row
+          // from sm: up — mirrors the registration list's responsive shape.
+          <li key={r.id} className="card flex flex-col gap-2 p-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+            <span className="flex min-w-0 items-center gap-3 sm:flex-1">
+              <span
+                className="w-8 shrink-0 text-center font-mono text-sm font-bold text-sky-700"
+                data-testid="queue-position"
+              >
+                #{positions.get(r.id) ?? "?"}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate font-medium text-slate-800">{r.display_name}</span>
+                <span className="block truncate text-xs text-slate-500">
+                  {r.contact_email} · joined {new Date(r.created_at).toLocaleDateString()}
+                </span>
               </span>
             </span>
             {canEdit && (
-              <span className="flex gap-1">
+              <span className="flex gap-1 border-t border-slate-100 pt-2 sm:border-0 sm:pt-0">
                 {feeDue ? (
                   <button
                     type="button"

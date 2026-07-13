@@ -204,31 +204,35 @@ export function RegistrationList({
               moneyActions &&
               (feeUnpaid || refundable || (r.status === "pending" && r.amount_cents > 0));
             return (
-              <li key={r.id} className="card flex flex-wrap items-center gap-3 p-3 text-sm">
-                <span className={`badge ${STATUS_STYLE[r.status] ?? ""}`}>{r.status}</span>
-                {r.status === "waitlisted" && positions.has(r.id) && (
-                  <span className="badge bg-sky-100 font-mono text-sky-700">#{positions.get(r.id)}</span>
-                )}
-                {chip && (
-                  <span className={`badge ${chip.cls}`} data-testid="payment-chip">
-                    {chip.label}
-                  </span>
-                )}
-                {duplicates.has(r.id) && (
-                  <span
-                    className="badge bg-amber-50 text-amber-700"
-                    data-testid="duplicate-hint"
-                    title="Same contact email as another active entry in this division — may be intentional (e.g. a parent entering two kids)."
-                  >
-                    ⚠ duplicate contact
-                  </span>
-                )}
-                {r.ref_code && (
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-slate-700">
-                    {r.ref_code}
-                  </span>
-                )}
-                <span className="min-w-[10rem] flex-1">
+              // Card on mobile (stacked: badges / identity / actions), one
+              // inline row from sm: up — crowded data never squeezes the name.
+              <li key={r.id} className="card flex flex-col gap-2 p-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
+                <span className="flex flex-wrap items-center gap-1.5">
+                  <span className={`badge ${STATUS_STYLE[r.status] ?? ""}`}>{r.status}</span>
+                  {r.status === "waitlisted" && positions.has(r.id) && (
+                    <span className="badge bg-sky-100 font-mono text-sky-700">#{positions.get(r.id)}</span>
+                  )}
+                  {chip && (
+                    <span className={`badge ${chip.cls}`} data-testid="payment-chip">
+                      {chip.label}
+                    </span>
+                  )}
+                  {duplicates.has(r.id) && (
+                    <span
+                      className="badge bg-amber-50 text-amber-700"
+                      data-testid="duplicate-hint"
+                      title="Same contact email as another active entry in this division — may be intentional (e.g. a parent entering two kids)."
+                    >
+                      ⚠ duplicate contact
+                    </span>
+                  )}
+                  {r.ref_code && (
+                    <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-xs font-semibold text-slate-700">
+                      {r.ref_code}
+                    </span>
+                  )}
+                </span>
+                <span className="min-w-0 sm:min-w-[10rem] sm:flex-1">
                   <span className="block truncate font-medium text-slate-800">
                     {r.display_name}
                     {r.entrant_id && (
@@ -245,7 +249,7 @@ export function RegistrationList({
                   </span>
                 </span>
                 {canEdit && (hasSpot || hasMoney) && (
-                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-100 pt-2 sm:border-0 sm:pt-0">
                     {hasSpot && (
                       <span className="flex items-center gap-1">
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Spot</span>
