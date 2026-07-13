@@ -302,7 +302,11 @@ export const PersonClaim = z.object({
 });
 
 /** POST response only — claim_url embeds the secret, shown exactly once. */
-export const CreatedPersonClaim = PersonClaim.extend({ claim_url: z.string() });
+export const CreatedPersonClaim = PersonClaim.extend({
+  claim_url: z.string(),
+  /** Whether the invite email was accepted by the provider. */
+  email_sent: z.boolean(),
+});
 
 export const PutAvailability = z.object({
   status: z.enum(["in", "out", "maybe"]),

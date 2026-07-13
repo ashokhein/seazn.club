@@ -239,6 +239,18 @@ export async function listFixtureAvailability(
   });
 }
 
+/** True when the user's ONLY relationship to the platform is a claimed
+ *  player profile (no org memberships). Their landing is /me — never the
+ *  org dashboard, and never an auto-provisioned "My organization" (the
+ *  scorer-only rule, doc 13 §4, extended to players). */
+export async function isPlayerOnly(userId: string): Promise<boolean> {
+  const [row] = await sql<{ player_only: boolean }[]>`
+    select exists(select 1 from persons where user_id = ${userId})
+       and not exists(select 1 from org_members where user_id = ${userId})
+       as player_only`;
+  return row?.player_only === true;
+}
+
 export interface MyPerson {
   id: string;
   full_name: string;

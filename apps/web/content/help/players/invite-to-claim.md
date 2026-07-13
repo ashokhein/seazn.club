@@ -1,6 +1,6 @@
 ---
 title: Inviting players to claim their profiles
-description: Send claim invites from the Directory, hand out QR codes at the club, read the availability grid, and unlink an account when needed.
+description: Email claim invites from the Directory, read the availability grid, run match-day QR check-in, and unlink an account when needed.
 order: 2
 ---
 
@@ -8,12 +8,9 @@ A claimed player sees their own matches, RSVPs availability you can act on, and 
 
 ## Send an invite
 
-In **Directory → Players**, choose **invite to claim…** next to a player and enter their email. Two things happen:
+In **Directory → Players**, choose **Invite to claim…** next to a player and enter their email. They get the claim link by email, and **only an account signed in with that exact address can accept it** — a forwarded link doesn't move the profile to someone else. Invites last 14 days.
 
-- They get an email with the claim link.
-- You get the same link as a **QR code and copyable URL** — shown once, so print it or let them scan it on the spot. It's valid for 14 days.
-
-One open invite per player: sending a new one quietly withdraws the previous link. A pending invite shows as **Invite pending** with a *withdraw* action.
+Typo in the address? Just invite again with the right one — one open invite per player, and sending a new one quietly withdraws the previous link. A pending invite shows as **Invite pending** with a *Withdraw invite* action.
 
 ## Availability in the lineup picker
 
@@ -21,7 +18,7 @@ Once players RSVP from their player home, the fixture's lineup picker shows a ch
 
 ## Match-day check-in QR
 
-On a fixture page, **Check-in QR** mints a code you can pin up at the venue. Claimed players scan it and mark themselves present; the dot appears in your lineup picker. The code stops working at midnight local time. A player who hasn't claimed yet is pointed to ask you for a claim invite — nothing breaks.
+At the top of a fixture page (until the match starts), **Check-in QR** mints a code you can pin up at the venue. Claimed players scan it and mark themselves present; the dot appears in your lineup picker. The code stops working at midnight local time. A player who hasn't claimed yet is pointed to ask you for a claim invite — nothing breaks.
 
 ## Unlinking
 

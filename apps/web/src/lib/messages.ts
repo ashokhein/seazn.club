@@ -192,18 +192,27 @@ export const messages = {
 
   // ── Player accounts (PROMPT-53) ──
   "claim.invite": "Invite to claim",
+  "claim.invite.tip":
+    "Email this player a link to take over their profile — see their matches, RSVP availability, manage their own consent.",
   "claim.invite.title": "Invite {name} to claim their profile",
   "claim.invite.explain":
-    "They get an email with a claim link — and you get the same link as a QR to show or print. Claiming lets them see their matches, RSVP availability and manage what's public.",
+    "They get an email with a claim link — only an account signed in with that address can accept it. Claiming lets them see their matches, RSVP availability and manage what's public.",
   "claim.invite.email": "Their email",
   "claim.invite.send": "Send invite",
   "claim.invite.sending": "Sending…",
+  "claim.invite.sent": "Invite emailed to {email}.",
+  "claim.invite.sendFailed":
+    "The email couldn't be sent — copy the link below and share it with them yourself.",
   "claim.invite.linkNote":
-    "This link works for 14 days and is only shown here once — copy it or let them scan the QR now.",
+    "The link works for 14 days and is only shown here once. Whoever opens it must sign in as the invited address.",
   "claim.invited": "Invite pending",
   "claim.revoke": "Withdraw invite",
+  "claim.revoke.tip": "Cancel the pending invite — the emailed link stops working immediately.",
   "claim.claimed": "Claimed",
   "claim.unlink": "Unlink",
+  "claim.unlink.tip":
+    "Disconnect the player's account from this profile. Rosters and results stay; you can invite them again later.",
+  "persons.merge.tip": "Fold a duplicate entry into the player you keep. Can't be undone.",
   "confirm.unlinkPlayer.title": "Unlink this player account?",
   "confirm.unlinkPlayer.body":
     "{name} loses access to this profile on their player home. Matches and results stay. You can invite them to claim again later.",

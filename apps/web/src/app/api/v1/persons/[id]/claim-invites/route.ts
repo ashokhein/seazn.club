@@ -22,8 +22,14 @@ export async function POST(req: Request, { params }: Ctx) {
     const auth = await requireResourceAuth(req, "person", id, "write");
     const { secret, person_name, org_name, ...claim } = await createClaimInvite(auth, id, email);
     const claim_url = `${baseUrl(req)}${routes.claim(secret)}`;
-    await sendClaimInviteEmail(email, { orgName: org_name, personName: person_name, claimUrl: claim_url });
-    return reply(201, { ...claim, claim_url });
+    // Email is the primary channel (owner decision 2026-07-13); the console
+    // shows the send outcome honestly and keeps the copyable link as fallback.
+    const email_sent = await sendClaimInviteEmail(email, {
+      orgName: org_name,
+      personName: person_name,
+      claimUrl: claim_url,
+    });
+    return reply(201, { ...claim, claim_url, email_sent });
   });
 }
 

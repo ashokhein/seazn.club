@@ -66,19 +66,29 @@ export default async function ClaimPage({
             </p>
           </div>
           {user ? (
-            <div className="card p-6">
-              <p className="mb-1 text-sm text-slate-600">
-                Signed in as <span className="font-medium text-purple-700">{user.display_name}</span>{" "}
-                <span className="text-slate-400">({user.email})</span>
-              </p>
-              {user.email.toLowerCase() !== claim.email.toLowerCase() && (
-                <p className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                  This invite was sent to {claim.email}. That&apos;s fine if both are you —
-                  the profile links to the account you&apos;re signed in with now.
+            user.email.toLowerCase() === claim.email.toLowerCase() ? (
+              <div className="card p-6">
+                <p className="mb-3 text-sm text-slate-600">
+                  Signed in as <span className="font-medium text-purple-700">{user.display_name}</span>{" "}
+                  <span className="text-slate-400">({user.email})</span>
                 </p>
-              )}
-              <ClaimAccept token={token} personName={claim.person_name} />
-            </div>
+                <ClaimAccept token={token} personName={claim.person_name} />
+              </div>
+            ) : (
+              // Strict match (owner decision 2026-07-13): the invited address
+              // is the identity check — a forwarded link alone must not move
+              // the profile to a different account.
+              <div className="card p-6">
+                <h2 className="text-base font-bold text-purple-900">Wrong account for this invite</h2>
+                <p className="mt-2 text-sm text-slate-600">
+                  This invite was sent to{" "}
+                  <span className="font-medium text-purple-700">{claim.email}</span>, but
+                  you&apos;re signed in as <span className="font-medium">{user.email}</span>.
+                  Sign out, then sign in with the invited address to claim it. Wrong address
+                  on the invite? Ask the organiser to re-send it.
+                </p>
+              </div>
+            )
           ) : (
             <>
               <p className="mb-4 text-center text-sm text-cream/70">

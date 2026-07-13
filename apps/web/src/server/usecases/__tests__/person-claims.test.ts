@@ -81,7 +81,7 @@ describe.skipIf(!HAS_DB)("person claims (PROMPT-53)", () => {
     expect(resolved.email).toBe("sam@test.local");
 
     const playerId = await makeUser("sam");
-    await claimPerson(invite.secret, playerId);
+    await claimPerson(invite.secret, playerId, "sam@test.local");
     const [linked] = await sql<{ user_id: string | null }[]>`
       select user_id from persons where id = ${person.id}`;
     expect(linked.user_id).toBe(playerId);
@@ -96,7 +96,7 @@ describe.skipIf(!HAS_DB)("person claims (PROMPT-53)", () => {
   it("inviting an already-claimed person → 409 ALREADY_CLAIMED", async () => {
     const { owner, person } = await rig();
     const invite = await createClaimInvite(owner, person.id, "sam@test.local");
-    await claimPerson(invite.secret, await makeUser("sam"));
+    await claimPerson(invite.secret, await makeUser("sam"), "sam@test.local");
     await expect(createClaimInvite(owner, person.id, "again@test.local")).rejects.toMatchObject({
       status: 409,
       code: "ALREADY_CLAIMED",
@@ -112,7 +112,9 @@ describe.skipIf(!HAS_DB)("person claims (PROMPT-53)", () => {
       status: 401,
       code: "CLAIM_EXPIRED",
     });
-    await expect(claimPerson(invite.secret, await makeUser("sam"))).rejects.toMatchObject({
+    await expect(
+      claimPerson(invite.secret, await makeUser("sam"), "sam@test.local"),
+    ).rejects.toMatchObject({
       code: "CLAIM_EXPIRED",
     });
   });
@@ -150,8 +152,8 @@ describe.skipIf(!HAS_DB)("person claims (PROMPT-53)", () => {
     const invite = await createClaimInvite(owner, person.id, "sam@test.local");
     const [a, b] = [await makeUser("a"), await makeUser("b")];
     const results = await Promise.allSettled([
-      claimPerson(invite.secret, a),
-      claimPerson(invite.secret, b),
+      claimPerson(invite.secret, a, "sam@test.local"),
+      claimPerson(invite.secret, b, "sam@test.local"),
     ]);
     const wins = results.filter((r) => r.status === "fulfilled").length;
     expect(wins).toBe(1);
@@ -159,10 +161,27 @@ describe.skipIf(!HAS_DB)("person claims (PROMPT-53)", () => {
     expect((loser.reason as HttpError).code).toBe("CLAIM_CLAIMED");
   });
 
+  it("strict match: a different signed-in address is refused; case doesn't matter", async () => {
+    const { owner, person } = await rig();
+    const invite = await createClaimInvite(owner, person.id, "sam@test.local");
+    await expect(
+      claimPerson(invite.secret, await makeUser("impostor"), "impostor@test.local"),
+    ).rejects.toMatchObject({
+      status: 403,
+      code: "CLAIM_EMAIL_MISMATCH",
+    });
+    // The person is untouched by the refused attempt…
+    const [row] = await sql<{ user_id: string | null }[]>`
+      select user_id from persons where id = ${person.id}`;
+    expect(row.user_id).toBeNull();
+    // …and the right address still claims, case-insensitively.
+    await claimPerson(invite.secret, await makeUser("sam"), "SAM@Test.Local");
+  });
+
   it("unlink detaches the login, closes claims, keeps the audit rows", async () => {
     const { owner, person } = await rig();
     const invite = await createClaimInvite(owner, person.id, "sam@test.local");
-    await claimPerson(invite.secret, await makeUser("sam"));
+    await claimPerson(invite.secret, await makeUser("sam"), "sam@test.local");
     await unlinkPerson(owner, person.id);
 
     const [row] = await sql<{ user_id: string | null }[]>`

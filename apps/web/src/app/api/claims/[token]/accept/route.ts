@@ -10,7 +10,7 @@ export async function POST(_req: Request, { params }: Ctx) {
   return handler(async () => {
     const user = await requireUser();
     const { token } = await params;
-    const claim = await claimPerson(token, user.id);
+    const claim = await claimPerson(token, user.id, user.email);
     return {
       person_id: claim.person_id,
       person_name: claim.person_name,

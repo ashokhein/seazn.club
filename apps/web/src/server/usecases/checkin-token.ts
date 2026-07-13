@@ -47,8 +47,10 @@ export async function createCheckinLink(
     const [fixture] = await tx<{ id: string; division_id: string; status: string }[]>`
       select id, division_id, status from fixtures where id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
-    if (fixture.status === "finalized" || fixture.status === "cancelled") {
-      throw new HttpError(422, `fixture is ${fixture.status} — check-in is closed`);
+    // Check-in is an arrival tool: mint only before play starts (the UI hides
+    // the button then too — this is the enforcement, not the hiding).
+    if (fixture.status !== "scheduled") {
+      throw new HttpError(422, `fixture is ${fixture.status} — check-in codes are minted before the match starts`);
     }
     const [settings] = await tx<{ tz: string }[]>`
       select tz from schedule_settings where division_id = ${fixture.division_id}`;

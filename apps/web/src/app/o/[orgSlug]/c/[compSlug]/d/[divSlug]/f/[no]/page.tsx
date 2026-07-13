@@ -79,6 +79,18 @@ export default async function FixturePage({
           </p>
         )}
 
+        {/* Player self-check-in QR (PROMPT-53) — top of the match panel, and
+            only BEFORE the match starts (owner feedback 2026-07-13): check-in
+            is an arrival tool, once play begins it's just noise. */}
+        {!isScorer &&
+          canScore &&
+          !(competition.frozen ?? false) &&
+          fixture.status === "scheduled" && (
+            <div className="mb-3 flex justify-end">
+              <CheckinQr fixtureId={fixture.id} />
+            </div>
+          )}
+
         <FixtureConsole
           fixture={{
             id: fixture.id,
@@ -139,10 +151,6 @@ export default async function FixturePage({
                 fixtureId={fixture.id}
                 scorerLabel={sportModule.officialLabel.scorer}
               />
-              {/* Player self-check-in QR (PROMPT-53) — all plans. */}
-              <div className="mt-3">
-                <CheckinQr fixtureId={fixture.id} />
-              </div>
             </div>
           )}
       </main>

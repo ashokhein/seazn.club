@@ -198,6 +198,18 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
     expect(await checkInToFixture(stranger, f1.id)).toBeNull();
   });
 
+  it("isPlayerOnly: claimed person + no org = true; members and strangers = false", async () => {
+    const { owner, ownerId } = await seedOrg("po");
+    const { persons } = await rig(owner);
+    const player = await makeUser("player");
+    await sql`update persons set user_id = ${player} where id = ${persons[0].id}`;
+
+    const { isPlayerOnly } = await import("../me");
+    expect(await isPlayerOnly(player)).toBe(true); // claimed, no memberships
+    expect(await isPlayerOnly(ownerId)).toBe(false); // org member
+    expect(await isPlayerOnly(await makeUser("stranger"))).toBe(false); // neither
+  });
+
   it("consent flip persists, revalidates the person's divisions; guardian gate 403s", async () => {
     const { owner } = await seedOrg("g");
     const adult = await rig(owner);

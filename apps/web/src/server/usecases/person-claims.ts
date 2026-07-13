@@ -153,11 +153,24 @@ export async function resolveClaimToken(token: string): Promise<ResolvedClaim> {
 }
 
 /**
- * Link the person to the logged-in user. Transactional: the person row is
+ * Link the person to the logged-in user. Strict email match (owner decision
+ * 2026-07-13): only an account signed in with the INVITED address may accept —
+ * the emailed link alone is not enough. Transactional: the person row is
  * locked so two racing accepts can't both win; the loser gets CLAIM_CLAIMED.
  */
-export async function claimPerson(token: string, userId: string): Promise<ResolvedClaim> {
+export async function claimPerson(
+  token: string,
+  userId: string,
+  userEmail: string,
+): Promise<ResolvedClaim> {
   const claim = await resolveClaimToken(token);
+  if (claim.email.toLowerCase() !== userEmail.toLowerCase()) {
+    throw new HttpError(
+      403,
+      `This invite was sent to ${claim.email} — sign in with that address to claim it`,
+      "CLAIM_EMAIL_MISMATCH",
+    );
+  }
   await sql.begin(async (tx) => {
     const [updated] = await tx<{ id: string }[]>`
       update persons set user_id = ${userId}

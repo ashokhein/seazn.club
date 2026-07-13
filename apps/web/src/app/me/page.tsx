@@ -174,6 +174,15 @@ export default async function MePage({
         )}
 
         {persons.length > 0 && <ConsentCard persons={persons} />}
+
+        {/* Growth seam (PROMPT-53): every claimed player is a future
+            organiser. Quiet, last, and only when they run nothing yet. */}
+        <p className="mt-10 text-center text-xs text-slate-400">
+          Run your own league or tournament?{" "}
+          <Link href="/orgs/new" className="text-purple-600 hover:underline">
+            Create an organisation
+          </Link>
+        </p>
       </main>
     </>
   );

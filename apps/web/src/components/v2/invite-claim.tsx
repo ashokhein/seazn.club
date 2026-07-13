@@ -1,9 +1,10 @@
 "use client";
 
 // Player-account claim controls (PROMPT-53): per-person invite → pending →
-// claimed lifecycle in the Directory. The invite modal shows the one-time
-// claim link + QR (invite-scorer pattern) — the email goes out too, but the
-// print-at-the-club path never depends on inboxes.
+// claimed lifecycle in the Directory. Email is the channel (owner decision
+// 2026-07-13 — claims are strictly bound to the invited address, so a QR has
+// no claim path anymore); the modal reports the send outcome honestly and
+// keeps the one-time link as a manual fallback.
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
@@ -22,7 +23,7 @@ export function InviteClaim({ personId, personName, claimed, claimPending }: Pro
   const [modal, setModal] = useState(false);
   const [email, setEmail] = useState("");
   const [link, setLink] = useState<string | null>(null);
-  const [qr, setQr] = useState<string | null>(null);
+  const [emailSent, setEmailSent] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -32,13 +33,12 @@ export function InviteClaim({ personId, personName, claimed, claimPending }: Pro
     setBusy(true);
     setError(null);
     try {
-      const out = await apiV1<{ claim_url: string }>(
+      const out = await apiV1<{ claim_url: string; email_sent: boolean }>(
         `/api/v1/persons/${personId}/claim-invites`,
         { method: "POST", json: { email } },
       );
       setLink(out.claim_url);
-      const QRCode = (await import("qrcode")).default;
-      setQr(await QRCode.toDataURL(out.claim_url, { width: 240, margin: 1 }));
+      setEmailSent(out.email_sent);
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
@@ -63,23 +63,24 @@ export function InviteClaim({ personId, personName, claimed, claimPending }: Pro
   const close = () => {
     setModal(false);
     setLink(null);
-    setQr(null);
     setEmail("");
     setCopied(false);
     setError(null);
   };
 
+  // State chips live in the table's Account column — this component renders
+  // only the verbs.
   if (claimed) {
     return (
       <span className="inline-flex items-center gap-2">
-        <span className="badge bg-emerald-100 text-emerald-700">{msg("claim.claimed")}</span>
         <button
           type="button"
           disabled={busy}
           onClick={() => setConfirmUnlink(true)}
-          className="text-slate-400 hover:text-red-600 hover:underline"
+          title={msg("claim.unlink.tip")}
+          className="btn btn-ghost px-2 py-1 text-xs text-red-600 hover:bg-red-50"
         >
-          {msg("claim.unlink").toLowerCase()}
+          {msg("claim.unlink")}
         </button>
         <ConfirmDialog
           open={confirmUnlink}
@@ -104,28 +105,27 @@ export function InviteClaim({ personId, personName, claimed, claimPending }: Pro
   return (
     <span className="inline-flex items-center gap-2">
       {claimPending && !modal ? (
-        <>
-          <span className="badge bg-amber-100 text-amber-700">{msg("claim.invited")}</span>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              run(() => apiV1(`/api/v1/persons/${personId}/claim-invites`, { method: "DELETE" }))
-            }
-            className="text-slate-400 hover:text-red-600 hover:underline"
-          >
-            {msg("claim.revoke").toLowerCase()}
-          </button>
-        </>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() =>
+            run(() => apiV1(`/api/v1/persons/${personId}/claim-invites`, { method: "DELETE" }))
+          }
+          title={msg("claim.revoke.tip")}
+          className="btn btn-ghost px-2 py-1 text-xs"
+        >
+          {msg("claim.revoke")}
+        </button>
       ) : (
         !modal && (
           <button
             type="button"
             disabled={busy}
             onClick={() => setModal(true)}
-            className="text-slate-400 hover:text-purple-600 hover:underline"
+            title={msg("claim.invite.tip")}
+            className="btn btn-ghost px-2 py-1 text-xs text-purple-700"
           >
-            {msg("claim.invite").toLowerCase()}…
+            {msg("claim.invite")}…
           </button>
         )
       )}
@@ -159,35 +159,41 @@ export function InviteClaim({ personId, personName, claimed, claimPending }: Pro
 
             {link ? (
               <>
-                {qr && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={qr}
-                    alt={`QR code for ${personName}'s claim link`}
-                    className="mx-auto rounded-lg border border-slate-200 p-1"
-                    width={176}
-                    height={176}
-                    data-testid="claim-qr"
-                  />
+                {emailSent ? (
+                  <p
+                    className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-700"
+                    data-testid="claim-emailed"
+                  >
+                    {msg("claim.invite.sent", { email })}
+                  </p>
+                ) : (
+                  // Send failure is the ONLY time the link shows — the
+                  // organiser needs a way out, and only the invited address
+                  // can accept it anyway (strict match).
+                  <>
+                    <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">
+                      {msg("claim.invite.sendFailed")}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <code
+                        className="min-w-0 flex-1 truncate rounded bg-slate-100 px-2 py-1.5 text-xs text-slate-700"
+                        data-testid="claim-link"
+                      >
+                        {link}
+                      </code>
+                      <button
+                        type="button"
+                        className="btn btn-ghost px-2 py-1 text-xs"
+                        onClick={() => {
+                          void navigator.clipboard.writeText(link);
+                          setCopied(true);
+                        }}
+                      >
+                        {copied ? "Copied" : "Copy"}
+                      </button>
+                    </div>
+                  </>
                 )}
-                <div className="flex items-center gap-2">
-                  <code
-                    className="min-w-0 flex-1 truncate rounded bg-slate-100 px-2 py-1.5 text-xs text-slate-700"
-                    data-testid="claim-link"
-                  >
-                    {link}
-                  </code>
-                  <button
-                    type="button"
-                    className="btn btn-ghost px-2 py-1 text-xs"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(link);
-                      setCopied(true);
-                    }}
-                  >
-                    {copied ? "Copied" : "Copy"}
-                  </button>
-                </div>
                 <p className="text-[11px] text-slate-400">{msg("claim.invite.linkNote")}</p>
                 <button type="button" onClick={close} className="btn btn-primary w-full text-xs">
                   Done

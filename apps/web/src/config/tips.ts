@@ -36,6 +36,11 @@ export const TIPS = {
     body: "Same person listed twice? Merge moves their team memberships, lineups and profiles onto the player you keep, then removes the duplicate. Results are untouched — but a merge can't be undone.",
     helpSlug: "entrants/duplicate-players",
   },
+  "persons.actions": {
+    title: "Player actions",
+    body: "Invite to claim emails the player a link to run their own profile — matches, RSVPs, consent. Unlink disconnects a claimed account; rosters and results stay. Merge… folds a duplicate into the player you keep.",
+    helpSlug: "players/invite-to-claim",
+  },
   "formats.picker": {
     title: "Choosing a format",
     body: "League plays everyone once and ranks by points. Knockout eliminates losers. Groups + knockout qualifies the top of each group. Swiss pairs equals with equals — good for big fields on short time.",
