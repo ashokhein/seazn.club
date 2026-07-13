@@ -8,15 +8,19 @@ import { invalidateOrgEntitlements } from "@/lib/entitlements";
 /**
  * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
  * Embedded Checkout, not a redirect). Pure — no Stripe/DB — so it's unit-tested.
- * Honours the 14-day no-card trial: `payment_method_collection: "if_required"`
- * + cancel when no card is added by trial end. `ui_mode: "embedded"` requires a
- * `return_url` (not success/cancel urls); Stripe redirects there on completion,
- * where the billing page reconciles from the session id.
+ * `trialDays` 14 = the no-card trial (`payment_method_collection:
+ * "if_required"` + cancel when no card is added by trial end); 0 = no trial
+ * block at all, so Stripe charges at checkout and always collects a card —
+ * one trial per org, decided by the caller via checkoutTrialDays().
+ * `ui_mode: "embedded"` requires a `return_url` (not success/cancel urls);
+ * Stripe redirects there on completion, where the billing page reconciles
+ * from the session id.
  */
 export function buildEmbeddedCheckoutParams(args: {
   priceId: string;
   orgId: string;
   returnUrl: string;
+  trialDays: number;
   customerId?: string;
   customerEmail?: string;
   /** ISO currency picking one of the price's currency_options (v3/07 §4);
@@ -30,10 +34,14 @@ export function buildEmbeddedCheckoutParams(args: {
     ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
     ...(args.currency && args.currency !== "usd" ? { currency: args.currency } : {}),
     metadata: { org_id: args.orgId },
-    payment_method_collection: "if_required",
+    ...(args.trialDays > 0 ? { payment_method_collection: "if_required" as const } : {}),
     subscription_data: {
-      trial_period_days: 14,
-      trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+      ...(args.trialDays > 0
+        ? {
+            trial_period_days: args.trialDays,
+            trial_settings: { end_behavior: { missing_payment_method: "cancel" as const } },
+          }
+        : {}),
       metadata: { org_id: args.orgId },
     },
     line_items: [{ price: args.priceId, quantity: 1 }],
@@ -42,6 +50,32 @@ export function buildEmbeddedCheckoutParams(args: {
     tax_id_collection: { enabled: true },
     automatic_tax: { enabled: true },
   };
+}
+
+/**
+ * One trial per organisation (product gap 2026-07-13): the downgrade→upgrade
+ * loop must not re-arm the 14-day trial. `trial_used_at` is stamped by
+ * syncSubscription the first time a trialing sub syncs and never cleared.
+ */
+export function checkoutTrialDays(
+  sub: { trial_used_at: string | null } | undefined,
+): number {
+  return sub?.trial_used_at ? 0 : 14;
+}
+
+/**
+ * A live Stripe subscription means plan changes go through the in-app manage
+ * flow — a second checkout would mint a second subscription for the same org.
+ */
+export function assertCheckoutAllowed(
+  sub: { stripe_subscription_id: string | null; status: string | null } | undefined,
+): void {
+  if (sub?.stripe_subscription_id && (sub.status === "active" || sub.status === "trialing")) {
+    throw new HttpError(
+      409,
+      "This organization already has a subscription — manage your plan from the billing page instead.",
+    );
+  }
 }
 
 /**
@@ -141,12 +175,13 @@ export async function syncSubscription(
   await sql`
     insert into subscriptions
       (org_id, plan_key, status, stripe_subscription_id,
-       current_period_end, trial_end, cancel_at_period_end, currency, updated_at)
+       current_period_end, trial_end, trial_used_at, cancel_at_period_end, currency, updated_at)
     values
       (${orgId}, ${planKey ?? "community"}, ${status},
        ${stripeSub.id},
        ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
        ${stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null},
+       ${stripeSub.trial_end ? new Date().toISOString() : null},
        ${stripeSub.cancel_at_period_end},
        ${stripeSub.currency ?? null},
        now())
@@ -156,6 +191,8 @@ export async function syncSubscription(
       stripe_subscription_id = excluded.stripe_subscription_id,
       current_period_end     = excluded.current_period_end,
       trial_end              = excluded.trial_end,
+      -- One trial per org: stamped the first time a trial appears, never cleared.
+      trial_used_at          = coalesce(subscriptions.trial_used_at, excluded.trial_used_at),
       cancel_at_period_end   = excluded.cancel_at_period_end,
       currency               = coalesce(excluded.currency, subscriptions.currency),
       updated_at             = now()`;

@@ -5,7 +5,11 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { baseUrl } from "@/lib/oauth";
 import { checkoutSchema } from "@/lib/types";
-import { buildEmbeddedCheckoutParams } from "@/lib/billing";
+import {
+  assertCheckoutAllowed,
+  buildEmbeddedCheckoutParams,
+  checkoutTrialDays,
+} from "@/lib/billing";
 import { preferredCurrency } from "@/lib/currency-server";
 import { routes } from "@/lib/routes";
 
@@ -34,16 +38,26 @@ export async function POST(req: Request) {
 
     // Reuse existing Stripe customer if we already have one
     const [[sub], [org]] = await Promise.all([
-      sql<{ stripe_customer_id: string | null }[]>`
-        select stripe_customer_id from subscriptions where org_id = ${orgId}`,
+      sql<{
+        stripe_customer_id: string | null;
+        stripe_subscription_id: string | null;
+        status: string | null;
+        trial_used_at: string | null;
+      }[]>`
+        select stripe_customer_id, stripe_subscription_id, status, trial_used_at
+        from subscriptions where org_id = ${orgId}`,
       sql<{ slug: string }[]>`select slug from organizations where id = ${orgId}`,
     ]);
+    // A live Stripe sub changes plan in-app, never via a second checkout.
+    assertCheckoutAllowed(sub);
 
     const session = await getStripe().checkout.sessions.create(
       buildEmbeddedCheckoutParams({
         priceId: plan.price_id,
         orgId,
         returnUrl: `${baseUrl(req)}${routes.billing(org.slug)}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
+        // One trial per org — a re-subscribing org pays from day one.
+        trialDays: checkoutTrialDays(sub),
         currency: await preferredCurrency(orgId, req),
         customerId: sub?.stripe_customer_id ?? undefined,
         customerEmail: user.email,

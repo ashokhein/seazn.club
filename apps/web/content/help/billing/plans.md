@@ -10,7 +10,7 @@ Run real competitions, free: 2 active competitions, 3 team members, 16 entrants 
 
 ## Pro
 
-Everything unlimited, plus the organiser toolkit: your branding on public pages and share images, entry fees via Stripe, spreadsheet imports and exports, clubs, player stats, advanced formats, API keys and embeds. Starts with a 14-day trial, no card required.
+Everything unlimited, plus the organiser toolkit: your branding on public pages and share images, entry fees via Stripe, spreadsheet imports and exports, clubs, player stats, advanced formats, API keys and embeds. Starts with a 14-day trial, no card required — one trial per organisation; if you come back to Pro later, billing starts from day one.
 
 ## Event Pass
 
