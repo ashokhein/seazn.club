@@ -107,6 +107,7 @@ const RULES: RouteRule[] = [
   { method: "POST", path: "/divisions/:id/schedule/validate", scope: "read", pin: "division" },
   { method: "GET", path: "/divisions/:id/stages", scope: "read", pin: "division" },
   { method: "POST", path: "/divisions/:id/stages", scope: "manage", pin: "division" },
+  { method: "PUT", path: "/divisions/:id/stages", scope: "manage", pin: "division" },
   { method: "POST", path: "/divisions/:id/start", scope: "score", pin: "division" },
   { method: "GET", path: "/divisions/:id/stats/players", scope: "read", pin: "division" },
   { method: "POST", path: "/divisions/:id/undo", scope: "manage", pin: "division" },

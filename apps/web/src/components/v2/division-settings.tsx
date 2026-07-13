@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 import { divisionAccent, monogram } from "@/lib/division-hue";
 import { MatchRuleFields, buildRuleOverride } from "./match-rules";
+import { STAGE_TEMPLATES, buildTemplateStages, detectTemplate } from "./format-templates";
 
 export interface DivisionSettingsInfo {
   id: string;
@@ -100,7 +101,7 @@ export function DivisionSettings({
   locked: boolean;
   /** Stage structure (kind + name) — shown so group/top sections are visible
    *  here; structure itself is edited on the Fixtures tab. */
-  stages: { name: string; kind: string }[];
+  stages: { name: string; kind: string; config: Record<string, unknown> | null; qualification: Record<string, unknown> | null }[];
   canEdit: boolean;
   /** "/o/{org}/c/{comp}/d/" — renames regenerate the slug, and the client
    *  must follow it without losing the settings tab. */
@@ -115,6 +116,25 @@ export function DivisionSettings({
   const [name, setName] = useState(division.name);
   const [logoUrl, setLogoUrl] = useState(division.logo_url);
   const [variantKey, setVariantKey] = useState(division.variant_key);
+  // Competition format = the stage structure (League / Groups + Knockout…).
+  const detected = detectTemplate(stages);
+  const [template, setTemplate] = useState(detected ?? "league");
+  const currentQualified = (() => {
+    const q = stages.find((st) => st.qualification)?.qualification as
+      | { topN?: number; take?: unknown[] }
+      | undefined;
+    return q?.topN ?? (Array.isArray(q?.take) ? q.take.length : 4);
+  })();
+  const [qualified, setQualified] = useState(currentQualified);
+  const [poolCount, setPoolCount] = useState(
+    ((stages.find((st) => st.kind === "group")?.config as { pools?: { count?: number } } | null)?.pools?.count) ?? 2,
+  );
+  const [swissRounds, setSwissRounds] = useState(
+    ((stages.find((st) => st.kind === "swiss")?.config as { rounds?: number } | null)?.rounds) ?? 5,
+  );
+  const [legs, setLegs] = useState(
+    ((stages.find((st) => st.kind === "league" || st.kind === "group")?.config as { legs?: number } | null)?.legs) ?? 1,
+  );
   const cfg = (division.config ?? {}) as { points?: { w?: number; d?: number; l?: number }; progressScore?: boolean };
   const [pointsW, setPointsW] = useState(cfg.points ? String(cfg.points.w ?? "") : "");
   const [pointsD, setPointsD] = useState(cfg.points ? String(cfg.points.d ?? "") : "");
@@ -183,6 +203,15 @@ export function DivisionSettings({
       });
       setLogoUrl(null);
     }, "Logo removed — the tile shows the monogram again.");
+
+  const applyStructure = () =>
+    run(async () => {
+      const drafts = buildTemplateStages(template, { qualified, swissRounds, poolCount, legs });
+      await apiV1(`/api/v1/divisions/${division.id}/stages`, {
+        method: "PUT",
+        json: drafts.map((d, i) => ({ ...d, seq: i + 1 })),
+      });
+    }, "Format changed — stages rebuilt.");
 
   const applyFormat = () =>
     run(async () => {
@@ -310,6 +339,80 @@ export function DivisionSettings({
           </div>
         ) : (
           <>
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Competition format
+              </p>
+              <label className="block text-xs text-slate-500">
+                Structure
+                <select
+                  disabled={!canEdit}
+                  value={template}
+                  onChange={(e) => setTemplate(e.target.value)}
+                  className="input mt-1 w-full"
+                  data-testid="format-template"
+                >
+                  {STAGE_TEMPLATES.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-0.5 block text-[11px] text-slate-400">
+                  {STAGE_TEMPLATES.find((t) => t.key === template)?.help}
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {["league_ko", "groups_ko", "group_stepladder"].includes(template) && (
+                  <label className="block text-xs text-slate-500">
+                    Top N advance
+                    <input type="number" min={2} max={32} disabled={!canEdit} value={qualified}
+                      onChange={(e) => setQualified(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+                {template === "groups_ko" && (
+                  <label className="block text-xs text-slate-500">
+                    Groups
+                    <input type="number" min={2} max={8} disabled={!canEdit} value={poolCount}
+                      onChange={(e) => setPoolCount(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+                {template === "swiss" && (
+                  <label className="block text-xs text-slate-500">
+                    Rounds
+                    <input type="number" min={3} max={15} disabled={!canEdit} value={swissRounds}
+                      onChange={(e) => setSwissRounds(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+                {["league", "league_ko", "groups_ko"].includes(template) && (
+                  <label className="block text-xs text-slate-500">
+                    Rounds vs each opponent
+                    <input type="number" min={1} max={4} disabled={!canEdit} value={legs}
+                      onChange={(e) => setLegs(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+              </div>
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={applyStructure}
+                  className="btn btn-primary text-xs"
+                  data-testid="apply-structure"
+                >
+                  {stages.length > 0 ? "Change format (rebuilds stages)" : "Set format"}
+                </button>
+              )}
+              {detected === null && stages.length > 0 && (
+                <p className="text-[11px] text-amber-600">
+                  Current structure is custom — applying a format here replaces it.
+                </p>
+              )}
+            </div>
+
+            <p className="border-t border-slate-100 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Match rules
+            </p>
             <label className="block text-xs text-slate-500">
               Variant
               <select

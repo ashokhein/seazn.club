@@ -74,6 +74,7 @@ export const ROUTES: RouteSpec[] = [
   // Stages
   { path: "/divisions/{id}/stages", method: "get", summary: "List stages", tag: "stages", response: z.array(S.Stage) },
   { path: "/divisions/{id}/stages", method: "post", summary: "Define the stage graph", tag: "stages", request: S.CreateStages, response: z.union([S.Stage, z.array(S.Stage)]), status: 201, errors: [409] },
+  { path: "/divisions/{id}/stages", method: "put", summary: "Replace the stage graph (v8 Settings format; 409 FORMAT_LOCKED once fixtures exist)", tag: "stages", request: S.CreateStages, response: z.array(S.Stage), errors: [409] },
   { path: "/stages/{id}/generate", method: "post", summary: "Generate fixtures (idempotent, returns diff)", tag: "stages", response: S.GenerateResult, errors: [422] },
   { path: "/stages/{id}/complete", method: "post", summary: "Guarded stage completion / progression", tag: "stages", response: S.CompleteResult, errors: [422] },
   { path: "/stages/{id}/standings", method: "get", summary: "Standings snapshot", tag: "stages", query: { pool_id: { schema: { type: "string", format: "uuid" } } } },

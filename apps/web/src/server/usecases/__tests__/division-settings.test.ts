@@ -11,7 +11,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision, getDivision, patchDivision } from "../divisions";
 import { createEntrants } from "../entrants";
-import { createStages, generateStageFixtures } from "../stages";
+import { createStages, generateStageFixtures, replaceStages } from "../stages";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -117,6 +117,39 @@ describe.skipIf(!HAS_DB)("format lock (v8)", () => {
     await expect(
       patchDivision(owner, division.id, { variant_key: "nope" }),
     ).rejects.toMatchObject({ status: 422 });
+  });
+});
+
+describe.skipIf(!HAS_DB)("replaceStages — format structure swap (v8)", () => {
+  it("swaps league → groups+knockout until fixtures exist, then 409 FORMAT_LOCKED", async () => {
+    const owner = await seedOwner();
+    const { division } = await rig(owner);
+    await createStages(owner, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+
+    // Pre-fixtures: the whole structure swaps in one call.
+    const swapped = await replaceStages(owner, division.id, [
+      { seq: 1, kind: "group", name: "Group stage", config: { legs: 1, pools: { count: 2 } }, qualification: null },
+      {
+        seq: 2, kind: "knockout", name: "Knockout", config: {},
+        qualification: { take: [{ pool: "A", rank: 1 }, { pool: "B", rank: 1 }] },
+      },
+    ]);
+    expect(swapped.map((s) => s.kind)).toEqual(["group", "knockout"]);
+
+    // Generate fixtures on the new structure → structure is history too.
+    await createEntrants(owner, division.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+      { kind: "individual", display_name: "C", seed: 3, members: [] },
+      { kind: "individual", display_name: "D", seed: 4, members: [] },
+    ]);
+    await generateStageFixtures(owner, swapped[0]!.id);
+
+    await expect(
+      replaceStages(owner, division.id, [
+        { seq: 1, kind: "league", name: "L", config: {}, qualification: null },
+      ]),
+    ).rejects.toMatchObject({ status: 409, code: "FORMAT_LOCKED" });
   });
 });
 

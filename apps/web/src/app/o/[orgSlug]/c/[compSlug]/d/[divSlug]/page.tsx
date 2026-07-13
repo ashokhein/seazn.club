@@ -286,7 +286,12 @@ export default async function DivisionPage({
             }}
             variants={await listVariantOptions(auth, division.sport_key)}
             locked={formatLocked([{ fixture_count: fixtures.length }])}
-            stages={stages.map((st) => ({ name: st.name, kind: st.kind }))}
+            stages={stages.map((st) => ({
+              name: st.name,
+              kind: st.kind,
+              config: (st.config ?? null) as Record<string, unknown> | null,
+              qualification: (st.qualification ?? null) as Record<string, unknown> | null,
+            }))}
             canEdit={editable}
             divisionPathPrefix={`/o/${orgSlug}/c/${compSlug}/d/`}
             fixturesHref={routes.division(orgSlug, compSlug, divSlug, "fixtures")}

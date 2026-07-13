@@ -7,6 +7,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MatchRuleFields, SPORT_RULES, buildRuleOverride } from "./match-rules";
+import { STAGE_TEMPLATES, buildTemplateStages, type StageDraft } from "./format-templates";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { routes } from "@/lib/routes";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -30,13 +31,6 @@ function pickVariant(sportKey: string, variants: { key: string }[]): string {
   const pref = PREFERRED_VARIANT[sportKey.toLowerCase()];
   if (pref && variants.some((v) => v.key === pref)) return pref;
   return variants[0]?.key ?? "";
-}
-
-interface StageDraft {
-  kind: string;
-  name: string;
-  config: Record<string, unknown>;
-  qualification: Record<string, unknown> | null;
 }
 
 // Wizard template → format-gallery family (v3/06 §4 "How this works →").
@@ -77,115 +71,6 @@ interface PreviewPhase {
   note?: string;
   sections: PreviewSection[];
 }
-
-// One-click stage graphs. `qualified(n)` = how many advance to stage 2.
-const STAGE_TEMPLATES: {
-  key: string;
-  label: string;
-  help: string;
-  build: (q: number) => StageDraft[];
-}[] = [
-  {
-    key: "league",
-    label: "League",
-    help: "Single round robin, table decides.",
-    build: () => [{ kind: "league", name: "League", config: { legs: 1 }, qualification: null }],
-  },
-  {
-    key: "league_ko",
-    label: "League + Finals",
-    help: "Round robin, then top N knockout.",
-    build: (q) => [
-      { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
-      { kind: "knockout", name: "Finals", config: {}, qualification: { topN: q } },
-    ],
-  },
-  {
-    key: "groups_ko",
-    label: "Groups + Knockout",
-    help: "Two pools, top of each cross over.",
-    build: (q) => [
-      {
-        kind: "group",
-        name: "Group stage",
-        config: { legs: 1, pools: { count: 2 } },
-        qualification: null,
-      },
-      {
-        kind: "knockout",
-        name: "Knockout",
-        config: {},
-        qualification: {
-          take: Array.from({ length: q }, (_, i) => ({
-            pool: i % 2 === 0 ? "A" : "B",
-            rank: Math.floor(i / 2) + 1,
-          })),
-        },
-      },
-    ],
-  },
-  {
-    key: "group_stepladder",
-    label: "Group + Stepladder",
-    help: "Round robin, then a stepladder final — lowest seed climbs.",
-    build: (q) => [
-      { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
-      { kind: "stepladder", name: "Stepladder finals", config: {}, qualification: { topN: q } },
-    ],
-  },
-  {
-    key: "swiss",
-    label: "Swiss",
-    help: "Score-group pairings, fixed rounds.",
-    build: () => [
-      { kind: "swiss", name: "Swiss", config: { rounds: 5 }, qualification: null },
-    ],
-  },
-  {
-    key: "knockout",
-    label: "Knockout",
-    help: "Single elimination bracket.",
-    build: () => [{ kind: "knockout", name: "Knockout", config: {}, qualification: null }],
-  },
-  {
-    key: "double_elim",
-    label: "Double elimination",
-    help: "Losers bracket + grand final (Pro).",
-    build: () => [
-      { kind: "double_elim", name: "Double elimination", config: {}, qualification: null },
-    ],
-  },
-  {
-    key: "triple_rr",
-    label: "Triple round robin",
-    help: "Everyone plays everyone three times.",
-    build: () => [{ kind: "league", name: "Triple RR", config: { legs: 3 }, qualification: null }],
-  },
-  {
-    key: "americano",
-    label: "Americano (padel)",
-    help: "Individuals rotate partners each round; personal points (Pro).",
-    build: () => [
-      { kind: "americano", name: "Americano", config: { mode: "americano", courtCount: 2, rounds: 7 }, qualification: null },
-    ],
-  },
-  {
-    key: "mexicano",
-    label: "Mexicano (padel)",
-    help: "Re-rank each round: 1+4 vs 2+3 from live points (Pro).",
-    build: () => [
-      { kind: "americano", name: "Mexicano", config: { mode: "mexicano", courtCount: 2, rounds: 7 }, qualification: null },
-    ],
-  },
-  {
-    key: "ladder",
-    label: "Ladder",
-    help: "Open standings; players challenge upward over a long window (Pro).",
-    build: () => [
-      { kind: "ladder", name: "Ladder", config: { challengeRange: 3 }, qualification: null },
-    ],
-  },
-];
 
 const GENDERS = [
   { key: "m", label: "Male" },
@@ -285,16 +170,7 @@ export function DivisionBuilder({
   }
 
   function buildStages(): StageDraft[] {
-    const t = STAGE_TEMPLATES.find((s) => s.key === template);
-    const drafts = (t ?? STAGE_TEMPLATES[0]).build(qualified);
-    // Apply the knob values onto the template's first stage.
-    return drafts.map((d) => {
-      const config = { ...d.config };
-      if (d.kind === "swiss") config.rounds = swissRounds;
-      if (d.kind === "league" || d.kind === "group") config.legs = legs;
-      if (d.kind === "group") config.pools = { count: poolCount };
-      return { ...d, config };
-    });
+    return buildTemplateStages(template, { qualified, swissRounds, poolCount, legs });
   }
 
   async function submit() {

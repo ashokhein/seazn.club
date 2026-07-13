@@ -301,6 +301,15 @@ async function divisionSettingsSuite(admin: Session): Promise<void> {
     "v8 format 409s once fixtures exist",
     post.status === 409 && (post.json.error as { code?: string } | undefined)?.code === "FORMAT_LOCKED",
   );
+
+  const structSwap = await raw(admin, `/api/v1/divisions/${div.id}/stages`, "PUT", [
+    { seq: 1, kind: "knockout", name: "KO", config: {}, qualification: null },
+  ]);
+  check(
+    "v8 structure PUT 409s once fixtures exist",
+    structSwap.status === 409 &&
+      (structSwap.json.error as { code?: string } | undefined)?.code === "FORMAT_LOCKED",
+  );
 }
 
 /** Flip Stripe Connect readiness (spec 2026-07-12) — Express onboarding can't

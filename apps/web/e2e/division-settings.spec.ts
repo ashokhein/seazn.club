@@ -48,6 +48,16 @@ test("settings tab: sections render, rename works, format locks with fixtures", 
 
   // Format editor is live pre-fixtures — structured fields, no JSON needed.
   await page.getByRole("button", { name: /Format/ }).click();
+
+  // Competition format: pick Groups + Knockout, apply, structure rebuilds.
+  await page.getByTestId("format-template").selectOption("groups_ko");
+  await page.getByRole("spinbutton", { name: "Top N advance" }).fill("2");
+  await page.getByTestId("apply-structure").click();
+  await expect(page.getByText("Format changed — stages rebuilt.")).toBeVisible();
+  await expect(page.getByTestId("stage-structure")).toContainText("Group stage");
+  await expect(page.getByTestId("stage-structure")).toContainText("Knockout");
+
+  // Match rules still apply independently.
   await page.getByRole("spinbutton", { name: "Win" }).fill("5");
   await page.getByRole("button", { name: "Apply format" }).click();
   await expect(page.getByText("Format updated.")).toBeVisible();
@@ -57,17 +67,15 @@ test("settings tab: sections render, rename works, format locks with fixtures", 
   await expect(page.getByTestId("division-settings")).toHaveCount(0);
   await expect(page.getByText("Danger zone")).toHaveCount(0);
 
-  // Generate fixtures → the format is history.
+  // Generate fixtures on the new structure → the format is history.
   await apiJson(
     request,
     `/api/v1/divisions/${rig.divisionId}/entrants`,
     "POST",
-    ["Alpha", "Bravo"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })),
+    ["Alpha", "Bravo", "Cara", "Drew"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })),
   );
-  const stage = await apiJson<{ id: string }>(request, `/api/v1/divisions/${rig.divisionId}/stages`, "POST", {
-    seq: 1, kind: "league", name: "L", config: {},
-  });
-  await apiJson(request, `/api/v1/stages/${stage.data!.id}/generate`, "POST");
+  const stagesNow = await apiJson<{ id: string }[]>(request, `/api/v1/divisions/${rig.divisionId}/stages`);
+  await apiJson(request, `/api/v1/stages/${stagesNow.data![0]!.id}/generate`, "POST");
 
   // Renames regenerate the slug — resolve the current one before navigating.
   const fresh = await apiJson<{ slug: string }>(request, `/api/v1/divisions/${rig.divisionId}`);
@@ -81,6 +89,12 @@ test("settings tab: sections render, rename works, format locks with fixtures", 
   });
   expect(res.status()).toBe(409);
   expect(((await res.json()) as { error?: { code?: string } }).error?.code).toBe("FORMAT_LOCKED");
+
+  const swap = await page.request.put(`/api/v1/divisions/${rig.divisionId}/stages`, {
+    data: [{ seq: 1, kind: "league", name: "L", config: {}, qualification: null }],
+  });
+  expect(swap.status()).toBe(409);
+  expect(((await swap.json()) as { error?: { code?: string } }).error?.code).toBe("FORMAT_LOCKED");
 });
 
 test("cards wear their identity: sport banner on comps, monogram tile on divisions", async ({

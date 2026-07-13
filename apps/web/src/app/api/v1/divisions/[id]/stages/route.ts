@@ -1,7 +1,7 @@
 import { v1, reply, parseBody } from "@/server/api-v1/http";
 import { requireResourceAuth } from "@/server/api-v1/auth";
 import { CreateStages } from "@/server/api-v1/schemas";
-import { listStages, createStages } from "@/server/usecases/stages";
+import { listStages, createStages, replaceStages } from "@/server/usecases/stages";
 
 type Ctx = { params: Promise<{ id: string }> };
 
@@ -10,6 +10,17 @@ export async function GET(req: Request, { params }: Ctx) {
     const { id } = await params;
     const auth = await requireResourceAuth(req, "division", id, "read");
     return listStages(auth, id);
+  });
+}
+
+/** Replace the whole stage graph (v8 Settings → Format) — 409 FORMAT_LOCKED
+ *  once fixtures exist. */
+export async function PUT(req: Request, { params }: Ctx) {
+  return v1(async () => {
+    const { id } = await params;
+    const body = await parseBody(req, CreateStages);
+    const auth = await requireResourceAuth(req, "division", id, "write");
+    return replaceStages(auth, id, body);
   });
 }
 

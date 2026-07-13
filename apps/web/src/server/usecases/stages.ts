@@ -201,6 +201,34 @@ export async function createStages(
   });
 }
 
+/** Replace the division's whole stage graph (v8 Settings → Format: League /
+ *  Knockout / Groups + Knockout…). Allowed only while no stage owns fixtures
+ *  — the same FORMAT_LOCKED rule as patchDivision's variant/config guard.
+ *  Delete + recreate runs as two steps (createStages owns its validation and
+ *  tx); a failed create leaves the division stage-less, recoverable exactly
+ *  like the manual Fixtures-tab delete-then-add flow. */
+export async function replaceStages(
+  auth: AuthCtx,
+  divisionId: string,
+  input: CreateStages,
+): Promise<StageRow[]> {
+  await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + divisionId}))`;
+    const [locked] = await tx`
+      select 1 from fixtures f join stages s on s.id = f.stage_id
+      where s.division_id = ${divisionId} limit 1`;
+    if (locked) {
+      throw new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
+    }
+    await tx`delete from stages where division_id = ${divisionId}`;
+  });
+  return createStages(auth, divisionId, input);
+}
+
 /**
  * Delete a stage (organiser added it by mistake). Only the last stage of the
  * graph is deletable — removing a middle stage would orphan the qualification
