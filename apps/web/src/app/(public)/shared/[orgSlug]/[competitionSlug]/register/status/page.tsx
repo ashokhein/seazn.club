@@ -169,6 +169,14 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
       <div className={`mt-3 rounded-xl border p-5 ${copy.tone}`}>
         <h1 className="font-display text-2xl font-semibold">{copy.title}</h1>
         <p className="mt-1 text-sm">{copy.body}</p>
+        {view.status === "waitlisted" && view.position !== null && (
+          <p
+            className="mt-2 inline-block rounded-md bg-white/70 px-2.5 py-1 text-xs font-semibold tabular-nums"
+            data-testid="queue-position-public"
+          >
+            You&apos;re #{view.position} in line — we&apos;ll email you if a spot opens.
+          </p>
+        )}
         {view.status === "pending" && view.can_pay_online && view.expires_at && (
           <p className="mt-2 inline-block rounded-md bg-white/70 px-2.5 py-1 text-xs font-semibold tabular-nums">
             Spot held until {formatDeadlineUtc(view.expires_at)}
