@@ -42,6 +42,8 @@ export interface RegisterDivision {
   open: boolean;
   closed_reason: string | null;
   requires_dob: boolean;
+  /** Queue length behind a full division (PROMPT-52). */
+  waitlisted: number;
   youth: boolean;
   form_fields: {
     key: string;
@@ -482,7 +484,11 @@ export function RegisterForm({
                       {d.remaining !== null && d.remaining > 0
                         ? ` · ${msg("register.capacity.left", { n: d.remaining })}`
                         : ""}
-                      {dWaitlist ? " · full — joins the waitlist" : ""}
+                      {dWaitlist
+                        ? d.waitlisted > 0
+                          ? ` · full — waitlist: ${d.waitlisted}`
+                          : " · full — joins the waitlist"
+                        : ""}
                       {disabled && d.closed_reason === "window" ? " · registration closed" : ""}
                       {disabled && d.closed_reason === "payments_unavailable"
                         ? " · card payments temporarily unavailable"

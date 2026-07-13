@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { platformFeeDefault } from "@/lib/platform-settings";
 import { AdminPlatformSettings } from "@/components/admin-platform-settings";
 
@@ -17,6 +18,12 @@ export default async function AdminSettingsPage() {
         </p>
       </div>
       <AdminPlatformSettings initialFeePercent={fee} />
+      <p className="text-xs text-slate-500">
+        See what the cut has earned →{" "}
+        <Link href="/admin/revenue" className="text-purple-300 hover:text-white">
+          Revenue
+        </Link>
+      </p>
     </div>
   );
 }
