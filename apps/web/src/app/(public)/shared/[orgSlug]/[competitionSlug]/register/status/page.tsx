@@ -174,7 +174,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
             className="mt-2 inline-block rounded-md bg-white/70 px-2.5 py-1 text-xs font-semibold tabular-nums"
             data-testid="queue-position-public"
           >
-            You&apos;re #{view.position} in line — we&apos;ll email you if a spot opens.
+            {`You're #${view.position} in line — we'll email you if a spot opens.`}
           </p>
         )}
         {view.status === "pending" && view.can_pay_online && view.expires_at && (

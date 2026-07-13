@@ -367,18 +367,14 @@ function FormBuilder({
     onChange([...fields, { key: `question_${n}`, label: `Question ${n}`, kind: "text", required: false }]);
   }
 
+  // Lives inside a ~340px accordion column: every control gets the full row
+  // (a shared row collapsed the label input to nothing), and the add button
+  // sits full-width under the list where it can't crowd the intro copy.
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-slate-400">
-          Ask registrants anything beyond name, email and date of birth.
-        </p>
-        {canEdit && fields.length < 12 && (
-          <button type="button" onClick={add} className="btn btn-ghost text-xs">
-            + Add question
-          </button>
-        )}
-      </div>
+      <p className="text-xs text-slate-400">
+        Ask registrants anything beyond name, email and date of birth.
+      </p>
       {fields.length === 0 && (
         <p className="text-xs text-slate-400">
           e.g. shirt size, dietary needs, emergency contact, club membership number, or a
@@ -387,9 +383,10 @@ function FormBuilder({
       )}
       {fields.map((f, i) => (
         <div key={i} className="space-y-2 rounded-md border border-slate-200 p-3">
-          <div className="flex gap-2">
+          <label className="block text-xs text-slate-500">
+            Question label
             <input
-              placeholder="Label"
+              placeholder="e.g. Shirt size"
               disabled={!canEdit}
               value={f.label}
               onChange={(e) =>
@@ -403,27 +400,13 @@ function FormBuilder({
                       .slice(0, 40) || f.key,
                 })
               }
-              className="input flex-1 text-sm"
+              className="input mt-1 w-full text-sm"
             />
-            <select
-              disabled={!canEdit}
-              value={f.kind}
-              onChange={(e) =>
-                update(i, {
-                  kind: e.target.value as FormField["kind"],
-                  options: e.target.value === "select" ? (f.options ?? [""]) : undefined,
-                })
-              }
-              className="input text-sm"
-            >
-              <option value="text">Text</option>
-              <option value="select">Select</option>
-              <option value="checkbox">Checkbox</option>
-            </select>
-          </div>
+          </label>
           {f.kind === "select" && (
             <input
               placeholder="Options, comma-separated"
+              aria-label="Select options, comma-separated"
               disabled={!canEdit}
               value={(f.options ?? []).join(", ")}
               onChange={(e) =>
@@ -437,8 +420,24 @@ function FormBuilder({
               className="input w-full text-sm"
             />
           )}
-          <div className="flex items-center justify-between">
-            <label className="flex items-center gap-1.5 text-xs text-slate-500">
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              aria-label="Question type"
+              disabled={!canEdit}
+              value={f.kind}
+              onChange={(e) =>
+                update(i, {
+                  kind: e.target.value as FormField["kind"],
+                  options: e.target.value === "select" ? (f.options ?? [""]) : undefined,
+                })
+              }
+              className="input min-w-0 flex-1 text-sm"
+            >
+              <option value="text">Text</option>
+              <option value="select">Select</option>
+              <option value="checkbox">Checkbox</option>
+            </select>
+            <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-slate-500">
               <input
                 type="checkbox"
                 disabled={!canEdit}
@@ -451,7 +450,7 @@ function FormBuilder({
               <button
                 type="button"
                 onClick={() => onChange(fields.filter((_, j) => j !== i))}
-                className="text-xs text-red-500 hover:underline"
+                className="ml-auto text-xs text-red-500 hover:underline"
               >
                 Remove
               </button>
@@ -459,6 +458,11 @@ function FormBuilder({
           </div>
         </div>
       ))}
+      {canEdit && fields.length < 12 && (
+        <button type="button" onClick={add} className="btn btn-ghost w-full text-xs">
+          + Add question
+        </button>
+      )}
       <p className="text-[11px] text-slate-400">Save settings to apply form changes.</p>
     </div>
   );
