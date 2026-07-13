@@ -228,7 +228,7 @@ export function RegistrationList({
                     {r.ref_code}
                   </span>
                 )}
-                <span className="min-w-0 flex-1">
+                <span className="min-w-[10rem] flex-1">
                   <span className="block truncate font-medium text-slate-800">
                     {r.display_name}
                     {r.entrant_id && (
