@@ -21,6 +21,8 @@ import {
   type LineupSlotIn,
 } from "@/components/v2/fixture-console";
 import { DeviceLinkPanel } from "@/components/v2/device-link-panel";
+import { listFixtureAvailability } from "@/server/usecases/me";
+import { CheckinQr } from "@/components/v2/checkin-qr";
 
 export default async function FixturePage({
   params,
@@ -35,11 +37,12 @@ export default async function FixturePage({
   const id = page.fixtureId;
   const isScorer = auth.role === "scorer";
   const fixture = await getFixture(auth, id);
-  const [division, state, events, recorderNames] = await Promise.all([
+  const [division, state, events, recorderNames, availability] = await Promise.all([
     getDivision(auth, fixture.division_id),
     getFixtureState(auth, id),
     listEvents(auth, id, 0),
     eventRecorderNames(auth, id),
+    listFixtureAvailability(auth, id),
   ]);
   const competition = await getCompetition(auth, division.competition_id);
   const sportModule = resolveModule(division.sport_key, division.module_version);
@@ -115,6 +118,7 @@ export default async function FixturePage({
           }))}
           canEdit={canScore && !(competition.frozen ?? false)}
           recorderNames={recorderNames}
+          availability={availability}
           publicPath={
             // Share needs a page strangers can open (v3/10 #2) — private
             // competitions have none.
@@ -135,6 +139,10 @@ export default async function FixturePage({
                 fixtureId={fixture.id}
                 scorerLabel={sportModule.officialLabel.scorer}
               />
+              {/* Player self-check-in QR (PROMPT-53) — all plans. */}
+              <div className="mt-3">
+                <CheckinQr fixtureId={fixture.id} />
+              </div>
             </div>
           )}
       </main>

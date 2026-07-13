@@ -5,7 +5,11 @@
 // (doc 08 §3); the engine validates size/roles at the scoring door.
 import { useState } from "react";
 import { apiV1 } from "@/lib/client-v1";
-import type { SideInfo, LineupSlotIn } from "@/components/v2/fixture-console";
+import type {
+  SideInfo,
+  LineupSlotIn,
+  PersonAvailability,
+} from "@/components/v2/fixture-console";
 
 interface Props {
   fixtureId: string;
@@ -15,6 +19,55 @@ interface Props {
   lineupSize: number;
   canEdit: boolean;
   onSaved: () => void;
+  /** Player RSVP/check-in per person (PROMPT-53). No entry → "—" chip. */
+  availability?: Record<string, PersonAvailability>;
+}
+
+// RSVP chip vocabulary: ✓ in / ✗ out / ? maybe / — no answer (or unclaimed).
+const AVAIL_CHIP: Record<PersonAvailability["status"], { mark: string; cls: string; label: string }> = {
+  in: { mark: "✓", cls: "bg-emerald-100 text-emerald-700", label: "available" },
+  out: { mark: "✗", cls: "bg-red-100 text-red-600", label: "unavailable" },
+  maybe: { mark: "?", cls: "bg-amber-100 text-amber-700", label: "maybe available" },
+};
+
+function AvailabilityChip({
+  personName,
+  info,
+}: {
+  personName: string;
+  info: PersonAvailability | undefined;
+}) {
+  if (!info) {
+    return (
+      <span
+        aria-label={`${personName}: no availability answer`}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] text-slate-400"
+        data-testid="availability-chip"
+      >
+        —
+      </span>
+    );
+  }
+  const chip = AVAIL_CHIP[info.status];
+  return (
+    <span className="inline-flex items-center gap-1" data-testid="availability-chip">
+      <span
+        aria-label={`${personName}: ${chip.label}${info.note ? ` — ${info.note}` : ""}`}
+        title={info.note ?? undefined}
+        className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${chip.cls}`}
+      >
+        {chip.mark}
+      </span>
+      {info.checked_in_at && (
+        <span
+          aria-label={`${personName}: checked in at the venue`}
+          title="Checked in at the venue"
+          className="inline-block h-2 w-2 rounded-full bg-lime-500"
+          data-testid="checkedin-dot"
+        />
+      )}
+    </span>
+  );
 }
 
 interface SlotDraft {
@@ -34,6 +87,7 @@ export function LineupEditor({
   lineupSize,
   canEdit,
   onSaved,
+  availability = {},
 }: Props) {
   const [slots, setSlots] = useState<SlotDraft[]>(() =>
     side.lineup.map((s: LineupSlotIn, i) => ({
@@ -114,6 +168,7 @@ export function LineupEditor({
           <li key={s.person_id} className="flex flex-wrap items-center gap-2 text-xs">
             <span className="w-7 font-mono text-slate-400">{i + 1}.</span>
             <span className="w-36 truncate font-medium text-slate-700">{s.full_name}</span>
+            <AvailabilityChip personName={s.full_name} info={availability[s.person_id]} />
             <select
               disabled={!canEdit}
               value={s.slot}
@@ -232,6 +287,7 @@ export function LineupEditor({
               .filter((m) => !inLineup.has(m.person_id))
               .map((m) => (
                 <span key={m.person_id} className="inline-flex items-center gap-1 rounded-full border border-slate-200 px-2 py-0.5 text-xs text-slate-500">
+                  <AvailabilityChip personName={m.full_name} info={availability[m.person_id]} />
                   {m.full_name}
                   <button
                     type="button"

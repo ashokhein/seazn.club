@@ -4,9 +4,10 @@ import "server-only";
 // claimed player is usually NOT an org member, so the tenant door never
 // opens for them; every function pins rows through persons.user_id = me.
 // dob never leaves this module — only the derived consent_locked flag does.
-import { sql } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { consentLocked } from "@/lib/guardian";
+import type { AuthCtx } from "@/server/api-v1/auth";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 
 export type AvailabilityStatus = "in" | "out" | "maybe";
@@ -215,6 +216,27 @@ export async function checkInToFixture(
       set checked_in_at = now(), updated_at = now()
     returning ${sql(FA_COLS)}`;
   return row;
+}
+
+export interface FixtureAvailability {
+  person_id: string;
+  status: AvailabilityStatus;
+  note: string | null;
+  checked_in_at: string | null;
+}
+
+/** Organiser-side read for the lineup picker (PROMPT-53): every RSVP/check-in
+ *  on the fixture, keyed by person. Tenant-bounded — unlike the /me reads. */
+export async function listFixtureAvailability(
+  auth: AuthCtx,
+  fixtureId: string,
+): Promise<Record<string, FixtureAvailability>> {
+  return withTenant(auth.orgId, async (tx) => {
+    const rows = await tx<FixtureAvailability[]>`
+      select person_id, status, note, checked_in_at
+      from fixture_availability where fixture_id = ${fixtureId}`;
+    return Object.fromEntries(rows.map((r) => [r.person_id, r]));
+  });
 }
 
 export interface MyPerson {
