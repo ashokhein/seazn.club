@@ -5,7 +5,8 @@
 
 export interface DerivableReg {
   id: string;
-  status: "pending" | "paid" | "confirmed" | "waitlisted" | "withdrawn" | "expired";
+  /** Registration status; plain string so client row types assign directly. */
+  status: string;
   contact_email: string;
   amount_cents: number;
   refunded_cents: number;
