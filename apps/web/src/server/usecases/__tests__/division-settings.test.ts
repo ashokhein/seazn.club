@@ -10,6 +10,8 @@ import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision, getDivision, patchDivision } from "../divisions";
+import { createEntrants } from "../entrants";
+import { createStages, generateStageFixtures } from "../stages";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -74,6 +76,47 @@ describe.skipIf(!HAS_DB)("division logo columns (V274)", () => {
 
     const cleared = await patchDivision(owner, division.id, { logo_storage_path: null });
     expect(cleared.logo_storage_path).toBeNull();
+  });
+});
+
+describe.skipIf(!HAS_DB)("format lock (v8)", () => {
+  it("variant/config edits work until fixtures exist, then 409 FORMAT_LOCKED", async () => {
+    const owner = await seedOwner();
+    const { division } = await rig(owner);
+
+    // Pre-fixtures: variant + config change lands (re-validated like create).
+    const changed = await patchDivision(owner, division.id, {
+      variant_key: "sets",
+      config: { points: { w: 2, d: 1, l: 0 } },
+    });
+    expect(changed.variant_key).toBe("sets");
+    expect((changed.config as { points: { w: number } }).points.w).toBe(2);
+
+    // Generate a league schedule → the format is history.
+    await createEntrants(owner, division.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+    ]);
+    const [stage] = await createStages(owner, division.id, {
+      seq: 1, kind: "league", name: "L", config: {},
+    });
+    await generateStageFixtures(owner, stage!.id);
+
+    await expect(
+      patchDivision(owner, division.id, { variant_key: "score" }),
+    ).rejects.toMatchObject({ status: 409, code: "FORMAT_LOCKED" });
+
+    // Non-format fields still patch while locked.
+    const renamed = await patchDivision(owner, division.id, { name: "Open Renamed" });
+    expect(renamed.name).toBe("Open Renamed");
+  });
+
+  it("rejects an unknown variant with 422 (create-time validation reused)", async () => {
+    const owner = await seedOwner();
+    const { division } = await rig(owner);
+    await expect(
+      patchDivision(owner, division.id, { variant_key: "nope" }),
+    ).rejects.toMatchObject({ status: 422 });
   });
 });
 

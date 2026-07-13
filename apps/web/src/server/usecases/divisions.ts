@@ -380,6 +380,42 @@ export async function patchDivision(
   let previousCompetitionId: string | null = null;
   const row = await withTenant(auth.orgId, async (tx) => {
     const effective: Record<string, unknown> = { ...patch };
+    // Format edits (v8 spec §2): allowed only while no stage owns fixtures,
+    // then re-validated exactly like create — variant preset merged with the
+    // override and parsed by the PINNED module's schema.
+    if (patch.variant_key !== undefined || patch.config !== undefined) {
+      const [{ locked }] = await tx<{ locked: boolean }[]>`
+        select exists(
+          select 1 from fixtures f
+          join stages s on s.id = f.stage_id
+          where s.division_id = ${id}
+        ) as locked`;
+      if (locked) {
+        throw new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
+      }
+      const [current] = await tx<
+        { sport_key: string; module_version: string; variant_key: string }[]
+      >`select sport_key, module_version, variant_key from divisions where id = ${id}`;
+      if (!current) throw new HttpError(404, "division not found");
+      const variantKey = patch.variant_key ?? current.variant_key;
+      const [variant] = await tx<{ config: Record<string, unknown> }[]>`
+        select config from sport_variants
+        where sport_key = ${current.sport_key} and key = ${variantKey}
+        order by org_id nulls last limit 1`;
+      if (!variant) {
+        throw new HttpError(422, `unknown variant '${variantKey}' for ${current.sport_key}`);
+      }
+      const sportModule = resolveModule(current.sport_key, current.module_version);
+      const merged = { ...variant.config, ...(patch.config ?? {}) };
+      const parsed = sportModule.configSchema.safeParse(merged);
+      if (!parsed.success) {
+        throw new EngineError("CONFIG_INVALID", `invalid ${current.sport_key} config`, {
+          issues: parsed.error.issues,
+        });
+      }
+      effective.variant_key = variantKey;
+      effective.config = tx.json(parsed.data as never);
+    }
     // Eligibility edits re-derive the youth flag unless the same patch sets
     // it explicitly (v3/11 gap 8 — auto with organiser override).
     if (patch.eligibility !== undefined && patch.youth === undefined) {
