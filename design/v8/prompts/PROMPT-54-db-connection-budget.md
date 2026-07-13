@@ -18,10 +18,13 @@ PostgREST, background workers), app contribution at idle is 0 (`idle_timeout: 20
 closes pool connections). Steady state is nowhere near exhaustion: 2 machines × 5
 default = 10 worst case on top of the baseline.
 
-The real failure mode is the 2026-07-13 stg outage: crash-looping machines leaked dead
-direct connections until FATAL 53300 ("remaining connection slots are reserved for
-SUPERUSER"), which caused more crashes. Self-healed when flapping stopped. So: budget
-explicitly, rotate connections so leaks age out, and give ops a one-command diagnosis.
+**Root cause found + fixed after this prompt was written** (PR #80,
+`fix/db-client-singleton`): production builds never cached the postgres client —
+`getClient()` constructed a fresh pool per sql-proxy access, so ONE page render held
+25+ connections; the 2026-07-13 stg FATAL 53300 outage was this bug, with crash-loops
+as the symptom. The tasks below remain valid as defense-in-depth (budget the pool
+explicitly, rotate so any future leak ages out, one-command diagnosis) — verify PR #80
+is merged/deployed first, and re-measure with `db-conn-report` before choosing values.
 
 ## Task
 
