@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 // clubs and none of their consoles. All plans, free included.
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getCurrentUser } from "@/lib/auth";
+import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
 import { msg } from "@/lib/messages";
 import { listMyFixtures, listMyPersons, type MyFixture, type MyResult } from "@/server/usecases/me";
@@ -20,10 +20,16 @@ export default async function MePage({
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=/me");
-  const [{ upcoming, results, teams }, persons] = await Promise.all([
+  const [{ upcoming, results, teams }, persons, orgs, activeOrgId] = await Promise.all([
     listMyFixtures(user.id),
     listMyPersons(user.id),
+    // Dual-role seam: organisers who are also players get a door back.
+    // Read-only resolve — resolveActiveOrg repairs the cookie, which a
+    // Server Component render is not allowed to do.
+    getUserOrgs(user.id),
+    getActiveOrgId(),
   ]);
+  const activeOrg = orgs.find((o) => o.id === activeOrgId) ?? orgs[0] ?? null;
   const { claimed } = await searchParams;
   const [next, ...rest] = upcoming;
 
@@ -36,6 +42,14 @@ export default async function MePage({
           </span>
           <span className="text-sm text-cream/60">{msg("me.eyebrow")}</span>
           <div className="flex-1" />
+          {activeOrg && (
+            <Link
+              href={routes.orgHome(activeOrg.slug)}
+              className="rounded-md px-2.5 py-1.5 text-sm font-medium text-cream/70 transition-colors hover:bg-cream/10 hover:text-cream"
+            >
+              ← Console
+            </Link>
+          )}
           <span className="text-xs text-cream/60">{user.display_name}</span>
           <LogoutButton />
         </div>

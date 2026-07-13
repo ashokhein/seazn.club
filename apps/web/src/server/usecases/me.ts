@@ -239,6 +239,14 @@ export async function listFixtureAvailability(
   });
 }
 
+/** Does any claimed player profile point at this login? Drives the console
+ *  nav's "Player home" door for dual-role users (organiser + player). */
+export async function hasClaimedProfile(userId: string): Promise<boolean> {
+  const [row] = await sql<{ has: boolean }[]>`
+    select exists(select 1 from persons where user_id = ${userId}) as has`;
+  return row?.has === true;
+}
+
 /** True when the user's ONLY relationship to the platform is a claimed
  *  player profile (no org memberships). Their landing is /me — never the
  *  org dashboard, and never an auto-provisioned "My organization" (the

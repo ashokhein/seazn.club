@@ -1,7 +1,8 @@
 import Link from "@/components/ui/console-link";
-import { LayoutDashboard, Settings, Users } from "lucide-react";
+import { CircleUserRound, LayoutDashboard, Settings, Users } from "lucide-react";
 import { HelpMenu } from "@/components/help-menu";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
+import { hasClaimedProfile } from "@/server/usecases/me";
 import { routes } from "@/lib/routes";
 import { needsTourAfterOnboarding } from "@/lib/activation";
 import { EDITOR_ROLES } from "@/lib/types";
@@ -34,6 +35,7 @@ export async function Nav() {
     }
   }
   const logoUrl = activeOrg ? orgLogoUrl(activeOrg) : null;
+  const isPlayer = !!user && (await hasClaimedProfile(user.id));
   // Tour targets editor flows (rename org, create competition) — viewers skip it.
   const canTour =
     !!user && !!activeOrg && (EDITOR_ROLES as readonly string[]).includes(activeOrg.role);
@@ -102,6 +104,18 @@ export async function Nav() {
                 <Settings className="h-4 w-4" strokeWidth={1.75} />
                 <span className="hidden sm:inline">Settings</span>
               </Link>
+              {/* Dual-role seam (PROMPT-53): an organiser who is ALSO a
+                  claimed player keeps a door to their own player home. */}
+              {isPlayer && (
+                <Link
+                  href={routes.me()}
+                  aria-label="Player home"
+                  className="flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium text-cream/85 transition-colors hover:bg-cream/10 hover:text-cream"
+                >
+                  <CircleUserRound className="h-4 w-4" strokeWidth={1.75} />
+                  <span className="hidden sm:inline">Player home</span>
+                </Link>
+              )}
             </nav>
             {/* The console "?" menu (v3/06 §3): closes on outside click/Esc. */}
             <HelpMenu />
