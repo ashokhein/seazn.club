@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { describeEvent, EVENT_TONE_STYLE } from "@/lib/event-copy";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { ClientTime } from "@/components/client-time";
 import { ShareButton } from "@/components/share-button";
 import { LineupEditor } from "@/components/v2/lineup-editor";
 import { ScoringErrorBoundary } from "@/components/v2/scoring-error-boundary";
@@ -208,9 +209,14 @@ export function FixtureConsole({
         </p>
         <p className="mt-1 text-xs text-slate-400">
           Round {fixture.round_no}
-          {fixture.scheduled_at
-            ? ` · ${new Date(fixture.scheduled_at).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}`
-            : ""}
+          {fixture.scheduled_at ? (
+            <>
+              {" · "}
+              <ClientTime value={fixture.scheduled_at} mode="datetime" />
+            </>
+          ) : (
+            ""
+          )}
           {fixture.venue ? ` · ${fixture.venue}` : ""}
           {fixture.court_label ? ` · ${fixture.court_label}` : ""}
           {` · recorded by the ${sport.scorerLabel.toLowerCase()}`}
@@ -370,7 +376,7 @@ export function FixtureConsole({
                     {recorder ? <span className="text-slate-400"> ({recorder})</span> : null}
                   </span>
                   <span className="shrink-0 text-slate-400">
-                    {new Date(e.recorded_at).toLocaleTimeString()}
+                    <ClientTime value={e.recorded_at} mode="time" />
                   </span>
                   {scoring && !voided && e.type !== "core.void" && !decidedLock(live.status) && (
                     <button
