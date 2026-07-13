@@ -252,10 +252,79 @@ async function main() {
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
+  // --- design/v7 PROMPT-52: waitlist queue position + public count.
+  // Before gapSuite — its destructive downgrade ends the org's pro quota.
+  await regQueueSuite(admin);
+
   await gapSuite(admin, org.id, org2.id);
 
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
   await platformRevenueSuite(admin, `admin_${tag}@example.com`);
+}
+
+/** design/v7 PROMPT-52: the waitlist is a visible queue — the token status
+ *  view carries a 1-based position and the public register card shows the
+ *  queue length behind a full division. */
+async function regQueueSuite(admin: Session): Promise<void> {
+  // v1 writes land on the session's ACTIVE org (earlier suites switch it) —
+  // resolve that org's slug, not the sign-in default's.
+  const me = (await call(admin, "/api/users/me")) as { org: { id: string } | null };
+  const orgs = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const orgSlug = orgs.find((o) => o.id === me.org?.id)!.slug;
+
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `Queue Probe ${tag}`,
+      visibility: "public",
+    }),
+  );
+  const div = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Tiny Queue",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+      eligibility: [],
+    }),
+  );
+  await v1(admin, `/api/v1/divisions/${div.id}/registration-settings`, "PUT", {
+    enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "gbp",
+    capacity: 1, form_fields: [],
+  });
+
+  const submit = async (name: string) => {
+    const res = await v1(newSession(), `/api/v1/public/orgs/${orgSlug}/competitions/${comp.slug}/register`, "POST", {
+      division_id: div.id,
+      display_name: name,
+      contact_email: `${name.replace(/ /g, "").toLowerCase()}_${tag}@example.com`,
+    });
+    if (res.status !== 201) {
+      console.log(`queue submit "${name}" failed:`, res.status, JSON.stringify(res.json));
+    }
+    return res;
+  };
+  const holder = await submit("Queue Holder"); // takes the only spot
+  check("queue holder takes the spot", holder.status === 201);
+  const w1res = await submit("Queue First");
+  const w1 = v1data<{ registration_id: string; access_token: string; status: string }>(w1res);
+  check("queue overflow waitlists", w1res.status === 201 && w1?.status === "waitlisted");
+  await submit("Queue Second");
+
+  const status = await v1(
+    newSession(),
+    `/api/v1/public/registrations/${w1.registration_id}?token=${encodeURIComponent(w1.access_token)}`,
+  );
+  const view = v1data<{ status: string; position: number | null }>(status);
+  check(
+    "waitlist status carries #1 position",
+    view.status === "waitlisted" && view.position === 1,
+  );
+
+  const registerPage = await html(newSession(), `/shared/${orgSlug}/${comp.slug}/register`);
+  check(
+    "public card shows waitlist count",
+    registerPage.status === 200 && registerPage.body.includes("full — waitlist: 2"),
+  );
 }
 
 /** Flip the staff-console flag on a user — same SQL-flip convention as
