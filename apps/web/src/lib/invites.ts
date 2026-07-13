@@ -77,3 +77,39 @@ export async function grantInvite(invite: InviteRow, userId: string): Promise<vo
   const { invalidateUserOrgs } = await import("@/lib/auth");
   await invalidateUserOrgs(userId);
 }
+
+export type AcceptOutcome = "joined" | "scope_added" | "already_member";
+
+/**
+ * Accept an invite for a (possibly already-member) user. Invites are
+ * additive and never change an existing role:
+ *  - not a member → grantInvite (join with the invite's role + assignment);
+ *  - viewer/scorer × a scoped scorer invite → the assignment is added on top
+ *    of their current role (the umpire-QR-at-courtside case) and a use is
+ *    consumed — no seat charged, their existing seat already counts;
+ *  - anything else (owner/admin scanning their own QR, role invites to
+ *    members) → no-op, and the use is NOT burnt.
+ */
+export async function acceptInvite(invite: InviteRow, userId: string): Promise<AcceptOutcome> {
+  const { getOrgRole } = await import("@/lib/auth");
+  const existing = await getOrgRole(invite.org_id, userId);
+  if (!existing) {
+    await grantInvite(invite, userId);
+    return "joined";
+  }
+  const scope = invite.default_scope;
+  const additive =
+    invite.role === "scorer" && scope !== null &&
+    (existing === "viewer" || existing === "scorer");
+  if (!additive) return "already_member";
+  await sql.begin(async (tx) => {
+    await tx`
+      insert into scorer_assignments (org_id, user_id, scope_type, scope_id, created_by)
+      values (${invite.org_id}, ${userId}, ${scope.type}, ${scope.id}, null)
+      on conflict (org_id, user_id, scope_type, scope_id) do nothing`;
+    await tx`
+      update org_invites set used_count = used_count + 1
+      where id = ${invite.id}`;
+  });
+  return "scope_added";
+}

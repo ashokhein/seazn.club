@@ -3,7 +3,7 @@ import { HttpError } from "@/lib/errors";
 import { getCurrentUser, getOrgRole } from "@/lib/auth";
 import { publicRateLimit } from "@/server/usecases/public";
 import { fixtureRealtimeEligible } from "@/server/public-site/data";
-import { fixtureScope, scorerCovers } from "@/server/usecases/scorers";
+import { fixtureScope, scorerCovers, scoresViaAssignment } from "@/server/usecases/scorers";
 import { mintPublicFixtureToken } from "@/lib/realtime";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -50,5 +50,5 @@ async function isFixtureOfficial(fixtureId: string): Promise<boolean> {
   if (!scope) return false;
   const role = await getOrgRole(scope.org_id, user.id);
   if (role === "owner" || role === "admin") return true;
-  return role === "scorer" && (await scorerCovers(scope.org_id, user.id, scope));
+  return scoresViaAssignment(role) && (await scorerCovers(scope.org_id, user.id, scope));
 }

@@ -31,9 +31,11 @@ export default async function FixturePage({
   const fixtureNo = Number(no);
   if (!Number.isInteger(fixtureNo) || fixtureNo < 1) notFound();
   const page = await requireFixturePage(orgSlug, compSlug, divSlug, fixtureNo);
-  const { auth, canScore } = page;
+  const { auth, canScore, canEdit } = page;
   const id = page.fixtureId;
-  const isScorer = auth.role === "scorer";
+  // Scorer-role members and viewers scoring via assignment share the umpire
+  // chrome (My-matches breadcrumb); editors keep the organiser surface.
+  const isScorer = canScore && !canEdit;
   const fixture = await getFixture(auth, id);
   const [division, state, events, recorderNames] = await Promise.all([
     getDivision(auth, fixture.division_id),
@@ -125,8 +127,7 @@ export default async function FixturePage({
         />
 
         {/* Day-of device link (doc 13 §7): editors only — scorers never mint. */}
-        {!isScorer &&
-          canScore &&
+        {canEdit &&
           !(competition.frozen ?? false) &&
           fixture.status !== "finalized" &&
           fixture.status !== "cancelled" && (

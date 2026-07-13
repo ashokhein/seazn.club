@@ -160,6 +160,12 @@ export async function requireFixturePage(
     const scope = await fixtureScope(fixture.id);
     if (!scope || !(await scorerCovers(org.id, user.id, scope))) notFound();
     canScore = true;
+  } else if (membership.role === "viewer") {
+    // A viewer scores the fixtures their umpire-invite assignments cover
+    // (additive invites) — the page stays readable either way.
+    const { fixtureScope, scorerCovers } = await import("@/server/usecases/scorers");
+    const scope = await fixtureScope(fixture.id);
+    canScore = !!scope && (await scorerCovers(org.id, user.id, scope));
   }
   return {
     auth: { orgId: org.id, via: "session", userId: user.id, role: membership.role, keyId: null },
@@ -207,6 +213,11 @@ export async function requireResourcePageAuth(
     const scope = await fixtureScope(id);
     if (!scope || !(await scorerCovers(orgId, user.id, scope))) notFound();
     canScore = true;
+  } else if (org.role === "viewer" && kind === "fixture") {
+    // Additive invites: a viewer's covering assignment turns the score pad on.
+    const { fixtureScope, scorerCovers } = await import("@/server/usecases/scorers");
+    const scope = await fixtureScope(id);
+    canScore = !!scope && (await scorerCovers(orgId, user.id, scope));
   }
   return {
     auth: { orgId, via: "session", userId: user.id, role: org.role, keyId: null },

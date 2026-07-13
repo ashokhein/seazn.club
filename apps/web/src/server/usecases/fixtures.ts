@@ -8,6 +8,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import type { PatchFixture, PutLineup } from "@/server/api-v1/schemas";
 import { FIXTURE_COLS, type FixtureRow } from "./stages";
 import { moveFixture } from "./schedule";
+import { scoresViaAssignment } from "./scorers";
 
 /** Doc 13 §7: a device link reads fixture state/events ONLY — every other
  *  fixture surface (detail, lineups, schedule) is 403 for dl_ tokens. */
@@ -86,9 +87,10 @@ export async function putLineup(
       from fixtures f join divisions d on d.id = f.division_id
       where f.id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
-    // Doc 13 §2: lineup entry is config-gated for scorers (courtside reality
-    // default: allowed). Coverage was proven at the door.
-    if (auth.role === "scorer" && !fixture.scorer_can_enter_lineups) {
+    // Doc 13 §2: lineup entry is config-gated for anyone scoring via
+    // assignment (courtside reality default: allowed). Coverage was proven
+    // at the door.
+    if (scoresViaAssignment(auth.role) && !fixture.scorer_can_enter_lineups) {
       throw new HttpError(403, "Lineup entry is restricted to organisers in this division");
     }
     if (fixture.home_entrant_id !== entrantId && fixture.away_entrant_id !== entrantId) {
