@@ -80,4 +80,16 @@ test("pulse, queue order, #N in line, and public waitlist count all match one se
   // Public register card shows the queue length behind the full division.
   await page.goto(`/shared/${org.slug}/${rig.compSlug}/register`);
   await expect(page.getByText("full — waitlist: 2")).toBeVisible();
+
+  // Noticeboard QR (PROMPT-52 follow-up): the link card reveals a data-URL
+  // QR of the register link plus a competition-named PNG download.
+  await page.goto(`/o/${org.slug}/c/${rig.compSlug}/d/${rig.divSlug}/registrations`);
+  await page.getByRole("button", { name: "QR" }).click();
+  const qr = page.getByTestId("reg-link-qr");
+  await expect(qr).toBeVisible();
+  expect(await qr.getAttribute("src")).toMatch(/^data:image\/png/);
+  await expect(page.getByRole("link", { name: "Download PNG" })).toHaveAttribute(
+    "download",
+    `register-${rig.compSlug}.png`,
+  );
 });

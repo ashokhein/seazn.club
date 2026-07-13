@@ -6,6 +6,8 @@ order: 1
 
 Instead of typing entrants yourself, open a division for **self-registration**: a *Register now* button appears on the competition's public page.
 
+The console's **Public registration link** card gives you the URL to share — **Copy** it, **Open** it, or press **QR** for a printable code (with a PNG download) that opens the register form from a club noticeboard.
+
 ## Set it up
 
 The division's **registration settings** are grouped by what matters when — **Open & close** (the enable switch, entrant type and window), **Capacity**, **Money**, and **Sign-up form**:

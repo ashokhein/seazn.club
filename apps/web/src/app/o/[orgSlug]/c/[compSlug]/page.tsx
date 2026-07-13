@@ -79,11 +79,11 @@ export default async function CompetitionPage({
               <a
                 href={`${publicPath}/poster.pdf`}
                 target="_blank"
-                aria-label="Print Poster (PDF, opens in a new tab)"
+                aria-label="QR poster (PDF, opens in a new tab)"
                 className="btn btn-ghost gap-1.5"
               >
                 <Printer className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">Print Poster</span>
+                <span className="hidden sm:inline">QR</span>
               </a>
             )}
             <Link
