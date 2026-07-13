@@ -12,6 +12,7 @@ import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, divisionChipState, CHIP_SORT } from "@/components/ui/status-chip";
 import { divisionAccent, monogram } from "@/lib/division-hue";
+import { resolveLogoUrl } from "@/server/public-site/data";
 import { routes } from "@/lib/routes";
 import { msg } from "@/lib/messages";
 
@@ -138,7 +139,7 @@ export default async function CompetitionPage({
                         href={routes.division(orgSlug, compSlug, d.slug)}
                         media={{
                           kind: "tile",
-                          logoUrl: d.logo_url,
+                          logoUrl: resolveLogoUrl(d.logo_storage_path, d.logo_url),
                           monogram: monogram(d.name),
                           hue: divisionAccent(d.id),
                         }}
