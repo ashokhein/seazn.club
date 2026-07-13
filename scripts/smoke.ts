@@ -408,8 +408,12 @@ async function divisionSettingsSuite(admin: Session): Promise<void> {
   const uploadUrl = await raw(admin, `/api/v1/divisions/${div.id}/logo-upload-url`, "POST", {});
   const upload = uploadUrl.json.data as { storage_path?: string } | undefined;
   check(
-    "v8 division logo upload URL mints",
-    uploadUrl.status === 200 && !!upload?.storage_path?.includes(div.id),
+    "v8 division logo upload URL mints (or 503 keyless)",
+    (uploadUrl.status === 200 && !!upload?.storage_path?.includes(div.id)) ||
+      // CI smoke runs without Supabase creds — the guard is the behavior.
+      (uploadUrl.status === 503 &&
+        (uploadUrl.json.error as { message?: string } | undefined)?.message ===
+          "Storage is not configured"),
   );
 
   await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
