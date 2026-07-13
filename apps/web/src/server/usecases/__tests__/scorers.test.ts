@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { PaymentRequiredError, HttpError } from "@/lib/errors";
 import { createOrgForUser } from "@/lib/auth";
-import { grantInvite, loadInvite } from "@/lib/invites";
+import { acceptInvite, grantInvite, loadInvite } from "@/lib/invites";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { OrgRole } from "@/lib/types";
 import { createCompetition } from "../competitions";
@@ -345,6 +345,139 @@ describe.skipIf(!HAS_DB)("scorer role (doc 13, PROMPT-18)", () => {
     });
     await expect(assertMemberNotFrozen(orgId, admins[2])).resolves.toBeUndefined();
     await expect(assertMemberNotFrozen(orgId, ownerId)).resolves.toBeUndefined();
+  });
+
+  it("viewer with a covering assignment scores; scorer config gates apply to them", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const owner = asRole(orgId, ownerId, "owner");
+    const { division, fixtures } = await rig(owner);
+    const viewerId = await addMember(orgId, "viewer");
+    await createAssignment(orgId, viewerId, { type: "division", id: division.id }, ownerId);
+
+    const viewer = asRole(orgId, viewerId, "viewer");
+    const fx = fixtures[0].id;
+    await expect(requireScorable(viewer, fx)).resolves.toBeTruthy();
+
+    // Assignments show up in their "My matches" like any umpire's.
+    const mine = await listAssignedFixtures(viewerId);
+    expect(new Set(mine.map((f) => f.division_id))).toEqual(new Set([division.id]));
+
+    // They score like a scorer — and the per-division scorer config gates
+    // bind them too (they are not editors).
+    await scoreEvent(viewer, fx, { expected_seq: 0, type: "core.start", payload: {} });
+    const decided = await scoreEvent(viewer, fx, {
+      expected_seq: 1, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+    });
+    await sql`update divisions set scorer_can_finalize = false where id = ${division.id}`;
+    await expect(finalizeFixture(viewer, fx, decided.seq)).rejects.toMatchObject({ status: 403 });
+    await sql`update divisions set scorer_can_finalize = true where id = ${division.id}`;
+    const finalized = await finalizeFixture(viewer, fx, decided.seq);
+
+    // Post-finalize void stays an editor's power.
+    const [starter] = await sql<{ id: string }[]>`
+      select id from score_events where fixture_id = ${fx} and seq = 1`;
+    await expect(
+      scoreEvent(viewer, fx, {
+        expected_seq: finalized.seq, type: "core.void", payload: { event_id: starter.id },
+      }),
+    ).rejects.toMatchObject({ status: 403 });
+
+    // Lineup config gate binds viewers-with-assignment as it does scorers.
+    const fx2 = fixtures[1];
+    const entrantId = (fx2.home_entrant_id ?? fx2.away_entrant_id) as string;
+    await sql`update divisions set scorer_can_enter_lineups = false where id = ${division.id}`;
+    await expect(putLineup(viewer, fx2.id, entrantId, { slots: [] })).rejects.toMatchObject({
+      status: 403,
+    });
+
+    // Their unassigned fixtures stay 403 — assignment, not role, is the key.
+    const other = await rig(owner);
+    await expect(requireScorable(viewer, other.fixtures[0].id)).rejects.toMatchObject({
+      status: 403,
+    });
+  });
+
+  it("accept, existing viewer × scorer invite: scope added, role kept, no scorer seat", async () => {
+    const { orgId, ownerId } = await seedOrg(); // community: scorers.max 1
+    const owner = asRole(orgId, ownerId, "owner");
+    const { division, fixtures } = await rig(owner);
+
+    // Fill the single scorer seat so the additive path would 402 if it
+    // (wrongly) charged the scorer pool.
+    const seatFiller = await makeInvite(orgId, "scorer");
+    await grantInvite((await loadInvite(seatFiller))!, await makeUser("seat"));
+
+    const viewerId = await addMember(orgId, "viewer");
+    const token = await makeInvite(orgId, "scorer", { type: "division", id: division.id });
+    const outcome = await acceptInvite((await loadInvite(token))!, viewerId);
+    expect(outcome).toBe("scope_added");
+
+    const [membership] = await sql<{ role: string }[]>`
+      select role from org_members where org_id = ${orgId} and user_id = ${viewerId}`;
+    expect(membership.role).toBe("viewer"); // never a silent role change
+    const scope = (await fixtureScope(fixtures[0].id))!;
+    expect(await scorerCovers(orgId, viewerId, scope)).toBe(true);
+    const [{ used_count }] = await sql<{ used_count: number }[]>`
+      select used_count from org_invites where token = ${token}`;
+    expect(used_count).toBe(1);
+  });
+
+  it("accept, existing scorer × second invite: assignment added for the new scope", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const owner = asRole(orgId, ownerId, "owner");
+    const first = await rig(owner);
+    const second = await rig(owner);
+
+    const scorerId = await addMember(orgId, "scorer");
+    await createAssignment(orgId, scorerId, { type: "division", id: first.division.id }, ownerId);
+
+    const token = await makeInvite(orgId, "scorer", {
+      type: "division", id: second.division.id,
+    });
+    const outcome = await acceptInvite((await loadInvite(token))!, scorerId);
+    expect(outcome).toBe("scope_added");
+
+    const scope = (await fixtureScope(second.fixtures[0].id))!;
+    expect(await scorerCovers(orgId, scorerId, scope)).toBe(true);
+    // First assignment untouched.
+    const firstScope = (await fixtureScope(first.fixtures[0].id))!;
+    expect(await scorerCovers(orgId, scorerId, firstScope)).toBe(true);
+  });
+
+  it("accept, editor × scorer invite: no-op — role kept, no assignment, use not burnt", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const owner = asRole(orgId, ownerId, "owner");
+    const { division, fixtures } = await rig(owner);
+
+    const token = await makeInvite(orgId, "scorer", { type: "division", id: division.id });
+    const outcome = await acceptInvite((await loadInvite(token))!, ownerId);
+    expect(outcome).toBe("already_member");
+
+    const [membership] = await sql<{ role: string }[]>`
+      select role from org_members where org_id = ${orgId} and user_id = ${ownerId}`;
+    expect(membership.role).toBe("owner"); // never downgraded by scanning own QR
+    const scope = (await fixtureScope(fixtures[0].id))!;
+    expect(await scorerCovers(orgId, ownerId, scope)).toBe(false);
+    const [{ used_count }] = await sql<{ used_count: number }[]>`
+      select used_count from org_invites where token = ${token}`;
+    expect(used_count).toBe(0); // the single-use link survives an owner's test scan
+  });
+
+  it("accept, fresh user: joins as scorer with the assignment (unchanged path)", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const owner = asRole(orgId, ownerId, "owner");
+    const { division, fixtures } = await rig(owner);
+
+    const userId = await makeUser("fresh");
+    const token = await makeInvite(orgId, "scorer", { type: "division", id: division.id });
+    const outcome = await acceptInvite((await loadInvite(token))!, userId);
+    expect(outcome).toBe("joined");
+
+    const [membership] = await sql<{ role: string }[]>`
+      select role from org_members where org_id = ${orgId} and user_id = ${userId}`;
+    expect(membership.role).toBe("scorer");
+    const scope = (await fixtureScope(fixtures[0].id))!;
+    expect(await scorerCovers(orgId, userId, scope)).toBe(true);
   });
 
   it("viewer role never scores; HttpError carries 403 not 401", async () => {

@@ -1,11 +1,13 @@
 import { getOrgRole, requireUser, setActiveOrgId } from "@/lib/auth";
 import { handler } from "@/lib/http";
-import { grantInvite, inviteProblem, loadInvite } from "@/lib/invites";
+import { acceptInvite, inviteProblem, loadInvite } from "@/lib/invites";
 
 /**
  * Join the inviting org with the embedded role (must be logged in).
- * Seat quotas (doc 13 §5) bite inside grantInvite; a scorer invite with a
- * default_scope creates membership + assignment atomically (doc 13 §4).
+ * Invites are additive (acceptInvite): a non-member joins with the invite's
+ * role; a viewer/scorer accepting a scoped scorer invite keeps their role and
+ * gains the assignment; an editor's own test scan is a no-op. Seat quotas
+ * (doc 13 §5) bite inside grantInvite on the join path only.
  */
 export async function POST(
   _req: Request,
@@ -20,17 +22,21 @@ export async function POST(
     const problem = inviteProblem(invite);
     if (problem) throw new Error(problem);
 
-    const existing = await getOrgRole(invite.org_id, user.id);
-    if (!existing) await grantInvite(invite, user.id);
+    const outcome = await acceptInvite(invite, user.id);
 
     await setActiveOrgId(invite.org_id);
-    const role = existing ?? invite.role;
+    const role = (await getOrgRole(invite.org_id, user.id)) ?? invite.role;
+    // Scorer post-login landing (doc 13 §4): straight to My matches — and a
+    // member who just gained an umpire assignment lands there too, on the
+    // matches the invite was about.
+    const landing =
+      role === "scorer" || outcome === "scope_added" ? "/my-matches" : "/dashboard";
     return {
       org_id: invite.org_id,
       org_name: invite.org_name,
       role,
-      // Scorer post-login landing (doc 13 §4): straight to My matches.
-      landing: role === "scorer" ? "/my-matches" : "/dashboard",
+      outcome,
+      landing,
     };
   });
 }

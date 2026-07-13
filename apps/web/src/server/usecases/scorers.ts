@@ -46,20 +46,29 @@ export async function scorerCovers(
   return rows.length > 0;
 }
 
+/** Roles whose scoring rights come from assignments, not the role itself:
+ *  scorers always; viewers additively (an accepted umpire invite keeps their
+ *  role and adds the assignment). The scorer capability config gates bind
+ *  both — only editors bypass them. */
+export function scoresViaAssignment(role: string | null): boolean {
+  return role === "scorer" || role === "viewer";
+}
+
 /**
- * THE scorer gate (doc 13 §2/§3): editor roles and write-scoped API keys pass;
- * a scorer passes iff a covering assignment exists. Everyone else — viewers
- * included, for scoring — is 403. Returns the fixture scope so callers can
- * apply the capability config without a second lookup.
+ * THE scorer gate (doc 13 §2/§3): editor roles and write-scoped API keys
+ * pass; scorers — and viewers, whose umpire invites grant assignments on top
+ * of their read role — pass iff a covering assignment exists. Everyone else
+ * is 403. Returns the fixture scope so callers can apply the capability
+ * config without a second lookup.
  */
 export async function requireScorable(auth: AuthCtx, fixtureId: string): Promise<FixtureScope> {
   const scope = await fixtureScope(fixtureId);
   if (!scope || scope.org_id !== auth.orgId) throw new HttpError(404, "fixture not found");
   if (auth.via === "api_key") return scope; // scope checked at key auth (write)
   if (auth.role === "owner" || auth.role === "admin") return scope;
-  if (auth.role === "scorer") {
+  if (scoresViaAssignment(auth.role)) {
     if (auth.userId && (await scorerCovers(auth.orgId, auth.userId, scope))) return scope;
-    throw new HttpError(403, "You are not assigned to this fixture");
+    if (auth.role === "scorer") throw new HttpError(403, "You are not assigned to this fixture");
   }
   throw new HttpError(403, "Your role cannot record scores");
 }

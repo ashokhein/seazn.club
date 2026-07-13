@@ -23,6 +23,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AppendEventRequest } from "@/server/api-v1/schemas";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { requiredFeatureForEvent } from "./fidelity";
+import { scoresViaAssignment } from "./scorers";
 import { fillSlot } from "./stages";
 
 export interface ScoreOutcome {
@@ -200,9 +201,10 @@ async function assertEntitledToScore(
 
   // Scorer capabilities (doc 13 §2): coverage was proven at the door
   // (requireFixtureActor → requireScorable); here the per-division config
-  // gates apply. Finalize is config-gated; undo is own-fixture PRE-finalize
-  // only — a finalized ledger is an editor's to reopen.
-  if (auth.role === "scorer") {
+  // gates apply — to scorers and to viewers scoring via assignment alike.
+  // Finalize is config-gated; undo is own-fixture PRE-finalize only — a
+  // finalized ledger is an editor's to reopen.
+  if (scoresViaAssignment(auth.role)) {
     if (input.type === "core.finalize" && !ctx.scorer_can_finalize) {
       throw new HttpError(403, "Finalizing is restricted to organisers in this division");
     }

@@ -1780,6 +1780,54 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   const seatFull = await raw(scorer2, `/api/invites/${scorerInvite2.token}/accept`, "POST", {});
   check("gap second scorer seat blocked (scorers.max)", seatFull.status === 402);
 
+  // --- Additive invites: accepting never changes an existing role. An
+  // editor's own test scan is a no-op that doesn't burn the link; a viewer
+  // accepting the same link keeps viewer and gains the assignment — even
+  // with the scorer seat pool full (no seat is charged) ---
+  const gapViewerInvite = (await call(admin, `/api/orgs/${proOrgId}/invites`, "POST", {
+    role: "viewer",
+    max_uses: 1,
+  })) as { token: string };
+  const gapViewer = newSession();
+  await signIn(gapViewer, `gap_viewer_${tag}@example.com`);
+  await call(gapViewer, `/api/invites/${gapViewerInvite.token}/accept`, "POST", {});
+  const umpInvite = (await call(admin, `/api/orgs/${proOrgId}/invites`, "POST", {
+    role: "scorer",
+    max_uses: 1,
+    default_scope: { type: "division", id: divId },
+  })) as { token: string };
+  const ownScan = (await call(admin, `/api/invites/${umpInvite.token}/accept`, "POST", {})) as {
+    outcome: string;
+    role: string;
+  };
+  check(
+    "gap editor test-scan is a no-op (role kept)",
+    ownScan.outcome === "already_member" && ownScan.role !== "scorer",
+  );
+  const vAccept = (await call(gapViewer, `/api/invites/${umpInvite.token}/accept`, "POST", {})) as {
+    outcome: string;
+    role: string;
+    landing: string;
+  };
+  check(
+    "gap viewer umpire invite: scope added, role kept",
+    vAccept.outcome === "scope_added" && vAccept.role === "viewer" &&
+      vAccept.landing === "/my-matches",
+  );
+  const vAssigned = await v1(gapViewer, "/api/v1/me/assigned-fixtures");
+  check(
+    "gap viewer sees assigned fixtures",
+    vAssigned.status === 200 && v1data<unknown[]>(vAssigned).length > 0,
+  );
+  const vFixture = v1data<{ fixtures: { id: string }[] }>(gen).fixtures[1]!.id;
+  const vState = await v1(gapViewer, `/api/v1/fixtures/${vFixture}/state`);
+  const vEvent = await v1(gapViewer, `/api/v1/fixtures/${vFixture}/events`, "POST", {
+    expected_seq: v1data<{ last_seq: number }>(vState).last_seq,
+    type: "generic.result",
+    payload: { p1Score: 1, p2Score: 0 },
+  });
+  check("gap viewer scores via assignment", vEvent.status === 201);
+
   // --- Discovery: public + discoverable (started division passes the quality
   // floor); discoverable without public visibility is rejected ---
   const pub = await v1(admin, `/api/v1/competitions/${compId}`, "PATCH", { visibility: "public" });

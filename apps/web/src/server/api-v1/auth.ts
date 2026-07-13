@@ -260,9 +260,11 @@ export async function requireFixtureActor(
   const ctx: AuthCtx = { orgId, via: "session", userId: user.id, role, keyId: null };
   if (role === "owner" || role === "admin") return ctx;
   if (role === "viewer" && intent === "read") return ctx;
-  if (role === "scorer") {
-    const { requireScorable } = await import("@/server/usecases/scorers");
-    await requireScorable(ctx, fixtureId); // 403 without a covering assignment
+  const { requireScorable, scoresViaAssignment } = await import("@/server/usecases/scorers");
+  if (scoresViaAssignment(role)) {
+    // Scorers always, viewers when writing (additive umpire invites) — both
+    // need a covering assignment; 403 without one.
+    await requireScorable(ctx, fixtureId);
     return ctx;
   }
   throw new HttpError(403, "Insufficient permissions");
