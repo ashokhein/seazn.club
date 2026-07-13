@@ -39,10 +39,12 @@ test("settings tab: sections render, rename works, format locks with fixtures", 
     await expect(page.getByRole("button", { name: new RegExp(section) })).toBeVisible();
   }
 
-  // Rename from General persists (slug survives redirects server-side).
+  // Rename from General persists — and the client follows the regenerated
+  // slug WITHOUT losing the settings tab (demo-caught regression).
   await page.getByLabel("Division name").fill("Tile Open Renamed");
   await page.getByRole("button", { name: "Save name" }).click();
-  await expect(page.getByText("Name saved.")).toBeVisible();
+  await page.waitForURL(/\/d\/tile-open-renamed\?tab=settings/, { timeout: 15_000 });
+  await expect(page.getByTestId("division-settings")).toBeVisible();
 
   // Format editor is live pre-fixtures.
   await page.getByRole("button", { name: /Format/ }).click();

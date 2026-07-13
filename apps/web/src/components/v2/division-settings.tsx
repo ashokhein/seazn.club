@@ -87,6 +87,7 @@ export function DivisionSettings({
   variants,
   locked,
   canEdit,
+  divisionPathPrefix,
   fixturesHref,
   embed,
   danger,
@@ -96,6 +97,9 @@ export function DivisionSettings({
   /** formatLocked() from the page — fixtures exist. */
   locked: boolean;
   canEdit: boolean;
+  /** "/o/{org}/c/{comp}/d/" — renames regenerate the slug, and the client
+   *  must follow it without losing the settings tab. */
+  divisionPathPrefix: string;
   fixturesHref: string;
   /** Server-rendered EmbedSnippet (or the private-comp note). */
   embed: ReactNode;
@@ -130,7 +134,12 @@ export function DivisionSettings({
 
   const saveName = () =>
     run(async () => {
-      await apiV1(`/api/v1/divisions/${division.id}`, { method: "PATCH", json: { name: name.trim() } });
+      const row = await apiV1<{ slug: string }>(`/api/v1/divisions/${division.id}`, {
+        method: "PATCH",
+        json: { name: name.trim() },
+      });
+      // Renames regenerate the slug — follow it and stay on this tab.
+      router.replace(`${divisionPathPrefix}${row.slug}?tab=settings`);
     }, "Name saved.");
 
   const uploadLogo = (file: File | undefined) => {
