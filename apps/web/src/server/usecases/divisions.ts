@@ -41,13 +41,16 @@ export interface DivisionRow {
   /** Youth privacy (v3/11 gap 8): auto from U-age eligibility, overridable. */
   youth: boolean;
   player_name_display: "full" | "first_initial" | null;
+  /** Card identity (V274, v8): uploaded logo; null → monogram tile. */
+  logo_url: string | null;
+  logo_storage_path: string | null;
 }
 
 const COLS = [
   "id", "competition_id", "name", "slug", "description", "sport_key", "variant_key", "config",
   "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
   "scheduling_mode", "auto_progress", "schedule_locked", "archived_at", "created_at",
-  "seq", "youth", "player_name_display",
+  "seq", "youth", "player_name_display", "logo_url", "logo_storage_path",
 ] as const;
 
 /** U-anything eligibility (maxAgeAt below 18) marks a division youth. */

@@ -129,6 +129,8 @@ export const PatchDivision = z
     youth: z.boolean(),
     /** Public name rendering; null resolves youth → first_initial. */
     player_name_display: z.enum(["full", "first_initial"]).nullable(),
+    /** Card logo (V274, v8); null reverts the tile to the monogram. */
+    logo_storage_path: z.string().max(500).nullable(),
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");

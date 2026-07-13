@@ -58,6 +58,13 @@ export function orgLogoPath(orgId: string): string {
 }
 
 /**
+ * Division logo storage path (V274, v8) — the card-tile image.
+ */
+export function divisionLogoPath(orgId: string, divisionId: string): string {
+  return `orgs/${orgId}/divisions/${divisionId}/logo.webp`;
+}
+
+/**
  * Resolve display URL for a player image:
  * - If image_storage_path set → CDN URL
  * - Else if image_url is an https URL → use directly
