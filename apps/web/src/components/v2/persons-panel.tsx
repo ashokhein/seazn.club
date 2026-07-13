@@ -4,6 +4,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
+import { InviteClaim } from "@/components/v2/invite-claim";
 
 interface Person {
   id: string;
@@ -13,6 +14,8 @@ interface Person {
   consent: { public_name?: boolean; public_photo?: boolean };
   external_ref: string | null;
   photo_path: string | null;
+  user_id: string | null;
+  claim_pending?: boolean;
 }
 
 export function PersonsPanel({
@@ -177,6 +180,12 @@ export function PersonsPanel({
                 ))}
                 {canEdit && (
                   <td className="px-4 py-2 text-right text-xs">
+                    <InviteClaim
+                      personId={p.id}
+                      personName={p.full_name}
+                      claimed={!!p.user_id}
+                      claimPending={!!p.claim_pending}
+                    />{" "}
                     {mergeSource && mergeSource.id !== p.id ? (
                       <button
                         type="button"

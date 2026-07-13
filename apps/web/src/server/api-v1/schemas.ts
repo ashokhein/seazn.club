@@ -276,7 +276,11 @@ export const Person = z.object({
   gender: z.enum(["m", "f", "x"]).nullable(),
   consent: z.record(z.string(), z.unknown()),
   external_ref: z.string().nullable(),
+  /** Set once a player has claimed this row (PROMPT-53). */
+  user_id: Uuid.nullable(),
   created_at: z.string(),
+  /** List read only: an open, unexpired claim invite exists. */
+  claim_pending: z.boolean().optional(),
 });
 
 // ---------------------------------------------------------------------------

@@ -7175,8 +7175,23 @@
                                   }
                                 ]
                               },
+                              "user_id": {
+                                "anyOf": [
+                                  {
+                                    "type": "string",
+                                    "format": "uuid",
+                                    "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
                               "created_at": {
                                 "type": "string"
+                              },
+                              "claim_pending": {
+                                "type": "boolean"
                               }
                             },
                             "required": [
@@ -7186,6 +7201,7 @@
                               "gender",
                               "consent",
                               "external_ref",
+                              "user_id",
                               "created_at"
                             ],
                             "additionalProperties": false
@@ -7225,6 +7241,7 @@
                         "gender": "m",
                         "consent": {},
                         "external_ref": "example",
+                        "user_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                         "created_at": "example"
                       }
                     ],
@@ -7535,8 +7552,23 @@
                             }
                           ]
                         },
+                        "user_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
+                        },
+                        "claim_pending": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -7546,6 +7578,7 @@
                         "gender",
                         "consent",
                         "external_ref",
+                        "user_id",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -7565,6 +7598,7 @@
                     "gender": "m",
                     "consent": {},
                     "external_ref": "example",
+                    "user_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "created_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -7802,8 +7836,23 @@
                             }
                           ]
                         },
+                        "user_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
+                        },
+                        "claim_pending": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -7813,6 +7862,7 @@
                         "gender",
                         "consent",
                         "external_ref",
+                        "user_id",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -7832,6 +7882,7 @@
                     "gender": "m",
                     "consent": {},
                     "external_ref": "example",
+                    "user_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "created_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -8144,8 +8195,23 @@
                             }
                           ]
                         },
+                        "user_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
+                        },
+                        "claim_pending": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -8155,6 +8221,7 @@
                         "gender",
                         "consent",
                         "external_ref",
+                        "user_id",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -8174,6 +8241,7 @@
                     "gender": "m",
                     "consent": {},
                     "external_ref": "example",
+                    "user_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "created_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -8435,8 +8503,23 @@
                             }
                           ]
                         },
+                        "user_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
+                        },
+                        "claim_pending": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -8446,6 +8529,7 @@
                         "gender",
                         "consent",
                         "external_ref",
+                        "user_id",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -8465,6 +8549,7 @@
                     "gender": "m",
                     "consent": {},
                     "external_ref": "example",
+                    "user_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "created_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -8746,8 +8831,23 @@
                             }
                           ]
                         },
+                        "user_id": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "format": "uuid",
+                              "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
+                        },
+                        "claim_pending": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -8757,6 +8857,7 @@
                         "gender",
                         "consent",
                         "external_ref",
+                        "user_id",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -8776,6 +8877,7 @@
                     "gender": "m",
                     "consent": {},
                     "external_ref": "example",
+                    "user_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "created_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"

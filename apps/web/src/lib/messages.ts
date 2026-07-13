@@ -189,6 +189,51 @@ export const messages = {
   "embed.copy": "Copy snippet",
   "sponsors.title": "Sponsors",
   "sponsors.line": "Sponsor logos appear on your public pages, the registration page and the TV slideshow.",
+
+  // ── Player accounts (PROMPT-53) ──
+  "claim.invite": "Invite to claim",
+  "claim.invite.title": "Invite {name} to claim their profile",
+  "claim.invite.explain":
+    "They get an email with a claim link — and you get the same link as a QR to show or print. Claiming lets them see their matches, RSVP availability and manage what's public.",
+  "claim.invite.email": "Their email",
+  "claim.invite.send": "Send invite",
+  "claim.invite.sending": "Sending…",
+  "claim.invite.linkNote":
+    "This link works for 14 days and is only shown here once — copy it or let them scan the QR now.",
+  "claim.invited": "Invite pending",
+  "claim.revoke": "Withdraw invite",
+  "claim.claimed": "Claimed",
+  "claim.unlink": "Unlink",
+  "confirm.unlinkPlayer.title": "Unlink this player account?",
+  "confirm.unlinkPlayer.body":
+    "{name} loses access to this profile on their player home. Matches and results stay. You can invite them to claim again later.",
+  "confirm.unlinkPlayer.label": "Unlink",
+  "me.title": "My matches & teams",
+  "me.eyebrow": "Player home",
+  "me.empty":
+    "Nothing here yet. When an organiser rosters you into a team or draw, your matches land on this page.",
+  "me.next.title": "Next match",
+  "me.upcoming.title": "Coming up",
+  "me.results.title": "Recent results",
+  "me.teams.title": "My teams",
+  "me.rsvp.in": "In",
+  "me.rsvp.maybe": "Maybe",
+  "me.rsvp.out": "Out",
+  "me.rsvp.notePlaceholder": "Add a note for the organiser (optional)",
+  "me.rsvp.saved": "Saved",
+  "me.checkedin": "Checked in",
+  "me.consent.title": "What's public about you",
+  "me.consent.line":
+    "These switches control whether your name and photo appear on public pages — per club.",
+  "me.consent.name": "Show my name publicly",
+  "me.consent.photo": "Show my photo publicly",
+  "me.consent.locked": "An organiser manages this until you're 16.",
+  "checkin.title": "Match check-in",
+  "checkin.done.title": "You're checked in",
+  "checkin.done.line": "The organiser can see you're here. Good luck!",
+  "checkin.needsClaim.title": "Claim your profile first",
+  "checkin.needsClaim.line":
+    "Check-in works once you've claimed your player profile. Ask the organiser to send you a claim invite, then scan again.",
 } as const;
 
 export type MessageKey = keyof typeof messages;
