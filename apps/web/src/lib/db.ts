@@ -82,7 +82,12 @@ function getClient(): Sql {
       },
     },
   });
-  if (process.env.NODE_ENV !== "production") globalForDb._sql = client;
+  // Stash unconditionally: getClient() is called lazily per sql-proxy access,
+  // so without this every production query built a fresh client (its own
+  // pool) — one page render held 25+ connections and exhausted stg's 60
+  // slots (FATAL 53300, 2026-07-13 outage). The globalThis stash doubles as
+  // the dev-HMR survivor.
+  globalForDb._sql = client;
   return client;
 }
 
