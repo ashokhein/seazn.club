@@ -14,11 +14,12 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <span className="text-xs font-bold uppercase tracking-widest text-purple-400">
           Staff Console
         </span>
-        <nav className="flex gap-4 text-sm text-slate-400">
+        <nav className="flex min-w-0 gap-4 overflow-x-auto text-sm text-slate-400">
           <Link href="/admin" className="hover:text-white">Dashboard</Link>
           <Link href="/admin/orgs" className="hover:text-white">Orgs</Link>
           <Link href="/admin/users" className="hover:text-white">Users</Link>
           <Link href="/admin/coupons" className="hover:text-white">Coupons</Link>
+          <Link href="/admin/revenue" className="hover:text-white">Revenue</Link>
           <Link href="/admin/settings" className="hover:text-white">Settings</Link>
           <Link href="/admin/audit" className="hover:text-white">Audit</Link>
         </nav>

@@ -601,6 +601,8 @@ export interface PublicDivisionInfo {
   requires_dob: boolean;
   /** Youth division (v3/11 gap 8): the form always adds guardian consent. */
   youth: boolean;
+  /** Queue length behind a full division (PROMPT-52) — public. */
+  waitlisted: number;
   form_fields: RegistrationFormField[];
 }
 
@@ -644,12 +646,16 @@ export async function publicRegistrationInfo(
       eligibility: unknown[];
       youth: boolean;
       active: number;
+      waitlisted: number;
     })[]
   >`
     select rs.*, d.name, d.slug, d.sport_key, d.eligibility, d.youth,
            (select count(*)::int from registrations r
              where r.division_id = rs.division_id
-               and r.status in ${sql([...SPOT_HOLDERS])}) as active
+               and r.status in ${sql([...SPOT_HOLDERS])}) as active,
+           (select count(*)::int from registrations r
+             where r.division_id = rs.division_id
+               and r.status = 'waitlisted') as waitlisted
     from registration_settings rs
     join divisions d on d.id = rs.division_id
     where d.competition_id = ${comp.id} and rs.enabled
@@ -684,6 +690,7 @@ export async function publicRegistrationInfo(
       closed_reason: reason,
       requires_dob: requiresDob(r.eligibility ?? []),
       youth: r.youth,
+      waitlisted: r.waitlisted,
       form_fields: r.form_fields ?? [],
     };
   });
@@ -1209,6 +1216,8 @@ export interface PublicStatusView {
   /** Pay CTA gate: card pending + fee due + Connect live. */
   can_pay_online: boolean;
   payment_instructions: string | null;
+  /** 1-based place in the waitlist queue; null unless waitlisted (PROMPT-52). */
+  position: number | null;
   created_at: string;
 }
 
@@ -1233,6 +1242,18 @@ export async function publicRegistrationStatus(
   // never change what an in-flight registrant owes (spec issue #8).
   const paymentDue = reg.status === "pending" && reg.amount_cents > 0;
   const offline = reg.payment_method !== "stripe";
+  // Queue position (PROMPT-52): created_at-then-id order — identical to the
+  // oldest-first order auto-promotion consumes, so "#N" never lies.
+  // The row's own created_at is read back in SQL (not passed from JS): a JS
+  // Date truncates to ms while timestamptz keeps µs, and the tuple compare
+  // would then exclude the row itself.
+  const [posRow] = reg.status === "waitlisted"
+    ? await sql<{ position: number }[]>`
+        select count(*)::int as position from registrations r
+        where r.division_id = ${reg.division_id} and r.status = 'waitlisted'
+          and (r.created_at, r.id) <=
+              (select created_at, id from registrations where id = ${reg.id})`
+    : [];
   return {
     id: reg.id,
     status: reg.status,
@@ -1257,6 +1278,7 @@ export async function publicRegistrationStatus(
       paymentDue && offline
         ? (settings?.payment_instructions ?? ctx.payment_instructions)
         : null,
+    position: posRow?.position ?? null,
     created_at: new Date(reg.created_at).toISOString(),
   };
 }

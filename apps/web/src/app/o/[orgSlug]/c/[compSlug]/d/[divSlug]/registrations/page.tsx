@@ -52,7 +52,7 @@ export default async function DivisionRegistrationsPage({
               Share this with entrants — it opens the register form for {competition.name}.
             </p>
             <div className="mt-2">
-              <CopyLink path={registerUrl} />
+              <CopyLink path={registerUrl} qrFileName={`register-${competition.slug}.png`} />
             </div>
           </div>
         ) : (
