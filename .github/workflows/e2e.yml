@@ -3,6 +3,12 @@ name: E2E
 # Playwright UI e2e suite, split out of the CI smoke job so PRs stay fast.
 # Runs automatically on pushes to main; for a PR, trigger it manually and
 # pass the PR number (Actions -> E2E -> Run workflow).
+#
+# target=staging runs the same suite against the deployed staging app instead
+# of a local dev server: E2E_PROD_TARGET=1 makes the auth helpers mint login
+# tokens straight in the staging DB (production builds never dev-expose
+# `login_url`) and skips the specs that assert dev link exposure. The run
+# leaves TAG-prefixed e2e users/orgs behind in the staging DB.
 on:
   push:
     branches: [main]
@@ -12,6 +18,12 @@ on:
         description: "PR number to run the e2e suite against (empty = main)"
         required: false
         type: string
+      target:
+        description: "Where to run the suite"
+        required: false
+        default: local
+        type: choice
+        options: [local, staging]
 
 concurrency:
   group: e2e-${{ inputs.pr || github.ref }}
@@ -20,6 +32,7 @@ concurrency:
 jobs:
   e2e:
     name: Playwright e2e (Postgres container)
+    if: ${{ (inputs.target || 'local') == 'local' }}
     runs-on: ubuntu-latest
 
     services:
@@ -113,3 +126,63 @@ jobs:
       - name: Dev server log (on failure)
         if: failure()
         run: cat dev-server.log || true
+
+  # Same suite against the deployed staging app. No Postgres/Redis services and
+  # no dev server: PLAYWRIGHT_BASE points at Fly, and the SQL setup helpers
+  # (plan flips, login-token minting) reach the staging DB through the same
+  # STAGING_DATABASE_URL secret the deploy job migrates with. Manual-only.
+  e2e-staging:
+    name: Playwright e2e (staging)
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: e2e-staging
+      cancel-in-progress: false
+    env:
+      DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+      PLAYWRIGHT_BASE: https://seazn-club-stg.fly.dev
+      E2E_PROD_TARGET: "1"
+      NEXT_TELEMETRY_DISABLED: "1"
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.pr && format('refs/pull/{0}/head', inputs.pr) || github.ref }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+
+      # Staging auto-stops idle machines; a warm health check here keeps the
+      # Playwright webServer block in reuse mode (it must never boot a local
+      # dev server against the staging DB).
+      - name: Wake staging app
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf "$PLAYWRIGHT_BASE/api/health" >/dev/null; then
+              echo "staging up after ${i} attempts"; exit 0
+            fi
+            sleep 2
+          done
+          echo "staging did not become healthy"; exit 1
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/package-lock.json', 'package-lock.json') }}
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: apps/web
+      - name: Run Playwright e2e against staging
+        run: npm run test:e2e
+        working-directory: apps/web
+
+      - name: Upload Playwright report (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-staging
+          path: apps/web/playwright-report
+          retention-days: 7

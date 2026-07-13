@@ -32,6 +32,11 @@ export const TAG = Date.now().toString(36);
 export const proEmail = () => `e2e-pro-${TAG}@example.com`;
 export const communityEmail = () => `e2e-community-${TAG}@example.com`;
 
+// True when the server under test is a production build (e.g. staging): it
+// never dev-exposes login/claim links, so auth helpers mint tokens straight in
+// the DB and the specs that assert dev exposure skip themselves.
+export const PROD_TARGET = !!process.env.E2E_PROD_TARGET;
+
 // Thin JSON helpers over the app's own endpoints — used to set up heavy state
 // (scoring, entrants) fast so specs assert on UI, not on data entry speed.
 export async function apiJson<T = unknown>(
@@ -54,13 +59,45 @@ export async function apiJson<T = unknown>(
 }
 
 /**
+ * Mint a passwordless sign-in path directly in the DB — the production-target
+ * fallback for servers that won't dev-expose `login_url`. Mirrors the route's
+ * inert-user creation (resolveOrCreateUser) plus lib/login-link.ts
+ * createLoginLink; tokens are stored plaintext with a 15-minute TTL.
+ */
+export async function mintLoginPathBySql(email: string): Promise<string> {
+  const { randomBytes } = await import("node:crypto");
+  const token = randomBytes(32).toString("base64url");
+  await withDb(async (sql) => {
+    const displayName = email.split("@")[0].replace(/[._-]+/g, " ").trim() || "Member";
+    await sql`
+      insert into users (email, display_name, email_verified)
+      values (${email}, ${displayName}, false)
+      on conflict (email) do nothing`;
+    const users = await sql<{ id: string }[]>`
+      select id from users where email = ${email} and deleted_at is null limit 1`;
+    if (!users[0]) throw new Error(`mintLoginPathBySql: no user row for ${email}`);
+    const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
+    await sql`
+      insert into login_links (user_id, token, expires_at)
+      values (${users[0].id}, ${token}, ${expiresAt})`;
+  });
+  return `/magic-link?token=${token}`;
+}
+
+/**
  * Passwordless UI login on a fresh page (specs that need their own context).
  * Requests a magic link and opens the dev-exposed URL to establish the session;
- * an unknown email auto-creates the account.
+ * an unknown email auto-creates the account. Production targets skip the route
+ * (it would email a real — bouncing — address) and mint the token in the DB.
  */
 export async function loginUi(page: Page, email: string): Promise<void> {
-  const res = await page.request.post("/api/auth/magic-link", { data: { email } });
-  const loginUrl = ((await res.json()) as { data?: { login_url?: string } }).data?.login_url;
+  let loginUrl: string | undefined;
+  if (PROD_TARGET) {
+    loginUrl = await mintLoginPathBySql(email);
+  } else {
+    const res = await page.request.post("/api/auth/magic-link", { data: { email } });
+    loginUrl = ((await res.json()) as { data?: { login_url?: string } }).data?.login_url;
+  }
   if (!loginUrl) throw new Error("magic-link login_url missing — dev server required");
   await page.goto(loginUrl);
   await page.waitForURL(
@@ -157,11 +194,58 @@ export async function setOrgConnectSql(
   });
 }
 
+/**
+ * Drop an org's server-side entitlement cache (`ent:{org}:*`). SQL-flip
+ * helpers mutate entitlement state behind the app's back; on a Redis-backed
+ * target (staging) a limit resolved BEFORE the flip stays cached for up to
+ * 300s, so the flip never lands inside the test. Local/CI have no Redis —
+ * the cache layer is inert there and this is a cheap no-op round-trip.
+ *
+ * There is no public invalidation endpoint, so this rides the superadmin
+ * entitlement-override route (upsert and delete both invalidate): the calling
+ * session's user is flipped to superadmin for the two calls, then restored.
+ */
+export async function invalidateOrgEntitlements(
+  request: APIRequestContext,
+  orgId: string,
+): Promise<void> {
+  // Flip the org's owner (== the calling session in every e2e spec). NEVER
+  // key on the *Email() helpers here — TAG is per-process, so a spec worker
+  // computes a different tag than the setup worker that minted the account.
+  const setStaff = (on: boolean) =>
+    withDb((sql) =>
+      on
+        ? sql`update users set is_staff = true, staff_role = 'superadmin'
+            where id in (select user_id from org_members where org_id = ${orgId} and role = 'owner')`
+        : sql`update users set is_staff = false, staff_role = null
+            where id in (select user_id from org_members where org_id = ${orgId} and role = 'owner')`,
+    );
+  const KEY = "e2e.cache.bust";
+  await setStaff(true);
+  try {
+    await request.fetch(`/api/admin/orgs/${orgId}/entitlement-override`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      data: { feature_key: KEY, reason: "e2e: drop cached entitlements after SQL flip" },
+    });
+    await request.fetch(`/api/admin/orgs/${orgId}/entitlement-override`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      data: { feature_key: KEY },
+    });
+  } finally {
+    await setStaff(false);
+  }
+}
+
 /** Grant an Event Pass (v3/07 §3) directly — the one-time Stripe checkout
- *  can't run in e2e, same SQL-flip convention as plans. */
+ *  can't run in e2e, same SQL-flip convention as plans. Pass `request` when
+ *  the org has already resolved entitlements this run (see
+ *  invalidateOrgEntitlements — required against staging). */
 export async function grantCompetitionPassSql(
   orgId: string,
   competitionId: string,
+  request?: APIRequestContext,
 ): Promise<void> {
   await withDb(async (sql) => {
     await sql`
@@ -169,6 +253,7 @@ export async function grantCompetitionPassSql(
       values (${competitionId}, ${orgId})
       on conflict (competition_id) do nothing`;
   });
+  if (request) await invalidateOrgEntitlements(request, orgId);
 }
 
 /** Force a subscription lifecycle state (trialing / past_due / …) for banner

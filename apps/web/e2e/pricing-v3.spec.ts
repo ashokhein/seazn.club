@@ -111,7 +111,9 @@ test.describe.serial("event pass gate (community org)", () => {
     expect(passHref).toMatch(new RegExp(`/c/${comp.data!.slug}/upgrade$`));
 
     // Purchase (SQL analogue — test-infra convention), then the gate lifts…
-    await grantCompetitionPassSql(orgId, compId);
+    // The 402 above cached this org's resolved limit server-side, so the
+    // grant must also bust the entitlement cache (staging has Redis).
+    await grantCompetitionPassSql(orgId, compId, request);
     const third = await apiJson(request, `/api/v1/competitions/${compId}/divisions`, "POST", {
       name: "Three",
       ...GENERIC,

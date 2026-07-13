@@ -1,8 +1,13 @@
 import { test, expect } from "@playwright/test";
+import { PROD_TARGET } from "./helpers";
 
 // Exercises the login UI itself, so it runs in a fresh, unauthenticated context
 // (override the shared Pro storage state).
 test.use({ storageState: { cookies: [], origins: [] } });
+
+// Both tests assert the dev-only `login_url` exposure — production targets
+// (e.g. staging) send real email instead, so there is nothing to assert there.
+test.skip(PROD_TARGET, "dev link exposure is disabled on production targets");
 
 const email = `e2e-magic-${Date.now().toString(36)}@example.com`;
 

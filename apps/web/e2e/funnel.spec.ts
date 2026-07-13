@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { TAG } from "./helpers";
+import { PROD_TARGET, TAG } from "./helpers";
+
+// The funnel flow hinges on the dev-exposed claim link ([data-claim-url]) —
+// production targets (e.g. staging) email it instead, so skip there.
+test.skip(PROD_TARGET, "dev claim-link exposure is disabled on production targets");
 
 // PROMPT-36 (v3/07 §6): the /start funnel end-to-end — a fresh anonymous
 // visitor configures a competition, receives the claim link (dev exposes it

@@ -298,6 +298,12 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
     const d0 = rig.divisions[0]!;
     const filtered = `${boardUrl}?d=${d0.slug}`;
     const pageB = await context.newPage();
+    // The premise is that B writes with a STALE seq. Where Supabase realtime
+    // is live (staging), A's move broadcasts schedule_changed and B silently
+    // router.refresh()es to the new seq — its write then fails on a court
+    // clash instead of SEQ_CONFLICT. Deafen B's websocket so it provably
+    // keeps the pre-move seq; a no-op where realtime isn't configured.
+    await pageB.routeWebSocket(/realtime/, () => {});
     await page.goto(filtered);
     await pageB.goto(filtered);
 

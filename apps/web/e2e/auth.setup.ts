@@ -1,5 +1,7 @@
 import { test as setup, expect, type Page } from "@playwright/test";
 import {
+  PROD_TARGET,
+  mintLoginPathBySql,
   proEmail,
   communityEmail,
   setOrgPlanBySql,
@@ -20,10 +22,16 @@ const COMMUNITY_STATE = "e2e/.auth/community.json";
 // closed) — these two setup links plus passwordless-login.spec.ts consume 3.
 // Budget accordingly before adding specs that mint new users.
 async function provision(page: Page, email: string): Promise<void> {
-  // Dev exposes the link as `login_url` so the flow is testable without email.
-  const linkRes = await page.request.post("/api/auth/magic-link", { data: { email } });
-  const loginUrl = ((await linkRes.json()) as { data?: { login_url?: string } }).data
-    ?.login_url;
+  let loginUrl: string | undefined;
+  if (PROD_TARGET) {
+    // Production target (e.g. staging): the route emails a real (bouncing)
+    // address instead of dev-exposing the link — mint the token in the DB.
+    loginUrl = await mintLoginPathBySql(email);
+  } else {
+    // Dev exposes the link as `login_url` so the flow is testable without email.
+    const linkRes = await page.request.post("/api/auth/magic-link", { data: { email } });
+    loginUrl = ((await linkRes.json()) as { data?: { login_url?: string } }).data?.login_url;
+  }
   if (!loginUrl)
     throw new Error("magic-link login_url missing — dev server (non-production) required for e2e");
 
