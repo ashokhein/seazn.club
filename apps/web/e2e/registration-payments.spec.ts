@@ -82,6 +82,8 @@ test("offline journey: instructions on the receipt, Mark paid confirms the entry
 
   // Organiser: the row shows due · cash, Mark paid confirms in one move.
   await page.goto(`/o/${org.slug}/c/${rig.compSlug}/d/${rig.divisionSlug}/registrations`);
+  // v7 console: the list opens on Confirmed — the pending row sits under All.
+  await page.getByTestId("reg-tab-all").click();
   await expect(page.getByTestId("payment-chip")).toHaveText("due · cash");
   await page.getByRole("button", { name: "Mark paid" }).click();
   await page.getByRole("button", { name: "Mark paid & confirm" }).click();
