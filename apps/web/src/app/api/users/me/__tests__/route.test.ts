@@ -60,41 +60,55 @@ beforeEach(() => {
   resolveActiveOrgMock.mockReset();
 });
 
+// Identity endpoints must never be cacheable — an intermediary caching a 200
+// would leak one user's identity to another, and a cached 401 would blind the
+// post-login identify (task-8 review F3). Explicit on EVERY status, not left
+// to framework defaults + external CDN rules.
+const NO_STORE = "private, no-store";
+
 describe.skipIf(!HAS_DB)("GET /api/users/me", () => {
-  it("401s when not authenticated", async () => {
+  it("401s when not authenticated, with Cache-Control: private, no-store", async () => {
     requireUserMock.mockRejectedValueOnce(new AuthError("Not authenticated"));
     const res = await GET();
     expect(res.status).toBe(401);
+    expect(res.headers.get("cache-control")).toBe(NO_STORE);
     const json = (await res.json()) as { ok: boolean };
     expect(json.ok).toBe(false);
   });
 
-  it("200s with { id, email, org } for an authenticated user with an active org", async () => {
+  it("200s with the minimized { id, org } payload — no email — and no-store", async () => {
     const org = await seedOrgWithPlan("pro");
     requireUserMock.mockResolvedValueOnce(fakeUser);
     resolveActiveOrgMock.mockResolvedValueOnce(org);
 
     const res = await GET();
     expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(NO_STORE);
     const json = (await res.json()) as {
       ok: boolean;
-      data: { id: string; email: string; org: { id: string; name: string; plan: string } | null };
+      data: { id: string; org: { id: string; name: string; plan: string } | null };
     };
     expect(json.ok).toBe(true);
     expect(json.data.id).toBe(fakeUser.id);
-    expect(json.data.email).toBe(fakeUser.email);
     expect(json.data.org).toEqual({ id: org.id, name: org.name, plan: "pro" });
+    // Data minimization (task-8 review F3): nothing consumes email — the
+    // identify payload is {userId, orgId, orgName, plan} — so it must not
+    // ride along on an endpoint fetched on every anonymous navigation.
+    expect(json.data).not.toHaveProperty("email");
+    expect(Object.keys(json.data).sort()).toEqual(["id", "org"]);
   });
 
-  it("200s with org: null when the user belongs to no org", async () => {
+  it("200s with org: null (and no email) when the user belongs to no org", async () => {
     requireUserMock.mockResolvedValueOnce(fakeUser);
     resolveActiveOrgMock.mockResolvedValueOnce(null);
 
     const res = await GET();
     expect(res.status).toBe(200);
+    expect(res.headers.get("cache-control")).toBe(NO_STORE);
     const json = (await res.json()) as { ok: boolean; data: { org: unknown } };
     expect(json.ok).toBe(true);
     expect(json.data.org).toBeNull();
+    expect(json.data).not.toHaveProperty("email");
   });
 });
 

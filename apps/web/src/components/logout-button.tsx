@@ -2,7 +2,9 @@
 
 import { LogOut } from "lucide-react";
 import { useRouter } from "next/navigation";
+import posthog from "posthog-js";
 import { api } from "@/lib/client";
+import { clearAnalyticsIdentity } from "@/lib/analytics-identity";
 
 export function LogoutButton() {
   const router = useRouter();
@@ -10,6 +12,16 @@ export function LogoutButton() {
     <button
       onClick={async () => {
         await api("/api/auth/logout", { method: "POST" });
+        // Kill the analytics identity BEFORE the (soft) navigation — the
+        // cached identify payload and posthog distinct id would otherwise
+        // outlive the session and misattribute the next user in this tab
+        // (task-8 review, Critical). Guarded: must never block logout.
+        try {
+          clearAnalyticsIdentity();
+          if (posthog.__loaded) posthog.reset();
+        } catch {
+          /* analytics teardown is best-effort */
+        }
         router.push("/login");
         router.refresh();
       }}
