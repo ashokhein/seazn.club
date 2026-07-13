@@ -246,7 +246,7 @@ export function DivisionSettings({
         method: "PATCH",
         json: { variant_key: variantKey, config: override },
       });
-    }, "Format updated.");
+    }, "Match rules saved.");
 
   return (
     <div className="max-w-2xl space-y-3" data-testid="division-settings">
@@ -492,7 +492,7 @@ export function DivisionSettings({
 
             {canEdit && (
               <button type="button" disabled={busy} onClick={applyFormat} className="btn btn-primary text-xs">
-                Apply format
+                Save match rules
               </button>
             )}
             <p className="text-[11px] text-slate-400">

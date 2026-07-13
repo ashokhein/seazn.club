@@ -59,8 +59,8 @@ test("settings tab: sections render, rename works, format locks with fixtures", 
 
   // Match rules still apply independently.
   await page.getByRole("spinbutton", { name: "Win" }).fill("5");
-  await page.getByRole("button", { name: "Apply format" }).click();
-  await expect(page.getByText("Format updated.")).toBeVisible();
+  await page.getByRole("button", { name: "Save match rules" }).click();
+  await expect(page.getByText("Match rules saved.")).toBeVisible();
 
   // The strays moved: no embed snippet / danger zone under other tabs.
   await page.goto(`${base}?tab=entrants`);
