@@ -8,7 +8,7 @@ Pro orgs can **embed** live standings, a schedule or a bracket into any website 
 
 ## Get the snippet
 
-Open the division's sharing panel, pick what to embed, and copy the snippet. It's a single iframe:
+Open the division's **Settings tab → Sharing & embed**, pick what to embed, and copy the snippet. It's a single iframe:
 
 ```
 <iframe src="https://seazn.club/embed/divisions/…/standings"

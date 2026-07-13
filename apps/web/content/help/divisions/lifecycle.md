@@ -20,6 +20,6 @@ When the last stage completes, the division is done — the champion banner goes
 
 ## Common questions
 
-**I started too early — can I go back?** If nothing has been scored, an admin can void the accidental start from the division's danger zone. Once real results exist, the lock is the point.
+**I started too early — can I go back?** If nothing has been scored, an admin can void the accidental start from the division's **Settings tab → Danger zone**. Once real results exist, the lock is the point.
 
 **What about archiving?** [Archive](/help/divisions/archive) hides a division without deleting anything.
