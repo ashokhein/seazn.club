@@ -15,6 +15,7 @@ export const HELP_ARTICLE_SLUGS = [
   "getting-started/share-your-dashboard",
   "entrants/kinds",
   "entrants/withdrawals",
+  "entrants/duplicate-players",
   "registration/open-registration",
   "registration/reference-numbers",
   "registration/waitlist",

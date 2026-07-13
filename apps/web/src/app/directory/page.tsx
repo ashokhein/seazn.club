@@ -10,6 +10,7 @@ import { listPersons } from "@/server/usecases/persons";
 import { listClubs } from "@/server/usecases/clubs";
 import { PersonsPanel } from "@/components/v2/persons-panel";
 import { ClubsPanel } from "@/components/v2/clubs-panel";
+import { Tip } from "@/components/ui/tip";
 
 const TABS = ["players", "clubs"] as const;
 type Tab = (typeof TABS)[number];
@@ -66,6 +67,8 @@ async function PlayersTab() {
       <p className="text-sm text-slate-500">
         Players rostered into entrants across competitions. Date of birth is used only for
         eligibility and is never shown publicly; names appear on public pages only with consent.
+        Spot the same person twice? Use <strong>merge…</strong> on the duplicate
+        <Tip id="persons.merge" className="ml-0.5 align-middle" />
       </p>
       <PersonsPanel
         persons={items.map((p) => ({
