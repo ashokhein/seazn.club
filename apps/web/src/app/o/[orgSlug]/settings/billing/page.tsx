@@ -76,6 +76,9 @@ export default async function BillingPage({
   const planKey = sub?.plan_key ?? "community";
   const status = sub?.status ?? "active";
   const isPro = planKey === "pro";
+  // One trial per org (V277): the upgrade CTA must not promise a trial the
+  // checkout won't grant.
+  const trialAvailable = !sub?.trial_used_at;
   // A comped/dev-granted Pro org has no Stripe subscription — it gets the
   // in-app downgrade instead of the cancel-at-period-end flow.
   const hasStripeSubscription = !!sub?.stripe_subscription_id;
@@ -368,13 +371,15 @@ export default async function BillingPage({
               </div>
             </div>
             <p className="mb-4 text-xs text-slate-500">
-              14-day free trial · no card required · cancel anytime
+              {trialAvailable
+                ? "14-day free trial · no card required · cancel anytime"
+                : "Billed from day one — your free trial has already been used · cancel anytime"}
             </p>
             {/* Annual leads (v3/07 §4): 12 for the price of 10, said plainly. */}
             <div className="flex flex-wrap items-center gap-3">
               <UpgradeButton
                 interval="annual"
-                label={`Start free trial — ${formatMinor(
+                label={`${trialAvailable ? "Start free trial" : "Go Pro"} — ${formatMinor(
                   Math.round(proPrice("annual", currency) / 12),
                   currency,
                 )}/mo billed yearly`}

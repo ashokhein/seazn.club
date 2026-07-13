@@ -174,6 +174,8 @@ export interface Subscription {
   stripe_subscription_id: string | null;
   current_period_end: string | null;
   trial_end: string | null;
+  /** One trial per org (V277): stamped when the first trial starts, never cleared. */
+  trial_used_at: string | null;
   cancel_at_period_end: boolean;
   updated_at: string;
 }

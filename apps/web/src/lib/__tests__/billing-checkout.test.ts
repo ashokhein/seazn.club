@@ -3,7 +3,12 @@
 // ui_mode, the return_url contract, the 14-day no-card trial and the
 // pass/currency extensions (v3/07 §3–4) that the checkout routes depend on.
 import { describe, expect, it } from "vitest";
-import { buildEmbeddedCheckoutParams, buildPassCheckoutParams } from "@/lib/billing";
+import {
+  assertCheckoutAllowed,
+  buildEmbeddedCheckoutParams,
+  buildPassCheckoutParams,
+  checkoutTrialDays,
+} from "@/lib/billing";
 import {
   currencyFromAcceptLanguage,
   formatMinor,
@@ -15,6 +20,7 @@ const base = {
   priceId: "price_123",
   orgId: "org-abc",
   returnUrl: "https://app.test/settings/billing?checkout=success&session_id={CHECKOUT_SESSION_ID}",
+  trialDays: 14,
 };
 
 describe("buildEmbeddedCheckoutParams", () => {
@@ -36,6 +42,15 @@ describe("buildEmbeddedCheckoutParams", () => {
     expect(p.subscription_data?.trial_settings?.end_behavior?.missing_payment_method).toBe("cancel");
   });
 
+  it("trialDays 0: no trial keys, card collection required, metadata kept", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, trialDays: 0, customerEmail: "a@b.com" });
+    expect(p.subscription_data && "trial_period_days" in p.subscription_data).toBe(false);
+    expect(p.subscription_data && "trial_settings" in p.subscription_data).toBe(false);
+    // No trial → payment due at checkout, so the card is always collected.
+    expect("payment_method_collection" in p).toBe(false);
+    expect(p.subscription_data?.metadata).toEqual({ org_id: "org-abc" });
+  });
+
   it("reuses an existing customer id, else falls back to customer_email", () => {
     const withCust = buildEmbeddedCheckoutParams({ ...base, customerId: "cus_9" });
     expect(withCust.customer).toBe("cus_9");
@@ -52,6 +67,35 @@ describe("buildEmbeddedCheckoutParams", () => {
     const usd = buildEmbeddedCheckoutParams({ ...base, currency: "usd" });
     expect("currency" in usd).toBe(false);
     expect("currency" in buildEmbeddedCheckoutParams(base)).toBe(false);
+  });
+});
+
+describe("one trial per org (product gap 2026-07-13)", () => {
+  it("first-ever checkout gets the 14-day trial", () => {
+    expect(checkoutTrialDays(undefined)).toBe(14);
+    expect(checkoutTrialDays({ trial_used_at: null })).toBe(14);
+  });
+
+  it("an org that ever trialed gets no second trial — downgrade/upgrade loop closed", () => {
+    expect(checkoutTrialDays({ trial_used_at: "2026-01-01T00:00:00Z" })).toBe(0);
+  });
+
+  it("checkout is refused while a live Stripe subscription exists", () => {
+    for (const status of ["active", "trialing"]) {
+      expect(() =>
+        assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status }),
+      ).toThrowError(/manage/i);
+    }
+  });
+
+  it("checkout is allowed with no sub row, a canceled sub, or comped Pro", () => {
+    expect(() => assertCheckoutAllowed(undefined)).not.toThrow();
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "canceled" }),
+    ).not.toThrow();
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: null, status: "active" }),
+    ).not.toThrow();
   });
 });
 
