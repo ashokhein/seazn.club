@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
   ArrowRight, CalendarClock, ClipboardList, CreditCard, LayoutGrid,
-  Megaphone, Play, Rocket, Trophy, Users, Webhook,
+  Megaphone, Play, Rocket, Trophy, UserCheck, Users, Webhook,
 } from "lucide-react";
 import { helpNav } from "@/server/help-content";
 import { HelpSearch } from "@/components/help-search";
@@ -12,6 +12,7 @@ const SECTION_ICONS: Record<string, React.ComponentType<{ className?: string; st
   "getting-started": Rocket,
   formats: LayoutGrid,
   entrants: Users,
+  players: UserCheck,
   registration: ClipboardList,
   scheduling: CalendarClock,
   scoring: Play,
