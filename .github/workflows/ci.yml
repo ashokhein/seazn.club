@@ -253,6 +253,15 @@ jobs:
         env:
           DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
 
+      # Sport catalog rows are GENERATED from the engine registry — new
+      # sports ship as rows, not schema (v6/00). Idempotent upserts keyed by
+      # sport/variant; must land before the app deploys or the division
+      # builder serves a stale sport_variants catalog (known gotcha).
+      - name: Sync sport catalog
+        run: npm run sync:sports
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
       # Idempotent by design: prices matched by lookup_key, currency_options
       # re-asserted, resulting ids written into `plans` (checkout 503s when
       # unsynced, so this must land before the app). Skips with a notice
