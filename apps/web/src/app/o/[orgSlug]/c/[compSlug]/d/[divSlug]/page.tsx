@@ -20,6 +20,7 @@ import { DivisionDangerZone } from "@/components/v2/division-danger-zone";
 import { EmbedSnippet } from "@/components/v2/embed-snippet";
 import { DivisionSettings } from "@/components/v2/division-settings";
 import { formatLocked } from "@/lib/format-lock";
+import { resolveLogoUrl } from "@/server/public-site/data";
 import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
@@ -281,7 +282,9 @@ export default async function DivisionPage({
               sport_key: division.sport_key,
               variant_key: division.variant_key,
               config: division.config,
-              logo_url: division.logo_url,
+              // Uploads store the storage path; resolve it so the tile
+              // survives remounts (tab switches) — same fix as the card.
+              logo_url: resolveLogoUrl(division.logo_storage_path, division.logo_url),
               logo_storage_path: division.logo_storage_path,
             }}
             variants={await listVariantOptions(auth, division.sport_key)}
