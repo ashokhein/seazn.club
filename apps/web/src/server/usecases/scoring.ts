@@ -9,6 +9,7 @@ import { HttpError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import { rateLimit } from "@/lib/rate-limit";
 import { requireFeature } from "@/lib/entitlements";
+import { deferred } from "@/lib/deferred";
 import { EngineError } from "@seazn/engine/core";
 import { appendEvent, resolveModule } from "@/server/engine-db";
 import { recomputeStandings } from "@/server/engine-db";
@@ -369,8 +370,10 @@ async function invalidatePublicCache(
     // Cheap by design (doc 15 §2 / PROMPT-19 item 4): the `discovery` tag
     // fires only for discoverable competitions.
     if (movesDiscovery && row.discoverable) {
-      await invalidateDiscoveryCache();
-      fireDiscoveryRevalidate();
+      deferred(async () => {
+        await invalidateDiscoveryCache();
+        fireDiscoveryRevalidate();
+      });
     }
   }
 }

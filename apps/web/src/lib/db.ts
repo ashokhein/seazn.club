@@ -22,6 +22,34 @@ export function statementCount(): number {
   return globalForDb._queryCount ?? 0;
 }
 
+export interface DbConnectionOptions {
+  ssl: false | "require";
+  prepare: boolean;
+  max: number;
+  schema: string;
+}
+
+/**
+ * Pure derivation of postgres.js options from the URL + env. Session pooler
+ * (:5432) / direct connections keep prepared statements; Supabase's
+ * transaction pooler (:6543) does not support them. Pool size is env-tunable
+ * (DB_POOL_MAX, 1..50) so a machine-size bump doesn't need a code change.
+ */
+export function connectionOptions(
+  url: string,
+  env: Record<string, string | undefined> = process.env,
+): DbConnectionOptions {
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sslEnv = env.DATABASE_SSL;
+  const ssl: false | "require" =
+    sslEnv === "disable" ? false : sslEnv === "require" ? "require" : isLocal ? false : "require";
+  const prepare = !url.includes(":6543");
+  const rawMax = Number(env.DB_POOL_MAX);
+  const max = Number.isInteger(rawMax) && rawMax >= 1 && rawMax <= 50 ? rawMax : 5;
+  const schema = env.DB_SCHEMA ?? "seazn_club";
+  return { ssl, prepare, max, schema };
+}
+
 function getClient(): Sql {
   if (globalForDb._sql) return globalForDb._sql;
   const url = process.env.DATABASE_URL;
@@ -30,32 +58,12 @@ function getClient(): Sql {
       "DATABASE_URL is not set. Copy .env.example to .env.local and add your Supabase connection string.",
     );
   }
-  // Supabase requires SSL; a local Postgres rejects it. Auto-detect, with an
-  // optional override via DATABASE_SSL=require|disable.
-  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
-  const sslEnv = process.env.DATABASE_SSL;
-  const ssl =
-    sslEnv === "disable"
-      ? false
-      : sslEnv === "require"
-        ? "require"
-        : isLocal
-          ? false
-          : "require";
-
-  // Supabase's transaction pooler (port 6543) does not support prepared
-  // statements; disable them in that case.
-  const prepare = !url.includes(":6543");
-
-  // The app lives in a dedicated schema (see db/flyway.toml). Pin it on the
-  // connection startup packet so every query — including `withTenant`'s
-  // `set local role app_user` transactions — resolves unqualified names there.
-  const schema = process.env.DB_SCHEMA ?? "seazn_club";
+  const { ssl, prepare, max, schema } = connectionOptions(url);
 
   const client = postgres(url, {
     ssl,
     prepare,
-    max: 5,
+    max,
     idle_timeout: 20,
     connect_timeout: 15,
     connection: { search_path: schema },

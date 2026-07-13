@@ -102,6 +102,8 @@ export function TearOffTicket({
             <p className="mt-2 max-w-md text-xs text-ink-muted">{msg("register.ticket.keep")}</p>
           </div>
           {qrDataUrl && (
+            /* data: URI QR code — generated in-memory, not storage-served; next/image
+               optimizer doesn't apply, stays <img> */
             /* eslint-disable-next-line @next/next/no-img-element -- data URL QR */
             <img
               src={qrDataUrl}

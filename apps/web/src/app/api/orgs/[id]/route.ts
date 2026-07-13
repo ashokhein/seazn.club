@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
 import { requireOrgRole, invalidateUserOrgs, generateOrgSlug } from "@/lib/auth";
 import { recordSlugHistory } from "@/server/usecases/slugs";
+import { invalidateSlugCache } from "@/server/slug-resolve";
 import { fireOrgRevalidate } from "@/server/public-site/revalidate";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
@@ -105,6 +106,7 @@ export async function PATCH(
     // A rename busts the OLD slug's tree too (its pages now redirect).
     fireOrgRevalidate(org.slug);
     if (previousSlug) fireOrgRevalidate(previousSlug);
+    if (previousSlug) await invalidateSlugCache("org", null, previousSlug, org.slug);
 
     return org;
   });

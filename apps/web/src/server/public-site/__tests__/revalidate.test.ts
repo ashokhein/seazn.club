@@ -15,6 +15,13 @@ vi.mock("@/server/public-site/data", () => ({
   orgTag: (slug: string) => `org-public:${slug}`,
   DISCOVERY_TAG: "discovery",
 }));
+const broadcastRevalidate = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@/lib/peer-revalidate", () => ({ broadcastRevalidate }));
+// Task 7: CDN purge fires alongside the peer broadcast at the same seam —
+// mocked here purely to assert the wiring, not purgeCdn's own behavior
+// (that's cdn-purge.test.ts's job).
+const purgeCdn = vi.hoisted(() => vi.fn(async () => {}));
+vi.mock("@/lib/cdn-purge", () => ({ purgeCdn }));
 
 import {
   fireDivisionRevalidate,
@@ -22,7 +29,11 @@ import {
   fireDiscoveryRevalidate,
 } from "../revalidate";
 
-beforeEach(() => revalidateTag.mockClear());
+beforeEach(() => {
+  revalidateTag.mockClear();
+  broadcastRevalidate.mockClear();
+  purgeCdn.mockClear();
+});
 
 describe("public-site revalidation profiles", () => {
   it("org chrome expires immediately (read-your-writes)", () => {
@@ -30,15 +41,27 @@ describe("public-site revalidation profiles", () => {
     expect(revalidateTag).toHaveBeenCalledWith("org-public:my-org", { expire: 0 });
   });
 
+  it("org chrome broadcast fans out with expire mode", () => {
+    fireOrgRevalidate("riverside");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["org-public:riverside"], "expire");
+  });
+
   it("division/competition tags keep stale-while-revalidate", () => {
     fireDivisionRevalidate("d1", "c1");
     expect(revalidateTag).toHaveBeenCalledWith("division:d1", "max");
     expect(revalidateTag).toHaveBeenCalledWith("competition:c1", "max");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["division:d1", "competition:c1"], "swr");
+  });
+
+  it("division-only broadcast omits the competition tag when none is passed", () => {
+    fireDivisionRevalidate("d1");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["division:d1"], "swr");
   });
 
   it("discovery tag keeps stale-while-revalidate", () => {
     fireDiscoveryRevalidate();
     expect(revalidateTag).toHaveBeenCalledWith("discovery", "max");
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["discovery"], "swr");
   });
 
   it("swallows revalidateTag throwing outside a request scope", () => {
@@ -46,5 +69,30 @@ describe("public-site revalidation profiles", () => {
       throw new Error("static generation store missing");
     });
     expect(() => fireOrgRevalidate("my-org")).not.toThrow();
+    // Broadcast is unconditional — it must still fire even though the local
+    // revalidateTag call above threw (outside-request-scope path).
+    expect(broadcastRevalidate).toHaveBeenCalledWith(["org-public:my-org"], "expire");
+  });
+});
+
+// Task 7 (spec 2026-07-12 §3 A-step 1): a CDN purge must fire alongside the
+// peer broadcast at every revalidation seam — otherwise a stray rendering
+// change can go un-cached (or a purge can silently stop happening) with no
+// test ever catching it. This is a pure wiring check: purgeCdn's own
+// behavior (debounce, fail-open, env-gating) is covered by cdn-purge.test.ts.
+describe("CDN purge fires alongside peer broadcast (Task 7)", () => {
+  it("fireDivisionRevalidate calls purgeCdn", () => {
+    fireDivisionRevalidate("d1", "c1");
+    expect(purgeCdn).toHaveBeenCalledTimes(1);
+  });
+
+  it("fireOrgRevalidate calls purgeCdn", () => {
+    fireOrgRevalidate("riverside");
+    expect(purgeCdn).toHaveBeenCalledTimes(1);
+  });
+
+  it("fireDiscoveryRevalidate calls purgeCdn", () => {
+    fireDiscoveryRevalidate();
+    expect(purgeCdn).toHaveBeenCalledTimes(1);
   });
 });

@@ -3,6 +3,7 @@
 // render with noindex; private ones never reach here (the view 404s them).
 import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
+import Image from "next/image";
 import type { Metadata } from "next";
 import { ChevronRight } from "lucide-react";
 import { getPublicCompetition } from "@/server/public-site/data";
@@ -14,6 +15,12 @@ import { renderProse } from "@/lib/prose";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
 
 export const revalidate = 30;
+
+// ISR (task-8): empty-array generateStaticParams is required for on-demand
+// ISR on a dynamic segment in this Next version — see generate-static-params.md.
+export async function generateStaticParams() {
+  return [];
+}
 
 type Props = { params: Promise<{ orgSlug: string; competitionSlug: string }> };
 
@@ -82,6 +89,10 @@ export default async function CompetitionHomePage({ params }: Props) {
       <section className="relative mb-6 overflow-hidden rounded-2xl bg-court text-court-ink shadow-lg">
         {branding.banner ? (
           <>
+            {/* competition branding.banner — raw jsonb (z.record(string, unknown)),
+                not routed through resolveLogoUrl and has no upload UI today, so it
+                isn't provably a storage URL; stays <img> until that's confirmed
+                (task-4 report: skipped-ambiguous-source) */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={branding.banner}
@@ -103,6 +114,8 @@ export default async function CompetitionHomePage({ params }: Props) {
         <div className="relative flex flex-col gap-5 p-6 sm:p-8">
           <div className="flex flex-wrap items-start gap-4">
             {branding.logo ? (
+              // competition branding.logo — same unconstrained jsonb / no-upload-UI
+              // situation as branding.banner above; skipped-ambiguous-source.
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={branding.logo}
@@ -247,8 +260,8 @@ export default async function CompetitionHomePage({ params }: Props) {
               const inner = (
                 <span className="flex items-center gap-2 rounded-lg border border-zinc-200/80 bg-surface px-3 py-2 text-sm text-zinc-600 shadow-sm">
                   {s.logo ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={s.logo} alt="" className="h-6 w-6 object-contain" />
+                    // sponsor logo — uploaded via content-upload, always a storage URL.
+                    <Image src={s.logo} alt="" width={24} height={24} className="h-6 w-6 object-contain" />
                   ) : null}
                   {s.name}
                 </span>

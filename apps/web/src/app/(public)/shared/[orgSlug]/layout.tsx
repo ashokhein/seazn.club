@@ -8,6 +8,7 @@
 // can re-brand the whole surface later without touching components.
 import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
+import Image from "next/image";
 import { Barlow_Condensed } from "next/font/google";
 import { isReservedSlug } from "@/lib/public-site";
 import { publicThemeStyle } from "@/lib/public-theme";
@@ -60,10 +61,12 @@ export default async function PublicOrgLayout({
       <header className="sticky top-0 z-40 bg-court text-court-ink shadow-md">
         <div className="mx-auto flex h-[52px] max-w-5xl items-center gap-3 px-4">
           {org.logo ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
+            // resolveLogoUrl(...) output — storage-served, covered by remotePatterns.
+            <Image
               src={org.logo}
               alt=""
+              width={32}
+              height={32}
               className="h-8 w-8 shrink-0 rounded-md bg-white/10 object-cover"
             />
           ) : (

@@ -15,7 +15,8 @@ primary_region = "lhr"
   force_https         = true
   auto_stop_machines  = "stop"
   auto_start_machines = true
-  min_machines_running = 1          # keep one warm; avoids cold-start for users
+  min_machines_running = 2          # deploy overlap + matchday headroom; peers
+                                    # stay ISR-coherent via /api/internal/revalidate
 
   [http_service.concurrency]
     type       = "connections"
@@ -32,10 +33,14 @@ primary_region = "lhr"
 
 [[vm]]
   size   = "shared-cpu-1x"
-  memory = "512mb"
+  memory = "1gb"
 
 # ── Secrets (set via `fly secrets set KEY=value`) ─────────────────────────────
-# DATABASE_URL             — Supabase transaction pooler URL (port 6543)
+# DATABASE_URL             — Supabase SESSION pooler URL (port 5432, Supavisor).
+#                            The app is an always-on server: session mode keeps
+#                            prepared statements (transaction pooler :6543
+#                            disables them — lib/db.ts auto-detects either).
+# DB_POOL_MAX              — optional, default 5; raise with machine size.
 # AUTH_SECRET              — random 32-byte hex; `openssl rand -hex 32`
 # SUPABASE_SERVICE_ROLE_KEY
 # SUPABASE_JWT_SECRET
@@ -43,3 +48,4 @@ primary_region = "lhr"
 # STRIPE_WEBHOOK_SECRET
 # RESEND_API_KEY
 # SENTRY_AUTH_TOKEN        — only needed if uploading source maps in CI
+# PEER_REVALIDATE=1 — enable multi-machine tag fan-out (requires CRON_SECRET)

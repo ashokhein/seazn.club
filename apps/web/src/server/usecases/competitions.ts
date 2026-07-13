@@ -11,6 +11,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import { page, type ListQuery, type Page } from "@/server/api-v1/http";
 import type { CreateCompetition, PatchCompetition } from "@/server/api-v1/schemas";
 import { fireDiscoveryRevalidate, invalidateDiscoveryCache } from "@/server/public-site/revalidate";
+import { invalidateSlugCache } from "@/server/slug-resolve";
 import {
   ACTIVE_COMPETITION_STATUSES,
   assertCompetitionNotFrozen,
@@ -193,6 +194,7 @@ export async function patchCompetition(
     await requireFeature(auth.orgId, "discovery.branding");
   }
   let statusChangedTo: string | null = null;
+  let previousSlug: string | null = null;
   const { row, discoveryTouched } = await withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {
       if (RESERVED_ENTITY_SLUGS.has(patch.slug)) {
@@ -222,6 +224,7 @@ export async function patchCompetition(
     }
     if (effective.slug && effective.slug !== before.slug) {
       await recordSlugHistory(tx, "competition", auth.orgId, before.slug, id);
+      previousSlug = before.slug;
     }
     const nextVisibility = patch.visibility ?? before.visibility;
     // Hard coupling (doc 15 §1): never leak a non-public competition to
@@ -269,6 +272,9 @@ export async function patchCompetition(
     await invalidateDiscoveryCache();
     fireDiscoveryRevalidate();
   }
+  // A rename busts the cached slug resolution (old + new key) — outside the
+  // tx, same reasoning as the discovery invalidation above.
+  if (previousSlug) await invalidateSlugCache("competition", auth.orgId, previousSlug, row.slug);
   // Lifecycle events (feature 1): tournament start/finish. `active` = play is on;
   // `complete` = it's wrapped up.
   if (statusChangedTo === "active" || statusChangedTo === "complete") {

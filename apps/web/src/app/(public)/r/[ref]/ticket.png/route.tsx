@@ -109,6 +109,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ ref: str
                 {stamp.label}
               </div>
             </div>
+            {/* next/og ImageResponse (satori) renderer — the next/image component
+                isn't supported inside it, stays <img> */}
             {/* eslint-disable-next-line @next/next/no-img-element -- OG renderer */}
             <img src={qr} alt="" width={180} height={180} style={{ borderRadius: 12 }} />
           </div>

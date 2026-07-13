@@ -15,6 +15,13 @@ import type { StandingsRow } from "@seazn/engine/competition";
 
 export const revalidate = 30;
 
+// ISR (task-8): same fix as the /shared tree — empty-array generateStaticParams
+// is required for on-demand ISR on a dynamic segment in this Next version
+// (docs: api-reference/functions/generate-static-params.md).
+export async function generateStaticParams() {
+  return [];
+}
+
 const WIDGETS = new Set(["standings", "schedule", "bracket"]);
 const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
 

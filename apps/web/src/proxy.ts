@@ -2,6 +2,19 @@ import { NextRequest, NextResponse } from "next/server";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
+// ISR/CDN-cacheable public surfaces (spec 2026-07-12 P5): nonce CSP forces
+// dynamic rendering, so these trees stay Report-Only permanently — flipping
+// CSP_MODE=enforce hardens the app surface without un-caching spectator pages.
+// Cacheable trees: /shared and /embed. /r (registration-ref tree, /r/[ref]) is
+// deliberately excluded because it is force-dynamic and processes self-withdraw
+// tokens; excluding it from the carve-out costs no caching but keeps enforce
+// active on a token-bearing page.
+const CACHEABLE_PUBLIC = /^\/(shared|embed)(\/|$)/;
+
+export function isCacheablePublicPath(pathname: string): boolean {
+  return CACHEABLE_PUBLIC.test(pathname);
+}
+
 /**
  * Build the Content-Security-Policy for a page request (doc 04 §5).
  *
@@ -16,9 +29,9 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
  * browser console on staging) to switch to blocking. Enforcing nonce CSP forces
  * dynamic rendering (no static/CDN caching), which is why it is opt-in.
  */
-function cspHeader(nonce: string): { name: string; value: string } {
+function cspHeader(nonce: string, opts: { forceReportOnly?: boolean } = {}): { name: string; value: string } {
   const isDev = process.env.NODE_ENV === "development";
-  const enforce = process.env.CSP_MODE === "enforce";
+  const enforce = process.env.CSP_MODE === "enforce" && !opts.forceReportOnly;
   const value = [
     `default-src 'self'`,
     // Stripe.js is loaded from js.stripe.com for Embedded Checkout.
@@ -99,13 +112,17 @@ export function proxy(request: NextRequest) {
   }
 
   // Page requests: attach a per-request nonce + CSP.
+  const cacheable = isCacheablePublicPath(request.nextUrl.pathname);
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
-  const csp = cspHeader(nonce);
+  const csp = cspHeader(nonce, { forceReportOnly: cacheable });
 
   const requestHeaders = new Headers(request.headers);
-  requestHeaders.set("x-nonce", nonce);
-  // Next reads the enforcing CSP header on the request to stamp script nonces.
-  requestHeaders.set(csp.name, csp.value);
+  if (!cacheable) {
+    // Nonce request headers make Next stamp scripts per-request; cacheable
+    // trees skip them so the HTML stays byte-stable for ISR/CDN.
+    requestHeaders.set("x-nonce", nonce);
+    requestHeaders.set(csp.name, csp.value);
+  }
 
   const response = NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set(csp.name, csp.value);
