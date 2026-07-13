@@ -139,20 +139,17 @@ export default async function DivisionPage({
               <a
                 href={`/shared/${orgSlug}/${competition.slug}/poster.pdf?division=${divSlug}`}
                 target="_blank"
-                aria-label="Print Poster (PDF, opens in a new tab)"
+                aria-label="QR poster (PDF, opens in a new tab)"
                 className="btn btn-ghost gap-1.5"
               >
                 <Printer className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">Print Poster</span>
+                <span className="hidden sm:inline">QR</span>
               </a>
             )}
-            {editable && (
-              <InviteScorer
-                orgId={auth.orgId}
-                divisionId={id}
-                officialLabel={sportModule.officialLabel.scorer}
-              />
-            )}
+          </div>
+          {/* v8: primary actions live on their own row under the title —
+              Start / Schedule / Invite wrap cleanly at 390px. */}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
             <LaunchActions
               divisionId={id}
               orgSlug={orgSlug}
@@ -161,6 +158,13 @@ export default async function DivisionPage({
               status={division.status}
               canEdit={editable}
             />
+            {editable && (
+              <InviteScorer
+                orgId={auth.orgId}
+                divisionId={id}
+                officialLabel={sportModule.officialLabel.scorer}
+              />
+            )}
           </div>
         </div>
 
@@ -282,6 +286,7 @@ export default async function DivisionPage({
             }}
             variants={await listVariantOptions(auth, division.sport_key)}
             locked={formatLocked([{ fixture_count: fixtures.length }])}
+            stages={stages.map((st) => ({ name: st.name, kind: st.kind }))}
             canEdit={editable}
             divisionPathPrefix={`/o/${orgSlug}/c/${compSlug}/d/`}
             fixturesHref={routes.division(orgSlug, compSlug, divSlug, "fixtures")}

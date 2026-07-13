@@ -9,6 +9,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 import { divisionAccent, monogram } from "@/lib/division-hue";
+import { MatchRuleFields, buildRuleOverride } from "./match-rules";
 
 export interface DivisionSettingsInfo {
   id: string;
@@ -86,6 +87,7 @@ export function DivisionSettings({
   division,
   variants,
   locked,
+  stages,
   canEdit,
   divisionPathPrefix,
   fixturesHref,
@@ -96,6 +98,9 @@ export function DivisionSettings({
   variants: { key: string; name: string }[];
   /** formatLocked() from the page — fixtures exist. */
   locked: boolean;
+  /** Stage structure (kind + name) — shown so group/top sections are visible
+   *  here; structure itself is edited on the Fixtures tab. */
+  stages: { name: string; kind: string }[];
   canEdit: boolean;
   /** "/o/{org}/c/{comp}/d/" — renames regenerate the slug, and the client
    *  must follow it without losing the settings tab. */
@@ -110,7 +115,12 @@ export function DivisionSettings({
   const [name, setName] = useState(division.name);
   const [logoUrl, setLogoUrl] = useState(division.logo_url);
   const [variantKey, setVariantKey] = useState(division.variant_key);
-  const [configText, setConfigText] = useState(JSON.stringify(division.config ?? {}, null, 2));
+  const cfg = (division.config ?? {}) as { points?: { w?: number; d?: number; l?: number }; progressScore?: boolean };
+  const [pointsW, setPointsW] = useState(cfg.points ? String(cfg.points.w ?? "") : "");
+  const [pointsD, setPointsD] = useState(cfg.points ? String(cfg.points.d ?? "") : "");
+  const [pointsL, setPointsL] = useState(cfg.points ? String(cfg.points.l ?? "") : "");
+  const [ruleValues, setRuleValues] = useState<Record<string, string>>({});
+  const [advancedText, setAdvancedText] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -176,15 +186,36 @@ export function DivisionSettings({
 
   const applyFormat = () =>
     run(async () => {
-      let config: unknown;
-      try {
-        config = JSON.parse(configText);
-      } catch {
-        throw new Error("Config is not valid JSON");
+      // The server merges preset + override, but presets only carry the
+      // variant-identity keys (resultMode/allowDraws) — schema-required keys
+      // like progressScore live in the division's current config. Base the
+      // override on that valid snapshot; on a variant change, drop the
+      // identity keys so the new preset wins them.
+      const override: Record<string, unknown> = {
+        ...((division.config as Record<string, unknown>) ?? {}),
+      };
+      if (variantKey !== division.variant_key) {
+        delete override.resultMode;
+        delete override.allowDraws;
+      }
+      Object.assign(override, buildRuleOverride(division.sport_key, ruleValues));
+      if (pointsW !== "" || pointsD !== "" || pointsL !== "") {
+        override.points = {
+          w: pointsW === "" ? (cfg.points?.w ?? 0) : Number(pointsW),
+          d: pointsD === "" ? (cfg.points?.d ?? 0) : Number(pointsD),
+          l: pointsL === "" ? (cfg.points?.l ?? 0) : Number(pointsL),
+        };
+      }
+      if (advancedText.trim() !== "") {
+        try {
+          Object.assign(override, JSON.parse(advancedText));
+        } catch {
+          throw new Error("Advanced overrides are not valid JSON");
+        }
       }
       await apiV1(`/api/v1/divisions/${division.id}`, {
         method: "PATCH",
-        json: { variant_key: variantKey, config },
+        json: { variant_key: variantKey, config: override },
       });
     }, "Format updated.");
 
@@ -294,25 +325,76 @@ export function DivisionSettings({
                 ))}
               </select>
             </label>
-            <label className="block text-xs text-slate-500">
-              Config (advanced — validated by the sport module on save)
+
+            {cfg.points && (
+              <div>
+                <p className="text-xs text-slate-500">Standings points</p>
+                <div className="mt-1 grid grid-cols-3 gap-2">
+                  <label className="block text-xs text-slate-500">
+                    Win
+                    <input type="number" min={0} max={99} disabled={!canEdit} value={pointsW}
+                      onChange={(e) => setPointsW(e.target.value)} className="input mt-1 w-full" />
+                  </label>
+                  <label className="block text-xs text-slate-500">
+                    Draw
+                    <input type="number" min={0} max={99} disabled={!canEdit} value={pointsD}
+                      onChange={(e) => setPointsD(e.target.value)} className="input mt-1 w-full" />
+                  </label>
+                  <label className="block text-xs text-slate-500">
+                    Loss
+                    <input type="number" min={0} max={99} disabled={!canEdit} value={pointsL}
+                      onChange={(e) => setPointsL(e.target.value)} className="input mt-1 w-full" />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <MatchRuleFields
+              sportKey={division.sport_key}
+              values={ruleValues}
+              onChange={setRuleValues}
+              disabled={!canEdit}
+            />
+
+            {stages.length > 0 && (
+              <p className="rounded-md bg-slate-50 p-3 text-xs text-slate-500" data-testid="stage-structure">
+                Structure:{" "}
+                {stages.map((st, i) => (
+                  <span key={i}>
+                    {i > 0 && " → "}
+                    <span className="font-medium text-slate-700">{st.name}</span> ({st.kind})
+                  </span>
+                ))}
+                {" · "}
+                <Link href={fixturesHref} className="text-purple-700 underline">
+                  edit stages on the Fixtures tab
+                </Link>
+              </p>
+            )}
+
+            <details>
+              <summary className="cursor-pointer text-[11px] text-slate-400">
+                Advanced overrides (JSON)
+              </summary>
               <textarea
                 disabled={!canEdit}
-                value={configText}
-                onChange={(e) => setConfigText(e.target.value)}
-                rows={6}
+                value={advancedText}
+                onChange={(e) => setAdvancedText(e.target.value)}
+                rows={4}
                 spellCheck={false}
+                placeholder='e.g. { "progressScore": true }'
                 className="input mt-1 w-full font-mono text-xs"
               />
-            </label>
+            </details>
+
             {canEdit && (
               <button type="button" disabled={busy} onClick={applyFormat} className="btn btn-primary text-xs">
                 Apply format
               </button>
             )}
             <p className="text-[11px] text-slate-400">
-              Changing the format re-validates against the sport&apos;s rules. Once fixtures are
-              generated it locks for good.
+              Blank fields keep the variant&apos;s defaults; changes re-validate against the
+              sport&apos;s rules. Once fixtures are generated the format locks for good.
             </p>
           </>
         )}

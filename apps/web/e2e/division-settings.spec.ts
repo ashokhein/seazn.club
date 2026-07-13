@@ -46,9 +46,11 @@ test("settings tab: sections render, rename works, format locks with fixtures", 
   await page.waitForURL(/\/d\/tile-open-renamed\?tab=settings/, { timeout: 15_000 });
   await expect(page.getByTestId("division-settings")).toBeVisible();
 
-  // Format editor is live pre-fixtures.
+  // Format editor is live pre-fixtures — structured fields, no JSON needed.
   await page.getByRole("button", { name: /Format/ }).click();
-  await expect(page.getByRole("button", { name: "Apply format" })).toBeVisible();
+  await page.getByRole("spinbutton", { name: "Win" }).fill("5");
+  await page.getByRole("button", { name: "Apply format" }).click();
+  await expect(page.getByText("Format updated.")).toBeVisible();
 
   // The strays moved: no embed snippet / danger zone under other tabs.
   await page.goto(`${base}?tab=entrants`);
