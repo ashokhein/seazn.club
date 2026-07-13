@@ -8,7 +8,7 @@ When the draw is ready, press **Start**. Starting locks entrants and format — 
 
 ## Scoring a match
 
-Open any fixture and use its score pad — each sport gets the right one (sets for badminton, overs for cricket, plain points for generic scoring). Every entry updates standings, progression and public dashboards immediately.
+Open any fixture and use its score pad — each sport gets the right one (sets for badminton, [real tennis scoring](/help/scoring/tennis) with tie-breaks, overs for cricket, [periods and penalties for the hockeys](/help/scoring/hockey), plain points for generic scoring). Every entry updates standings, progression and public dashboards immediately.
 
 ## Who can score
 

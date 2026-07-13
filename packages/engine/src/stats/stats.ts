@@ -63,12 +63,19 @@ export function aggregatePlayerStats(
       if (event.type !== metric.from) continue;
       if (metric.when !== undefined && !metric.when(payload)) continue;
       const person = payload[metric.field ?? "person"];
-      if (typeof person !== "string" || person === "") continue;
+      // An array field credits every listed person once (ice-hockey assists:
+      // up to two per goal, each worth one assist — v6/00 §3).
+      const persons = Array.isArray(person)
+        ? person.filter((p): p is string => typeof p === "string" && p !== "")
+        : typeof person === "string" && person !== ""
+          ? [person]
+          : [];
+      if (persons.length === 0) continue;
       if (metric.agg === "count") {
-        bump(person, metric.key, 1);
+        for (const p of persons) bump(p, metric.key, 1);
       } else {
         const value = payload[metric.sumField ?? "value"];
-        if (typeof value === "number") bump(person, metric.key, value);
+        if (typeof value === "number") for (const p of persons) bump(p, metric.key, value);
       }
     }
     if (event.type === "core.award") {

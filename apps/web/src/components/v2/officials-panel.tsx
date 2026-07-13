@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { officialRolePreset } from "@/lib/official-roles";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
 interface Official {
@@ -64,6 +65,7 @@ export function OfficialsPanel({
   stages,
   hideNames,
   canEdit,
+  sportKey,
 }: {
   divisionId: string;
   officials: Official[];
@@ -71,13 +73,16 @@ export function OfficialsPanel({
   stages: StageLite[];
   hideNames: boolean;
   canEdit: boolean;
+  /** Seeds the add-form role + crew hint from the sport's preset (v6/00 §4). */
+  sportKey?: string;
 }) {
+  const rolePreset = officialRolePreset(sportKey);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
-  const [roles, setRoles] = useState("referee");
+  const [roles, setRoles] = useState(rolePreset.defaultRole);
   const [blockStay, setBlockStay] = useState(true);
   const [poolLock, setPoolLock] = useState(false);
   const [fairness, setFairness] = useState<"tournament" | "per_day">("tournament");
@@ -198,7 +203,10 @@ export function OfficialsPanel({
               void run(async () => {
                 await apiV1("/api/v1/officials", {
                   method: "POST",
-                  json: { display_name: name.trim(), role_keys: roleList.length ? roleList : ["referee"] },
+                  json: {
+                    display_name: name.trim(),
+                    role_keys: roleList.length ? roleList : [rolePreset.defaultRole],
+                  },
                 });
                 setName("");
               });
@@ -213,6 +221,11 @@ export function OfficialsPanel({
               <input className="input w-40" value={roles} onChange={(e) => setRoles(e.target.value)} />
             </label>
             <button type="submit" className="btn btn-primary" disabled={busy}>Add official</button>
+            {rolePreset.crew.length > 1 && (
+              <span className="basis-full text-[11px] text-slate-400">
+                Usual crew for this sport: {rolePreset.crew.join(", ")}
+              </span>
+            )}
           </form>
         )}
       </div>

@@ -16,6 +16,9 @@ export interface DiscoveryLiveFixture {
   id: string;
   sport_key: string;
   headline: string | null;
+  /** "5v4" / "10v11" while a suspension runs (period-kernel sports) — the
+   *  wall's power-play chip (v6/00 §5). */
+  strength: string | null;
   competition_name: string;
   org_slug: string;
   comp_slug: string;
@@ -28,8 +31,8 @@ export interface DiscoveryLiveFixture {
 export const getDiscoveryLive = unstable_cache(
   async (): Promise<DiscoveryLiveFixture[]> => {
     const rows = await sql<
-      (Omit<DiscoveryLiveFixture, "headline"> & {
-        summary: { headline?: string } | null;
+      (Omit<DiscoveryLiveFixture, "headline" | "strength"> & {
+        summary: { headline?: string; detail?: { strength?: string | null } } | null;
       })[]
     >`
       select f.id, d.sport_key, f.summary,
@@ -41,7 +44,11 @@ export const getDiscoveryLive = unstable_cache(
       where f.status = 'in_play'
       order by f.scheduled_at nulls last, f.id
       limit 6`;
-    return rows.map(({ summary, ...r }) => ({ ...r, headline: summary?.headline ?? null }));
+    return rows.map(({ summary, ...r }) => ({
+      ...r,
+      headline: summary?.headline ?? null,
+      strength: summary?.detail?.strength ?? null,
+    }));
   },
   ["discovery-live"],
   { tags: [DISCOVERY_TAG], revalidate: REVALIDATE_FAST },
@@ -53,8 +60,8 @@ export const getDiscoveryLive = unstable_cache(
 export const getDiscoveryLiveAll = unstable_cache(
   async (): Promise<DiscoveryLiveFixture[]> => {
     const rows = await sql<
-      (Omit<DiscoveryLiveFixture, "headline"> & {
-        summary: { headline?: string } | null;
+      (Omit<DiscoveryLiveFixture, "headline" | "strength"> & {
+        summary: { headline?: string; detail?: { strength?: string | null } } | null;
       })[]
     >`
       select f.id, d.sport_key, f.summary,
@@ -66,7 +73,11 @@ export const getDiscoveryLiveAll = unstable_cache(
       where f.status = 'in_play'
       order by f.scheduled_at nulls last, f.id
       limit 60`;
-    return rows.map(({ summary, ...r }) => ({ ...r, headline: summary?.headline ?? null }));
+    return rows.map(({ summary, ...r }) => ({
+      ...r,
+      headline: summary?.headline ?? null,
+      strength: summary?.detail?.strength ?? null,
+    }));
   },
   ["discovery-live-all"],
   { tags: [DISCOVERY_TAG], revalidate: REVALIDATE_FAST },

@@ -228,6 +228,87 @@ export function setBreakdown(summary: unknown, sportKey: string): SetBreakdown |
 }
 
 // ---------------------------------------------------------------------------
+// Period-kernel breakdowns (v6/00 §5): goals by period, the strength chip
+// while suspensions run, the discipline list, and the serving side (tennis).
+// All read ScoreSummary.detail and return null when the sport doesn't carry
+// that shape — the surfaces stay sport-agnostic.
+// ---------------------------------------------------------------------------
+
+export interface PeriodScoreRow {
+  phase: string;
+  home: number;
+  away: number;
+}
+
+export function periodBreakdown(summary: unknown): PeriodScoreRow[] | null {
+  if (typeof summary !== "object" || summary === null) return null;
+  const detail = (summary as { detail?: unknown }).detail;
+  if (typeof detail !== "object" || detail === null) return null;
+  const raw = (detail as { periods?: unknown }).periods;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const rows: PeriodScoreRow[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const { phase, home, away } = entry as Record<string, unknown>;
+    if (typeof phase !== "string" || typeof home !== "number" || typeof away !== "number") {
+      return null;
+    }
+    rows.push({ phase, home, away });
+  }
+  return rows;
+}
+
+/** "5v4" / "10v11" while a team-short suspension runs, else null. */
+export function matchStrength(summary: unknown): string | null {
+  if (typeof summary !== "object" || summary === null) return null;
+  const detail = (summary as { detail?: unknown }).detail;
+  if (typeof detail !== "object" || detail === null) return null;
+  const strength = (detail as { strength?: unknown }).strength;
+  return typeof strength === "string" && strength !== "" ? strength : null;
+}
+
+export interface DisciplineEntry {
+  side: "home" | "away";
+  person?: string;
+  classKey: string;
+}
+
+export function disciplineList(summary: unknown): DisciplineEntry[] | null {
+  if (typeof summary !== "object" || summary === null) return null;
+  const detail = (summary as { detail?: unknown }).detail;
+  if (typeof detail !== "object" || detail === null) return null;
+  const raw = (detail as { discipline?: unknown }).discipline;
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const rows: DisciplineEntry[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const { side, person, classKey } = entry as Record<string, unknown>;
+    if ((side !== "home" && side !== "away") || typeof classKey !== "string") return null;
+    rows.push({
+      side,
+      classKey,
+      ...(typeof person === "string" ? { person } : {}),
+    });
+  }
+  return rows;
+}
+
+/** Which side is serving (nested kernel, rally fidelity) — null otherwise. */
+export function servingSide(summary: unknown): "home" | "away" | null {
+  if (typeof summary !== "object" || summary === null) return null;
+  const detail = (summary as { detail?: unknown }).detail;
+  if (typeof detail !== "object" || detail === null) return null;
+  const serving = (detail as { serving?: unknown }).serving;
+  return serving === "home" || serving === "away" ? serving : null;
+}
+
+/** Human label for a discipline class key: "double_minor" → "Double minor". */
+export function disciplineLabel(classKey: string): string {
+  const label = classKey.replace(/_/g, " ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
+}
+
+// ---------------------------------------------------------------------------
 // Row normalization + spectator vocabulary
 // ---------------------------------------------------------------------------
 

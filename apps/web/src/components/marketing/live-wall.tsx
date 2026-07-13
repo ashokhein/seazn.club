@@ -53,8 +53,13 @@ export function LiveWall({ fixtures }: { fixtures: DiscoveryLiveFixture[] }) {
                     <span aria-hidden>{sportEmoji(f.sport_key)}</span>
                     <span className="truncate">{f.competition_name}</span>
                   </p>
-                  <p className="mk-display mt-2 truncate text-xl font-bold tabular-nums text-cream">
-                    {f.headline ?? "In play"}
+                  <p className="mk-display mt-2 flex items-center gap-2 truncate text-xl font-bold tabular-nums text-cream">
+                    <span className="truncate">{f.headline ?? "In play"}</span>
+                    {f.strength ? (
+                      <span className="shrink-0 rounded-full bg-amber-400/20 px-2 py-0.5 font-mono text-[11px] font-bold text-amber-300">
+                        {f.strength}
+                      </span>
+                    ) : null}
                   </p>
                   <p className="mt-2 text-xs font-medium text-lime-400">
                     Watch live →

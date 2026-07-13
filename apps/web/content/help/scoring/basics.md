@@ -4,7 +4,7 @@ description: Start the division, open a fixture, use its pad — every point flo
 order: 1
 ---
 
-Scoring opens when you **start** the division ([why starting locks setup](/help/divisions/lifecycle)). From then on, every fixture has a score pad tuned to its sport: sets and games for racquet sports, overs and wickets for cricket, a plain score pad for everything else.
+Scoring opens when you **start** the division ([why starting locks setup](/help/divisions/lifecycle)). From then on, every fixture has a score pad tuned to its sport: sets and games for racquet sports ([tennis scores like tennis](/help/scoring/tennis) — deuce, tie-breaks and all), overs and wickets for cricket, [periods, penalties and shoot-outs for the hockeys](/help/scoring/hockey), a plain score pad for everything else.
 
 ## The flow
 

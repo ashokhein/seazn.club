@@ -11,6 +11,8 @@ import { ScoringErrorBoundary } from "@/components/v2/scoring-error-boundary";
 import { GenericPad } from "@/components/v2/pads/generic-pad";
 import { BoardgamePad } from "@/components/v2/pads/boardgame-pad";
 import { SetbasedPad } from "@/components/v2/pads/setbased-pad";
+import { TennisPad } from "@/components/v2/pads/tennis-pad";
+import { PeriodPad } from "@/components/v2/pads/period-pad";
 import { FootballPad } from "@/components/v2/pads/football-pad";
 import { CricketPad } from "@/components/v2/pads/cricket-pad";
 import type {
@@ -53,6 +55,10 @@ interface Props {
 }
 
 const SETBASED = new Set(["volleyball", "badminton", "tabletennis"]);
+// Nested-kernel sports (points → games → sets) — TennisPad, not SetbasedPad.
+const NESTED = new Set(["tennis"]);
+// Period-kernel sports — PeriodPad (football stays on FootballPad this wave).
+const PERIOD = new Set(["icehockey", "hockey"]);
 const DEAD_CODES = new Set(["LINK_EXPIRED", "LINK_REVOKED", "LINK_INVALID", "UNAUTHENTICATED"]);
 
 export function DeviceScorePad({
@@ -258,6 +264,10 @@ export function DeviceScorePad({
               <FootballPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
             ) : SETBASED.has(sport.key) ? (
               <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : NESTED.has(sport.key) ? (
+              <TennisPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : PERIOD.has(sport.key) ? (
+              <PeriodPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
             ) : sport.key === "boardgame" ? (
               <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
             ) : (

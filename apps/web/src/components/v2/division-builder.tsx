@@ -25,6 +25,9 @@ export interface SportOption {
 // The most common variant to preselect per sport (else the first listed).
 const PREFERRED_VARIANT: Record<string, string> = {
   cricket: "t20",
+  tennis: "tour",
+  icehockey: "iihf",
+  hockey: "fih-outdoor",
 };
 
 function pickVariant(sportKey: string, variants: { key: string }[]): string {
