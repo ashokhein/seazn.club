@@ -51,6 +51,7 @@ async function seedOrgWithPlan(plan: string): Promise<OrgMembership> {
     logo_storage_path: null,
     payment_instructions: null,
     branding: null,
+    default_payment_method: "offline",
     role: "owner",
   };
 }
