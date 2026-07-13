@@ -6,7 +6,7 @@
 //
 // v8: optional media identity — competitions wear a sport-tinted banner
 // strip, divisions a 56px logo-or-monogram tile. Anatomy below is unchanged.
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import type { ReactNode } from "react";
 import { msg } from "@/lib/messages";
 

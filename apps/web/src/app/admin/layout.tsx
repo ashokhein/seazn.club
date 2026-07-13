@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { requireStaff } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";

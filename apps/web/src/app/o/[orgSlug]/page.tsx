@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 // Org home — competitions as match-day cards (v3/03 §2). Nav comes from the
 // /o layout; auth comes from the URL (PROMPT-30).
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { Trophy } from "lucide-react";
 import { BillingBanner } from "@/components/billing-banner";
 import { requireOrgPage } from "@/server/page-auth";

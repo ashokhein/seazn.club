@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, ArrowLeftRight, Palette,

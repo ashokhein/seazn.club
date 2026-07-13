@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 // Fixture console (PROMPT-15 task 1): schedule, lineups, sport-shaped scoring
 // pad, void/undo, finalize. Server shell — all interaction in FixtureConsole.
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { notFound } from "next/navigation";
 import { requireFixturePage } from "@/server/page-auth";
 import {

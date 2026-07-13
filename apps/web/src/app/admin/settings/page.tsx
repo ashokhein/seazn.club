@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { platformFeeDefault } from "@/lib/platform-settings";
 import { AdminPlatformSettings } from "@/components/admin-platform-settings";
 

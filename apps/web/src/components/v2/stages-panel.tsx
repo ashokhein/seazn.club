@@ -6,7 +6,7 @@
 // reschedule with undo, bye/void ghost rows, sticky round headers on mobile,
 // print via the DocModel timetable export. Scoring lives on the fixture page.
 import { useState } from "react";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { useRouter } from "next/navigation";
 import { routes } from "@/lib/routes";
 import { ClientDateRange, ClientTime } from "@/components/client-time";

@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 // Competition overview: divisions as match-day cards (v3/03 §2); settings
 // live on their own page.
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { CalendarRange, Globe, MonitorPlay, Printer, Settings } from "lucide-react";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { getCompetition } from "@/server/usecases/competitions";

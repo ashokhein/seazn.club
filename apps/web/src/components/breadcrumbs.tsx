@@ -5,7 +5,7 @@
 // repairs the cookie on arrival). Mobile collapses to "‹ parent", which IS
 // the back affordance; desktop gets a 44px chevron whose parent name shows
 // on hover. Back always targets the structural parent, never history.back().
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { useEffect, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";

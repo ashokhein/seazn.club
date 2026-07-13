@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Event Pass purchase page (v3/07 §3): one-time embedded checkout that
 // upgrades THIS competition for its lifetime. Reconciles on return like the
 // billing page (webhook optional).
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
 import { reconcilePassCheckout } from "@/lib/billing";
 import { requireCompetitionPage } from "@/server/page-auth";

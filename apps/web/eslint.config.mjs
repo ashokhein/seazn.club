@@ -68,6 +68,29 @@ const eslintConfig = defineConfig([
       ],
     },
   },
+  {
+    // Console pages are fully dynamic (private, no-store) with no loading.tsx
+    // boundaries: next/link's default viewport prefetch renders the whole
+    // target page (DB queries included) per visible link, and re-runs after
+    // every router.refresh(). Console surfaces must use ConsoleLink, which
+    // pins prefetch off (regression gate for the 2026-07-13 HAR finding:
+    // one division view = 26 full renders).
+    files: ["src/app/o/**/*.{ts,tsx}", "src/app/admin/**/*.{ts,tsx}"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "next/link",
+              message:
+                "Console surfaces: import Link from @/components/ui/console-link (prefetch off by default).",
+            },
+          ],
+        },
+      ],
+    },
+  },
   // Override default ignores of eslint-config-next.
   globalIgnores([".next/**", "out/**", "build/**", "next-env.d.ts"]),
 ]);

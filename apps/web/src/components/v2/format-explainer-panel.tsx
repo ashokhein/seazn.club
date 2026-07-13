@@ -4,7 +4,7 @@
 // organisers understand a format without leaving the wizard. Same gallery
 // content as /help/formats/<family>, live example through the same
 // format-preview endpoint the wizard already uses.
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 import { formatFamily, FormatDiagram } from "@/config/format-gallery";

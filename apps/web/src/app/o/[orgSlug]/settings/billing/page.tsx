@@ -1,5 +1,5 @@
 export const dynamic = "force-dynamic";
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
 import { reconcileCheckout, billingCtaLabel } from "@/lib/billing";
 import { requireOrgPage } from "@/server/page-auth";

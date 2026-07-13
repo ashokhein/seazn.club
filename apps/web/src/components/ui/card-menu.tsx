@@ -3,7 +3,7 @@
 // ⋯ overflow menu for EntityCard (v3/03 §1): card actions live here so the
 // card body stays one clean click target. Link items only — mutating actions
 // belong on the page they navigate to.
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
 import { msg } from "@/lib/messages";

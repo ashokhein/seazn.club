@@ -1,4 +1,4 @@
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { LayoutDashboard, Settings, Users } from "lucide-react";
 import { HelpMenu } from "@/components/help-menu";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
