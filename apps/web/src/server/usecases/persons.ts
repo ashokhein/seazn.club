@@ -18,10 +18,14 @@ export interface PersonRow {
   consent: unknown;
   external_ref: string | null;
   photo_path: string | null;
+  /** Set once a player has claimed this row (PROMPT-53). */
+  user_id: string | null;
   created_at: string;
+  /** listPersons only: an open, unexpired claim invite exists. */
+  claim_pending?: boolean;
 }
 
-const COLS = ["id", "full_name", "dob", "gender", "consent", "external_ref", "photo_path", "created_at"] as const;
+const COLS = ["id", "full_name", "dob", "gender", "consent", "external_ref", "photo_path", "user_id", "created_at"] as const;
 
 // Player photos ride the same public 'assets' bucket as club badges; the
 // public_photo consent flag gates display, not upload.
@@ -34,13 +38,23 @@ const PHOTO_MIME = new Map<string, string>([
 
 export async function listPersons(auth: AuthCtx, query: ListQuery): Promise<Page<PersonRow>> {
   return withTenant(auth.orgId, async (tx) => {
+    // claim_pending drives the console's invite → pending → claimed states
+    // (PROMPT-53) — computed on the list read only.
     const rows = query.cursor
       ? await tx<PersonRow[]>`
-          select ${tx(COLS)} from persons
+          select ${tx(COLS)},
+                 exists(select 1 from person_claims pc
+                        where pc.person_id = persons.id and pc.claimed_at is null
+                          and pc.revoked_at is null and pc.expires_at > now()) as claim_pending
+          from persons
           where (created_at, id) > (${query.cursor.createdAt}, ${query.cursor.id})
           order by created_at, id limit ${query.limit + 1}`
       : await tx<PersonRow[]>`
-          select ${tx(COLS)} from persons order by created_at, id limit ${query.limit + 1}`;
+          select ${tx(COLS)},
+                 exists(select 1 from person_claims pc
+                        where pc.person_id = persons.id and pc.claimed_at is null
+                          and pc.revoked_at is null and pc.expires_at > now()) as claim_pending
+          from persons order by created_at, id limit ${query.limit + 1}`;
     return page(rows, query.limit);
   });
 }

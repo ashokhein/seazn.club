@@ -16,3 +16,4 @@ export {
 export { refundIssuedTemplate, type RefundIssuedArgs } from "./refund-issued";
 export { disputeAlertTemplate, type DisputeAlertArgs } from "./dispute-alert";
 export { funnelClaimTemplate, funnelReminderTemplate, type FunnelEmailArgs } from "./funnel";
+export { claimInviteTemplate, type ClaimInviteArgs } from "./claim-invite";

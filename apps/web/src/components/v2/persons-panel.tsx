@@ -4,6 +4,13 @@
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
+import { msg } from "@/lib/messages";
+import { InviteClaim } from "@/components/v2/invite-claim";
+import { Tip } from "@/components/ui/tip";
+import {
+  ResponsiveTable,
+  type ResponsiveColumn,
+} from "@/components/ui/responsive-table";
 
 interface Person {
   id: string;
@@ -13,6 +20,8 @@ interface Person {
   consent: { public_name?: boolean; public_photo?: boolean };
   external_ref: string | null;
   photo_path: string | null;
+  user_id: string | null;
+  claim_pending?: boolean;
 }
 
 export function PersonsPanel({
@@ -101,116 +110,178 @@ export function PersonsPanel({
         className="input max-w-xs"
       />
 
-      <section className="card scroll-x scroll-x-fade">
-        <table className="table">
-          <thead>
-            <tr>
-              <th className="px-4 py-2 text-left">Name</th>
-              <th className="px-4 py-2 text-left">DOB</th>
-              <th className="px-4 py-2 text-left">Gender</th>
-              <th className="px-4 py-2 text-left">Public name</th>
-              <th className="px-4 py-2 text-left">Public photo</th>
-              {canEdit && <th className="px-4 py-2 text-right">Actions</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 && (
-              <tr>
-                <td colSpan={canEdit ? 6 : 5} className="px-4 py-6 text-center text-sm text-slate-400">
-                  No players found.
-                </td>
-              </tr>
+      {(() => {
+        const identity = (p: Person) => (
+          <span className="flex min-w-0 items-center gap-2.5">
+            {p.photo_path ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={`${storageBase}/${p.photo_path}`}
+                alt={`${p.full_name} photo`}
+                className="h-8 w-8 shrink-0 rounded-full object-cover"
+              />
+            ) : (
+              <span
+                aria-hidden
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs text-slate-400"
+              >
+                {p.full_name.charAt(0).toUpperCase()}
+              </span>
             )}
-            {filtered.map((p) => (
-              <tr key={p.id}>
-                <td className="px-4 py-2 text-sm font-medium text-slate-800">
-                  <span className="flex items-center gap-2">
-                    {p.photo_path ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={`${storageBase}/${p.photo_path}`}
-                        alt={`${p.full_name} photo`}
-                        className="h-7 w-7 rounded-full object-cover"
-                      />
-                    ) : (
-                      <span
-                        aria-hidden
-                        className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-100 text-xs text-slate-400"
-                      >
-                        {p.full_name.charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                    <span>
-                      {p.full_name}
-                      {p.external_ref && (
-                        <span className="ml-2 font-mono text-xs text-slate-400">
-                          {p.external_ref}
-                        </span>
-                      )}
-                    </span>
-                  </span>
-                </td>
-                <td className="px-4 py-2 text-sm text-slate-500">{p.dob ?? "—"}</td>
-                <td className="px-4 py-2 text-sm text-slate-500">{p.gender ?? "—"}</td>
-                {(["public_name", "public_photo"] as const).map((key) => (
-                  <td key={key} className="px-4 py-2">
-                    <button
-                      type="button"
-                      disabled={!canEdit || busy}
-                      onClick={() =>
-                        run(() =>
-                          apiV1(`/api/v1/persons/${p.id}`, {
-                            method: "PATCH",
-                            json: { consent: { ...p.consent, [key]: !p.consent[key] } },
-                          }),
-                        )
-                      }
-                      className={`badge ${
-                        p.consent[key]
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-slate-100 text-slate-500"
-                      } ${canEdit ? "cursor-pointer" : ""}`}
-                    >
-                      {p.consent[key] ? "yes" : "no"}
-                    </button>
-                  </td>
-                ))}
-                {canEdit && (
-                  <td className="px-4 py-2 text-right text-xs">
-                    {mergeSource && mergeSource.id !== p.id ? (
-                      <button
-                        type="button"
-                        disabled={busy}
-                        onClick={() =>
-                          run(async () => {
-                            await apiV1(`/api/v1/persons/${p.id}/merge`, {
-                              method: "POST",
-                              json: { duplicate_id: mergeSource.id },
-                            });
-                            setMergeSource(null);
-                          })
-                        }
-                        className="btn btn-primary px-2 py-1 text-xs"
-                      >
-                        Keep this one
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={busy || mergeSource?.id === p.id}
-                        onClick={() => setMergeSource(p)}
-                        className="text-slate-400 hover:text-purple-600 hover:underline"
-                      >
-                        merge…
-                      </button>
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-medium text-slate-800">
+                {p.full_name}
+              </span>
+              <span className="block text-xs text-slate-400">
+                {[p.dob, p.gender, p.external_ref].filter(Boolean).join(" · ") || "—"}
+              </span>
+            </span>
+          </span>
+        );
+
+        const consentPills = (p: Person) => (
+          <span className="inline-flex flex-wrap gap-1.5">
+            {(
+              [
+                { key: "public_name" as const, label: "Name" },
+                { key: "public_photo" as const, label: "Photo" },
+              ]
+            ).map(({ key, label }) => {
+              const on = !!p.consent[key];
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={on}
+                  disabled={!canEdit || busy}
+                  title={
+                    on
+                      ? `${label} is shown on public pages — click to hide`
+                      : `${label} is hidden from public pages — click to show`
+                  }
+                  onClick={() =>
+                    run(() =>
+                      apiV1(`/api/v1/persons/${p.id}`, {
+                        method: "PATCH",
+                        json: { consent: { ...p.consent, [key]: !on } },
+                      }),
+                    )
+                  }
+                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium transition ${
+                    on
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-slate-200 bg-white text-slate-400"
+                  } ${canEdit ? "hover:border-slate-400" : ""}`}
+                >
+                  <span aria-hidden>{on ? "✓" : "–"}</span>
+                  {label}
+                </button>
+              );
+            })}
+          </span>
+        );
+
+        const accountChip = (p: Person) =>
+          p.user_id ? (
+            <span className="badge bg-emerald-100 text-emerald-700">{msg("claim.claimed")}</span>
+          ) : p.claim_pending ? (
+            <span className="badge bg-amber-100 text-amber-700">{msg("claim.invited")}</span>
+          ) : (
+            <span className="text-xs text-slate-400">—</span>
+          );
+
+        const actions = (p: Person) => (
+          <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
+            <InviteClaim
+              personId={p.id}
+              personName={p.full_name}
+              claimed={!!p.user_id}
+              claimPending={!!p.claim_pending}
+            />
+            {mergeSource && mergeSource.id !== p.id ? (
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  run(async () => {
+                    await apiV1(`/api/v1/persons/${p.id}/merge`, {
+                      method: "POST",
+                      json: { duplicate_id: mergeSource.id },
+                    });
+                    setMergeSource(null);
+                  })
+                }
+                className="btn btn-primary px-2 py-1 text-xs"
+              >
+                Keep this one
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy || mergeSource?.id === p.id}
+                onClick={() => setMergeSource(p)}
+                title={msg("persons.merge.tip")}
+                className="btn btn-ghost px-2 py-1 text-xs"
+              >
+                Merge…
+              </button>
+            )}
+          </span>
+        );
+
+        const columns: ResponsiveColumn<Person>[] = [
+          { key: "player", header: "Player", render: identity },
+          { key: "public", header: "Public", render: consentPills },
+          { key: "account", header: "Account", render: accountChip },
+          ...(canEdit
+            ? [
+                {
+                  key: "actions",
+                  header: (
+                    <>
+                      Actions
+                      <Tip id="persons.actions" small className="ml-1 align-middle" />
+                    </>
+                  ),
+                  headerClassName: "text-right",
+                  className: "text-right",
+                  render: actions,
+                },
+              ]
+            : []),
+        ];
+
+        return (
+          <section className="card p-0 sm:p-0">
+            <ResponsiveTable
+              aria-label="Players"
+              columns={columns}
+              rows={filtered}
+              keyOf={(p) => p.id}
+              empty={
+                <p className="px-4 py-6 text-center text-sm text-slate-400">
+                  No players found.
+                </p>
+              }
+              renderCard={(p) => (
+                <div className="space-y-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    {identity(p)}
+                    {accountChip(p)}
+                  </div>
+                  {consentPills(p)}
+                  {canEdit && (
+                    <div className="flex flex-wrap justify-end gap-1.5 border-t border-slate-100 pt-2">
+                      {actions(p)}
+                    </div>
+                  )}
+                </div>
+              )}
+            />
+          </section>
+        );
+      })()}
+
     </div>
   );
 }

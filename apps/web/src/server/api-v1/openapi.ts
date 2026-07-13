@@ -71,6 +71,16 @@ export const ROUTES: RouteSpec[] = [
   { path: "/persons/{id}/photo", method: "post", summary: "Upload a player photo (multipart `file`); public display gated by public_photo consent", tag: "persons", response: S.Person, errors: [400, 404, 415, 502] },
   { path: "/persons/{id}/profiles/{sport}", method: "get", summary: "Get a per-sport profile", tag: "persons" },
   { path: "/persons/{id}/profiles/{sport}", method: "put", summary: "Upsert a per-sport profile", tag: "persons", request: S.PutProfile, errors: [422] },
+  // Player accounts (PROMPT-53) — session-only, never key-accessible
+  { path: "/persons/{id}/claim-invites", method: "post", summary: "Invite the person to claim their profile (session editors only; claim_url embeds the one-time secret; revokes any prior open invite)", tag: "player-accounts", request: S.CreateClaimInvite, response: S.CreatedPersonClaim, status: 201, errors: [409] },
+  { path: "/persons/{id}/claim-invites", method: "get", summary: "The person's open claim invite, if any (never the secret)", tag: "player-accounts", response: S.PersonClaim.nullable() },
+  { path: "/persons/{id}/claim-invites", method: "delete", summary: "Withdraw the open claim invite (idempotent)", tag: "player-accounts", response: S.PersonClaim.nullable() },
+  { path: "/persons/{id}/unlink", method: "post", summary: "Staff unlink: detach the player login and revoke live claims (audited — claim rows are retained)", tag: "player-accounts" },
+  { path: "/me/fixtures", method: "get", summary: "Player home read: upcoming fixtures, recent results and teams for every claimed person of the caller, across orgs (session only)", tag: "player-accounts", response: S.MyFixtures },
+  { path: "/me/fixtures/{id}/availability", method: "put", summary: "RSVP in/out/maybe + note for the caller's person on this fixture (session only)", tag: "player-accounts", request: S.PutAvailability, response: S.Availability, errors: [403, 422] },
+  { path: "/me/persons", method: "get", summary: "The caller's claimed player profiles with consent state (session only)", tag: "player-accounts", response: z.array(S.MyPerson) },
+  { path: "/me/persons/{id}/consent", method: "patch", summary: "Player-owned consent flags; under-16 → 403 CONSENT_LOCKED (guardian gate)", tag: "player-accounts", request: S.PatchMyConsent, response: S.MyPerson, errors: [403] },
+  { path: "/fixtures/{id}/checkin-link", method: "post", summary: "Mint the fixture's self-check-in QR link (session editors only; signed token, dies at local midnight)", tag: "player-accounts", response: S.CheckinLink, status: 201, errors: [422] },
   // Stages
   { path: "/divisions/{id}/stages", method: "get", summary: "List stages", tag: "stages", response: z.array(S.Stage) },
   { path: "/divisions/{id}/stages", method: "post", summary: "Define the stage graph", tag: "stages", request: S.CreateStages, response: z.union([S.Stage, z.array(S.Stage)]), status: 201, errors: [409] },

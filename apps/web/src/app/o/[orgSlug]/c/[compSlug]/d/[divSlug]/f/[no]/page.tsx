@@ -21,6 +21,8 @@ import {
   type LineupSlotIn,
 } from "@/components/v2/fixture-console";
 import { DeviceLinkPanel } from "@/components/v2/device-link-panel";
+import { listFixtureAvailability } from "@/server/usecases/me";
+import { CheckinQr } from "@/components/v2/checkin-qr";
 
 export default async function FixturePage({
   params,
@@ -37,11 +39,12 @@ export default async function FixturePage({
   // chrome (My-matches breadcrumb); editors keep the organiser surface.
   const isScorer = canScore && !canEdit;
   const fixture = await getFixture(auth, id);
-  const [division, state, events, recorderNames] = await Promise.all([
+  const [division, state, events, recorderNames, availability] = await Promise.all([
     getDivision(auth, fixture.division_id),
     getFixtureState(auth, id),
     listEvents(auth, id, 0),
     eventRecorderNames(auth, id),
+    listFixtureAvailability(auth, id),
   ]);
   const competition = await getCompetition(auth, division.competition_id);
   const sportModule = resolveModule(division.sport_key, division.module_version);
@@ -77,6 +80,18 @@ export default async function FixturePage({
             </span>
           </p>
         )}
+
+        {/* Player self-check-in QR (PROMPT-53) — top of the match panel, and
+            only BEFORE the match starts (owner feedback 2026-07-13): check-in
+            is an arrival tool, once play begins it's just noise. */}
+        {!isScorer &&
+          canScore &&
+          !(competition.frozen ?? false) &&
+          fixture.status === "scheduled" && (
+            <div className="mb-3 flex justify-end">
+              <CheckinQr fixtureId={fixture.id} />
+            </div>
+          )}
 
         <FixtureConsole
           fixture={{
@@ -117,6 +132,7 @@ export default async function FixturePage({
           }))}
           canEdit={canScore && !(competition.frozen ?? false)}
           recorderNames={recorderNames}
+          availability={availability}
           publicPath={
             // Share needs a page strangers can open (v3/10 #2) — private
             // competitions have none.

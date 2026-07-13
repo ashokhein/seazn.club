@@ -16,6 +16,8 @@ export const HELP_ARTICLE_SLUGS = [
   "entrants/kinds",
   "entrants/withdrawals",
   "entrants/duplicate-players",
+  "players/claim-your-profile",
+  "players/invite-to-claim",
   "registration/open-registration",
   "registration/reference-numbers",
   "registration/waitlist",

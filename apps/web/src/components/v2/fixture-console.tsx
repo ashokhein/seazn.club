@@ -101,6 +101,14 @@ interface Props {
   /** Public fixture path — enables the share action once decided (v3/10 #2).
    *  Null when the competition isn't shared. */
   publicPath?: string | null;
+  /** Player RSVP/check-in per person (PROMPT-53) — chips in the lineup picker. */
+  availability?: Record<string, PersonAvailability>;
+}
+
+export interface PersonAvailability {
+  status: "in" | "out" | "maybe";
+  note: string | null;
+  checked_in_at: string | null;
 }
 
 export type SendEvent = (type: string, payload: unknown) => Promise<boolean>;
@@ -132,6 +140,7 @@ export function FixtureConsole({
   canEdit,
   recorderNames = {},
   publicPath = null,
+  availability = {},
 }: Props) {
   const router = useRouter();
   const [live, setLive] = useState<LiveState>(initialState);
@@ -343,6 +352,7 @@ export function FixtureConsole({
                 lineupSize={sport.lineupSize}
                 canEdit={canEdit && live.status === "scheduled"}
                 onSaved={() => router.refresh()}
+                availability={availability}
               />
             );
           })}

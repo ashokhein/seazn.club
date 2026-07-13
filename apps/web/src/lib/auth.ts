@@ -310,6 +310,14 @@ export async function postAuthLanding(
       return { redirect: "/my-matches", orgId: orgs[0].id, hasOrg: true };
     }
   }
+  // Same rule for claimed players (PROMPT-53): their home is /me — a player
+  // must never be walked into organiser onboarding or handed a default org.
+  {
+    const { isPlayerOnly } = await import("@/server/usecases/me");
+    if (await isPlayerOnly(userId)) {
+      return { redirect: routes.me(), orgId: null, hasOrg: false };
+    }
+  }
   const orgId = await ensureActiveOrg(userId);
   // New users (onboarding_completed_at null) go to the first-run wizard.
   const { needsOnboarding } = await import("@/lib/activation");

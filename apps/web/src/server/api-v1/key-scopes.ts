@@ -198,6 +198,17 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   // Browser-upload handshake (v8): signed URLs are a console UX, not an API
   // surface — a leaked key must not mint writable storage URLs.
   "POST /divisions/:id/logo-upload-url",
+  // Player accounts (PROMPT-53): claim invites and check-in links mint login
+  // capabilities; the /me surface is session-personal. Never key-accessible.
+  "POST /persons/:id/claim-invites",
+  "GET /persons/:id/claim-invites",
+  "DELETE /persons/:id/claim-invites",
+  "POST /persons/:id/unlink",
+  "GET /me/fixtures",
+  "PUT /me/fixtures/:id/availability",
+  "GET /me/persons",
+  "PATCH /me/persons/:id/consent",
+  "POST /fixtures/:id/checkin-link",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.

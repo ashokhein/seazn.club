@@ -21,6 +21,8 @@ import {
   funnelClaimTemplate,
   funnelReminderTemplate,
   type FunnelEmailArgs,
+  claimInviteTemplate,
+  type ClaimInviteArgs,
 } from "@/lib/email-templates";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -132,6 +134,11 @@ export async function sendMagicLinkEmail(to: string, link: string): Promise<bool
 /** Funnel claim link (v3/07 §6) — transactional: it doubles as sign-in. */
 export async function sendFunnelClaimEmail(to: string, args: FunnelEmailArgs): Promise<boolean> {
   return send({ to, transactional: true, ...funnelClaimTemplate(args) });
+}
+
+/** Player-account claim invite (PROMPT-53). */
+export async function sendClaimInviteEmail(to: string, args: ClaimInviteArgs): Promise<boolean> {
+  return send({ to, transactional: true, ...claimInviteTemplate(args) });
 }
 
 /** One-shot +24h funnel reminder (v3/07 §6). */

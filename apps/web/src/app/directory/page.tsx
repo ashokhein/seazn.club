@@ -79,6 +79,8 @@ async function PlayersTab() {
           consent: p.consent as { public_name?: boolean; public_photo?: boolean },
           external_ref: p.external_ref,
           photo_path: p.photo_path,
+          user_id: p.user_id,
+          claim_pending: p.claim_pending,
         }))}
         storageBase={storageBase}
         canEdit={canEdit}
