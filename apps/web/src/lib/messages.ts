@@ -210,6 +210,7 @@ export const messages = {
   "confirm.unlinkPlayer.label": "Unlink",
   "me.title": "My matches & teams",
   "me.eyebrow": "Player home",
+  "me.claimed": "Profile claimed — this is your player home now.",
   "me.empty":
     "Nothing here yet. When an organiser rosters you into a team or draw, your matches land on this page.",
   "me.next.title": "Next match",

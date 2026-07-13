@@ -36,6 +36,9 @@ export const routes = {
   /** Public dashboard — slug-based already, marker-less scheme, unchanged. */
   shared: (orgSlug: Slug, compSlug?: Slug, divSlug?: Slug) =>
     ["/shared", orgSlug, compSlug, divSlug].filter(Boolean).join("/"),
+  /** Public fixture page (spectator view — the link /me hands a player). */
+  sharedFixture: (orgSlug: Slug, compSlug: Slug, divSlug: Slug, fixtureId: string) =>
+    `/shared/${orgSlug}/${compSlug}/${divSlug}/fixtures/${fixtureId}`,
   /** Player home (PROMPT-53) — cross-org, deliberately NOT under /o. */
   me: () => "/me",
   /** Token surfaces (PROMPT-53): the token IS the address, no org in the URL. */
