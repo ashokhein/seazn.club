@@ -1,0 +1,515 @@
+"use client";
+
+// Division Settings tab (v8 spec §2): General → Format → Sharing & embed →
+// Danger zone, tap-per-section. The format section renders read-only once
+// fixtures exist; patchDivision enforces the same rule (409 FORMAT_LOCKED),
+// so hiding and enforcement can't drift.
+import { useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { apiV1 } from "@/lib/client-v1";
+import { divisionAccent, monogram } from "@/lib/division-hue";
+import { MatchRuleFields, buildRuleOverride } from "./match-rules";
+import { STAGE_TEMPLATES, buildTemplateStages, detectTemplate } from "./format-templates";
+
+export interface DivisionSettingsInfo {
+  id: string;
+  name: string;
+  sport_key: string;
+  variant_key: string;
+  config: unknown;
+  logo_url: string | null;
+  logo_storage_path: string | null;
+}
+
+function Group({
+  title,
+  summary,
+  defaultOpen = false,
+  danger = false,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  defaultOpen?: boolean;
+  danger?: boolean;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <section className={`card p-0 ${danger ? "border-red-200" : ""}`}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between gap-2 px-5 py-3 text-left"
+      >
+        <span className={`text-sm font-semibold ${danger ? "text-red-700" : "text-slate-700"}`}>
+          {title}
+        </span>
+        <span className="flex items-center gap-2">
+          {summary && !open && (
+            <span className="max-w-48 truncate text-xs text-slate-400">{summary}</span>
+          )}
+          <span aria-hidden className="text-xs text-slate-400">{open ? "▾" : "▸"}</span>
+        </span>
+      </button>
+      {open && <div className="space-y-3 px-5 pb-5">{children}</div>}
+    </section>
+  );
+}
+
+async function fileToWebp(file: File, max: number): Promise<Blob> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+  const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const el = new Image();
+    el.onload = () => resolve(el);
+    el.onerror = () => reject(new Error("bad image"));
+    el.src = dataUrl;
+  });
+  const scale = Math.min(1, max / Math.max(img.width, img.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(img.width * scale));
+  canvas.height = Math.max(1, Math.round(img.height * scale));
+  canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob(resolve, "image/webp", 0.88),
+  );
+  if (!blob) throw new Error("image conversion failed");
+  return blob;
+}
+
+export function DivisionSettings({
+  division,
+  variants,
+  locked,
+  stages,
+  canEdit,
+  divisionPathPrefix,
+  fixturesHref,
+  embed,
+  danger,
+}: {
+  division: DivisionSettingsInfo;
+  variants: { key: string; name: string }[];
+  /** formatLocked() from the page — fixtures exist. */
+  locked: boolean;
+  /** Stage structure (kind + name) — shown so group/top sections are visible
+   *  here; structure itself is edited on the Fixtures tab. */
+  stages: { name: string; kind: string; config: Record<string, unknown> | null; qualification: Record<string, unknown> | null }[];
+  canEdit: boolean;
+  /** "/o/{org}/c/{comp}/d/" — renames regenerate the slug, and the client
+   *  must follow it without losing the settings tab. */
+  divisionPathPrefix: string;
+  fixturesHref: string;
+  /** Server-rendered EmbedSnippet (or the private-comp note). */
+  embed: ReactNode;
+  /** DivisionDangerZone, unchanged. */
+  danger: ReactNode;
+}) {
+  const router = useRouter();
+  const [name, setName] = useState(division.name);
+  const [logoUrl, setLogoUrl] = useState(division.logo_url);
+  const [variantKey, setVariantKey] = useState(division.variant_key);
+  // Competition format = the stage structure (League / Groups + Knockout…).
+  const detected = detectTemplate(stages);
+  const [template, setTemplate] = useState(detected ?? "league");
+  const currentQualified = (() => {
+    const q = stages.find((st) => st.qualification)?.qualification as
+      | { topN?: number; take?: unknown[] }
+      | undefined;
+    return q?.topN ?? (Array.isArray(q?.take) ? q.take.length : 4);
+  })();
+  const [qualified, setQualified] = useState(currentQualified);
+  const [poolCount, setPoolCount] = useState(
+    ((stages.find((st) => st.kind === "group")?.config as { pools?: { count?: number } } | null)?.pools?.count) ?? 2,
+  );
+  const [swissRounds, setSwissRounds] = useState(
+    ((stages.find((st) => st.kind === "swiss")?.config as { rounds?: number } | null)?.rounds) ?? 5,
+  );
+  const [legs, setLegs] = useState(
+    ((stages.find((st) => st.kind === "league" || st.kind === "group")?.config as { legs?: number } | null)?.legs) ?? 1,
+  );
+  const cfg = (division.config ?? {}) as { points?: { w?: number; d?: number; l?: number }; progressScore?: boolean };
+  const [pointsW, setPointsW] = useState(cfg.points ? String(cfg.points.w ?? "") : "");
+  const [pointsD, setPointsD] = useState(cfg.points ? String(cfg.points.d ?? "") : "");
+  const [pointsL, setPointsL] = useState(cfg.points ? String(cfg.points.l ?? "") : "");
+  const [ruleValues, setRuleValues] = useState<Record<string, string>>({});
+  const [advancedText, setAdvancedText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileInputId = `division-logo-${division.id}`;
+  const hue = divisionAccent(division.id);
+
+  async function run(fn: () => Promise<void>, done: string) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      await fn();
+      setNotice(done);
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const saveName = () =>
+    run(async () => {
+      const row = await apiV1<{ slug: string }>(`/api/v1/divisions/${division.id}`, {
+        method: "PATCH",
+        json: { name: name.trim() },
+      });
+      // Renames regenerate the slug — follow it and stay on this tab.
+      router.replace(`${divisionPathPrefix}${row.slug}?tab=settings`);
+    }, "Name saved.");
+
+  const uploadLogo = (file: File | undefined) => {
+    if (!file) return;
+    void run(async () => {
+      const webp = await fileToWebp(file, 512);
+      const { upload_url, storage_path } = await apiV1<{
+        upload_url: string;
+        storage_path: string;
+      }>(`/api/v1/divisions/${division.id}/logo-upload-url`, { method: "POST", json: {} });
+      const put = await fetch(upload_url, {
+        method: "PUT",
+        headers: { "Content-Type": "image/webp" },
+        body: webp,
+      });
+      if (!put.ok) throw new Error(`upload failed (${put.status})`);
+      await apiV1(`/api/v1/divisions/${division.id}`, {
+        method: "PATCH",
+        json: { logo_storage_path: storage_path },
+      });
+      const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+      setLogoUrl(base ? `${base}/storage/v1/object/public/assets/${storage_path}` : null);
+    }, "Logo uploaded — the card tile uses it now.");
+  };
+
+  const removeLogo = () =>
+    run(async () => {
+      await apiV1(`/api/v1/divisions/${division.id}`, {
+        method: "PATCH",
+        json: { logo_storage_path: null },
+      });
+      setLogoUrl(null);
+    }, "Logo removed — the tile shows the monogram again.");
+
+  const applyStructure = () =>
+    run(async () => {
+      const drafts = buildTemplateStages(template, { qualified, swissRounds, poolCount, legs });
+      await apiV1(`/api/v1/divisions/${division.id}/stages`, {
+        method: "PUT",
+        json: drafts.map((d, i) => ({ ...d, seq: i + 1 })),
+      });
+    }, "Format changed — stages rebuilt.");
+
+  const applyFormat = () =>
+    run(async () => {
+      // The server merges preset + override, but presets only carry the
+      // variant-identity keys (resultMode/allowDraws) — schema-required keys
+      // like progressScore live in the division's current config. Base the
+      // override on that valid snapshot; on a variant change, drop the
+      // identity keys so the new preset wins them.
+      const override: Record<string, unknown> = {
+        ...((division.config as Record<string, unknown>) ?? {}),
+      };
+      if (variantKey !== division.variant_key) {
+        delete override.resultMode;
+        delete override.allowDraws;
+      }
+      Object.assign(override, buildRuleOverride(division.sport_key, ruleValues));
+      if (pointsW !== "" || pointsD !== "" || pointsL !== "") {
+        override.points = {
+          w: pointsW === "" ? (cfg.points?.w ?? 0) : Number(pointsW),
+          d: pointsD === "" ? (cfg.points?.d ?? 0) : Number(pointsD),
+          l: pointsL === "" ? (cfg.points?.l ?? 0) : Number(pointsL),
+        };
+      }
+      if (advancedText.trim() !== "") {
+        try {
+          Object.assign(override, JSON.parse(advancedText));
+        } catch {
+          throw new Error("Advanced overrides are not valid JSON");
+        }
+      }
+      await apiV1(`/api/v1/divisions/${division.id}`, {
+        method: "PATCH",
+        json: { variant_key: variantKey, config: override },
+      });
+    }, "Match rules saved.");
+
+  return (
+    <div className="max-w-2xl space-y-3" data-testid="division-settings">
+      <Group title="General" defaultOpen summary={division.name}>
+        <label className="block text-xs text-slate-500">
+          Division name
+          <input
+            disabled={!canEdit}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="input mt-1 w-full"
+          />
+        </label>
+        {canEdit && (
+          <button
+            type="button"
+            disabled={busy || name.trim() === "" || name.trim() === division.name}
+            onClick={saveName}
+            className="btn btn-primary text-xs"
+          >
+            Save name
+          </button>
+        )}
+
+        <div className="flex items-center gap-4 border-t border-slate-100 pt-3">
+          {/* Live card-tile preview: logo, else monogram in the accent hue. */}
+          <label
+            htmlFor={canEdit ? fileInputId : undefined}
+            aria-hidden
+            data-testid="settings-tile-preview"
+            className={`flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg ${canEdit ? "cursor-pointer" : ""}`}
+            style={
+              logoUrl
+                ? undefined
+                : { backgroundColor: `color-mix(in srgb, ${hue} 15%, white)`, color: hue }
+            }
+          >
+            {logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element -- tenant upload
+              <img src={logoUrl} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <span className="text-xl font-bold">{monogram(name || division.name)}</span>
+            )}
+          </label>
+          <div className="min-w-0 flex-1 text-xs text-slate-500">
+            <p className="font-medium text-slate-700">Card logo</p>
+            <p className="mt-0.5">
+              Shows on this division&apos;s card. Without one, the card wears the monogram.
+            </p>
+            {canEdit && (
+              <span className="mt-1 flex gap-3">
+                <label htmlFor={fileInputId} className="cursor-pointer text-purple-700 underline">
+                  Upload image
+                </label>
+                {logoUrl && (
+                  <button type="button" disabled={busy} onClick={removeLogo} className="text-red-500 underline">
+                    Remove
+                  </button>
+                )}
+              </span>
+            )}
+          </div>
+          <input
+            id={fileInputId}
+            type="file"
+            accept="image/*"
+            disabled={!canEdit || busy}
+            className="sr-only"
+            onChange={(e) => uploadLogo(e.target.files?.[0])}
+          />
+        </div>
+      </Group>
+
+      <Group
+        title="Format"
+        summary={`${division.sport_key} · ${locked ? `${division.variant_key} (locked)` : division.variant_key}`}
+      >
+        {locked ? (
+          <div data-testid="format-locked" className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
+            <p className="font-medium text-slate-700">
+              {division.sport_key} · {division.variant_key}
+            </p>
+            <p className="mt-1">
+              Format is locked — fixtures exist. Delete the stages first if you must change it
+              (<Link href={fixturesHref} className="text-purple-700 underline">Fixtures</Link>).
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                Competition format
+              </p>
+              <label className="block text-xs text-slate-500">
+                Structure
+                <select
+                  disabled={!canEdit}
+                  value={template}
+                  onChange={(e) => setTemplate(e.target.value)}
+                  className="input mt-1 w-full"
+                  data-testid="format-template"
+                >
+                  {STAGE_TEMPLATES.map((t) => (
+                    <option key={t.key} value={t.key}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <span className="mt-0.5 block text-[11px] text-slate-400">
+                  {STAGE_TEMPLATES.find((t) => t.key === template)?.help}
+                </span>
+              </label>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {["league_ko", "groups_ko", "group_stepladder"].includes(template) && (
+                  <label className="block text-xs text-slate-500">
+                    Top N advance
+                    <input type="number" min={2} max={32} disabled={!canEdit} value={qualified}
+                      onChange={(e) => setQualified(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+                {template === "groups_ko" && (
+                  <label className="block text-xs text-slate-500">
+                    Groups
+                    <input type="number" min={2} max={8} disabled={!canEdit} value={poolCount}
+                      onChange={(e) => setPoolCount(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+                {template === "swiss" && (
+                  <label className="block text-xs text-slate-500">
+                    Rounds
+                    <input type="number" min={3} max={15} disabled={!canEdit} value={swissRounds}
+                      onChange={(e) => setSwissRounds(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+                {["league", "league_ko", "groups_ko"].includes(template) && (
+                  <label className="block text-xs text-slate-500">
+                    Rounds vs each opponent
+                    <input type="number" min={1} max={4} disabled={!canEdit} value={legs}
+                      onChange={(e) => setLegs(Number(e.target.value))} className="input mt-1 w-full" />
+                  </label>
+                )}
+              </div>
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={applyStructure}
+                  className="btn btn-primary text-xs"
+                  data-testid="apply-structure"
+                >
+                  {stages.length > 0 ? "Change format (rebuilds stages)" : "Set format"}
+                </button>
+              )}
+              {detected === null && stages.length > 0 && (
+                <p className="text-[11px] text-amber-600">
+                  Current structure is custom — applying a format here replaces it.
+                </p>
+              )}
+            </div>
+
+            <p className="border-t border-slate-100 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
+              Match rules
+            </p>
+            <label className="block text-xs text-slate-500">
+              Variant
+              <select
+                disabled={!canEdit}
+                value={variantKey}
+                onChange={(e) => setVariantKey(e.target.value)}
+                className="input mt-1 w-full"
+              >
+                {variants.map((v) => (
+                  <option key={v.key} value={v.key}>
+                    {v.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {cfg.points && (
+              <div>
+                <p className="text-xs text-slate-500">Standings points</p>
+                <div className="mt-1 grid grid-cols-3 gap-2">
+                  <label className="block text-xs text-slate-500">
+                    Win
+                    <input type="number" min={0} max={99} disabled={!canEdit} value={pointsW}
+                      onChange={(e) => setPointsW(e.target.value)} className="input mt-1 w-full" />
+                  </label>
+                  <label className="block text-xs text-slate-500">
+                    Draw
+                    <input type="number" min={0} max={99} disabled={!canEdit} value={pointsD}
+                      onChange={(e) => setPointsD(e.target.value)} className="input mt-1 w-full" />
+                  </label>
+                  <label className="block text-xs text-slate-500">
+                    Loss
+                    <input type="number" min={0} max={99} disabled={!canEdit} value={pointsL}
+                      onChange={(e) => setPointsL(e.target.value)} className="input mt-1 w-full" />
+                  </label>
+                </div>
+              </div>
+            )}
+
+            <MatchRuleFields
+              sportKey={division.sport_key}
+              values={ruleValues}
+              onChange={setRuleValues}
+              disabled={!canEdit}
+            />
+
+            {stages.length > 0 && (
+              <p className="rounded-md bg-slate-50 p-3 text-xs text-slate-500" data-testid="stage-structure">
+                Structure:{" "}
+                {stages.map((st, i) => (
+                  <span key={i}>
+                    {i > 0 && " → "}
+                    <span className="font-medium text-slate-700">{st.name}</span> ({st.kind})
+                  </span>
+                ))}
+                {" · "}
+                <Link href={fixturesHref} className="text-purple-700 underline">
+                  edit stages on the Fixtures tab
+                </Link>
+              </p>
+            )}
+
+            <details>
+              <summary className="cursor-pointer text-[11px] text-slate-400">
+                Advanced overrides (JSON)
+              </summary>
+              <textarea
+                disabled={!canEdit}
+                value={advancedText}
+                onChange={(e) => setAdvancedText(e.target.value)}
+                rows={4}
+                spellCheck={false}
+                placeholder='e.g. { "progressScore": true }'
+                className="input mt-1 w-full font-mono text-xs"
+              />
+            </details>
+
+            {canEdit && (
+              <button type="button" disabled={busy} onClick={applyFormat} className="btn btn-primary text-xs">
+                Save match rules
+              </button>
+            )}
+            <p className="text-[11px] text-slate-400">
+              Blank fields keep the variant&apos;s defaults; changes re-validate against the
+              sport&apos;s rules. Once fixtures are generated the format locks for good.
+            </p>
+          </>
+        )}
+      </Group>
+
+      <Group title="Sharing & embed" summary="Widgets for your website">
+        {embed}
+      </Group>
+
+      <Group title="Danger zone" summary="Archive or delete" danger>
+        {danger}
+      </Group>
+
+      {notice && <p className="rounded-md bg-emerald-50 px-3 py-2 text-xs text-emerald-700">{notice}</p>}
+      {error && <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}

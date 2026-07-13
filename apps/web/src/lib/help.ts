@@ -29,6 +29,7 @@ export const HELP_ARTICLE_SLUGS = [
   "scoring/scorer-role",
   "divisions/lifecycle",
   "divisions/archive",
+  "divisions/settings",
   "sharing/visibility",
   "sharing/dashboard",
   "sharing/slideshow",

@@ -53,7 +53,9 @@ test("resulted division: 409 → archive → restore round-trip", async ({ page,
   expect(refused.error?.code).toBe("DIVISION_HAS_RESULTS");
 
   // Archive from the division's danger zone (plain danger confirm, no typing).
-  await page.goto(`/divisions/${divisionId}`);
+  // v8: archive lives in Settings → Danger zone.
+  await page.goto(`/divisions/${divisionId}?tab=settings`);
+  await page.getByRole("button", { name: /Danger zone/ }).click({ timeout: 20_000 });
   await page.getByRole("button", { name: "Archive division" }).click({ timeout: 20_000 });
   await page.getByRole("dialog").getByRole("button", { name: "Archive division" }).click();
   await page.waitForURL(/\/o\/[^/]+\/c\/[^/?]+$/, { timeout: 20_000 });

@@ -6,6 +6,8 @@
 // override object, validated server-side by the pinned module's configSchema.
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import { MatchRuleFields, SPORT_RULES, buildRuleOverride } from "./match-rules";
+import { STAGE_TEMPLATES, buildTemplateStages, type StageDraft } from "./format-templates";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { routes } from "@/lib/routes";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -29,13 +31,6 @@ function pickVariant(sportKey: string, variants: { key: string }[]): string {
   const pref = PREFERRED_VARIANT[sportKey.toLowerCase()];
   if (pref && variants.some((v) => v.key === pref)) return pref;
   return variants[0]?.key ?? "";
-}
-
-interface StageDraft {
-  kind: string;
-  name: string;
-  config: Record<string, unknown>;
-  qualification: Record<string, unknown> | null;
 }
 
 // Wizard template → format-gallery family (v3/06 §4 "How this works →").
@@ -77,115 +72,6 @@ interface PreviewPhase {
   sections: PreviewSection[];
 }
 
-// One-click stage graphs. `qualified(n)` = how many advance to stage 2.
-const STAGE_TEMPLATES: {
-  key: string;
-  label: string;
-  help: string;
-  build: (q: number) => StageDraft[];
-}[] = [
-  {
-    key: "league",
-    label: "League",
-    help: "Single round robin, table decides.",
-    build: () => [{ kind: "league", name: "League", config: { legs: 1 }, qualification: null }],
-  },
-  {
-    key: "league_ko",
-    label: "League + Finals",
-    help: "Round robin, then top N knockout.",
-    build: (q) => [
-      { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
-      { kind: "knockout", name: "Finals", config: {}, qualification: { topN: q } },
-    ],
-  },
-  {
-    key: "groups_ko",
-    label: "Groups + Knockout",
-    help: "Two pools, top of each cross over.",
-    build: (q) => [
-      {
-        kind: "group",
-        name: "Group stage",
-        config: { legs: 1, pools: { count: 2 } },
-        qualification: null,
-      },
-      {
-        kind: "knockout",
-        name: "Knockout",
-        config: {},
-        qualification: {
-          take: Array.from({ length: q }, (_, i) => ({
-            pool: i % 2 === 0 ? "A" : "B",
-            rank: Math.floor(i / 2) + 1,
-          })),
-        },
-      },
-    ],
-  },
-  {
-    key: "group_stepladder",
-    label: "Group + Stepladder",
-    help: "Round robin, then a stepladder final — lowest seed climbs.",
-    build: (q) => [
-      { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
-      { kind: "stepladder", name: "Stepladder finals", config: {}, qualification: { topN: q } },
-    ],
-  },
-  {
-    key: "swiss",
-    label: "Swiss",
-    help: "Score-group pairings, fixed rounds.",
-    build: () => [
-      { kind: "swiss", name: "Swiss", config: { rounds: 5 }, qualification: null },
-    ],
-  },
-  {
-    key: "knockout",
-    label: "Knockout",
-    help: "Single elimination bracket.",
-    build: () => [{ kind: "knockout", name: "Knockout", config: {}, qualification: null }],
-  },
-  {
-    key: "double_elim",
-    label: "Double elimination",
-    help: "Losers bracket + grand final (Pro).",
-    build: () => [
-      { kind: "double_elim", name: "Double elimination", config: {}, qualification: null },
-    ],
-  },
-  {
-    key: "triple_rr",
-    label: "Triple round robin",
-    help: "Everyone plays everyone three times.",
-    build: () => [{ kind: "league", name: "Triple RR", config: { legs: 3 }, qualification: null }],
-  },
-  {
-    key: "americano",
-    label: "Americano (padel)",
-    help: "Individuals rotate partners each round; personal points (Pro).",
-    build: () => [
-      { kind: "americano", name: "Americano", config: { mode: "americano", courtCount: 2, rounds: 7 }, qualification: null },
-    ],
-  },
-  {
-    key: "mexicano",
-    label: "Mexicano (padel)",
-    help: "Re-rank each round: 1+4 vs 2+3 from live points (Pro).",
-    build: () => [
-      { kind: "americano", name: "Mexicano", config: { mode: "mexicano", courtCount: 2, rounds: 7 }, qualification: null },
-    ],
-  },
-  {
-    key: "ladder",
-    label: "Ladder",
-    help: "Open standings; players challenge upward over a long window (Pro).",
-    build: () => [
-      { kind: "ladder", name: "Ladder", config: { challengeRange: 3 }, qualification: null },
-    ],
-  },
-];
-
 const GENDERS = [
   { key: "m", label: "Male" },
   { key: "f", label: "Female" },
@@ -193,125 +79,6 @@ const GENDERS = [
 ];
 
 // ---------------------------------------------------------------------------
-// Match rules — curated per-sport fields that build the config override
-// object (previously a raw-JSON textarea). Blank = keep the variant default;
-// the pinned module's configSchema still validates server-side.
-// ---------------------------------------------------------------------------
-
-interface RuleField {
-  key: string;
-  label: string;
-  help?: string;
-  /** number input, or a Default/On/Off select for booleans, or an option list. */
-  kind: "number" | "bool" | "select";
-  min?: number;
-  max?: number;
-  options?: { value: string; label: string }[];
-  /** Maps the entered value onto the override object (top-level key). */
-  build: (value: string) => Record<string, unknown>;
-}
-
-const SETBASED_RULES: RuleField[] = [
-  {
-    key: "bestOf",
-    label: "Best of (sets)",
-    kind: "select",
-    options: [1, 3, 5, 7].map((n) => ({ value: String(n), label: `Best of ${n}` })),
-    build: (v) => ({ bestOf: Number(v) }),
-  },
-  {
-    key: "setTo",
-    label: "Points to win a set",
-    kind: "number",
-    min: 1,
-    max: 100,
-    build: (v) => ({ setTo: Number(v) }),
-  },
-  {
-    key: "finalSetTo",
-    label: "Points in the deciding set",
-    kind: "number",
-    min: 1,
-    max: 100,
-    build: (v) => ({ finalSetTo: Number(v) }),
-  },
-];
-
-const SPORT_RULES: Record<string, RuleField[]> = {
-  football: [
-    {
-      key: "halfMinutes",
-      label: "Half length (minutes)",
-      kind: "number",
-      min: 5,
-      max: 60,
-      build: (v) => ({ halfMinutes: Number(v) }),
-    },
-    {
-      key: "extraTime",
-      label: "Extra time",
-      help: "Knockout fixtures only.",
-      kind: "bool",
-      build: (v) => ({ extraTime: { enabled: v === "on", halfMinutes: 15 } }),
-    },
-    {
-      key: "shootout",
-      label: "Penalty shootout",
-      help: "Knockout fixtures only.",
-      kind: "bool",
-      build: (v) => ({ shootout: v === "on" }),
-    },
-  ],
-  cricket: [
-    {
-      key: "overs",
-      label: "Overs per innings",
-      kind: "number",
-      min: 1,
-      max: 100,
-      build: (v) => ({ ballsPerInnings: Number(v) * 6 }),
-    },
-    {
-      key: "maxOversPerBowler",
-      label: "Max overs per bowler",
-      kind: "number",
-      min: 1,
-      max: 50,
-      build: (v) => ({ maxOversPerBowler: Number(v) }),
-    },
-    {
-      key: "superOver",
-      label: "Super over on a tie",
-      help: "Knockout fixtures only.",
-      kind: "bool",
-      build: (v) => ({ superOver: v === "on" }),
-    },
-    {
-      key: "dls",
-      label: "DLS revised targets",
-      help: "Pro feature — a manual umpire target works on every plan.",
-      kind: "bool",
-      build: (v) => ({ dls: { enabled: v === "on", edition: "standard" } }),
-    },
-  ],
-  volleyball: SETBASED_RULES,
-  badminton: SETBASED_RULES,
-  tabletennis: SETBASED_RULES,
-  boardgame: [
-    {
-      key: "variant",
-      label: "Clock family",
-      kind: "select",
-      options: [
-        { value: "classical", label: "Classical" },
-        { value: "rapid", label: "Rapid" },
-        { value: "blitz", label: "Blitz" },
-      ],
-      build: (v) => ({ variant: v }),
-    },
-  ],
-};
-
 export function DivisionBuilder({
   competitionId,
   orgSlug,
@@ -403,16 +170,7 @@ export function DivisionBuilder({
   }
 
   function buildStages(): StageDraft[] {
-    const t = STAGE_TEMPLATES.find((s) => s.key === template);
-    const drafts = (t ?? STAGE_TEMPLATES[0]).build(qualified);
-    // Apply the knob values onto the template's first stage.
-    return drafts.map((d) => {
-      const config = { ...d.config };
-      if (d.kind === "swiss") config.rounds = swissRounds;
-      if (d.kind === "league" || d.kind === "group") config.legs = legs;
-      if (d.kind === "group") config.pools = { count: poolCount };
-      return { ...d, config };
-    });
+    return buildTemplateStages(template, { qualified, swissRounds, poolCount, legs });
   }
 
   async function submit() {
@@ -423,11 +181,7 @@ export function DivisionBuilder({
 
     // Only rules the user actually set become overrides; the rest stay on
     // the variant's defaults.
-    let overrides: Record<string, unknown> = {};
-    for (const field of SPORT_RULES[sportKey] ?? []) {
-      const value = ruleValues[field.key];
-      if (value) overrides = { ...overrides, ...field.build(value) };
-    }
+    const overrides = buildRuleOverride(sportKey, ruleValues);
 
     setBusy(true);
     try {
@@ -630,50 +384,8 @@ export function DivisionBuilder({
             <p className="mt-0.5 text-xs text-slate-400">
               Leave a field on its default to use the variant&apos;s standard rules.
             </p>
-            <div className="mt-3 grid gap-4 sm:grid-cols-3">
-              {(SPORT_RULES[sportKey] ?? []).map((field) => (
-                <label key={field.key} className="block">
-                  <span className="label">{field.label}</span>
-                  {field.kind === "number" ? (
-                    <input
-                      type="number"
-                      min={field.min}
-                      max={field.max}
-                      value={ruleValues[field.key] ?? ""}
-                      onChange={(e) =>
-                        setRuleValues({ ...ruleValues, [field.key]: e.target.value })
-                      }
-                      placeholder="Default"
-                      className="input"
-                    />
-                  ) : (
-                    <select
-                      value={ruleValues[field.key] ?? ""}
-                      onChange={(e) =>
-                        setRuleValues({ ...ruleValues, [field.key]: e.target.value })
-                      }
-                      className="select"
-                    >
-                      <option value="">Default</option>
-                      {field.kind === "bool" ? (
-                        <>
-                          <option value="on">On</option>
-                          <option value="off">Off</option>
-                        </>
-                      ) : (
-                        (field.options ?? []).map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))
-                      )}
-                    </select>
-                  )}
-                  {field.help && (
-                    <span className="mt-0.5 block text-[11px] text-slate-400">{field.help}</span>
-                  )}
-                </label>
-              ))}
+            <div className="mt-3">
+              <MatchRuleFields sportKey={sportKey} values={ruleValues} onChange={setRuleValues} />
             </div>
           </div>
         )}

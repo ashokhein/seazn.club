@@ -53,39 +53,75 @@ export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
 
   if (paywall) return <UpgradeGate feature="scorers.max" compact />;
 
+  const close = () => {
+    setLink(null);
+    setQr(null);
+    setCopied(false);
+  };
+
   if (link) {
+    // Modal (v8): the link + QR present as one shareable card — hand the
+    // phone over or let them scan across the table.
     return (
-      <span className="inline-flex flex-col items-start gap-2">
-        <span className="inline-flex items-center gap-2">
-          <code className="max-w-64 truncate rounded bg-slate-100 px-2 py-1 text-xs text-slate-700">
-            {link}
-          </code>
-          <button
-            type="button"
-            className="btn btn-ghost px-2 py-1 text-xs"
-            onClick={() => {
-              void navigator.clipboard.writeText(link);
-              setCopied(true);
-            }}
-          >
-            {copied ? "Copied" : "Copy"}
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Invite ${article} ${officialLabel}`}
+        onClick={close}
+      >
+        <div
+          className="w-full max-w-sm space-y-3 rounded-xl bg-white p-5 shadow-xl"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <h2 className="text-sm font-semibold text-slate-800">
+              Invite {article} {officialLabel.toLowerCase()}
+            </h2>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={close}
+              className="-m-1 p-1 text-slate-400 hover:text-slate-700"
+            >
+              ✕
+            </button>
+          </div>
+          {qr && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={qr}
+              alt={`QR code inviting ${article} ${officialLabel} to this division`}
+              className="mx-auto rounded-lg border border-slate-200 p-1"
+              width={176}
+              height={176}
+              data-testid="invite-qr"
+            />
+          )}
+          <div className="flex items-center gap-2">
+            <code className="min-w-0 flex-1 truncate rounded bg-slate-100 px-2 py-1.5 text-xs text-slate-700">
+              {link}
+            </code>
+            <button
+              type="button"
+              className="btn btn-ghost px-2 py-1 text-xs"
+              onClick={() => {
+                void navigator.clipboard.writeText(link);
+                setCopied(true);
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Valid 1 hour, single use — whoever joins becomes this division&apos;s{" "}
+            {officialLabel.toLowerCase()}.
+          </p>
+          <button type="button" onClick={close} className="btn btn-primary w-full text-xs">
+            Done
           </button>
-        </span>
-        {qr && (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={qr}
-            alt={`QR code inviting ${article} ${officialLabel} to this division`}
-            className="rounded border border-slate-200"
-            width={120}
-            height={120}
-          />
-        )}
-        <span className="text-[11px] text-slate-400">
-          Valid 1 hour, single use — whoever joins becomes this division&apos;s{" "}
-          {officialLabel.toLowerCase()}.
-        </span>
-      </span>
+        </div>
+      </div>
     );
   }
 

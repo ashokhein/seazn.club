@@ -107,6 +107,7 @@ const RULES: RouteRule[] = [
   { method: "POST", path: "/divisions/:id/schedule/validate", scope: "read", pin: "division" },
   { method: "GET", path: "/divisions/:id/stages", scope: "read", pin: "division" },
   { method: "POST", path: "/divisions/:id/stages", scope: "manage", pin: "division" },
+  { method: "PUT", path: "/divisions/:id/stages", scope: "manage", pin: "division" },
   { method: "POST", path: "/divisions/:id/start", scope: "score", pin: "division" },
   { method: "GET", path: "/divisions/:id/stats/players", scope: "read", pin: "division" },
   { method: "POST", path: "/divisions/:id/undo", scope: "manage", pin: "division" },
@@ -194,6 +195,9 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "GET /fixtures/:id/device-links",
   "DELETE /fixtures/:id/device-links/:linkId",
   "POST /registrations/:id/refund",
+  // Browser-upload handshake (v8): signed URLs are a console UX, not an API
+  // surface — a leaked key must not mint writable storage URLs.
+  "POST /divisions/:id/logo-upload-url",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.

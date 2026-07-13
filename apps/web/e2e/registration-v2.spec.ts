@@ -199,6 +199,8 @@ test("organiser panel: ref column renders and search-by-ref finds the row", asyn
   expect(ref).toMatch(REF_RE);
 
   await page.goto(`/o/${org.slug}/c/${rig.compSlug}/d/${rig.divisions[0]!.slug}/registrations`);
+  // v7 console: pending rows render under the All tab.
+  await page.getByTestId("reg-tab-all").click();
   await expect(page.getByText(ref)).toBeVisible({ timeout: 20_000 });
 
   // Search by a phone-quoted (lowercase, dashless) ref.

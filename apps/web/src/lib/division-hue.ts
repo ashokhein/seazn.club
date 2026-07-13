@@ -37,6 +37,13 @@ export function divisionInk(divisionId: string): string {
   return `hsl(${divisionHue(divisionId)} 75% 26%)`;
 }
 
+/** Card-tile monogram (v8): the name's first grapheme, uppercased —
+ *  spread iteration keeps surrogate pairs (emoji, CJK) whole. */
+export function monogram(name: string): string {
+  const first = [...name.trim()][0];
+  return (first ?? "D").toUpperCase();
+}
+
 /**
  * Short code chip for board blocks (v3/04 §2): "U16 Boys Singles" → U16B.
  * Age-group tokens (U16, O40) survive whole; other words contribute initials;

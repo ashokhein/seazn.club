@@ -42,7 +42,9 @@ test("deleting a setup division lifts the free-plan divisions gate", async ({ pa
   expect(gated.status).toBe(402);
 
   // Delete through the UI: Danger zone → typed-name confirm.
-  await page.goto(`/divisions/${divisionId}`);
+  // v8: delete lives in Settings → Danger zone.
+  await page.goto(`/divisions/${divisionId}?tab=settings`);
+  await page.getByRole("button", { name: /Danger zone/ }).click({ timeout: 20_000 });
   await page.getByRole("button", { name: /Delete division/ }).click({ timeout: 20_000 });
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByText(/Destroyed:/)).toBeVisible();

@@ -11,8 +11,8 @@ import { EntityCard } from "@/components/ui/entity-card";
 import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, divisionChipState, CHIP_SORT } from "@/components/ui/status-chip";
-import { SPORT_EMOJI } from "@/components/discovery-cards";
-import { divisionAccent } from "@/lib/division-hue";
+import { divisionAccent, monogram } from "@/lib/division-hue";
+import { resolveLogoUrl } from "@/server/public-site/data";
 import { routes } from "@/lib/routes";
 import { msg } from "@/lib/messages";
 
@@ -137,7 +137,12 @@ export default async function CompetitionPage({
                       <EntityCard
                         key={d.id}
                         href={routes.division(orgSlug, compSlug, d.slug)}
-                        glyph={SPORT_EMOJI[d.sport_key] ?? "🏅"}
+                        media={{
+                          kind: "tile",
+                          logoUrl: resolveLogoUrl(d.logo_storage_path, d.logo_url),
+                          monogram: monogram(d.name),
+                          hue: divisionAccent(d.id),
+                        }}
                         name={d.name}
                         accent={divisionAccent(d.id)}
                         chip={<StatusChip state={chip} />}

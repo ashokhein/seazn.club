@@ -252,6 +252,9 @@ async function main() {
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
+  // --- v8: division settings — format lock + logo upload URL.
+  await divisionSettingsSuite(admin);
+
   // --- design/v7 PROMPT-52: waitlist queue position + public count.
   // Before gapSuite — its destructive downgrade ends the org's pro quota.
   await regQueueSuite(admin);
@@ -380,6 +383,64 @@ async function platformRevenueSuite(admin: Session, staffEmail: string): Promise
   } finally {
     await setStaff(staffEmail, null);
   }
+}
+
+/** v8 (spec 2026-07-13): the format is editable until fixtures exist, then
+ *  PATCH rejects with FORMAT_LOCKED; the logo upload URL mints for editors. */
+async function divisionSettingsSuite(admin: Session): Promise<void> {
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", { name: `V8 Probe ${tag}` }),
+  );
+  const div = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Lockable",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+
+  const pre = await raw(admin, `/api/v1/divisions/${div.id}`, "PATCH", {
+    config: { points: { w: 2, d: 1, l: 0 }, progressScore: false },
+  });
+  check("v8 format editable pre-fixtures", pre.status === 200);
+
+  const uploadUrl = await raw(admin, `/api/v1/divisions/${div.id}/logo-upload-url`, "POST", {});
+  const upload = uploadUrl.json.data as { storage_path?: string } | undefined;
+  check(
+    "v8 division logo upload URL mints (or 503 keyless)",
+    (uploadUrl.status === 200 && !!upload?.storage_path?.includes(div.id)) ||
+      // CI smoke runs without Supabase creds — the guard is the behavior.
+      (uploadUrl.status === 503 &&
+        (uploadUrl.json.error as { message?: string } | undefined)?.message ===
+          "Storage is not configured"),
+  );
+
+  await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+    { kind: "individual", display_name: "A", seed: 1 },
+    { kind: "individual", display_name: "B", seed: 2 },
+  ]);
+  const stage = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1, kind: "league", name: "L", config: {},
+    }),
+  );
+  await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST");
+
+  const post = await raw(admin, `/api/v1/divisions/${div.id}`, "PATCH", { variant_key: "score" });
+  check(
+    "v8 format 409s once fixtures exist",
+    post.status === 409 && (post.json.error as { code?: string } | undefined)?.code === "FORMAT_LOCKED",
+  );
+
+  const structSwap = await raw(admin, `/api/v1/divisions/${div.id}/stages`, "PUT", [
+    { seq: 1, kind: "knockout", name: "KO", config: {}, qualification: null },
+  ]);
+  check(
+    "v8 structure PUT 409s once fixtures exist",
+    structSwap.status === 409 &&
+      (structSwap.json.error as { code?: string } | undefined)?.code === "FORMAT_LOCKED",
+  );
 }
 
 /** Flip Stripe Connect readiness (spec 2026-07-12) — Express onboarding can't

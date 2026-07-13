@@ -20,4 +20,6 @@ An archived division can be purged permanently after 30 days in the archive — 
 
 **Does archiving free a Community slot?** Yes — archived divisions don't count against limits; that's often the painless answer to "over quota after downgrade".
 
+**Where do I find these?** The division's **Settings tab → Danger zone**.
+
 **Who can archive or delete?** Owners and admins; both actions require typing the division's name to confirm and land in the org audit trail.
