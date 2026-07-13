@@ -3,7 +3,7 @@ export const dynamic = "force-dynamic";
 // person register (DOB/consent, doc 07); Clubs = parent clubs that group teams
 // across divisions (Jul3/01). Both are org-wide entities, so they live behind
 // one "Directory" menu with a tab each.
-import Link from "next/link";
+import Link from "@/components/ui/console-link";
 import { Nav } from "@/components/nav";
 import { requirePageAuth } from "@/server/page-auth";
 import { listPersons } from "@/server/usecases/persons";
