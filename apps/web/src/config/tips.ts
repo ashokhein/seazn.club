@@ -31,6 +31,11 @@ export const TIPS = {
     body: "A division registers one kind of entrant: whole teams, individual players, or fixed pairs (doubles). Pick the kind that matches who plays a fixture.",
     helpSlug: "entrants/kinds",
   },
+  "persons.merge": {
+    title: "Merging duplicate players",
+    body: "Same person listed twice? Merge moves their team memberships, lineups and profiles onto the player you keep, then removes the duplicate. Results are untouched — but a merge can't be undone.",
+    helpSlug: "entrants/duplicate-players",
+  },
   "formats.picker": {
     title: "Choosing a format",
     body: "League plays everyone once and ranks by points. Knockout eliminates losers. Groups + knockout qualifies the top of each group. Swiss pairs equals with equals — good for big fields on short time.",

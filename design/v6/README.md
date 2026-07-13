@@ -1,8 +1,12 @@
 # v6 — Sport Expansion: Tennis · Ice Hockey · Field Hockey
 
-> **Status (2026-07-12):** not started. PROMPT-48 ⏳ · PROMPT-49 ⏳ · PROMPT-50 ⏳.
-> Branch (planned): `feat/v6-sports`. Migrations: none expected (sports are catalog rows
-> via `scripts/sync-sports.ts`, not schema).
+> **Status (2026-07-13):** wave COMPLETE. PROMPT-48 ✅ · PROMPT-49 ✅ · PROMPT-50 ✅.
+> Branch: `feat/v6-sports`. Migrations: none (catalog rows via `scripts/sync-sports.ts` —
+> run it against every environment DB). Notes: football stays on FootballPad (PeriodPad
+> migration is a follow-up); the shared shootout primitive IS the football refactor
+> (golden-replay byte-identical, module_version 1.0.0); grand-slam uses a third
+> `finalSet: { tiebreakTo: 10 }` form (slam-faithful games-level TB10 — spec §2 amendment);
+> discipline reporting rides the generic stats leaderboard's new Discipline view.
 
 ## Theme
 

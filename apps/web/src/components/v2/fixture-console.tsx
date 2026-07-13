@@ -17,6 +17,8 @@ import { GenericPad } from "@/components/v2/pads/generic-pad";
 import { BoardgamePad } from "@/components/v2/pads/boardgame-pad";
 import { CarromPad } from "@/components/v2/pads/carrom-pad";
 import { SetbasedPad } from "@/components/v2/pads/setbased-pad";
+import { TennisPad } from "@/components/v2/pads/tennis-pad";
+import { PeriodPad } from "@/components/v2/pads/period-pad";
 import { FootballPad } from "@/components/v2/pads/football-pad";
 import { CricketPad } from "@/components/v2/pads/cricket-pad";
 
@@ -114,6 +116,11 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 const SETBASED = new Set(["volleyball", "badminton", "tabletennis"]);
+// Nested-kernel sports (points → games → sets) — TennisPad, not SetbasedPad.
+const NESTED = new Set(["tennis"]);
+// Period-kernel sports — PeriodPad (football stays on FootballPad this wave;
+// migration noted as a follow-up in v6/README).
+const PERIOD = new Set(["icehockey", "hockey"]);
 
 export function FixtureConsole({
   fixture,
@@ -294,7 +301,7 @@ export function FixtureConsole({
 
       {/* Sport pad */}
       {scoring && !decided && home && away && (
-        <section className="card p-5">
+        <section className="card p-5" data-testid="score-pad">
           <h2 className="mb-3 text-sm font-semibold text-slate-700">Scoring</h2>
           <ScoringErrorBoundary fixtureId={fixture.id}>
             {sport.key === "cricket" ? (
@@ -303,6 +310,10 @@ export function FixtureConsole({
               <FootballPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
             ) : SETBASED.has(sport.key) ? (
               <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : NESTED.has(sport.key) ? (
+              <TennisPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : PERIOD.has(sport.key) ? (
+              <PeriodPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
             ) : sport.key === "boardgame" ? (
               <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
             ) : sport.key === "carrom" ? (
@@ -375,6 +386,10 @@ export function FixtureConsole({
                     {desc.text}
                     {recorder ? <span className="text-slate-400"> ({recorder})</span> : null}
                   </span>
+                  {/* ClientTime: locale time renders differently on server vs
+                      browser (17:59 vs 5:59 PM) — the mismatch forced a full
+                      client re-render that ate early clicks. SSR emits an
+                      empty span; the viewer-local time fills in after mount. */}
                   <span className="shrink-0 text-slate-400">
                     <ClientTime value={e.recorded_at} mode="time" />
                   </span>

@@ -20,4 +20,4 @@ One-time upgrade for a single competition — every division inside it gets Pro 
 
 **What happens to my data if I stop paying?** Nothing is deleted, ever — see [downgrading](/help/billing/downgrade).
 
-**Where are receipts?** Settings → Billing → Manage billing opens your Stripe portal with every invoice.
+**Where are receipts?** Every invoice is emailed to your billing address when it's charged. Your plan, payment card, billing address and VAT details are all managed in **Settings → Billing** — no external portal.

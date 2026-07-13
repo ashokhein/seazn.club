@@ -28,6 +28,7 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
   const [board, setBoard] = useState<Board | null>(null);
   const [metric, setMetric] = useState<string | null>(null);
   const [sort, setSort] = useState<"desc" | "asc">("desc");
+  const [view, setView] = useState<"all" | "discipline">("all");
   const [error, setError] = useState<string | null>(null);
   const [paywall, setPaywall] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,9 +77,36 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
     return <p className="text-sm text-slate-500">No player stats recorded yet.</p>;
   }
 
-  const cols = board.metrics;
+  // Discipline report (v6/00 §5): the same board narrowed to the penalty/
+  // card columns — a PIM leaderboard for ice hockey, a card list for FIH.
+  const isDisciplineKey = (key: string) =>
+    key === "pim" || key.startsWith("pen_") || key.endsWith("_cards");
+  const disciplineCols = board.metrics.filter((m) => isDisciplineKey(m.key));
+  const showDiscipline = view === "discipline" && disciplineCols.length > 0;
+  const cols = showDiscipline ? disciplineCols : board.metrics;
   return (
     <div className="space-y-3">
+      {disciplineCols.length > 0 && (
+        <div className="flex gap-1 text-xs">
+          {(["all", "discipline"] as const).map((v) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => {
+                setView(v);
+                if (v === "discipline") {
+                  const preferred =
+                    disciplineCols.find((m) => m.key === "pim") ?? disciplineCols[0];
+                  if (preferred) setMetric(preferred.key);
+                }
+              }}
+              className={`rounded-full px-3 py-1 ${view === v ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
+            >
+              {v === "all" ? "All stats" : "Discipline"}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
         <span>Sort by</span>
         <select

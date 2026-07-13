@@ -16,6 +16,7 @@ import {
 } from "../../core/types.ts";
 import type { PositionCatalog } from "../../sport/catalog.ts";
 import type { ModuleEvent, SportModule, TiebreakerKey } from "../../sport/module.ts";
+import { expectedKicker, shootoutDecision } from "../period/shootout.ts";
 
 // ---------------------------------------------------------------------------
 // Cfg — spec 04 §1.1
@@ -213,34 +214,11 @@ function resolveFullTime(state: FootballState, after: "FT" | "ET_FT"): FootballS
 }
 
 // spec 04 §1.4 — best-of-5 alternating, early decision when lead exceeds the
-// opponent's remaining kicks, then sudden-death pairs.
-function shootoutDecision(
-  kicks: readonly { side: Side; scored: boolean }[],
-): Side | null {
-  const taken = { home: 0, away: 0 };
-  const scored = { home: 0, away: 0 };
-  for (const kick of kicks) {
-    taken[kick.side]++;
-    if (kick.scored) scored[kick.side]++;
-  }
-  // Remaining entitlement: up to 5 in regulation; in sudden death a side is
-  // entitled to match the opponent's kick count (complete the pair).
-  const remaining = (side: Side): number =>
-    taken[side] < 5 ? 5 - taken[side] : Math.max(0, taken[opponent(side)] - taken[side]);
-  if (scored.home > scored.away + remaining("away")) return "home";
-  if (scored.away > scored.home + remaining("home")) return "away";
-  return null;
-}
-
-function expectedKicker(
-  kicks: readonly { side: Side; scored: boolean }[],
-): Side | null {
-  if (kicks.length === 0) return null; // either side may start
-  const taken = { home: 0, away: 0 };
-  for (const kick of kicks) taken[kick.side]++;
-  if (taken.home === taken.away) return (kicks[0] as { side: Side }).side;
-  return taken.home < taken.away ? "home" : "away";
-}
+// opponent's remaining kicks, then sudden-death pairs. Extracted to the
+// shared shootout primitive (v6/00 §3): football pens, IIHF GWS and the FIH
+// shoot-out are one shape — `shootoutDecision`/`expectedKicker` now come from
+// ../period/shootout.ts; byte-identical behavior locked by
+// football.golden.test.ts, so module_version stays 1.0.0 (v6/00 §6.2).
 
 // FIFA fair-play scale (spec 04 §1.5): yellow −1, second yellow (indirect
 // red) −3, direct red −4, yellow + direct red −5 — one deduction per person,

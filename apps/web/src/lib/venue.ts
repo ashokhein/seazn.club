@@ -8,6 +8,7 @@ const VENUE_BY_SPORT: Record<string, string> = {
   cricket: "pitch",
   rugby: "pitch",
   hockey: "pitch",
+  icehockey: "rink",
   tabletennis: "table",
   table_tennis: "table",
   "table-tennis": "table",

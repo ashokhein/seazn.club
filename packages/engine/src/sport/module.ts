@@ -44,6 +44,7 @@ export type TiebreakerKey =
   | "for"
   | "nrr"
   | "set_ratio"
+  | "game_ratio"
   | "board_ratio"
   | "point_ratio"
   | "buchholz"

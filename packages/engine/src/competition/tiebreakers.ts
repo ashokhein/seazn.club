@@ -291,6 +291,15 @@ const COMPARATORS: Partial<Record<TiebreakerKey, Comparator>> = {
       metricOf(b, ["sets_won"]),
       metricOf(b, ["sets_lost"]),
     ),
+  // Tennis games won/lost (v6/00 §2) — same cross-multiplied form as
+  // set_ratio, one level down the nested ledger.
+  game_ratio: (a, b) =>
+    compareRatio(
+      metricOf(a, ["games_won"]),
+      metricOf(a, ["games_lost"]),
+      metricOf(b, ["games_won"]),
+      metricOf(b, ["games_lost"]),
+    ),
   // Carrom boards won/lost (carrom.md §4) — same cross-multiplied form.
   board_ratio: (a, b) =>
     compareRatio(
@@ -633,6 +642,9 @@ export function validateCascade(
         break;
       case "set_ratio":
         if (!has("sets_won") || !has("sets_lost")) reject(key, "sets won/lost");
+        break;
+      case "game_ratio":
+        if (!has("games_won") || !has("games_lost")) reject(key, "games won/lost");
         break;
       case "board_ratio":
         if (!has("boards_won") || !has("boards_lost")) reject(key, "boards won/lost");
