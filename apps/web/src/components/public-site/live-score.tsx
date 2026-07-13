@@ -6,7 +6,15 @@
 // because the public page authenticates with a public token endpoint instead
 // of the org-member one.
 import { useCallback, useEffect, useState } from "react";
-import { setBreakdown, stripLiveSetPoints } from "@/lib/public-site";
+import {
+  disciplineLabel,
+  disciplineList,
+  matchStrength,
+  periodBreakdown,
+  servingSide,
+  setBreakdown,
+  stripLiveSetPoints,
+} from "@/lib/public-site";
 import {
   fetchLiveFixture,
   fetchPublicRealtimeToken,
@@ -92,6 +100,12 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
   // Kernel perSide order is [home, away]; row labels come from it.
   const sideIds = data.summary?.perSide?.map((s) => s.entrantId) ?? [];
   const showBreakdown = breakdown !== null && sideIds.length === 2;
+  // Period-kernel surfaces (v6/00 §5): power-play strength while live,
+  // goals-by-period once periods exist, the discipline list, tennis serve dot.
+  const strength = inPlay ? matchStrength(data.summary) : null;
+  const periods = periodBreakdown(data.summary);
+  const discipline = disciplineList(data.summary);
+  const serving = inPlay ? servingSide(data.summary) : null;
   return (
     <div className="space-y-4">
       {/* Court-slab scorebug — the broadcast moment of the page. */}
@@ -101,6 +115,11 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
             <p className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.22em] text-emerald-300">
               <span className="animate-live-pulse h-2 w-2 rounded-full bg-emerald-400" />
               Live{subscribed ? " · realtime" : ""}
+              {strength ? (
+                <span className="rounded-full bg-amber-400/20 px-2 py-0.5 font-mono text-[11px] font-bold tracking-normal text-amber-300">
+                  {strength}
+                </span>
+              ) : null}
             </p>
           ) : (
             <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-court-muted">
@@ -116,8 +135,9 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
           </p>
           {!showBreakdown && data.summary?.perSide ? (
             <ul className="mt-5 space-y-2">
-              {data.summary.perSide.map((side) => {
+              {data.summary.perSide.map((side, row) => {
                 const isWinner = data.outcome?.winner === side.entrantId;
+                const hasServe = serving !== null && (row === 0 ? "home" : "away") === serving;
                 return (
                   <li
                     key={side.entrantId}
@@ -126,6 +146,9 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
                     }`}
                   >
                     <span className="truncate font-display text-xl font-semibold uppercase tracking-wide sm:text-2xl">
+                      {hasServe ? (
+                        <span aria-label="serving" className="mr-1.5 text-amber-300">●</span>
+                      ) : null}
                       {entrantNames[side.entrantId] ?? "—"}
                     </span>
                     <span className="shrink-0 font-display text-xl font-bold sm:text-2xl">
@@ -152,8 +175,84 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
       {showBreakdown ? (
         <SetScoreboard
           breakdown={breakdown}
-          names={sideIds.map((id) => entrantNames[id] ?? "—")}
+          names={sideIds.map((id, row) => {
+            const name = entrantNames[id] ?? "—";
+            const hasServe = serving !== null && (row === 0 ? "home" : "away") === serving;
+            return hasServe ? `● ${name}` : name;
+          })}
         />
+      ) : null}
+
+      {periods && sideIds.length === 2 ? (
+        <div className="rounded-2xl border border-zinc-200/80 bg-surface p-5 shadow-sm">
+          <p className="mb-3 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
+            Goals by period
+          </p>
+          <div className="overflow-x-auto">
+            <table className="w-full border-separate border-spacing-0 tabular-nums">
+              <thead>
+                <tr>
+                  <th className="w-full" />
+                  {periods.map((p) => (
+                    <th
+                      key={p.phase}
+                      className="min-w-14 px-3 pb-2 text-center text-xs font-medium uppercase tracking-wide text-zinc-400"
+                    >
+                      {p.phase}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {(["home", "away"] as const).map((side, row) => (
+                  <tr key={side}>
+                    <td
+                      className={`max-w-40 truncate pr-4 text-sm font-medium text-zinc-800 ${row === 0 ? "border-b border-zinc-100" : ""} py-2`}
+                    >
+                      {entrantNames[sideIds[row]!] ?? "—"}
+                    </td>
+                    {periods.map((p) => (
+                      <td
+                        key={p.phase}
+                        className={`px-3 py-2 text-center font-display text-xl font-medium text-zinc-700 ${row === 0 ? "border-b border-zinc-100" : ""}`}
+                      >
+                        {p[side]}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {discipline && sideIds.length === 2 ? (
+        <div className="rounded-2xl border border-zinc-200/80 bg-surface p-5 shadow-sm">
+          <p className="mb-3 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
+            Discipline
+          </p>
+          <ul className="space-y-1.5">
+            {discipline.map((entry, i) => (
+              <li key={i} className="flex items-center gap-2 text-sm text-zinc-700">
+                <span
+                  aria-hidden
+                  className={`h-3 w-2 rounded-[2px] ${
+                    entry.classKey === "red" || entry.classKey === "match"
+                      ? "bg-red-500"
+                      : entry.classKey === "green"
+                        ? "bg-emerald-500"
+                        : "bg-amber-400"
+                  }`}
+                />
+                <span className="font-medium">{disciplineLabel(entry.classKey)}</span>
+                <span className="text-zinc-500">
+                  — {entrantNames[sideIds[entry.side === "home" ? 0 : 1]!] ?? "—"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
     </div>
   );

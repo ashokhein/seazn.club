@@ -84,6 +84,12 @@ const TEMPLATES: Record<string, (q: number) => StageSpec[]> = {
 
 // ── per-sport result events (winner side chosen by us) ─────────────────────
 type Ev = { type: string; payload: unknown };
+// v6 scenario counters — the first ice/FIH/tennis fixtures walk a fixed
+// ladder (OT, GWS, PP goal · draw+cards · MTB) so the demo reliably shows
+// every new surface; later fixtures randomize.
+let iceSeeded = 0;
+let fihSeeded = 0;
+let tennisSeeded = 0;
 function resultEvents(sport: string, variant: string, fx: { home: string; away: string }, homeWins: boolean): Ev[] {
   const w = homeWins ? fx.home : fx.away;
   const l = homeWins ? fx.away : fx.home;
@@ -131,6 +137,90 @@ function resultEvents(sport: string, variant: string, fx: { home: string; away: 
     case "boardgame":
       events.push({ type: "boardgame.result", payload: { winner: w, method: coin() ? "checkmate" : "resign" } });
       return events;
+    case "tennis": {
+      // v6/00 §5 demo richness: straight-set wins, with a 7–6 tie-break set
+      // now and then; the doubles-noad-mtb10 variant banks a real match
+      // tie-break decider ([6–4, 4–6, 10–7]).
+      const set = (h: number, a: number, tb?: { home: number; away: number }) =>
+        events.push({ type: "tennis.set_summary", payload: { home: h, away: a, ...(tb ? { tb } : {}) } });
+      const winnerHome = homeWins;
+      if (variant === "doubles-noad-mtb10" && tennisSeeded++ % 2 === 0) {
+        set(winnerHome ? 6 : 4, winnerHome ? 4 : 6);
+        set(winnerHome ? 4 : 6, winnerHome ? 6 : 4);
+        set(winnerHome ? 10 : 7, winnerHome ? 7 : 10); // MTB decider
+        return events;
+      }
+      const tbSet = tennisSeeded++ % 3 === 0;
+      if (tbSet) {
+        set(winnerHome ? 7 : 6, winnerHome ? 6 : 7, winnerHome ? { home: 7, away: 5 } : { home: 5, away: 7 });
+      } else {
+        set(winnerHome ? 6 : 2 + rnd(4), winnerHome ? 2 + rnd(4) : 6);
+      }
+      set(winnerHome ? 6 : rnd(5), winnerHome ? rnd(5) : 6);
+      return events;
+    }
+    case "icehockey": {
+      // Deterministic scenario ladder so the demo always shows an OT game, a
+      // GWS game and a 5v4 power-play goal (v6/00 §5), then random ones.
+      const scenario = iceSeeded++;
+      const goal = (by: string, extra?: Record<string, unknown>) =>
+        events.push({ type: "icehockey.goal", payload: { by, ...(extra ?? {}) } });
+      const adv = (to: string) => events.push({ type: "icehockey.period.advance", payload: { to } });
+      if (scenario === 0) {
+        // Sudden-death OT winner.
+        goal(w); goal(l); adv("P2"); goal(l); adv("P3"); goal(w); adv("FT"); goal(w);
+        return events;
+      }
+      if (scenario === 1) {
+        // Scoreless OT → GWS decided 3–0 after six attempts.
+        goal(w); goal(l); adv("P2"); adv("P3"); adv("FT"); adv("FT");
+        for (let i = 0; i < 3; i++) {
+          events.push({ type: "icehockey.shootout.attempt", payload: { by: w, scored: true } });
+          events.push({ type: "icehockey.shootout.attempt", payload: { by: l, scored: false } });
+        }
+        return events;
+      }
+      if (scenario === 2) {
+        // 5v4 power play: minor, PP goal, scorer-released minor.
+        events.push({ type: "icehockey.suspension.start", payload: { by: l, class: "minor" } });
+        goal(w, { kind: "pp" });
+        events.push({ type: "icehockey.suspension.end", payload: { by: l, class: "minor" } });
+        goal(w); adv("P2"); goal(l); adv("P3"); adv("FT");
+        return events;
+      }
+      const wg = 2 + rnd(3), lg = rnd(wg);
+      goal(w); adv("P2");
+      for (let i = 1; i < wg; i++) goal(w, rnd(3) === 0 ? { kind: "sh" } : undefined);
+      for (let i = 0; i < lg; i++) goal(l);
+      adv("P3"); adv("FT");
+      return events;
+    }
+    case "hockey": {
+      // First FIH game: a draw with a green + yellow card (team-short both
+      // times) so the demo shows cards and a drawn league row.
+      const scenario = fihSeeded++;
+      const goal = (by: string, extra?: Record<string, unknown>) =>
+        events.push({ type: "hockey.goal", payload: { by, ...(extra ?? {}) } });
+      const adv = (to: string) => events.push({ type: "hockey.period.advance", payload: { to } });
+      if (scenario === 0) {
+        goal(w, { kind: "pc" });
+        events.push({ type: "hockey.suspension.start", payload: { by: l, class: "green" } });
+        adv("Q2");
+        events.push({ type: "hockey.suspension.end", payload: { by: l, class: "green" } });
+        goal(l); adv("Q3");
+        events.push({ type: "hockey.suspension.start", payload: { by: l, class: "yellow" } });
+        adv("Q4");
+        events.push({ type: "hockey.suspension.end", payload: { by: l, class: "yellow" } });
+        adv("FT"); // level ⇒ draw
+        return events;
+      }
+      const wg = 1 + rnd(3), lg = rnd(wg);
+      for (let i = 0; i < wg; i++) goal(w, rnd(3) === 0 ? { kind: "pc" } : undefined);
+      adv("Q2");
+      for (let i = 0; i < lg; i++) goal(l);
+      adv("Q3"); adv("Q4"); adv("FT");
+      return events;
+    }
     case "generic":
       events.push({ type: "generic.result", payload: homeWins ? { p1Score: 2 + rnd(3), p2Score: rnd(2) } : { p1Score: rnd(2), p2Score: 2 + rnd(3) } });
       return events;
@@ -211,6 +301,15 @@ const PLAN_PRO: { name: string; divisions: DivPlan[] }[] = [
     { name: "Badminton Singles", sport: "badminton", variant: "bwf", kind: "individual", n: 7 + rnd(4), template: "league", ratio: 0.7 },
     { name: "TT Doubles", sport: "tabletennis", variant: "bo5", kind: "pair", n: 8, template: "groups_ko", q: 4, ratio: 1 },
     { name: "Badminton Juniors", sport: "badminton", variant: "short", kind: "individual", n: 8, template: "knockout", ratio: 1 },
+    // v6: tennis on the nested kernel — tour singles (TB sets in the mix)
+    // and the ITF doubles norm with a seeded match-tie-break decider.
+    { name: "Tennis Singles", sport: "tennis", variant: "tour", kind: "individual", n: 6, template: "league", ratio: 0.8 },
+    { name: "Tennis Doubles", sport: "tennis", variant: "doubles-noad-mtb10", kind: "pair", n: 4, template: "league", ratio: 1 },
+  ]},
+  // v6: ice hockey on the period kernel — the scenario ladder seeds an OT
+  // game, a GWS game and a 5v4 power-play goal (v6/00 §5).
+  { name: "Winter Ice Classic", divisions: [
+    { name: "IIHF Division", sport: "icehockey", variant: "iihf", kind: "team", n: 6, template: "league", ratio: 1 },
   ]},
   { name: "Chess Open 2026", divisions: [
     { name: "Open Swiss", sport: "boardgame", variant: "classical", kind: "individual", n: 10 + rnd(3), template: "swiss", ratio: 0.6 },
@@ -239,8 +338,11 @@ const PLAN_PRO: { name: string; divisions: DivPlan[] }[] = [
 // 1 division each, ≤16 entrants, ≤2 stages, no double elim) — shows the real
 // free experience including the Pro badges on gated controls.
 const PLAN_COMMUNITY: { name: string; divisions: DivPlan[] }[] = [
-  { name: "Friday Night Football", divisions: [
-    { name: "League", sport: "football", variant: "small-sided", kind: "team", n: 6, template: "league", ratio: 0.7 },
+  // v6: the community org shows FIH hockey — a drawn game with green/yellow
+  // cards seeds first (demo-richness rule). Fresh community seeds get this;
+  // accounts seeded before v6 keep their football league (resume skips).
+  { name: "Friday Night Hockey", divisions: [
+    { name: "FIH Outdoor League", sport: "hockey", variant: "fih-outdoor", kind: "team", n: 6, template: "league", ratio: 0.7 },
   ]},
   { name: "Office Table Tennis", divisions: [
     { name: "Singles Championship", sport: "tabletennis", variant: "bo5", kind: "individual", n: 8, template: "league_ko", q: 4, ratio: 1 },
@@ -310,6 +412,12 @@ async function main() {
     try {
       c = await call("/api/v1/competitions", "POST", { name: comp.name });
     } catch (e) {
+      // Accounts seeded before a PLAN change may sit at their plan caps —
+      // skip the competition rather than aborting the resume run.
+      if (/cap|limit|payment/i.test(String(e))) {
+        console.log(`${comp.name}: skipped (plan cap on this account)`);
+        continue;
+      }
       if (!String(e).includes("already in use")) throw e;
       const list = await call("/api/v1/competitions?limit=100");
       c = (list.items ?? list).find((x: { name: string }) => x.name === comp.name);

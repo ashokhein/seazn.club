@@ -8,6 +8,7 @@ const SPORT_DEFAULT: Record<string, number> = {
   cricket: 180,
   rugby: 80,
   hockey: 70,
+  icehockey: 75,
   badminton: 30,
   tennis: 90,
   squash: 40,
@@ -47,6 +48,11 @@ const VARIANT_OVERRIDE: Record<string, number> = {
   "tabletennis:bo5": 20,
   "tabletennis:bo7": 30,
   "tabletennis:hardbat-21": 15,
+  // Tennis by format: Fast4 is built for a short court slot; slams run long.
+  "tennis:fast4": 45,
+  "tennis:grand-slam": 180,
+  // Hockeys: youth quarters are shorter.
+  "hockey:youth": 50,
 };
 
 /** Default match length in minutes for a sport (+ optional variant). 30 if unknown. */

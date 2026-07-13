@@ -27,6 +27,8 @@ export const HELP_ARTICLE_SLUGS = [
   "scoring/conflicts",
   "scoring/device-links",
   "scoring/scorer-role",
+  "scoring/tennis",
+  "scoring/hockey",
   "divisions/lifecycle",
   "divisions/archive",
   "divisions/settings",

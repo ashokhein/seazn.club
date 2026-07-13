@@ -30,6 +30,9 @@ const SPORT_NAMES: Record<string, string> = {
   volleyball: "Volleyball",
   badminton: "Badminton",
   tabletennis: "Table Tennis",
+  tennis: "Tennis",
+  icehockey: "Ice Hockey",
+  hockey: "Hockey",
   boardgame: "Board game",
   generic: "Generic",
 };

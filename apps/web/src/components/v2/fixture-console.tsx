@@ -16,6 +16,8 @@ import { GenericPad } from "@/components/v2/pads/generic-pad";
 import { BoardgamePad } from "@/components/v2/pads/boardgame-pad";
 import { CarromPad } from "@/components/v2/pads/carrom-pad";
 import { SetbasedPad } from "@/components/v2/pads/setbased-pad";
+import { TennisPad } from "@/components/v2/pads/tennis-pad";
+import { PeriodPad } from "@/components/v2/pads/period-pad";
 import { FootballPad } from "@/components/v2/pads/football-pad";
 import { CricketPad } from "@/components/v2/pads/cricket-pad";
 
@@ -113,6 +115,11 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 const SETBASED = new Set(["volleyball", "badminton", "tabletennis"]);
+// Nested-kernel sports (points → games → sets) — TennisPad, not SetbasedPad.
+const NESTED = new Set(["tennis"]);
+// Period-kernel sports — PeriodPad (football stays on FootballPad this wave;
+// migration noted as a follow-up in v6/README).
+const PERIOD = new Set(["icehockey", "hockey"]);
 
 export function FixtureConsole({
   fixture,
@@ -297,6 +304,10 @@ export function FixtureConsole({
               <FootballPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
             ) : SETBASED.has(sport.key) ? (
               <SetbasedPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : NESTED.has(sport.key) ? (
+              <TennisPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
+            ) : PERIOD.has(sport.key) ? (
+              <PeriodPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
             ) : sport.key === "boardgame" ? (
               <BoardgamePad home={home} away={away} send={send} busy={busy} started={started} />
             ) : sport.key === "carrom" ? (

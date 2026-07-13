@@ -7,6 +7,7 @@ const fx = (n: number): DiscoveryLiveFixture => ({
   id: `f${n}`,
   sport_key: "cricket",
   headline: `14${n}/3 (12.4)`,
+  strength: null,
   competition_name: `Harbor Cup ${n}`,
   org_slug: "harbor",
   comp_slug: `cup-${n}`,

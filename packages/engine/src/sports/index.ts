@@ -15,6 +15,9 @@ import { generic } from "./generic/index.ts";
 import { volleyball } from "./setbased/volleyball.ts";
 import { badminton } from "./setbased/badminton.ts";
 import { tabletennis } from "./setbased/tabletennis.ts";
+import { tennis } from "./tennis/index.ts";
+import { icehockey } from "./icehockey/index.ts";
+import { hockey } from "./hockey/index.ts";
 
 // Every SportModule the engine ships. Order is not significant.
 export const builtinModules: readonly AnySportModule[] = [
@@ -26,6 +29,9 @@ export const builtinModules: readonly AnySportModule[] = [
   volleyball,
   badminton,
   tabletennis,
+  tennis,
+  icehockey,
+  hockey,
 ];
 
 // Register all shipped modules into a registry (the adapter calls this once at
