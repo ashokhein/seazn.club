@@ -8,6 +8,8 @@ import { requireOrgPage } from "@/server/page-auth";
 import { listCompetitions } from "@/server/usecases/competitions";
 import { listCompetitionCardStats, nextLine } from "@/server/usecases/card-stats";
 import { EntityCard } from "@/components/ui/entity-card";
+import { sportEmoji } from "@/components/discovery-cards";
+import { sportTint } from "@/lib/sport-tints";
 import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
@@ -98,6 +100,11 @@ export default async function OrgHomePage({
                   key={c.id}
                   href={routes.competition(orgSlug, c.slug)}
                   name={c.name}
+                  media={{
+                    kind: "banner",
+                    emoji: sportEmoji(s?.top_sport),
+                    tint: sportTint(s?.top_sport),
+                  }}
                   chip={<StatusChip state={c.frozen ? "frozen" : chip} />}
                   meta={
                     s

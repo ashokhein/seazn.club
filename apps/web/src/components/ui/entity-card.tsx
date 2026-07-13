@@ -3,9 +3,38 @@
 // "what's next" line / progress meter, with a 3px division-hue left border
 // for cross-page wayfinding. Server-safe: interactivity (⋯ menu, view
 // toggle) comes in as client children.
+//
+// v8: optional media identity — competitions wear a sport-tinted banner
+// strip, divisions a 56px logo-or-monogram tile. Anatomy below is unchanged.
 import Link from "next/link";
 import type { ReactNode } from "react";
 import { msg } from "@/lib/messages";
+
+export type CardMedia =
+  | { kind: "banner"; emoji: string; tint: string }
+  | { kind: "tile"; logoUrl: string | null; monogram: string; hue: string };
+
+function MediaTile({ media }: { media: Extract<CardMedia, { kind: "tile" }> }) {
+  return (
+    <span
+      aria-hidden
+      data-testid="card-tile"
+      className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg"
+      style={
+        media.logoUrl
+          ? undefined
+          : { backgroundColor: `color-mix(in srgb, ${media.hue} 15%, white)`, color: media.hue }
+      }
+    >
+      {media.logoUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- tenant-uploaded logo, remotePatterns unknown at build
+        <img src={media.logoUrl} alt="" className="h-full w-full object-cover" />
+      ) : (
+        <span className="text-xl font-bold">{media.monogram}</span>
+      )}
+    </span>
+  );
+}
 
 export function EntityCard({
   href,
@@ -17,9 +46,10 @@ export function EntityCard({
   progress,
   accent,
   menu,
+  media,
 }: {
   href: string;
-  /** Sport emoji / logo block, ~20px. */
+  /** Sport emoji / logo block, ~20px. Ignored when `media` is present. */
   glyph?: ReactNode;
   name: string;
   chip: ReactNode;
@@ -32,14 +62,16 @@ export function EntityCard({
   accent?: string;
   /** Client overflow menu; rendered above the stretched link. */
   menu?: ReactNode;
+  /** v8 identity: sport banner (competitions) or logo/monogram tile (divisions). */
+  media?: CardMedia;
 }) {
-  return (
-    <article
-      className="ecard group relative rounded-xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-purple-300 hover:shadow"
-      style={accent ? { borderLeft: `3px solid ${accent}` } : undefined}
-    >
+  const banner = media?.kind === "banner" ? media : null;
+  const tile = media?.kind === "tile" ? media : null;
+
+  const body = (
+    <div className={tile ? "min-w-0 flex-1" : undefined}>
       <div className="flex items-start gap-2">
-        {glyph && (
+        {!media && glyph && (
           <span aria-hidden className="mt-px shrink-0 text-base leading-5">
             {glyph}
           </span>
@@ -90,6 +122,40 @@ export function EntityCard({
           <span className="text-[11px] text-slate-500">{msg("card.progress.none")}</span>
         )}
       </div>
+    </div>
+  );
+
+  return (
+    <article
+      className={`ecard group relative rounded-xl border border-slate-200 bg-white shadow-sm transition hover:border-purple-300 hover:shadow ${
+        banner ? "overflow-hidden" : "p-4"
+      }`}
+      style={accent ? { borderLeft: `3px solid ${accent}` } : undefined}
+    >
+      {banner && (
+        <div
+          aria-hidden
+          data-testid="card-banner"
+          className="flex h-12 items-center px-4 sm:h-16"
+          style={{
+            background: `linear-gradient(135deg, ${banner.tint}33 0%, ${banner.tint}0a 70%, transparent)`,
+          }}
+        >
+          <span className="text-3xl motion-safe:transition-transform motion-safe:group-hover:scale-105">
+            {banner.emoji}
+          </span>
+        </div>
+      )}
+      {banner ? (
+        <div className="p-4 pt-3">{body}</div>
+      ) : tile ? (
+        <div className="flex gap-3">
+          <MediaTile media={tile} />
+          {body}
+        </div>
+      ) : (
+        body
+      )}
     </article>
   );
 }

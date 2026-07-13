@@ -19,6 +19,8 @@ export interface CompetitionCardStats {
   entrants: number;
   played: number;
   total: number;
+  /** Most common division sport — drives the card banner tint (v8). */
+  top_sport: string | null;
   next: NextFixture | null;
 }
 
@@ -57,6 +59,9 @@ export async function listCompetitionCardStats(
           join divisions d on d.id = f.division_id
           where d.competition_id = c.id and d.archived_at is null
             and f.status <> 'cancelled') as total,
+        (select d.sport_key from divisions d
+          where d.competition_id = c.id and d.archived_at is null
+          group by d.sport_key order by count(*) desc, d.sport_key limit 1) as top_sport,
         nf.next
       from competitions c
       left join lateral (
