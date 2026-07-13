@@ -6,7 +6,7 @@ import { ClipboardList, MonitorPlay, Printer } from "lucide-react";
 import { StatusChip, divisionChipState } from "@/components/ui/status-chip";
 import { routes } from "@/lib/routes";
 import { requireDivisionPage } from "@/server/page-auth";
-import { getDivision } from "@/server/usecases/divisions";
+import { getDivision, listVariantOptions } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listStages, getStandings } from "@/server/usecases/stages";
 import { listDivisionFixtures } from "@/server/usecases/fixtures";
@@ -18,6 +18,8 @@ import { resolveModule } from "@/server/engine-db";
 import { withTenant } from "@/lib/db";
 import { DivisionDangerZone } from "@/components/v2/division-danger-zone";
 import { EmbedSnippet } from "@/components/v2/embed-snippet";
+import { DivisionSettings } from "@/components/v2/division-settings";
+import { formatLocked } from "@/lib/format-lock";
 import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
@@ -30,7 +32,9 @@ import { tieBreakLabel, type StandingsRow } from "@seazn/engine/competition";
 import type { MetricSpecLike } from "@/lib/public-site";
 
 const TABS = ["entrants", "fixtures", "standings", "stats"] as const;
-type Tab = (typeof TABS)[number];
+// v8: editors get a Settings tab (general/format/sharing/danger).
+const EDIT_TABS = [...TABS, "settings"] as const;
+type Tab = (typeof EDIT_TABS)[number];
 const TABLE_KINDS = new Set(["league", "group", "swiss"]);
 
 export default async function DivisionPage({
@@ -52,9 +56,10 @@ export default async function DivisionPage({
   // it's entrants; once the tournament starts, match day lives on fixtures.
   const defaultTab: Tab =
     division.status === "active" || division.status === "completed" ? "fixtures" : "entrants";
-  const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "")
+  const requested: Tab | null = (EDIT_TABS as readonly string[]).includes(rawTab ?? "")
     ? (rawTab as Tab)
-    : defaultTab;
+    : null;
+  const tab: Tab = requested === "settings" && !canEdit ? defaultTab : (requested ?? defaultTab);
   const [competition, stages, fixtures, entrants, scheduleSettings, canExport] = await Promise.all([
     getCompetition(auth, division.competition_id),
     listStages(auth, id),
@@ -161,7 +166,7 @@ export default async function DivisionPage({
 
         {/* v3/02 §3.3: tabs scroll horizontally with an edge fade — never wrap. */}
         <nav className="scroll-x scroll-x-fade mb-6 flex gap-1 whitespace-nowrap border-b border-slate-200">
-          {TABS.map((t) => (
+          {(canEdit ? EDIT_TABS : TABS).map((t) => (
             <Link
               key={t}
               href={routes.division(orgSlug, compSlug, divSlug, t)}
@@ -262,25 +267,44 @@ export default async function DivisionPage({
 
         {tab === "stats" && <StatsPanel divisionId={id} />}
 
-        {/* Embed snippet (v3/10 #4) — editors of shareable competitions get
-            the copy-paste widget; free plans see the upgrade gate. */}
-        {canEdit && competition.visibility !== "private" && (
-          <div className="mt-8">
-            <EmbedSnippet
-              divisionId={id}
-              entitled={await hasFeature(auth.orgId, "embeds.enabled")}
-            />
-          </div>
-        )}
-
-        {/* Delete/archive (v3/09 §4) — owners/admins, even on frozen comps:
-            reducing usage is the honest way out of an over-quota freeze. */}
-        {canEdit && (
-          <DivisionDangerZone
-            divisionId={id}
-            divisionName={division.name}
-            orgSlug={orgSlug}
-            compSlug={compSlug}
+        {/* v8 spec §2: settings tab collects general/format/sharing/danger —
+            the embed snippet and danger zone moved here from the page bottom. */}
+        {tab === "settings" && canEdit && (
+          <DivisionSettings
+            division={{
+              id,
+              name: division.name,
+              sport_key: division.sport_key,
+              variant_key: division.variant_key,
+              config: division.config,
+              logo_url: division.logo_url,
+              logo_storage_path: division.logo_storage_path,
+            }}
+            variants={await listVariantOptions(auth, division.sport_key)}
+            locked={formatLocked([{ fixture_count: fixtures.length }])}
+            canEdit={editable}
+            fixturesHref={routes.division(orgSlug, compSlug, divSlug, "fixtures")}
+            embed={
+              competition.visibility !== "private" ? (
+                <EmbedSnippet
+                  divisionId={id}
+                  entitled={await hasFeature(auth.orgId, "embeds.enabled")}
+                />
+              ) : (
+                <p className="text-xs text-slate-500">
+                  This competition is private, so there is nothing to embed. Set it to
+                  unlisted or public in competition settings first.
+                </p>
+              )
+            }
+            danger={
+              <DivisionDangerZone
+                divisionId={id}
+                divisionName={division.name}
+                orgSlug={orgSlug}
+                compSlug={compSlug}
+              />
+            }
           />
         )}
       </main>

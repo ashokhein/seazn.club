@@ -53,6 +53,20 @@ const COLS = [
   "seq", "youth", "player_name_display", "logo_url", "logo_storage_path",
 ] as const;
 
+/** Variant choices for the Settings tab's format editor (v8) — system
+ *  presets plus this org's own, deduped per key (org's wins). */
+export async function listVariantOptions(
+  auth: AuthCtx,
+  sportKey: string,
+): Promise<{ key: string; name: string }[]> {
+  return withTenant(auth.orgId, (tx) =>
+    tx<{ key: string; name: string }[]>`
+      select distinct on (key) key, name from sport_variants
+      where sport_key = ${sportKey}
+      order by key, org_id nulls last`,
+  );
+}
+
 /** U-anything eligibility (maxAgeAt below 18) marks a division youth. */
 export function eligibilityIsYouth(rules: unknown[]): boolean {
   return rules.some((raw) => {
