@@ -4,6 +4,7 @@ import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, Palette,
   User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, BookOpen, Cookie, Handshake,
+  Clock,
   type LucideIcon,
 } from "lucide-react";
 import { getUserOrgs } from "@/lib/auth";
@@ -29,6 +30,7 @@ import {
   DeleteAccountButton,
 } from "@/components/account-actions";
 import { ApiKeysPanel } from "@/components/api-keys";
+import { TimezonePreference } from "@/components/timezone-preference";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
 import { TourReplayButton } from "@/components/tour-replay";
 import { PlanBadge } from "@/components/plan-badge";
@@ -360,6 +362,14 @@ export default async function SettingsPage({
                   <p className="text-sm text-slate-500">
                     Account ID: <span className="font-mono text-xs text-purple-600">{user.id}</span>
                   </p>
+                </section>
+
+                {/* Preferences — timezone (spec 2026-07-14). Drives every
+                    personal time + the local-time hint beside venue times. */}
+                <section className="card p-5">
+                  <SectionHeader icon={Clock}>Preferences</SectionHeader>
+                  <label className="mb-1 block text-sm text-slate-500">Timezone</label>
+                  <TimezonePreference current={user.timezone} />
                 </section>
 
                 {/* Change email */}

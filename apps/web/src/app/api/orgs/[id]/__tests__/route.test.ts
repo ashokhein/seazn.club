@@ -16,6 +16,7 @@ const fakeUser: User = {
   display_name: "Route Test",
   email: "route-test@test.local",
   avatar_url: null,
+  timezone: null,
 };
 
 vi.mock("@/lib/auth", async (importOriginal) => {

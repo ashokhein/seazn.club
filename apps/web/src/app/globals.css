@@ -705,3 +705,72 @@ body {
   background: linear-gradient(160deg, var(--mk-night-2), var(--mk-night));
   color: var(--mk-lime);
 }
+
+/* ── Timezone labels (spec 2026-07-14 user-timezone-design) ─────────────────
+   The venue lane shows the viewer's local equivalent in a distinct teal so it
+   never reads as a second venue time. Colour + position carry "whose time" —
+   no literal "your time" text on screen; screen readers get an aria-label. */
+:root {
+  --tz-you: #0d9488;
+  --tz-you-soft: #e6f6f4;
+}
+.tz-you {
+  display: block;
+  margin-top: 1px;
+  font-size: 0.75em;
+  font-weight: 600;
+  color: var(--tz-you);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.tz-you::before {
+  content: "↳ ";
+  opacity: 0.55;
+}
+/* Hover variant (opt-in via you="hover"): dotted underline + popover. */
+.tz-hoverable {
+  position: relative;
+  cursor: help;
+  border-bottom: 1.5px dotted color-mix(in srgb, var(--tz-you) 55%, transparent);
+}
+.tz-tip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 7px);
+  z-index: 20;
+  display: grid;
+  gap: 1px;
+  padding: 6px 9px;
+  border-radius: 8px;
+  background: var(--ps-court, #231738);
+  color: var(--ps-court-ink, #f7f5fb);
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 10px 26px -12px rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transform: translateY(3px);
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.tz-tip-you {
+  color: color-mix(in srgb, var(--tz-you) 70%, white);
+  font-variant-numeric: tabular-nums;
+}
+.tz-tip-lbl {
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.tz-hoverable:hover .tz-tip,
+.tz-hoverable:focus-visible .tz-tip {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (prefers-reduced-motion: reduce) {
+  .tz-tip {
+    transition: none;
+  }
+}

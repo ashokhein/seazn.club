@@ -29,6 +29,8 @@ export interface MyFixture {
   entrant_name: string | null;
   opponent_name: string | null;
   scheduled_at: string | null;
+  /** Venue zone (schedule_settings.tz of the fixture's division); null → UTC. */
+  venue_tz: string | null;
   venue: string | null;
   court_label: string | null;
   status: string;
@@ -82,7 +84,7 @@ export async function listMyFixtures(userId: string): Promise<{
            d.name as division_name, d.slug as division_slug, d.sport_key,
            f.round_no, e.display_name as entrant_name,
            opp.display_name as opponent_name,
-           f.scheduled_at, f.venue, f.court_label, f.status,
+           f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label, f.status,
            case when fa.status is null then null
                 else jsonb_build_object('status', fa.status, 'note', fa.note) end
              as availability,
@@ -94,6 +96,7 @@ export async function listMyFixtures(userId: string): Promise<{
     join divisions d on d.id = f.division_id
     join competitions c on c.id = d.competition_id
     join organizations o on o.id = f.org_id
+    left join schedule_settings ss on ss.division_id = d.id
     left join entrants opp on opp.id =
       case when f.home_entrant_id = e.id then f.away_entrant_id else f.home_entrant_id end
     left join fixture_availability fa on fa.fixture_id = f.id and fa.person_id = p.id
