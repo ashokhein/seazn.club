@@ -185,6 +185,19 @@ jobs:
       # in CI). Near that ceiling Turbopack's on-demand route compiles also
       # started 404ing transiently. `next start` has neither the watchdog nor
       # per-request compiles — and it's what production runs anyway.
+
+      # Persist the compiler cache between runs so the production build only
+      # pays for what changed (nextjs.org/docs/pages/guides/ci-build-caching).
+      # Source-hash key with a lockfile restore-key: exact hit on unchanged
+      # source, warm partial cache otherwise.
+      - name: Cache Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('apps/web/src/**/*.js', 'apps/web/src/**/*.jsx', 'apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+
       - name: Build (production)
         run: npm run build --workspace apps/web
 
