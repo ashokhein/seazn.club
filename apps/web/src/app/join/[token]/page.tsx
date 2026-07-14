@@ -27,6 +27,27 @@ function memberBlurb(invite: InviteRow, existing: OrgRole): string {
     `${existing} of this organization — accepting changes nothing.`;
 }
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = await params;
+  const invite = await loadInvite(token);
+  const title = invite
+    ? `Join ${invite.org_name} on Seazn Club`
+    : "Join a club on Seazn Club";
+  return {
+    title,
+    description: invite
+      ? `You've been invited as ${invite.role}. Accept your invite and get involved.`
+      : "Accept your invite and get involved.",
+    openGraph: { title },
+    // Personal links in chat apps: no reason for this to be indexable.
+    robots: { index: false },
+  };
+}
+
 export default async function JoinPage({
   params,
 }: {

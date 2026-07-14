@@ -178,17 +178,19 @@ jobs:
         env:
           REDIS_URL: redis://localhost:6379
 
-      - name: Start dev server
-        # --max-old-space-size: next dev's memory watchdog restarts the server
-        # once used heap crosses 80% of the V8 limit (start-server.js). On the
-        # 7 GB runner Node's default limit is ~2 GB, and the full smoke suite
-        # crosses that near the end — the restart made the next smoke fetch
-        # fail ("ERROR: fetch failed", every run since 2026-07-13 ~21:05).
-        # 4 GB matches local dev, where the suite has always passed.
-        env:
-          NODE_OPTIONS: --max-old-space-size=4096
+      # Smoke runs against a PRODUCTION build, not `next dev`. The dev server
+      # restarts itself once used heap crosses 80% of its V8 limit (which
+      # `next dev` pins to HALF the machine's RAM — ~3.5 GB on the 7 GB
+      # runner, vs ~16 GB on a dev laptop, which is why this only ever died
+      # in CI). Near that ceiling Turbopack's on-demand route compiles also
+      # started 404ing transiently. `next start` has neither the watchdog nor
+      # per-request compiles — and it's what production runs anyway.
+      - name: Build (production)
+        run: npm run build --workspace apps/web
+
+      - name: Start server
         run: |
-          npm run dev > dev-server.log 2>&1 &
+          npm run start --workspace apps/web > dev-server.log 2>&1 &
           echo "waiting for server…"
           for i in $(seq 1 90); do
             if curl -sf http://localhost:3000/api/health >/dev/null; then
