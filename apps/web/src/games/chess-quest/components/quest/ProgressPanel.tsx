@@ -95,6 +95,7 @@ export function ProgressPanel({ onClose, onPrint }: { onClose(): void; onPrint()
       <div className="mt-2 flex flex-col gap-2">
         <TrackBar label="Track 1 · First Steps" done={progress.trackDone(1)} total={24} />
         <TrackBar label="Track 2 · Rising Player" done={progress.trackDone(2)} total={24} />
+        <TrackBar label="Track 3 · Opening Range" done={progress.trackDone(3)} total={5} />
       </div>
 
       <h3 className="mk-display mt-5 font-bold text-purple-950">Last 14 days</h3>

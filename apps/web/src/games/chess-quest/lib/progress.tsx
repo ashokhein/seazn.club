@@ -63,7 +63,7 @@ export type Progress = {
   weeksDone(): number;
   currentWeek(total: number): number;
   landDone(land: { weeks: [number, number] }): boolean;
-  trackDone(track: 1 | 2): number;
+  trackDone(track: 1 | 2 | 3): number;
 
   // activity / streak
   markActivity(dateISO?: string): void;
@@ -258,8 +258,8 @@ export function createProgressState(storage?: Storage): Progress {
       return true;
     },
     trackDone: (track) => {
-      const lo = track === 2 ? 25 : 1;
-      const hi = track === 2 ? 48 : 24;
+      const ranges = { 1: [1, 24], 2: [25, 48], 3: [49, 53] } as const;
+      const [lo, hi] = ranges[track];
       let n = 0;
       for (let i = lo; i <= hi; i++) if (P().weeks[i]) n++;
       return n;

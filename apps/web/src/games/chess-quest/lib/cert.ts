@@ -1,9 +1,16 @@
-// Certificate title/line by tracks completed (port of js/app.js printCertificate).
-export function certTitle(t1: number, t2: number): { title: string; line: string } {
+// Certificate title/line by tracks completed (port of js/app.js printCertificate,
+// extended for Track 3 "Opening Range").
+export function certTitle(t1: number, t2: number, t3: number): { title: string; line: string } {
+  if (t1 === 24 && t2 === 24 && t3 === 5) {
+    return {
+      title: "Chess Quest Grandmaster",
+      line: "has completed the entire Chess Quest — all 53 lessons, from the first square to a real opening repertoire",
+    };
+  }
   if (t1 === 24 && t2 === 24) {
     return {
       title: "Chess Quest Champion",
-      line: "has completed the entire Chess Quest — all 48 lessons, from the first square to Rising Player strength",
+      line: "has completed Tracks 1 and 2 — 48 lessons, from the empty board to confident club play",
     };
   }
   if (t1 === 24) {
@@ -18,8 +25,14 @@ export function certTitle(t1: number, t2: number): { title: string; line: string
       line: "has completed Track 2 “Rising Player” — 24 lessons of combinations, openings, endgames and strategy",
     };
   }
+  if (t3 === 5) {
+    return {
+      title: "Opening Range Champion",
+      line: "has completed Track 3 “Opening Range” — five sound openings played by hand",
+    };
+  }
   return {
     title: "Chess Quest Adventurer",
-    line: `has bravely conquered ${t1 + t2} of 48 quest days — and the journey continues`,
+    line: `has bravely conquered ${t1 + t2 + t3} of 53 quest days — and the journey continues`,
   };
 }
