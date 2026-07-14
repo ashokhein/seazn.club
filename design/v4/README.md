@@ -2,6 +2,8 @@
 
 > **Status (2026-07-12):** not started. PROMPT-41 ⏳ · PROMPT-42 ⏳ · PROMPT-43 ⏳.
 > Branch (planned): `feat/v4-ai-schedule`. Migrations: V-next (schedule_source `ai`).
+> **2026-07-14:** interactive board-UX prototype built (mocked LLM) → design + findings in
+> `02-board-ux.md`; PROMPT-43 gains a pixel/motion reference before coding.
 
 ## Theme
 
@@ -24,6 +26,7 @@ undo, checkpoints, seq-concurrency and the ledger all work unchanged.
 |---|------|----------|--------|
 | 00 | `00-ai-schedule-architect.md` | Normative spec: removal of old feature, modes, pipeline, API, data, gating, failure modes, decisions | 41, 42, 43 |
 | 01 | `01-llm-contract.md` | The LLM contract: model/params, context-pack format, output schema, verbatim system prompt, repair/refine protocol, eval fixtures | 41, 42 |
+| 02 | `02-board-ux.md` | Board UX design + prototype finding: surface the referee/repair loop, 3-colour state contract, block/summary/instruction decisions, states. Prototype artifact linked. | 43 |
 
 ## Prompt index (prompts/)
 
