@@ -38,11 +38,18 @@ zone label on **every** rendered time so the zone is always explicit.
 2. **Label = short abbrev + IANA on hover** — primary `IST` / `BST` / `EDT`; full
    `Asia/Kolkata` in `title` tooltip and shown verbatim in the picker.
 3. **Scope = timezone only** — no locale work this wave.
-4. **Venue lane also shows "your time"** (added 2026-07-14 after demo) — every venue time
-   exposes the viewer's local equivalent inline. Default affordance: **hover/focus tooltip**
-   on dense boards (`14:30 BST · your time` + IANA), keeping boards uncluttered; **always-on
-   subtitle** on `/me` (personal page). `<Zoned>` supports both via a `you` prop
-   (`"hover" | "subtitle" | "off"`). Suppressed when viewer tz == venue tz (no noise).
+4. **Venue lane also shows the viewer's local time** (added 2026-07-14 after demo) — every
+   venue time exposes the viewer's local equivalent inline. **Shipped affordance: always-on
+   subtitle everywhere** (user picked subtitle over hover, 2026-07-14) — boards and `/me`
+   alike get the bare teal second line. `<Zoned>` still supports `you="hover"` as an option,
+   but the default and every call site use `you="subtitle"`. Suppressed when viewer tz ==
+   venue tz (no noise).
+   - **No literal "your time" text** — whose-time is carried by position + colour + labels,
+     not a stray phrase (user call): hover tooltip is a two-row grid
+     `Venue 19:00 IST / You 14:30 BST (+ IANA)`; the subtitle is a bare teal line
+     `↳ 14:30 BST` (teal = the "you" colour); `/me`'s second line drops even the arrow (the
+     page already *is* your schedule). Screen readers still get an explicit
+     `aria-label="your local time 14:30 BST"` on every terse form.
    Demo: `claude.ai/code/artifact/62714fe2-5c32-4311-bd08-55ff5d02c358`.
 
 ## The two lanes

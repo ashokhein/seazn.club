@@ -96,7 +96,7 @@ export async function getCurrentUser(): Promise<User | null> {
   if (cached) return cached;
 
   const rows = await sql<User[]>`
-    select id, display_name, email, avatar_url
+    select id, display_name, email, avatar_url, timezone
     from users where id = ${uid} limit 1
   `;
   const user = rows[0] ?? null;

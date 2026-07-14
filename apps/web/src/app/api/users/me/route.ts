@@ -41,20 +41,27 @@ export async function GET() {
   return res;
 }
 
-/** Update the authenticated user's profile (currently just the display name). */
+/**
+ * Update the authenticated user's profile: display name and/or timezone. Each
+ * field is optional; an absent field is left untouched, a `timezone: null`
+ * clears the preference ("follow my browser"). The zone is validated in the
+ * schema (isValidIana) so the column only holds an Intl-parseable name.
+ */
 export async function PATCH(req: Request) {
   return handler(async () => {
     const user = await requireUser();
-    const { display_name } = updateProfileSchema.parse(await req.json());
+    const patch = updateProfileSchema.parse(await req.json());
 
-    const [row] = await sql<{ display_name: string }[]>`
-      update users set display_name = ${display_name}
+    const [row] = await sql<{ display_name: string; timezone: string | null }[]>`
+      update users set
+        display_name = ${patch.display_name ?? sql`display_name`},
+        timezone     = ${patch.timezone !== undefined ? patch.timezone : sql`timezone`}
       where id = ${user.id}
-      returning display_name`;
+      returning display_name, timezone`;
 
-    // display_name is cached in getCurrentUser — drop the stale entry.
+    // display_name/timezone are cached in getCurrentUser — drop the stale entry.
     await invalidateUser(user.id);
-    return { display_name: row.display_name };
+    return { display_name: row.display_name, timezone: row.timezone };
   });
 }
 
