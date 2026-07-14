@@ -1,1 +1,11 @@
-{}
+{
+  "chip.onNow": "Nu bezig",
+  "chip.finished": "Afgelopen",
+  "chip.upcoming": "Binnenkort",
+  "org.competitionsBy": "Competities georganiseerd door {org}",
+  "hero.eyebrow": "Toernooihub",
+  "hero.subhead": "Volg live scores, wedstrijdschema's en standen voor elke competitie — geen account nodig.",
+  "section.about": "Over",
+  "section.competitions": "Competities",
+  "empty": "Op dit moment geen openbare competities — kom binnenkort terug."
+}
