@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { negotiateLocale } from "@/lib/i18n-negotiate";
+import { hasLocale } from "@/lib/i18n-constants";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -150,6 +152,18 @@ export function proxy(request: NextRequest) {
     requestHeaders.set("x-nonce", nonce);
     requestHeaders.set(csp.name, csp.value);
   }
+
+  // v5 i18n (spec §4): resolve the request locale once — explicit cookie pick,
+  // else Accept-Language negotiation — and expose it via x-seazn-locale for
+  // resolveLocale() to read. A request header only; it doesn't change cached
+  // HTML unless a page actually reads it (marketing/public do; the shell does
+  // not), so it's safe to set on cacheable trees too.
+  const cookieLocale = request.cookies.get("seazn_locale")?.value;
+  const locale =
+    cookieLocale && hasLocale(cookieLocale)
+      ? cookieLocale
+      : negotiateLocale(request.headers.get("accept-language"));
+  requestHeaders.set("x-seazn-locale", locale);
 
   const rewriteUrl = gamesHostRewrite(request);
   const response = rewriteUrl

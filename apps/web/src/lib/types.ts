@@ -9,6 +9,8 @@ export const userSchema = z.object({
   avatar_url: z.string().nullable(),
   /** IANA zone (spec 2026-07-14); null = follow the browser (seazn_tz cookie). */
   timezone: z.string().nullable(),
+  /** Preferred UI locale (v5 i18n); null = negotiate from Accept-Language. */
+  locale: z.string().nullable(),
 });
 export type User = z.infer<typeof userSchema>;
 

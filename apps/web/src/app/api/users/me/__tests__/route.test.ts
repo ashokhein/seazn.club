@@ -19,6 +19,7 @@ const fakeUser: User = {
   email: "me-route-test@test.local",
   avatar_url: null,
   timezone: null,
+  locale: null,
 };
 
 const requireUserMock = vi.fn<() => Promise<User>>();
