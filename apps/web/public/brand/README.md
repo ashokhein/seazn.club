@@ -1,8 +1,8 @@
 # Seazn Club brand assets
 
 The mark: **Anton** wordmark in night ink, lime pitch line, red ball resting
-at the line's right end. Colours: night `#150b36`, cream `#f5f0e8`, lime
-`#a3e635`, ball `#ef4444`.
+at the line's right end, tagline "ANY SPORT · LIVE IN MINUTES" beneath.
+Colours: night `#150b36`, cream `#f5f0e8`, lime `#a3e635`, ball `#ef4444`.
 
 ## Print (shirts, banners, merch)
 
