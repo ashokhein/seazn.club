@@ -8,11 +8,11 @@ Bring committee members, scorers and spectators into your organisation from **Se
 
 ## Invite by email
 
-Type an address, pick a role and press **Send invite**. The person gets an email with a personal join link that's valid for **7 days** and works exactly once. Pending email invites stay listed in the Team panel until they're accepted, expire or you revoke them — you can also copy the personal link from there and share it yourself.
+Type an address, pick a role and press **Send invite**. The person gets an email with a personal join link that's valid for **7 days**, works exactly once, and **only for the address it was sent to** — another account opening it is turned away. Pending email invites stay listed in the Team panel until they're accepted, expire or you revoke them — you can also copy the personal link from there and share it yourself.
 
 ## Invite by link
 
-Create a shareable link and drop it in the group chat. Anyone who opens it joins as the role you picked. Links last **30 days**, work for any number of people, and stay listed in the Team panel until they expire or you revoke them — closing the tab doesn't lose the link.
+Create a shareable link and drop it in the group chat. Anyone who opens it joins as the role you picked. Links last **24 hours**, work for any number of people, and stay listed in the Team panel until they expire or you revoke them — closing the tab doesn't lose the link.
 
 ## Roles
 

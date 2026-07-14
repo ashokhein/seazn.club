@@ -174,17 +174,22 @@ async function main() {
   check("email invite stores address", emailInvite.email === emailInvitee);
   check("email invite forced single-use", emailInvite.max_uses === 1);
   check("email invite reports send status", typeof emailInvite.email_sent === "boolean");
+  // Personal: only the invited address may accept — anyone else holding the
+  // link (here: the admin who minted it) is turned away with a 403.
+  await expectFail("email invite rejects a different account", () =>
+    call(admin, `/api/invites/${emailInvite.token}/accept`, "POST", {}),
+  );
 
-  // Invite-by-link (team settings): multi-use with a 30-day expiry — it must
+  // Invite-by-link (team settings): multi-use with a 24-hour expiry — it must
   // outlive the tab that created it and stay listed for later copying.
   const linkInvite = (await call(
     admin,
     `/api/orgs/${org.id}/invites`,
     "POST",
-    { role: "viewer", max_uses: 0, expires_in_days: 30 },
+    { role: "viewer", max_uses: 0, expires_in_days: 1 },
   )) as { token: string; expires_at: string | null };
   const linkTtlMs = new Date(linkInvite.expires_at ?? 0).getTime() - Date.now();
-  check("link invite lives ~30 days", linkTtlMs > 29 * 864e5 && linkTtlMs < 31 * 864e5);
+  check("link invite lives ~24 hours", linkTtlMs > 0.9 * 864e5 && linkTtlMs < 1.1 * 864e5);
   const teamInvites = (await call(admin, `/api/orgs/${org.id}/invites`)) as {
     token: string;
     email: string | null;

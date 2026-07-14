@@ -1,5 +1,6 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { HttpError } from "@/lib/errors";
 import type { OrgRole, ScorerScopeType } from "@/lib/types";
 
 export interface InviteRow {
@@ -9,6 +10,9 @@ export interface InviteRow {
   role: OrgRole;
   /** Scorer invites (doc 13 §4): accept also creates this assignment. */
   default_scope: { type: ScorerScopeType; id: string } | null;
+  /** Invite-by-email: personal — only the account with this address may
+   *  accept (enforced in acceptInvite). Null for shareable links. */
+  email: string | null;
   expires_at: string | null;
   max_uses: number;
   used_count: number;
@@ -19,7 +23,7 @@ export interface InviteRow {
 export async function loadInvite(token: string): Promise<InviteRow | null> {
   const rows = await sql<InviteRow[]>`
     select i.id, i.org_id, o.name as org_name, i.role, i.default_scope,
-           i.expires_at, i.max_uses, i.used_count, i.revoked
+           i.email, i.expires_at, i.max_uses, i.used_count, i.revoked
     from org_invites i
     join organizations o on o.id = i.org_id
     where i.token = ${token} limit 1`;
@@ -91,6 +95,16 @@ export type AcceptOutcome = "joined" | "scope_added" | "already_member";
  *    members) → no-op, and the use is NOT burnt.
  */
 export async function acceptInvite(invite: InviteRow, userId: string): Promise<AcceptOutcome> {
+  // Email invites are personal: only the account with the invited address may
+  // accept — anyone else who gets hold of the link is turned away, before any
+  // membership/no-op logic runs.
+  if (invite.email) {
+    const [u] = await sql<{ email: string }[]>`
+      select email from users where id = ${userId}`;
+    if (!u || u.email.toLowerCase() !== invite.email.toLowerCase()) {
+      throw new HttpError(403, "This invite was sent to a different email address");
+    }
+  }
   const { getOrgRole } = await import("@/lib/auth");
   const existing = await getOrgRole(invite.org_id, userId);
   if (!existing) {

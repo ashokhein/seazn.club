@@ -20,10 +20,11 @@ const ROLE_BADGE: Record<OrgRole, string> = {
 
 type InviteRole = "admin" | "viewer" | "scorer";
 
-/** How long a shareable team-settings link lives. Courtside QR invites keep
- *  their own short TTL server-side; this is the "share in the group chat"
- *  path, so it must survive well past the current tab. */
-const LINK_INVITE_DAYS = 30;
+/** How long a shareable team-settings link lives, in days. 24 hours: long
+ *  enough to survive the tab that created it and be shared in the group
+ *  chat, short enough that a leaked link ages out on its own. Courtside QR
+ *  invites keep their own 1-hour TTL server-side. */
+const LINK_INVITE_DAYS = 1;
 
 function RoleOptions() {
   return (
@@ -306,9 +307,8 @@ export function OrgTeam({
             Invite by link
           </h4>
           <p className="mb-2 text-xs text-slate-500">
-            Anyone with the link joins as the selected role. Links last{" "}
-            {LINK_INVITE_DAYS} days and stay listed here until they expire or
-            are revoked.
+            Anyone with the link joins as the selected role. Links last 24
+            hours and stay listed here until they expire or are revoked.
           </p>
           <div className="flex flex-wrap items-end gap-2">
             <label className="text-xs text-slate-500">
@@ -348,7 +348,7 @@ export function OrgTeam({
                       )}
                       {i.expires_at && (
                         <>
-                          expires <ClientTime value={i.expires_at} mode="date" />
+                          expires <ClientTime value={i.expires_at} mode="datetime" />
                         </>
                       )}
                     </span>
@@ -378,11 +378,13 @@ function joinUrl(token: string): string {
 
 function InviteLink({ token }: { token: string }) {
   const [copied, setCopied] = useState(false);
-  const url = joinUrl(token);
+  // The token is masked on screen (shoulder-surfing, screen shares); Copy
+  // puts the full URL on the clipboard.
+  const masked = `/join/${token.slice(0, 4)}…${token.slice(-4)}`;
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(url);
+      await navigator.clipboard.writeText(joinUrl(token));
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -396,7 +398,7 @@ function InviteLink({ token }: { token: string }) {
       className="min-w-0 flex-1 truncate text-left font-mono text-xs text-purple-700 hover:underline"
       title="Copy invite link"
     >
-      {copied ? "Copied!" : url}
+      {copied ? "Copied!" : `${masked} — copy link`}
     </button>
   );
 }

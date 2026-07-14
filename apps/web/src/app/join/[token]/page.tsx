@@ -37,6 +37,10 @@ export default async function JoinPage({
   const problem = invite ? inviteProblem(invite) : "Invite not found";
   const existingRole =
     user && invite ? await getOrgRole(invite.org_id, user.id) : null;
+  // Email invites are personal (acceptInvite enforces this server-side) —
+  // tell a mismatched account before they hit the 403.
+  const emailMismatch =
+    !!user && !!invite?.email && user.email.toLowerCase() !== invite.email.toLowerCase();
 
   return (
     <NightStage maxW="max-w-md">
@@ -68,12 +72,25 @@ export default async function JoinPage({
                 </span>
                 .
               </p>
-              {existingRole && (
-                <p className="mb-4 rounded-md bg-purple-50 px-3 py-2 text-sm text-purple-800">
-                  {memberBlurb(invite, existingRole)}
+              {emailMismatch ? (
+                <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  This is a personal invite for{" "}
+                  <span className="font-medium">{invite.email}</span>, but
+                  you&apos;re signed in as{" "}
+                  <span className="font-medium">{user.email}</span>. Sign in
+                  with the invited address, or ask the organiser to invite this
+                  one.
                 </p>
+              ) : (
+                <>
+                  {existingRole && (
+                    <p className="mb-4 rounded-md bg-purple-50 px-3 py-2 text-sm text-purple-800">
+                      {memberBlurb(invite, existingRole)}
+                    </p>
+                  )}
+                  <JoinInvite token={token} />
+                </>
               )}
-              <JoinInvite token={token} />
             </div>
           ) : (
             <>
