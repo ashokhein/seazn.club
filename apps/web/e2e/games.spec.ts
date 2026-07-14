@@ -1,7 +1,8 @@
 import { test, expect } from "@playwright/test";
 
-// Seazn Games surface: listing, player hub, deterministic play-through, 404s,
-// subdomain rewrite. No fixtures needed — the registry is static data.
+// Seazn Games surface: listing, quest hub, lesson→game launch + persistence,
+// free-play arcade, 404s, subdomain rewrite. No fixtures — static registry +
+// localStorage.
 
 test("games listing renders the Chess Quest card as playable", async ({ page }) => {
   await page.goto("/games");
@@ -10,19 +11,37 @@ test("games listing renders the Chess Quest card as playable", async ({ page }) 
   await expect(page.getByText("Play →")).toBeVisible();
 });
 
-test("chess quest hub lists the mini-games", async ({ page }) => {
+test("quest hub shows the map and the Day 1 lesson", async ({ page }) => {
   await page.goto("/games/chess-quest");
-  await expect(page.getByRole("link", { name: "← Games" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Chess Quest" })).toBeVisible();
-  // A few of the eight game cards.
-  await expect(page.getByRole("heading", { name: "Mate in 1" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Pawn Wars" })).toBeVisible();
+  await page.evaluate(() => localStorage.removeItem("seazn-games:chess-quest:v1"));
+  await page.reload();
+  await expect(page.getByText("First Steps")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Board Land" })).toBeVisible();
 });
 
-test("Mate in 1 can be solved end to end", async ({ page }) => {
+test("marking a day done persists across a reload", async ({ page }) => {
   await page.goto("/games/chess-quest");
+  await page.evaluate(() => localStorage.removeItem("seazn-games:chess-quest:v1"));
+  await page.reload();
+  await page.getByRole("button", { name: /Mark day done/ }).click();
+  await expect(page.getByRole("button", { name: /Done — undo/ })).toBeVisible();
+  await page.reload();
+  // Day 1 stays done — its map stop shows a check.
+  await expect(page.getByRole("button", { name: "Day 1: Board Land" })).toHaveText("✓");
+});
+
+test("a lesson launches its mini-game", async ({ page }) => {
+  await page.goto("/games/chess-quest");
+  await page.getByRole("button", { name: /Play Square Race/ }).click();
+  await expect(page.getByRole("button", { name: /Back to quest/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Square Race" })).toBeVisible();
+});
+
+test("free-play arcade lists the eight games and one solves", async ({ page }) => {
+  await page.goto("/games/chess-quest");
+  await page.getByRole("button", { name: "Free play" }).click();
+  await expect(page.getByRole("heading", { name: "Mate in 1" })).toBeVisible();
   await page.getByRole("button", { name: /Mate in 1/ }).click();
-  // Puzzle 1 "Sneak down the hallway": Re1–e8 is mate.
   await page.locator('[data-square="e1"]').click();
   await page.locator('[data-square="e8"]').click();
   await expect(page.getByText(/Checkmate/)).toBeVisible();
@@ -34,7 +53,6 @@ test("unknown game slug 404s", async ({ page }) => {
 });
 
 test("games.* host serves the games tree", async ({ browser }) => {
-  // The proxy prefers x-forwarded-host, which is what Fly sets in production.
   const ctx = await browser.newContext({
     extraHTTPHeaders: { "x-forwarded-host": "games.seazn.club" },
   });
@@ -42,6 +60,6 @@ test("games.* host serves the games tree", async ({ browser }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Games", exact: true })).toBeVisible();
   await page.goto("/chess-quest");
-  await expect(page.getByRole("heading", { name: "Chess Quest" })).toBeVisible();
+  await expect(page.getByRole("banner").getByRole("heading", { name: "Chess Quest" })).toBeVisible();
   await ctx.close();
 });
