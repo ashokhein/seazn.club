@@ -4,11 +4,18 @@ name: E2E
 # Runs automatically on pushes to main; for a PR, trigger it manually and
 # pass the PR number (Actions -> E2E -> Run workflow).
 #
-# target=staging runs the same suite against the deployed staging app instead
-# of a local dev server: E2E_PROD_TARGET=1 makes the auth helpers mint login
-# tokens straight in the staging DB (production builds never dev-expose
-# `login_url`) and skips the specs that assert dev link exposure. The run
-# leaves TAG-prefixed e2e users/orgs behind in the staging DB.
+# Both targets now run against a PRODUCTION build, never `next dev`: `next dev`
+# pins its V8 heap to half the runner's RAM and restarts itself past ~80% use
+# (with transient 404s from Turbopack's on-demand compiles as it nears the
+# ceiling) — flaky under a full Playwright run. `next start` has neither the
+# watchdog nor per-request compiles, and is what production runs anyway. The
+# compiler cache is persisted between runs so the build only pays for changes.
+#
+# Because production builds never dev-expose `login_url`, both targets set
+# E2E_PROD_TARGET=1: the auth helpers mint login tokens straight in the DB
+# (the local Postgres service here, the staging DB for target=staging) and
+# skip the specs that assert dev link exposure. Runs leave TAG-prefixed e2e
+# users/orgs behind in whichever DB they targeted.
 on:
   push:
     branches: [main]
@@ -62,6 +69,10 @@ jobs:
       AUTH_SECRET: ci-only-insecure-secret-please-change-in-prod-0123456789
       NEXT_PUBLIC_SUPABASE_URL: ""
       NEXT_TELEMETRY_DISABLED: "1"
+      # Production build → no dev-exposed `login_url`, so the auth helpers mint
+      # login tokens straight in the Postgres service above and skip the specs
+      # that assert dev link exposure. Same path the staging target uses.
+      E2E_PROD_TARGET: "1"
 
     steps:
       - uses: actions/checkout@v5
@@ -88,9 +99,29 @@ jobs:
       - name: Sync sport catalog from the engine registry
         run: npm run sync:sports
 
-      - name: Start dev server
+      # Persist the compiler cache between runs so the production build only
+      # pays for what changed (nextjs.org/docs/pages/guides/ci-build-caching).
+      # Source-hash key with a lockfile restore-key: exact hit on unchanged
+      # source, warm partial cache otherwise. Mirrors the CI smoke job.
+      - name: Cache Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: apps/web/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-${{ hashFiles('apps/web/src/**/*.js', 'apps/web/src/**/*.jsx', 'apps/web/src/**/*.ts', 'apps/web/src/**/*.tsx') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('package-lock.json') }}-
+
+      # Pre-compiled production build, not `next dev`: `next dev` pins its V8
+      # heap to half the runner RAM and restarts past ~80% use (transient 404s
+      # from Turbopack's on-demand compiles near the ceiling) — flaky under a
+      # full Playwright run. `next start` has neither watchdog nor per-request
+      # compiles, and matches production.
+      - name: Build (production)
+        run: npm run build --workspace apps/web
+
+      - name: Start server
         run: |
-          npm run dev > dev-server.log 2>&1 &
+          npm run start --workspace apps/web > dev-server.log 2>&1 &
           echo "waiting for server…"
           for i in $(seq 1 90); do
             if curl -sf http://localhost:3000/api/health >/dev/null; then

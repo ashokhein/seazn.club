@@ -3,9 +3,14 @@ import { defineConfig, devices } from "@playwright/test";
 // E2E UI suite. Drives the real app in Chromium. Auth is provisioned once
 // (auth.setup.ts → storageState) and reused across specs.
 //
-// Local:  a dev server on PLAYWRIGHT_BASE (default :3000) must already be up
-//         against a migrated DB (the webServer block boots one otherwise).
-// CI:     e2e.yml starts the server against the Postgres service.
+// Server:  a PRE-COMPILED production server (`next build` + `next start`), never
+//          `next dev` — dev's per-request Turbopack compiles + half-RAM heap
+//          watchdog make a full run flaky (transient 404s, restarts). Local: a
+//          server on PLAYWRIGHT_BASE (:3000) must already be up against a
+//          migrated DB, else the webServer block builds + starts one. Because a
+//          prod build never dev-exposes `login_url`, local runs need
+//          E2E_PROD_TARGET=1 + DATABASE_URL so the auth helpers mint tokens in
+//          the DB (same as CI). CI: e2e.yml builds + starts against Postgres.
 //
 // Two projects, two phases (see the test:e2e script):
 //   parallel — specs that only touch state they create (own competitions/
@@ -73,12 +78,13 @@ export default defineConfig({
       dependencies: ["setup"],
     },
   ],
-  // A dev server is expected on BASE (CI starts one; locally you usually run
-  // your own). Reuse it if present, else boot one — never double-start.
+  // A server is expected on BASE (CI starts one; locally you usually run your
+  // own). Reuse it if present, else build + start a production server — never
+  // `next dev`, never double-start. The long timeout covers a cold build.
   webServer: {
-    command: "npm run dev",
+    command: "npm run build && npm run start",
     url: `${BASE}/api/health`,
-    timeout: 120_000,
+    timeout: 300_000,
     reuseExistingServer: true,
   },
 });

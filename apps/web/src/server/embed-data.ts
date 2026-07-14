@@ -25,6 +25,8 @@ export interface EmbedPayload {
   fixtures: PublicFixture[];
   standings: PublicStandings[];
   entrants: PublicEntrant[];
+  /** Venue zone (schedule_settings.tz; UTC if unset) for schedule display. */
+  tz: string;
 }
 
 export type EmbedResolution =
@@ -64,7 +66,7 @@ export async function embedDivisionData(divisionId: string): Promise<EmbedResolu
     select id, slug, name from organizations where id = ${competition.org_id}`;
   if (!org) return { ok: false, reason: "not_found" };
 
-  const [stages, pools, fixtures, standings, entrants] = await Promise.all([
+  const [stages, pools, fixtures, standings, entrants, ssRows] = await Promise.all([
     sql<PublicStage[]>`
       select id, division_id, seq, kind, name, status
       from public_stages_v where division_id = ${divisionId} order by seq`,
@@ -86,10 +88,15 @@ export async function embedDivisionData(divisionId: string): Promise<EmbedResolu
       select id, division_id, kind, display_name, seed, status, members, team_display
       from public_entrants_v where division_id = ${divisionId}
       order by seed nulls last, display_name`,
+    sql<{ tz: string }[]>`
+      select tz from schedule_settings where division_id = ${divisionId}`,
   ]);
 
   return {
     ok: true,
-    data: { org, competition, division, stages, pools, fixtures, standings, entrants },
+    data: {
+      org, competition, division, stages, pools, fixtures, standings, entrants,
+      tz: ssRows[0]?.tz ?? "UTC",
+    },
   };
 }

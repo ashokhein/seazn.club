@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidIana } from "@/lib/tz";
 
 /** Authenticated user. `password_hash` is never sent to the client. */
 export const userSchema = z.object({
@@ -6,6 +7,8 @@ export const userSchema = z.object({
   display_name: z.string(),
   email: z.string(),
   avatar_url: z.string().nullable(),
+  /** IANA zone (spec 2026-07-14); null = follow the browser (seazn_tz cookie). */
+  timezone: z.string().nullable(),
 });
 export type User = z.infer<typeof userSchema>;
 
@@ -103,8 +106,18 @@ export const renameOrgSchema = z.object({
 }).strict();
 
 export const updateProfileSchema = z.object({
-  display_name: z.string().trim().min(1).max(80),
-}).strict();
+  display_name: z.string().trim().min(1).max(80).optional(),
+  /** IANA zone or null to clear ("follow my browser"). Rejects bogus zones so
+   *  the column only ever holds a value the render layer's Intl accepts. */
+  timezone: z
+    .string()
+    .trim()
+    .refine((v) => isValidIana(v), { message: "Unknown timezone" })
+    .nullable()
+    .optional(),
+}).strict().refine((v) => v.display_name !== undefined || v.timezone !== undefined, {
+  message: "Nothing to update",
+});
 
 export const createInviteSchema = z.object({
   role: z.enum(["admin", "viewer", "scorer"]),

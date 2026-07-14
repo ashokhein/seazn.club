@@ -12,6 +12,7 @@ import { listMyFixtures, listMyPersons, type MyFixture, type MyResult } from "@/
 import { RsvpControl } from "@/components/me/rsvp-control";
 import { ConsentCard } from "@/components/me/consent-card";
 import { LogoutButton } from "@/components/logout-button";
+import { Zoned, ViewerTzProvider } from "@/components/client-time";
 
 export default async function MePage({
   searchParams,
@@ -34,7 +35,7 @@ export default async function MePage({
   const [next, ...rest] = upcoming;
 
   return (
-    <>
+    <ViewerTzProvider tz={user.timezone}>
       <header className="app-gantry">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
           <span className="app-display text-base font-bold leading-none text-cream">
@@ -78,9 +79,22 @@ export default async function MePage({
                   {next.opponent_name ?? "TBD"}
                 </p>
                 <p className="mt-1.5 text-sm text-cream/70">
-                  <FixtureContext f={next} /> · {when(next.scheduled_at)}
+                  <FixtureContext f={next} />
                   {next.venue ? ` · ${next.venue}` : ""}
                   {next.court_label ? ` · ${next.court_label}` : ""}
+                </p>
+                <p className="mt-1 text-sm font-medium text-cream/90">
+                  {next.scheduled_at ? (
+                    <Zoned
+                      value={next.scheduled_at}
+                      tz={next.venue_tz ?? "UTC"}
+                      mode="datetime"
+                      showZone
+                      you="subtitle"
+                    />
+                  ) : (
+                    "Unscheduled"
+                  )}
                 </p>
                 {publicHref(next) && (
                   <Link
@@ -118,8 +132,21 @@ export default async function MePage({
                         {f.opponent_name ?? "TBD"}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-400">
-                        <FixtureContext f={f} /> · {when(f.scheduled_at)}
+                        <FixtureContext f={f} />
                         {f.venue ? ` · ${f.venue}` : ""}
+                      </p>
+                      <p className="mt-0.5 text-xs font-medium text-slate-600">
+                        {f.scheduled_at ? (
+                          <Zoned
+                            value={f.scheduled_at}
+                            tz={f.venue_tz ?? "UTC"}
+                            mode="datetime"
+                            showZone
+                            you="subtitle"
+                          />
+                        ) : (
+                          "Unscheduled"
+                        )}
                       </p>
                     </div>
                     {publicHref(f) && (
@@ -198,7 +225,7 @@ export default async function MePage({
           </Link>
         </p>
       </main>
-    </>
+    </ViewerTzProvider>
   );
 }
 
@@ -208,11 +235,6 @@ function FixtureContext({ f }: { f: MyFixture }) {
       {f.competition_name} · {f.division_name} · {f.org_name}
     </>
   );
-}
-
-function when(iso: string | null): string {
-  if (!iso) return "unscheduled";
-  return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 /** Spectator link — only competitions with a public page get one. */

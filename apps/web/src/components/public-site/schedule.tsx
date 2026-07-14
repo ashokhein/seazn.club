@@ -9,25 +9,33 @@ import Link from "next/link";
 import { useState } from "react";
 import { CalendarPlus } from "lucide-react";
 import type { PublicFixture } from "@/server/public-site/data";
+import { fmtTime, fmtDate, fmtZoneAbbrev } from "@/lib/format";
 
 interface Props {
   fixtures: PublicFixture[];
   entrantNames: Record<string, string>;
   divisionPath: string; // /{org}/{comp}/{div}
+  /** Venue zone (schedule_settings.tz) — times + day grouping are venue-local,
+   *  the same for every viewer (spec 2026-07-14 two-lane, venue authoritative). */
+  tz: string;
 }
 
-function dayKey(iso: string | null): string | null {
+// Day bucket key as the venue-local calendar date (YYYY-MM-DD) so a 23:30 venue
+// match doesn't slide onto the next/previous day for a viewer in another zone.
+function dayKey(iso: string | null, tz: string): string | null {
   if (!iso) return null;
-  const d = new Date(iso);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  try {
+    return new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date(iso)); // YYYY-MM-DD
+  } catch {
+    return new Intl.DateTimeFormat("en-CA").format(new Date(iso));
+  }
 }
 
 const UNSCHEDULED = "unscheduled";
 
-const timeOf = (iso: string) =>
-  new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-const shortDate = (iso: string) =>
-  new Date(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
+const timeOf = (iso: string, tz: string) => fmtTime(tz, iso);
+const shortDate = (iso: string, tz: string) =>
+  fmtDate(tz, iso, { weekday: "short", day: "numeric", month: "short" });
 
 /** Per-side score lines fit the stacked layout only when short ("3", "21").
     Long lines (cricket innings, set strings) fall back to the headline chip. */
@@ -46,11 +54,13 @@ function ScorebugRow({
   entrantNames,
   href,
   railMode,
+  tz,
 }: {
   fixture: PublicFixture;
   entrantNames: Record<string, string>;
   href: string;
   railMode: "time" | "date";
+  tz: string;
 }) {
   const live = f.status === "in_play";
   const decided = f.status === "decided" || f.status === "finalized";
@@ -86,12 +96,12 @@ function ScorebugRow({
           </span>
         ) : (
           <span className="font-display text-sm font-semibold text-ink">
-            {decided ? "Final" : f.scheduled_at ? timeOf(f.scheduled_at) : "TBD"}
+            {decided ? "Final" : f.scheduled_at ? timeOf(f.scheduled_at, tz) : "TBD"}
           </span>
         )}
         <span className="mt-0.5 max-w-[3.25rem] truncate text-[10px] uppercase tracking-wide text-ink-muted">
           {!decided && !live && railMode === "date" && f.scheduled_at
-            ? shortDate(f.scheduled_at)
+            ? shortDate(f.scheduled_at, tz)
             : (f.court_label ?? "")}
         </span>
       </span>
@@ -116,7 +126,7 @@ function ScorebugRow({
   );
 }
 
-export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
+export function Schedule({ fixtures, entrantNames, divisionPath, tz }: Props) {
   const [entrant, setEntrant] = useState<string>("");
   // Day view first (fixtures by date) — matches how a spectator reads a
   // timetable on the day. Round view stays a click away for bracket-style flow.
@@ -131,7 +141,7 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
 
   const groups = new Map<string, PublicFixture[]>();
   for (const f of shown) {
-    const key = mode === "day" ? (dayKey(f.scheduled_at) ?? UNSCHEDULED) : String(f.round_no);
+    const key = mode === "day" ? (dayKey(f.scheduled_at, tz) ?? UNSCHEDULED) : String(f.round_no);
     const list = groups.get(key) ?? [];
     list.push(f);
     groups.set(key, list);
@@ -213,6 +223,14 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
         <section key={key} className="mb-6">
           <h3 className="mb-2 flex items-center gap-3 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
             {groupLabel(key)}
+            {(() => {
+              const anchor = list.find((x) => x.scheduled_at)?.scheduled_at;
+              return anchor ? (
+                <span className="font-sans text-[10px] font-medium normal-case tracking-normal text-ink-muted/70">
+                  times in {fmtZoneAbbrev(tz, anchor)}
+                </span>
+              ) : null;
+            })()}
             <span aria-hidden className="h-px flex-1 bg-zinc-200" />
           </h3>
           <ul className="divide-y divide-zinc-100 overflow-hidden rounded-xl border border-zinc-200/80 bg-surface shadow-sm">
@@ -230,6 +248,7 @@ export function Schedule({ fixtures, entrantNames, divisionPath }: Props) {
                     entrantNames={entrantNames}
                     href={`${divisionPath}/fixtures/${f.id}`}
                     railMode={mode === "day" ? "time" : "date"}
+                    tz={tz}
                   />
                 </li>
               ))}

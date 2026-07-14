@@ -33,7 +33,7 @@ export default async function EmbedWidgetPage({ params }: Props) {
   const resolved = await embedDivisionData(id);
   // Both failure modes 404: a stranger's iframe is no place for a paywall.
   if (!resolved.ok) notFound();
-  const { org, competition, division, stages, pools, fixtures, standings, entrants } =
+  const { org, competition, division, stages, pools, fixtures, standings, entrants, tz } =
     resolved.data;
 
   let metricSpecs: MetricSpecLike[] = [];
@@ -55,7 +55,7 @@ export default async function EmbedWidgetPage({ params }: Props) {
   let body: React.ReactNode;
   if (widget === "schedule") {
     body = (
-      <Schedule fixtures={fixtures} entrantNames={entrantNames} divisionPath={publicPath} />
+      <Schedule fixtures={fixtures} entrantNames={entrantNames} divisionPath={publicPath} tz={tz} />
     );
   } else if (widget === "bracket") {
     const stage = stages.find((s) => BRACKET_KINDS.has(s.kind));

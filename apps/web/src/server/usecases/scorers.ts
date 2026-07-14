@@ -129,6 +129,8 @@ export interface AssignedFixture {
   home_name: string | null;
   away_name: string | null;
   scheduled_at: string | null;
+  /** Venue zone (schedule_settings.tz of the division); null → UTC. */
+  venue_tz: string | null;
   venue: string | null;
   court_label: string | null;
   status: string;
@@ -153,7 +155,7 @@ export async function listAssignedFixtures(
            d.sport_key, d.module_version, f.round_no,
            f.home_entrant_id, f.away_entrant_id,
            he.display_name as home_name, ae.display_name as away_name,
-           f.scheduled_at, f.venue, f.court_label, f.status
+           f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label, f.status
     from scorer_assignments sa
     join fixtures f on (
          (sa.scope_type = 'fixture'     and f.id = sa.scope_id)
@@ -164,6 +166,7 @@ export async function listAssignedFixtures(
     join divisions d on d.id = f.division_id
     join competitions c on c.id = d.competition_id
     join organizations o on o.id = f.org_id
+    left join schedule_settings ss on ss.division_id = d.id
     left join entrants he on he.id = f.home_entrant_id
     left join entrants ae on ae.id = f.away_entrant_id
     where sa.user_id = ${userId}
