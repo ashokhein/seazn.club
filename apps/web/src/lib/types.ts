@@ -117,9 +117,13 @@ export const updateProfileSchema = z.object({
     .refine((v) => isValidIana(v), { message: "Unknown timezone" })
     .nullable()
     .optional(),
-}).strict().refine((v) => v.display_name !== undefined || v.timezone !== undefined, {
-  message: "Nothing to update",
-});
+  /** UI locale (v5 i18n); null clears back to negotiated. Widen the enum when
+   *  hi/ta land. */
+  locale: z.enum(["en", "fr", "es", "nl"]).nullable().optional(),
+}).strict().refine(
+  (v) => v.display_name !== undefined || v.timezone !== undefined || v.locale !== undefined,
+  { message: "Nothing to update" },
+);
 
 export const createInviteSchema = z.object({
   role: z.enum(["admin", "viewer", "scorer"]),
