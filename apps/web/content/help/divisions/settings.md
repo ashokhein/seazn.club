@@ -13,6 +13,6 @@ Every division has a **Settings tab** (visible to editors) beside Entrants, Fixt
 
 ## Common questions
 
-**Why can't I change the format?** Fixtures exist — a schedule (and any results) were built on the old format. Delete the stages from the Fixtures tab first, or archive the division and start a fresh one.
+**Why can't I change the format?** Fixtures exist — a schedule (and any results) were built on the old format. On the **Fixtures tab**, delete the stages first (last stage down; a plain League has just the one), then the Format section unlocks. If a stage already has **played** results — anything in play, decided or finalized — it can't be deleted; archive the division and start a fresh one instead.
 
 **Who sees the Settings tab?** Owners, admins and editors of the competition. Viewers never see it.

@@ -268,7 +268,10 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
             .sort();
           return { from: times[0] ?? null, to: times[times.length - 1] ?? null };
         };
-        // Mirrors the server guard: last stage only, nothing played yet.
+        // Mirrors the server guard (deleteStage) EXACTLY: only the last stage
+        // in the graph, and only when it owns no played fixtures. No "keep one
+        // stage" rule — the server deletes the sole stage of a pure League too,
+        // which is the only escape from the format lock once fixtures exist.
         const deletable =
           stage.seq === Math.max(...stages.map((s) => s.seq)) &&
           !stageFixtures.some((f) => ["in_play", "decided", "finalized"].includes(f.status));
@@ -308,7 +311,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                   )}
                 </>
               )}
-              {canEdit && deletable && stages.length > 1 && (
+              {canEdit && deletable && (
                 <button
                   type="button"
                   disabled={busy !== null}
