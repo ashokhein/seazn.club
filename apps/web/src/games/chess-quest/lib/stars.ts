@@ -29,4 +29,8 @@ export const STAR_RULES = {
   rookMaze(moves: number, par: number): number {
     return moves <= par ? 3 : moves <= par + 1 ? 2 : 1;
   },
+  // Opening Trainer: clean run 3 stars, a slip or two still 2.
+  openingTrainer(mistakes: number): number {
+    return mistakes === 0 ? 3 : mistakes <= 2 ? 2 : 1;
+  },
 };
