@@ -2,5 +2,37 @@
   "start.meta.title": "Start a competition",
   "start.meta.description": "Name your competition, get a format recommendation, and go live — in about 60 seconds, before you even sign up.",
   "start.heading": "Start your competition",
-  "start.subhead": "Sixty seconds, no account needed — we'll email you the keys."
+  "start.subhead": "Sixty seconds, no account needed — we'll email you the keys.",
+
+  "home.meta.title": "Seazn Club — Run multi-sport community tournaments",
+  "home.meta.description": "Leagues, groups, knockouts — run any format for any sport in minutes, with online registration and entry fees built in. Free for community clubs.",
+  "home.og.title": "Seazn Club",
+  "home.og.description": "Run multi-sport community tournaments from setup to trophy in minutes.",
+
+  "home.hero.eyebrow": "FREE FOR COMMUNITY CLUBS",
+  "home.hero.title": "Any sport. Live in minutes.",
+  "home.hero.subhead": "Cricket, football, badminton, chess — name the sport and the field, Seazn Club draws the fixtures and puts your scoreboard live.",
+  "home.hero.freeNote": "Free forever for small clubs · ",
+  "home.hero.upgradeLink": "Upgrade a single event or go Pro",
+
+  "home.draw.title": "The Draw",
+  "home.draw.subhead": "Pick a format, set the field — the real fixture engine draws it. No account needed.",
+
+  "home.tools.title": "Matchday tools",
+  "home.tools.subhead": "The three jobs every organiser runs on the day.",
+
+  "home.audiences.title": "Who plays here",
+  "home.audiences.learnMore": "Learn more →",
+  "home.audiences.clubs.title": "Sports clubs & academies",
+  "home.audiences.clubs.body": "Weekly round-robins, internal ladders, seasonal championships. One org, all your sports.",
+  "home.audiences.events.title": "One-day events",
+  "home.audiences.events.body": "Open tournaments, charity cups, local derbies. Set up in 5 minutes, run all day smoothly.",
+  "home.audiences.schools.title": "Schools & youth programs",
+  "home.audiences.schools.body": "Inter-house competitions, lunchtime leagues, end-of-term championships. Kids love the live scoreboard.",
+
+  "home.finale.eyebrow": "FULL TIME · PICK YOUR SEASON",
+  "home.finale.title": "Pick your season",
+  "home.finale.subhead": "Free for community clubs. One pass for the big day. Pro for the whole year.",
+  "home.cta.start": "Start your tournament →",
+  "home.cta.signup": "Create free account"
 }

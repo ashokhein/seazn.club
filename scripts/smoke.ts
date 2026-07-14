@@ -1002,6 +1002,17 @@ async function i18nSuite(): Promise<void> {
 
   const bad = await fetch(`${BASE}/de/start`);
   check("i18n: unsupported locale 404s", bad.status === 404);
+
+  const enHome = await fetch(`${BASE}/en`);
+  const enHomeHtml = await enHome.text();
+  check("i18n: /en home English", enHomeHtml.includes("Any sport. Live in minutes."));
+
+  const frHome = await fetch(`${BASE}/fr`);
+  const frHomeHtml = await frHome.text();
+  check("i18n: /fr home French", frHomeHtml.includes("importe quel sport"));
+
+  const root = await fetch(`${BASE}/`, { redirect: "manual" });
+  check("i18n: / rewrites to en home (200, no redirect)", root.status === 200);
 }
 
 async function marketingSuite(): Promise<void> {
