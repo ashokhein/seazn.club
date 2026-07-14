@@ -16,6 +16,11 @@ export {
 } from "@/lib/i18n-constants";
 
 import { DEFAULT_LOCALE, type Dict, type Locale, type Namespace } from "@/lib/i18n-constants";
+import type { DictionaryKey } from "@/lib/i18n-keys";
+
+// Authored keys autocomplete; `& {}` keeps arbitrary strings (dynamic paths,
+// keys added before the next `i18n:gen-keys`) assignable without a cast.
+type TKey = DictionaryKey | (string & {});
 
 function lookup(dict: Dict, key: string): unknown {
   // A literal flat key ("items.one") wins; otherwise walk nested objects
@@ -35,7 +40,7 @@ function interpolate(s: string, vars?: Record<string, string | number>): string 
 /** Dot-key lookup + `{var}` interpolation. Never throws: on a miss it warns in
  *  dev and returns the key (callers already loaded an en-merged dict, so a real
  *  miss is a genuine gap, not a locale hole). */
-export function t(dict: Dict, key: string, vars?: Record<string, string | number>): string {
+export function t(dict: Dict, key: TKey, vars?: Record<string, string | number>): string {
   const val = lookup(dict, key);
   if (typeof val === "string") return interpolate(val, vars);
   if (process.env.NODE_ENV !== "production") console.warn(`[i18n] missing key: ${key}`);
