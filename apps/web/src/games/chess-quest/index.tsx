@@ -11,6 +11,8 @@ import { CoinHop } from "./components/games/CoinHop";
 import { PawnWars } from "./components/games/PawnWars";
 import { MateInOne } from "./components/games/MateInOne";
 import { MateInTwo } from "./components/games/MateInTwo";
+import { HangingHunt } from "./components/games/HangingHunt";
+import { TacticTrainer } from "./components/games/TacticTrainer";
 
 type GameEntry = {
   id: string;
@@ -55,6 +57,20 @@ const GAMES: GameEntry[] = [
     title: "Mate in 2",
     blurb: "Force checkmate in two — think a move ahead.",
     render: () => <MateInTwo />,
+  },
+  {
+    id: "hangingHunt",
+    emoji: "🔍",
+    title: "Piece Detective",
+    blurb: "Spot the piece that's free to take.",
+    render: () => <HangingHunt />,
+  },
+  {
+    id: "tacticTrainer",
+    emoji: "🎯",
+    title: "Trick Shots",
+    blurb: "Forks, pins, skewers, discovered attacks.",
+    render: () => <TacticTrainer pack="fork" />,
   },
 ];
 
