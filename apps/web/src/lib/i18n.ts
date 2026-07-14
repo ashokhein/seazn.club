@@ -17,6 +17,7 @@ export {
 
 import { DEFAULT_LOCALE, type Dict, type Locale, type Namespace } from "@/lib/i18n-constants";
 import type { DictionaryKey } from "@/lib/i18n-keys";
+import { buildPseudoDictionary } from "@/lib/pseudo";
 
 // Authored keys autocomplete; `& {}` keeps arbitrary strings (dynamic paths,
 // keys added before the next `i18n:gen-keys`) assignable without a cast.
@@ -105,6 +106,10 @@ const loaders: Record<Locale, Record<Namespace, Loader>> = {
  *  locale falls back to English (never a missing string in the UI). */
 export async function getDictionary(locale: Locale, ns: Namespace): Promise<Dict> {
   const en = (await loaders[DEFAULT_LOCALE][ns]()).default;
+  // Dev/CI pseudolocale (§8): render every extracted string as en-XA so the
+  // Playwright audit can flag anything that ISN'T pseudo (= hardcoded). Never
+  // set in production, so this branch is dead there.
+  if (process.env.SEAZN_PSEUDO === "1") return buildPseudoDictionary(en);
   if (locale === DEFAULT_LOCALE || !loaders[locale]) return en;
   const other = (await loaders[locale][ns]()).default;
   return { ...en, ...other };
