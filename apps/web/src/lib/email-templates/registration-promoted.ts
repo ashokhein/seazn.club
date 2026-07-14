@@ -1,6 +1,10 @@
 import { button, linkFallback, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
 import { formatDeadline } from "./registration";
+import {
+  fillPaymentInstructions,
+  paymentInstructionsText,
+} from "@/lib/payment-instructions";
 
 export interface RegistrationPromotedArgs {
   orgName: string;
@@ -25,6 +29,9 @@ export function registrationPromotedTemplate(
   const paid = opts.feeCents > 0;
   const deadline = opts.payDeadline ? formatDeadline(opts.payDeadline) : null;
   const card = paid && !!opts.payUrl;
+  const instructions = opts.paymentInstructions
+    ? paymentInstructionsText(fillPaymentInstructions(opts.paymentInstructions, opts.refCode))
+    : null;
 
   const nextStepHtml = card
     ? panel(
@@ -34,15 +41,14 @@ export function registrationPromotedTemplate(
     : paid
       ? panel(
           `Entry fee: ${money(opts.feeCents, opts.currency)}`,
-          opts.paymentInstructions ??
-            "The organiser will contact you with payment details.",
+          instructions ?? "The organiser will contact you with payment details.",
         )
       : paragraph("No payment is needed — the organiser will confirm your entry.");
 
   const nextStepText = card
     ? `Entry fee: ${money(opts.feeCents, opts.currency)}\nYour spot is held${deadline ? ` until ${deadline}` : ""} — pay to confirm it:\n${opts.payUrl}`
     : paid
-      ? `Entry fee: ${money(opts.feeCents, opts.currency)}\n${opts.paymentInstructions ?? "The organiser will contact you with payment details."}`
+      ? `Entry fee: ${money(opts.feeCents, opts.currency)}\n${instructions ?? "The organiser will contact you with payment details."}`
       : "No payment is needed — the organiser will confirm your entry.";
 
   return {

@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/client";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { ProseEditor } from "@/components/prose-editor";
 
 interface ConnectStatus {
   connected: boolean;
@@ -236,19 +237,19 @@ export function OrgPaymentInstructions({
         <span className="label">Cash / bank transfer instructions</span>
         <p className="mb-2 text-xs text-slate-500">
           Shown to registrants of pay-the-organiser divisions and included in their
-          confirmation email. Divisions can override these. e.g. bank name, account number,
-          sort code / IBAN, reference to use, or &ldquo;pay cash on the day&rdquo;.
+          confirmation email. Divisions can override these. Formatting is supported,
+          and <code className="rounded bg-slate-100 px-1">{"{{reference}}"}</code>{" "}
+          becomes each registrant&apos;s generated reference number — e.g.
+          &ldquo;quote {"{{reference}}"} on your transfer&rdquo;.
         </p>
-        <textarea
+        <ProseEditor
           value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
+          onChange={(md) => {
+            setValue(md);
             setSaved(false);
           }}
-          rows={5}
-          maxLength={2000}
-          placeholder={"Bank: Example Bank\nAccount name: Riverside FC\nSort code: 00-00-00\nAccount no: 12345678\nReference: your team name"}
-          className="input w-full font-mono text-sm"
+          orgId={orgId}
+          placeholder={"Bank: Example Bank\nAccount name: Riverside FC\nSort code: 00-00-00\nAccount no: 12345678\nReference: {{reference}}"}
         />
         <div className="mt-2 flex items-center gap-3">
           <button

@@ -19373,7 +19373,7 @@
                     "anyOf": [
                       {
                         "type": "string",
-                        "maxLength": 2000
+                        "maxLength": 5000
                       },
                       {
                         "type": "null"

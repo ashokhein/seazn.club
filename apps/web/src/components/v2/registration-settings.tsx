@@ -262,7 +262,7 @@ export function RegistrationSettings({
                   value={settings.payment_instructions ?? ""}
                   onChange={(e) => set({ payment_instructions: e.target.value || null })}
                   rows={3}
-                  maxLength={2000}
+                  maxLength={5000}
                   placeholder={
                     settings.org_payment_instructions
                       ? "Leave blank to use your organisation's instructions"
@@ -270,6 +270,10 @@ export function RegistrationSettings({
                   }
                   className="input mt-1 w-full font-mono text-xs"
                 />
+                <span className="mt-1 block text-[11px] text-slate-400">
+                  Markdown formatting works here; {"{{reference}}"} becomes the
+                  registrant&apos;s reference number.
+                </span>
                 {!settings.payment_instructions && settings.org_payment_instructions && (
                   <span className="mt-1 block text-[11px] text-slate-400">
                     Using your organisation&apos;s instructions.

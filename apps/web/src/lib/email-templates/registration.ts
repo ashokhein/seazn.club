@@ -1,5 +1,9 @@
 import { button, linkFallback, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
+import {
+  fillPaymentInstructions,
+  paymentInstructionsText,
+} from "@/lib/payment-instructions";
 
 export interface RegistrationEmailArgs {
   orgName: string;
@@ -32,6 +36,11 @@ export function registrationTemplate(
 ): { subject: string; html: string; text: string } {
   const waitlisted = opts.status === "waitlisted";
   const paid = opts.feeCents > 0 && !waitlisted;
+  // Markdown instructions → plain text for the panel, with the registrant's
+  // reference substituted for {{reference}}.
+  const instructions = opts.paymentInstructions
+    ? paymentInstructionsText(fillPaymentInstructions(opts.paymentInstructions, opts.refCode))
+    : null;
   const intro = waitlisted
     ? `You're on the waitlist for <strong>${escapeHtml(opts.competitionName)}</strong>. We'll be in touch if a place opens up.`
     : `Thanks ${escapeHtml(opts.displayName)} — your registration for <strong>${escapeHtml(opts.competitionName)}</strong> has been received.`;
@@ -44,8 +53,8 @@ export function registrationTemplate(
         `Entry fee: ${money(opts.feeCents, opts.currency)}`,
         `Your spot is held${deadline ? ` until ${deadline}` : ""} — complete payment to confirm it.`,
       ) + button(`Pay now — ${money(opts.feeCents, opts.currency)}`, opts.payUrl as string)
-    : paid && opts.paymentInstructions
-      ? panel(`Entry fee: ${money(opts.feeCents, opts.currency)}`, opts.paymentInstructions)
+    : paid && instructions
+      ? panel(`Entry fee: ${money(opts.feeCents, opts.currency)}`, instructions as string)
       : paid
         ? paragraph(
             `Entry fee: <strong>${money(opts.feeCents, opts.currency)}</strong>. The organiser will contact you with payment details.`,
@@ -55,8 +64,8 @@ export function registrationTemplate(
   const paymentText = card
     ? `\n\nEntry fee: ${money(opts.feeCents, opts.currency)}` +
       `\nYour spot is held${deadline ? ` until ${deadline}` : ""} — pay to confirm it:\n${opts.payUrl}`
-    : paid && opts.paymentInstructions
-      ? `\n\nEntry fee: ${money(opts.feeCents, opts.currency)}\nHow to pay:\n${opts.paymentInstructions}`
+    : paid && instructions
+      ? `\n\nEntry fee: ${money(opts.feeCents, opts.currency)}\nHow to pay:\n${instructions}`
       : paid
         ? `\n\nEntry fee: ${money(opts.feeCents, opts.currency)}. The organiser will contact you with payment details.`
         : "";

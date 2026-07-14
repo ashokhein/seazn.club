@@ -15,6 +15,9 @@ import {
 } from "@/server/usecases/registrations";
 import { HttpError } from "@/lib/errors";
 import { baseUrlFromHeaders } from "@/lib/base-url";
+import { renderProse } from "@/lib/prose";
+import { fillPaymentInstructions } from "@/lib/payment-instructions";
+import { CompetitionProse } from "@/components/public-site/competition-prose";
 import { TearOffTicket } from "@/components/public-site/ticket";
 import { RegistrationActions } from "@/components/public-site/registration-actions";
 import { msg } from "@/lib/messages";
@@ -250,9 +253,15 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
         <div className="mt-4 rounded-xl border border-accent-line bg-accent-soft p-5">
           <h2 className="text-sm font-semibold text-accent-strong">How to pay your entry fee</h2>
           {view.payment_instructions ? (
-            <p className="mt-2 text-sm whitespace-pre-line text-zinc-700">
-              {view.payment_instructions}
-            </p>
+            /* Markdown through the one prose pipeline; {{reference}} becomes
+               this registrant's ref code. */
+            <div className="mt-2 text-sm text-zinc-700">
+              <CompetitionProse
+                html={await renderProse(
+                  fillPaymentInstructions(view.payment_instructions, view.ref_code),
+                )}
+              />
+            </div>
           ) : (
             <p className="mt-2 text-sm text-zinc-600">
               The organiser will contact you at your registered email with payment details.

@@ -1752,7 +1752,10 @@ export async function sendPaymentReminder(
     displayName: reg.display_name,
     feeCents: fee,
     currency: settings?.currency ?? reg.currency ?? "gbp",
-    paymentInstructions: ctx.payment_instructions,
+    // Division override first, org-wide fallback — same resolution as the
+    // confirmation email; refCode personalises {{reference}}.
+    paymentInstructions: settings?.payment_instructions ?? ctx.payment_instructions,
+    refCode: reg.ref_code,
   });
   await withTenant(auth.orgId, (tx) =>
     audit(tx, ctx.competition_id, auth.orgId, "registration.payment_reminded", { registration_id: regId }, auth.userId),

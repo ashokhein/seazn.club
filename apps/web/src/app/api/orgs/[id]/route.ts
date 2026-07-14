@@ -12,7 +12,7 @@ import { z } from "zod";
 const orgPatchSchema = z.union([
   renameOrgSchema,
   z.object({ logo_storage_path: z.string().max(500).nullable() }).strict(),
-  z.object({ payment_instructions: z.string().max(2000).nullable() }).strict(),
+  z.object({ payment_instructions: z.string().max(5000).nullable() }).strict(),
   // Default payment method for NEW division registration settings (spec §3).
   z.object({ default_payment_method: z.enum(["offline", "stripe"]) }).strict(),
   // Org "about" (v3/06 §2): Markdown, rendered on the public org page.

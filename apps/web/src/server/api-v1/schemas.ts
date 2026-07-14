@@ -803,7 +803,7 @@ export const PutRegistrationSettings = z
     form_fields: z.array(RegistrationFormField).max(12).default([]),
     payment_method: RegistrationPaymentMethod.default("offline"),
     /** Per-division override of the org's offline payment instructions. */
-    payment_instructions: z.string().max(2000).nullish(),
+    payment_instructions: z.string().max(5000).nullish(),
   })
   .superRefine((s, ctx) => {
     const keys = s.form_fields.map((f) => f.key);
