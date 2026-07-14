@@ -12,7 +12,9 @@ export function inviteTemplate(
       subject: `You've been invited to join ${orgName} on Seazn Club`,
       preheader: `Accept your invite to ${orgName} and get involved.`,
       mastheadTag: orgName,
-      eyebrow: orgName,
+      // The org already headlines the masthead — the eyebrow says what KIND
+      // of mail this is instead of repeating it.
+      eyebrow: "Team invite",
       title: "You're invited",
       contentHtml:
         paragraph(

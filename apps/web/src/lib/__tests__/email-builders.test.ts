@@ -79,8 +79,10 @@ const allBuilders: [string, { subject: string; html: string; text: string }][] =
 describe("email builders compose from the html templates", () => {
   for (const [name, out] of allBuilders) {
     it(`${name}: courtside shell, no unresolved tokens, non-empty text`, () => {
-      // Slab masthead + court line come from base.html only.
-      expect(out.html).toContain('bgcolor="#231738"');
+      // Stadium-night slab + pitch line + ball come from base.html only.
+      expect(out.html).toContain('bgcolor="#150b36"');
+      expect(out.html).toContain('bgcolor="#a3e635"');
+      expect(out.html).toContain("&#9679;");
       expect(out.html).toContain("Barlow Condensed");
       // Preheader div present and filled.
       expect(out.html).toContain("mso-hide:all");
