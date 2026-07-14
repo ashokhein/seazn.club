@@ -60,6 +60,29 @@ test("an Opening Trainer lesson launches and takes the first move", async ({ pag
   await expect(page.locator('[data-square="e4"]')).toHaveAttribute("aria-label", /white pawn/);
 });
 
+test("an Opening Trainer line finishes (incl. an opponent-ending line)", async ({ page }) => {
+  await page.goto("/games/chess-quest");
+  await page.evaluate(() => localStorage.removeItem("seazn-games:chess-quest:v1"));
+  await page.reload();
+  await page.getByRole("button", { name: "Free play" }).click();
+  await page.getByRole("button", { name: /Opening Trainer/ }).click();
+  await expect(page.getByText(/The Italian Game/)).toBeVisible();
+  // Play the three learner moves; the trainer auto-plays Black's replies. The
+  // Italian ends on Black's Bc5, so completion must be driven off the opponent
+  // reply (regression: it used to hang without finishing).
+  const play = async (from: string, to: string) => {
+    await page.locator(`[data-square="${from}"]`).click();
+    await page.locator(`[data-square="${to}"]`).click();
+  };
+  await play("e2", "e4");
+  await expect(page.getByText("Nf3")).toBeVisible(); // after Black's auto …e5, next prompt is Nf3
+  await play("g1", "f3");
+  await expect(page.getByText("Bc4")).toBeVisible(); // after auto …Nc6, next prompt is Bc4
+  await play("f1", "c4");
+  await expect(page.getByText(/you played the whole line/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Play again" })).toBeVisible();
+});
+
 test("unknown game slug 404s", async ({ page }) => {
   const res = await page.goto("/games/not-a-game");
   expect(res?.status()).toBe(404);

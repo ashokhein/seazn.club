@@ -65,9 +65,25 @@ export function OpeningTrainer({ opening }: { opening: string }) {
 
   useEffect(() => () => clearPending(), [clearPending]);
 
-  // Auto-play opponent moves; glow the learner's from-square on their turn.
+  const finish = useCallback(() => {
+    setDone(true);
+    setHighlights({});
+    const stars = STAR_RULES.openingTrainer(mistakes);
+    progress.setGameStars("openingTrainer", stars);
+    setStatus(`<strong>${op.name}</strong> — you played the whole line! ${"★".repeat(stars)}`);
+    voice.say(`${op.name}. You played the whole line!`);
+    celebrate();
+  }, [mistakes, op.name, progress]);
+
+  // Drive the sequence off `ply`: finish the line, auto-play opponent replies,
+  // or glow the learner's from-square. Completion runs here (not in
+  // onLearnerMove) so lines that end on an opponent move also finish.
   useEffect(() => {
-    if (done || ply >= op.line.length) return;
+    if (done) return;
+    if (ply >= op.line.length) {
+      finish();
+      return;
+    }
     if (!learnerPly(ply)) {
       later(() => {
         const mv = op.line[ply];
@@ -85,16 +101,6 @@ export function OpeningTrainer({ opening }: { opening: string }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ply, done]);
 
-  function finish() {
-    setDone(true);
-    setHighlights({});
-    const stars = STAR_RULES.openingTrainer(mistakes);
-    progress.setGameStars("openingTrainer", stars);
-    setStatus(`<strong>${op.name}</strong> — you played the whole line! ${"★".repeat(stars)}`);
-    voice.say(`${op.name}. You played the whole line!`);
-    celebrate();
-  }
-
   function onLearnerMove(from: number, to: number) {
     const mv = op.line[ply];
     if (from === sqIdx(mv.from) && to === sqIdx(mv.to)) {
@@ -103,9 +109,9 @@ export function OpeningTrainer({ opening }: { opening: string }) {
       setPopN((v) => v + 1);
       sfx.move();
       setSelIdx(-1);
-      const nextPly = ply + 1;
-      setPly(nextPly);
-      if (nextPly >= op.line.length) finish();
+      // Completion is handled by the ply-driven effect (covers opponent-ending
+      // lines too), so just advance.
+      setPly(ply + 1);
     } else {
       setSelIdx(-1);
       setMistakes((x) => x + 1);
