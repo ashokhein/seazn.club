@@ -19,7 +19,9 @@ import {
   sqName,
 } from "../../engine";
 import { MATE2 } from "../../content/puzzles";
+import { celebrate } from "../../lib/celebrate";
 import { sfx } from "../../lib/sfx";
+import { voice } from "../../lib/voice";
 import { STAR_RULES } from "../../lib/stars";
 import { useLater } from "../../lib/use-later";
 import { useProgress } from "../../lib/progress";
@@ -86,7 +88,8 @@ export function MateInTwo() {
     const n = progress.solved2Count();
     progress.setGameStars("mateInTwo", STAR_RULES.packStars(n));
     setStatus(msg);
-    sfx.fanfare();
+    voice.say(msg);
+    celebrate();
     setBusy(true);
     later(() => {
       if (n < MATE2.length) load(firstUnsolved(progress.isSolved2));

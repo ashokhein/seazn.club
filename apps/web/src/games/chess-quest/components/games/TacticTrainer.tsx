@@ -21,7 +21,9 @@ import {
 } from "../../engine";
 import { TACTICS, TACTICS2 } from "../../content/puzzles";
 import { useCopy } from "../../lib/copy";
+import { celebrate } from "../../lib/celebrate";
 import { sfx } from "../../lib/sfx";
+import { voice } from "../../lib/voice";
 import { STAR_RULES } from "../../lib/stars";
 import { useLater } from "../../lib/use-later";
 import { useProgress } from "../../lib/progress";
@@ -131,7 +133,8 @@ export function TacticTrainer({ pack: initialPack = "fork" }: { pack?: string })
       tier2 ? STAR_RULES.packStars(total) : STAR_RULES.tacticTier1(total),
     );
     setStatus(`<strong>${info.name}!</strong> 🎯 Beautifully done.`);
-    sfx.fanfare();
+    voice.say(`${info.name}! Beautifully done!`);
+    celebrate();
     setBusy(true);
     later(() => {
       const n = progress.tacticCount(pack);

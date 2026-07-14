@@ -6,9 +6,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { applyMove, isMate, isWhitePiece, legalTargets, parseFEN, sqIdx } from "../../engine";
 import { MATE1 } from "../../content/puzzles";
+import { celebrate } from "../../lib/celebrate";
 import { sfx } from "../../lib/sfx";
 import { STAR_RULES } from "../../lib/stars";
 import { useLater } from "../../lib/use-later";
+import { voice } from "../../lib/voice";
 import { useProgress } from "../../lib/progress";
 import { Board, Highlight } from "../Board";
 import { GameShell } from "../GameShell";
@@ -61,7 +63,8 @@ export function MateInOne() {
     const n = progress.solvedCount();
     progress.setGameStars("mateInOne", STAR_RULES.packStars(n));
     setStatus("<strong>Checkmate!</strong> 🎉 The king has nowhere to run.");
-    sfx.fanfare();
+    voice.say("Checkmate! The king has nowhere to run!");
+    celebrate();
     setBusy(true);
     later(() => {
       if (n < MATE1.length) load(firstUnsolved(progress.isSolved));

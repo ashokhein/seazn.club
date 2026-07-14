@@ -6,8 +6,10 @@
 import { parseFEN, pieceTargets, sqIdx } from "../../engine";
 import { LANDS } from "../../content/lands";
 import { GameId, LESSONS } from "../../content/lessons";
+import { celebrate } from "../../lib/celebrate";
 import { useCopy } from "../../lib/copy";
 import { useProgress } from "../../lib/progress";
+import { sfx } from "../../lib/sfx";
 import { Board, Highlight } from "../Board";
 import { Rich } from "../rich";
 import { dayOf, GAME_LABEL, lessonCopy } from "./questData";
@@ -89,7 +91,14 @@ export function LessonCard({
         <button
           type="button"
           className={isDone ? "btn btn-ghost" : "btn btn-primary"}
-          onClick={() => progress.setWeekDone(wk.n, !isDone)}
+          onClick={(e) => {
+            const was = isDone;
+            progress.setWeekDone(wk.n, !was);
+            if (!was) {
+              sfx.chime();
+              if (progress.landDone(land)) celebrate(e.currentTarget);
+            }
+          }}
         >
           {isDone ? "✓ Done — undo?" : "Mark day done ⭐"}
         </button>

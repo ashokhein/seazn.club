@@ -8,6 +8,7 @@ import { useState } from "react";
 import { GameId } from "./content/lessons";
 import { CopyProvider } from "./lib/copy";
 import { ProgressProvider, useProgress } from "./lib/progress";
+import { useDeviceAudio } from "./lib/use-device-audio";
 import { SquareRace } from "./components/games/SquareRace";
 import { CoinHop } from "./components/games/CoinHop";
 import { PawnWars } from "./components/games/PawnWars";
@@ -65,6 +66,7 @@ const ARCADE: { id: GameId; emoji: string; title: string; blurb: string; opts: O
 
 function QuestApp() {
   const progress = useProgress();
+  useDeviceAudio();
   const [view, setView] = useState<"quest" | "arcade">("quest");
   const [selected, setSelected] = useState(() => progress.currentWeek(LESSONS.length));
   const [game, setGame] = useState<{ game: GameId; opts: Opts; back: "quest" | "arcade" } | null>(

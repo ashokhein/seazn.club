@@ -14,7 +14,9 @@ import {
 } from "../../engine";
 import { HUNTS } from "../../content/puzzles";
 import { useCopy } from "../../lib/copy";
+import { celebrate } from "../../lib/celebrate";
 import { sfx } from "../../lib/sfx";
+import { voice } from "../../lib/voice";
 import { STAR_RULES } from "../../lib/stars";
 import { useLater } from "../../lib/use-later";
 import { useProgress } from "../../lib/progress";
@@ -68,6 +70,7 @@ export function HangingHunt() {
     const n = progress.huntCount();
     progress.setGameStars("hangingHunt", STAR_RULES.hangingHunt(n));
     setStatus("<strong>Found it!</strong> 🔍 Free stuff detected.");
+    voice.say("Found it! Free stuff detected!");
     sfx.coin();
     setBusy(true);
     later(() => {
@@ -76,7 +79,7 @@ export function HangingHunt() {
         setStatus(
           "<strong>All cases closed!</strong> Official Free-Stuff Detector badge earned. ★★★",
         );
-        sfx.fanfare();
+        celebrate();
       }
     }, 1300);
   }

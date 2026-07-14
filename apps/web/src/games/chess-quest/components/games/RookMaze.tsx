@@ -6,7 +6,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { applyMove, pathDistances, pieceTargets } from "../../engine";
 import { emptyBoard, randSquares } from "../../lib/rand";
+import { celebrate } from "../../lib/celebrate";
 import { sfx } from "../../lib/sfx";
+import { voice } from "../../lib/voice";
 import { STAR_RULES } from "../../lib/stars";
 import { useLater } from "../../lib/use-later";
 import { useProgress } from "../../lib/progress";
@@ -88,7 +90,8 @@ export function RookMaze({ pieces = ["R"] }: { pieces?: string[] }) {
         totalMoves <= maze.par ? " — the perfect path! " : ` (best possible was ${maze.par}). `
       }${"★".repeat(stars)}`,
     );
-    sfx.fanfare();
+    voice.say(`Caught in ${totalMoves} moves!${totalMoves <= maze.par ? " The perfect path!" : ""}`);
+    celebrate();
   }
 
   function onTap(idx: number) {

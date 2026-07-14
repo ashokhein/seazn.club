@@ -44,6 +44,28 @@ export function QuestHeader({
           >
             📊 Progress
           </button>
+          <button
+            type="button"
+            aria-label={progress.getMuted() ? "Unmute sounds" : "Mute sounds"}
+            aria-pressed={progress.getMuted()}
+            onClick={() => progress.setMuted(!progress.getMuted())}
+            className="rounded-full border border-purple-300 bg-white px-2 py-1 text-sm hover:bg-purple-50"
+          >
+            {progress.getMuted() ? "🔇" : "🔊"}
+          </button>
+          <button
+            type="button"
+            aria-label={progress.getVoiceOn() ? "Turn coach voice off" : "Turn coach voice on"}
+            aria-pressed={progress.getVoiceOn()}
+            onClick={() => progress.setVoiceOn(!progress.getVoiceOn())}
+            className={`rounded-full border px-2 py-1 text-sm ${
+              progress.getVoiceOn()
+                ? "border-purple-300 bg-white hover:bg-purple-50"
+                : "border-slate-200 bg-slate-100 opacity-50"
+            }`}
+          >
+            🗣
+          </button>
         </div>
       </div>
 

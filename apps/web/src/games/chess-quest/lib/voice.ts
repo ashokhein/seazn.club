@@ -2,12 +2,12 @@
 // network. Port of the standalone app's Voice; enabled state comes from the
 // store. say() takes rich/plain strings and strips markup + emoji first.
 let enabled = true;
-let voice: SpeechSynthesisVoice | null = null;
+let chosenVoice: SpeechSynthesisVoice | null = null;
 
 function pickVoice() {
   if (typeof window === "undefined" || !window.speechSynthesis) return;
   const all = speechSynthesis.getVoices();
-  voice =
+  chosenVoice =
     all.find((v) => /Samantha|Google US English|Zira/i.test(v.name)) ??
     all.find((v) => v.lang?.startsWith("en")) ??
     null;
@@ -41,7 +41,7 @@ export const voice = {
     if (!text) return;
     speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    if (voice) u.voice = voice;
+    if (chosenVoice) u.voice = chosenVoice;
     u.rate = 0.95;
     u.pitch = 1.1;
     u.volume = 0.9;

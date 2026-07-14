@@ -14,6 +14,7 @@ import {
 } from "../../engine";
 import { emptyBoard } from "../../lib/rand";
 import { useCopy } from "../../lib/copy";
+import { celebrate } from "../../lib/celebrate";
 import { sfx } from "../../lib/sfx";
 import { STAR_RULES } from "../../lib/stars";
 import { useProgress } from "../../lib/progress";
@@ -74,7 +75,7 @@ export function PawnWars() {
         whiteWon ? t("⬜ The kid wins", "⬜ White wins") : t("⬛ The grown-up wins", "⬛ Black wins")
       } — ${why} ${"★".repeat(stars)}`,
     );
-    sfx.fanfare();
+    celebrate();
   }
 
   function bump() {

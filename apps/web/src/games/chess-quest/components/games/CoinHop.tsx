@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { applyMove, fileOf, pieceTargets, rankRow } from "../../engine";
 import { emptyBoard, randSquares } from "../../lib/rand";
+import { celebrate } from "../../lib/celebrate";
 import { sfx } from "../../lib/sfx";
 import { STAR_RULES } from "../../lib/stars";
 import { useProgress } from "../../lib/progress";
@@ -64,7 +65,7 @@ export function CoinHop({ pieces = ["N"] }: { pieces?: string[] }) {
     const stars = STAR_RULES.coinHop(totalMoves, piece);
     progress.setGameStars("coinHop", stars);
     setStatus(`All coins collected in <strong>${totalMoves}</strong> moves! ${"★".repeat(stars)}`);
-    sfx.fanfare();
+    celebrate();
   }
 
   function onTap(idx: number) {
