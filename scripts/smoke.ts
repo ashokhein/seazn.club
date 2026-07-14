@@ -257,6 +257,27 @@ async function main() {
       (oldConsole.location ?? "").includes(`/o/${renamed.slug}`),
   );
 
+  // --- User timezone preference (spec 2026-07-14) — account-level, all plans ---
+  {
+    const saved = (await call(admin, "/api/users/me", "PATCH", {
+      timezone: "Asia/Kolkata",
+    })) as { timezone: string | null };
+    check("pro: timezone saved", saved.timezone === "Asia/Kolkata");
+    const cleared = (await call(admin, "/api/users/me", "PATCH", {
+      timezone: null,
+    })) as { timezone: string | null };
+    check("pro: timezone clears to browser default", cleared.timezone === null);
+    await expectFail("bogus timezone rejected", () =>
+      call(admin, "/api/users/me", "PATCH", { timezone: "Mars/Phobos" }),
+    );
+    // Free path: the viewer session is plan-agnostic for account settings.
+    const vSaved = (await call(viewer, "/api/users/me", "PATCH", {
+      timezone: "Europe/London",
+    })) as { timezone: string | null };
+    check("free: timezone saved", vSaved.timezone === "Europe/London");
+    await call(viewer, "/api/users/me", "PATCH", { timezone: null });
+  }
+
   // --- Platform API /api/v1 (PROMPT-11) — the full engine v2 lifecycle ---
   await v1Suite(admin, org2.id, renamed.slug);
 

@@ -37,3 +37,45 @@ test("display name edits persist and the data export downloads", async ({ page }
   const body = (await exported.json()) as Record<string, unknown>;
   expect(Object.keys(body).length).toBeGreaterThan(0);
 });
+
+// Timezone preference: pick a zone, it persists; a bogus zone is rejected by
+// the API. No email budget touched.
+test("timezone preference persists and the API rejects a bogus zone", async ({ page }) => {
+  await page.goto("/settings?tab=account");
+
+  const select = page.getByRole("combobox", { name: "Your timezone" });
+  await expect(select).toBeVisible();
+
+  // Preferences form has its own Save; scope to the timezone control's form.
+  const tzForm = page.locator("div").filter({ has: select }).last();
+  await select.selectOption("Asia/Kolkata");
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes("/api/users/me") && r.request().method() === "PATCH" && r.ok(),
+    ),
+    tzForm.getByRole("button", { name: /^Sav/ }).click(),
+  ]);
+
+  await page.reload();
+  await expect(page.getByRole("combobox", { name: "Your timezone" })).toHaveValue(
+    "Asia/Kolkata",
+    { timeout: 20_000 },
+  );
+
+  // The venue-vs-your-time helper copy is present.
+  await expect(page.getByText(/venue/i).first()).toBeVisible();
+
+  // API guards the column: a non-IANA zone is a 4xx, not stored.
+  const bad = await page.request.patch("/api/users/me", {
+    headers: { "Content-Type": "application/json" },
+    data: { timezone: "Mars/Phobos" },
+  });
+  expect(bad.status()).toBeGreaterThanOrEqual(400);
+  expect(bad.status()).toBeLessThan(500);
+
+  // Restore to "follow my browser" so reruns start clean.
+  await page.request.patch("/api/users/me", {
+    headers: { "Content-Type": "application/json" },
+    data: { timezone: null },
+  });
+});
