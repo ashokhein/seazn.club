@@ -3,6 +3,7 @@ import { parseFEN } from "../../engine";
 import { LANDS } from "../lands";
 import { LESSONS } from "../lessons";
 import { TACTICS, TACTICS2 } from "../puzzles";
+import { OPENING_IDS } from "../openings";
 
 const GAME_IDS = [
   "squareRace",
@@ -13,16 +14,17 @@ const GAME_IDS = [
   "hangingHunt",
   "tacticTrainer",
   "rookMaze",
+  "openingTrainer",
 ];
 
 describe("curriculum shape", () => {
-  it("48 lessons, numbered 1..48 in order", () => {
-    expect(LESSONS).toHaveLength(48);
+  it("53 lessons, numbered 1..53 in order", () => {
+    expect(LESSONS).toHaveLength(53);
     LESSONS.forEach((l, i) => expect(l.n).toBe(i + 1));
   });
-  it("9 lands tiling lessons 1..48 exactly once", () => {
-    expect(LANDS).toHaveLength(9);
-    const seen = new Array(49).fill(0);
+  it("10 lands tiling lessons 1..53 exactly once", () => {
+    expect(LANDS).toHaveLength(10);
+    const seen = new Array(54).fill(0);
     for (const land of LANDS) {
       for (let i = land.weeks[0]; i <= land.weeks[1]; i++) seen[i]++;
     }
@@ -37,6 +39,13 @@ describe("curriculum shape", () => {
   it("track 2 lands cover lessons 25..48 only", () => {
     for (const land of LANDS.filter((l) => l.track === 2)) {
       expect(land.weeks[0]).toBeGreaterThanOrEqual(25);
+      expect(land.weeks[1]).toBeLessThanOrEqual(48);
+    }
+  });
+  it("track 3 lands cover lessons 49..53 only", () => {
+    for (const land of LANDS.filter((l) => l.track === 3)) {
+      expect(land.weeks[0]).toBeGreaterThanOrEqual(49);
+      expect(land.weeks[1]).toBeLessThanOrEqual(53);
     }
   });
   it("every land has both check registers", () => {
@@ -71,6 +80,12 @@ describe("curriculum shape", () => {
       const pack = l.gameOpts?.pack ?? "";
       const exists = pack in TACTICS || pack in TACTICS2;
       expect(exists, `lesson ${l.n} pack "${pack}"`).toBe(true);
+    }
+  });
+  it("opening-trainer lessons name a real opening", () => {
+    for (const l of LESSONS.filter((x) => x.game === "openingTrainer")) {
+      const op = l.gameOpts?.opening ?? "";
+      expect(OPENING_IDS, `lesson ${l.n}`).toContain(op);
     }
   });
 });

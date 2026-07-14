@@ -11,7 +11,8 @@ export type GameId =
   | "mateInTwo"
   | "hangingHunt"
   | "tacticTrainer"
-  | "rookMaze";
+  | "rookMaze"
+  | "openingTrainer";
 
 export type LessonCopy = { learn: string; play: string; spark: string };
 
@@ -20,7 +21,7 @@ export type Lesson = {
   land: number; // owning land id (1..9)
   title: string;
   game: GameId | null; // null = play on a real board
-  gameOpts?: { pieces?: string[]; pack?: string };
+  gameOpts?: { pieces?: string[]; pack?: string; opening?: string };
   learn: string;
   play: string;
   spark: string; // Story register
@@ -362,7 +363,8 @@ export const LESSONS: Lesson[] = [
     n: 19,
     land: 5,
     title: "Her First Opening",
-    game: null,
+    game: "openingTrainer",
+    gameOpts: { opening: "italian" },
     learn:
       "One recipe, both colors. White: e4, knight f3, bishop c4, castle (the Italian Game). Black against e4: mirror it.",
     play: "The same opening in every game. No memorizing — just a familiar, safe start.",
@@ -580,7 +582,8 @@ export const LESSONS: Lesson[] = [
     n: 31,
     land: 7,
     title: "The Italian, With a Plan",
-    game: null,
+    game: "openingTrainer",
+    gameOpts: { opening: "italian" },
     learn:
       "You know the Italian moves — now the WHY: the bishop eyes f7, the knight guards e5, castling connects the rooks. Every move has a job.",
     play: "Play the Italian and say each piece’s job out loud as it develops. Then swap colors and say black’s jobs.",
@@ -910,6 +913,86 @@ export const LESSONS: Lesson[] = [
       play: "A notated best-of-three at slow pace, fully analyzed afterwards. Then the Mate in 2 pack clean — no hints, no misses.",
       spark:
         "From here it’s rated games, a club, and a puzzle habit. The method you built is the same one titled players use — just add miles.",
+    },
+  },
+
+  /* ---- Track 3: Opening Range (lessons 49–53, Days 97–105) ---- */
+  {
+    n: 49,
+    land: 10,
+    title: "The Italian Game",
+    game: "openingTrainer",
+    gameOpts: { opening: "italian" },
+    learn: "e4, Knight f3, Bishop c4 — the friendly Italian. The bishop stares at f7.",
+    play: "Play the Italian in the trainer until the moves feel automatic. No reading — just play!",
+    spark: "Same three moves every game. Soon your hands know them before your head does.",
+    classic: {
+      learn: "1.e4 e5 2.Nf3 Nc6 3.Bc4 Bc5 — the Italian: rapid development, pressure on f7.",
+      play: "Drill the line in the trainer until it’s reflex, both the moves and the reason.",
+      spark: "Repetition, not theory. One opening played fifty times beats five played ten.",
+    },
+  },
+  {
+    n: 50,
+    land: 10,
+    title: "The Ruy Lopez",
+    game: "openingTrainer",
+    gameOpts: { opening: "ruyLopez" },
+    learn: "Like the Italian, but the bishop goes to b5 to bother the knight guarding e5.",
+    play: "Play the Ruy Lopez line in the trainer. Feel how Bb5 pins the defender.",
+    spark: "The “Spanish torture” — slow, sound pressure the pros still play today.",
+    classic: {
+      learn:
+        "1.e4 e5 2.Nf3 Nc6 3.Bb5 a6 — the Ruy Lopez: pressure the e5 defender, keep long-term bind.",
+      play: "Drill it; note how Bb5 targets the knight, not the pawn directly.",
+      spark: "The most respected 1.e4 e5 opening — worth owning even at club level.",
+    },
+  },
+  {
+    n: 51,
+    land: 10,
+    title: "The Scotch Game",
+    game: "openingTrainer",
+    gameOpts: { opening: "scotch" },
+    learn: "Punch the centre open early with d4, then grab the pawn back with the knight.",
+    play: "Play the Scotch in the trainer: e4, Nf3, d4, take, take with the knight.",
+    spark: "Open lines fast — great when you like lively, attacking games.",
+    classic: {
+      learn:
+        "1.e4 e5 2.Nf3 Nc6 3.d4 exd4 4.Nxd4 — the Scotch: early central break, quick development lead.",
+      play: "Drill the capture sequence until the recapture on d4 is automatic.",
+      spark: "A clean way to avoid heavy Ruy Lopez theory while staying principled.",
+    },
+  },
+  {
+    n: 52,
+    land: 10,
+    title: "The London System",
+    game: "openingTrainer",
+    gameOpts: { opening: "london" },
+    learn: "A calm setup with d4, Nf3 and the bishop out to f4 — plays against almost anything.",
+    play: "Play the London in the trainer. Same easy setup, game after game.",
+    spark: "Low-stress, high-reward: a system you can lean on when you’re tired.",
+    classic: {
+      learn: "1.d4 d5 2.Nf3 Nf6 3.Bf4 — the London: a solid, low-theory system with a clear plan.",
+      play: "Drill the setup; the move order is flexible but the pieces always land the same.",
+      spark: "Ideal one-system repertoire for busy players — minimal memorization.",
+    },
+  },
+  {
+    n: 53,
+    land: 10,
+    title: "The Scandinavian Defense",
+    game: "openingTrainer",
+    gameOpts: { opening: "scandinavian" },
+    learn: "Now you’re Black! Answer e4 with d5 right away, take, then bring the queen to a5 safely.",
+    play: "Play the Scandinavian in the trainer as Black. Hit the centre from move one.",
+    spark: "One opening that works against e4 every single time — no surprises.",
+    classic: {
+      learn:
+        "1.e4 d5 2.exd5 Qxd5 3.Nc3 Qa5 — the Scandinavian: immediate central challenge as Black, queen tucked on a5.",
+      play: "Drill it as Black; learn to develop with tempo after the queen settles.",
+      spark: "A dependable, low-theory answer to 1.e4 you can rely on under pressure.",
     },
   },
 ];
