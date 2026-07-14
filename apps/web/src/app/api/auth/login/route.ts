@@ -1,5 +1,6 @@
 import { sql } from "@/lib/db";
 import { createSession, postAuthLanding, verifyPassword } from "@/lib/auth";
+import { stampTermsAcceptance } from "@/lib/legal";
 import { handler } from "@/lib/http";
 import { baseUrl } from "@/lib/oauth";
 import { sendVerificationEmail } from "@/lib/email";
@@ -45,6 +46,9 @@ export async function POST(req: Request) {
     }
 
     await createSession(user.id);
+    // Login happened under the clickwrap notice (GDPR spec 2026-07-14) —
+    // backfills pre-policy accounts; no-op once stamped.
+    await stampTermsAcceptance(user.id);
 
     const landing = await postAuthLanding(user.id, next);
     return {
