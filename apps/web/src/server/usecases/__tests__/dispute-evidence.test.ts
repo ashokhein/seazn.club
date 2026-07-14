@@ -55,7 +55,7 @@ afterAll(async () => {
 describe.skipIf(!HAS_DB)("dispute evidence pack", () => {
   it("bundles registration, receipt reconstruction and activity log", async () => {
     const { owner, orgId, divisionId, compId } = await seed();
-    const ref = "SZ-TEST-EVID";
+    const ref = `SZ-EV${randomUUID().slice(0, 6).toUpperCase()}`;
     const [{ id: regId }] = await sql<{ id: string }[]>`
       insert into registrations
         (division_id, org_id, status, ref_code, display_name, contact_email,
@@ -96,7 +96,7 @@ describe.skipIf(!HAS_DB)("dispute evidence pack", () => {
       insert into registrations
         (division_id, org_id, status, ref_code, display_name, contact_email,
          amount_cents, currency, payment_method, access_token_hash)
-      values (${a.divisionId}, ${a.orgId}, 'confirmed', 'SZ-OTHER-ORG1',
+      values (${a.divisionId}, ${a.orgId}, 'confirmed', ${`SZ-XO${randomUUID().slice(0, 6).toUpperCase()}`},
               'Alex', 'a@example.com', 0, 'gbp', 'offline', ${randomUUID()})
       returning id`;
     await expect(buildDisputeEvidence(b.owner, regId, "https://test.local")).rejects.toThrow();

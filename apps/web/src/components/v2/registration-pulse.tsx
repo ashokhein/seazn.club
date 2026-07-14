@@ -10,7 +10,7 @@ import { RefreshCw } from "lucide-react";
 import type { Pulse } from "@/lib/registration-derive";
 import { currencySymbol } from "./registration-settings";
 
-export type Tab = "confirmed" | "pending" | "waitlist" | "all";
+export type Tab = "confirmed" | "pending" | "waitlist" | "disputed" | "all";
 
 function hoursUntil(iso: string): string {
   const h = Math.max(0, Math.round((new Date(iso).getTime() - Date.now()) / 3_600_000));
@@ -112,7 +112,7 @@ export function RegistrationPulse({
               label="disputed"
               value={String(pulse.disputed)}
               tone="text-rose-700"
-              onClick={() => onJump("all")}
+              onClick={() => onJump("disputed")}
             />
           )}
         </>

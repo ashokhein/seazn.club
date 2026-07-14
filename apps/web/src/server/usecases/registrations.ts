@@ -1094,9 +1094,11 @@ export async function handleRegistrationDispute(
       dispute_id: dispute.id,
       amount_cents: dispute.amount,
     }, null);
+    // Current owner via org_members, NOT organizations.created_by — ownership
+    // transfers flip the role but leave created_by on the original creator.
     const [owner] = await sql<{ email: string }[]>`
-      select u.email from organizations o join users u on u.id = o.created_by
-      where o.id = ${reg.org_id}`;
+      select u.email from org_members m join users u on u.id = m.user_id
+      where m.org_id = ${reg.org_id} and m.role = 'owner' limit 1`;
     if (owner) {
       void sendDisputeAlertEmail({
         to: owner.email,

@@ -325,6 +325,11 @@ export function RegistrationSettings({
               onChange={(e) => set({ refund_lock_at: fromLocalInput(e.target.value) })}
               className="input mt-1 w-full"
             />
+            <span className="mt-1 block text-[11px] text-slate-400">
+              {settings.refund_lock_at
+                ? "After this moment withdrawals keep the fee — refunds become your call, per entry."
+                : "No date set: every paid withdrawal auto-refunds in full, right up to match day."}
+            </span>
           </label>
         )}
       </Group>

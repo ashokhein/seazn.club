@@ -58,6 +58,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "confirmed", label: "Confirmed" },
   { key: "pending", label: "Pending" },
   { key: "waitlist", label: "Waitlist" },
+  { key: "disputed", label: "Disputed" },
   { key: "all", label: "All" },
 ];
 
@@ -65,6 +66,7 @@ function inTab(r: Registration, tab: Tab): boolean {
   if (tab === "all") return true;
   if (tab === "confirmed") return r.status === "confirmed";
   if (tab === "pending") return r.status === "pending" || r.status === "paid";
+  if (tab === "disputed") return r.disputed_at !== null;
   return r.status === "waitlisted";
 }
 
@@ -99,6 +101,7 @@ export function RegistrationList({
     confirmed: regs.filter((r) => inTab(r, "confirmed")).length,
     pending: regs.filter((r) => inTab(r, "pending")).length,
     waitlist: regs.filter((r) => inTab(r, "waitlist")).length,
+    disputed: regs.filter((r) => inTab(r, "disputed")).length,
     all: regs.length,
   };
   const visible = shown.filter((r) => inTab(r, tab));
@@ -106,7 +109,8 @@ export function RegistrationList({
   return (
     <div>
       <div role="tablist" aria-label="Registrations by status" className="mb-3 flex flex-wrap gap-1">
-        {TABS.map(({ key, label }) => (
+        {/* The Disputed tab only exists while there's something disputed to see. */}
+        {TABS.filter(({ key }) => key !== "disputed" || counts.disputed > 0 || tab === "disputed").map(({ key, label }) => (
           <button
             key={key}
             role="tab"

@@ -195,6 +195,9 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "GET /fixtures/:id/device-links",
   "DELETE /fixtures/:id/device-links/:linkId",
   "POST /registrations/:id/refund",
+  // Dispute evidence pack: console-only download; keys must not exfiltrate
+  // registrant PII bundles.
+  "GET /registrations/:id/evidence",
   // Browser-upload handshake (v8): signed URLs are a console UX, not an API
   // surface — a leaked key must not mint writable storage URLs.
   "POST /divisions/:id/logo-upload-url",
