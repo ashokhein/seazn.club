@@ -60,28 +60,82 @@ test("an Opening Trainer lesson launches and takes the first move", async ({ pag
   await expect(page.locator('[data-square="e4"]')).toHaveAttribute("aria-label", /white pawn/);
 });
 
-test("an Opening Trainer line finishes (incl. an opponent-ending line)", async ({ page }) => {
-  await page.goto("/games/chess-quest");
-  await page.evaluate(() => localStorage.removeItem("seazn-games:chess-quest:v1"));
-  await page.reload();
-  await page.getByRole("button", { name: "Free play" }).click();
-  await page.getByRole("button", { name: /Opening Trainer/ }).click();
-  await expect(page.getByText(/The Italian Game/)).toBeVisible();
-  // Play the three learner moves; the trainer auto-plays Black's replies. The
-  // Italian ends on Black's Bc5, so completion must be driven off the opponent
-  // reply (regression: it used to hang without finishing).
-  const play = async (from: string, to: string) => {
-    await page.locator(`[data-square="${from}"]`).click();
-    await page.locator(`[data-square="${to}"]`).click();
-  };
-  await play("e2", "e4");
-  await expect(page.getByText("Nf3")).toBeVisible(); // after Black's auto …e5, next prompt is Nf3
-  await play("g1", "f3");
-  await expect(page.getByText("Bc4")).toBeVisible(); // after auto …Nc6, next prompt is Bc4
-  await play("f1", "c4");
-  await expect(page.getByText(/you played the whole line/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Play again" })).toBeVisible();
-});
+// Every Track 3 opening must play its whole line to completion. Each step is
+// the learner's move plus the SAN the trainer prompts for it — we wait for that
+// prompt (which also covers the trainer's auto-reply, and the auto-1.e4 the
+// Scandinavian plays before Black's first move) before making the move. Covers
+// opponent-ending lines (Italian, Ruy Lopez — the regression), captures
+// (Scotch), a learner-ending line (London), and a Black-learner line where the
+// trainer moves first (Scandinavian).
+const OPENING_WALKTHROUGHS: { day: number; title: string; steps: [string, string, string][] }[] = [
+  {
+    day: 97,
+    title: "The Italian Game",
+    steps: [
+      ["e2", "e4", "e4"],
+      ["g1", "f3", "Nf3"],
+      ["f1", "c4", "Bc4"],
+    ],
+  },
+  {
+    day: 99,
+    title: "The Ruy Lopez",
+    steps: [
+      ["e2", "e4", "e4"],
+      ["g1", "f3", "Nf3"],
+      ["f1", "b5", "Bb5"],
+    ],
+  },
+  {
+    day: 101,
+    title: "The Scotch Game",
+    steps: [
+      ["e2", "e4", "e4"],
+      ["g1", "f3", "Nf3"],
+      ["d2", "d4", "d4"],
+      ["f3", "d4", "Nxd4"],
+    ],
+  },
+  {
+    day: 103,
+    title: "The London System",
+    steps: [
+      ["d2", "d4", "d4"],
+      ["g1", "f3", "Nf3"],
+      ["c1", "f4", "Bf4"],
+    ],
+  },
+  {
+    day: 105,
+    title: "The Scandinavian Defense",
+    steps: [
+      ["d7", "d5", "d5"],
+      ["d8", "d5", "Qxd5"],
+      ["d5", "a5", "Qa5"],
+    ],
+  },
+];
+
+for (const opening of OPENING_WALKTHROUGHS) {
+  test(`Opening Trainer plays ${opening.title} to completion`, async ({ page }) => {
+    await page.goto("/games/chess-quest");
+    await page.evaluate(() => localStorage.removeItem("seazn-games:chess-quest:v1"));
+    await page.reload();
+    // Launch the opening from its Track 3 lesson.
+    await page.getByRole("button", { name: `Day ${opening.day}: ${opening.title}` }).click();
+    await page.getByRole("button", { name: /Play the opening/ }).click();
+    await expect(page.getByText(new RegExp(opening.title)).first()).toBeVisible();
+
+    for (const [from, to, san] of opening.steps) {
+      // Wait for this move to be prompted (covers the trainer's prior auto-move).
+      await expect(page.getByText(san, { exact: true }).first()).toBeVisible();
+      await page.locator(`[data-square="${from}"]`).click();
+      await page.locator(`[data-square="${to}"]`).click();
+    }
+    await expect(page.getByText(/you played the whole line/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Play again" })).toBeVisible();
+  });
+}
 
 test("unknown game slug 404s", async ({ page }) => {
   const res = await page.goto("/games/not-a-game");
