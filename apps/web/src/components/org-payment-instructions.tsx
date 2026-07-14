@@ -107,7 +107,7 @@ export function OrgPaymentInstructions({
     <div className="space-y-5">
       {/* Stripe Connect (owners only — the API enforces it too). */}
       {isOwner && (
-        <div className="rounded-lg border border-slate-200 p-4">
+        <div data-tour="connect-stripe" className="rounded-lg border border-slate-200 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <p className="text-sm font-medium text-slate-800">Card payments (Stripe)</p>

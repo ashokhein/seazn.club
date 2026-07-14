@@ -587,9 +587,11 @@ body {
 .mk-nav-night .mk-nav-link:hover { opacity: 1; background: rgb(245 240 232 / 0.08); }
 .mk-nav-night .mk-nav-link.btn-ghost { background: transparent; border-color: #3b2a6e; color: var(--mk-cream); }
 .mk-nav-night .mk-nav-cta { background: var(--mk-lime); color: var(--mk-night); }
+/* Logo swap: light navs show the night-ink mark, the night hero shows the
+   cream mark (lime pitch line + red ball). Exactly one renders at a time. */
+.mk-nav-logo-img-night { display: none; }
 .mk-nav-night .mk-nav-logo-img { display: none; }
-.mk-nav-night .mk-nav-logo-text { color: var(--mk-cream); }
-.mk-nav-solid .mk-nav-logo-text { display: none; }
+.mk-nav-night .mk-nav-logo-img-night { display: block; }
 /* Dark funnel form variant */
 .mk-funnel-night { border-color: #3b2a6e; background: rgb(26 15 62 / 0.75); }
 .mk-funnel-night .label { color: #b7aede; }

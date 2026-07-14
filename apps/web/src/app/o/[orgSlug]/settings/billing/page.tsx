@@ -130,7 +130,7 @@ export default async function BillingPage({
         )}
 
         {/* Current plan */}
-        <section className="card mb-6 p-5">
+        <section data-tour="billing-plan" className="card mb-6 p-5">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
             Current plan
           </h2>
