@@ -1,7 +1,7 @@
 ---
 title: Reference numbers
 description: Every registration gets a short reference — players use it to check status, pay or withdraw, no account needed.
-order: 2
+order: 3
 ---
 
 Every registration gets a **reference** like `SZ-7F3K-Q2ND`, shown on the confirmation ticket and in email. It's how players interact with their entry without creating an account.

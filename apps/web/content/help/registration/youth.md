@@ -1,7 +1,7 @@
 ---
 title: Youth divisions and privacy
 description: Under-18 divisions get guardian consent at registration and shortened names on public pages.
-order: 4
+order: 5
 ---
 
 Set an under-age eligibility rule (U16, U12…) on a division and it is automatically flagged as a **youth division**. Two protections switch on:

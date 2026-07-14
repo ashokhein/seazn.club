@@ -1,7 +1,7 @@
 ---
 title: The waitlist
 description: When a division fills, new entries queue — and promote automatically when a spot frees.
-order: 3
+order: 4
 ---
 
 Set a **capacity** on registration and the division can never overfill. Entry number *capacity + 1* is offered the **waitlist** instead of a rejection.
