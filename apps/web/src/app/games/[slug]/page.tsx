@@ -37,6 +37,12 @@ export default async function GamePage({ params }: { params: Promise<Params> }) 
         </Link>
         <span className="text-sm text-slate-300">|</span>
         <h1 className="mk-display text-base font-bold text-purple-950">{game.title}</h1>
+        <Link
+          href="/"
+          className="ml-auto text-xs text-slate-400 hover:text-purple-600"
+        >
+          Powered by <span className="font-semibold">Seazn Club</span>
+        </Link>
       </header>
       <main className="min-h-0 flex-1">
         {game.status === "live" ? (
