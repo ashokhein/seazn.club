@@ -128,6 +128,57 @@ export function OrgPaymentInstructions({
               </span>
             )}
           </div>
+          {/* What connecting involves — the three stops on the way to taking
+              card entry fees, with the current one highlighted. */}
+          <ol className="mt-3 space-y-2">
+            {[
+              {
+                label: "Connect",
+                detail:
+                  "You're sent to Stripe's secure onboarding — Seazn Club never sees your details.",
+                done: !!connect?.connected,
+                active: !connect?.connected,
+              },
+              {
+                label: "Verify (KYC)",
+                detail:
+                  "Stripe verifies who receives the money: legal name, date of birth and bank account — clubs and companies may be asked for registration documents. Usually minutes; occasionally Stripe asks for more and it takes a day or two. You can leave and resume anytime.",
+                done: !!connect?.charges_enabled,
+                active: !!connect?.connected && !connect?.charges_enabled,
+              },
+              {
+                label: "Go live",
+                detail:
+                  "Charges enabled: divisions can take card entry fees, entries confirm on payment, and payouts land in your bank on Stripe's schedule — minus Stripe's processing fee and the platform fee for your plan.",
+                done: !!connect?.charges_enabled,
+                active: !!connect?.charges_enabled,
+              },
+            ].map((step, i) => (
+              <li key={step.label} className="flex items-start gap-2.5">
+                <span
+                  className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-semibold ${
+                    step.done
+                      ? "bg-emerald-100 text-emerald-700"
+                      : step.active
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  {step.done ? "✓" : i + 1}
+                </span>
+                <p className="text-xs leading-5 text-slate-500">
+                  <span
+                    className={`font-medium ${
+                      step.active ? "text-purple-700" : "text-slate-700"
+                    }`}
+                  >
+                    {step.label}
+                  </span>{" "}
+                  — {step.detail}
+                </p>
+              </li>
+            ))}
+          </ol>
           {!connect?.charges_enabled && (
             <button
               type="button"

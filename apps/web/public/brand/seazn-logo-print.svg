@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1520 440" role="img" aria-label="Seazn Club">
+  <!-- Print master (light backgrounds). Wordmark font: Anton (Google Fonts,
+       OFL). For print shops that require outlined text, open in Illustrator/
+       Inkscape with Anton installed and convert text to outlines, or use the
+       companion 4K PNG. -->
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Anton&amp;display=swap');
+    text { font-family: 'Anton', 'Arial Narrow', sans-serif; }
+  </style>
+  <text x="40" y="300" font-size="300" letter-spacing="4" fill="#150b36">SEAZN CLUB</text>
+  <rect x="40" y="352" width="1360" height="26" rx="13" fill="#a3e635"/>
+  <circle cx="1440" cy="312" r="40" fill="#ef4444"/>
+</svg>
