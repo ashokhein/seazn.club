@@ -48,7 +48,7 @@ test("pulse, queue order, #N in line, and public waitlist count all match one se
       request,
       `/api/v1/public/orgs/${org.slug}/competitions/${rig.compSlug}/register`,
       "POST",
-      { division_id: rig.divisionId, display_name: name, contact_email: email },
+      { division_id: rig.divisionId, display_name: name, contact_email: email, privacy_consent: true },
     );
 
   await submit("Holder One", `holder-${TAG}@e.com`); // takes the only spot (pending)

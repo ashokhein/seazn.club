@@ -156,7 +156,7 @@ export const messages = {
   "register.ticket.save": "Save ticket",
   "register.guardian.title": "Under-18 entry — guardian consent",
   "register.consent.data":
-    "I agree that {org} and Seazn Club will store and process the details on this form (name, contact email, date of birth) to run this competition.",
+    "I agree that {org} and Seazn Club will store and process the details on this form (name, email address, date of birth) to run this competition.",
   "register.consent.privacy": "Privacy Policy",
 
   // ── Showcase opt-in (doc 15 §1) — exact consent copy, shared by the

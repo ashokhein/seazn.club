@@ -15,7 +15,7 @@
 - DB-backed tests: ephemeral PG on 127.0.0.1:54329 (fall back 54331 if squatted), `DATABASE_SSL=disable`, run vitest from `apps/web` cwd (repo-root cwd breaks `@/` aliases).
 - `LEGAL_VERSION = "2026-07-14"` everywhere (privacy page "Last updated" bumps to 14 July 2026 in Task 7).
 - Every code change ships with a test that fails without it (standing feedback).
-- Copy style: sentence case, plain verbs; consent label = "I agree that {org} and Seazn Club will store and process the details on this form (name, contact email, date of birth) to run this competition."
+- Copy style: sentence case, plain verbs; consent label = "I agree that {org} and Seazn Club will store and process the details on this form (name, email address, date of birth) to run this competition."
 - rtk hook swallows `npx next dev` — launch dev servers as `node <root>/node_modules/next/dist/bin/next dev` with `PORT=<n>`.
 - Commit messages end with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
 
@@ -308,7 +308,7 @@ Note: `text-center` + `text-left` conflict — give LegalNotice `text-center` on
 
 ```ts
 "register.consent.data":
-  "I agree that {org} and Seazn Club will store and process the details on this form (name, contact email, date of birth) to run this competition.",
+  "I agree that {org} and Seazn Club will store and process the details on this form (name, email address, date of birth) to run this competition.",
 "register.consent.privacy": "Privacy Policy",
 ```
 

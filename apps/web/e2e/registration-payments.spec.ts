@@ -72,6 +72,7 @@ test("offline journey: instructions on the receipt, Mark paid confirms the entry
   await page.getByRole("radio").first().check();
   await page.getByLabel(/Full name/).fill(`Cash Payer ${TAG}`);
   await page.getByLabel(/Contact email/).fill(`cash-${TAG}@example.com`);
+  await page.getByRole("checkbox", { name: /I agree that/ }).check();
   await page.getByRole("button", { name: /Enter — £15\.00/ }).click();
 
   // Receipt: held spot + the division's own instructions (org override).
@@ -138,6 +139,7 @@ test("full paid division: waitlist promises no payment until promotion", async (
       division_id: rig.divisionId,
       display_name: "First In",
       contact_email: `first-pay-${TAG}@e.com`,
+      privacy_consent: true,
     },
   );
 
@@ -146,6 +148,7 @@ test("full paid division: waitlist promises no payment until promotion", async (
   await expect(page.getByText("Full — join the waitlist, pay only if promoted.")).toBeVisible();
   await page.getByLabel(/Full name/).fill("Wait Payer");
   await page.getByLabel(/Contact email/).fill(`waitpay-${TAG}@example.com`);
+  await page.getByRole("checkbox", { name: /I agree that/ }).check();
   await page.getByRole("button", { name: "Join the waitlist" }).click();
   await page.waitForURL(/register\/status\?rid=/, { timeout: 20_000 });
   await expect(page.getByText("no payment is taken while you wait")).toBeVisible();

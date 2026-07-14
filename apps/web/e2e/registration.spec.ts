@@ -47,6 +47,8 @@ test("public registration: open → register → confirm to entrant", async ({
     await anon.getByText("Singles").first().click(); // division radio card
     await anon.getByLabel(/full name/i).fill(`Reg Runner ${TAG}`);
     await anon.getByLabel(/contact email/i).fill(`e2e-reg-${TAG}@example.com`);
+    // GDPR (spec 2026-07-14): the form requires explicit privacy consent.
+    await anon.getByRole("checkbox", { name: /I agree that/ }).check();
     // Registration v2 (PROMPT-34) renamed the submit CTA.
     await anon.getByRole("button", { name: "Enter the competition" }).click();
 
