@@ -13,6 +13,7 @@ import { MateInOne } from "./components/games/MateInOne";
 import { MateInTwo } from "./components/games/MateInTwo";
 import { HangingHunt } from "./components/games/HangingHunt";
 import { TacticTrainer } from "./components/games/TacticTrainer";
+import { RookMaze } from "./components/games/RookMaze";
 
 type GameEntry = {
   id: string;
@@ -71,6 +72,13 @@ const GAMES: GameEntry[] = [
     title: "Trick Shots",
     blurb: "Forks, pins, skewers, discovered attacks.",
     render: () => <TacticTrainer pack="fork" />,
+  },
+  {
+    id: "rookMaze",
+    emoji: "🧩",
+    title: "Rook Maze",
+    blurb: "Slide around the walls to catch the prey.",
+    render: () => <RookMaze pieces={["R", "B", "Q"]} />,
   },
 ];
 

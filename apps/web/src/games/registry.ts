@@ -21,7 +21,7 @@ export const GAMES: GameMeta[] = [
     description:
       "A free chess learning adventure: 48 bite-size lessons across two tracks, from how the pieces move to mate-in-two tactics. Play mini-games, earn stars, and track your streak — right in the browser.",
     thumbnail: "♟️",
-    status: "coming-soon",
+    status: "live",
   },
 ];
 
