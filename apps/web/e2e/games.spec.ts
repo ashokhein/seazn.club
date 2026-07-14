@@ -47,6 +47,19 @@ test("free-play arcade lists the eight games and one solves", async ({ page }) =
   await expect(page.getByText(/Checkmate/)).toBeVisible();
 });
 
+test("an Opening Trainer lesson launches and takes the first move", async ({ page }) => {
+  await page.goto("/games/chess-quest");
+  await page.evaluate(() => localStorage.removeItem("seazn-games:chess-quest:v1"));
+  await page.reload();
+  await page.getByRole("button", { name: "Free play" }).click();
+  await page.getByRole("button", { name: /Opening Trainer/ }).click();
+  await expect(page.getByText(/The Italian Game/)).toBeVisible();
+  // First learner move in the Italian: e2–e4.
+  await page.locator('[data-square="e2"]').click();
+  await page.locator('[data-square="e4"]').click();
+  await expect(page.locator('[data-square="e4"]')).toHaveAttribute("aria-label", /white pawn/);
+});
+
 test("unknown game slug 404s", async ({ page }) => {
   const res = await page.goto("/games/not-a-game");
   expect(res?.status()).toBe(404);

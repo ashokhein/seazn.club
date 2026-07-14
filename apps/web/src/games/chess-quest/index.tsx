@@ -17,6 +17,7 @@ import { MateInTwo } from "./components/games/MateInTwo";
 import { HangingHunt } from "./components/games/HangingHunt";
 import { TacticTrainer } from "./components/games/TacticTrainer";
 import { RookMaze } from "./components/games/RookMaze";
+import { OpeningTrainer } from "./components/games/OpeningTrainer";
 import { Certificate } from "./components/quest/Certificate";
 import { GrownUpsDrawer } from "./components/quest/GrownUpsDrawer";
 import { LessonCard } from "./components/quest/LessonCard";
@@ -33,6 +34,7 @@ type Opts = Record<string, unknown>;
 function renderGame(game: GameId, opts: Opts) {
   const pieces = (opts.pieces as string[] | undefined) ?? undefined;
   const pack = (opts.pack as string | undefined) ?? undefined;
+  const opening = (opts.opening as string | undefined) ?? undefined;
   switch (game) {
     case "squareRace":
       return <SquareRace />;
@@ -50,6 +52,8 @@ function renderGame(game: GameId, opts: Opts) {
       return <TacticTrainer pack={pack ?? "fork"} />;
     case "rookMaze":
       return <RookMaze pieces={pieces ?? ["R", "B", "Q"]} />;
+    case "openingTrainer":
+      return <OpeningTrainer opening={opening ?? "italian"} />;
   }
 }
 
@@ -62,6 +66,7 @@ const ARCADE: { id: GameId; emoji: string; title: string; blurb: string; opts: O
   { id: "hangingHunt", emoji: "🔍", title: "Piece Detective", blurb: "Spot the piece that's free to take.", opts: {} },
   { id: "tacticTrainer", emoji: "🎯", title: "Trick Shots", blurb: "Forks, pins, skewers, discovered attacks.", opts: { pack: "fork" } },
   { id: "rookMaze", emoji: "🧩", title: "Rook Maze", blurb: "Slide around the walls to catch the prey.", opts: {} },
+  { id: "openingTrainer", emoji: "📖", title: "Opening Trainer", blurb: "Play a real opening, move by move.", opts: { opening: "italian" } },
 ];
 
 function QuestApp() {

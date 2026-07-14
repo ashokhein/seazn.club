@@ -9,7 +9,7 @@ export type Land = {
   goal: string;
   check: string; // Story register
   checkClassic: string; // Classic register
-  track?: 2; // present on Track 2 lands only
+  track?: 2 | 3; // present on Track 2 / Track 3 lands only
 };
 
 export const LANDS: Land[] = [
@@ -103,5 +103,16 @@ export const LANDS: Land[] = [
     check: "She picks moves from a candidate list, and her own games become her study book.",
     checkClassic:
       "You choose from candidate moves, exploit outposts and files, and mine every game you play for lessons.",
+  },
+  {
+    id: 10,
+    glyph: "♚",
+    name: "Opening Range",
+    weeks: [49, 53],
+    track: 3,
+    goal: "Turn opening rules into real repertoire — play five sound openings by hand.",
+    check: "She plays the Italian, Ruy Lopez, Scotch, London and Scandinavian from memory.",
+    checkClassic:
+      "You reproduce five standard openings move-for-move and can state each one’s plan.",
   },
 ];

@@ -53,4 +53,10 @@ describe("star formulas (ported thresholds)", () => {
     expect(STAR_RULES.rookMaze(6, 5)).toBe(2);
     expect(STAR_RULES.rookMaze(7, 5)).toBe(1);
   });
+  it("openingTrainer by mistakes", () => {
+    expect(STAR_RULES.openingTrainer(0)).toBe(3);
+    expect(STAR_RULES.openingTrainer(1)).toBe(2);
+    expect(STAR_RULES.openingTrainer(2)).toBe(2);
+    expect(STAR_RULES.openingTrainer(3)).toBe(1);
+  });
 });

@@ -11,7 +11,8 @@ export function Certificate() {
   const name = progress.getName() || "This player";
   const t1 = progress.trackDone(1);
   const t2 = progress.trackDone(2);
-  const { title, line } = certTitle(t1, t2);
+  const t3 = progress.trackDone(3);
+  const { title, line } = certTitle(t1, t2, t3);
   const landsDone = LANDS.filter((l) => progress.landDone(l)).length;
   const date = new Date().toLocaleDateString(undefined, {
     year: "numeric",

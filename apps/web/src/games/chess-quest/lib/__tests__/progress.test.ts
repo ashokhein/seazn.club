@@ -143,9 +143,13 @@ describe("lessons + tracks", () => {
     expect(p.landDone({ weeks: [1, 4] })).toBe(false);
     expect(p.trackDone(1)).toBe(2);
     expect(p.trackDone(2)).toBe(1);
+    p.setWeekDone(49, true);
+    p.setWeekDone(53, true);
+    expect(p.trackDone(3)).toBe(2);
     p.setWeekDone(2, false);
     expect(p.isWeekDone(2)).toBe(false);
-    expect(p.weeksDone()).toBe(2);
+    // done now: 1, 25, 49, 53
+    expect(p.weeksDone()).toBe(4);
   });
 
   it("totalStars = weeks done + game stars", () => {
