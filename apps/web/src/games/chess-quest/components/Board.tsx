@@ -80,14 +80,15 @@ export function Board({
         onClick={onTap ? () => onTap(idx) : undefined}
       >
         {p !== "" ? (
-          <span
+          // Classic Cburnett SVG pieces (see public/games/chess-quest/pieces/LICENSE.md)
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
             key={popping?.idx === idx ? `pop-${popping.n}` : "pc"}
-            className={`cq-pc ${isWhitePiece(p) ? "cq-pc-w" : "cq-pc-b"}${
-              popping?.idx === idx ? " cq-pop" : ""
-            }`}
-          >
-            {GLYPH[p.toUpperCase()]}
-          </span>
+            src={`/games/chess-quest/pieces/${p.toLowerCase()}${isWhitePiece(p) ? "l" : "d"}.svg`}
+            alt=""
+            draggable={false}
+            className={`cq-pc${popping?.idx === idx ? " cq-pop" : ""}`}
+          />
         ) : coins?.has(idx) ? (
           <span className="cq-coin" />
         ) : null}

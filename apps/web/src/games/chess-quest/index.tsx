@@ -1,35 +1,81 @@
 "use client";
 
-// Temporary Phase C2 preview: renders the Board inside GameShell to verify
-// the chrome in the browser. Task C7 replaces this with the game hub.
+// Chess Quest hub — pick a mini-game, play, come back. Games arrive here
+// task by task through Phase C; C7 finalizes the full 8-game grid.
 import "./chess-quest.css";
 import { useState } from "react";
-import { parseFEN, sqName } from "./engine";
-import { Board } from "./components/Board";
-import { GameShell } from "./components/GameShell";
+import { CopyProvider } from "./lib/copy";
+import { ProgressProvider } from "./lib/progress";
+import { SquareRace } from "./components/games/SquareRace";
+import { CoinHop } from "./components/games/CoinHop";
 
-const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+type GameEntry = {
+  id: string;
+  emoji: string;
+  title: string;
+  blurb: string;
+  render(): React.ReactNode;
+};
+
+const GAMES: GameEntry[] = [
+  {
+    id: "squareRace",
+    emoji: "🎯",
+    title: "Square Race",
+    blurb: "Name that square — how many in 60 seconds?",
+    render: () => <SquareRace />,
+  },
+  {
+    id: "coinHop",
+    emoji: "🪙",
+    title: "Coin Hop",
+    blurb: "Collect every coin in as few moves as you can.",
+    render: () => <CoinHop pieces={["N", "B", "R", "Q", "K"]} />,
+  },
+];
 
 export default function ChessQuest() {
-  const [last, setLast] = useState<string>("");
-  const [shake, setShake] = useState(0);
+  const [open, setOpen] = useState<GameEntry | null>(null);
+
   return (
-    <GameShell
-      title="Chess Quest"
-      score="board preview"
-      status={last ? `You tapped <strong>${last}</strong>` : "Tap any square."}
-      controls={
-        <button type="button" className="btn btn-ghost" onClick={() => setShake((s) => s + 1)}>
-          Shake
-        </button>
-      }
-    >
-      <Board
-        position={parseFEN(START).board}
-        labels
-        shakeToken={shake}
-        onTap={(idx) => setLast(sqName(idx))}
-      />
-    </GameShell>
+    <ProgressProvider>
+      <CopyProvider register="classic">
+        {open ? (
+          <div className="flex flex-col">
+            <div className="mx-auto w-full max-w-xl px-4 pt-3">
+              <button
+                type="button"
+                onClick={() => setOpen(null)}
+                className="text-sm font-medium text-purple-600 hover:text-purple-800"
+              >
+                ← All games
+              </button>
+            </div>
+            {open.render()}
+          </div>
+        ) : (
+          <div className="mx-auto w-full max-w-3xl px-4 py-8">
+            <h2 className="mk-display text-3xl font-bold text-purple-950">Chess Quest</h2>
+            <p className="mt-2 max-w-lg text-sm text-slate-600">
+              Eight mini-games that teach real chess skills — pick one and play.
+            </p>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {GAMES.map((g) => (
+                <button
+                  key={g.id}
+                  type="button"
+                  onClick={() => setOpen(g)}
+                  className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-sm transition hover:border-purple-300 hover:shadow-md"
+                >
+                  <div className="text-3xl">{g.emoji}</div>
+                  <h3 className="mk-display mt-2 text-lg font-bold text-purple-950">{g.title}</h3>
+                  <p className="mt-1 text-xs text-slate-500">{g.blurb}</p>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </CopyProvider>
+    </ProgressProvider>
   );
 }
