@@ -1,3 +1,7 @@
 {
-  "app.name": "Seazn Club"
+  "app.name": "Seazn Club",
+  "cookie.message": "Nous utilisons des cookies essentiels pour vous maintenir connecté. Avec votre consentement, nous utilisons également un outil d'analyse tiers pour comprendre l'utilisation du produit et améliorer Seazn Club. Aucun cookie publicitaire.",
+  "cookie.policyLink": "Politique relative aux cookies",
+  "cookie.accept": "Accepter",
+  "cookie.reject": "Refuser"
 }
