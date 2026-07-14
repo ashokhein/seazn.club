@@ -1,5 +1,6 @@
 import { sql } from "@/lib/db";
 import { hashPassword, safeNextPath } from "@/lib/auth";
+import { stampTermsAcceptance } from "@/lib/legal";
 import { handler } from "@/lib/http";
 import { baseUrl } from "@/lib/oauth";
 import { sendVerificationEmail } from "@/lib/email";
@@ -37,6 +38,8 @@ export async function POST(req: Request) {
       insert into users (email, password_hash, display_name, email_verified)
       values (${email}, ${password_hash}, ${display_name}, false)
       returning id`;
+    // Sign-up happened under the clickwrap notice (GDPR spec 2026-07-14).
+    await stampTermsAcceptance(user.id);
 
     // Email a single-use verification link. The account stays inactive (no
     // session) until the link is opened. A safe `next` (e.g. an invite) is

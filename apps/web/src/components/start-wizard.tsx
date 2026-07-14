@@ -6,6 +6,7 @@ import { useMemo, useState } from "react";
 import { api } from "@/lib/client";
 import { recommendFormats, type Recommendation } from "@/lib/format-recommend";
 import { FUNNEL_SPORTS } from "@/components/start-funnel-form";
+import { LegalNotice } from "@/components/legal-notice";
 
 interface Initial {
   sport?: string;
@@ -233,6 +234,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
             We’ll email you one link that signs you in and creates the
             competition. No password, no spam.
           </p>
+          <LegalNotice className="text-left" />
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex gap-2">
             <button type="button" onClick={() => setStep(1)} className="btn btn-ghost flex-none">

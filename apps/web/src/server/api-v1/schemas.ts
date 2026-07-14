@@ -918,6 +918,8 @@ export const PublicRegisterRequest = z.object({
   gender: z.enum(["m", "f", "x"]).nullish(),
   guardian_name: z.string().max(120).nullish(),
   guardian_consent: z.boolean().default(false),
+  /** GDPR (spec 2026-07-14): explicit agreement to store/process the form's PII. */
+  privacy_consent: z.boolean().default(false),
   answers: z.record(z.string(), z.unknown()).default({}),
   // Team registrations may include a squad roster (typed or imported). Ignored
   // for individual/pair entrants.

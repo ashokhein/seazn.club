@@ -8,7 +8,7 @@ Set an under-age eligibility rule (U16, U12…) on a division and it is automati
 
 ## Guardian consent
 
-The registration form adds a consent step: a parent or guardian ticks the box and gives their name. Entries without it can't be submitted.
+The registration form adds a consent step: a parent or guardian ticks the box and gives their name. Entries without it can't be submitted. This sits alongside the standard privacy-consent checkbox every registrant ticks — on a youth division the guardian gives both.
 
 ## Name privacy on public pages
 

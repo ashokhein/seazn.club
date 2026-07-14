@@ -17,6 +17,7 @@ import type postgres from "postgres";
 import type Stripe from "stripe";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
+import { LEGAL_VERSION } from "@/lib/legal";
 import { getLimit, requireFeature } from "@/lib/entitlements";
 import { platformFeeDefault } from "@/lib/platform-settings";
 import { getStripe } from "@/lib/stripe";
@@ -763,6 +764,12 @@ export async function submitRegistration(
     }
   }
 
+  // GDPR consent (spec 2026-07-14): explicit agreement before we store the
+  // registrant's details; timestamp + policy version make it demonstrable.
+  if (!input.privacy_consent) {
+    throw new HttpError(422, "Please agree to the privacy policy to register");
+  }
+
   const answers = validateAnswers(settings.form_fields ?? [], input.answers);
   const secret = mintRegistrationToken();
 
@@ -807,13 +814,15 @@ export async function submitRegistration(
             const [r] = await sp<RegistrationRow[]>`
               insert into registrations
                 (division_id, status, ref_code, display_name, contact_email, dob, gender,
-                 guardian_name, guardian_consent, answers, roster, amount_cents, currency,
+                 guardian_name, guardian_consent, privacy_consent_at, privacy_consent_version,
+                 answers, roster, amount_cents, currency,
                  payment_method, expires_at, access_token_hash)
               values
                 (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"}, ${ref},
                  ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
                  ${input.gender ?? null}, ${input.guardian_name ?? null},
-                 ${input.guardian_consent}, ${sp.json(answers as never)},
+                 ${input.guardian_consent}, now(), ${LEGAL_VERSION},
+                 ${sp.json(answers as never)},
                  ${sp.json(roster as never)},
                  ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
                  ${settings.payment_method},

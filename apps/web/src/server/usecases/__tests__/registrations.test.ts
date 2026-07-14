@@ -60,6 +60,7 @@ import {
   type RegistrationRow,
 } from "../registrations";
 import { isValidRefCode } from "@/lib/ref-code";
+import { LEGAL_VERSION } from "@/lib/legal";
 import { resolveNameDisplay } from "@/lib/name-display";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -214,6 +215,7 @@ const SUBMIT_BASE = {
   gender: null,
   guardian_name: null,
   guardian_consent: false,
+  privacy_consent: true,
   answers: {},
   players: [],
 };
@@ -261,6 +263,12 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     expect(res.registration.status).toBe("pending");
     expect(res.checkout_url).toBeNull();
     expect(res.access_token.startsWith("rg_")).toBe(true);
+
+    // GDPR (spec 2026-07-14): consent is demonstrable — timestamp + version stored.
+    const [stored] = await sql<{ privacy_consent_at: Date | null; privacy_consent_version: string | null }[]>`
+      select privacy_consent_at, privacy_consent_version from registrations where id = ${res.registration.id}`;
+    expect(stored.privacy_consent_at).toBeInstanceOf(Date);
+    expect(stored.privacy_consent_version).toBe(LEGAL_VERSION);
 
     const confirmed = await confirmRegistration(owner, res.registration.id);
     expect(confirmed.status).toBe("confirmed");
@@ -475,6 +483,22 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
       ...base, dob: "2012-05-01", guardian_name: "Pat Parent", guardian_consent: true,
     }, "http://t.local");
     expect(ok.registration.status).toBe("pending");
+  });
+
+  it("rejects submissions without privacy consent (GDPR, spec 2026-07-14)", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+    });
+
+    await expect(
+      submitRegistration(orgSlug, competition.slug, {
+        ...SUBMIT_BASE, division_id: division.id, privacy_consent: false,
+      }, "http://t.local"),
+    ).rejects.toThrow(/privacy/i);
   });
 
   it("custom form answers validate against the bounded builder", async () => {

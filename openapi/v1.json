@@ -30210,6 +30210,10 @@
                     "default": false,
                     "type": "boolean"
                   },
+                  "privacy_consent": {
+                    "default": false,
+                    "type": "boolean"
+                  },
                   "answers": {
                     "default": {},
                     "type": "object",
@@ -30271,6 +30275,7 @@
                   "display_name",
                   "contact_email",
                   "guardian_consent",
+                  "privacy_consent",
                   "answers",
                   "players"
                 ],
@@ -30282,6 +30287,7 @@
                 "contact_email": "example",
                 "dob": "2026-08-01",
                 "guardian_consent": true,
+                "privacy_consent": true,
                 "answers": {},
                 "players": [
                   {

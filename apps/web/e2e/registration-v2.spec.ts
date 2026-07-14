@@ -62,6 +62,7 @@ test("individual registers through the ticket page; /r/[ref] resolves; withdraw 
   await page.getByRole("radio").first().check();
   await page.getByLabel(/Full name/).fill(`Walk In ${TAG}`);
   await page.getByLabel(/Contact email/).fill(`walkin-${TAG}@example.com`);
+  await page.getByRole("checkbox", { name: /I agree that/ }).check();
   await page.getByRole("button", { name: "Enter the competition" }).click();
 
   // Success screen = the tear-off ticket with the huge mono ref.
@@ -135,6 +136,7 @@ test("pair and team kinds submit with their own identity blocks", async ({ page,
   await page.getByLabel(/Your name/).fill("Alex Pairman");
   await page.getByLabel(/Partner's name/).fill("Sam Partner");
   await page.getByLabel(/Contact email/).fill(`pair-${TAG}@example.com`);
+  await page.getByRole("checkbox", { name: /I agree that/ }).check();
   await page.getByRole("button", { name: "Enter the competition" }).click();
   await page.waitForURL(/register\/status\?rid=/, { timeout: 20_000 });
   await expect(page.getByText("Alex Pairman & Sam Partner")).toBeVisible();
@@ -147,6 +149,7 @@ test("pair and team kinds submit with their own identity blocks", async ({ page,
   await page.getByLabel(/Contact email/).fill(`team-${TAG}@example.com`);
   await page.getByRole("button", { name: "+ Add player" }).click();
   await page.getByLabel("Player 1 name").fill("Jordan Blake");
+  await page.getByRole("checkbox", { name: /I agree that/ }).check();
   await page.getByRole("button", { name: "Enter the competition" }).click();
   await page.waitForURL(/register\/status\?rid=/, { timeout: 20_000 });
   expect((await page.getByTestId("ref-code").textContent())?.trim()).toMatch(REF_RE);
@@ -165,7 +168,12 @@ test("full division flips to the waitlist state (an invitation, not a dead end)"
     request,
     `/api/v1/public/orgs/${org.slug}/competitions/${rig.compSlug}/register`,
     "POST",
-    { division_id: rig.divisions[0]!.id, display_name: "First In", contact_email: `first-${TAG}@e.com` },
+    {
+      division_id: rig.divisions[0]!.id,
+      display_name: "First In",
+      contact_email: `first-${TAG}@e.com`,
+      privacy_consent: true,
+    },
   );
 
   await page.goto(`/shared/${org.slug}/${rig.compSlug}/register`);
@@ -174,6 +182,7 @@ test("full division flips to the waitlist state (an invitation, not a dead end)"
   await expect(page.getByText("This division is full")).toBeVisible();
   await page.getByLabel(/Full name/).fill("Wait Lister");
   await page.getByLabel(/Contact email/).fill(`wait-${TAG}@example.com`);
+  await page.getByRole("checkbox", { name: /I agree that/ }).check();
   await page.getByRole("button", { name: "Join the waitlist" }).click();
   await page.waitForURL(/register\/status\?rid=/, { timeout: 20_000 });
   await expect(page.getByText("You're on the waitlist")).toBeVisible();
@@ -193,6 +202,7 @@ test("organiser panel: ref column renders and search-by-ref finds the row", asyn
       division_id: rig.divisions[0]!.id,
       display_name: "Findable Person",
       contact_email: `find-${TAG}@example.com`,
+      privacy_consent: true,
     },
   );
   const ref = reg.data!.ref_code;
@@ -253,11 +263,14 @@ test("youth division: public surfaces render first-initial names; open divisions
     "Henry Adams",
   ]);
 
-  // The consent section never renders on an open division without a minor
-  // DOB. (Select by label — the register panel orders divisions by name.)
+  // GDPR (spec 2026-07-14): the consent section always renders (privacy
+  // checkbox for everyone); the guardian block still only appears on youth
+  // divisions. (Select by label — the register panel orders divisions by name.)
   await page.goto(`/shared/${org.slug}/${rig.compSlug}/register`);
   await page.getByRole("radio", { name: /Open Public/ }).check();
-  await expect(page.locator("[data-section='consent']")).toHaveCount(0);
+  await expect(page.locator("[data-section='consent']")).toBeVisible();
+  await expect(page.getByText(/guardian consent/i)).toHaveCount(0);
   await page.getByRole("radio", { name: /U16 Public/ }).check();
   await expect(page.locator("[data-section='consent']")).toBeVisible();
+  await expect(page.getByText(/guardian consent/i).first()).toBeVisible();
 });

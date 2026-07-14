@@ -14,7 +14,7 @@ export default function PrivacyPage() {
       <MarketingNav />
       <main className="mx-auto max-w-3xl px-4 py-16">
         <h1 className="mb-2 text-3xl font-bold text-purple-900">Privacy Policy</h1>
-        <p className="mb-8 text-sm text-slate-400">Last updated: 30 June 2026</p>
+        <p className="mb-8 text-sm text-slate-400">Last updated: 14 July 2026</p>
         <div className="prose prose-slate max-w-none space-y-6 text-sm text-slate-700">
 
           <section>
@@ -31,6 +31,7 @@ export default function PrivacyPage() {
               <li><strong>Billing data:</strong> subscription status, plan. Card details are held by Stripe and never stored on our servers.</li>
               <li><strong>Usage data:</strong> product analytics events (e.g. "first tournament created", page views) collected via PostHog, only with your consent. Withdraw anytime by clearing cookies or rejecting the cookie banner.</li>
               <li><strong>Communication preferences:</strong> email suppression list (bounces / complaints).</li>
+              <li><strong>Consent records:</strong> when you create an account or submit a competition registration we record the time and policy version of your acceptance, so we can demonstrate it later.</li>
             </ul>
           </section>
 

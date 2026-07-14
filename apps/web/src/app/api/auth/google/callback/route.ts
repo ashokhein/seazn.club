@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { sql } from "@/lib/db";
 import { createSession, postAuthLanding, invalidateUser } from "@/lib/auth";
+import { stampTermsAcceptance } from "@/lib/legal";
 import {
   GOOGLE_TOKEN_URL,
   GOOGLE_USERINFO_URL,
@@ -62,6 +63,9 @@ export async function GET(req: Request) {
   const userId = await upsertGoogleUser(profile as GoogleProfile);
   // upsert may refresh display_name/avatar for an existing user.
   await invalidateUser(userId);
+  // "Continue with Google" sits under the clickwrap notice (GDPR spec
+  // 2026-07-14) — record acceptance; no-op if already stamped.
+  await stampTermsAcceptance(userId);
 
   // 4. Sign in.
   await createSession(userId);

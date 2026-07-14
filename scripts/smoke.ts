@@ -93,6 +93,9 @@ async function main() {
   check("active org cookie set", admin.cookies["seazn_org"] === ver.org_id);
   // A brand-new account (no onboarding completed) lands on the first-run wizard.
   check("new user routed to onboarding", ver.redirect === "/onboarding");
+  // GDPR (spec 2026-07-14): requesting the magic link under the clickwrap
+  // notice stamps terms acceptance on the account.
+  await checkTermsStamp(`admin_${tag}@example.com`);
   const org = { id: ver.org_id };
 
   // --- Competition lifecycle guards (v2 service layer) ---
@@ -622,6 +625,7 @@ async function regQueueSuite(admin: Session): Promise<void> {
       division_id: div.id,
       display_name: name,
       contact_email: `${name.replace(/ /g, "").toLowerCase()}_${tag}@example.com`,
+      privacy_consent: true,
     });
     if (res.status !== 201) {
       console.log(`queue submit "${name}" failed:`, res.status, JSON.stringify(res.json));
@@ -650,6 +654,27 @@ async function regQueueSuite(admin: Session): Promise<void> {
     "public card shows waitlist count",
     registerPage.status === 200 && registerPage.body.includes("full — waitlist: 2"),
   );
+}
+
+/** GDPR (spec 2026-07-14): assert the magic-link request stamped terms
+ *  acceptance — same SQL convention as setStaff/setConnect. */
+async function checkTermsStamp(email: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) return; // keyless run: nothing to assert against
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    const [row] = await sql<{ terms_accepted_at: Date | null; terms_version: string | null }[]>`
+      select terms_accepted_at, terms_version from users where email = ${email}`;
+    check("auth terms acceptance stamped", !!row?.terms_accepted_at && !!row?.terms_version);
+  } finally {
+    await sql.end();
+  }
 }
 
 /** Flip the staff-console flag on a user — same SQL-flip convention as
@@ -1154,6 +1179,7 @@ async function schedRegV3Suite(
     division_id: div.id,
     display_name: `Ref Probe ${tag}`,
     contact_email: `refprobe_${tag}@example.com`,
+    privacy_consent: true,
   });
   const regData = v1data<{ ref_code: string }>(reg);
   check(
@@ -1181,6 +1207,14 @@ async function schedRegV3Suite(
   });
   check("reg honeypot rejects bots (400)", honey.status === 400);
 
+  // GDPR (spec 2026-07-14): a submission without privacy consent is refused.
+  const noConsent = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
+    division_id: div.id,
+    display_name: `No Consent ${tag}`,
+    contact_email: `noconsent_${tag}@example.com`,
+  });
+  check("reg without privacy consent refused (422)", noConsent.status === 422);
+
   // --- Dual payments (spec 2026-07-12): offline mark-paid + card gates (pro) ---
   const orgsList = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
   const proOrgId = orgsList.find((o) => o.slug === proOrgSlug)!.id;
@@ -1201,6 +1235,7 @@ async function schedRegV3Suite(
     division_id: payDiv.id,
     display_name: `Cash Payer ${tag}`,
     contact_email: `cash_${tag}@example.com`,
+    privacy_consent: true,
   });
   const offRegData = v1data<{ registration_id: string; checkout_url: string | null }>(offReg);
   check(
@@ -1232,6 +1267,7 @@ async function schedRegV3Suite(
     division_id: payDiv.id,
     display_name: `Card Payer ${tag}`,
     contact_email: `card_${tag}@example.com`,
+    privacy_consent: true,
   });
   const cardRegData = v1data<{ registration_id: string; status: string }>(cardReg);
   // No Stripe key in smoke: the session mint fails gracefully — the row still
@@ -1267,6 +1303,7 @@ async function schedRegV3Suite(
     division_id: fDiv.id,
     display_name: `Free Ref ${tag}`,
     contact_email: `freeref_${tag}@example.com`,
+    privacy_consent: true,
   });
   const fRegData = v1data<{ ref_code: string }>(fReg);
   check(
@@ -2031,6 +2068,7 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     division_id: divId,
     display_name: `Walk In ${tag}`,
     contact_email: `walkin_${tag}@example.com`,
+    privacy_consent: true,
   });
   const regData = v1data<{ registration_id: string; status: string; access_token: string }>(reg);
   check(

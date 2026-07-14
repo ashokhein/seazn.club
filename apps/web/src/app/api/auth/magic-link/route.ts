@@ -1,6 +1,7 @@
 import { sql } from "@/lib/db";
 import { handler } from "@/lib/http";
 import { safeNextPath } from "@/lib/auth";
+import { stampTermsAcceptance } from "@/lib/legal";
 import { sendMagicLinkEmail } from "@/lib/email";
 import { createLoginLink } from "@/lib/login-link";
 import { baseUrl } from "@/lib/oauth";
@@ -68,6 +69,9 @@ export async function POST(req: Request) {
 
     let devLink: string | undefined;
     if (userId) {
+      // The submit sat under the "By continuing, you agree…" notice (GDPR
+      // spec 2026-07-14) — record acceptance; no-op if already stamped.
+      await stampTermsAcceptance(userId);
       const token = await createLoginLink(userId);
       const nextQuery = next ? `&next=${encodeURIComponent(next)}` : "";
       const link = `${baseUrl(req)}/magic-link?token=${token}${nextQuery}`;
