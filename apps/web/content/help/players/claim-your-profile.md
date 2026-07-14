@@ -8,7 +8,7 @@ Organisers add players to their club directory; claiming links that entry to you
 
 ## How claiming works
 
-An organiser sends you a **claim invite** by email. Open the link, sign in with **that same email address** (a magic link, no password), and tap **This is me**. The link works for 14 days and for one profile.
+An organiser sends you a **claim invite** by email. Open the link, sign in with **that same email address** (a magic link, no password), and tap **This is me**. The link works for 14 days and for one profile. Signing in accepts our [Terms of Service](/legal/terms) and [Privacy Policy](/legal/privacy) — the notice sits under the sign-in button.
 
 Signed in with a different address? The page will tell you — sign out and sign in with the invited one. If the organiser used the wrong address, ask them to re-send the invite. If the link says *expired*, *withdrawn* or *already claimed*, a fresh invite fixes it — your profile and history are unaffected.
 

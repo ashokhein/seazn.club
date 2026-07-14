@@ -18,6 +18,10 @@ The division's **registration settings** are grouped by what matters when — **
   - **Card at sign-up** (Pro / Event Pass) — Stripe checkout during registration, settling straight to your connected Stripe account. Connect Stripe first under *Settings → Payments* (a short one-time onboarding). Paid entries are **confirmed automatically**; unpaid ones hold their spot for **48 hours** (reminder at 24h) and then expire, promoting the waitlist. The full journey — KYC, payouts, refunds and disputes — is in [how card entry fees flow](/help/registration/card-payments).
 - **Custom questions** (in **Sign-up form**) — shirt size, dietary needs, emergency contact; answers export with the entrant list.
 
+## Privacy consent
+
+Every registrant ticks a consent box before submitting: they agree that your organisation and Seazn Club store and process the details on the form (name, email address, date of birth) to run the competition. The form won't submit without it, and the acceptance — with its time and policy version — is stored on the entry, so you can demonstrate consent later if a registrant asks. The [Privacy Policy](/legal/privacy) is linked right on the checkbox.
+
 ## After someone registers
 
 They get a **reference number** like `SZ-7F3K-Q2ND` and a tear-off ticket — their key to checking status, paying and withdrawing without an account ([how references work](/help/registration/reference-numbers)).

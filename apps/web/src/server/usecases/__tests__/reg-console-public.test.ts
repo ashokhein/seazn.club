@@ -87,6 +87,7 @@ const SUBMIT_BASE = {
   gender: null,
   guardian_name: null,
   guardian_consent: false,
+  privacy_consent: true,
   answers: {},
   players: [],
 };
