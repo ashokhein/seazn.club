@@ -29,7 +29,9 @@ import {
   sendRegistrationPromotedEmail,
   sendRefundIssuedEmail,
   sendDisputeAlertEmail,
+  sendDisputeLostEmail,
 } from "@/lib/email";
+import { routes } from "@/lib/routes";
 import { generateRefCode, isValidRefCode, normalizeRefCode } from "@/lib/ref-code";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -293,6 +295,7 @@ interface DivisionCtx {
   comp_visibility: string;
   starts_on: string | null;
   ends_on: string | null;
+  div_slug: string;
   org_slug: string;
   org_name: string;
   payment_instructions: string | null;
@@ -301,7 +304,7 @@ interface DivisionCtx {
 
 async function divisionCtx(db: AnySql, divisionId: string): Promise<DivisionCtx> {
   const [row] = await db<DivisionCtx[]>`
-    select d.id, d.competition_id, d.org_id, d.eligibility,
+    select d.id, d.competition_id, d.org_id, d.eligibility, d.slug as div_slug,
            c.name as comp_name, c.slug as comp_slug, c.visibility as comp_visibility,
            c.starts_on, c.ends_on,
            o.slug as org_slug, o.name as org_name, o.payment_instructions,
@@ -1103,14 +1106,10 @@ export async function handleRegistrationDispute(
       dispute_id: dispute.id,
       amount_cents: dispute.amount,
     }, null);
-    // Current owner via org_members, NOT organizations.created_by — ownership
-    // transfers flip the role but leave created_by on the original creator.
-    const [owner] = await sql<{ email: string }[]>`
-      select u.email from org_members m join users u on u.id = m.user_id
-      where m.org_id = ${reg.org_id} and m.role = 'owner' limit 1`;
+    const owner = await currentOwnerEmail(reg.org_id);
     if (owner) {
       void sendDisputeAlertEmail({
-        to: owner.email,
+        to: owner,
         orgName: ctx.org_name,
         competitionName: ctx.comp_name,
         displayName: reg.display_name,
@@ -1129,6 +1128,8 @@ export async function handleRegistrationDispute(
       dispute_id: dispute.id,
     }, null);
   } else if (dispute.status === "lost") {
+    // The write-off must land whatever Stripe does next — same contract as
+    // refund failure never undoing a withdrawal.
     await sql`update registrations
               set refunded_cents = amount_cents,
                   refunded_at = coalesce(refunded_at, now()), updated_at = now()
@@ -1137,6 +1138,121 @@ export async function handleRegistrationDispute(
       registration_id: reg.id,
       dispute_id: dispute.id,
     }, null);
+    const recovery = await recoverDisputedTransfer(dispute, reg, ctx);
+    // `already` = a replayed close (metadata guard hit) — everything below
+    // already happened on the first run.
+    if (!recovery.already) {
+      const owner = await currentOwnerEmail(reg.org_id);
+      if (owner) {
+        void sendDisputeLostEmail({
+          to: owner,
+          orgName: ctx.org_name,
+          competitionName: ctx.comp_name,
+          displayName: reg.display_name,
+          amountCents: dispute.amount,
+          currency: reg.currency ?? "gbp",
+          refCode: reg.ref_code,
+          recoveredCents: recovery.recoveredCents,
+          consoleUrl:
+            fallbackOrigin() +
+            routes.divisionRegistrations(ctx.org_slug, ctx.comp_slug, ctx.div_slug),
+        }).catch(() => {});
+      }
+    }
+  }
+}
+
+/** Current owner via org_members, NOT organizations.created_by — ownership
+ *  transfers flip the role but leave created_by on the original creator. */
+async function currentOwnerEmail(orgId: string): Promise<string | null> {
+  const [owner] = await sql<{ email: string }[]>`
+    select u.email from org_members m join users u on u.id = m.user_id
+    where m.org_id = ${orgId} and m.role = 'owner' limit 1`;
+  return owner?.email ?? null;
+}
+
+/**
+ * PROMPT-55: on a LOST entry-fee dispute, pull the club's net back off its
+ * connected balance so the platform's loss is Stripe's dispute fee only.
+ *
+ * Mechanics verified against the live API in test mode (2026-07-14, GBP):
+ * destination charges transfer the FULL charge amount to the connected
+ * account and collect the application fee from it separately, and a lost
+ * dispute auto-reverses NEITHER — the platform is debited
+ * dispute.amount + Stripe's dispute fee, the transfer stays unreversed and
+ * the application fee stays earned. Worked example (fee 2000, app fee 100,
+ * GBP dispute fee 2000): transfer = 2000, club net = 1900; on loss the
+ * platform is debited 4000. Reversing 1900 leaves the club exactly flat on
+ * the entry (2000 in − 100 app fee − 1900 reversed = 0) and the platform's
+ * net cost is the dispute fee alone (−4000 + 1900 recovered + 100 app fee
+ * kept = −2000). Absorbing that fee is the cost of owning the dispute flow.
+ *
+ * The reversal may push the club's Express balance negative; Stripe then
+ * recovers from future payouts or bank debits per the Connect settings —
+ * that is the intended liability chain: the platform owns the dispute
+ * response (Express accounts have no dispute surface), clubs own the
+ * economic risk of their own registrants.
+ *
+ * Never throws: recovery failure is audited and must not block the webhook
+ * ACK or the write-off above. Stripe calls stay OUTSIDE any sql tx.
+ */
+async function recoverDisputedTransfer(
+  dispute: Stripe.Dispute,
+  reg: RegistrationRow,
+  ctx: DivisionCtx,
+): Promise<{ recoveredCents: number; already: boolean }> {
+  const note = (type: string, extra: Record<string, unknown>) =>
+    audit(sql, ctx.competition_id, reg.org_id, type, {
+      registration_id: reg.id,
+      dispute_id: dispute.id,
+      ...extra,
+    }, null);
+  try {
+    const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
+    if (!chargeId) {
+      await note("registration.dispute_recovery_skipped", { reason: "no_charge" });
+      return { recoveredCents: 0, already: false };
+    }
+    const stripe = getStripe();
+    const charge = await stripe.charges.retrieve(chargeId, { expand: ["transfer"] });
+    let transfer = charge.transfer;
+    if (typeof transfer === "string") transfer = await stripe.transfers.retrieve(transfer);
+    if (!transfer) {
+      // e.g. the charge predates the Connect wiring.
+      await note("registration.dispute_recovery_skipped", { reason: "no_transfer" });
+      return { recoveredCents: 0, already: false };
+    }
+    // Stripe idempotency keys expire (~24h) but /admin/billing-events can
+    // replay a closed event much later — this metadata check is the durable
+    // guard against double reversals; the key below covers webhook retries.
+    const existing = await stripe.transfers.listReversals(transfer.id, { limit: 100 });
+    if (existing.data.some((r) => r.metadata?.dispute_id === dispute.id)) {
+      return { recoveredCents: 0, already: true };
+    }
+    // Club's net share of the disputed amount (partial disputes exist),
+    // capped by whatever is still unreversed on the transfer.
+    const net = transfer.amount - (charge.application_fee_amount ?? 0);
+    const share = Math.round((dispute.amount * net) / charge.amount);
+    const amount = Math.min(share, transfer.amount - transfer.amount_reversed);
+    if (amount <= 0) {
+      await note("registration.dispute_recovery_skipped", { reason: "nothing_to_reverse" });
+      return { recoveredCents: 0, already: false };
+    }
+    await stripe.transfers.createReversal(
+      transfer.id,
+      { amount, metadata: { dispute_id: dispute.id, registration_id: reg.id } },
+      { idempotencyKey: `dispute-reversal-${dispute.id}` },
+    );
+    await note("registration.dispute_recovered", {
+      transfer_id: transfer.id,
+      reversed_cents: amount,
+    });
+    return { recoveredCents: amount, already: false };
+  } catch (err) {
+    await note("registration.dispute_recovery_failed", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { recoveredCents: 0, already: false };
   }
 }
 

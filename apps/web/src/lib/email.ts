@@ -18,6 +18,8 @@ import {
   type RefundIssuedArgs,
   disputeAlertTemplate,
   type DisputeAlertArgs,
+  disputeLostTemplate,
+  type DisputeLostArgs,
   funnelClaimTemplate,
   funnelReminderTemplate,
   type FunnelEmailArgs,
@@ -224,6 +226,17 @@ export interface DisputeAlertEmail extends DisputeAlertArgs {
 export async function sendDisputeAlertEmail(opts: DisputeAlertEmail): Promise<boolean> {
   const { to, ...args } = opts;
   return send({ to, ...disputeAlertTemplate(args) });
+}
+
+export interface DisputeLostEmail extends DisputeLostArgs {
+  to: string;
+}
+
+/** Organiser outcome mail: a chargeback closed lost — states the write-off
+ *  and the balance recovery (PROMPT-55). */
+export async function sendDisputeLostEmail(opts: DisputeLostEmail): Promise<boolean> {
+  const { to, ...args } = opts;
+  return send({ to, ...disputeLostTemplate(args) });
 }
 
 /** True when Resend is configured. */

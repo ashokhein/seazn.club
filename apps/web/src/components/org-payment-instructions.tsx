@@ -36,6 +36,7 @@ export function OrgPaymentInstructions({
   const [connect, setConnect] = useState<ConnectStatus | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectBusy, setConnectBusy] = useState(false);
+  const [tosAgreed, setTosAgreed] = useState(false);
   const dirty = value.trim() !== (initialValue ?? "").trim();
 
   // Connect status is owner-only server-side; returning from Stripe
@@ -87,7 +88,7 @@ export function OrgPaymentInstructions({
     try {
       const { url } = await apiV1<{ url: string }>(`/api/v1/orgs/${orgId}/connect`, {
         method: "POST",
-        json: { return_path: "/settings/payments" },
+        json: { return_path: "/settings/payments", tos_agreed: tosAgreed },
       });
       window.location.assign(url);
     } catch (err) {
@@ -180,11 +181,37 @@ export function OrgPaymentInstructions({
               </li>
             ))}
           </ol>
+          {/* ToS gate (PROMPT-55): the first connect creates the Express
+              account, so the chargeback clause is accepted before it exists.
+              Resuming an existing onboarding never re-asks. */}
+          {!connect?.charges_enabled && !connect?.connected && (
+            <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-600">
+              <input
+                type="checkbox"
+                checked={tosAgreed}
+                onChange={(e) => setTosAgreed(e.target.checked)}
+                className="mt-0.5 accent-purple-600"
+              />
+              <span>
+                I agree to the{" "}
+                <a
+                  href="/legal/terms"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-purple-600 underline"
+                >
+                  Terms of Service
+                </a>
+                , including that my organisation bears the cost of chargebacks on its
+                entry fees — lost disputes are recovered from our Stripe balance.
+              </span>
+            </label>
+          )}
           {!connect?.charges_enabled && (
             <button
               type="button"
               onClick={startOnboarding}
-              disabled={connectBusy}
+              disabled={connectBusy || (!connect?.connected && !tosAgreed)}
               className="btn btn-primary mt-3 px-4 text-sm"
             >
               {connectBusy

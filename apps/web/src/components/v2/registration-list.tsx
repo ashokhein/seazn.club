@@ -19,12 +19,17 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 /** Payment chip per row (spec §8): one glanceable money state. */
-function paymentChip(r: Registration): { label: string; cls: string } | null {
+function paymentChip(r: Registration): { label: string; cls: string; title?: string } | null {
   if (r.amount_cents <= 0 && !r.payment_intent_id) return null;
   // A closed-lost dispute leaves disputed_at set for history AND marks the
   // money returned — show that outcome, not a still-open-looking flag.
   if (r.disputed_at && r.refunded_cents >= r.amount_cents && r.amount_cents > 0)
-    return { label: "dispute lost · refunded", cls: "bg-rose-100 text-rose-700" };
+    return {
+      label: "dispute lost · refunded",
+      cls: "bg-rose-100 text-rose-700",
+      // Static copy (PROMPT-55): deep history lives in the activity log.
+      title: "The cardholder was repaid by Stripe and the amount was recovered from your Stripe balance.",
+    };
   if (r.disputed_at) return { label: "⚠ disputed", cls: "bg-rose-100 text-rose-700" };
   const partiallyRefunded = r.refunded_cents > 0 && r.refunded_cents < r.amount_cents;
   if (r.refunded_cents >= r.amount_cents && r.refunded_cents > 0)
@@ -231,7 +236,7 @@ export function RegistrationList({
                     <span className="badge bg-sky-100 font-mono text-sky-700">#{positions.get(r.id)}</span>
                   )}
                   {chip && (
-                    <span className={`badge ${chip.cls}`} data-testid="payment-chip">
+                    <span className={`badge ${chip.cls}`} data-testid="payment-chip" title={chip.title}>
                       {chip.label}
                     </span>
                   )}

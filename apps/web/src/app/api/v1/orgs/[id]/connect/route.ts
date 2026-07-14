@@ -28,6 +28,8 @@ export async function POST(req: Request, { params }: Ctx) {
     assertUuid(id, "organization");
     const auth = await requireOrgAuth(req, id, "write");
     const input = await parseBody(req, CreateConnectOnboarding);
-    return createConnectOnboardingLink(auth, id, baseUrl(req), input.return_path);
+    return createConnectOnboardingLink(
+      auth, id, baseUrl(req), input.return_path, input.tos_agreed,
+    );
   });
 }

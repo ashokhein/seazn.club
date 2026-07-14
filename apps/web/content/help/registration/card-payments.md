@@ -8,7 +8,7 @@ Card entry fees run on **Stripe Connect**: registrants pay at sign-up, the money
 
 ## 1. Connect and verify (one-time)
 
-Under **Settings → Payments**, press **Connect Stripe**. You're sent to Stripe's secure onboarding — Seazn Club never sees your details. Stripe verifies who receives the money (**KYC**): legal name, date of birth and bank account; clubs and companies may be asked for registration documents. Usually minutes; occasionally Stripe asks for more and it takes a day or two. You can leave and resume anytime.
+Under **Settings → Payments**, agree to the Terms of Service — connecting means your organisation bears the cost of chargebacks on its entry fees (see [§5 below](#5-disputes-chargebacks)) — then press **Connect Stripe**. You're sent to Stripe's secure onboarding — Seazn Club never sees your details. Stripe verifies who receives the money (**KYC**): legal name, date of birth and bank account; clubs and companies may be asked for registration documents. Usually minutes; occasionally Stripe asks for more and it takes a day or two. You can leave and resume anytime.
 
 When Stripe finishes, your Payments page shows **Live — charges enabled** and divisions can choose **Card at sign-up**. Until then, saving a card division is blocked — and if verification ever lapses later, card divisions close to new entries automatically rather than take money that can't be collected.
 
@@ -30,7 +30,11 @@ Refunds you make directly in the Stripe dashboard sync back — the entry shows 
 
 ## 5. Disputes (chargebacks)
 
-If a cardholder disputes a payment, the registration is **flagged on your console** the moment Stripe tells us, and you get an alert email. Press **Evidence pack** on the flagged entry — it downloads one document with everything that proves the entry was genuine: the registration record, a reconstruction of the confirmation email, the full activity log and the entrant's fixtures, mapped to Stripe's evidence fields. Respond to the dispute in your Stripe dashboard using it. If the dispute is lost, the payment returns to the cardholder. When it closes, the flag updates automatically.
+If a cardholder disputes a payment, the registration is **flagged on your console** the moment Stripe tells us, and you get an alert email. Press **Evidence pack** on the flagged entry — it downloads one document with everything that proves the entry was genuine: the registration record, a reconstruction of the confirmation email, the full activity log and the entrant's fixtures, mapped to Stripe's evidence fields. Seazn Club submits the response to Stripe. When the dispute closes, the flag updates automatically.
+
+**If the dispute is won**, the flag clears and nothing changes — the money stays yours.
+
+**If the dispute is lost**, Stripe repays the cardholder and the entry shows **dispute lost · refunded**. The disputed amount is then **recovered from your Stripe balance** — if the balance can't cover it, Stripe takes the difference from your upcoming payouts or your linked bank account on its own schedule. Seazn Club covers Stripe's dispute fee, and you get an email stating exactly what moved. Whether the entrant stays in the competition is your call — the entry is flagged, not withdrawn.
 
 ## Common questions
 

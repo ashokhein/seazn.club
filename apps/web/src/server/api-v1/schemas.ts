@@ -987,6 +987,10 @@ export const ConnectStatus = z.object({
 export const CreateConnectOnboarding = z.object({
   /** App-relative path to return to after Stripe onboarding. */
   return_path: z.string().max(300).regex(/^\//, "app-relative path").default("/settings/billing"),
+  /** Acceptance of the entry-fee chargeback terms (ToS §5). Required for the
+   *  first connect — the Express account is only created once accepted;
+   *  resuming onboarding does not re-ask (PROMPT-55). */
+  tos_agreed: z.boolean().default(false),
 });
 export type CreateConnectOnboarding = z.infer<typeof CreateConnectOnboarding>;
 

@@ -310,10 +310,45 @@ async function main() {
   // BEFORE gapSuite: its downgrade eats org2's competition headroom.
   await playerAccountsSuite(admin, org2.id);
 
+  // --- design/v9 PROMPT-55: dispute-loss recovery surfaces.
+  await disputeSurfacesSuite();
+
   await gapSuite(admin, org.id, org2.id);
 
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
   await platformRevenueSuite(admin, `admin_${tag}@example.com`);
+}
+
+/** design/v9 PROMPT-55: the chargeback-liability copy is live on the public
+ *  surfaces (same pages on free and pro — both plans' organisers are bound
+ *  by the same clause), and connecting Stripe refuses without accepting it.
+ *  The reversal itself is webhook-driven and covered by the DB-backed vitest
+ *  suite; smoke pins what organisers actually read and click. Runs on its
+ *  own org — the shared pro org already carries a smoke-flipped Connect
+ *  account, which skips the first-connect gate by design. */
+async function disputeSurfacesSuite() {
+  const terms = await html(newSession(), "/legal/terms");
+  check(
+    "p55: ToS carries the entry-fee chargeback clause",
+    terms.status === 200 &&
+      terms.body.includes("Entry-fee chargebacks") &&
+      terms.body.includes("recovered from your connected Stripe balance"),
+  );
+  const helpCards = await html(newSession(), "/help/registration/card-payments");
+  check(
+    "p55: card-payments help states the lost-dispute outcome",
+    helpCards.status === 200 && helpCards.body.includes("recovered from your Stripe balance"),
+  );
+  // First connect without accepting the terms is refused before any Stripe
+  // call — asserts the server-side gate, not just the disabled checkbox
+  // (keyless-safe: the 422 answers before getStripe()).
+  const owner = newSession();
+  const who = await signIn(owner, `tos_${tag}@example.com`);
+  await setPlan(who.org_id, "pro");
+  const refused = await v1(owner, `/api/v1/orgs/${who.org_id}/connect`, "POST", {
+    return_path: "/settings/payments",
+  });
+  check("p55: connect refuses without ToS agreement (422)", refused.status === 422);
 }
 
 /** PROMPT-53 player accounts over real HTTP: invite → claim → RSVP →
@@ -2392,6 +2427,7 @@ async function cleanup(tag: string): Promise<void> {
     `ui_free_${tag}@example.com`,
     `pass_${tag}@example.com`,
     `funnel_${tag}@example.com`,
+    `tos_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
