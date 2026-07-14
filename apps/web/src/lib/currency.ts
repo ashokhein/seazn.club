@@ -48,10 +48,14 @@ export function passPrice(currency: Currency): number {
  * Format minor units in a currency for marketing surfaces: whole amounts drop
  * the decimals ("$20", "₹1,499"), fractional ones keep them ("$16.67").
  */
-export function formatMinor(amountMinor: number, currency: Currency): string {
+export function formatMinor(
+  amountMinor: number,
+  currency: Currency,
+  locale = "en",
+): string {
   const amount = amountMinor / 100;
   const whole = Number.isInteger(amount);
-  return new Intl.NumberFormat("en", {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: currency.toUpperCase(),
     minimumFractionDigits: whole ? 0 : 2,
