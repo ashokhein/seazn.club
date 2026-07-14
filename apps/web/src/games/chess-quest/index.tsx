@@ -1,15 +1,35 @@
 "use client";
 
-// Phase A placeholder — proves the registry → player-map → lazy-load path.
-// Phase C replaces this with the real Chess Quest root component.
+// Temporary Phase C2 preview: renders the Board inside GameShell to verify
+// the chrome in the browser. Task C7 replaces this with the game hub.
+import "./chess-quest.css";
+import { useState } from "react";
+import { parseFEN, sqName } from "./engine";
+import { Board } from "./components/Board";
+import { GameShell } from "./components/GameShell";
+
+const START = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
 export default function ChessQuest() {
+  const [last, setLast] = useState<string>("");
+  const [shake, setShake] = useState(0);
   return (
-    <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-      <div className="text-6xl">♟️</div>
-      <h2 className="mk-display text-2xl font-bold text-purple-950">Chess Quest</h2>
-      <p className="max-w-sm text-sm text-slate-500">
-        The quest is being prepared. Check back soon!
-      </p>
-    </div>
+    <GameShell
+      title="Chess Quest"
+      score="board preview"
+      status={last ? `You tapped <strong>${last}</strong>` : "Tap any square."}
+      controls={
+        <button type="button" className="btn btn-ghost" onClick={() => setShake((s) => s + 1)}>
+          Shake
+        </button>
+      }
+    >
+      <Board
+        position={parseFEN(START).board}
+        labels
+        shakeToken={shake}
+        onTap={(idx) => setLast(sqName(idx))}
+      />
+    </GameShell>
   );
 }
