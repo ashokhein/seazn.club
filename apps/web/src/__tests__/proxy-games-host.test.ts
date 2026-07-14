@@ -27,6 +27,16 @@ describe("games subdomain host rewrite", () => {
     expect(gamesHostRewrite(req("/api/v1/public/discovery", GAMES_HOST))).toBeNull();
   });
 
+  it("leaves shared assets and non-page trees alone (found in browser demo)", () => {
+    // Public files: layout links /site.webmanifest on every page.
+    expect(gamesHostRewrite(req("/site.webmanifest", GAMES_HOST))).toBeNull();
+    expect(gamesHostRewrite(req("/brand/logo-wide.png", GAMES_HOST))).toBeNull();
+    // PostHog reverse proxy (next.config rewrites /ingest/* upstream).
+    expect(gamesHostRewrite(req("/ingest/array/phc_x/config.js", GAMES_HOST))).toBeNull();
+    // Multi-segment paths have no games route — pass through to 404 as-is.
+    expect(gamesHostRewrite(req("/chess-quest/deep/path", GAMES_HOST))).toBeNull();
+  });
+
   it("ignores non-games hosts (incl. lookalike paths)", () => {
     expect(gamesHostRewrite(req("/", { host: "seazn.club" }))).toBeNull();
     expect(gamesHostRewrite(req("/gamesfoo", GAMES_HOST))?.pathname).toBe("/games/gamesfoo");

@@ -78,14 +78,21 @@ export function requestHostname(request: NextRequest): string {
  * games.* hosts serve the /games route tree: games.seazn.club/ is the games
  * listing, games.seazn.club/<slug> plays a game. Any `games.`-prefixed host
  * matches so staging (games.stg…) and local (games.localhost) work unchanged.
- * Returns the rewritten URL, or null when no rewrite applies (wrong host,
- * API call, or already inside /games — never double-prefix).
+ * Returns the rewritten URL, or null when no rewrite applies.
+ *
+ * Only "/" and single-segment slug paths ("/chess-quest") rewrite — the games
+ * tree has no deeper URLs. Everything else (API, /ingest PostHog proxy,
+ * public files like /site.webmanifest or /brand/*, and /games itself — never
+ * double-prefix) passes through untouched so shared assets keep working on
+ * the subdomain.
  */
+const GAMES_SLUG_PATH = /^\/[a-z0-9-]+$/;
+
 export function gamesHostRewrite(request: NextRequest): URL | null {
   if (!requestHostname(request).startsWith("games.")) return null;
   const { pathname } = request.nextUrl;
-  if (pathname.startsWith("/api/")) return null;
-  if (pathname === "/games" || pathname.startsWith("/games/")) return null;
+  if (pathname !== "/" && !GAMES_SLUG_PATH.test(pathname)) return null;
+  if (pathname === "/games") return null;
   const url = request.nextUrl.clone();
   url.pathname = pathname === "/" ? "/games" : `/games${pathname}`;
   return url;
