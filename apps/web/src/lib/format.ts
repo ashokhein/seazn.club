@@ -68,8 +68,36 @@ export function fmtZoneAbbrev(
 ): string {
   const d = toDate(value) ?? new Date();
   const parts = fmt(tz, { timeZoneName: "short" }).formatToParts(d);
-  return parts.find((p) => p.type === "timeZoneName")?.value ?? tz;
+  const raw = parts.find((p) => p.type === "timeZoneName")?.value ?? tz;
+  // ICU builds vary: some emit "IST"/"BST", others fall back to an offset
+  // ("GMT+5:30") for the very same zone (Node and some headless browsers do
+  // this for Asia/Kolkata). When the runtime punts to an offset AND we have a
+  // stable, DST-free abbreviation for the zone, prefer the recognizable name so
+  // "IST" doesn't read as "GMT+5:30". We never override a runtime that already
+  // produced a name, so DST zones (London GMT/BST, New York EST/EDT) are
+  // untouched and stay correct across the year.
+  if (/^(?:GMT|UTC)[+-]/.test(raw) && DST_FREE_ABBREV[tz]) return DST_FREE_ABBREV[tz];
+  return raw;
 }
+
+// DST-free zones whose common abbreviation some ICU builds don't emit. All are
+// year-round fixed offsets, so a static label is always correct.
+const DST_FREE_ABBREV: Record<string, string> = {
+  "Asia/Kolkata": "IST",
+  "Asia/Colombo": "IST", // Sri Lanka shares +05:30
+  "Asia/Karachi": "PKT",
+  "Asia/Dhaka": "BST", // Bangladesh Standard Time
+  "Asia/Kathmandu": "NPT",
+  "Asia/Yangon": "MMT",
+  "Asia/Kabul": "AFT",
+  "Asia/Tehran": "IRST",
+  "Asia/Dubai": "GST",
+  "Asia/Muscat": "GST",
+  "Asia/Singapore": "SGT",
+  "Asia/Kuala_Lumpur": "MYT",
+  "Asia/Bangkok": "ICT",
+  "Asia/Jakarta": "WIB",
+};
 
 /**
  * Compact date range in one zone: "12–14 Aug", "30 Aug – 2 Sep", "16 Aug"

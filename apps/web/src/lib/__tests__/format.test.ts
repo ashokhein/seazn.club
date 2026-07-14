@@ -28,11 +28,18 @@ describe("fmtZoneAbbrev — DST-dependent", () => {
     expect(summer).not.toBe(winter);
     expect(summer).toBeTruthy();
   });
-  it("Asia/Kolkata is stable year-round (no DST)", () => {
+  it("Asia/Kolkata is stable year-round (no DST) and reads IST, not an offset", () => {
     const jan = fmtZoneAbbrev("Asia/Kolkata", "2026-01-15T12:00:00Z");
     const aug = fmtZoneAbbrev("Asia/Kolkata", IST_1900);
     expect(jan).toBe(aug);
-    expect(jan).toBeTruthy();
+    // The DST-free override guarantees "IST" even where ICU emits "GMT+5:30".
+    expect(jan).toBe("IST");
+  });
+  it("keeps a runtime-provided name and only overrides offset fallbacks", () => {
+    // Gulf Standard Time is DST-free; ICU offset fallback becomes GST.
+    expect(fmtZoneAbbrev("Asia/Dubai", IST_1900)).toBe("GST");
+    // A zone with no override keeps whatever the runtime gives (never blank).
+    expect(fmtZoneAbbrev("America/New_York", IST_1900)).toBeTruthy();
   });
 });
 
