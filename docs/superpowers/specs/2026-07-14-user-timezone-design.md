@@ -203,16 +203,20 @@ Account save    ─▶ PATCH /api/users/me ─▶ users.timezone + seazn_tz cook
   carries `venue_tz`).
 - e2e (persist + reject), smoke (pro + free), help doc `scheduling/timezones.md`.
 
-**Remaining venue/personal surfaces** (mechanism ready — each just needs `<Zoned>`
-with the right `tz` + `you="subtitle"`, and for the ISR public surface, threading
-`schedule_settings.tz` through `PublicFixture` + regrouping days by venue zone):
-- Public division schedule (`components/public-site/schedule.tsx`) + shared fixture
-  page — currently browser-zone, unlabelled. Highest-value spectator surface; needs
-  the public-data tz thread (kept out of this slice to protect the ISR cache design).
-- Console fixture board / schedule board — venue tz already threaded (settings-panel);
-  add `showZone` + subtitle.
-- Personal-lane admin tables, billing renewal dates, audit log — swap host-zone
-  `toLocaleString` for `<Zoned tz={userTz}>`.
+**Also shipped (2026-07-14, surfaces pass):**
+- Public division schedule + embed widget — `getPublicDivision` / `embedDivisionData`
+  carry `schedule_settings.tz`; `<Schedule tz>` groups days by venue-local date, renders
+  rail times in venue tz, and captions each day header "times in {abbrev}". Verified live:
+  "MONDAY 13 JULY · times in IST", times in IST. (No per-row viewer subtitle — the 3.25rem
+  rail is too dense; the header caption states the zone.)
+- Console: `ClientTime` gained `showZone`; stages-panel "Scheduled ·" + fixture console
+  kick-off now read venue tz + label (venue tz via `getScheduleSettings`).
+- Scorer `/my-matches`: `listAssignedFixtures` carries `venue_tz`; venue time + label +
+  viewer-local subtitle, wrapped in `ViewerTzProvider`.
+
+**Still on host/browser zone (low-value internal, follow-up):** admin tables
+(`/admin/*`), billing renewal date (date-only, low ambiguity), audit log — swap the
+server-side `toLocaleString` for a labelled render when touched next.
 
 ## Rollout
 
