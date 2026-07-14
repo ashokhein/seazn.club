@@ -76,11 +76,11 @@ describe("progress store (session-only; Phase D swaps persistence)", () => {
 });
 
 describe("profiles store (Phase D)", () => {
-  it("starts with one story profile, empty name", () => {
+  it("starts with one classic profile, empty name", () => {
     const p = createProgressState();
     expect(p.profiles()).toHaveLength(1);
     expect(p.activeId()).toBe("p1");
-    expect(p.getMode()).toBe("story");
+    expect(p.getMode()).toBe("classic"); // public-site default
     expect(p.getName()).toBe("");
   });
 
@@ -116,7 +116,7 @@ describe("profiles store (Phase D)", () => {
   it("addProfile never mutates existing profiles", () => {
     const p = createProgressState();
     p.setName("Mila");
-    expect(p.getMode()).toBe("story");
+    p.setMode("story");
     p.addProfile("Dad", "classic");
     p.switchProfile("p1");
     expect(p.getMode()).toBe("story");
@@ -125,8 +125,8 @@ describe("profiles store (Phase D)", () => {
 
   it("setMode only touches the active profile", () => {
     const p = createProgressState();
-    p.setMode("classic");
-    expect(p.getMode()).toBe("classic");
+    p.setMode("story");
+    expect(p.getMode()).toBe("story");
   });
 });
 

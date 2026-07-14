@@ -97,7 +97,9 @@ function dayNum(iso: string): number {
 function blankProfile(): Profile {
   return {
     name: "",
-    mode: "story",
+    // Public site skews adult, so the first profile reads Classic; a kid
+    // profile can be switched to Story per-player (spec 2026-07-14).
+    mode: "classic",
     weeks: {},
     stars: {},
     best: {},
@@ -348,8 +350,11 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
   const [inner] = useState<Progress>(() =>
     createProgressState(typeof window !== "undefined" ? window.localStorage : undefined),
   );
-  const [, setVersion] = useState(0);
+  const [version, setVersion] = useState(0);
 
+  // `version` is a dep so each mutation produces a NEW value object — pure
+  // context consumers (e.g. the lesson card) only re-render when the value
+  // identity changes, and the store mutates in place behind a stable `inner`.
   const value = useMemo(() => {
     const wrapped = { ...inner };
     for (const m of MUTATORS) {
@@ -361,7 +366,8 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
       };
     }
     return wrapped as Progress;
-  }, [inner]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inner, version]);
 
   return <ProgressCtx.Provider value={value}>{children}</ProgressCtx.Provider>;
 }
