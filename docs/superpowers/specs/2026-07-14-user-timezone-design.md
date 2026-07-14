@@ -38,6 +38,12 @@ zone label on **every** rendered time so the zone is always explicit.
 2. **Label = short abbrev + IANA on hover** — primary `IST` / `BST` / `EDT`; full
    `Asia/Kolkata` in `title` tooltip and shown verbatim in the picker.
 3. **Scope = timezone only** — no locale work this wave.
+4. **Venue lane also shows "your time"** (added 2026-07-14 after demo) — every venue time
+   exposes the viewer's local equivalent inline. Default affordance: **hover/focus tooltip**
+   on dense boards (`14:30 BST · your time` + IANA), keeping boards uncluttered; **always-on
+   subtitle** on `/me` (personal page). `<Zoned>` supports both via a `you` prop
+   (`"hover" | "subtitle" | "off"`). Suppressed when viewer tz == venue tz (no noise).
+   Demo: `claude.ai/code/artifact/62714fe2-5c32-4311-bd08-55ff5d02c358`.
 
 ## The two lanes
 
@@ -102,6 +108,12 @@ read it without an extra query. `invalidateUser()` already called on profile PAT
 - Server-first: personal times can now render on the server in the resolved tz (stable),
   with `<Zoned tz={userTz} showZone />`. No more empty-span-until-mount for the common case.
 - `showZone` appends the abbrev; `title` carries the full IANA name (decision 2).
+- **`you` prop** (decision 4): `"hover" | "subtitle" | "off"` (default `"off"`). When the
+  time is a **venue** time, `you={youTz}`-context makes `<Zoned>` compute the viewer's local
+  equivalent and expose it — as a focusable hover tooltip (`"hover"`) or an inline subtitle
+  line (`"subtitle"`). Needs the resolved `youTz`, threaded via a lightweight
+  `TimezoneContext` provider set once in the console/root layout from `resolveTimezone()`
+  (client components read it without prop-drilling). Rendered only when `youTz !== venueTz`.
 - Keeps a client fallback for the anonymous-no-cookie first paint only.
 - `ClientDateRange` folds into `fmtRange`; existing call sites keep working via re-export.
 
@@ -123,12 +135,15 @@ New **Preferences** section in `/o/[org]/settings?tab=account`, above Change-ema
 Route updates `users.timezone`, keeps `display_name` path intact, calls `invalidateUser`.
 `isValidIana` = membership in `Intl.supportedValuesOf("timeZone")` (server-side).
 
-### 7. Zone labels on the venue lane
+### 7. Zone labels + "your time" on the venue lane
 
 Schedule surfaces already pass `tz={schedule_settings.tz}` to time components — flip on
-`showZone` there so venue times read `19:00 IST`. `day-label.ts`/board keep venue-zone
-grouping unchanged; only the label is added. The board settings panel (which *sets* the
-venue tz) gains a one-line "all times below shown in <tz>" caption.
+`showZone` there so venue times read `19:00 IST`, and pass `you="hover"` (boards) /
+`you="subtitle"` (`/me`) so the viewer's local equivalent is one hover/glance away
+(decision 4). `day-label.ts`/board keep venue-zone grouping unchanged; only the
+label + your-time affordance are added. The board settings panel (which *sets* the venue
+tz) gains a one-line "all times below shown in <tz>" caption. Suppression rule: when the
+resolved viewer tz equals the venue tz, the your-time affordance is omitted entirely.
 
 ## Data flow
 
@@ -156,7 +171,9 @@ Account save    ─▶ PATCH /api/users/me ─▶ users.timezone + seazn_tz cook
 - **Unit** `fmtZoneAbbrev` DST correctness: `Europe/London` → `GMT` in Jan, `BST` in Jul.
 - **Unit** `updateProfileSchema` rejects `"Mars/Phobos"`, accepts `"Asia/Kolkata"`, accepts null.
 - **e2e** set tz in Account → `/me` personal time shows chosen abbrev; venue time on a
-  fixture page still shows venue abbrev (proves two-lane).
+  fixture page still shows venue abbrev (proves two-lane) AND its "your time" subtitle shows
+  the chosen zone; when viewer tz == venue tz the your-time affordance is absent.
+- **Unit** `<Zoned>` `you` prop: renders subtitle/hover markup only when `youTz !== venueTz`.
 - **smoke.ts** extend pro + free: PATCH tz, assert whoami/me reflects it and label present.
 
 ## Docs (mandatory closing pass)
