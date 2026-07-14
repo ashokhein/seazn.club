@@ -58,6 +58,40 @@ function cspHeader(nonce: string, opts: { forceReportOnly?: boolean } = {}): { n
 }
 
 /**
+ * Bare hostname for the request: prefer X-Forwarded-Host (Fly.io / reverse
+ * proxy; Next dev also sets it — WITH a port), fall back to Host. Ports are
+ * stripped; URL parsing handles IPv6 hosts like "[::1]:3000" correctly.
+ */
+export function requestHostname(request: NextRequest): string {
+  const rawHost =
+    request.headers.get("x-forwarded-host")?.split(",")[0].trim() ??
+    request.headers.get("host") ??
+    request.nextUrl.hostname;
+  try {
+    return new URL(`http://${rawHost}`).hostname;
+  } catch {
+    return rawHost.split(":")[0];
+  }
+}
+
+/**
+ * games.* hosts serve the /games route tree: games.seazn.club/ is the games
+ * listing, games.seazn.club/<slug> plays a game. Any `games.`-prefixed host
+ * matches so staging (games.stg…) and local (games.localhost) work unchanged.
+ * Returns the rewritten URL, or null when no rewrite applies (wrong host,
+ * API call, or already inside /games — never double-prefix).
+ */
+export function gamesHostRewrite(request: NextRequest): URL | null {
+  if (!requestHostname(request).startsWith("games.")) return null;
+  const { pathname } = request.nextUrl;
+  if (pathname.startsWith("/api/")) return null;
+  if (pathname === "/games" || pathname.startsWith("/games/")) return null;
+  const url = request.nextUrl.clone();
+  url.pathname = pathname === "/" ? "/games" : `/games${pathname}`;
+  return url;
+}
+
+/**
  * CSRF protection: for every mutating API call, the Origin header must match
  * the app host. Browsers always send Origin on cross-origin requests, so a
  * mismatch means a third-party site is trying to trigger an action on behalf
@@ -82,21 +116,7 @@ export function proxy(request: NextRequest) {
       // any cross-origin request that somehow carries credentials.
       // Absent Origin (same-origin fetch in some browsers/curl) → allow through.
       if (origin) {
-        // Prefer X-Forwarded-Host (Fly.io / reverse proxy; Next dev also sets
-        // it — WITH a port, e.g. "localhost:3000"). Fall back to Host. Strip
-        // the port from either so we compare bare hostnames.
-        const rawHost =
-          request.headers.get("x-forwarded-host")?.split(",")[0].trim() ??
-          request.headers.get("host") ??
-          request.nextUrl.hostname;
-        // URL parsing handles IPv6 hosts like "[::1]:3000" correctly.
-        const appHost = (() => {
-          try {
-            return new URL(`http://${rawHost}`).hostname;
-          } catch {
-            return rawHost.split(":")[0];
-          }
-        })();
+        const appHost = requestHostname(request);
         try {
           const originHostname = new URL(origin).hostname;
           if (originHostname !== appHost) {
@@ -124,7 +144,10 @@ export function proxy(request: NextRequest) {
     requestHeaders.set(csp.name, csp.value);
   }
 
-  const response = NextResponse.next({ request: { headers: requestHeaders } });
+  const rewriteUrl = gamesHostRewrite(request);
+  const response = rewriteUrl
+    ? NextResponse.rewrite(rewriteUrl, { request: { headers: requestHeaders } })
+    : NextResponse.next({ request: { headers: requestHeaders } });
   response.headers.set(csp.name, csp.value);
   return response;
 }
