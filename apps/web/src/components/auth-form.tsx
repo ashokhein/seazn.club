@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { api } from "@/lib/client";
+import { LegalNotice } from "@/components/legal-notice";
 
 /**
  * Passwordless sign-in: Google, or a one-time link emailed to the address.
@@ -114,6 +115,7 @@ export function AuthForm({ next }: { next?: string }) {
       <p className="mt-4 text-center text-xs text-slate-400">
         No password needed. New here? Entering your email creates your account.
       </p>
+      <LegalNotice className="mt-2 text-center" />
     </div>
   );
 }

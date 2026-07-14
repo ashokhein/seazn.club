@@ -128,6 +128,7 @@ export function RegisterForm({
   const [gender, setGender] = useState("");
   const [guardianName, setGuardianName] = useState("");
   const [guardianConsent, setGuardianConsent] = useState(false);
+  const [privacyConsent, setPrivacyConsent] = useState(false);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const [players, setPlayers] = useState<Player[]>([]);
   const [importText, setImportText] = useState("");
@@ -177,6 +178,7 @@ export function RegisterForm({
           gender: gender || null,
           guardian_name: guardianName || null,
           guardian_consent: guardianConsent,
+          privacy_consent: privacyConsent,
           answers,
           website: website || undefined,
           players:
@@ -356,36 +358,62 @@ export function RegisterForm({
         {
           key: "consent",
           title: msg("register.section.consent"),
-          show: needsGuardian,
+          show: true,
           body: (
-            <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
-              <p className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
-                {msg("register.guardian.title")}
-                <Tip id="register.youth" />
-              </p>
-              <label className="mt-2 block text-sm">
-                <span className="text-zinc-700">Parent / guardian name *</span>
-                <input
-                  required
-                  value={guardianName}
-                  onChange={(e) => setGuardianName(e.target.value)}
-                  maxLength={120}
-                  className={INPUT_CLASS}
-                />
-              </label>
-              <label className="mt-2 flex items-start gap-2 text-sm text-zinc-700">
+            <div className="space-y-3">
+              {/* GDPR (spec 2026-07-14): explicit processing consent, every registrant. */}
+              <label className="flex items-start gap-2 text-sm text-zinc-700">
                 <input
                   type="checkbox"
                   required
-                  checked={guardianConsent}
-                  onChange={(e) => setGuardianConsent(e.target.checked)}
+                  checked={privacyConsent}
+                  onChange={(e) => setPrivacyConsent(e.target.checked)}
                   className="mt-0.5"
                 />
                 <span>
-                  I am the parent/guardian and consent to this registration and to the
-                  competition&apos;s handling of the player&apos;s details.
+                  {msg("register.consent.data", { org: org.name })}{" "}
+                  <a
+                    href="/legal/privacy"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline"
+                  >
+                    {msg("register.consent.privacy")}
+                  </a>{" "}
+                  *
                 </span>
               </label>
+              {needsGuardian && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4">
+                  <p className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
+                    {msg("register.guardian.title")}
+                    <Tip id="register.youth" />
+                  </p>
+                  <label className="mt-2 block text-sm">
+                    <span className="text-zinc-700">Parent / guardian name *</span>
+                    <input
+                      required
+                      value={guardianName}
+                      onChange={(e) => setGuardianName(e.target.value)}
+                      maxLength={120}
+                      className={INPUT_CLASS}
+                    />
+                  </label>
+                  <label className="mt-2 flex items-start gap-2 text-sm text-zinc-700">
+                    <input
+                      type="checkbox"
+                      required
+                      checked={guardianConsent}
+                      onChange={(e) => setGuardianConsent(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      I am the parent/guardian and consent to this registration and to the
+                      competition&apos;s handling of the player&apos;s details.
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
           ),
         },
