@@ -9,6 +9,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { listAssignedFixtures } from "@/server/usecases/scorers";
 import { resolveModule } from "@/server/engine-db";
 import { LogoutButton } from "@/components/logout-button";
+import { Zoned, ViewerTzProvider } from "@/components/client-time";
 
 export default async function MyMatchesPage() {
   const user = await getCurrentUser();
@@ -21,7 +22,7 @@ export default async function MyMatchesPage() {
   const later = fixtures.filter((f) => !today.includes(f));
 
   return (
-    <>
+    <ViewerTzProvider tz={user.timezone}>
       {/* Scorer console gets the same night gantry as the org chrome. */}
       <header className="app-gantry">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
@@ -49,7 +50,7 @@ export default async function MyMatchesPage() {
         {today.length > 0 && <Section title="Today" fixtures={today} />}
         {later.length > 0 && <Section title="Upcoming" fixtures={later} />}
       </main>
-    </>
+    </ViewerTzProvider>
   );
 }
 
@@ -88,12 +89,17 @@ function Section({ title, fixtures }: { title: string; fixtures: Assigned[] }) {
               </div>
               <div className="text-right text-xs text-slate-500">
                 <p>
-                  {f.scheduled_at
-                    ? new Date(f.scheduled_at).toLocaleString(undefined, {
-                        dateStyle: "medium",
-                        timeStyle: "short",
-                      })
-                    : "unscheduled"}
+                  {f.scheduled_at ? (
+                    <Zoned
+                      value={f.scheduled_at}
+                      tz={f.venue_tz ?? "UTC"}
+                      mode="datetime"
+                      showZone
+                      you="subtitle"
+                    />
+                  ) : (
+                    "unscheduled"
+                  )}
                 </p>
                 <p className="text-slate-400">
                   {[f.venue, f.court_label].filter(Boolean).join(" · ")}
