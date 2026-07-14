@@ -202,4 +202,16 @@ describe("persistence", () => {
     expect(p.profiles()).toHaveLength(1);
     expect(p.getName()).toBe("");
   });
+
+  it("device audio settings default on and persist", () => {
+    const storage = fakeStorage();
+    const p = createProgressState(storage);
+    expect(p.getMuted()).toBe(false);
+    expect(p.getVoiceOn()).toBe(true);
+    p.setMuted(true);
+    p.setVoiceOn(false);
+    const reloaded = createProgressState(storage);
+    expect(reloaded.getMuted()).toBe(true);
+    expect(reloaded.getVoiceOn()).toBe(false);
+  });
 });

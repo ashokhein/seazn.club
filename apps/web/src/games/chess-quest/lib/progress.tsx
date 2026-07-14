@@ -26,7 +26,13 @@ type Profile = {
   created: string;
 };
 
-type Blob = { active: string; seq: number; profiles: Record<string, Profile> };
+type Blob = {
+  active: string;
+  seq: number;
+  muted: boolean;
+  voiceOff: boolean;
+  profiles: Record<string, Profile>;
+};
 
 export type Progress = {
   // puzzle packs (Phase C contract — unchanged)
@@ -77,6 +83,12 @@ export type Progress = {
   addProfile(name: string, mode: Mode): string;
   switchProfile(id: string): boolean;
   removeProfile(id: string): boolean;
+
+  // device settings (shared across profiles)
+  getMuted(): boolean;
+  setMuted(m: boolean): void;
+  getVoiceOn(): boolean;
+  setVoiceOn(on: boolean): void;
 };
 
 function todayISO(): string {
@@ -113,7 +125,7 @@ function blankProfile(): Profile {
 }
 
 function freshBlob(): Blob {
-  return { active: "p1", seq: 1, profiles: { p1: blankProfile() } };
+  return { active: "p1", seq: 1, muted: false, voiceOff: false, profiles: { p1: blankProfile() } };
 }
 
 function loadBlob(storage?: Storage): Blob {
@@ -318,6 +330,17 @@ export function createProgressState(storage?: Storage): Progress {
       save();
       return true;
     },
+
+    getMuted: () => !!data.muted,
+    setMuted: (m) => {
+      data.muted = !!m;
+      save();
+    },
+    getVoiceOn: () => !data.voiceOff,
+    setVoiceOn: (on) => {
+      data.voiceOff = !on;
+      save();
+    },
   };
 }
 
@@ -342,6 +365,8 @@ const MUTATORS = [
   "addProfile",
   "switchProfile",
   "removeProfile",
+  "setMuted",
+  "setVoiceOn",
 ] as const;
 
 export function ProgressProvider({ children }: { children: React.ReactNode }) {
