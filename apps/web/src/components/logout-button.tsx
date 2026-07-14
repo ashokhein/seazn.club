@@ -22,7 +22,9 @@ export function LogoutButton() {
         } catch {
           /* analytics teardown is best-effort */
         }
-        router.push("/login");
+        // Land on the marketing home, not the login form — signing out is
+        // "leave the console", not "start a new session".
+        router.push("/");
         router.refresh();
       }}
       // Lives only on night chrome (gantry + my-matches header) — cream it is.

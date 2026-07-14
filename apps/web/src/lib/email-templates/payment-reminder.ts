@@ -1,6 +1,10 @@
 import { button, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
 import { formatDeadline } from "./registration";
+import {
+  fillPaymentInstructions,
+  paymentInstructionsText,
+} from "@/lib/payment-instructions";
 
 export interface PaymentReminderArgs {
   orgName: string;
@@ -12,6 +16,8 @@ export interface PaymentReminderArgs {
   /** Card entries (sweep T-24h reminder): fresh checkout link + deadline. */
   checkoutUrl?: string | null;
   payDeadline?: Date | string | null;
+  /** Fills {{reference}} in the instructions. */
+  refCode?: string | null;
 }
 
 /** Payment nudge for an unpaid entry fee — organiser-triggered (offline) or
@@ -21,13 +27,16 @@ export function paymentReminderTemplate(
 ): { subject: string; html: string; text: string } {
   const amount = money(opts.feeCents, opts.currency);
   const deadline = opts.payDeadline ? formatDeadline(opts.payDeadline) : null;
+  const instructions = opts.paymentInstructions
+    ? paymentInstructionsText(fillPaymentInstructions(opts.paymentInstructions, opts.refCode))
+    : null;
   const how = opts.checkoutUrl
     ? panel(
         "Complete your payment",
         `Your spot is held${deadline ? ` until ${deadline}` : ""} — after that it's offered to the next in line.`,
       ) + button(`Pay now — ${amount}`, opts.checkoutUrl)
-    : opts.paymentInstructions
-      ? panel("How to pay", opts.paymentInstructions)
+    : instructions
+      ? panel("How to pay", instructions)
       : paragraph(`Please contact ${escapeHtml(opts.orgName)} to arrange payment.`);
 
   return {
@@ -50,8 +59,8 @@ export function paymentReminderTemplate(
       `Entry fee: ${amount}.` +
       (opts.checkoutUrl
         ? `\nYour spot is held${deadline ? ` until ${deadline}` : ""} — pay here:\n${opts.checkoutUrl}`
-        : opts.paymentInstructions
-          ? `\nHow to pay:\n${opts.paymentInstructions}`
+        : instructions
+          ? `\nHow to pay:\n${instructions}`
           : `\nPlease contact the organiser to arrange payment.`) +
       `\n\nIf you've already paid, please ignore this.`,
   };

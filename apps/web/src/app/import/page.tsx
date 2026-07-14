@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 // Bulk participant import wizard (Jul3/01, PROMPT-21): upload → column map →
 // preview (the plan, rendered) → commit.
 import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { Nav } from "@/components/nav";
 import { requirePageAuth } from "@/server/page-auth";
 import { ImportWizard } from "@/components/v2/import-wizard";
@@ -13,6 +14,7 @@ export default async function ImportPage() {
     <>
       <Nav />
       <main className="mx-auto max-w-4xl px-4 py-8">
+        <BackLink href="/dashboard" label="Dashboard" />
         <div className="mb-6">
           <p className="app-eyebrow mb-1">Bulk add</p>
           <h1 className="page-title">

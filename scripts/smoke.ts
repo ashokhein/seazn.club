@@ -161,6 +161,45 @@ async function main() {
     call(newSession(), `/api/invites/${viewerInvite.token}/accept`, "POST"),
   );
 
+  // Invite-by-email (team settings): personal invite, single-use forced,
+  // address stored; email_sent reports the Resend outcome (false with a blank
+  // key — the UI then offers the personal link for manual sharing).
+  const emailInvitee = `emailinvitee_${tag}@example.com`;
+  const emailInvite = (await call(
+    admin,
+    `/api/orgs/${org.id}/invites`,
+    "POST",
+    { role: "viewer", email: emailInvitee },
+  )) as { token: string; email: string | null; max_uses: number; email_sent?: boolean };
+  check("email invite stores address", emailInvite.email === emailInvitee);
+  check("email invite forced single-use", emailInvite.max_uses === 1);
+  check("email invite reports send status", typeof emailInvite.email_sent === "boolean");
+  // Personal: only the invited address may accept — anyone else holding the
+  // link (here: the admin who minted it) is turned away with a 403.
+  await expectFail("email invite rejects a different account", () =>
+    call(admin, `/api/invites/${emailInvite.token}/accept`, "POST", {}),
+  );
+
+  // Invite-by-link (team settings): multi-use with a 24-hour expiry — it must
+  // outlive the tab that created it and stay listed for later copying.
+  const linkInvite = (await call(
+    admin,
+    `/api/orgs/${org.id}/invites`,
+    "POST",
+    { role: "viewer", max_uses: 0, expires_in_days: 1 },
+  )) as { token: string; expires_at: string | null };
+  const linkTtlMs = new Date(linkInvite.expires_at ?? 0).getTime() - Date.now();
+  check("link invite lives ~24 hours", linkTtlMs > 0.9 * 864e5 && linkTtlMs < 1.1 * 864e5);
+  const teamInvites = (await call(admin, `/api/orgs/${org.id}/invites`)) as {
+    token: string;
+    email: string | null;
+  }[];
+  check(
+    "team panel lists both pending invites",
+    teamInvites.some((i) => i.token === emailInvite.token && i.email === emailInvitee) &&
+      teamInvites.some((i) => i.token === linkInvite.token && i.email === null),
+  );
+
   // Admin invite -> a second user joins and CAN create a competition. Retire
   // the viewer probe first: the check is about the ROLE, and the v3 free cap
   // (1 active competition) would 402 the create on quota instead.
@@ -1426,6 +1465,11 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
 
   const anon = newSession();
   const pubStandings = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}/divisions/${divSlug}/standings`);
+  // Flaked once in CI (2026-07-13, 404) with no body in the log — keep the
+  // response visible so a recurrence is diagnosable.
+  if (pubStandings.status !== 200) {
+    console.log("public standings response:", pubStandings.status, JSON.stringify(pubStandings.json));
+  }
   check("v1 public standings (no auth)", pubStandings.status === 200 && pubStandings.json.ok === true);
   check("v1 public reads are cacheable", (pubStandings.headers.get("cache-control") ?? "").includes("s-maxage"));
   const pubComp = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}`);

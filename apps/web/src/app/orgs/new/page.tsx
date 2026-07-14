@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 import Link from "next/link";
+import { BackLink } from "@/components/back-link";
 import { redirect } from "next/navigation";
 import { getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { Nav } from "@/components/nav";
@@ -14,6 +15,7 @@ export default async function NewOrgPage() {
     <>
       <Nav />
       <main className="mx-auto max-w-md px-4 py-10">
+        {orgs.length > 0 && <BackLink href="/dashboard" label="Dashboard" />}
         <div className="mb-6 text-center">
           <h1 className="page-title">
             Create an organization

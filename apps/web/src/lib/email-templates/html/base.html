@@ -47,25 +47,32 @@
 
         <table role="presentation" class="sz-container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
 
-          <!-- ============ Masthead: courtside slab ============ -->
+          <!-- ============ Masthead: stadium-night slab ============ -->
+          <!-- The brand mark (wordmark + pitch line + ball) is drawn with
+               table cells and a text bullet, not an image — it survives
+               image blocking in every client. -->
           <tr>
-            <td class="sz-masthead" bgcolor="#231738" style="background-color:#231738;border-radius:14px 14px 0 0;padding:18px 32px;">
+            <td class="sz-masthead" bgcolor="#150b36" style="background-color:#150b36;border-radius:14px 14px 0 0;padding:18px 32px 6px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td align="left" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:21px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f7f5fb;">
-                    Seazn&nbsp;<span style="color:#a78bfa;">Club</span>
+                  <td align="left" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:21px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f5f0e8;">
+                    Seazn&nbsp;<span style="color:#a3e635;">Club</span>
                   </td>
-                  <td align="right" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:14px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:rgba(247,245,251,0.64);">
+                  <td align="right" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:14px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:rgba(245,240,232,0.64);">
                     {{MASTHEAD_TAG}}
                   </td>
+                </tr>
+                <tr>
+                  <!-- The ball, resting on the pitch line below -->
+                  <td colspan="2" align="right" style="font-size:20px;line-height:12px;color:#ef4444;padding:2px 0 0;">&#9679;</td>
                 </tr>
               </table>
             </td>
           </tr>
 
-          <!-- Court line: the accent stripe under the slab -->
+          <!-- Pitch line: the lime stripe the ball sits on -->
           <tr>
-            <td bgcolor="#7c3aed" style="background-color:#7c3aed;height:3px;line-height:3px;font-size:1px;">&nbsp;</td>
+            <td bgcolor="#a3e635" style="background-color:#a3e635;height:4px;line-height:4px;font-size:1px;">&nbsp;</td>
           </tr>
 
           <!-- ============ Card body ============ -->
@@ -95,7 +102,7 @@
                 {{FOOTER_NOTE}}
               </p>
               <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#6f6a7c;">
-                &copy; {{YEAR}} Seazn Club &middot; League software for grassroots sport
+                &copy; {{YEAR}} Seazn Club &middot; Any sport &middot; Live in minutes
               </p>
             </td>
           </tr>

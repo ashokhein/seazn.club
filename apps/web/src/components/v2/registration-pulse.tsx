@@ -3,11 +3,14 @@
 // Registration pulse (PROMPT-52): one glanceable strip per division —
 // entries against capacity, card-money state, next expiry. Every number is
 // a button that jumps the list to the matching tab, so the strip doubles as
-// navigation. Pure render over the derived Pulse; no fetching.
+// navigation. Pure render over the derived Pulse; the refresh button calls
+// back into the panel's loader (payments land out-of-band via Stripe).
+import { useState } from "react";
+import { RefreshCw } from "lucide-react";
 import type { Pulse } from "@/lib/registration-derive";
 import { currencySymbol } from "./registration-settings";
 
-export type Tab = "confirmed" | "pending" | "waitlist" | "all";
+export type Tab = "confirmed" | "pending" | "waitlist" | "disputed" | "all";
 
 function hoursUntil(iso: string): string {
   const h = Math.max(0, Math.round((new Date(iso).getTime() - Date.now()) / 3_600_000));
@@ -44,11 +47,14 @@ export function RegistrationPulse({
   pulse,
   currency,
   onJump,
+  onRefresh,
 }: {
   pulse: Pulse;
   currency: string;
   onJump: (tab: Tab) => void;
+  onRefresh?: () => Promise<void>;
 }) {
+  const [refreshing, setRefreshing] = useState(false);
   const sym = currencySymbol(currency);
   const money = (cents: number) => `${sym}${(cents / 100).toFixed(2)}`;
   const anyMoney =
@@ -106,10 +112,29 @@ export function RegistrationPulse({
               label="disputed"
               value={String(pulse.disputed)}
               tone="text-rose-700"
-              onClick={() => onJump("all")}
+              onClick={() => onJump("disputed")}
             />
           )}
         </>
+      )}
+      {onRefresh && (
+        <button
+          type="button"
+          aria-label="Refresh registrations"
+          title="Refresh registrations"
+          disabled={refreshing}
+          onClick={async () => {
+            setRefreshing(true);
+            try {
+              await onRefresh();
+            } finally {
+              setRefreshing(false);
+            }
+          }}
+          className="ml-auto rounded-md p-2 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 disabled:opacity-60"
+        >
+          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} strokeWidth={1.75} />
+        </button>
       )}
     </div>
   );

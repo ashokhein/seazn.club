@@ -4,6 +4,7 @@ export const dynamic = "force-dynamic";
 // across divisions (Jul3/01). Both are org-wide entities, so they live behind
 // one "Directory" menu with a tab each.
 import Link from "@/components/ui/console-link";
+import { BackLink } from "@/components/back-link";
 import { Nav } from "@/components/nav";
 import { requirePageAuth } from "@/server/page-auth";
 import { listPersons } from "@/server/usecases/persons";
@@ -28,6 +29,7 @@ export default async function DirectoryPage({
     <>
       <Nav />
       <main className="mx-auto max-w-4xl px-4 py-8">
+        <BackLink href="/dashboard" label="Dashboard" />
         <div className="mb-6">
           <p className="app-eyebrow mb-1">People &amp; clubs</p>
           <h1 className="page-title">Directory</h1>

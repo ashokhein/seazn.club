@@ -21,6 +21,10 @@ const STATUS_STYLE: Record<string, string> = {
 /** Payment chip per row (spec §8): one glanceable money state. */
 function paymentChip(r: Registration): { label: string; cls: string } | null {
   if (r.amount_cents <= 0 && !r.payment_intent_id) return null;
+  // A closed-lost dispute leaves disputed_at set for history AND marks the
+  // money returned — show that outcome, not a still-open-looking flag.
+  if (r.disputed_at && r.refunded_cents >= r.amount_cents && r.amount_cents > 0)
+    return { label: "dispute lost · refunded", cls: "bg-rose-100 text-rose-700" };
   if (r.disputed_at) return { label: "⚠ disputed", cls: "bg-rose-100 text-rose-700" };
   const partiallyRefunded = r.refunded_cents > 0 && r.refunded_cents < r.amount_cents;
   if (r.refunded_cents >= r.amount_cents && r.refunded_cents > 0)
@@ -54,6 +58,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "confirmed", label: "Confirmed" },
   { key: "pending", label: "Pending" },
   { key: "waitlist", label: "Waitlist" },
+  { key: "disputed", label: "Disputed" },
   { key: "all", label: "All" },
 ];
 
@@ -61,6 +66,7 @@ function inTab(r: Registration, tab: Tab): boolean {
   if (tab === "all") return true;
   if (tab === "confirmed") return r.status === "confirmed";
   if (tab === "pending") return r.status === "pending" || r.status === "paid";
+  if (tab === "disputed") return r.disputed_at !== null;
   return r.status === "waitlisted";
 }
 
@@ -95,6 +101,7 @@ export function RegistrationList({
     confirmed: regs.filter((r) => inTab(r, "confirmed")).length,
     pending: regs.filter((r) => inTab(r, "pending")).length,
     waitlist: regs.filter((r) => inTab(r, "waitlist")).length,
+    disputed: regs.filter((r) => inTab(r, "disputed")).length,
     all: regs.length,
   };
   const visible = shown.filter((r) => inTab(r, tab));
@@ -102,7 +109,8 @@ export function RegistrationList({
   return (
     <div>
       <div role="tablist" aria-label="Registrations by status" className="mb-3 flex flex-wrap gap-1">
-        {TABS.map(({ key, label }) => (
+        {/* The Disputed tab only exists while there's something disputed to see. */}
+        {TABS.filter(({ key }) => key !== "disputed" || counts.disputed > 0 || tab === "disputed").map(({ key, label }) => (
           <button
             key={key}
             role="tab"
@@ -197,12 +205,22 @@ export function RegistrationList({
                     {chip?.label === "refund incomplete" ? "Retry refund" : "Refund"}
                   </button>
                 )}
+                {r.disputed_at && (
+                  <a
+                    href={`/api/v1/registrations/${r.id}/evidence`}
+                    download
+                    className="btn btn-ghost text-xs font-medium text-rose-700"
+                    title="Download the dispute evidence pack — receipt, activity log and fixtures, ready for the Stripe dispute response"
+                  >
+                    Evidence pack
+                  </a>
+                )}
               </>
             );
             const hasSpot = spotActions && (r.status !== "withdrawn" && r.status !== "expired");
             const hasMoney =
               moneyActions &&
-              (feeUnpaid || refundable || (r.status === "pending" && r.amount_cents > 0));
+              (feeUnpaid || refundable || (r.status === "pending" && r.amount_cents > 0) || r.disputed_at);
             return (
               // Card on mobile (stacked: badges / identity / actions), one
               // inline row from sm: up — crowded data never squeezes the name.

@@ -48,18 +48,15 @@ export async function Nav() {
     <header className="app-gantry sticky top-0 z-20">
       <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 h-14">
 
-        {/* Left: wordmark + org scorebug. The light logo image is illegible
-            on night, so the wordmark goes condensed cream (same move as the
-            marketing night nav). */}
+        {/* Left: wordmark + org scorebug. logo-wide-night.png is the cream
+            wordmark with the pitch line + ball — legible on night chrome. */}
         <Link href="/" className="flex shrink-0 items-center gap-2.5">
-          {logoUrl ? (
+          {logoUrl && (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={logoUrl} alt="Org logo" className="h-7 w-7 rounded-md object-cover ring-1 ring-cream/20" />
-          ) : (
-            <span className="app-display text-lg font-bold leading-none text-cream">
-              Seazn <span className="text-lime-400">Club</span>
-            </span>
           )}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-wide-night.png" alt="Seazn Club" className="h-7 w-auto" />
         </Link>
         {user && activeOrg && (
           <span

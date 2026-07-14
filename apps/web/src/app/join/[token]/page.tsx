@@ -27,6 +27,27 @@ function memberBlurb(invite: InviteRow, existing: OrgRole): string {
     `${existing} of this organization — accepting changes nothing.`;
 }
 
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ token: string }>;
+}) {
+  const { token } = await params;
+  const invite = await loadInvite(token);
+  const title = invite
+    ? `Join ${invite.org_name} on Seazn Club`
+    : "Join a club on Seazn Club";
+  return {
+    title,
+    description: invite
+      ? `You've been invited as ${invite.role}. Accept your invite and get involved.`
+      : "Accept your invite and get involved.",
+    openGraph: { title },
+    // Personal links in chat apps: no reason for this to be indexable.
+    robots: { index: false },
+  };
+}
+
 export default async function JoinPage({
   params,
 }: {
@@ -37,6 +58,10 @@ export default async function JoinPage({
   const problem = invite ? inviteProblem(invite) : "Invite not found";
   const existingRole =
     user && invite ? await getOrgRole(invite.org_id, user.id) : null;
+  // Email invites are personal (acceptInvite enforces this server-side) —
+  // tell a mismatched account before they hit the 403.
+  const emailMismatch =
+    !!user && !!invite?.email && user.email.toLowerCase() !== invite.email.toLowerCase();
 
   return (
     <NightStage maxW="max-w-md">
@@ -68,12 +93,25 @@ export default async function JoinPage({
                 </span>
                 .
               </p>
-              {existingRole && (
-                <p className="mb-4 rounded-md bg-purple-50 px-3 py-2 text-sm text-purple-800">
-                  {memberBlurb(invite, existingRole)}
+              {emailMismatch ? (
+                <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                  This is a personal invite for{" "}
+                  <span className="font-medium">{invite.email}</span>, but
+                  you&apos;re signed in as{" "}
+                  <span className="font-medium">{user.email}</span>. Sign in
+                  with the invited address, or ask the organiser to invite this
+                  one.
                 </p>
+              ) : (
+                <>
+                  {existingRole && (
+                    <p className="mb-4 rounded-md bg-purple-50 px-3 py-2 text-sm text-purple-800">
+                      {memberBlurb(invite, existingRole)}
+                    </p>
+                  )}
+                  <JoinInvite token={token} />
+                </>
               )}
-              <JoinInvite token={token} />
             </div>
           ) : (
             <>

@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 import Link from "@/components/ui/console-link";
 import {
   Building2, Users, CreditCard, UserCircle,
-  Pencil, Image as ImageIcon, ArrowLeftRight, Palette,
+  Pencil, Image as ImageIcon, Palette,
   User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, BookOpen, Cookie, Handshake,
   type LucideIcon,
 } from "lucide-react";
@@ -217,6 +217,7 @@ export default async function SettingsPage({
                     <p className="truncate font-mono text-xs text-purple-600">{active.slug}</p>
                   </div>
                   <span className={`badge ${ROLE_BADGE[active.role]}`}>{active.role}</span>
+                  <OrgSwitcher orgs={orgs} activeId={active.id} />
                 </div>
 
                 {canEdit && (
@@ -293,11 +294,6 @@ export default async function SettingsPage({
                     )}
                   </div>
                 )}
-
-                <div className="mt-5 border-t border-slate-100 pt-5">
-                  <SubSection icon={ArrowLeftRight} label="Switch organisation" />
-                  <OrgSwitcher orgs={orgs} activeId={active.id} />
-                </div>
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">

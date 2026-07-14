@@ -38,7 +38,7 @@
 <body style="margin:0;padding:0;background-color:#f6f5f8;">
   <!-- Preheader: shows next to the subject in the inbox list, invisible in the body -->
   <div style="display:none;font-size:1px;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">
-    You're in Division 1 — entry fee details and the current table inside.&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
+    Division 1 — entry fee details and the current table inside.&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;
   </div>
 
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="#f6f5f8" style="background-color:#f6f5f8;">
@@ -47,25 +47,32 @@
 
         <table role="presentation" class="sz-container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;">
 
-          <!-- ============ Masthead: courtside slab ============ -->
+          <!-- ============ Masthead: stadium-night slab ============ -->
+          <!-- The brand mark (wordmark + pitch line + ball) is drawn with
+               table cells and a text bullet, not an image — it survives
+               image blocking in every client. -->
           <tr>
-            <td class="sz-masthead" bgcolor="#231738" style="background-color:#231738;border-radius:14px 14px 0 0;padding:18px 32px;">
+            <td class="sz-masthead" bgcolor="#150b36" style="background-color:#150b36;border-radius:14px 14px 0 0;padding:18px 32px 6px;">
               <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
                 <tr>
-                  <td align="left" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:21px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f7f5fb;">
-                    Seazn&nbsp;<span style="color:#a78bfa;">Club</span>
+                  <td align="left" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:21px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f5f0e8;">
+                    Seazn&nbsp;<span style="color:#a3e635;">Club</span>
                   </td>
-                  <td align="right" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:14px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:rgba(247,245,251,0.64);">
-                    Riverside Racquets
+                  <td align="right" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:14px;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:rgba(245,240,232,0.64);">
+                    Riverside Racquets CC
                   </td>
+                </tr>
+                <tr>
+                  <!-- The ball, resting on the pitch line below -->
+                  <td colspan="2" align="right" style="font-size:20px;line-height:12px;color:#ef4444;padding:2px 0 0;">&#9679;</td>
                 </tr>
               </table>
             </td>
           </tr>
 
-          <!-- Court line: the accent stripe under the slab -->
+          <!-- Pitch line: the lime stripe the ball sits on -->
           <tr>
-            <td bgcolor="#7c3aed" style="background-color:#7c3aed;height:3px;line-height:3px;font-size:1px;">&nbsp;</td>
+            <td bgcolor="#a3e635" style="background-color:#a3e635;height:4px;line-height:4px;font-size:1px;">&nbsp;</td>
           </tr>
 
           <!-- ============ Card body ============ -->
@@ -74,7 +81,7 @@
 
               <!-- Eyebrow -->
               <p style="margin:0 0 6px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:13px;font-weight:600;letter-spacing:2.5px;text-transform:uppercase;color:#6931c9;">
-                Riverside Racquets · Spring Open 2026
+                Riverside Racquets CC · Division 1
               </p>
 
               <!-- Title -->
@@ -84,19 +91,29 @@
 
               <!-- Composable content: concatenate blocks/*.html and drop in -->
               <p style="margin:0 0 16px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:15px;line-height:24px;color:#3d3849;">
-  Thanks Alex — your entry for <strong>Spring Open 2026</strong> has been received. You're in Division 1; here's how the table looks going into your first week.
+  Thanks Alex — your registration for <strong>Spring Open 2026</strong> has been received. You've joined Division 1; here's how the table looks going into your first week.
 </p>
 <!-- Info panel: payment instructions, notices, secondary detail -->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:8px 0 20px;">
   <tr>
     <td bgcolor="#f5effe" style="background-color:#f5effe;border:1px solid #decefb;border-radius:12px;padding:16px 20px;">
       <p style="margin:0 0 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:14px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#6931c9;">
-        Entry fee: £25.00
+        Entry fee — £25.00
       </p>
       <!-- Token kept flush against the tags: pre-line would render template newlines -->
       <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;line-height:22px;color:#3d3849;white-space:pre-line;">Bank transfer to Riverside Racquets CC
-Sort code 12-34-56 · Account 87654321
-Reference: SPRING-ALEX</p>
+Sort 20-00-00 · Account 1234 5678
+Quote your reference: SZ-4F7K-2Q9D</p>
+    </td>
+  </tr>
+</table>
+<!-- Bulletproof CTA: color/padding live on the td so Outlook renders it -->
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
+  <tr>
+    <td align="center" bgcolor="#7c3aed" style="background-color:#7c3aed;border-radius:10px;">
+      <a href="https://seazn.club/r/SZ-4F7K-2Q9D" target="_blank" style="display:inline-block;padding:13px 32px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:17px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;text-decoration:none;border-radius:10px;">
+        View your registration
+      </a>
     </td>
   </tr>
 </table>
@@ -107,7 +124,7 @@ Reference: SPRING-ALEX</p>
 
   <!-- Slab header -->
   <tr>
-    <td colspan="6" bgcolor="#231738" style="background-color:#231738;padding:12px 16px;">
+    <td colspan="6" bgcolor="#150b36" style="background-color:#150b36;padding:12px 16px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         <tr>
           <td align="left" style="font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:#f7f5fb;">
@@ -134,7 +151,7 @@ Reference: SPRING-ALEX</p>
   <!-- Leader row: accent bar + soft violet fill. Use for rank 1 (or the recipient's row). -->
 <tr>
   <td width="40" align="center" bgcolor="#f5effe" style="background-color:#f5effe;border-left:3px solid #7c3aed;padding:10px 0 10px 5px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6931c9;">1</td>
-  <td align="left" bgcolor="#f5effe" style="background-color:#f5effe;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#1d1928;">Meadowbank Smashers</td>
+  <td align="left" bgcolor="#f5effe" style="background-color:#f5effe;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:700;color:#1d1928;">Riverside Aces</td>
   <td width="36" align="center" bgcolor="#f5effe" style="background-color:#f5effe;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#3d3849;">6</td>
   <td width="36" align="center" bgcolor="#f5effe" style="background-color:#f5effe;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#3d3849;">6</td>
   <td width="36" align="center" bgcolor="#f5effe" style="background-color:#f5effe;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#3d3849;">0</td>
@@ -142,57 +159,38 @@ Reference: SPRING-ALEX</p>
 </tr>
 <!-- Standard standings row. Alternate ROW_BG between #ffffff and #faf9fc. -->
 <tr>
-  <td width="40" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0 10px 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6f6a7c;">2</td>
-  <td align="left" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1d1928;">Riverside A</td>
+  <td width="40" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0 10px 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6f6a7c;">2</td>
+  <td align="left" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1d1928;">Oakwood Foxes</td>
+  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">6</td>
+  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">4</td>
+  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">2</td>
+  <td width="48" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 8px 10px 0;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#1d1928;">12</td>
+</tr>
+<!-- Standard standings row. Alternate ROW_BG between #ffffff and #faf9fc. -->
+<tr>
+  <td width="40" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0 10px 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6f6a7c;">3</td>
+  <td align="left" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1d1928;">Brookvale Tigers</td>
   <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">6</td>
-  <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">4</td>
-  <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">2</td>
-  <td width="48" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 8px 10px 0;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#1d1928;">12</td>
+  <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">3</td>
+  <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">3</td>
+  <td width="48" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 8px 10px 0;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#1d1928;">9</td>
 </tr>
 <!-- Standard standings row. Alternate ROW_BG between #ffffff and #faf9fc. -->
 <tr>
-  <td width="40" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0 10px 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6f6a7c;">3</td>
-  <td align="left" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1d1928;">Northside Netters</td>
+  <td width="40" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0 10px 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6f6a7c;">4</td>
+  <td align="left" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1d1928;">Kingsway Falcons</td>
   <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">6</td>
-  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">3</td>
-  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">3</td>
-  <td width="48" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 8px 10px 0;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#1d1928;">9</td>
-</tr>
-<!-- Standard standings row. Alternate ROW_BG between #ffffff and #faf9fc. -->
-<tr>
-  <td width="40" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0 10px 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6f6a7c;">4</td>
-  <td align="left" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1d1928;">Court Jesters</td>
-  <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">6</td>
-  <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">2</td>
-  <td width="36" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">4</td>
-  <td width="48" align="center" bgcolor="#ffffff" style="background-color:#ffffff;padding:10px 8px 10px 0;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#1d1928;">6</td>
-</tr>
-<!-- Standard standings row. Alternate ROW_BG between #ffffff and #faf9fc. -->
-<tr>
-  <td width="40" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0 10px 8px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#6f6a7c;">5</td>
-  <td align="left" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:14px;font-weight:600;color:#1d1928;">Riverside B</td>
-  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">6</td>
-  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">0</td>
-  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">6</td>
-  <td width="48" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 8px 10px 0;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#1d1928;">0</td>
+  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">1</td>
+  <td width="36" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:13px;color:#6f6a7c;">5</td>
+  <td width="48" align="center" bgcolor="#faf9fc" style="background-color:#faf9fc;padding:10px 8px 10px 0;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:16px;font-weight:700;color:#1d1928;">3</td>
 </tr>
 
 
-</table>
-<!-- Bulletproof CTA: color/padding live on the td so Outlook renders it -->
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:24px 0;">
-  <tr>
-    <td align="center" bgcolor="#7c3aed" style="background-color:#7c3aed;border-radius:10px;">
-      <a href="https://seazn.club/riverside-racquets/spring-open-2026/entry/abc123" target="_blank" style="display:inline-block;padding:13px 32px;font-family:'Barlow Condensed','Arial Narrow',Arial,sans-serif;font-size:17px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;text-decoration:none;border-radius:10px;">
-        View your registration
-      </a>
-    </td>
-  </tr>
 </table>
 <!-- "Button not working?" plain-link fallback -->
 <p style="margin:20px 0 0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#6f6a7c;">
   Button not working? Paste this link into your browser:<br>
-  <a href="https://seazn.club/riverside-racquets/spring-open-2026/entry/abc123" target="_blank" style="color:#6931c9;text-decoration:underline;word-break:break-all;">https://seazn.club/riverside-racquets/spring-open-2026/entry/abc123</a>
+  <a href="https://seazn.club/r/SZ-4F7K-2Q9D" target="_blank" style="color:#6931c9;text-decoration:underline;word-break:break-all;">https://seazn.club/r/SZ-4F7K-2Q9D</a>
 </p>
 
 
@@ -203,10 +201,10 @@ Reference: SPRING-ALEX</p>
           <tr>
             <td style="padding:24px 32px;">
               <p style="margin:0 0 8px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#6f6a7c;">
-                You received this because you entered Spring Open 2026 at Riverside Racquets.
+                You received this because this address registered for Spring Open 2026 at Riverside Racquets CC.
               </p>
               <p style="margin:0;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;font-size:12px;line-height:18px;color:#6f6a7c;">
-                &copy; 2026 Seazn Club &middot; League software for grassroots sport
+                &copy; 2026 Seazn Club &middot; Any sport &middot; Live in minutes
               </p>
             </td>
           </tr>

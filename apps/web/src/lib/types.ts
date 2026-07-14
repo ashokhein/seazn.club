@@ -61,6 +61,8 @@ export interface OrgInvite {
   org_id: string;
   role: OrgRole;
   default_scope: { type: ScorerScopeType; id: string } | null;
+  /** Invite-by-email: the recipient address; null for shareable links. */
+  email: string | null;
   token: string;
   expires_at: string | null;
   max_uses: number;
@@ -107,6 +109,8 @@ export const updateProfileSchema = z.object({
 export const createInviteSchema = z.object({
   role: z.enum(["admin", "viewer", "scorer"]),
   max_uses: z.number().int().min(0).max(1000).default(1),
+  /** Invite-by-email: send the join link to this address (forces single-use). */
+  email: z.string().trim().email().max(120).nullable().optional(),
   expires_in_days: z.number().int().min(1).max(365).nullable().optional(),
   /** Scorer invites only (doc 13 §4): accept creates this assignment too. */
   default_scope: z

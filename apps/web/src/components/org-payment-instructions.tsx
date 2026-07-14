@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/client";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { ProseEditor } from "@/components/prose-editor";
 
 interface ConnectStatus {
   connected: boolean;
@@ -128,6 +129,57 @@ export function OrgPaymentInstructions({
               </span>
             )}
           </div>
+          {/* What connecting involves — the three stops on the way to taking
+              card entry fees, with the current one highlighted. */}
+          <ol className="mt-3 space-y-2">
+            {[
+              {
+                label: "Connect",
+                detail:
+                  "You're sent to Stripe's secure onboarding — Seazn Club never sees your details.",
+                done: !!connect?.connected,
+                active: !connect?.connected,
+              },
+              {
+                label: "Verify (KYC)",
+                detail:
+                  "Stripe verifies who receives the money: legal name, date of birth and bank account — clubs and companies may be asked for registration documents. Usually minutes; occasionally Stripe asks for more and it takes a day or two. You can leave and resume anytime.",
+                done: !!connect?.charges_enabled,
+                active: !!connect?.connected && !connect?.charges_enabled,
+              },
+              {
+                label: "Go live",
+                detail:
+                  "Charges enabled: divisions can take card entry fees, entries confirm on payment, and payouts land in your bank on Stripe's schedule — minus Stripe's processing fee and the platform fee for your plan.",
+                done: !!connect?.charges_enabled,
+                active: !!connect?.charges_enabled,
+              },
+            ].map((step, i) => (
+              <li key={step.label} className="flex items-start gap-2.5">
+                <span
+                  className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full text-[11px] font-semibold ${
+                    step.done
+                      ? "bg-emerald-100 text-emerald-700"
+                      : step.active
+                        ? "bg-purple-100 text-purple-700"
+                        : "bg-slate-100 text-slate-500"
+                  }`}
+                >
+                  {step.done ? "✓" : i + 1}
+                </span>
+                <p className="text-xs leading-5 text-slate-500">
+                  <span
+                    className={`font-medium ${
+                      step.active ? "text-purple-700" : "text-slate-700"
+                    }`}
+                  >
+                    {step.label}
+                  </span>{" "}
+                  — {step.detail}
+                </p>
+              </li>
+            ))}
+          </ol>
           {!connect?.charges_enabled && (
             <button
               type="button"
@@ -185,19 +237,19 @@ export function OrgPaymentInstructions({
         <span className="label">Cash / bank transfer instructions</span>
         <p className="mb-2 text-xs text-slate-500">
           Shown to registrants of pay-the-organiser divisions and included in their
-          confirmation email. Divisions can override these. e.g. bank name, account number,
-          sort code / IBAN, reference to use, or &ldquo;pay cash on the day&rdquo;.
+          confirmation email. Divisions can override these. Formatting is supported,
+          and <code className="rounded bg-slate-100 px-1">{"{{reference}}"}</code>{" "}
+          becomes each registrant&apos;s generated reference number — e.g.
+          &ldquo;quote {"{{reference}}"} on your transfer&rdquo;.
         </p>
-        <textarea
+        <ProseEditor
           value={value}
-          onChange={(e) => {
-            setValue(e.target.value);
+          onChange={(md) => {
+            setValue(md);
             setSaved(false);
           }}
-          rows={5}
-          maxLength={2000}
-          placeholder={"Bank: Example Bank\nAccount name: Riverside FC\nSort code: 00-00-00\nAccount no: 12345678\nReference: your team name"}
-          className="input w-full font-mono text-sm"
+          orgId={orgId}
+          placeholder={"Bank: Example Bank\nAccount name: Riverside FC\nSort code: 00-00-00\nAccount no: 12345678\nReference: {{reference}}"}
         />
         <div className="mt-2 flex items-center gap-3">
           <button
