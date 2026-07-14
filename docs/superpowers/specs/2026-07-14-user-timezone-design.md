@@ -189,6 +189,31 @@ Account save    ─▶ PATCH /api/users/me ─▶ users.timezone + seazn_tz cook
   two-lane rule (why a fixture shows venue time, not yours).
 - OpenAPI: `PATCH /users/me` request body gains `timezone` (no new route → no ROUTES add).
 
+## Implementation status (2026-07-14)
+
+**Shipped + verified** (branch `feat/user-timezone`, 6 commits, tsc + 685 unit green):
+- Data layer: V280 `users.timezone`, `lib/tz.ts` (pure, canonicalizing full IANA
+  list), `lib/tz-server.ts` `resolveTimezone`, `lib/format.ts` (+ DST-free IST/GST/…
+  abbrev override for ICU builds that emit offsets).
+- `<Zoned>` + `ViewerTzProvider`/`useViewerTz`; `.tz-you` subtitle CSS.
+- Account → Preferences picker (full grouped list, Detect, live preview). Verified
+  live on desktop + mobile: preview reads `22:21 IST` for Asia/Kolkata; save
+  persists; API rejects bogus zones.
+- `/me` fixtures render venue tz + label + viewer-local subtitle (`listMyFixtures`
+  carries `venue_tz`).
+- e2e (persist + reject), smoke (pro + free), help doc `scheduling/timezones.md`.
+
+**Remaining venue/personal surfaces** (mechanism ready — each just needs `<Zoned>`
+with the right `tz` + `you="subtitle"`, and for the ISR public surface, threading
+`schedule_settings.tz` through `PublicFixture` + regrouping days by venue zone):
+- Public division schedule (`components/public-site/schedule.tsx`) + shared fixture
+  page — currently browser-zone, unlabelled. Highest-value spectator surface; needs
+  the public-data tz thread (kept out of this slice to protect the ISR cache design).
+- Console fixture board / schedule board — venue tz already threaded (settings-panel);
+  add `showZone` + subtitle.
+- Personal-lane admin tables, billing renewal dates, audit log — swap host-zone
+  `toLocaleString` for `<Zoned tz={userTz}>`.
+
 ## Rollout
 
 Additive, nullable column — safe pre-deploy. Migration V280 applies via Flyway
