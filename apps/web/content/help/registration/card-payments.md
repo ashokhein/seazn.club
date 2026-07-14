@@ -22,7 +22,11 @@ Each payment settles to your connected Stripe account, minus Stripe's processing
 
 ## 4. Refunds
 
-Withdrawals (yours or a registrant's self-withdrawal within the allowed window) refund automatically: the money returns to the card, the platform fee is returned too, and the registrant gets a receipt email. Refunds you make directly in the Stripe dashboard sync back — the entry shows as refunded on your console either way.
+Withdrawals refund automatically **in full** when they land before the division's **refund lock date**: the money returns to the card, the platform fee is returned too, and the registrant gets a receipt email. After the lock date nothing refunds by itself — it's your call, via the manual refund on the entry.
+
+**No refund lock date set?** Then there is no cut-off: every paid withdrawal auto-refunds in full, right up to match day. If you don't want to refund late drop-outs, set the lock date in the division's registration settings.
+
+Refunds you make directly in the Stripe dashboard sync back — the entry shows as refunded on your console either way.
 
 ## 5. Disputes (chargebacks)
 
