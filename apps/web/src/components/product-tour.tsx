@@ -17,7 +17,7 @@ interface TourStep {
   body: string;
 }
 
-const STEPS: TourStep[] = [
+export const STEPS: TourStep[] = [
   {
     id: "welcome",
     path: (org: string) => routes.orgHome(org),
@@ -37,7 +37,21 @@ const STEPS: TourStep[] = [
     path: (org: string) => routes.orgSettings(org),
     target: "org-rename",
     title: "Rename your organisation",
-    body: "Type a new name here and save. The tabs on the left also cover your team, plan and API keys.",
+    body: "Type a new name here and save. The tabs on the left cover your team, plan and API keys — next, let's set up getting paid.",
+  },
+  {
+    id: "connect",
+    path: (org: string) => routes.payments(org),
+    target: "connect-stripe",
+    title: "Get paid",
+    body: "Connect Stripe to take card entry fees — payouts land straight in your bank. You're sent to Stripe's secure onboarding; Seazn Club never sees your details.",
+  },
+  {
+    id: "billing",
+    path: (org: string) => routes.billing(org),
+    target: "billing-plan",
+    title: "Your plan & billing",
+    body: "You're on the free Community plan. Track usage, view invoices and upgrade to Pro here whenever you're ready.",
   },
   {
     id: "new-competition",
@@ -58,8 +72,28 @@ const STEPS: TourStep[] = [
 export const TOUR_STORAGE_KEY = "seazn.tour.step";
 const PADDING = 8;
 const TOOLTIP_WIDTH = 320;
+const TOOLTIP_HEIGHT = 220; // placement estimate; the card itself is auto-height
 
 type Rect = { top: number; left: number; width: number; height: number };
+
+/** Where the tooltip sits relative to the highlighted target: below when it
+ *  fits, else above when it fits, else centered. A target taller than the
+ *  viewport (a whole settings card on a phone) fits neither side, so it centers
+ *  rather than render off-screen. A null rect (no/hidden target) also centers. */
+export function placeTooltip(rect: Rect | null, vw: number, vh: number): React.CSSProperties {
+  const centered: React.CSSProperties = {
+    top: "50%",
+    left: "50%",
+    transform: "translate(-50%, -50%)",
+  };
+  if (!rect) return centered;
+  const left = Math.min(Math.max(rect.left, 16), Math.max(vw - TOOLTIP_WIDTH - 16, 16));
+  const gap = PADDING + 8;
+  const belowTop = rect.top + rect.height + gap;
+  if (belowTop + TOOLTIP_HEIGHT <= vh) return { top: belowTop, left };
+  if (rect.top - gap - TOOLTIP_HEIGHT >= 0) return { bottom: vh - rect.top + gap, left };
+  return centered;
+}
 
 function measure(target: string): Rect | null {
   const el = document.querySelector(`[data-tour="${target}"]`);
@@ -183,20 +217,9 @@ export function ProductTour({ autoStart, orgSlug }: { autoStart: boolean; orgSlu
   const s = STEPS[step];
   const isLast = step === STEPS.length - 1;
 
-  // Tooltip placement: below the target when there's room, otherwise above;
-  // centered card when there's no target.
-  let tooltipStyle: React.CSSProperties;
-  if (rect) {
-    const vw = window.innerWidth;
-    const vh = window.innerHeight;
-    const left = Math.min(Math.max(rect.left, 16), Math.max(vw - TOOLTIP_WIDTH - 16, 16));
-    const below = rect.top + rect.height + PADDING + 220 < vh;
-    tooltipStyle = below
-      ? { top: rect.top + rect.height + PADDING + 8, left }
-      : { bottom: vh - rect.top + PADDING + 8, left };
-  } else {
-    tooltipStyle = { top: "50%", left: "50%", transform: "translate(-50%, -50%)" };
-  }
+  // Tooltip placement: below the target when it fits, else above, else centered
+  // (a target taller than the viewport would push the tooltip off-screen).
+  const tooltipStyle = placeTooltip(rect, window.innerWidth, window.innerHeight);
 
   return createPortal(
     <div className="fixed inset-0 z-[100]" role="dialog" aria-modal="true" aria-label="Product tour">

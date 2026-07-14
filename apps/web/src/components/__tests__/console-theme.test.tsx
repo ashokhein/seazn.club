@@ -46,14 +46,17 @@ describe("floodlit console theme", () => {
     expect(html).toContain("Riverside");
   });
 
-  it("night stage mounts the wordmark over its children", () => {
+  it("night stage mounts the brand mark (not a text lockup) over its children", () => {
     const html = renderToStaticMarkup(
       <NightStage>
         <p>ticket window</p>
       </NightStage>,
     );
     expect(html).toContain("app-night-stage");
-    expect(html).toContain("Seazn");
+    // The cream wordmark carrying the lime pitch line + red ball — the mark, not
+    // plain "Seazn Club" text. The alt keeps the accessible name.
+    expect(html).toContain("/logo-wide-night.png");
+    expect(html).toContain('alt="Seazn Club"');
     expect(html).toContain("ticket window");
   });
 });

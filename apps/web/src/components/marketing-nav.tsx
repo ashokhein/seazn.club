@@ -27,13 +27,14 @@ export async function MarketingNav({
       {night ? <NavScrollFlip /> : null}
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3">
         <Link href="/" aria-label="Seazn Club — home" className="flex items-center gap-2">
-          {/* logo-wide.png is the night-ink wordmark on transparent — right
-              for light navs; the night state swaps to the cream text lockup. */}
+          {/* logo-wide.png is the night-ink wordmark for light navs; the night
+              state swaps to logo-wide-night.png — the cream wordmark carrying
+              the lime pitch line + red ball, legible over the floodlit hero.
+              Exactly one shows at a time via CSS (globals.css §mk-nav). */}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-wide.png" alt="Seazn Club" className="mk-nav-logo-img h-9 w-auto" />
-          <span aria-hidden className="mk-nav-logo-text mk-display text-xl font-bold tracking-[0.08em]">
-            SEAZN <span className="text-lime-400">CLUB</span>
-          </span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-wide-night.png" alt="Seazn Club" className="mk-nav-logo-img-night h-9 w-auto" />
         </Link>
         <nav className="flex items-center gap-1 sm:gap-2">
           {LINKS.map((l) => (

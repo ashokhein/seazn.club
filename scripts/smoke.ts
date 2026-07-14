@@ -1140,6 +1140,17 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
     "v3/11 manage sections stay hidden without a Stripe customer (pro)",
     !proBilling.body.includes("Payment methods"),
   );
+  // Product tour: the Billing and Connect steps highlight real anchors — the
+  // plan card on billing, the Stripe card on payments (owner-only).
+  check(
+    "product tour: billing step anchor present (pro)",
+    proBilling.body.includes('data-tour="billing-plan"'),
+  );
+  const proPayments = await html(admin, `/o/${proOrgSlug}/settings/payments`);
+  check(
+    "product tour: Connect step anchor present on payments (owner)",
+    proPayments.status === 200 && proPayments.body.includes('data-tour="connect-stripe"'),
+  );
   const freeCancel = await raw(free, "/api/billing/cancel", "POST", {});
   check("v3/11 cancel wants a Stripe customer first (free)", freeCancel.status === 400);
   const proAddress = await raw(admin, "/api/billing/address", "POST", {
@@ -1154,6 +1165,10 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
     freeBilling.status === 200 &&
       freeBilling.body.includes("Upgrade to Pro") &&
       !freeBilling.body.includes("Manage billing →"),
+  );
+  check(
+    "product tour: billing step anchor present (free)",
+    freeBilling.body.includes('data-tour="billing-plan"'),
   );
 }
 

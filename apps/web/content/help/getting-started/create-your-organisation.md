@@ -13,6 +13,13 @@ Everything you run on seazn.club lives inside an **organisation** — your club,
 3. Add a **logo** and **brand colour** (Pro) so dashboards and share images carry your identity.
 4. Invite teammates under **Settings → Team** — owners and admins can edit everything, scorers only score their assigned matches, viewers can look but not touch. Invites never change an existing member's role: a viewer who accepts an umpire invite keeps viewer access and just gains those matches to score ([how scorer invites work](/help/scoring/scorer-role)).
 
+## Get set up to get paid
+
+The welcome tour walks you through this next, right after naming your organisation:
+
+1. **Connect Stripe** under **Settings → Payments** so you can take **card entry fees** — registrants pay at sign-up and the money settles straight into your own Stripe account. It's a one-time, secure onboarding; [here's the whole money journey](/help/registration/card-payments).
+2. Check **Settings → Plan & billing** — you start on the free **Community** plan. Card entry fees and other paid extras unlock on **Pro**; you can [compare plans and upgrade](/help/billing/plans) whenever you're ready. Running a free event? Community is plenty.
+
 ## Common questions
 
 **Can I run more than one organisation?** Yes — switch between them from the organisation menu. Each has its own competitions, team and plan.
