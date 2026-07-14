@@ -31,16 +31,14 @@ export default async function GamePage({ params }: { params: Promise<Params> }) 
 
   return (
     <div className="flex min-h-dvh flex-col bg-white">
-      <header className="flex items-center gap-3 border-b border-slate-200 px-4 py-2">
+      <header className="flex flex-wrap items-center justify-center gap-3 border-b border-slate-200 px-4 py-2">
         <Link href="/games" className="text-sm font-medium text-purple-600 hover:text-purple-800">
           ← Games
         </Link>
         <span className="text-sm text-slate-300">|</span>
         <h1 className="mk-display text-base font-bold text-purple-950">{game.title}</h1>
-        <Link
-          href="/"
-          className="ml-auto text-xs text-slate-400 hover:text-purple-600"
-        >
+        <span className="text-sm text-slate-300">|</span>
+        <Link href="/" className="text-xs text-slate-400 hover:text-purple-600">
           Powered by <span className="font-semibold">Seazn Club</span>
         </Link>
       </header>
