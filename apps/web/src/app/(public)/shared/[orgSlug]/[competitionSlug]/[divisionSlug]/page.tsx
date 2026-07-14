@@ -54,7 +54,7 @@ export default async function DivisionHomePage({ params }: Props) {
     if (renamed) permanentRedirect(renamed);
     notFound();
   }
-  const { org, competition, division, stages, pools, fixtures, standings, entrants } = data;
+  const { org, competition, division, stages, pools, fixtures, standings, entrants, tz } = data;
 
   // MetricSpec[] + cascade from the division's PINNED module version.
   let metricSpecs: MetricSpecLike[] = [];
@@ -295,6 +295,7 @@ export default async function DivisionHomePage({ params }: Props) {
             fixtures={fixtures}
             entrantNames={entrantNames}
             divisionPath={basePath}
+            tz={tz}
           />,
           standingsPanel,
           entrantsPanel,

@@ -267,6 +267,8 @@ export async function getPublicDivision(
   fixtures: PublicFixture[];
   standings: PublicStandings[];
   entrants: PublicEntrant[];
+  /** Venue zone for schedule display (schedule_settings.tz; UTC if unset). */
+  tz: string;
 } | null> {
   const shell = await getPublicCompetition(orgSlug, compSlug);
   if (!shell) return null;
@@ -297,7 +299,9 @@ export async function getPublicDivision(
                team_display
         from public_entrants_v where division_id = ${division.id}
         order by seed nulls last, display_name`;
-      return { stages, pools, fixtures, standings, entrants };
+      const [ss] = await sql<{ tz: string }[]>`
+        select tz from schedule_settings where division_id = ${division.id}`;
+      return { stages, pools, fixtures, standings, entrants, tz: ss?.tz ?? "UTC" };
     },
     ["pub-div", division.id],
     {
