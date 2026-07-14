@@ -15,6 +15,7 @@ export const GAME_LABEL: Record<GameId, string> = {
   hangingHunt: "▶ Play Piece Detective",
   tacticTrainer: "▶ Play Trick Shots",
   rookMaze: "▶ Play Rook Maze",
+  openingTrainer: "▶ Play the opening",
 };
 
 // The active register's copy for a lesson.

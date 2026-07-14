@@ -32,7 +32,7 @@ export function QuestMap({
                   Track {track}
                 </span>
                 <span className="mk-display text-sm font-bold text-purple-900">
-                  {track === 1 ? "First Steps" : "Rising Player"}
+                  {track === 1 ? "First Steps" : track === 2 ? "Rising Player" : "Opening Range"}
                 </span>
               </div>
             ) : null}
