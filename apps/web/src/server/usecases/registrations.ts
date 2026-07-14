@@ -1895,3 +1895,138 @@ export async function registrationIcs(regId: string, token: string): Promise<str
     "",
   ].join("\r\n");
 }
+
+// ---------------------------------------------------------------------------
+// Dispute evidence pack
+// ---------------------------------------------------------------------------
+
+const esc = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function evidenceRow(label: string, value: string): string {
+  return `<tr><td style="padding:6px 14px 6px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${esc(label)}</td><td style="padding:6px 0;font-weight:600">${esc(value)}</td></tr>`;
+}
+
+/**
+ * Everything the platform holds that shows a disputed entry was genuine, as
+ * one printable HTML document mapped to Stripe's evidence fields: the
+ * registration record, the reconstructed confirmation email (receipt +
+ * customer communication), the audit trail (activity log) and the entrant's
+ * fixtures (service provided). Organisers download it from the flagged row
+ * and paste/upload into the dispute response.
+ */
+export async function buildDisputeEvidence(
+  auth: AuthCtx,
+  regId: string,
+  origin: string,
+): Promise<{ ref: string; html: string }> {
+  const reg = await withTenant(auth.orgId, (tx) => orgReg(tx, regId));
+  const ctx = await divisionCtx(sql, reg.division_id);
+  const [division] = await sql<{ name: string }[]>`
+    select name from divisions where id = ${reg.division_id}`;
+
+  const events = await sql<{ type: string; payload: unknown; created_at: Date }[]>`
+    select type, payload, created_at from competition_events
+    where competition_id = ${ctx.competition_id}
+      and payload->>'registration_id' = ${regId}
+    order by created_at`;
+
+  const fixtures = reg.entrant_id
+    ? await sql<
+        { round_no: number | null; status: string; outcome: unknown; scheduled_at: Date | null; venue: string | null }[]
+      >`
+      select round_no, status, outcome, scheduled_at, venue from fixtures
+      where home_entrant_id = ${reg.entrant_id} or away_entrant_id = ${reg.entrant_id}
+      order by round_no nulls last, scheduled_at nulls last`
+    : [];
+
+  // The transactional receipt, reconstructed with the exact sender inputs.
+  const settings = await loadSettings(sql, reg.division_id);
+  const { registrationTemplate } = await import("@/lib/email-templates");
+  const emailText = registrationTemplate({
+    orgName: ctx.org_name,
+    competitionName: ctx.comp_name,
+    displayName: reg.display_name,
+    status: reg.status,
+    feeCents: reg.amount_cents,
+    currency: reg.currency ?? settings?.currency ?? "gbp",
+    paymentInstructions: null,
+    statusUrl: `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status`,
+    refCode: reg.ref_code,
+    refStatusUrl: reg.ref_code ? `${origin}/r/${reg.ref_code}` : null,
+  }).text;
+
+  const when = (d: Date | string | null) => (d ? new Date(d).toISOString() : "—");
+  const ref = reg.ref_code ?? reg.id;
+
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Dispute evidence — ${esc(ref)}</title></head>
+<body style="margin:0;font-family:system-ui,-apple-system,sans-serif;color:#18181b">
+<div style="background:#150b36;color:#f5f0e8;padding:18px 32px 8px">
+  <div style="font-size:18px;font-weight:800;letter-spacing:2px">SEAZN <span style="color:#a3e635">CLUB</span></div>
+  <div style="text-align:right;color:#ef4444;font-size:14px;line-height:8px">&#9679;</div>
+</div>
+<div style="height:4px;background:#a3e635"></div>
+<div style="max-width:760px;margin:0 auto;padding:28px 32px">
+  <h1 style="font-size:22px;margin:0 0 2px">Dispute evidence pack — ${esc(ref)}</h1>
+  <p style="margin:0 0 20px;color:#6b7280;font-size:13px">
+    Generated ${new Date().toISOString()} · ${esc(ctx.org_name)} · for the Stripe dispute response${reg.dispute_id ? ` (${esc(reg.dispute_id)})` : ""}.
+  </p>
+
+  <h2 style="font-size:15px;margin:20px 0 6px">Registration (product/service + customer)</h2>
+  <table style="font-size:14px;border-collapse:collapse">
+    ${evidenceRow("Reference", ref)}
+    ${evidenceRow("Entrant", reg.display_name)}
+    ${evidenceRow("Customer email", reg.contact_email)}
+    ${evidenceRow("Competition", `${ctx.comp_name} — ${division?.name ?? ""}`)}
+    ${evidenceRow("Service dates", `${ctx.starts_on ?? "—"} – ${ctx.ends_on ?? "—"}`)}
+    ${evidenceRow("Amount", `${((reg.amount_cents ?? 0) / 100).toFixed(2)} ${(reg.currency ?? "gbp").toUpperCase()}`)}
+    ${evidenceRow("Payment intent", reg.payment_intent_id ?? "—")}
+    ${evidenceRow("Registered at", when(reg.created_at))}
+    ${evidenceRow("Status", reg.status)}
+    ${evidenceRow("Disputed at", when(reg.disputed_at))}
+    ${evidenceRow("Status page", reg.ref_code ? `${origin}/r/${reg.ref_code}` : "—")}
+  </table>
+
+  <h2 style="font-size:15px;margin:24px 0 6px">Confirmation email (receipt / customer communication)</h2>
+  <p style="margin:0 0 6px;color:#6b7280;font-size:12px">Reconstruction of the transactional email sent to ${esc(reg.contact_email)} at registration.</p>
+  <pre style="background:#f6f5f8;border-radius:8px;padding:14px;font-size:12px;white-space:pre-wrap">${esc(emailText)}</pre>
+
+  <h2 style="font-size:15px;margin:24px 0 6px">Activity log (${events.length})</h2>
+  <table style="font-size:13px;border-collapse:collapse">
+    ${events
+      .map((e) =>
+        evidenceRow(new Date(e.created_at).toISOString(), `${e.type} ${JSON.stringify(e.payload)}`),
+      )
+      .join("")}
+  </table>
+
+  <h2 style="font-size:15px;margin:24px 0 6px">Fixtures for this entrant (service provided) — ${fixtures.length}</h2>
+  ${
+    fixtures.length === 0
+      ? `<p style="color:#6b7280;font-size:13px;margin:0">No fixtures yet (or the entry has no entrant).</p>`
+      : `<table style="font-size:13px;border-collapse:collapse">${fixtures
+          .map((f) =>
+            evidenceRow(
+              `Round ${f.round_no ?? "—"} · ${f.scheduled_at ? new Date(f.scheduled_at).toISOString() : "unscheduled"}`,
+              `${f.status}${f.venue ? ` · ${f.venue}` : ""}${f.outcome ? ` · ${JSON.stringify(f.outcome)}` : ""}`,
+            ),
+          )
+          .join("")}</table>`
+  }
+
+  <h2 style="font-size:15px;margin:24px 0 6px">How to use</h2>
+  <ol style="font-size:13px;color:#374151;padding-left:18px;margin:0">
+    <li>Open the dispute in your Stripe Dashboard (platform account).</li>
+    <li>Product/service: paste the Registration section; service date = the competition dates.</li>
+    <li>Customer communication / receipt: paste the confirmation email reconstruction.</li>
+    <li>Activity log + fixtures: upload this document as supporting evidence.</li>
+  </ol>
+</div>
+</body></html>`;
+
+  await withTenant(auth.orgId, (tx) =>
+    audit(tx, ctx.competition_id, auth.orgId, "registration.evidence_exported", { registration_id: regId }, auth.userId),
+  );
+  return { ref, html };
+}

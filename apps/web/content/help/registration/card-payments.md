@@ -30,7 +30,7 @@ Refunds you make directly in the Stripe dashboard sync back — the entry shows 
 
 ## 5. Disputes (chargebacks)
 
-If a cardholder disputes a payment, the registration is **flagged on your console** the moment Stripe tells us, and you get an alert email. Gather what proves the entry was genuine — the confirmation email, check-in records — and respond to the dispute in your Stripe dashboard. If the dispute is lost, the payment returns to the cardholder. When it closes, the flag updates automatically.
+If a cardholder disputes a payment, the registration is **flagged on your console** the moment Stripe tells us, and you get an alert email. Press **Evidence pack** on the flagged entry — it downloads one document with everything that proves the entry was genuine: the registration record, a reconstruction of the confirmation email, the full activity log and the entrant's fixtures, mapped to Stripe's evidence fields. Respond to the dispute in your Stripe dashboard using it. If the dispute is lost, the payment returns to the cardholder. When it closes, the flag updates automatically.
 
 ## Common questions
 

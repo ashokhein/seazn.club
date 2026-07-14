@@ -21,6 +21,10 @@ const STATUS_STYLE: Record<string, string> = {
 /** Payment chip per row (spec §8): one glanceable money state. */
 function paymentChip(r: Registration): { label: string; cls: string } | null {
   if (r.amount_cents <= 0 && !r.payment_intent_id) return null;
+  // A closed-lost dispute leaves disputed_at set for history AND marks the
+  // money returned — show that outcome, not a still-open-looking flag.
+  if (r.disputed_at && r.refunded_cents >= r.amount_cents && r.amount_cents > 0)
+    return { label: "dispute lost · refunded", cls: "bg-rose-100 text-rose-700" };
   if (r.disputed_at) return { label: "⚠ disputed", cls: "bg-rose-100 text-rose-700" };
   const partiallyRefunded = r.refunded_cents > 0 && r.refunded_cents < r.amount_cents;
   if (r.refunded_cents >= r.amount_cents && r.refunded_cents > 0)
@@ -197,12 +201,22 @@ export function RegistrationList({
                     {chip?.label === "refund incomplete" ? "Retry refund" : "Refund"}
                   </button>
                 )}
+                {r.disputed_at && (
+                  <a
+                    href={`/api/v1/registrations/${r.id}/evidence`}
+                    download
+                    className="btn btn-ghost text-xs font-medium text-rose-700"
+                    title="Download the dispute evidence pack — receipt, activity log and fixtures, ready for the Stripe dispute response"
+                  >
+                    Evidence pack
+                  </a>
+                )}
               </>
             );
             const hasSpot = spotActions && (r.status !== "withdrawn" && r.status !== "expired");
             const hasMoney =
               moneyActions &&
-              (feeUnpaid || refundable || (r.status === "pending" && r.amount_cents > 0));
+              (feeUnpaid || refundable || (r.status === "pending" && r.amount_cents > 0) || r.disputed_at);
             return (
               // Card on mobile (stacked: badges / identity / actions), one
               // inline row from sm: up — crowded data never squeezes the name.
