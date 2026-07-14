@@ -1,6 +1,7 @@
 import type { MetadataRoute } from "next";
 import { listPublicSitemapEntries } from "@/server/public-site/data";
 import { listDiscoverySports } from "@/server/public-site/discovery";
+import { liveGames } from "@/games/registry";
 
 const BASE = "https://seazn.club";
 
@@ -11,6 +12,13 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     { url: `${BASE}/discover`, lastModified: now, changeFrequency: "hourly", priority: 0.9 },
     { url: `${BASE}/live`, lastModified: now, changeFrequency: "hourly", priority: 0.8 },
     { url: `${BASE}/pricing`, lastModified: now, changeFrequency: "monthly", priority: 0.9 },
+    { url: `${BASE}/games`, lastModified: now, changeFrequency: "weekly", priority: 0.8 },
+    ...liveGames().map((g) => ({
+      url: `${BASE}/games/${g.slug}`,
+      lastModified: now,
+      changeFrequency: "monthly" as const,
+      priority: 0.7,
+    })),
     { url: `${BASE}/use-cases/clubs`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
     { url: `${BASE}/use-cases/events`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
     { url: `${BASE}/use-cases/schools`, lastModified: now, changeFrequency: "monthly", priority: 0.8 },
