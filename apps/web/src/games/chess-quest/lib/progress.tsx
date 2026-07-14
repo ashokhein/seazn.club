@@ -3,7 +3,7 @@
 // Session progress store. Phase C keeps it in memory; Phase D swaps the
 // provider internals for localStorage-backed profiles. The Progress API is
 // the contract — game components must not reach around it.
-import { createContext, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useMemo, useState } from "react";
 
 export type Progress = {
   isSolved(i: number): boolean;
@@ -86,12 +86,10 @@ const MUTATORS = [
 ] as const;
 
 export function ProgressProvider({ children }: { children: React.ReactNode }) {
-  const ref = useRef<Progress | null>(null);
-  ref.current ??= createProgressState();
+  const [inner] = useState(createProgressState);
   const [, setVersion] = useState(0);
 
   const value = useMemo(() => {
-    const inner = ref.current!;
     const wrapped = { ...inner };
     for (const m of MUTATORS) {
       const fn = inner[m] as (...args: never[]) => unknown;
@@ -102,7 +100,7 @@ export function ProgressProvider({ children }: { children: React.ReactNode }) {
       };
     }
     return wrapped as Progress;
-  }, []);
+  }, [inner]);
 
   return <ProgressCtx.Provider value={value}>{children}</ProgressCtx.Provider>;
 }

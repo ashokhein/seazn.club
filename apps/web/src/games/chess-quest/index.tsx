@@ -9,6 +9,8 @@ import { ProgressProvider } from "./lib/progress";
 import { SquareRace } from "./components/games/SquareRace";
 import { CoinHop } from "./components/games/CoinHop";
 import { PawnWars } from "./components/games/PawnWars";
+import { MateInOne } from "./components/games/MateInOne";
+import { MateInTwo } from "./components/games/MateInTwo";
 
 type GameEntry = {
   id: string;
@@ -39,6 +41,20 @@ const GAMES: GameEntry[] = [
     title: "Pawn Wars",
     blurb: "Pawns only — first to crown a queen wins.",
     render: () => <PawnWars />,
+  },
+  {
+    id: "mateInOne",
+    emoji: "♚",
+    title: "Mate in 1",
+    blurb: "Deliver checkmate in a single move.",
+    render: () => <MateInOne />,
+  },
+  {
+    id: "mateInTwo",
+    emoji: "👑",
+    title: "Mate in 2",
+    blurb: "Force checkmate in two — think a move ahead.",
+    render: () => <MateInTwo />,
   },
 ];
 

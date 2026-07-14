@@ -43,12 +43,12 @@ export function Board({
   popToken?: { idx: number; n: number } | null;
   shakeToken?: number;
 }) {
-  // Re-mount the popped piece span so the CSS animation restarts.
-  const [popping, setPopping] = useState<{ idx: number; n: number } | null>(null);
-  useEffect(() => {
-    if (popToken) setPopping(popToken);
-  }, [popToken]);
+  // popToken drives the pop animation directly: the popped piece's `key`
+  // includes popToken.n, so bumping it re-mounts that span and replays the
+  // CSS keyframes — no extra state needed.
+  const popping = popToken ?? null;
 
+  // Shake replays a CSS animation for ~320ms after each shakeToken change.
   const [shaking, setShaking] = useState(false);
   const firstShake = useRef(true);
   useEffect(() => {

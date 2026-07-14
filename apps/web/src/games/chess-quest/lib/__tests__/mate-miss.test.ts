@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseFEN, sqIdx, sqName } from "../../engine";
+import { parseFEN, sqName } from "../../engine";
 import { classifyMateMiss } from "../mate-miss";
 
 const b = (fen: string) => parseFEN(fen).board;

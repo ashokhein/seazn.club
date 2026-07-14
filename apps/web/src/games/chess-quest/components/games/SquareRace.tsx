@@ -3,7 +3,7 @@
 // Square Race — 60 seconds, tap the called-out square. Port of js/games.js
 // squareRace (lines 136–195): scoring flash, 5-streak celebration hook point,
 // best-score record, star thresholds from STAR_RULES.
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { sqName } from "../../engine";
 import { emptyBoard } from "../../lib/rand";
 import { sfx } from "../../lib/sfx";
@@ -28,32 +28,36 @@ export function SquareRace() {
   const [highlights, setHighlights] = useState<Partial<Record<number, Highlight>>>({});
   const [shake, setShake] = useState(0);
   const scoreRef = useRef(0);
+  const timeRef = useRef(60);
+
+  // finish runs from the interval callback (not the effect body), so its
+  // setState calls don't trip the cascading-render lint.
+  const finish = useCallback(() => {
+    setRunning(false);
+    setHighlights({});
+    const s = scoreRef.current;
+    const stars = STAR_RULES.squareRace(s);
+    const record = progress.setBest("squareRace", s);
+    if (stars) progress.setGameStars("squareRace", stars);
+    setStatus(
+      `Time! You found <strong>${s}</strong> squares ${"★".repeat(stars)}${
+        record ? " — new record!" : ""
+      }<br><small>Best so far: ${progress.getBest("squareRace")}</small>`,
+    );
+  }, [progress]);
 
   useEffect(() => {
     if (!running) return;
     const timer = setInterval(() => {
-      setTime((t) => t - 1);
+      timeRef.current -= 1;
+      setTime(timeRef.current);
+      if (timeRef.current <= 0) {
+        clearInterval(timer);
+        finish();
+      }
     }, 1000);
     return () => clearInterval(timer);
-  }, [running]);
-
-  useEffect(() => {
-    if (running && time <= 0) {
-      setRunning(false);
-      setHighlights({});
-      const s = scoreRef.current;
-      const stars = STAR_RULES.squareRace(s);
-      const record = progress.setBest("squareRace", s);
-      if (stars) progress.setGameStars("squareRace", stars);
-      setStatus(
-        `Time! You found <strong>${s}</strong> squares ${"★".repeat(stars)}${
-          record ? " — new record!" : ""
-        }<br><small>Best so far: ${progress.getBest("squareRace")}</small>`,
-      );
-    }
-    // progress is intentionally omitted: reading it here must not rearm the effect
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [time, running]);
+  }, [running, finish]);
 
   function newTarget() {
     const t = Math.floor(Math.random() * 64);
@@ -63,6 +67,7 @@ export function SquareRace() {
 
   function start() {
     scoreRef.current = 0;
+    timeRef.current = 60;
     setScore(0);
     setTime(60);
     setRunning(true);
