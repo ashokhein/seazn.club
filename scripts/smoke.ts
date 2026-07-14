@@ -1460,6 +1460,11 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
 
   const anon = newSession();
   const pubStandings = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}/divisions/${divSlug}/standings`);
+  // Flaked once in CI (2026-07-13, 404) with no body in the log — keep the
+  // response visible so a recurrence is diagnosable.
+  if (pubStandings.status !== 200) {
+    console.log("public standings response:", pubStandings.status, JSON.stringify(pubStandings.json));
+  }
   check("v1 public standings (no auth)", pubStandings.status === 200 && pubStandings.json.ok === true);
   check("v1 public reads are cacheable", (pubStandings.headers.get("cache-control") ?? "").includes("s-maxage"));
   const pubComp = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}`);

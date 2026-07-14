@@ -9699,6 +9699,9 @@
                         },
                         "claim_url": {
                           "type": "string"
+                        },
+                        "email_sent": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -9710,7 +9713,8 @@
                         "claimed_at",
                         "revoked_at",
                         "created_at",
-                        "claim_url"
+                        "claim_url",
+                        "email_sent"
                       ],
                       "additionalProperties": false
                     },
@@ -9731,7 +9735,8 @@
                     "claimed_at": "example",
                     "revoked_at": "example",
                     "created_at": "example",
-                    "claim_url": "example"
+                    "claim_url": "example",
+                    "email_sent": true
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }

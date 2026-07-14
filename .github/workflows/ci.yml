@@ -179,6 +179,14 @@ jobs:
           REDIS_URL: redis://localhost:6379
 
       - name: Start dev server
+        # --max-old-space-size: next dev's memory watchdog restarts the server
+        # once used heap crosses 80% of the V8 limit (start-server.js). On the
+        # 7 GB runner Node's default limit is ~2 GB, and the full smoke suite
+        # crosses that near the end — the restart made the next smoke fetch
+        # fail ("ERROR: fetch failed", every run since 2026-07-13 ~21:05).
+        # 4 GB matches local dev, where the suite has always passed.
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: |
           npm run dev > dev-server.log 2>&1 &
           echo "waiting for server…"
