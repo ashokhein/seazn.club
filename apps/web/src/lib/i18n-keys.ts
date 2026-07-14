@@ -2,6 +2,15 @@
 // Run `npm run i18n:gen-keys` after changing any en dictionary key.
 export type DictionaryKey =
   | "app.name"
+  | "chip.finished"
+  | "chip.onNow"
+  | "chip.upcoming"
+  | "empty"
+  | "hero.eyebrow"
+  | "hero.subhead"
+  | "org.competitionsBy"
+  | "section.about"
+  | "section.competitions"
   | "start.heading"
   | "start.meta.description"
   | "start.meta.title"
