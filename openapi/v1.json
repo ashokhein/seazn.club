@@ -29423,15 +29423,21 @@
                     "type": "string",
                     "maxLength": 300,
                     "pattern": "^\\/"
+                  },
+                  "tos_agreed": {
+                    "default": false,
+                    "type": "boolean"
                   }
                 },
                 "required": [
-                  "return_path"
+                  "return_path",
+                  "tos_agreed"
                 ],
                 "additionalProperties": false
               },
               "example": {
-                "return_path": "example"
+                "return_path": "example",
+                "tos_agreed": true
               }
             }
           }

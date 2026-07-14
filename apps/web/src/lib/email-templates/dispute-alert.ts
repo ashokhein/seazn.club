@@ -34,7 +34,7 @@ export function disputeAlertTemplate(
         ) +
         panel(
           "What happens next",
-          "The registration is flagged on your console. If the dispute is lost, the payment is returned to the cardholder. " +
+          "The registration is flagged on your console. If the dispute is lost, the cardholder is repaid and the amount is recovered from your Stripe balance. " +
             "Check the entry, and gather anything that proves the registration was genuine (the confirmation email, check-in records).",
         ),
       footerNote: "You received this because you own the organisation on seazn.club.",
@@ -43,6 +43,6 @@ export function disputeAlertTemplate(
       `Payment dispute opened — ${opts.competitionName} (${opts.orgName}).\n` +
       `Disputed: ${amount} from ${opts.displayName}` +
       (opts.refCode ? ` (ref ${opts.refCode})` : "") +
-      `.\nThe registration is flagged on your console. If the dispute is lost, the payment is returned to the cardholder.`,
+      `.\nThe registration is flagged on your console. If the dispute is lost, the cardholder is repaid and the amount is recovered from your Stripe balance.`,
   };
 }

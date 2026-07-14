@@ -76,6 +76,7 @@ export async function createConnectOnboardingLink(
   orgId: string,
   origin: string,
   returnPath: string,
+  tosAgreed = false,
 ): Promise<{ url: string }> {
   requireOwnerSession(auth, orgId);
   // Connect is org-wide plumbing: any Event Pass in the org unlocks it too,
@@ -83,13 +84,24 @@ export async function createConnectOnboardingLink(
   const [anyPass] = await sql<{ ok: number }[]>`
     select 1 as ok from competition_passes where org_id = ${orgId} limit 1`;
   if (!anyPass) await requireFeature(orgId, "registration.paid");
-  const stripe = getStripe();
 
   let { stripe_account_id: accountId } = await orgConnect(orgId);
+  // ToS gate (PROMPT-55): the org accepts the entry-fee chargeback clause
+  // (lost disputes are recovered from its connected balance) BEFORE the
+  // Express account exists. Resuming onboarding never re-asks; the
+  // acceptance timestamp lives on the account metadata — no DB column.
+  // Checked before getStripe() so the 422 answers even keyless.
+  if (!accountId && !tosAgreed) {
+    throw new HttpError(
+      422,
+      "Agree to the Terms of Service (entry-fee chargebacks) before connecting Stripe",
+    );
+  }
+  const stripe = getStripe();
   if (!accountId) {
     const account = await stripe.accounts.create({
       type: "express",
-      metadata: { org_id: orgId },
+      metadata: { org_id: orgId, tos_agreed_at: new Date().toISOString() },
       capabilities: {
         card_payments: { requested: true },
         transfers: { requested: true },

@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   accountDeletionTemplate,
   disputeAlertTemplate,
+  disputeLostTemplate,
   emailChangeConfirmTemplate,
   emailChangeNoticeTemplate,
   inviteTemplate,
@@ -74,6 +75,19 @@ const allBuilders: [string, { subject: string; html: string; text: string }][] =
       refCode: "SZ-ABCD-EFGH",
     }),
   ],
+  [
+    "dispute-lost",
+    disputeLostTemplate({
+      orgName: "Riverside Racquets",
+      competitionName: "Spring Open 2026",
+      displayName: "Alex",
+      amountCents: 2500,
+      currency: "gbp",
+      refCode: "SZ-ABCD-EFGH",
+      recoveredCents: 2375,
+      consoleUrl: LINK,
+    }),
+  ],
 ];
 
 describe("email builders compose from the html templates", () => {
@@ -116,6 +130,28 @@ describe("email builders compose from the html templates", () => {
     expect(card.html).toContain("https://checkout.stripe.test/cs_2");
     const offline = paymentReminderTemplate(registrationArgs);
     expect(offline.html).toContain("Bank transfer");
+  });
+
+  it("dispute-lost email states the loss, the balance debit and who pays the fee", () => {
+    const out = disputeLostTemplate({
+      orgName: "O", competitionName: "C", displayName: "D",
+      amountCents: 2000, currency: "gbp", refCode: "SZ-XXXX-YYYY",
+      recoveredCents: 1900, consoleUrl: LINK,
+    });
+    expect(out.subject.toLowerCase()).toContain("dispute lost");
+    expect(out.text).toContain("SZ-XXXX-YYYY");
+    expect(out.text).toContain("£20.00"); // disputed amount
+    expect(out.text).toContain("£19.00"); // recovered from the club's balance
+    expect(out.text.toLowerCase()).toContain("stripe balance");
+    expect(out.text.toLowerCase()).toContain("dispute fee");
+    expect(out.html).toContain(`href="${LINK}"`);
+    // Recovery failed → no false claim that money moved.
+    const failed = disputeLostTemplate({
+      orgName: "O", competitionName: "C", displayName: "D",
+      amountCents: 2000, currency: "gbp", refCode: null,
+      recoveredCents: 0, consoleUrl: LINK,
+    });
+    expect(failed.text.toLowerCase()).not.toContain("recovered from your stripe balance");
   });
 
   it("refund email states the amount; dispute alert warns the organiser", () => {

@@ -1,7 +1,9 @@
 # v9 — Dispute Loss Recovery
 
-> **Status (2026-07-14):** not started. PROMPT-55 ⏳.
-> Branch (planned): `feat/v9-dispute-loss-recovery` (worktree).
+> **Status (2026-07-14):** PROMPT-55 ✅ implemented on
+> `feat/v9-dispute-loss-recovery` (worktree) — reversal + email + ToS gate
+> before Connect (owner ask, 2026-07-14). Live `createReversal` smoke-run
+> pending: the local restricted key needs "Transfers Write" enabled.
 > Migrations: none expected (all state already exists: `disputed_at`,
 > `dispute_id`, `refunded_cents`; Stripe holds the reversal state).
 > **Prereq:** PR #89 merged — it ships the dispute UX this builds on
