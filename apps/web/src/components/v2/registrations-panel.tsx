@@ -298,7 +298,12 @@ export function RegistrationsPanel({
             and Stripe dashboard. Disputed rows are flagged below.
           </div>
         )}
-        <RegistrationPulse pulse={pulse} currency={settings.currency} onJump={setPickedTab} />
+        <RegistrationPulse
+          pulse={pulse}
+          currency={settings.currency}
+          onJump={setPickedTab}
+          onRefresh={refresh}
+        />
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
             Registrations <span className="text-slate-500">({regs.length})</span>
