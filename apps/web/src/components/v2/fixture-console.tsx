@@ -86,6 +86,8 @@ interface Props {
     id: string;
     status: string;
     scheduled_at: string | null;
+    /** Venue zone (schedule_settings.tz) so the kick-off shows venue time. */
+    scheduled_tz?: string;
     venue: string | null;
     court_label: string | null;
     round_no: number;
@@ -228,7 +230,7 @@ export function FixtureConsole({
           {fixture.scheduled_at ? (
             <>
               {" · "}
-              <ClientTime value={fixture.scheduled_at} mode="datetime" />
+              <ClientTime value={fixture.scheduled_at} mode="datetime" tz={fixture.scheduled_tz} showZone />
             </>
           ) : (
             ""

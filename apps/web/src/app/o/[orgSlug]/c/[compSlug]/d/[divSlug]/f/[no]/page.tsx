@@ -12,6 +12,7 @@ import {
   listEvents,
 } from "@/server/usecases/fixtures";
 import { getDivision } from "@/server/usecases/divisions";
+import { getScheduleSettings } from "@/server/usecases/schedule";
 import { getCompetition } from "@/server/usecases/competitions";
 import { getEntrant } from "@/server/usecases/entrants";
 import { resolveModule } from "@/server/engine-db";
@@ -39,12 +40,13 @@ export default async function FixturePage({
   // chrome (My-matches breadcrumb); editors keep the organiser surface.
   const isScorer = canScore && !canEdit;
   const fixture = await getFixture(auth, id);
-  const [division, state, events, recorderNames, availability] = await Promise.all([
+  const [division, state, events, recorderNames, availability, schedule] = await Promise.all([
     getDivision(auth, fixture.division_id),
     getFixtureState(auth, id),
     listEvents(auth, id, 0),
     eventRecorderNames(auth, id),
     listFixtureAvailability(auth, id),
+    getScheduleSettings(auth, fixture.division_id),
   ]);
   const competition = await getCompetition(auth, division.competition_id);
   const sportModule = resolveModule(division.sport_key, division.module_version);
@@ -98,6 +100,7 @@ export default async function FixturePage({
             id: fixture.id,
             status: fixture.status,
             scheduled_at: fixture.scheduled_at,
+            scheduled_tz: schedule.tz,
             venue: fixture.venue,
             court_label: fixture.court_label,
             round_no: fixture.round_no,

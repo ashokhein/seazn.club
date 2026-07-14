@@ -722,7 +722,7 @@ function FixtureLine({
         >
           {timed ? (
             <>
-              Scheduled · <ClientTime value={fixture.scheduled_at} mode="datetime" tz={tz} />
+              Scheduled · <ClientTime value={fixture.scheduled_at} mode="datetime" tz={tz} showZone />
             </>
           ) : (
             "Unscheduled"

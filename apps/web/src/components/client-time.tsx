@@ -125,12 +125,15 @@ export function ClientTime({
   value,
   mode = "time",
   tz,
+  showZone = false,
 }: {
   value: string | Date | null;
   mode?: "time" | "datetime" | "date";
   /** Render in this IANA zone instead of the viewer's (v3/04 §3 — schedule
    *  pages show the competition timezone, never a browser-local surprise). */
   tz?: string;
+  /** Append the zone abbrev ("19:00 IST"). No-op for date mode (no clock). */
+  showZone?: boolean;
 }) {
   const [text, setText] = useState("");
 
@@ -139,20 +142,32 @@ export function ClientTime({
     const d = value instanceof Date ? value : new Date(value);
     const zone = tz ? { timeZone: tz } : {};
     try {
-      setText(
+      const base =
         mode === "datetime"
           ? d.toLocaleString([], { dateStyle: "medium", timeStyle: "short", ...zone })
           : mode === "date"
             ? d.toLocaleDateString([], { dateStyle: "medium", ...zone })
-            : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...zone }),
-      );
+            : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", ...zone });
+      const abbrev =
+        showZone && mode !== "date" ? ` ${fmtZoneAbbrev(tz ?? UTC_LOCAL(), d)}` : "";
+      setText(base + abbrev);
     } catch {
       // Unknown zone string — fall back to the viewer's local time.
       setText(mode === "date" ? d.toLocaleDateString() : d.toLocaleString());
     }
-  }, [value, mode, tz]);
+  }, [value, mode, tz, showZone]);
 
   return <span suppressHydrationWarning>{text}</span>;
+}
+
+/** Viewer's own zone, for labelling times ClientTime renders without an
+ *  explicit tz (so "showZone" still names a zone rather than guessing). */
+function UTC_LOCAL(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
 }
 
 /**
