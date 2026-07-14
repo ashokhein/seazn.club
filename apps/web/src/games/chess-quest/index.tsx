@@ -8,6 +8,7 @@ import { CopyProvider } from "./lib/copy";
 import { ProgressProvider } from "./lib/progress";
 import { SquareRace } from "./components/games/SquareRace";
 import { CoinHop } from "./components/games/CoinHop";
+import { PawnWars } from "./components/games/PawnWars";
 
 type GameEntry = {
   id: string;
@@ -31,6 +32,13 @@ const GAMES: GameEntry[] = [
     title: "Coin Hop",
     blurb: "Collect every coin in as few moves as you can.",
     render: () => <CoinHop pieces={["N", "B", "R", "Q", "K"]} />,
+  },
+  {
+    id: "pawnWars",
+    emoji: "⚔️",
+    title: "Pawn Wars",
+    blurb: "Pawns only — first to crown a queen wins.",
+    render: () => <PawnWars />,
   },
 ];
 
