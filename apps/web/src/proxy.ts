@@ -165,6 +165,17 @@ export function proxy(request: NextRequest) {
       : negotiateLocale(request.headers.get("accept-language"));
   requestHeaders.set("x-seazn-locale", locale);
 
+  // Marketing [lang] routing (spec §5): unprefixed marketing paths rewrite to
+  // the /en prefix (canonical English, no visible redirect, existing links
+  // unbroken). Localized URLs like /fr/start are served directly. Extend
+  // MARKETING_UNPREFIXED as more marketing pages move under [lang].
+  const MARKETING_UNPREFIXED = new Set(["/start"]);
+  if (MARKETING_UNPREFIXED.has(request.nextUrl.pathname)) {
+    const url = request.nextUrl.clone();
+    url.pathname = `/en${request.nextUrl.pathname}`;
+    return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
+  }
+
   const rewriteUrl = gamesHostRewrite(request);
   const response = rewriteUrl
     ? NextResponse.rewrite(rewriteUrl, { request: { headers: requestHeaders } })
