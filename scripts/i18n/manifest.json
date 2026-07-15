@@ -818,7 +818,11 @@
     "ticket.stamp.waitlisted": "b084547ebc488d98",
     "ticket.stamp.withdrawn": "130c31a7c228fe13",
     "dialog.cancel": "19766ed6ccb2f4a3",
-    "dialog.typedInstruction": "3139a4bf12d6329b"
+    "dialog.typedInstruction": "3139a4bf12d6329b",
+    "registration.withdraw": "164546a9c5481480",
+    "registration.payFallback": "92fb3b056f83fed8",
+    "registration.withdrawing": "fd1fd7ba0c054cd3",
+    "registration.withdrawMy": "5c64c001af08660e"
   },
   "fr": {
     "app.name": "fb56d648fbb9ae92",
@@ -1639,7 +1643,11 @@
     "ticket.stamp.waitlisted": "b084547ebc488d98",
     "ticket.stamp.withdrawn": "130c31a7c228fe13",
     "dialog.cancel": "19766ed6ccb2f4a3",
-    "dialog.typedInstruction": "3139a4bf12d6329b"
+    "dialog.typedInstruction": "3139a4bf12d6329b",
+    "registration.withdraw": "164546a9c5481480",
+    "registration.payFallback": "92fb3b056f83fed8",
+    "registration.withdrawing": "fd1fd7ba0c054cd3",
+    "registration.withdrawMy": "5c64c001af08660e"
   },
   "nl": {
     "app.name": "fb56d648fbb9ae92",
@@ -2460,6 +2468,10 @@
     "ticket.stamp.waitlisted": "b084547ebc488d98",
     "ticket.stamp.withdrawn": "130c31a7c228fe13",
     "dialog.cancel": "19766ed6ccb2f4a3",
-    "dialog.typedInstruction": "3139a4bf12d6329b"
+    "dialog.typedInstruction": "3139a4bf12d6329b",
+    "registration.withdraw": "164546a9c5481480",
+    "registration.payFallback": "92fb3b056f83fed8",
+    "registration.withdrawing": "fd1fd7ba0c054cd3",
+    "registration.withdrawMy": "5c64c001af08660e"
   }
 }

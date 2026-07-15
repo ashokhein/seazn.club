@@ -528,5 +528,9 @@
   "ticket.stamp.paid": "BETAALD",
   "ticket.stamp.confirmed": "BEVESTIGD",
   "ticket.stamp.waitlisted": "WACHTLIJST",
-  "ticket.stamp.withdrawn": "INGETROKKEN"
+  "ticket.stamp.withdrawn": "INGETROKKEN",
+  "registration.withdraw": "Terugtrekken",
+  "registration.payFallback": "Inschrijfgeld betalen",
+  "registration.withdrawing": "Terugtrekken…",
+  "registration.withdrawMy": "Mijn inschrijving intrekken"
 }

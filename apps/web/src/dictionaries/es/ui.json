@@ -528,5 +528,9 @@
   "ticket.stamp.paid": "PAGADO",
   "ticket.stamp.confirmed": "CONFIRMADO",
   "ticket.stamp.waitlisted": "LISTA DE ESPERA",
-  "ticket.stamp.withdrawn": "RETIRADO"
+  "ticket.stamp.withdrawn": "RETIRADO",
+  "registration.withdraw": "Retirarse",
+  "registration.payFallback": "Pagar cuota de inscripción",
+  "registration.withdrawing": "Retirando…",
+  "registration.withdrawMy": "Retirar mi inscripción"
 }

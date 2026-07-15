@@ -528,5 +528,9 @@
   "ticket.stamp.paid": "PAID",
   "ticket.stamp.confirmed": "CONFIRMED",
   "ticket.stamp.waitlisted": "WAITLIST",
-  "ticket.stamp.withdrawn": "WITHDRAWN"
+  "ticket.stamp.withdrawn": "WITHDRAWN",
+  "registration.withdraw": "Withdraw",
+  "registration.payFallback": "Pay entry fee",
+  "registration.withdrawing": "Withdrawing…",
+  "registration.withdrawMy": "Withdraw my entry"
 }
