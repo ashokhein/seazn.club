@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { Check, Code2, Copy } from "lucide-react";
 import { UpgradeGate } from "@/components/upgrade-gate";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 const WIDGETS = [
   { key: "standings", label: "Standings" },
@@ -35,6 +35,7 @@ export function EmbedSnippet({
   divisionId: string;
   entitled: boolean;
 }) {
+  const msg = useMsg();
   const [widget, setWidget] = useState<string>("standings");
   const [copied, setCopied] = useState(false);
 

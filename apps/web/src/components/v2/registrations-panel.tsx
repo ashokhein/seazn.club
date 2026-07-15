@@ -10,7 +10,7 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 import { normalizeRefCode } from "@/lib/ref-code";
 import {
   duplicateContactIds,
@@ -80,6 +80,7 @@ export function RegistrationsPanel({
   /** registration.paid entitlement — false shows the plan badge on the fee field. */
   paidAllowed?: boolean;
 }) {
+  const msg = useMsg();
   const confirmDialog = useConfirm();
   const [settings, setSettings] = useState<Settings | null>(null);
   const [regs, setRegs] = useState<Registration[]>([]);

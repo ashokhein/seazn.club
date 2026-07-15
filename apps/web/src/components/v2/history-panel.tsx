@@ -10,7 +10,7 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface HistoryRow {
   seq: number;
@@ -55,6 +55,7 @@ export function HistoryPanel({
   scheduleLocked: boolean;
   canEdit: boolean;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const confirmDialog = useConfirm();
   const [history, setHistory] = useState<HistoryOut | null>(null);

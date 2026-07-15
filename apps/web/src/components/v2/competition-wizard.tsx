@@ -8,10 +8,11 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { VisibilityPicker } from "@/components/ui/visibility-picker";
 import { routes } from "@/lib/routes";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 
 export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
+  const msg = useMsg();
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");

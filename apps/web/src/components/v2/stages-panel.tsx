@@ -14,7 +14,7 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { TipCallout } from "@/components/ui/tip";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface StageRow {
   id: string;
@@ -67,6 +67,7 @@ const FIXTURE_STATUS_STYLE: Record<string, string> = {
 };
 
 export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fixtures, entrantNames, canEdit, tz, canExport }: Props) {
+  const msg = useMsg();
   const confirmDialog = useConfirm();
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -646,6 +647,7 @@ function FixtureLine({
   /** Fired after a schedule PATCH lands — the panel offers Undo (item 5). */
   onRescheduled?: () => void;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [when, setWhen] = useState(
