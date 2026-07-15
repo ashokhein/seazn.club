@@ -1,22 +1,26 @@
 import { paragraph, renderEmail } from "./compose";
 import { escapeHtml } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 
-/** Security notice to the OLD address when an email change is requested. */
-export function emailChangeNoticeTemplate(newEmail: string): { subject: string; html: string; text: string } {
-  const subject = "Your Seazn Club email address is being changed";
+/** Security notice to the OLD address when an email change is requested.
+ *  `dict` = emails namespace for the recipient's locale. */
+export function emailChangeNoticeTemplate(
+  newEmail: string,
+  dict: Dict,
+): { subject: string; html: string; text: string } {
+  const subject = t(dict, "emailChangeNotice.subject");
   return {
     subject,
     html: renderEmail({
       subject,
-      preheader: "A change to your account email was requested — review if this wasn't you.",
-      eyebrow: "Security",
-      title: "Email change requested",
+      preheader: t(dict, "emailChangeNotice.preheader"),
+      eyebrow: t(dict, "emailChangeNotice.eyebrow"),
+      title: t(dict, "emailChangeNotice.title"),
       contentHtml: paragraph(
-        `Someone requested a change to the email address on your account to <strong>${escapeHtml(newEmail)}</strong>. ` +
-          "The change will take effect once the new address is confirmed. If this wasn't you, contact support immediately.",
+        t(dict, "emailChangeNotice.body", { newEmail: escapeHtml(newEmail) }),
       ),
-      footerNote: "This notice was sent to the address currently on your account.",
+      footerNote: t(dict, "emailChangeNotice.footer"),
     }),
-    text: `Your account email is being changed to ${newEmail}. If this wasn't you, contact support.`,
+    text: t(dict, "emailChangeNotice.text", { newEmail }),
   };
 }

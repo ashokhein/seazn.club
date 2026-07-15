@@ -13,60 +13,18 @@ interface TourStep {
   path: (org: string) => string;
   /** Matches an element's data-tour attribute; null renders a centered card. */
   target: string | null;
-  title: string;
-  body: string;
 }
 
+// Structure only — the step copy (title/body) is localized and comes from the
+// `console` dict keyed `tour.<id>.title|body`, passed in by the server parent.
 export const STEPS: TourStep[] = [
-  {
-    id: "welcome",
-    path: (org: string) => routes.orgHome(org),
-    target: null,
-    title: "Welcome to Seazn Club 👋",
-    body: "A quick tour of the essentials — your organisation, settings and creating your first competition. Takes under a minute.",
-  },
-  {
-    id: "org-chip",
-    path: (org: string) => routes.orgHome(org),
-    target: "org-chip",
-    title: "Your organisation",
-    body: "Everything you create lives under this organisation. Next, let's see where you can rename it.",
-  },
-  {
-    id: "org-rename",
-    path: (org: string) => routes.orgSettings(org),
-    target: "org-rename",
-    title: "Rename your organisation",
-    body: "Type a new name here and save. The tabs on the left cover your team, plan and API keys — next, let's set up getting paid.",
-  },
-  {
-    id: "connect",
-    path: (org: string) => routes.payments(org),
-    target: "connect-stripe",
-    title: "Get paid",
-    body: "Connect Stripe to take card entry fees — payouts land straight in your bank. You're sent to Stripe's secure onboarding; Seazn Club never sees your details.",
-  },
-  {
-    id: "billing",
-    path: (org: string) => routes.billing(org),
-    target: "billing-plan",
-    title: "Your plan & billing",
-    body: "You're on the free Community plan. Track usage, view invoices and upgrade to Pro here whenever you're ready.",
-  },
-  {
-    id: "new-competition",
-    path: (org: string) => routes.orgHome(org),
-    target: "new-competition",
-    title: "Create a competition",
-    body: "A competition holds one or more divisions — each with its own sport, entrants and format. Let's start one.",
-  },
-  {
-    id: "wizard",
-    path: (org: string) => routes.competitionNew(org),
-    target: "competition-wizard",
-    title: "Your first competition",
-    body: "Follow the wizard: name it, add a division, pick a sport and format. Replay this tour anytime from Settings → Organisation.",
-  },
+  { id: "welcome", path: (org: string) => routes.orgHome(org), target: null },
+  { id: "org-chip", path: (org: string) => routes.orgHome(org), target: "org-chip" },
+  { id: "org-rename", path: (org: string) => routes.orgSettings(org), target: "org-rename" },
+  { id: "connect", path: (org: string) => routes.payments(org), target: "connect-stripe" },
+  { id: "billing", path: (org: string) => routes.billing(org), target: "billing-plan" },
+  { id: "new-competition", path: (org: string) => routes.orgHome(org), target: "new-competition" },
+  { id: "wizard", path: (org: string) => routes.competitionNew(org), target: "competition-wizard" },
 ];
 
 export const TOUR_STORAGE_KEY = "seazn.tour.step";
@@ -103,7 +61,18 @@ function measure(target: string): Rect | null {
   return { top: r.top, left: r.left, width: r.width, height: r.height };
 }
 
-export function ProductTour({ autoStart, orgSlug }: { autoStart: boolean; orgSlug: string }) {
+/** `dict` is the localized `console` tour slice (keys `tour.*`), resolved by the
+ *  server parent (Nav) and passed in — client islands can't import the
+ *  server-only t(). */
+export function ProductTour({
+  autoStart,
+  orgSlug,
+  dict,
+}: {
+  autoStart: boolean;
+  orgSlug: string;
+  dict: Record<string, string>;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const [step, setStep] = useState<number | null>(null);
@@ -216,13 +185,15 @@ export function ProductTour({ autoStart, orgSlug }: { autoStart: boolean; orgSlu
   if (!mounted || step === null) return null;
   const s = STEPS[step];
   const isLast = step === STEPS.length - 1;
+  const title = dict[`tour.${s.id}.title`] ?? "";
+  const body = dict[`tour.${s.id}.body`] ?? "";
 
   // Tooltip placement: below the target when it fits, else above, else centered
   // (a target taller than the viewport would push the tooltip off-screen).
   const tooltipStyle = placeTooltip(rect, window.innerWidth, window.innerHeight);
 
   return createPortal(
-    <div className="fixed inset-0 z-[100]" role="dialog" aria-modal="true" aria-label="Product tour">
+    <div className="fixed inset-0 z-[100]" role="dialog" aria-modal="true" aria-label={dict["tour.dialogLabel"]}>
       {/* Dim layer — spotlight cut-out around the target via box-shadow */}
       {rect ? (
         <div
@@ -244,8 +215,8 @@ export function ProductTour({ autoStart, orgSlug }: { autoStart: boolean; orgSlu
         className="fixed rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
         style={{ width: TOOLTIP_WIDTH, ...tooltipStyle }}
       >
-        <h3 className="text-sm font-semibold text-slate-800">{s.title}</h3>
-        <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{s.body}</p>
+        <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+        <p className="mt-1.5 text-sm leading-relaxed text-slate-500">{body}</p>
 
         <div className="mt-4 flex items-center gap-1.5">
           {STEPS.map((_, i) => (
@@ -264,16 +235,16 @@ export function ProductTour({ autoStart, orgSlug }: { autoStart: boolean; orgSlu
             onClick={() => finish(true)}
             className="text-xs text-slate-400 hover:text-slate-600"
           >
-            Skip tour
+            {dict["tour.skip"]}
           </button>
           <div className="flex items-center gap-2">
             {step > 0 && (
               <button type="button" onClick={() => goTo(step - 1)} className="btn btn-ghost text-xs">
-                Back
+                {dict["tour.back"]}
               </button>
             )}
             <button type="button" onClick={() => goTo(step + 1)} className="btn btn-primary text-xs">
-              {isLast ? "Finish" : "Next"}
+              {isLast ? dict["tour.finish"] : dict["tour.next"]}
             </button>
           </div>
         </div>

@@ -15,6 +15,7 @@ export type Namespace =
   | "common"
   | "marketing"
   | "public"
+  | "console"
   | "emails"
   | "errors"
   | "metadata";
@@ -25,4 +26,11 @@ export type Dict = Record<string, unknown>;
  *  pseudolocale and any unknown code. */
 export function hasLocale(x: string): x is Locale {
   return (LOCALES as readonly string[]).includes(x);
+}
+
+/** Coerce a possibly-null stored value (e.g. users.locale, which is nullable
+ *  when the user has never chosen) into a concrete Locale, falling back to the
+ *  default. Handy at email/console call sites that read the DB value directly. */
+export function toLocale(x: string | null | undefined): Locale {
+  return x != null && hasLocale(x) ? x : DEFAULT_LOCALE;
 }

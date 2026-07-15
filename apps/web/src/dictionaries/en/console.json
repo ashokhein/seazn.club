@@ -1,0 +1,35 @@
+{
+  "nav.dashboard": "Dashboard",
+  "nav.directory": "Directory",
+  "nav.settings": "Settings",
+  "nav.playerHome": "Player home",
+  "nav.signIn": "Sign in",
+  "nav.signOut": "Sign out",
+  "nav.orgLogoAlt": "Org logo",
+
+  "help.menu": "Help",
+  "help.centre": "Help centre",
+  "help.developerDocs": "Developer docs",
+  "help.contactSupport": "Contact support",
+
+  "tour.dialogLabel": "Product tour",
+  "tour.skip": "Skip tour",
+  "tour.back": "Back",
+  "tour.finish": "Finish",
+  "tour.next": "Next",
+
+  "tour.welcome.title": "Welcome to Seazn Club 👋",
+  "tour.welcome.body": "A quick tour of the essentials — your organisation, settings and creating your first competition. Takes under a minute.",
+  "tour.org-chip.title": "Your organisation",
+  "tour.org-chip.body": "Everything you create lives under this organisation. Next, let's see where you can rename it.",
+  "tour.org-rename.title": "Rename your organisation",
+  "tour.org-rename.body": "Type a new name here and save. The tabs on the left cover your team, plan and API keys — next, let's set up getting paid.",
+  "tour.connect.title": "Get paid",
+  "tour.connect.body": "Connect Stripe to take card entry fees — payouts land straight in your bank. You're sent to Stripe's secure onboarding; Seazn Club never sees your details.",
+  "tour.billing.title": "Your plan & billing",
+  "tour.billing.body": "You're on the free Community plan. Track usage, view invoices and upgrade to Pro here whenever you're ready.",
+  "tour.new-competition.title": "Create a competition",
+  "tour.new-competition.body": "A competition holds one or more divisions — each with its own sport, entrants and format. Let's start one.",
+  "tour.wizard.title": "Your first competition",
+  "tour.wizard.body": "Follow the wizard: name it, add a division, pick a sport and format. Replay this tour anytime from Settings → Organisation."
+}

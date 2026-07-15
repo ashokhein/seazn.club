@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { handler, HttpError } from "@/lib/http";
 import { changeEmailSchema } from "@/lib/types";
 import { sendEmailChangeConfirmation, sendEmailChangeNotice } from "@/lib/email";
+import { toLocale } from "@/lib/i18n";
 import { baseUrl } from "@/lib/oauth";
 
 /** Request an email-address change. Sends a confirmation link to the new address. */
@@ -32,8 +33,9 @@ export async function POST(req: Request) {
       values (${user.id}, ${user.email}, ${new_email}, ${token}, ${expiresAt.toISOString()})`;
 
     const link = `${baseUrl(req)}/api/auth/change-email/confirm?token=${token}`;
-    await sendEmailChangeConfirmation(new_email, link);
-    await sendEmailChangeNotice(user.email, new_email);
+    const locale = toLocale(user.locale);
+    await sendEmailChangeConfirmation(new_email, link, locale);
+    await sendEmailChangeNotice(user.email, new_email, locale);
 
     return { message: "A confirmation link has been sent to your new email address." };
   });

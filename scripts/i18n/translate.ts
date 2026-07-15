@@ -19,6 +19,18 @@ const MODEL = "claude-opus-4-8";
 type StrMap = Record<string, string>;
 type Manifest = Record<string, StrMap>; // locale → key → source-hash
 
+// A strict json_schema with one required prop per key is compiled into a grammar
+// by the API; too many keys at once overflows it ("compiled grammar is too
+// large"). Translate in bounded slices so the grammar stays small — and so a
+// mid-run failure only loses the current slice (the manifest persists the rest).
+const CHUNK = 30;
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
 /** Translate a batch of flat key→English-value entries into `locale`. Structured
  *  output guarantees the returned object has exactly the requested keys. */
 export async function translateBatch(
@@ -69,17 +81,25 @@ async function main(): Promise<void> {
       const changed = changedKeys(enFlat, manifest[locale], hashValue);
       if (changed.length === 0) continue;
 
-      const entries: StrMap = Object.fromEntries(changed.map((k) => [k, enFlat[k]]));
-      console.log(`→ ${locale}/${ns}: translating ${changed.length} key(s)…`);
-      const translated = await translateBatch(client, { locale, entries, glossary });
-
       const path = join(DICT, locale, `${ns}.json`);
-      const current = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as StrMap) : {};
-      const merged = { ...current, ...translated };
-      if (REVIEW.has(locale)) merged["__reviewNeeded"] = "true"; // machine-QA flag
-      writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
+      const slices = chunk(changed, CHUNK);
+      console.log(
+        `→ ${locale}/${ns}: translating ${changed.length} key(s) in ${slices.length} slice(s)…`,
+      );
+      for (const [i, slice] of slices.entries()) {
+        if (slices.length > 1) console.log(`   slice ${i + 1}/${slices.length} (${slice.length})`);
+        const entries: StrMap = Object.fromEntries(slice.map((k) => [k, enFlat[k]]));
+        const translated = await translateBatch(client, { locale, entries, glossary });
 
-      for (const k of changed) manifest[locale][k] = hashValue(enFlat[k]);
+        const current = existsSync(path) ? (JSON.parse(readFileSync(path, "utf8")) as StrMap) : {};
+        const merged = { ...current, ...translated };
+        if (REVIEW.has(locale)) merged["__reviewNeeded"] = "true"; // machine-QA flag
+        writeFileSync(path, JSON.stringify(merged, null, 2) + "\n");
+
+        // Persist manifest per slice so a later failure resumes cleanly.
+        for (const k of slice) manifest[locale][k] = hashValue(enFlat[k]);
+        writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + "\n");
+      }
     }
   }
 

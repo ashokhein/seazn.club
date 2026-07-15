@@ -10,11 +10,14 @@ import { listAssignedFixtures } from "@/server/usecases/scorers";
 import { resolveModule } from "@/server/engine-db";
 import { LogoutButton } from "@/components/logout-button";
 import { Zoned, ViewerTzProvider } from "@/components/client-time";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t } from "@/lib/i18n";
 
 export default async function MyMatchesPage() {
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=/my-matches");
   const fixtures = await listAssignedFixtures(user.id);
+  const dict = await getDictionary(await resolveLocale(), "console");
 
   const today = fixtures.filter(
     (f) => f.scheduled_at !== null && sameDay(new Date(f.scheduled_at), new Date()),
@@ -32,7 +35,7 @@ export default async function MyMatchesPage() {
           <span className="text-sm text-cream/60">My matches</span>
           <div className="flex-1" />
           <span className="text-xs text-cream/60">{user.display_name}</span>
-          <LogoutButton />
+          <LogoutButton label={t(dict, "nav.signOut")} />
         </div>
       </header>
       <main className="mx-auto max-w-3xl px-4 py-8">

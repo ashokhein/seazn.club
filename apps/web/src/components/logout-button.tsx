@@ -6,7 +6,9 @@ import posthog from "posthog-js";
 import { api } from "@/lib/client";
 import { clearAnalyticsIdentity } from "@/lib/analytics-identity";
 
-export function LogoutButton() {
+/** `label` is the localized "Sign out" copy, resolved by the server parent and
+ *  passed in (client islands can't import the server-only t()). */
+export function LogoutButton({ label }: { label: string }) {
   const router = useRouter();
   return (
     <button
@@ -29,10 +31,10 @@ export function LogoutButton() {
       }}
       // Lives only on night chrome (gantry + my-matches header) — cream it is.
       className="flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-cream/70 transition-colors hover:bg-cream/10 hover:text-cream"
-      title="Sign out"
+      title={label}
     >
       <LogOut className="h-4 w-4" strokeWidth={1.75} />
-      <span className="hidden sm:inline">Sign out</span>
+      <span className="hidden sm:inline">{label}</span>
     </button>
   );
 }

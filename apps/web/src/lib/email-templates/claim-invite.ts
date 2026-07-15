@@ -1,5 +1,6 @@
 import { button, linkFallback, paragraph, renderEmail } from "./compose";
 import { escapeHtml } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 
 export interface ClaimInviteArgs {
   orgName: string;
@@ -8,29 +9,36 @@ export interface ClaimInviteArgs {
 }
 
 /** Player-account claim invite (PROMPT-53): the person takes ownership of
- *  their profile — schedule, availability and consent flags. */
-export function claimInviteTemplate(args: ClaimInviteArgs): {
+ *  their profile — schedule, availability and consent flags. `dict` = emails
+ *  namespace for the recipient's locale. */
+export function claimInviteTemplate(
+  args: ClaimInviteArgs,
+  dict: Dict,
+): {
   subject: string;
   html: string;
   text: string;
 } {
-  const subject = `Claim your player profile at ${args.orgName}`;
+  const subject = t(dict, "claimInvite.subject", { orgName: args.orgName });
   return {
     subject,
     html: renderEmail({
       subject,
-      preheader: `See your matches, tell organisers when you can play, and control what's public.`,
+      preheader: t(dict, "claimInvite.preheader"),
       mastheadTag: args.orgName,
       eyebrow: args.orgName,
-      title: "Claim your player profile",
+      title: t(dict, "claimInvite.title"),
       contentHtml:
         paragraph(
-          `An organiser at <strong>${escapeHtml(args.orgName)}</strong> set up a player profile for <strong>${escapeHtml(args.personName)}</strong>. Claim it to see all your matches in one place, RSVP your availability, and control what appears publicly.`,
+          t(dict, "claimInvite.body", {
+            orgName: escapeHtml(args.orgName),
+            personName: escapeHtml(args.personName),
+          }),
         ) +
-        button("Claim my profile", args.claimUrl) +
+        button(t(dict, "claimInvite.button"), args.claimUrl) +
         linkFallback(args.claimUrl),
-      footerNote: `You received this because an organiser at ${args.orgName} invited this address. Not you? Just ignore this email.`,
+      footerNote: t(dict, "claimInvite.footer", { orgName: args.orgName }),
     }),
-    text: `Claim your player profile at ${args.orgName}: ${args.claimUrl}`,
+    text: t(dict, "claimInvite.text", { orgName: args.orgName, claimUrl: args.claimUrl }),
   };
 }

@@ -1013,6 +1013,28 @@ async function i18nSuite(): Promise<void> {
 
   const root = await fetch(`${BASE}/`, { redirect: "manual" });
   check("i18n: / rewrites to en home (200, no redirect)", root.status === 200);
+
+  // Email localization end-to-end (spec cycle 46): a user whose stored locale is
+  // French gets the French transactional templates. change-email renders the
+  // subject+html+text from the fr emails dict server-side before sending, so a
+  // missing key or broken {placeholder} would surface as a 500 here. Emails are
+  // not tier-gated, so this exercises the path for free and pro accounts alike.
+  const mailer = newSession();
+  await signIn(mailer, `i18nmail_${tag}@example.com`);
+  await call(mailer, "/api/users/me", "PATCH", { locale: "fr" });
+  const chg = await raw(mailer, "/api/auth/change-email", "POST", {
+    new_email: `i18nmail2_${tag}@example.com`,
+  });
+  check("i18n: fr-locale user renders French change-email server-side", chg.status === 200);
+
+  // Console chrome (spec cycle 46): the shared authed nav resolves the same
+  // fr locale (cookie → user.locale) and renders from the `console` dict. The
+  // signed-in mailer has locale=fr, so its nav shows the French Dashboard label.
+  const chrome = await html(mailer, "/directory");
+  check(
+    "i18n: fr-locale user sees translated console chrome (nav)",
+    chrome.status === 200 && chrome.body.includes("Tableau de bord"),
+  );
 }
 
 async function marketingSuite(): Promise<void> {

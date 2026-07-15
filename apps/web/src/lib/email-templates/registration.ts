@@ -1,5 +1,6 @@
 import { button, linkFallback, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 import {
   fillPaymentInstructions,
   paymentInstructionsText,
@@ -30,78 +31,115 @@ export function formatDeadline(d: Date | string): string {
 }
 
 /** Registration confirmation — carries the offline (cash/bank) payment
- *  instructions for paid entries. */
+ *  instructions for paid entries. `dict` = emails namespace for the
+ *  recipient's locale (see lib/email.ts senders). */
 export function registrationTemplate(
   opts: RegistrationEmailArgs,
+  dict: Dict,
 ): { subject: string; html: string; text: string } {
   const waitlisted = opts.status === "waitlisted";
   const paid = opts.feeCents > 0 && !waitlisted;
+  const amount = money(opts.feeCents, opts.currency);
   // Markdown instructions → plain text for the panel, with the registrant's
   // reference substituted for {{reference}}.
   const instructions = opts.paymentInstructions
     ? paymentInstructionsText(fillPaymentInstructions(opts.paymentInstructions, opts.refCode))
     : null;
   const intro = waitlisted
-    ? `You're on the waitlist for <strong>${escapeHtml(opts.competitionName)}</strong>. We'll be in touch if a place opens up.`
-    : `Thanks ${escapeHtml(opts.displayName)} — your registration for <strong>${escapeHtml(opts.competitionName)}</strong> has been received.`;
+    ? t(dict, "registration.introWaitlist", { competitionName: escapeHtml(opts.competitionName) })
+    : t(dict, "registration.intro", {
+        displayName: escapeHtml(opts.displayName),
+        competitionName: escapeHtml(opts.competitionName),
+      });
 
   const card = paid && !!opts.payUrl;
   const deadline = opts.payDeadline ? formatDeadline(opts.payDeadline) : null;
 
   const paymentBlock = card
     ? panel(
-        `Entry fee: ${money(opts.feeCents, opts.currency)}`,
-        `Your spot is held${deadline ? ` until ${deadline}` : ""} — complete payment to confirm it.`,
-      ) + button(`Pay now — ${money(opts.feeCents, opts.currency)}`, opts.payUrl as string)
+        t(dict, "registration.feePanelTitle", { amount }),
+        deadline
+          ? t(dict, "registration.feeHeldUntil", { deadline })
+          : t(dict, "registration.feeHeld"),
+      ) + button(t(dict, "registration.payNow", { amount }), opts.payUrl as string)
     : paid && instructions
-      ? panel(`Entry fee: ${money(opts.feeCents, opts.currency)}`, instructions as string)
+      ? panel(t(dict, "registration.feePanelTitle", { amount }), instructions as string)
       : paid
-        ? paragraph(
-            `Entry fee: <strong>${money(opts.feeCents, opts.currency)}</strong>. The organiser will contact you with payment details.`,
-          )
+        ? paragraph(t(dict, "registration.feeContactOrganiser", { amount }))
         : "";
 
   const paymentText = card
-    ? `\n\nEntry fee: ${money(opts.feeCents, opts.currency)}` +
-      `\nYour spot is held${deadline ? ` until ${deadline}` : ""} — pay to confirm it:\n${opts.payUrl}`
+    ? "\n\n" +
+      t(dict, "registration.textFee", { amount }) +
+      "\n" +
+      (deadline
+        ? t(dict, "registration.textHeldUntil", { deadline })
+        : t(dict, "registration.textHeld")) +
+      "\n" +
+      opts.payUrl
     : paid && instructions
-      ? `\n\nEntry fee: ${money(opts.feeCents, opts.currency)}\nHow to pay:\n${instructions}`
+      ? "\n\n" +
+        t(dict, "registration.textFee", { amount }) +
+        "\n" +
+        t(dict, "registration.textHowToPay") +
+        "\n" +
+        instructions
       : paid
-        ? `\n\nEntry fee: ${money(opts.feeCents, opts.currency)}. The organiser will contact you with payment details.`
+        ? "\n\n" + t(dict, "registration.textFeeContactOrganiser", { amount })
         : "";
 
+  const subject = t(dict, "registration.subject", { competitionName: opts.competitionName });
   return {
-    subject: `Registration received — ${opts.competitionName}`,
+    subject,
     html: renderEmail({
-      subject: `Registration received — ${opts.competitionName}`,
+      subject,
       preheader: waitlisted
-        ? `You're on the waitlist for ${opts.competitionName} — we'll be in touch.`
-        : `Your entry for ${opts.competitionName} is in${paid ? " — payment details inside" : ""}.`,
+        ? t(dict, "registration.preheaderWaitlist", { competitionName: opts.competitionName })
+        : paid
+          ? t(dict, "registration.preheaderPaid", { competitionName: opts.competitionName })
+          : t(dict, "registration.preheaderFree", { competitionName: opts.competitionName }),
       mastheadTag: opts.orgName,
       eyebrow: `${opts.orgName} · ${opts.competitionName}`,
-      title: waitlisted ? "You're on the waitlist" : "Registration received",
+      title: waitlisted
+        ? t(dict, "registration.titleWaitlist")
+        : t(dict, "registration.title"),
       contentHtml:
         paragraph(intro) +
         (opts.refCode
           ? panel(
-              `Your reference: ${escapeHtml(opts.refCode)}`,
-              "Quote it to the organiser or look yourself up on the day" +
-                (opts.refStatusUrl ? ` at ${opts.refStatusUrl}` : "") +
-                ".",
+              t(dict, "registration.refPanelTitle", { refCode: opts.refCode }),
+              opts.refStatusUrl
+                ? t(dict, "registration.refPanelBodyAt", { url: opts.refStatusUrl })
+                : t(dict, "registration.refPanelBody"),
             )
           : "") +
         paymentBlock +
-        button("View your registration", opts.statusUrl) +
+        button(t(dict, "registration.viewButton"), opts.statusUrl) +
         linkFallback(opts.statusUrl),
-      footerNote: `You received this because this address was used to enter ${opts.competitionName} at ${opts.orgName}.`,
+      footerNote: t(dict, "registration.footer", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }),
     }),
     text:
-      `${waitlisted ? "You're on the waitlist" : "Registration received"} for ${opts.competitionName} (${opts.orgName}).` +
+      (waitlisted
+        ? t(dict, "registration.textIntroWaitlist", {
+            competitionName: opts.competitionName,
+            orgName: opts.orgName,
+          })
+        : t(dict, "registration.textIntro", {
+            competitionName: opts.competitionName,
+            orgName: opts.orgName,
+          })) +
       (opts.refCode
-        ? `\n\nYour reference: ${opts.refCode}` +
-          (opts.refStatusUrl ? `\nCheck your status: ${opts.refStatusUrl}` : "")
+        ? "\n\n" +
+          t(dict, "registration.textRef", { refCode: opts.refCode }) +
+          (opts.refStatusUrl
+            ? "\n" + t(dict, "registration.textRefStatus", { url: opts.refStatusUrl })
+            : "")
         : "") +
       paymentText +
-      `\n\nView your registration: ${opts.statusUrl}`,
+      "\n\n" +
+      t(dict, "registration.textView", { url: opts.statusUrl }),
   };
 }

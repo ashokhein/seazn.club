@@ -19,6 +19,8 @@ import {
   verificationTemplate,
 } from "../email-templates";
 import { standingsTable } from "../email-templates/compose";
+import type { Dict } from "@/lib/i18n";
+import { buildPseudoDictionary } from "@/lib/pseudo";
 // Localized builders take the emails dict; the en namespace is the source text.
 import emailsEn from "@/dictionaries/en/emails.json";
 
@@ -35,62 +37,91 @@ const registrationArgs = {
   statusUrl: LINK,
 };
 
-const allBuilders: [string, { subject: string; html: string; text: string }][] = [
-  ["verification", verificationTemplate(LINK, emailsEn)],
-  ["password-reset", passwordResetTemplate(LINK, emailsEn)],
-  ["magic-link", magicLinkTemplate(LINK, emailsEn)],
-  ["email-change-confirm", emailChangeConfirmTemplate(LINK)],
-  ["email-change-notice", emailChangeNoticeTemplate("new@example.com")],
-  ["account-deletion", accountDeletionTemplate()],
-  ["invite", inviteTemplate("Riverside Racquets", LINK)],
-  ["registration", registrationTemplate(registrationArgs)],
-  ["payment-reminder", paymentReminderTemplate(registrationArgs)],
-  [
-    "registration-promoted",
-    registrationPromotedTemplate({
-      ...registrationArgs,
-      payUrl: LINK,
-      payDeadline: "2026-08-01T12:00:00Z",
-      refCode: "SZ-ABCD-EFGH",
-      refStatusUrl: "https://seazn.club/r/SZ-ABCD-EFGH",
-    }),
-  ],
-  [
-    "refund-issued",
-    refundIssuedTemplate({
-      orgName: "Riverside Racquets",
-      competitionName: "Spring Open 2026",
-      displayName: "Alex",
-      amountCents: 2500,
-      currency: "gbp",
-      refCode: "SZ-ABCD-EFGH",
-    }),
-  ],
-  [
-    "dispute-alert",
-    disputeAlertTemplate({
-      orgName: "Riverside Racquets",
-      competitionName: "Spring Open 2026",
-      displayName: "Alex",
-      amountCents: 2500,
-      currency: "gbp",
-      refCode: "SZ-ABCD-EFGH",
-    }),
-  ],
-  [
-    "dispute-lost",
-    disputeLostTemplate({
-      orgName: "Riverside Racquets",
-      competitionName: "Spring Open 2026",
-      displayName: "Alex",
-      amountCents: 2500,
-      currency: "gbp",
-      refCode: "SZ-ABCD-EFGH",
-      recoveredCents: 2375,
-      consoleUrl: LINK,
-    }),
-  ],
-];
+// Each entry pairs a builder (built from `dict`) with the dict key that supplies
+// its subject line — the localization regression overrides that key and asserts
+// the output follows (the pre-i18n templates ignored the dict entirely).
+function makeBuilders(
+  dict: Dict,
+): [string, { subject: string; html: string; text: string }, string][] {
+  return [
+    ["verification", verificationTemplate(LINK, dict), "verification.subject"],
+    ["password-reset", passwordResetTemplate(LINK, dict), "passwordReset.subject"],
+    ["magic-link", magicLinkTemplate(LINK, dict), "magicLink.subject"],
+    ["email-change-confirm", emailChangeConfirmTemplate(LINK, dict), "emailChangeConfirm.subject"],
+    [
+      "email-change-notice",
+      emailChangeNoticeTemplate("new@example.com", dict),
+      "emailChangeNotice.subject",
+    ],
+    ["account-deletion", accountDeletionTemplate(dict), "accountDeletion.subject"],
+    ["invite", inviteTemplate("Riverside Racquets", LINK, dict), "invite.subject"],
+    ["registration", registrationTemplate(registrationArgs, dict), "registration.subject"],
+    ["payment-reminder", paymentReminderTemplate(registrationArgs, dict), "paymentReminder.subject"],
+    [
+      "registration-promoted",
+      registrationPromotedTemplate(
+        {
+          ...registrationArgs,
+          payUrl: LINK,
+          payDeadline: "2026-08-01T12:00:00Z",
+          refCode: "SZ-ABCD-EFGH",
+          refStatusUrl: "https://seazn.club/r/SZ-ABCD-EFGH",
+        },
+        dict,
+      ),
+      "registrationPromoted.subject",
+    ],
+    [
+      "refund-issued",
+      refundIssuedTemplate(
+        {
+          orgName: "Riverside Racquets",
+          competitionName: "Spring Open 2026",
+          displayName: "Alex",
+          amountCents: 2500,
+          currency: "gbp",
+          refCode: "SZ-ABCD-EFGH",
+        },
+        dict,
+      ),
+      "refundIssued.subject",
+    ],
+    [
+      "dispute-alert",
+      disputeAlertTemplate(
+        {
+          orgName: "Riverside Racquets",
+          competitionName: "Spring Open 2026",
+          displayName: "Alex",
+          amountCents: 2500,
+          currency: "gbp",
+          refCode: "SZ-ABCD-EFGH",
+        },
+        dict,
+      ),
+      "disputeAlert.subject",
+    ],
+    [
+      "dispute-lost",
+      disputeLostTemplate(
+        {
+          orgName: "Riverside Racquets",
+          competitionName: "Spring Open 2026",
+          displayName: "Alex",
+          amountCents: 2500,
+          currency: "gbp",
+          refCode: "SZ-ABCD-EFGH",
+          recoveredCents: 2375,
+          consoleUrl: LINK,
+        },
+        dict,
+      ),
+      "disputeLost.subject",
+    ],
+  ];
+}
+
+const allBuilders = makeBuilders(emailsEn as Dict);
 
 describe("email builders compose from the html templates", () => {
   for (const [name, out] of allBuilders) {
@@ -104,42 +135,73 @@ describe("email builders compose from the html templates", () => {
       expect(out.html).toContain("mso-hide:all");
       // No template token survives substitution.
       expect(out.html).not.toMatch(/\{\{[A-Z_]+\}\}/);
+      // No i18n placeholder leaks (an un-passed {var} would).
+      expect(out.subject).not.toMatch(/\{\w+\}/);
       // Plain-text part still populated.
       expect(out.text.length).toBeGreaterThan(10);
       expect(out.subject.length).toBeGreaterThan(5);
     });
   }
 
+  it("every builder reads the provided dict, not hardcoded English", () => {
+    for (const [name, , subjectKey] of allBuilders) {
+      const marker = `SUBJ_${name.toUpperCase()}`;
+      const fr = { ...(emailsEn as Dict), [subjectKey]: marker } as Dict;
+      const [, out] = makeBuilders(fr).find(([n]) => n === name)!;
+      expect(out.subject).toBe(marker);
+    }
+  });
+
+  // Email-side equivalent of the SEAZN_PSEUDO Playwright audit: build every
+  // template from the en-XA pseudo dict; all copy must be ⟦…⟧-wrapped, so any
+  // un-extracted (hardcoded) English string would leak through un-wrapped.
+  it("pseudolocale audit: all copy comes from the dict, nothing hardcoded", () => {
+    const pseudo = buildPseudoDictionary(emailsEn as Dict) as Dict;
+    for (const [name, out] of makeBuilders(pseudo)) {
+      expect(out.subject.startsWith("⟦"), `${name}: subject not from dict`).toBe(true);
+      expect(out.html, `${name}: body copy not from dict`).toContain("⟦");
+    }
+  });
+
   it("card registration carries a Pay now button and the deadline", () => {
-    const out = registrationTemplate({
-      ...registrationArgs,
-      paymentInstructions: null,
-      payUrl: "https://checkout.stripe.test/cs_1",
-      payDeadline: "2026-08-01T12:00:00Z",
-    });
+    const out = registrationTemplate(
+      {
+        ...registrationArgs,
+        paymentInstructions: null,
+        payUrl: "https://checkout.stripe.test/cs_1",
+        payDeadline: "2026-08-01T12:00:00Z",
+      },
+      emailsEn as Dict,
+    );
     expect(out.html).toContain("https://checkout.stripe.test/cs_1");
     expect(out.html).toContain("Pay now");
     expect(out.text).toContain("https://checkout.stripe.test/cs_1");
   });
 
   it("card payment reminder links the fresh checkout, offline keeps instructions", () => {
-    const card = paymentReminderTemplate({
-      ...registrationArgs,
-      paymentInstructions: null,
-      checkoutUrl: "https://checkout.stripe.test/cs_2",
-      payDeadline: "2026-08-01T12:00:00Z",
-    });
+    const card = paymentReminderTemplate(
+      {
+        ...registrationArgs,
+        paymentInstructions: null,
+        checkoutUrl: "https://checkout.stripe.test/cs_2",
+        payDeadline: "2026-08-01T12:00:00Z",
+      },
+      emailsEn as Dict,
+    );
     expect(card.html).toContain("https://checkout.stripe.test/cs_2");
-    const offline = paymentReminderTemplate(registrationArgs);
+    const offline = paymentReminderTemplate(registrationArgs, emailsEn as Dict);
     expect(offline.html).toContain("Bank transfer");
   });
 
   it("dispute-lost email states the loss, the balance debit and who pays the fee", () => {
-    const out = disputeLostTemplate({
-      orgName: "O", competitionName: "C", displayName: "D",
-      amountCents: 2000, currency: "gbp", refCode: "SZ-XXXX-YYYY",
-      recoveredCents: 1900, consoleUrl: LINK,
-    });
+    const out = disputeLostTemplate(
+      {
+        orgName: "O", competitionName: "C", displayName: "D",
+        amountCents: 2000, currency: "gbp", refCode: "SZ-XXXX-YYYY",
+        recoveredCents: 1900, consoleUrl: LINK,
+      },
+      emailsEn as Dict,
+    );
     expect(out.subject.toLowerCase()).toContain("dispute lost");
     expect(out.text).toContain("SZ-XXXX-YYYY");
     expect(out.text).toContain("£20.00"); // disputed amount
@@ -148,87 +210,103 @@ describe("email builders compose from the html templates", () => {
     expect(out.text.toLowerCase()).toContain("dispute fee");
     expect(out.html).toContain(`href="${LINK}"`);
     // Recovery failed → no false claim that money moved.
-    const failed = disputeLostTemplate({
-      orgName: "O", competitionName: "C", displayName: "D",
-      amountCents: 2000, currency: "gbp", refCode: null,
-      recoveredCents: 0, consoleUrl: LINK,
-    });
+    const failed = disputeLostTemplate(
+      {
+        orgName: "O", competitionName: "C", displayName: "D",
+        amountCents: 2000, currency: "gbp", refCode: null,
+        recoveredCents: 0, consoleUrl: LINK,
+      },
+      emailsEn as Dict,
+    );
     expect(failed.text.toLowerCase()).not.toContain("recovered from your stripe balance");
   });
 
   it("refund email states the amount; dispute alert warns the organiser", () => {
-    const refund = refundIssuedTemplate({
-      orgName: "O", competitionName: "C", displayName: "D",
-      amountCents: 1234, currency: "gbp", refCode: null,
-    });
+    const refund = refundIssuedTemplate(
+      {
+        orgName: "O", competitionName: "C", displayName: "D",
+        amountCents: 1234, currency: "gbp", refCode: null,
+      },
+      emailsEn as Dict,
+    );
     expect(refund.text).toContain("12.34");
-    const dispute = disputeAlertTemplate({
-      orgName: "O", competitionName: "C", displayName: "D",
-      amountCents: 1234, currency: "gbp", refCode: "SZ-XXXX-YYYY",
-    });
+    const dispute = disputeAlertTemplate(
+      {
+        orgName: "O", competitionName: "C", displayName: "D",
+        amountCents: 1234, currency: "gbp", refCode: "SZ-XXXX-YYYY",
+      },
+      emailsEn as Dict,
+    );
     expect(dispute.subject.toLowerCase()).toContain("dispute");
     expect(dispute.text).toContain("SZ-XXXX-YYYY");
   });
 
   it("CTA builders carry the link in a button href", () => {
     for (const t of [
-      verificationTemplate(LINK, emailsEn),
-      passwordResetTemplate(LINK, emailsEn),
-      magicLinkTemplate(LINK, emailsEn),
-      emailChangeConfirmTemplate(LINK),
-      inviteTemplate("Org", LINK),
-      registrationTemplate(registrationArgs),
+      verificationTemplate(LINK, emailsEn as Dict),
+      passwordResetTemplate(LINK, emailsEn as Dict),
+      magicLinkTemplate(LINK, emailsEn as Dict),
+      emailChangeConfirmTemplate(LINK, emailsEn as Dict),
+      inviteTemplate("Org", LINK, emailsEn as Dict),
+      registrationTemplate(registrationArgs, emailsEn as Dict),
     ]) {
       expect(t.html).toContain(`href="${LINK}"`);
     }
   });
 
-  it("localized CTA builders read the provided dict (not hardcoded English)", () => {
-    const fr = { ...emailsEn, "magicLink.subject": "SUBJ_FR", "magicLink.button": "BTN_FR" };
-    const out = magicLinkTemplate(LINK, fr);
-    expect(out.subject).toBe("SUBJ_FR");
-    expect(out.html).toContain("BTN_FR");
-  });
-
   it("registration escapes user-supplied names in the html", () => {
-    const out = registrationTemplate({
-      ...registrationArgs,
-      competitionName: 'Spring <script>alert("x")</script>',
-      displayName: "A & B",
-    });
+    const out = registrationTemplate(
+      {
+        ...registrationArgs,
+        competitionName: 'Spring <script>alert("x")</script>',
+        displayName: "A & B",
+      },
+      emailsEn as Dict,
+    );
     expect(out.html).not.toContain("<script>");
     expect(out.html).toContain("&lt;script&gt;");
     expect(out.html).toContain("A &amp; B");
   });
 
   it("registration renders fee panel with instructions preserved", () => {
-    const out = registrationTemplate(registrationArgs);
+    const out = registrationTemplate(registrationArgs, emailsEn as Dict);
     expect(out.html).toContain("Entry fee: £25.00");
     expect(out.html).toContain(">Bank transfer\nRef: SPRING</p>");
   });
 
   it("registration carries the reference number + status link in html AND text (v3/05 §3)", () => {
-    const out = registrationTemplate({
-      ...registrationArgs,
-      refCode: "SZ-ABCD-EFG2",
-      refStatusUrl: "https://seazn.club/r/SZ-ABCD-EFG2",
-    });
+    const out = registrationTemplate(
+      {
+        ...registrationArgs,
+        refCode: "SZ-ABCD-EFG2",
+        refStatusUrl: "https://seazn.club/r/SZ-ABCD-EFG2",
+      },
+      emailsEn as Dict,
+    );
     expect(out.html).toContain("SZ-ABCD-EFG2");
     expect(out.html).toContain("https://seazn.club/r/SZ-ABCD-EFG2");
     expect(out.text).toContain("Your reference: SZ-ABCD-EFG2");
     expect(out.text).toContain("https://seazn.club/r/SZ-ABCD-EFG2");
     // Rows without a ref (pre-v2) keep the old shape — no dangling label.
-    expect(registrationTemplate(registrationArgs).text).not.toContain("Your reference");
+    expect(registrationTemplate(registrationArgs, emailsEn as Dict).text).not.toContain(
+      "Your reference",
+    );
   });
 
   it("registration waitlist variant drops the fee panel", () => {
-    const out = registrationTemplate({ ...registrationArgs, status: "waitlisted" });
+    const out = registrationTemplate(
+      { ...registrationArgs, status: "waitlisted" },
+      emailsEn as Dict,
+    );
     expect(out.html).toContain("on the waitlist");
     expect(out.html).not.toContain("Entry fee");
   });
 
   it("payment reminder without instructions points at the organiser", () => {
-    const out = paymentReminderTemplate({ ...registrationArgs, paymentInstructions: null });
+    const out = paymentReminderTemplate(
+      { ...registrationArgs, paymentInstructions: null },
+      emailsEn as Dict,
+    );
     expect(out.html).toContain("Please contact Riverside Racquets to arrange payment.");
   });
 
