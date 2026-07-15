@@ -174,12 +174,12 @@ export function proxy(request: NextRequest) {
   // directly. Extend MARKETING_UNPREFIXED as more marketing pages move under
   // [lang].
   const MARKETING_UNPREFIXED = new Set(["/", "/start", "/pricing", "/scheduling", "/formats"]);
-  if (MARKETING_UNPREFIXED.has(request.nextUrl.pathname)) {
+  // Marketing trees with sub-paths (e.g. /use-cases/clubs) — prefix match.
+  const MARKETING_PREFIXED = ["/use-cases/"];
+  const mp = request.nextUrl.pathname;
+  if (MARKETING_UNPREFIXED.has(mp) || MARKETING_PREFIXED.some((pre) => mp.startsWith(pre))) {
     const url = request.nextUrl.clone();
-    url.pathname =
-      request.nextUrl.pathname === "/"
-        ? `/${locale}`
-        : `/${locale}${request.nextUrl.pathname}`;
+    url.pathname = mp === "/" ? `/${locale}` : `/${locale}${mp}`;
     return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
   }
 
