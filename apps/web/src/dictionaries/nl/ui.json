@@ -349,5 +349,15 @@
   "upgrade.proCard.title": "Het hele jaar door evenementen organiseren?",
   "upgrade.perMonth": "/maand",
   "upgrade.proCard.body": "Pro upgradet elke competitie in je organisatie — onbeperkt aantal evenementen en divisies, 256 deelnemers per divisie, spelersstatistieken, officials, API-toegang en 2% platformkosten.",
-  "upgrade.proCard.cta": "Neem Pro — 14 dagen gratis proberen"
+  "upgrade.proCard.cta": "Neem Pro — 14 dagen gratis proberen",
+  "me.console": "Console",
+  "me.tbd": "Nog te bepalen",
+  "me.unscheduled": "Niet ingepland",
+  "me.matchPage": "Wedstrijdpagina",
+  "me.growth.q": "Organiseer je een eigen competitie of toernooi?",
+  "me.growth.cta": "Maak een organisatie aan",
+  "checkin.subtitle": "Laat de organisator weten dat je er bent — met één tik.",
+  "checkin.signInPrompt": "Meld je aan om in te checken — geen wachtwoord nodig.",
+  "checkin.busy": "Bezig met inchecken…",
+  "checkin.cta": "Ik ben er — inchecken"
 }

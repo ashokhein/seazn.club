@@ -349,5 +349,15 @@
   "upgrade.proCard.title": "Vous organisez des événements toute l’année ?",
   "upgrade.perMonth": "/mois",
   "upgrade.proCard.body": "Pro améliore toutes les compétitions de votre organisation — événements et divisions illimités, 256 participants par division, statistiques des joueurs, officiels, accès API et des frais de plateforme de 2 %.",
-  "upgrade.proCard.cta": "Passer à Pro — essai gratuit de 14 jours"
+  "upgrade.proCard.cta": "Passer à Pro — essai gratuit de 14 jours",
+  "me.console": "Console",
+  "me.tbd": "À déterminer",
+  "me.unscheduled": "Non planifié",
+  "me.matchPage": "Page du match",
+  "me.growth.q": "Vous organisez votre propre ligue ou tournoi ?",
+  "me.growth.cta": "Créer une organisation",
+  "checkin.subtitle": "Indiquez à l’organisateur que vous êtes arrivé — un seul appui.",
+  "checkin.signInPrompt": "Connectez-vous pour vous enregistrer — aucun mot de passe requis.",
+  "checkin.busy": "Enregistrement en cours…",
+  "checkin.cta": "Je suis là — m’enregistrer"
 }

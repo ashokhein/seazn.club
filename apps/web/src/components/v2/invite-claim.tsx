@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 import { ConfirmDialog } from "@/components/v2/confirm-dialog";
 
 interface Props {
@@ -19,6 +19,7 @@ interface Props {
 }
 
 export function InviteClaim({ personId, personName, claimed, claimPending }: Props) {
+  const msg = useMsg();
   const router = useRouter();
   const [modal, setModal] = useState(false);
   const [email, setEmail] = useState("");

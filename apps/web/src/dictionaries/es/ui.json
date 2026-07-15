@@ -349,5 +349,15 @@
   "upgrade.proCard.title": "¿Organizas eventos todo el año?",
   "upgrade.perMonth": "/mes",
   "upgrade.proCard.body": "Pro mejora todas las competiciones de tu organización — eventos y divisiones ilimitados, 256 participantes por división, estadísticas de jugadores, oficiales, acceso a la API y una comisión de plataforma del 2%.",
-  "upgrade.proCard.cta": "Pasar a Pro — prueba gratuita de 14 días"
+  "upgrade.proCard.cta": "Pasar a Pro — prueba gratuita de 14 días",
+  "me.console": "Consola",
+  "me.tbd": "Por determinar",
+  "me.unscheduled": "Sin programar",
+  "me.matchPage": "Página del partido",
+  "me.growth.q": "¿Organizas tu propia liga o torneo?",
+  "me.growth.cta": "Crear una organización",
+  "checkin.subtitle": "Avisa al organizador de que has llegado, con un solo toque.",
+  "checkin.signInPrompt": "Inicia sesión para registrar tu llegada, sin contraseña.",
+  "checkin.busy": "Registrando llegada…",
+  "checkin.cta": "Ya estoy aquí — registrar llegada"
 }

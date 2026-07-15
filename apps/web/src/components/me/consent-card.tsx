@@ -5,7 +5,8 @@
 // render read-only with plain-language copy — the lock is server-enforced.
 import { useState } from "react";
 import { apiV1 } from "@/lib/client-v1";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
+import { type MessageKey } from "@/lib/messages";
 
 export interface ConsentPerson {
   id: string;
@@ -15,12 +16,13 @@ export interface ConsentPerson {
   consent_locked: boolean;
 }
 
-const FLAGS = [
-  { key: "public_name" as const, label: () => msg("me.consent.name") },
-  { key: "public_photo" as const, label: () => msg("me.consent.photo") },
+const FLAGS: { key: "public_name" | "public_photo"; labelKey: MessageKey }[] = [
+  { key: "public_name", labelKey: "me.consent.name" },
+  { key: "public_photo", labelKey: "me.consent.photo" },
 ];
 
 export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
+  const msg = useMsg();
   const [state, setState] = useState(() =>
     Object.fromEntries(persons.map((p) => [p.id, p.consent])),
   );
@@ -67,7 +69,7 @@ export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
                     onChange={() => toggle(p, f.key)}
                     className="h-4 w-4 rounded border-purple-200 accent-purple-600"
                   />
-                  {f.label()}
+                  {msg(f.labelKey)}
                 </label>
               ))}
             </div>

@@ -5,14 +5,15 @@
 // styles it for the Next-match night hero; default is the light list rows.
 import { useState } from "react";
 import { apiV1 } from "@/lib/client-v1";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
+import { type MessageKey } from "@/lib/messages";
 
 type Status = "in" | "out" | "maybe";
 
-const OPTIONS: { value: Status; mark: string; label: () => string }[] = [
-  { value: "in", mark: "✓", label: () => msg("me.rsvp.in") },
-  { value: "maybe", mark: "?", label: () => msg("me.rsvp.maybe") },
-  { value: "out", mark: "✗", label: () => msg("me.rsvp.out") },
+const OPTIONS: { value: Status; mark: string; labelKey: MessageKey }[] = [
+  { value: "in", mark: "✓", labelKey: "me.rsvp.in" },
+  { value: "maybe", mark: "?", labelKey: "me.rsvp.maybe" },
+  { value: "out", mark: "✗", labelKey: "me.rsvp.out" },
 ];
 
 const ACTIVE: Record<Status, string> = {
@@ -32,6 +33,7 @@ export function RsvpControl({
   checkedInAt: string | null;
   onDark?: boolean;
 }) {
+  const msg = useMsg();
   const [status, setStatus] = useState<Status | null>(initial?.status ?? null);
   const [note, setNote] = useState(initial?.note ?? "");
   const [savedNote, setSavedNote] = useState(initial?.note ?? "");
@@ -74,7 +76,7 @@ export function RsvpControl({
             }`}
           >
             <span aria-hidden>{o.mark}</span>
-            {o.label()}
+            {msg(o.labelKey)}
           </button>
         ))}
         {checkedInAt && (

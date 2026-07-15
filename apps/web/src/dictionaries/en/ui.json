@@ -349,5 +349,15 @@
   "upgrade.proCard.title": "Running events all year?",
   "upgrade.perMonth": "/month",
   "upgrade.proCard.body": "Pro upgrades every competition in your organization — unlimited events and divisions, 256 entrants per division, player stats, officials, API access and a 2% platform fee.",
-  "upgrade.proCard.cta": "Go Pro — 14-day free trial"
+  "upgrade.proCard.cta": "Go Pro — 14-day free trial",
+  "me.console": "Console",
+  "me.tbd": "TBD",
+  "me.unscheduled": "Unscheduled",
+  "me.matchPage": "Match page",
+  "me.growth.q": "Run your own league or tournament?",
+  "me.growth.cta": "Create an organisation",
+  "checkin.subtitle": "Tell the organiser you’ve arrived — one tap.",
+  "checkin.signInPrompt": "Sign in to check in — no password needed.",
+  "checkin.busy": "Checking in…",
+  "checkin.cta": "I’m here — check in"
 }
