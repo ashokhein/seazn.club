@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useConfirm } from "@/components/ui/confirm-provider";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 // ---------------------------------------------------------------------------
 // Display name form
@@ -146,6 +146,7 @@ export function ChangeEmailForm({ currentEmail }: { currentEmail: string }) {
 // ---------------------------------------------------------------------------
 
 export function LeaveOrgButton({ orgId, orgName }: { orgId: string; orgName: string }) {
+  const msg = useMsg();
   const router = useRouter();
   const confirm = useConfirm();
   const [loading, setLoading] = useState(false);
@@ -200,6 +201,7 @@ export function TransferOwnerForm({
   orgId: string;
   members: { user_id: string; display_name: string; email: string; role: string }[];
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const confirm = useConfirm();
   const [newOwnerId, setNewOwnerId] = useState("");
