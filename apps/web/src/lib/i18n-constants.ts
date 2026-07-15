@@ -11,14 +11,23 @@ export const DEFAULT_LOCALE: Locale = "en";
 // by the switcher — reached only via an explicit audit override.
 export const PSEUDO_LOCALE = "en-XA" as const;
 
-export type Namespace =
-  | "common"
-  | "marketing"
-  | "public"
-  | "console"
-  | "emails"
-  | "errors"
-  | "metadata";
+// Runtime source of truth for the namespace set (the drift guard iterates it).
+// `console` is the shared authed-app chrome; dashboard/competitions/settings are
+// the cycle-47 console feature-page domains (later batches add admin, developers,
+// …). Truly shared strings (status enums, common nouns) live in `common`.
+export const NAMESPACES = [
+  "common",
+  "marketing",
+  "public",
+  "console",
+  "dashboard",
+  "competitions",
+  "settings",
+  "emails",
+  "errors",
+  "metadata",
+] as const;
+export type Namespace = (typeof NAMESPACES)[number];
 
 export type Dict = Record<string, unknown>;
 
