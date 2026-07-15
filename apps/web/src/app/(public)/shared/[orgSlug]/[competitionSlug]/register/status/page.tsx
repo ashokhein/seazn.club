@@ -21,7 +21,7 @@ import { CompetitionProse } from "@/components/public-site/competition-prose";
 import { TearOffTicket } from "@/components/public-site/ticket";
 import { RegistrationActions } from "@/components/public-site/registration-actions";
 import { resolveLocale } from "@/lib/resolve-locale";
-import { getDictionary, t, type Dict } from "@/lib/i18n";
+import { getDictionary, t, type Dict, type Locale } from "@/lib/i18n";
 import { DictProvider } from "@/components/i18n/dict-provider";
 
 export const metadata: Metadata = { robots: { index: false, follow: false } };
@@ -42,15 +42,15 @@ const STATUS_COPY: Record<string, { key: string; tone: string }> = {
   expired: { key: "status.expired", tone: "border-zinc-200 bg-zinc-50 text-zinc-600" },
 };
 
-function formatDeadlineUtc(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", {
+function formatDeadlineUtc(iso: string, locale: Locale): string {
+  return new Date(iso).toLocaleString(locale, {
     weekday: "short", day: "numeric", month: "short",
     hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short",
   });
 }
 
-function money(cents: number, currency: string | null): string {
-  return new Intl.NumberFormat("en-GB", {
+function money(cents: number, currency: string | null, locale: Locale): string {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: (currency ?? "gbp").toUpperCase(),
   }).format(cents / 100);
@@ -160,7 +160,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
         )}
         {view.status === "pending" && view.can_pay_online && view.expires_at && (
           <p className="mt-2 inline-block rounded-md bg-white/70 px-2.5 py-1 text-xs font-semibold tabular-nums">
-            {t(ui, "status.spotHeld", { deadline: formatDeadlineUtc(view.expires_at) })}
+            {t(ui, "status.spotHeld", { deadline: formatDeadlineUtc(view.expires_at, locale) })}
           </p>
         )}
         <Timeline status={view.status} paid={view.amount_cents > 0 || view.fee_cents > 0} ui={ui} />
@@ -212,7 +212,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
                 token={token}
                 status={view.status}
                 paymentDue={view.can_pay_online}
-                payLabel={t(ui, "status.payLabel", { amount: money(view.amount_cents, view.currency) })}
+                payLabel={t(ui, "status.payLabel", { amount: money(view.amount_cents, view.currency, locale) })}
               />
             </>
           }
@@ -221,9 +221,9 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
 
       {view.amount_cents > 0 && (
         <p className="mt-4 text-sm text-zinc-600">
-          {t(ui, "status.entryFee")} <strong>{money(view.amount_cents, view.currency)}</strong>
+          {t(ui, "status.entryFee")} <strong>{money(view.amount_cents, view.currency, locale)}</strong>
           {view.refunded_cents > 0
-            ? ` ${t(ui, "status.refunded", { amount: money(view.refunded_cents, view.currency) })}`
+            ? ` ${t(ui, "status.refunded", { amount: money(view.refunded_cents, view.currency, locale) })}`
             : ""}
         </p>
       )}

@@ -523,5 +523,10 @@
   "clubs.logo.assignRemaining": "Assign remaining files to clubs without a badge, in order",
   "clubs.logo.assign.one": "Assign {count} logo",
   "clubs.logo.assign.other": "Assign {count} logos",
-  "clubs.logo.clear": "Clear"
+  "clubs.logo.clear": "Clear",
+  "ticket.stamp.pending": "RECEIVED",
+  "ticket.stamp.paid": "PAID",
+  "ticket.stamp.confirmed": "CONFIRMED",
+  "ticket.stamp.waitlisted": "WAITLIST",
+  "ticket.stamp.withdrawn": "WITHDRAWN"
 }

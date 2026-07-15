@@ -523,5 +523,10 @@
   "clubs.logo.assignRemaining": "Wijs de resterende bestanden op volgorde toe aan clubs zonder logo",
   "clubs.logo.assign.one": "{count} logo toewijzen",
   "clubs.logo.assign.other": "{count} logo's toewijzen",
-  "clubs.logo.clear": "Wissen"
+  "clubs.logo.clear": "Wissen",
+  "ticket.stamp.pending": "ONTVANGEN",
+  "ticket.stamp.paid": "BETAALD",
+  "ticket.stamp.confirmed": "BEVESTIGD",
+  "ticket.stamp.waitlisted": "WACHTLIJST",
+  "ticket.stamp.withdrawn": "INGETROKKEN"
 }

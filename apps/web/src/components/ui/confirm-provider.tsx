@@ -16,7 +16,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { msg } from "@/lib/messages";
+import { readLocaleCookie, clientCommon } from "@/lib/client-dict";
 import { isConfirmArmed } from "@/lib/typed-confirm";
 
 export interface ConfirmOptions {
@@ -77,7 +77,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
 /** Split the typed-challenge copy around its {name} slot so the name can
  *  render in mono without the message layer knowing about JSX. */
 function typedInstruction(): { before: string; after: string } {
-  const [before = "", after = ""] = msg("confirm.typed.instruction").split("{name}");
+  // Renders at the root ConfirmProvider (outside any DictProvider), so it reads
+  // the locale from the cookie via the small `common` client bundle.
+  const [before = "", after = ""] = clientCommon(
+    readLocaleCookie(),
+    "dialog.typedInstruction",
+  ).split("{name}");
   return { before, after };
 }
 
@@ -169,7 +174,7 @@ function ConfirmSurface({
         )}
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
           <button type="button" className="btn btn-ghost" onClick={() => settle(false)}>
-            {msg("confirm.cancel")}
+            {clientCommon(readLocaleCookie(), "dialog.cancel")}
           </button>
           <button
             type={tone === "danger" ? "button" : "submit"}

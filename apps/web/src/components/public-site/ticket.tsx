@@ -4,13 +4,14 @@
 // reference + QR. Server component — the QR arrives as a data URL.
 import { msgFor } from "@/lib/messages-i18n";
 import type { Locale } from "@/lib/i18n-constants";
+import type { MessageKey } from "@/lib/messages";
 
-const STATUS_STAMP: Record<string, { label: string; tone: string }> = {
-  pending: { label: "RECEIVED", tone: "text-amber-700 border-amber-400" },
-  paid: { label: "PAID", tone: "text-emerald-700 border-emerald-400" },
-  confirmed: { label: "CONFIRMED", tone: "text-emerald-700 border-emerald-400" },
-  waitlisted: { label: "WAITLIST", tone: "text-sky-700 border-sky-400" },
-  withdrawn: { label: "WITHDRAWN", tone: "text-zinc-500 border-zinc-300" },
+const STATUS_STAMP: Record<string, { labelKey: MessageKey; tone: string }> = {
+  pending: { labelKey: "ticket.stamp.pending", tone: "text-amber-700 border-amber-400" },
+  paid: { labelKey: "ticket.stamp.paid", tone: "text-emerald-700 border-emerald-400" },
+  confirmed: { labelKey: "ticket.stamp.confirmed", tone: "text-emerald-700 border-emerald-400" },
+  waitlisted: { labelKey: "ticket.stamp.waitlisted", tone: "text-sky-700 border-sky-400" },
+  withdrawn: { labelKey: "ticket.stamp.withdrawn", tone: "text-zinc-500 border-zinc-300" },
 };
 
 export function TearOffTicket({
@@ -73,7 +74,7 @@ export function TearOffTicket({
             className={`shrink-0 -rotate-6 rounded border-2 px-2.5 py-1 font-display text-lg font-bold tracking-widest ${stamp.tone}`}
             aria-label={`Status: ${status}`}
           >
-            {stamp.label}
+            {msgFor(locale, stamp.labelKey)}
           </span>
         </div>
 

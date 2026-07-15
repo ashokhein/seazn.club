@@ -811,7 +811,14 @@
     "clubs.logo.assignRemaining": "3987a708d3a4a701",
     "clubs.logo.assign.one": "c66f8e6f1ba4d7c1",
     "clubs.logo.assign.other": "faf407bd142130f3",
-    "clubs.logo.clear": "83b12c2216efb4fd"
+    "clubs.logo.clear": "83b12c2216efb4fd",
+    "ticket.stamp.pending": "a65d0f154febc9da",
+    "ticket.stamp.paid": "e17956e663502842",
+    "ticket.stamp.confirmed": "102cf1442cf6e329",
+    "ticket.stamp.waitlisted": "b084547ebc488d98",
+    "ticket.stamp.withdrawn": "130c31a7c228fe13",
+    "dialog.cancel": "19766ed6ccb2f4a3",
+    "dialog.typedInstruction": "3139a4bf12d6329b"
   },
   "fr": {
     "app.name": "fb56d648fbb9ae92",
@@ -1625,7 +1632,14 @@
     "clubs.logo.assignRemaining": "3987a708d3a4a701",
     "clubs.logo.assign.one": "c66f8e6f1ba4d7c1",
     "clubs.logo.assign.other": "faf407bd142130f3",
-    "clubs.logo.clear": "83b12c2216efb4fd"
+    "clubs.logo.clear": "83b12c2216efb4fd",
+    "ticket.stamp.pending": "a65d0f154febc9da",
+    "ticket.stamp.paid": "e17956e663502842",
+    "ticket.stamp.confirmed": "102cf1442cf6e329",
+    "ticket.stamp.waitlisted": "b084547ebc488d98",
+    "ticket.stamp.withdrawn": "130c31a7c228fe13",
+    "dialog.cancel": "19766ed6ccb2f4a3",
+    "dialog.typedInstruction": "3139a4bf12d6329b"
   },
   "nl": {
     "app.name": "fb56d648fbb9ae92",
@@ -2439,6 +2453,13 @@
     "clubs.logo.assignRemaining": "3987a708d3a4a701",
     "clubs.logo.assign.one": "c66f8e6f1ba4d7c1",
     "clubs.logo.assign.other": "faf407bd142130f3",
-    "clubs.logo.clear": "83b12c2216efb4fd"
+    "clubs.logo.clear": "83b12c2216efb4fd",
+    "ticket.stamp.pending": "a65d0f154febc9da",
+    "ticket.stamp.paid": "e17956e663502842",
+    "ticket.stamp.confirmed": "102cf1442cf6e329",
+    "ticket.stamp.waitlisted": "b084547ebc488d98",
+    "ticket.stamp.withdrawn": "130c31a7c228fe13",
+    "dialog.cancel": "19766ed6ccb2f4a3",
+    "dialog.typedInstruction": "3139a4bf12d6329b"
   }
 }

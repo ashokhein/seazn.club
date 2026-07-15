@@ -523,5 +523,10 @@
   "clubs.logo.assignRemaining": "Attribuer les fichiers restants aux clubs sans écusson, dans l'ordre",
   "clubs.logo.assign.one": "Attribuer {count} logo",
   "clubs.logo.assign.other": "Attribuer {count} logos",
-  "clubs.logo.clear": "Effacer"
+  "clubs.logo.clear": "Effacer",
+  "ticket.stamp.pending": "REÇU",
+  "ticket.stamp.paid": "PAYÉ",
+  "ticket.stamp.confirmed": "CONFIRMÉ",
+  "ticket.stamp.waitlisted": "LISTE D'ATTENTE",
+  "ticket.stamp.withdrawn": "RETIRÉ"
 }

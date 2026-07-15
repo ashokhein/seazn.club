@@ -3,5 +3,7 @@
   "cookie.message": "Usamos cookies esenciales para mantener tu sesión iniciada. Con tu consentimiento, también utilizamos una herramienta de análisis de terceros para comprender el uso del producto y mejorar Seazn Club. Sin cookies publicitarias.",
   "cookie.policyLink": "Política de cookies",
   "cookie.accept": "Aceptar",
-  "cookie.reject": "Rechazar"
+  "cookie.reject": "Rechazar",
+  "dialog.cancel": "Cancelar",
+  "dialog.typedInstruction": "Escribe {name} para confirmar"
 }

@@ -523,5 +523,10 @@
   "clubs.logo.assignRemaining": "Asignar los archivos restantes a los clubes sin escudo, en orden",
   "clubs.logo.assign.one": "Asignar {count} logo",
   "clubs.logo.assign.other": "Asignar {count} logos",
-  "clubs.logo.clear": "Borrar"
+  "clubs.logo.clear": "Borrar",
+  "ticket.stamp.pending": "RECIBIDO",
+  "ticket.stamp.paid": "PAGADO",
+  "ticket.stamp.confirmed": "CONFIRMADO",
+  "ticket.stamp.waitlisted": "LISTA DE ESPERA",
+  "ticket.stamp.withdrawn": "RETIRADO"
 }
