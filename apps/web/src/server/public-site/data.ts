@@ -39,6 +39,10 @@ export interface PublicOrg {
   logo: string | null;
   /** Org "about" Markdown (v3/06 §2) — render via lib/prose only. */
   about: string | null;
+  /** Spectator-facing locale for this org's public pages (v5 i18n §4). Drives
+   *  the page language for every visitor, keeping the page ISR-cacheable (it's
+   *  a function of the org, not the request). */
+  default_locale: string;
 }
 
 export interface PublicCompetition {
@@ -162,7 +166,8 @@ async function loadOrg(orgSlug: string): Promise<PublicOrg | null> {
   const [row] = await sql<
     (Omit<PublicOrg, "logo"> & { logo_url: string | null; logo_storage_path: string | null })[]
   >`
-    select o.id, o.name, o.slug, o.about, org_has_feature(o.id, 'branding') as branded,
+    select o.id, o.name, o.slug, o.about, o.default_locale,
+           org_has_feature(o.id, 'branding') as branded,
            case when org_has_feature(o.id, 'dashboard.branding')
                 then o.branding else '{}'::jsonb end as branding,
            case when org_has_feature(o.id, 'branding') then o.logo_url end as logo_url,

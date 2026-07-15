@@ -1,0 +1,11 @@
+{
+  "chip.onNow": "En curso",
+  "chip.finished": "Finalizado",
+  "chip.upcoming": "Próximamente",
+  "org.competitionsBy": "Competiciones organizadas por {org}",
+  "hero.eyebrow": "Centro de torneos",
+  "hero.subhead": "Sigue marcadores en vivo, calendarios de partidos y clasificaciones de cada competición — sin necesidad de cuenta.",
+  "section.about": "Acerca de",
+  "section.competitions": "Competiciones",
+  "empty": "No hay competiciones públicas en este momento — vuelve pronto."
+}

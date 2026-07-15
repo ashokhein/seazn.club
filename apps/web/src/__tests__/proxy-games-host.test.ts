@@ -62,7 +62,8 @@ describe("games subdomain host rewrite", () => {
   });
 
   it("proxy() leaves normal hosts alone", () => {
-    const res = proxy(req("/pricing", { host: "seazn.club" }));
+    // /dashboard is neither a games host nor a marketing-rewritten path.
+    const res = proxy(req("/dashboard", { host: "seazn.club" }));
     expect(res.headers.get("x-middleware-rewrite")).toBeNull();
   });
 });

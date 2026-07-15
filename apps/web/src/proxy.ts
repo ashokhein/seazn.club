@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import { negotiateLocale } from "@/lib/i18n-negotiate";
+import { hasLocale } from "@/lib/i18n-constants";
 
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -149,6 +151,30 @@ export function proxy(request: NextRequest) {
     // trees skip them so the HTML stays byte-stable for ISR/CDN.
     requestHeaders.set("x-nonce", nonce);
     requestHeaders.set(csp.name, csp.value);
+  }
+
+  // v5 i18n (spec §4): resolve the request locale once — explicit cookie pick,
+  // else Accept-Language negotiation — and expose it via x-seazn-locale for
+  // resolveLocale() to read. A request header only; it doesn't change cached
+  // HTML unless a page actually reads it (marketing/public do; the shell does
+  // not), so it's safe to set on cacheable trees too.
+  const cookieLocale = request.cookies.get("seazn_locale")?.value;
+  const locale =
+    cookieLocale && hasLocale(cookieLocale)
+      ? cookieLocale
+      : negotiateLocale(request.headers.get("accept-language"));
+  requestHeaders.set("x-seazn-locale", locale);
+
+  // Marketing [lang] routing (spec §5): unprefixed marketing paths rewrite to
+  // the /en prefix (canonical English, no visible redirect, existing links
+  // unbroken). Localized URLs like /fr/start are served directly. Extend
+  // MARKETING_UNPREFIXED as more marketing pages move under [lang].
+  const MARKETING_UNPREFIXED = new Set(["/", "/start", "/pricing"]);
+  if (MARKETING_UNPREFIXED.has(request.nextUrl.pathname)) {
+    const url = request.nextUrl.clone();
+    url.pathname =
+      request.nextUrl.pathname === "/" ? "/en" : `/en${request.nextUrl.pathname}`;
+    return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
   }
 
   const rewriteUrl = gamesHostRewrite(request);

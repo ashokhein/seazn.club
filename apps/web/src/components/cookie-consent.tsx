@@ -11,6 +11,8 @@ import {
   needsConsentPrompt,
   type ConsentChoice,
 } from "@/lib/consent";
+import { readLocaleCookie, clientCommon } from "@/lib/client-dict";
+import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n-constants";
 
 /**
  * Consent banner. Essential cookies (login) always run; analytics (PostHog) is
@@ -23,8 +25,10 @@ import {
  */
 export function CookieConsent() {
   const [visible, setVisible] = useState(false);
+  const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
 
   useEffect(() => {
+    setLocale(readLocaleCookie());
     // Show on first visit, or when the policy version moved on since the
     // visitor last chose (policy change / new third party → re-consent).
     if (needsConsentPrompt()) setVisible(true);
@@ -64,20 +68,18 @@ export function CookieConsent() {
   return (
     <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-xl rounded-2xl border border-purple-100 bg-white p-4 shadow-xl sm:left-6 sm:right-auto sm:max-w-sm">
       <p className="text-sm text-slate-600">
-        We use essential cookies to keep you logged in. With your consent, we
-        also use a third-party analytics tool to understand product usage and
-        improve Seazn Club. No advertising cookies.{" "}
+        {clientCommon(locale, "cookie.message")}{" "}
         <Link href="/legal/cookie-policy" className="text-purple-600 underline">
-          Cookie policy
+          {clientCommon(locale, "cookie.policyLink")}
         </Link>
         .
       </p>
       <div className="mt-3 flex gap-2">
         <button onClick={() => decide("accepted")} className="btn btn-primary text-xs">
-          Accept
+          {clientCommon(locale, "cookie.accept")}
         </button>
         <button onClick={() => decide("rejected")} className="btn btn-ghost text-xs">
-          Reject
+          {clientCommon(locale, "cookie.reject")}
         </button>
       </div>
     </div>

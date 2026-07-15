@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
+import { LocaleSwitcher } from "@/components/i18n/locale-switcher";
 
 const COLS: Array<{ head: string; links: Array<{ label: string; href: string }> }> = [
   {
@@ -71,6 +72,7 @@ export function MarketingFooter() {
         </div>
         <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t border-[#2b1d5c] pt-6 text-xs text-[#8d7fc0] sm:flex-row">
           <span>© {new Date().getFullYear()} Seazn Club. All rights reserved.</span>
+          <LocaleSwitcher />
           <span className="mk-display tracking-[0.2em]">ANY SPORT · LIVE IN MINUTES</span>
         </div>
       </div>

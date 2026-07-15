@@ -1,23 +1,26 @@
 import { button, linkFallback, paragraph, renderEmail } from "./compose";
+import { t, type Dict } from "@/lib/i18n";
 
-/** Email-verification link sent at sign-up. */
-export function verificationTemplate(link: string): { subject: string; html: string; text: string } {
-  const subject = "Verify your Seazn Club account";
+/** Email-verification link sent at sign-up. `dict` = emails namespace for the
+ *  recipient's locale (see lib/email.ts senders). */
+export function verificationTemplate(
+  link: string,
+  dict: Dict,
+): { subject: string; html: string; text: string } {
+  const subject = t(dict, "verification.subject");
   return {
     subject,
     html: renderEmail({
       subject,
-      preheader: "One click to verify your email and finish setting up your account.",
-      eyebrow: "Account",
-      title: "Confirm your email",
+      preheader: t(dict, "verification.preheader"),
+      eyebrow: t(dict, "account.eyebrow"),
+      title: t(dict, "verification.title"),
       contentHtml:
-        paragraph(
-          "Thanks for signing up. Click the button below to verify your email and finish setting up your account.",
-        ) +
-        button("Verify email", link) +
+        paragraph(t(dict, "verification.body")) +
+        button(t(dict, "verification.button"), link) +
         linkFallback(link),
-      footerNote: "You received this because this address was used to sign up for Seazn Club.",
+      footerNote: t(dict, "verification.footer"),
     }),
-    text: `Verify your account: ${link}`,
+    text: t(dict, "verification.text", { link }),
   };
 }

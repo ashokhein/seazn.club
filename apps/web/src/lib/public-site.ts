@@ -329,3 +329,17 @@ export function competitionChip(status: string): CompetitionChip {
   if (status === "completed" || status === "archived") return "finished";
   return "upcoming";
 }
+
+/** i18n dictionary key for a competition's status chip label (v5 i18n §4). Pure
+ *  (no i18n import) so this module stays client-safe; the server page resolves
+ *  it via t(dict, chipLabelKey(status)). */
+export function chipLabelKey(
+  status: string,
+): "chip.onNow" | "chip.finished" | "chip.upcoming" {
+  const chip = competitionChip(status);
+  return chip === "on-now"
+    ? "chip.onNow"
+    : chip === "finished"
+      ? "chip.finished"
+      : "chip.upcoming";
+}

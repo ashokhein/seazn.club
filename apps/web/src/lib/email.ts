@@ -1,5 +1,7 @@
 import "server-only";
 import { sql } from "@/lib/db";
+import { getDictionary } from "@/lib/i18n";
+import { type Locale } from "@/lib/i18n-constants";
 import {
   verificationTemplate,
   passwordResetTemplate,
@@ -121,16 +123,31 @@ async function send(opts: SendOptions): Promise<boolean> {
 // Transactional emails (bypass suppression — user must receive these)
 // ---------------------------------------------------------------------------
 
-export async function sendVerificationEmail(to: string, link: string): Promise<boolean> {
-  return send({ to, transactional: true, ...verificationTemplate(link) });
+export async function sendVerificationEmail(
+  to: string,
+  link: string,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, transactional: true, ...verificationTemplate(link, dict) });
 }
 
-export async function sendPasswordResetEmail(to: string, link: string): Promise<boolean> {
-  return send({ to, transactional: true, ...passwordResetTemplate(link) });
+export async function sendPasswordResetEmail(
+  to: string,
+  link: string,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, transactional: true, ...passwordResetTemplate(link, dict) });
 }
 
-export async function sendMagicLinkEmail(to: string, link: string): Promise<boolean> {
-  return send({ to, transactional: true, ...magicLinkTemplate(link) });
+export async function sendMagicLinkEmail(
+  to: string,
+  link: string,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, transactional: true, ...magicLinkTemplate(link, dict) });
 }
 
 /** Funnel claim link (v3/07 §6) — transactional: it doubles as sign-in. */

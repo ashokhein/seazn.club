@@ -312,6 +312,9 @@ async function main() {
   // --- PROMPT-40 marketing redesign (design/v3/12).
   await marketingSuite();
 
+// --- v5 i18n: marketing [lang] routing + translated copy.
+await i18nSuite();
+
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
   // fresh community owner. Destructive downgrade runs last.
@@ -984,6 +987,34 @@ async function pricingV3Suite(): Promise<void> {
  *  inside the created competition; the token is single-use. */
 // --- PROMPT-40 marketing redesign: matchday-arc home, public format-preview
 // API, /scheduling page (free path — no session anywhere).
+async function i18nSuite(): Promise<void> {
+  const fr = await fetch(`${BASE}/fr/start`);
+  const frHtml = await fr.text();
+  check("i18n: /fr/start 200", fr.status === 200);
+  check("i18n: /fr/start renders French", frHtml.includes("Lancez votre comp"));
+
+  const en = await fetch(`${BASE}/en/start`);
+  const enHtml = await en.text();
+  check("i18n: /en/start renders English", enHtml.includes("Start your competition"));
+
+  const bare = await fetch(`${BASE}/start`, { redirect: "manual" });
+  check("i18n: /start rewrites to en (200, no redirect)", bare.status === 200);
+
+  const bad = await fetch(`${BASE}/de/start`);
+  check("i18n: unsupported locale 404s", bad.status === 404);
+
+  const enHome = await fetch(`${BASE}/en`);
+  const enHomeHtml = await enHome.text();
+  check("i18n: /en home English", enHomeHtml.includes("Any sport. Live in minutes."));
+
+  const frHome = await fetch(`${BASE}/fr`);
+  const frHomeHtml = await frHome.text();
+  check("i18n: /fr home French", frHomeHtml.includes("importe quel sport"));
+
+  const root = await fetch(`${BASE}/`, { redirect: "manual" });
+  check("i18n: / rewrites to en home (200, no redirect)", root.status === 200);
+}
+
 async function marketingSuite(): Promise<void> {
   const home = await fetch(`${BASE}/`, { redirect: "manual" });
   const html = await home.text();

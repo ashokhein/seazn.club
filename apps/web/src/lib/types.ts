@@ -9,6 +9,8 @@ export const userSchema = z.object({
   avatar_url: z.string().nullable(),
   /** IANA zone (spec 2026-07-14); null = follow the browser (seazn_tz cookie). */
   timezone: z.string().nullable(),
+  /** Preferred UI locale (v5 i18n); null = negotiate from Accept-Language. */
+  locale: z.string().nullable(),
 });
 export type User = z.infer<typeof userSchema>;
 
@@ -115,9 +117,13 @@ export const updateProfileSchema = z.object({
     .refine((v) => isValidIana(v), { message: "Unknown timezone" })
     .nullable()
     .optional(),
-}).strict().refine((v) => v.display_name !== undefined || v.timezone !== undefined, {
-  message: "Nothing to update",
-});
+  /** UI locale (v5 i18n); null clears back to negotiated. Widen the enum when
+   *  hi/ta land. */
+  locale: z.enum(["en", "fr", "es", "nl"]).nullable().optional(),
+}).strict().refine(
+  (v) => v.display_name !== undefined || v.timezone !== undefined || v.locale !== undefined,
+  { message: "Nothing to update" },
+);
 
 export const createInviteSchema = z.object({
   role: z.enum(["admin", "viewer", "scorer"]),

@@ -31,6 +31,7 @@ import {
 } from "@/components/account-actions";
 import { ApiKeysPanel } from "@/components/api-keys";
 import { TimezonePreference } from "@/components/timezone-preference";
+import { LocalePreference } from "@/components/locale-preference";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
 import { TourReplayButton } from "@/components/tour-replay";
 import { PlanBadge } from "@/components/plan-badge";
@@ -370,6 +371,8 @@ export default async function SettingsPage({
                   <SectionHeader icon={Clock}>Preferences</SectionHeader>
                   <label className="mb-1 block text-sm text-slate-500">Timezone</label>
                   <TimezonePreference current={user.timezone} />
+                  <label className="mb-1 mt-5 block text-sm text-slate-500">Language</label>
+                  <LocalePreference current={user.locale} />
                 </section>
 
                 {/* Change email */}

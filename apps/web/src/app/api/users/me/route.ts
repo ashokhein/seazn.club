@@ -52,16 +52,17 @@ export async function PATCH(req: Request) {
     const user = await requireUser();
     const patch = updateProfileSchema.parse(await req.json());
 
-    const [row] = await sql<{ display_name: string; timezone: string | null }[]>`
+    const [row] = await sql<{ display_name: string; timezone: string | null; locale: string | null }[]>`
       update users set
         display_name = ${patch.display_name ?? sql`display_name`},
-        timezone     = ${patch.timezone !== undefined ? patch.timezone : sql`timezone`}
+        timezone     = ${patch.timezone !== undefined ? patch.timezone : sql`timezone`},
+        locale       = ${patch.locale !== undefined ? patch.locale : sql`locale`}
       where id = ${user.id}
-      returning display_name, timezone`;
+      returning display_name, timezone, locale`;
 
-    // display_name/timezone are cached in getCurrentUser — drop the stale entry.
+    // display_name/timezone/locale are cached in getCurrentUser — drop the stale entry.
     await invalidateUser(user.id);
-    return { display_name: row.display_name, timezone: row.timezone };
+    return { display_name: row.display_name, timezone: row.timezone, locale: row.locale };
   });
 }
 

@@ -5,9 +5,17 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ChevronRight } from "lucide-react";
 import { getPublicOrg } from "@/server/public-site/data";
-import { competitionChip } from "@/lib/public-site";
+import { competitionChip, chipLabelKey } from "@/lib/public-site";
 import { renderProse } from "@/lib/prose";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
+import { getDictionary, t, type Dict } from "@/lib/i18n";
+import { hasLocale, DEFAULT_LOCALE, type Locale } from "@/lib/i18n-constants";
+
+/** Public pages render in the org's locale for every visitor — a pure function
+ *  of the org (not the request), so the page stays ISR-cacheable. */
+function orgLocale(defaultLocale: string): Locale {
+  return hasLocale(defaultLocale) ? defaultLocale : DEFAULT_LOCALE;
+}
 
 export const revalidate = 30;
 
@@ -26,9 +34,10 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { orgSlug } = await params;
   const data = await getPublicOrg(orgSlug);
   if (!data) return {};
+  const dict = await getDictionary(orgLocale(data.org.default_locale), "public");
   return {
     title: data.org.name,
-    description: `Competitions run by ${data.org.name}`,
+    description: t(dict, "org.competitionsBy", { org: data.org.name }),
   };
 }
 
@@ -37,26 +46,27 @@ const fmtDate = (iso: string) =>
 
 /** Spectator-language chip; the status → chip mapping lives in
     lib/public-site.ts (competitionChip) so it unit-tests without JSX. */
-function statusChip(status: string) {
+function statusChip(status: string, dict: Dict) {
   const chip = competitionChip(status);
+  const label = t(dict, chipLabelKey(status));
   if (chip === "on-now") {
     return (
       <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-emerald-700 ring-1 ring-inset ring-emerald-200">
         <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-500" />
-        On now
+        {label}
       </span>
     );
   }
   if (chip === "finished") {
     return (
       <span className="rounded-full bg-zinc-100 px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-        Finished
+        {label}
       </span>
     );
   }
   return (
     <span className="rounded-full bg-accent-soft px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-accent-strong ring-1 ring-inset ring-accent-line">
-      Upcoming
+      {label}
     </span>
   );
 }
@@ -66,6 +76,7 @@ export default async function OrgLandingPage({ params }: Props) {
   const data = await getPublicOrg(orgSlug);
   if (!data) notFound();
   const { org, competitions } = data;
+  const dict = await getDictionary(orgLocale(org.default_locale), "public");
 
   return (
     <div>
@@ -81,15 +92,12 @@ export default async function OrgLandingPage({ params }: Props) {
           />
           <div className="relative">
             <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-court-muted">
-              Tournament hub
+              {t(dict, "hero.eyebrow")}
             </p>
             <h1 className="mt-2 font-display text-5xl font-bold uppercase leading-none tracking-tight sm:text-6xl">
               {org.name}
             </h1>
-            <p className="mt-3 max-w-xl text-sm text-court-muted">
-              Follow live scores, match schedules and standings for every competition — no
-              account needed.
-            </p>
+            <p className="mt-3 max-w-xl text-sm text-court-muted">{t(dict, "hero.subhead")}</p>
           </div>
         </div>
         <div aria-hidden className="h-1 bg-accent" />
@@ -98,18 +106,18 @@ export default async function OrgLandingPage({ params }: Props) {
       {org.about ? (
         <section className="mb-8">
           <h2 className="mb-3 font-display text-2xl font-semibold uppercase tracking-wide text-ink">
-            About
+            {t(dict, "section.about")}
           </h2>
           <CompetitionProse html={await renderProse(org.about)} />
         </section>
       ) : null}
 
       <h2 className="mb-3 font-display text-2xl font-semibold uppercase tracking-wide text-ink">
-        Competitions
+        {t(dict, "section.competitions")}
       </h2>
       {competitions.length === 0 ? (
         <p className="rounded-xl border border-dashed border-zinc-300 bg-surface p-6 text-center text-sm text-ink-muted">
-          No public competitions right now — check back soon.
+          {t(dict, "empty")}
         </p>
       ) : (
         <ul className="grid gap-3 sm:grid-cols-2">
@@ -129,7 +137,7 @@ export default async function OrgLandingPage({ params }: Props) {
                   />
                 </div>
                 <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-                  {statusChip(c.status)}
+                  {statusChip(c.status, dict)}
                   {c.starts_on ? (
                     <span>
                       {fmtDate(c.starts_on)}

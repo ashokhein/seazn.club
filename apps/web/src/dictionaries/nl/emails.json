@@ -1,0 +1,23 @@
+{
+  "account.eyebrow": "Account",
+  "ignoreNote": "Als je dit niet hebt aangevraagd, kun je deze e-mail veilig negeren.",
+  "magicLink.subject": "Je Seazn Club-aanmeldlink",
+  "magicLink.preheader": "Je eenmalige aanmeldlink — verloopt over 15 minuten.",
+  "magicLink.title": "Aanmelden bij Seazn Club",
+  "magicLink.body": "Klik op de knop hieronder om je aan te melden. Deze link verloopt over 15 minuten en kan één keer worden gebruikt.",
+  "magicLink.button": "Aanmelden",
+  "magicLink.text": "Aanmelden bij Seazn Club (verloopt over 15 minuten): {link}",
+  "passwordReset.subject": "Stel je Seazn Club-wachtwoord opnieuw in",
+  "passwordReset.preheader": "Je resetlink zit erin — deze verloopt over 1 uur.",
+  "passwordReset.title": "Stel je wachtwoord opnieuw in",
+  "passwordReset.body": "We hebben een verzoek ontvangen om je Seazn Club-wachtwoord opnieuw in te stellen. Deze link verloopt over 1 uur.",
+  "passwordReset.button": "Wachtwoord opnieuw instellen",
+  "passwordReset.text": "Stel je wachtwoord opnieuw in (verloopt over 1 uur): {link}",
+  "verification.subject": "Verifieer je Seazn Club-account",
+  "verification.preheader": "Eén klik om je e-mail te verifiëren en het instellen van je account af te ronden.",
+  "verification.title": "Bevestig je e-mailadres",
+  "verification.body": "Bedankt voor je aanmelding. Klik op de knop hieronder om je e-mail te verifiëren en het instellen van je account af te ronden.",
+  "verification.button": "E-mail verifiëren",
+  "verification.footer": "Je ontvangt dit omdat dit adres is gebruikt om je aan te melden voor Seazn Club.",
+  "verification.text": "Verifieer je account: {link}"
+}

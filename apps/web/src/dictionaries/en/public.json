@@ -1,0 +1,11 @@
+{
+  "chip.onNow": "On now",
+  "chip.finished": "Finished",
+  "chip.upcoming": "Upcoming",
+  "org.competitionsBy": "Competitions run by {org}",
+  "hero.eyebrow": "Tournament hub",
+  "hero.subhead": "Follow live scores, match schedules and standings for every competition — no account needed.",
+  "section.about": "About",
+  "section.competitions": "Competitions",
+  "empty": "No public competitions right now — check back soon."
+}

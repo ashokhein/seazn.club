@@ -117,3 +117,42 @@ export function fmtRange(
   const fb = f.format(b);
   return fa === fb ? fa : `${fa} – ${fb}`;
 }
+
+// ── Locale-aware helpers (v5 i18n §5) ───────────────────────────────────────
+// These take an explicit locale (unlike the tz date helpers above, which stay
+// en-GB until each surface adopts the resolved locale in cycles 45/46). Numbers,
+// durations, and relative times localize independently of timezone.
+
+/** Integer/decimal formatting per locale (grouping + decimal marks differ). */
+export function fmtNumber(
+  locale: string,
+  n: number,
+  opts: Intl.NumberFormatOptions = {},
+): string {
+  return new Intl.NumberFormat(locale, opts).format(n);
+}
+
+/** Match/segment duration, e.g. "1 hr 5 min". Rounds to whole minutes; omits an
+ *  empty hours field so short matches read "5 min", not "0 hr 5 min".
+ *  Uses Intl.NumberFormat unit style (universally supported) rather than
+ *  Intl.DurationFormat, which isn't a constructor on older Node runtimes. */
+export function fmtDuration(locale: string, seconds: number): string {
+  const totalMin = Math.max(0, Math.round(seconds / 60));
+  const hours = Math.floor(totalMin / 60);
+  const minutes = totalMin % 60;
+  const unit = (value: number, u: "hour" | "minute") =>
+    new Intl.NumberFormat(locale, { style: "unit", unit: u, unitDisplay: "short" }).format(value);
+  const parts: string[] = [];
+  if (hours > 0) parts.push(unit(hours, "hour"));
+  if (minutes > 0 || hours === 0) parts.push(unit(minutes, "minute"));
+  return parts.join(" ");
+}
+
+/** Relative time, e.g. "2 hours ago" / "in 3 days". Negative value = past. */
+export function fmtRelative(
+  locale: string,
+  value: number,
+  unit: Intl.RelativeTimeFormatUnit,
+): string {
+  return new Intl.RelativeTimeFormat(locale, { numeric: "auto" }).format(value, unit);
+}
