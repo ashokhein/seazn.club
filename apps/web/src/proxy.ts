@@ -166,14 +166,20 @@ export function proxy(request: NextRequest) {
   requestHeaders.set("x-seazn-locale", locale);
 
   // Marketing [lang] routing (spec §5): unprefixed marketing paths rewrite to
-  // the /en prefix (canonical English, no visible redirect, existing links
-  // unbroken). Localized URLs like /fr/start are served directly. Extend
-  // MARKETING_UNPREFIXED as more marketing pages move under [lang].
+  // the locale resolved just above — the explicit cookie pick, else Accept-
+  // Language (crawlers with no cookie/en get /en, so English stays canonical).
+  // This is what makes the footer language switcher work on "/": it writes the
+  // cookie and refreshes, and the rewrite then serves the matching prerender
+  // without a visible redirect. Localized URLs like /fr/start are served
+  // directly. Extend MARKETING_UNPREFIXED as more marketing pages move under
+  // [lang].
   const MARKETING_UNPREFIXED = new Set(["/", "/start", "/pricing"]);
   if (MARKETING_UNPREFIXED.has(request.nextUrl.pathname)) {
     const url = request.nextUrl.clone();
     url.pathname =
-      request.nextUrl.pathname === "/" ? "/en" : `/en${request.nextUrl.pathname}`;
+      request.nextUrl.pathname === "/"
+        ? `/${locale}`
+        : `/${locale}${request.nextUrl.pathname}`;
     return NextResponse.rewrite(url, { request: { headers: requestHeaders } });
   }
 
