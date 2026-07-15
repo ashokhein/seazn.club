@@ -153,5 +153,14 @@
   "useCases.schools.card.4.body": "Imprime el cuadro o la clasificación directamente desde la aplicación. Se ve genial en A3 para el tablón de anuncios del polideportivo.",
   "useCases.schools.card.5.title": "Control de acceso a nivel de personal",
   "useCases.schools.card.5.body": "El personal de educación física y los tutores pueden añadirse como administradores. Los directores pueden ver los resultados sin acceso de edición.",
-  "useCases.startFree": "Empieza gratis"
+  "useCases.startFree": "Empieza gratis",
+  "live.meta.title": "En directo ahora",
+  "live.meta.description": "Todos los partidos públicos que se están puntuando en Seazn Club en este momento: resultados en directo de clubes, ligas y eventos de un día.",
+  "live.eyebrow": "Bajo los focos",
+  "live.h1": "En directo ahora",
+  "live.subhead": "Todos los partidos públicos que se están puntuando en Seazn Club en este momento, directamente desde los móviles a pie de pista. Los resultados se actualizan solos.",
+  "live.browsePre": "¿Buscas una competición completa y no un solo partido?",
+  "live.browseLink": "Explorar el directorio",
+  "live.startPre": "¿Quieres ver tu club aquí?",
+  "live.startLink": "Empieza gratis"
 }

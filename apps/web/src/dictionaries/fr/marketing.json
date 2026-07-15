@@ -153,5 +153,14 @@
   "useCases.schools.card.4.body": "Imprimez le tableau ou le classement directement depuis l'application. Rendu parfait en A3 pour le panneau d'affichage de la salle de sport.",
   "useCases.schools.card.5.title": "Contrôle d'accès par niveau de personnel",
   "useCases.schools.card.5.body": "Les enseignants d'EPS et les professeurs principaux peuvent être ajoutés comme administrateurs. Les directeurs peuvent consulter les résultats sans accès en modification.",
-  "useCases.startFree": "Commencer gratuitement"
+  "useCases.startFree": "Commencer gratuitement",
+  "live.meta.title": "En direct",
+  "live.meta.description": "Tous les matchs publics dont le score est en cours sur Seazn Club en ce moment — scores en direct des clubs, ligues et événements d'une journée.",
+  "live.eyebrow": "Sous les projecteurs",
+  "live.h1": "En direct",
+  "live.subhead": "Tous les matchs publics dont le score est en cours sur Seazn Club à cet instant — directement depuis les téléphones au bord du court. Les scores se mettent à jour automatiquement.",
+  "live.browsePre": "Vous cherchez une compétition entière plutôt qu'un seul match ?",
+  "live.browseLink": "Parcourir l'annuaire",
+  "live.startPre": "Vous voulez voir votre club ici ?",
+  "live.startLink": "Commencer gratuitement"
 }

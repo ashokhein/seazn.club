@@ -153,5 +153,14 @@
   "useCases.schools.card.4.body": "Print het schema of de standen rechtstreeks vanuit de app. Ziet er geweldig uit op A3 voor het prikbord in de sportzaal.",
   "useCases.schools.card.5.title": "Toegangsbeheer op stafniveau",
   "useCases.schools.card.5.body": "Gymleraren en mentoren kunnen als beheerders worden toegevoegd. Schoolleiders kunnen resultaten bekijken zonder bewerkingsrechten.",
-  "useCases.startFree": "Gratis beginnen"
+  "useCases.startFree": "Gratis beginnen",
+  "live.meta.title": "Nu live",
+  "live.meta.description": "Elke openbare wedstrijd die nu op Seazn Club wordt bijgehouden — live scores van clubs, competities en eendaagse evenementen.",
+  "live.eyebrow": "Onder de schijnwerpers",
+  "live.h1": "Nu live",
+  "live.subhead": "Elke openbare wedstrijd die op dit moment op Seazn Club wordt bijgehouden — rechtstreeks vanaf de telefoons langs de baan. Scores worden vanzelf bijgewerkt.",
+  "live.browsePre": "Op zoek naar een volledige competitie en niet één wedstrijd?",
+  "live.browseLink": "Blader door de directory",
+  "live.startPre": "Wil je jouw club hier zien?",
+  "live.startLink": "Gratis beginnen"
 }

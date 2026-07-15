@@ -173,7 +173,7 @@ export function proxy(request: NextRequest) {
   // without a visible redirect. Localized URLs like /fr/start are served
   // directly. Extend MARKETING_UNPREFIXED as more marketing pages move under
   // [lang].
-  const MARKETING_UNPREFIXED = new Set(["/", "/start", "/pricing", "/scheduling", "/formats"]);
+  const MARKETING_UNPREFIXED = new Set(["/", "/start", "/pricing", "/scheduling", "/formats", "/live"]);
   // Marketing trees with sub-paths (e.g. /use-cases/clubs) — prefix match.
   const MARKETING_PREFIXED = ["/use-cases/"];
   const mp = request.nextUrl.pathname;

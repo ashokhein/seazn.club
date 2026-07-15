@@ -153,5 +153,14 @@
   "useCases.schools.card.4.body": "Print the bracket or standings directly from the app. Looks great on A3 for the sports hall notice board.",
   "useCases.schools.card.5.title": "Staff-level access control",
   "useCases.schools.card.5.body": "PE staff and form tutors can be added as admins. Headteachers can view results without editing access.",
-  "useCases.startFree": "Start free"
+  "useCases.startFree": "Start free",
+  "live.meta.title": "Live now",
+  "live.meta.description": "Every public match being scored on Seazn Club right now — live scores from clubs, leagues and one-day events.",
+  "live.eyebrow": "Under the floodlights",
+  "live.h1": "Live now",
+  "live.subhead": "Every public match being scored on Seazn Club at this moment — straight from courtside phones. Scores update by themselves.",
+  "live.browsePre": "Looking for a whole competition, not one match?",
+  "live.browseLink": "Browse the directory",
+  "live.startPre": "Want your club up here?",
+  "live.startLink": "Start free"
 }
