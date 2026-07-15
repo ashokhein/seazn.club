@@ -181,5 +181,20 @@
   "checkin.done.title": "You're checked in",
   "checkin.done.line": "The organiser can see you're here. Good luck!",
   "checkin.needsClaim.title": "Claim your profile first",
-  "checkin.needsClaim.line": "Check-in works once you've claimed your player profile. Ask the organiser to send you a claim invite, then scan again."
+  "checkin.needsClaim.line": "Check-in works once you've claimed your player profile. Ask the organiser to send you a claim invite, then scan again.",
+
+  "org.home.eyebrow": "Matchday console",
+  "org.home.title": "Competitions",
+  "org.home.subtitle.editor": "A competition holds one or more divisions — each with its own sport, entrants and format.",
+  "org.home.subtitle.viewer": "You have view-only access to this board.",
+  "org.home.directory": "Directory",
+  "org.home.newCompetition": "+ New Competition",
+  "org.home.empty.viewer": "No competitions yet.",
+  "org.home.meta.divisions.one": "{count} division",
+  "org.home.meta.divisions.other": "{count} divisions",
+  "org.home.meta.entrants.one": "{count} entrant",
+  "org.home.meta.entrants.other": "{count} entrants",
+  "org.home.menu.schedule": "Schedule Board",
+  "org.home.menu.settings": "Settings",
+  "org.home.menu.slideshow": "Slideshow"
 }

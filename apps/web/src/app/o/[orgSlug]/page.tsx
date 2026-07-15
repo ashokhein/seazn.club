@@ -14,7 +14,8 @@ import { CardMenu } from "@/components/ui/card-menu";
 import { ViewToggleContainer } from "@/components/ui/view-toggle";
 import { StatusChip, competitionChipState, CHIP_SORT } from "@/components/ui/status-chip";
 import { routes } from "@/lib/routes";
-import { msg } from "@/lib/messages";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, plural } from "@/lib/i18n";
 
 export default async function OrgHomePage({
   params,
@@ -32,6 +33,9 @@ export default async function OrgHomePage({
     await markOnboardingDone(auth.userId);
   }
 
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
+
   const { items: competitions } = await listCompetitions(auth, { cursor: null, limit: 100 });
   const stats = await listCompetitionCardStats(auth);
 
@@ -47,26 +51,26 @@ export default async function OrgHomePage({
       <main className="mx-auto max-w-6xl px-4 py-8">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-6">
           <div className="min-w-0">
-            <p className="app-eyebrow mb-1">Matchday console</p>
+            <p className="app-eyebrow mb-1">{t(dict, "org.home.eyebrow")}</p>
             <div className="flex items-center gap-3">
               <h1 className="page-title">
-                Competitions
+                {t(dict, "org.home.title")}
               </h1>
               <span className={`badge ${roleBadge(org.role)}`}>{org.role}</span>
             </div>
             <p className="mt-1 text-sm text-slate-500">
               {canEdit
-                ? "A competition holds one or more divisions — each with its own sport, entrants and format."
-                : "You have view-only access to this board."}
+                ? t(dict, "org.home.subtitle.editor")
+                : t(dict, "org.home.subtitle.viewer")}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Link href="/directory" className="btn btn-ghost">
-              Directory
+              {t(dict, "org.home.directory")}
             </Link>
             {canEdit && (
               <Link href={routes.competitionNew(orgSlug)} data-tour="new-competition" className="btn btn-primary">
-                + New Competition
+                {t(dict, "org.home.newCompetition")}
               </Link>
             )}
           </div>
@@ -81,15 +85,15 @@ export default async function OrgHomePage({
               </div>
               <div>
                 <h2 className="text-xl font-semibold text-slate-800">
-                  {msg("card.empty.competitions")}
+                  {t(dict, "card.empty.competitions")}
                 </h2>
               </div>
               <Link href={routes.competitionNew(orgSlug)} className="btn btn-primary">
-                {msg("card.empty.competitions.cta")}
+                {t(dict, "card.empty.competitions.cta")}
               </Link>
             </div>
           ) : (
-            <p className="text-sm text-slate-500">No competitions yet.</p>
+            <p className="text-sm text-slate-500">{t(dict, "org.home.empty.viewer")}</p>
           )
         ) : (
           <ViewToggleContainer storageKey="seazn.view.competitions" toggle={competitions.length > 20}>
@@ -105,10 +109,11 @@ export default async function OrgHomePage({
                     emoji: sportEmoji(s?.top_sport),
                     tint: sportTint(s?.top_sport),
                   }}
-                  chip={<StatusChip state={c.frozen ? "frozen" : chip} />}
+                  locale={locale}
+                  chip={<StatusChip state={c.frozen ? "frozen" : chip} locale={locale} />}
                   meta={
                     s
-                      ? `${s.divisions} division${s.divisions === 1 ? "" : "s"} · ${s.entrants} entrant${s.entrants === 1 ? "" : "s"}`
+                      ? `${plural(dict, "org.home.meta.divisions", s.divisions, locale)} · ${plural(dict, "org.home.meta.entrants", s.entrants, locale)}`
                       : null
                   }
                   next={s ? nextLine(s.next) : null}
@@ -117,9 +122,9 @@ export default async function OrgHomePage({
                     <CardMenu
                       name={c.name}
                       items={[
-                        { label: "Schedule Board", href: routes.competitionSchedule(orgSlug, c.slug) },
-                        { label: "Settings", href: routes.competitionSettings(orgSlug, c.slug) },
-                        { label: "Slideshow", href: routes.slideshowCompetition(c.id), external: true },
+                        { label: t(dict, "org.home.menu.schedule"), href: routes.competitionSchedule(orgSlug, c.slug) },
+                        { label: t(dict, "org.home.menu.settings"), href: routes.competitionSettings(orgSlug, c.slug) },
+                        { label: t(dict, "org.home.menu.slideshow"), href: routes.slideshowCompetition(c.id), external: true },
                       ]}
                     />
                   }

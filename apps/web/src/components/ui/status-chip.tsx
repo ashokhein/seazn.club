@@ -1,7 +1,9 @@
 // Status-chip vocabulary (v3/03 §1): the ONE way lifecycle state renders —
 // cards, page headers, fixture rows. Copy comes from lib/messages so the
 // vocabulary is a data table, not scattered class strings.
-import { msg, type MessageKey } from "@/lib/messages";
+import { type MessageKey } from "@/lib/messages";
+import { msgFor } from "@/lib/messages-i18n";
+import type { Locale } from "@/lib/i18n-constants";
 
 export type ChipState =
   | "draft"
@@ -67,7 +69,17 @@ export function divisionChipState(
   return opts.registrationOpen ? "registration" : "draft";
 }
 
-export function StatusChip({ state, className = "" }: { state: ChipState; className?: string }) {
+export function StatusChip({
+  state,
+  className = "",
+  locale = "en",
+}: {
+  state: ChipState;
+  className?: string;
+  /** Active locale for the chip vocabulary; server callers pass the resolved
+   *  locale, everyone else gets English. */
+  locale?: Locale;
+}) {
   return (
     <span
       data-chip={state}
@@ -76,7 +88,7 @@ export function StatusChip({ state, className = "" }: { state: ChipState; classN
       {state === "live" && (
         <span aria-hidden className="chip-pulse-dot h-1.5 w-1.5 rounded-full bg-lime-400" />
       )}
-      {msg(CHIP_KEY[state])}
+      {msgFor(locale, CHIP_KEY[state])}
     </span>
   );
 }
