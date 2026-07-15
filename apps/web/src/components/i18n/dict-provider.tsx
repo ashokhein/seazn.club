@@ -8,7 +8,7 @@
 import { createContext, useContext, useMemo, type ReactNode } from "react";
 import type { Dict, Locale } from "@/lib/i18n-constants";
 import { plural as pluralRuntime, t as tRuntime, type TKey } from "@/lib/i18n-runtime";
-import type { MessageKey } from "@/lib/messages";
+import { messages, type MessageKey } from "@/lib/messages";
 
 type DictContextValue = { dict: Dict; locale: Locale };
 
@@ -64,9 +64,12 @@ export function useLocale(): Locale {
 /** Typed drop-in for the `ui` copy catalog: a console island replaces
  *  `import { msg } from "@/lib/messages"` + `msg("k")` with
  *  `const msg = useMsg()` + `msg("k")` and gets the active locale (the /o layout
- *  provides the `ui` dict). Keys stay checked against MessageKey. */
+ *  provides the `ui` dict). Keys stay checked against MessageKey. Outside a
+ *  DictProvider it falls back to the English catalog — so islands shared with
+ *  off-console surfaces (public/me/checkin) convert safely. */
 export function useMsg(): (key: MessageKey, vars?: Record<string, string | number>) => string {
-  const { dict } = useDictContext();
+  const ctx = useContext(DictContext);
+  const dict = ctx?.dict ?? messages;
   return useMemo(
     () => (key: MessageKey, vars?: Record<string, string | number>) => tRuntime(dict, key, vars),
     [dict],

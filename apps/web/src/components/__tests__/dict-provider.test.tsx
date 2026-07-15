@@ -85,6 +85,18 @@ describe("DictProvider client i18n", () => {
     expect(html).not.toContain(">Draft<");
   });
 
+  it("useMsg() falls back to the English catalog outside a DictProvider", () => {
+    // Islands shared between /o (provider present) and public/me/checkin (no
+    // provider) can convert to useMsg() safely: off-console they render English,
+    // exactly as msg() did, instead of crashing.
+    function OrphanMsg() {
+      const msg = useMsg();
+      return <span id="chip">{msg("chip.live")}</span>;
+    }
+    const html = renderToStaticMarkup(<OrphanMsg />);
+    expect(html).toContain(">Live<");
+  });
+
   it("useT() throws a clear error when used outside a DictProvider", () => {
     function Orphan() {
       useT();
