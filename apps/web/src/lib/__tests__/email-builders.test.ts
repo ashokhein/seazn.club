@@ -19,6 +19,8 @@ import {
   verificationTemplate,
 } from "../email-templates";
 import { standingsTable } from "../email-templates/compose";
+// Localized builders take the emails dict; the en namespace is the source text.
+import emailsEn from "@/dictionaries/en/emails.json";
 
 const LINK = "https://seazn.club/x?token=abc";
 
@@ -34,9 +36,9 @@ const registrationArgs = {
 };
 
 const allBuilders: [string, { subject: string; html: string; text: string }][] = [
-  ["verification", verificationTemplate(LINK)],
-  ["password-reset", passwordResetTemplate(LINK)],
-  ["magic-link", magicLinkTemplate(LINK)],
+  ["verification", verificationTemplate(LINK, emailsEn)],
+  ["password-reset", passwordResetTemplate(LINK, emailsEn)],
+  ["magic-link", magicLinkTemplate(LINK, emailsEn)],
   ["email-change-confirm", emailChangeConfirmTemplate(LINK)],
   ["email-change-notice", emailChangeNoticeTemplate("new@example.com")],
   ["account-deletion", accountDeletionTemplate()],
@@ -170,15 +172,22 @@ describe("email builders compose from the html templates", () => {
 
   it("CTA builders carry the link in a button href", () => {
     for (const t of [
-      verificationTemplate(LINK),
-      passwordResetTemplate(LINK),
-      magicLinkTemplate(LINK),
+      verificationTemplate(LINK, emailsEn),
+      passwordResetTemplate(LINK, emailsEn),
+      magicLinkTemplate(LINK, emailsEn),
       emailChangeConfirmTemplate(LINK),
       inviteTemplate("Org", LINK),
       registrationTemplate(registrationArgs),
     ]) {
       expect(t.html).toContain(`href="${LINK}"`);
     }
+  });
+
+  it("localized CTA builders read the provided dict (not hardcoded English)", () => {
+    const fr = { ...emailsEn, "magicLink.subject": "SUBJ_FR", "magicLink.button": "BTN_FR" };
+    const out = magicLinkTemplate(LINK, fr);
+    expect(out.subject).toBe("SUBJ_FR");
+    expect(out.html).toContain("BTN_FR");
   });
 
   it("registration escapes user-supplied names in the html", () => {

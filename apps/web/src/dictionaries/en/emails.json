@@ -1,1 +1,26 @@
-{}
+{
+  "account.eyebrow": "Account",
+  "ignoreNote": "If you didn't request this, you can safely ignore this email.",
+
+  "magicLink.subject": "Your Seazn Club sign-in link",
+  "magicLink.preheader": "Your one-time sign-in link — expires in 15 minutes.",
+  "magicLink.title": "Sign in to Seazn Club",
+  "magicLink.body": "Click the button below to sign in. This link expires in 15 minutes and can be used once.",
+  "magicLink.button": "Sign in",
+  "magicLink.text": "Sign in to Seazn Club (expires in 15 minutes): {link}",
+
+  "passwordReset.subject": "Reset your Seazn Club password",
+  "passwordReset.preheader": "Your reset link is inside — it expires in 1 hour.",
+  "passwordReset.title": "Reset your password",
+  "passwordReset.body": "We received a request to reset your Seazn Club password. This link expires in 1 hour.",
+  "passwordReset.button": "Reset password",
+  "passwordReset.text": "Reset your password (expires in 1 hour): {link}",
+
+  "verification.subject": "Verify your Seazn Club account",
+  "verification.preheader": "One click to verify your email and finish setting up your account.",
+  "verification.title": "Confirm your email",
+  "verification.body": "Thanks for signing up. Click the button below to verify your email and finish setting up your account.",
+  "verification.button": "Verify email",
+  "verification.footer": "You received this because this address was used to sign up for Seazn Club.",
+  "verification.text": "Verify your account: {link}"
+}

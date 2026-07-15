@@ -1,1 +1,23 @@
-{}
+{
+  "account.eyebrow": "Cuenta",
+  "ignoreNote": "Si no solicitaste esto, puedes ignorar este correo de forma segura.",
+  "magicLink.subject": "Tu enlace de inicio de sesión de Seazn Club",
+  "magicLink.preheader": "Tu enlace de inicio de sesión de un solo uso — caduca en 15 minutos.",
+  "magicLink.title": "Inicia sesión en Seazn Club",
+  "magicLink.body": "Haz clic en el botón de abajo para iniciar sesión. Este enlace caduca en 15 minutos y puede usarse una vez.",
+  "magicLink.button": "Iniciar sesión",
+  "magicLink.text": "Inicia sesión en Seazn Club (caduca en 15 minutos): {link}",
+  "passwordReset.subject": "Restablece tu contraseña de Seazn Club",
+  "passwordReset.preheader": "Tu enlace de restablecimiento está dentro — caduca en 1 hora.",
+  "passwordReset.title": "Restablece tu contraseña",
+  "passwordReset.body": "Recibimos una solicitud para restablecer tu contraseña de Seazn Club. Este enlace caduca en 1 hora.",
+  "passwordReset.button": "Restablecer contraseña",
+  "passwordReset.text": "Restablece tu contraseña (caduca en 1 hora): {link}",
+  "verification.subject": "Verifica tu cuenta de Seazn Club",
+  "verification.preheader": "Un clic para verificar tu correo y terminar de configurar tu cuenta.",
+  "verification.title": "Confirma tu correo",
+  "verification.body": "Gracias por registrarte. Haz clic en el botón de abajo para verificar tu correo y terminar de configurar tu cuenta.",
+  "verification.button": "Verificar correo",
+  "verification.footer": "Recibiste esto porque esta dirección se usó para registrarse en Seazn Club.",
+  "verification.text": "Verifica tu cuenta: {link}"
+}
