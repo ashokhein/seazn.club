@@ -1,5 +1,6 @@
 import { panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 
 export interface RefundIssuedArgs {
   orgName: string;
@@ -11,35 +12,46 @@ export interface RefundIssuedArgs {
 }
 
 /** Refund confirmation to the registrant (auto, manual, late or duplicate —
- *  the reason stays organiser-side; the registrant just needs the receipt). */
+ *  the reason stays organiser-side; the registrant just needs the receipt).
+ *  `dict` = emails namespace for the recipient's locale. */
 export function refundIssuedTemplate(
   opts: RefundIssuedArgs,
+  dict: Dict,
 ): { subject: string; html: string; text: string } {
   const amount = money(opts.amountCents, opts.currency);
+  const subject = t(dict, "refundIssued.subject", { competitionName: opts.competitionName });
   return {
-    subject: `Refund issued — ${opts.competitionName}`,
+    subject,
     html: renderEmail({
-      subject: `Refund issued — ${opts.competitionName}`,
-      preheader: `${amount} is on its way back to your card.`,
+      subject,
+      preheader: t(dict, "refundIssued.preheader", { amount }),
       mastheadTag: opts.orgName,
       eyebrow: `${opts.orgName} · ${opts.competitionName}`,
-      title: "Refund issued",
+      title: t(dict, "refundIssued.title"),
       contentHtml:
         paragraph(
-          `Hi ${escapeHtml(opts.displayName)} — a refund of <strong>${amount}</strong> for your ${escapeHtml(opts.competitionName)} entry has been issued.`,
+          t(dict, "refundIssued.body", {
+            displayName: escapeHtml(opts.displayName),
+            amount,
+            competitionName: escapeHtml(opts.competitionName),
+          }),
         ) +
-        panel(
-          "When it lands",
-          "Refunds usually reach the original card within 5–10 business days, depending on your bank.",
-        ) +
+        panel(t(dict, "refundIssued.panelTitle"), t(dict, "refundIssued.panelBody")) +
         (opts.refCode
-          ? paragraph(`Registration reference: <strong>${escapeHtml(opts.refCode)}</strong>.`)
+          ? paragraph(t(dict, "refundIssued.reference", { refCode: escapeHtml(opts.refCode) }))
           : ""),
-      footerNote: `You received this because this address was used to enter ${opts.competitionName} at ${opts.orgName}.`,
+      footerNote: t(dict, "refundIssued.footer", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }),
     }),
     text:
-      `Refund issued — ${opts.competitionName} (${opts.orgName}).\n` +
-      `Amount: ${amount}. Refunds usually reach the original card within 5–10 business days.` +
-      (opts.refCode ? `\nRegistration reference: ${opts.refCode}` : ""),
+      t(dict, "refundIssued.text", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }) +
+      "\n" +
+      t(dict, "refundIssued.textAmount", { amount }) +
+      (opts.refCode ? "\n" + t(dict, "refundIssued.textReference", { refCode: opts.refCode }) : ""),
   };
 }

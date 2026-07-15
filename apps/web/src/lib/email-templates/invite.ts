@@ -1,29 +1,31 @@
 import { button, linkFallback, paragraph, renderEmail } from "./compose";
 import { escapeHtml } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 
-/** Org invite acceptance link. */
+/** Org invite acceptance link. `dict` = emails namespace for the recipient's
+ *  locale (see lib/email.ts senders). */
 export function inviteTemplate(
   orgName: string,
   link: string,
+  dict: Dict,
 ): { subject: string; html: string; text: string } {
+  const subject = t(dict, "invite.subject", { orgName });
   return {
-    subject: `You've been invited to join ${orgName} on Seazn Club`,
+    subject,
     html: renderEmail({
-      subject: `You've been invited to join ${orgName} on Seazn Club`,
-      preheader: `Accept your invite to ${orgName} and get involved.`,
+      subject,
+      preheader: t(dict, "invite.preheader", { orgName }),
       mastheadTag: orgName,
       // The org already headlines the masthead — the eyebrow says what KIND
       // of mail this is instead of repeating it.
-      eyebrow: "Team invite",
-      title: "You're invited",
+      eyebrow: t(dict, "invite.eyebrow"),
+      title: t(dict, "invite.title"),
       contentHtml:
-        paragraph(
-          `You've been invited to join <strong>${escapeHtml(orgName)}</strong> on Seazn Club. Click below to accept.`,
-        ) +
-        button("Accept invite", link) +
+        paragraph(t(dict, "invite.body", { orgName: escapeHtml(orgName) })) +
+        button(t(dict, "invite.button"), link) +
         linkFallback(link),
-      footerNote: `You received this because an organiser at ${orgName} invited this address.`,
+      footerNote: t(dict, "invite.footer", { orgName }),
     }),
-    text: `You've been invited to join ${orgName}. Accept: ${link}`,
+    text: t(dict, "invite.text", { orgName, link }),
   };
 }

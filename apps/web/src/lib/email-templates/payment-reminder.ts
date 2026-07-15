@@ -1,6 +1,7 @@
 import { button, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
 import { formatDeadline } from "./registration";
+import { t, type Dict } from "@/lib/i18n";
 import {
   fillPaymentInstructions,
   paymentInstructionsText,
@@ -21,9 +22,11 @@ export interface PaymentReminderArgs {
 }
 
 /** Payment nudge for an unpaid entry fee — organiser-triggered (offline) or
- *  sweep-triggered at T-24h with a fresh checkout link (card). */
+ *  sweep-triggered at T-24h with a fresh checkout link (card). `dict` = emails
+ *  namespace for the recipient's locale. */
 export function paymentReminderTemplate(
   opts: PaymentReminderArgs,
+  dict: Dict,
 ): { subject: string; html: string; text: string } {
   const amount = money(opts.feeCents, opts.currency);
   const deadline = opts.payDeadline ? formatDeadline(opts.payDeadline) : null;
@@ -32,36 +35,55 @@ export function paymentReminderTemplate(
     : null;
   const how = opts.checkoutUrl
     ? panel(
-        "Complete your payment",
-        `Your spot is held${deadline ? ` until ${deadline}` : ""} — after that it's offered to the next in line.`,
-      ) + button(`Pay now — ${amount}`, opts.checkoutUrl)
+        t(dict, "paymentReminder.completePanelTitle"),
+        deadline
+          ? t(dict, "paymentReminder.completeHeldUntil", { deadline })
+          : t(dict, "paymentReminder.completeHeld"),
+      ) + button(t(dict, "paymentReminder.payNow", { amount }), opts.checkoutUrl)
     : instructions
-      ? panel("How to pay", instructions)
-      : paragraph(`Please contact ${escapeHtml(opts.orgName)} to arrange payment.`);
+      ? panel(t(dict, "paymentReminder.howToPayTitle"), instructions)
+      : paragraph(t(dict, "paymentReminder.contactOrg", { orgName: escapeHtml(opts.orgName) }));
 
+  const subject = t(dict, "paymentReminder.subject", { competitionName: opts.competitionName });
   return {
-    subject: `Payment reminder — ${opts.competitionName}`,
+    subject,
     html: renderEmail({
-      subject: `Payment reminder — ${opts.competitionName}`,
-      preheader: `Your ${amount} entry fee for ${opts.competitionName} is still due.`,
+      subject,
+      preheader: t(dict, "paymentReminder.preheader", {
+        amount,
+        competitionName: opts.competitionName,
+      }),
       mastheadTag: opts.orgName,
       eyebrow: `${opts.orgName} · ${opts.competitionName}`,
-      title: "Entry fee still due",
+      title: t(dict, "paymentReminder.title"),
       contentHtml:
         paragraph(
-          `Hi ${escapeHtml(opts.displayName)}, your entry for <strong>${escapeHtml(opts.competitionName)}</strong> is confirmed once the ${amount} entry fee is received.`,
+          t(dict, "paymentReminder.body", {
+            displayName: escapeHtml(opts.displayName),
+            competitionName: escapeHtml(opts.competitionName),
+            amount,
+          }),
         ) + how,
-      footerNote:
-        "If you've already paid, please ignore this — it can take the organiser a little time to reconcile.",
+      footerNote: t(dict, "paymentReminder.footer"),
     }),
     text:
-      `Payment reminder for ${opts.competitionName} (${opts.orgName}).\n` +
-      `Entry fee: ${amount}.` +
+      t(dict, "paymentReminder.textLine", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }) +
+      "\n" +
+      t(dict, "paymentReminder.textFee", { amount }) +
       (opts.checkoutUrl
-        ? `\nYour spot is held${deadline ? ` until ${deadline}` : ""} — pay here:\n${opts.checkoutUrl}`
+        ? "\n" +
+          (deadline
+            ? t(dict, "paymentReminder.textHeldUntil", { deadline })
+            : t(dict, "paymentReminder.textHeld")) +
+          "\n" +
+          opts.checkoutUrl
         : instructions
-          ? `\nHow to pay:\n${instructions}`
-          : `\nPlease contact the organiser to arrange payment.`) +
-      `\n\nIf you've already paid, please ignore this.`,
+          ? "\n" + t(dict, "paymentReminder.textHowToPay") + "\n" + instructions
+          : "\n" + t(dict, "paymentReminder.textContactOrg")) +
+      "\n\n" +
+      t(dict, "paymentReminder.textAlreadyPaid"),
   };
 }

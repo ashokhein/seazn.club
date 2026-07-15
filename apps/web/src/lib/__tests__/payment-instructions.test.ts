@@ -6,6 +6,8 @@ import {
   paymentInstructionsText,
 } from "../payment-instructions";
 import { registrationTemplate } from "../email-templates/registration";
+import emailsEn from "@/dictionaries/en/emails.json";
+import type { Dict } from "@/lib/i18n";
 
 describe("payment instructions", () => {
   it("fills {{reference}} with the ref code, everywhere it appears", () => {
@@ -33,17 +35,20 @@ describe("payment instructions", () => {
   });
 
   it("registration email carries the personalised, stripped instructions", () => {
-    const { html, text } = registrationTemplate({
-      orgName: "Riverside",
-      competitionName: "Spring Open",
-      displayName: "Alex",
-      status: "pending",
-      feeCents: 2500,
-      currency: "gbp",
-      paymentInstructions: "**Quote {{reference}}** on your transfer.",
-      statusUrl: "https://x.test/status",
-      refCode: "SZ-AAAA-BBBB",
-    });
+    const { html, text } = registrationTemplate(
+      {
+        orgName: "Riverside",
+        competitionName: "Spring Open",
+        displayName: "Alex",
+        status: "pending",
+        feeCents: 2500,
+        currency: "gbp",
+        paymentInstructions: "**Quote {{reference}}** on your transfer.",
+        statusUrl: "https://x.test/status",
+        refCode: "SZ-AAAA-BBBB",
+      },
+      emailsEn as Dict,
+    );
     expect(html).toContain("Quote SZ-AAAA-BBBB on your transfer.");
     expect(html).not.toContain("{{reference}}");
     expect(html).not.toContain("**");

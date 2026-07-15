@@ -1,5 +1,6 @@
 import { panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 
 export interface DisputeAlertArgs {
   orgName: string;
@@ -13,36 +14,50 @@ export interface DisputeAlertArgs {
 
 /** Organiser-facing alert: a card payment was disputed (chargeback). The
  *  platform fronts the dispute on destination charges — the organiser needs
- *  to know the entry is contested and evidence may be needed. */
+ *  to know the entry is contested and evidence may be needed. `dict` = emails
+ *  namespace for the recipient's locale. */
 export function disputeAlertTemplate(
   opts: DisputeAlertArgs,
+  dict: Dict,
 ): { subject: string; html: string; text: string } {
   const amount = money(opts.amountCents, opts.currency);
+  const subject = t(dict, "disputeAlert.subject", { competitionName: opts.competitionName });
+  const refHtml = opts.refCode
+    ? t(dict, "disputeAlert.refClause", { refCode: escapeHtml(opts.refCode) })
+    : "";
+  const refText = opts.refCode ? t(dict, "disputeAlert.refClause", { refCode: opts.refCode }) : "";
   return {
-    subject: `Payment dispute opened — ${opts.competitionName}`,
+    subject,
     html: renderEmail({
-      subject: `Payment dispute opened — ${opts.competitionName}`,
-      preheader: `${amount} entry-fee payment disputed — action may be needed.`,
+      subject,
+      preheader: t(dict, "disputeAlert.preheader", { amount }),
       mastheadTag: opts.orgName,
       eyebrow: `${opts.orgName} · ${opts.competitionName}`,
-      title: "Payment dispute opened",
+      title: t(dict, "disputeAlert.title"),
       contentHtml:
         paragraph(
-          `The ${amount} entry-fee payment from <strong>${escapeHtml(opts.displayName)}</strong>` +
-            (opts.refCode ? ` (ref ${escapeHtml(opts.refCode)})` : "") +
-            ` for ${escapeHtml(opts.competitionName)} has been disputed by the cardholder.`,
+          t(dict, "disputeAlert.body", {
+            amount,
+            displayName: escapeHtml(opts.displayName),
+            ref: refHtml,
+            competitionName: escapeHtml(opts.competitionName),
+          }),
         ) +
-        panel(
-          "What happens next",
-          "The registration is flagged on your console. If the dispute is lost, the cardholder is repaid and the amount is recovered from your Stripe balance. " +
-            "Check the entry, and gather anything that proves the registration was genuine (the confirmation email, check-in records).",
-        ),
-      footerNote: "You received this because you own the organisation on seazn.club.",
+        panel(t(dict, "disputeAlert.panelTitle"), t(dict, "disputeAlert.panelBody")),
+      footerNote: t(dict, "disputeAlert.footer"),
     }),
     text:
-      `Payment dispute opened — ${opts.competitionName} (${opts.orgName}).\n` +
-      `Disputed: ${amount} from ${opts.displayName}` +
-      (opts.refCode ? ` (ref ${opts.refCode})` : "") +
-      `.\nThe registration is flagged on your console. If the dispute is lost, the cardholder is repaid and the amount is recovered from your Stripe balance.`,
+      t(dict, "disputeAlert.textLine", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }) +
+      "\n" +
+      t(dict, "disputeAlert.textDisputed", {
+        amount,
+        displayName: opts.displayName,
+        ref: refText,
+      }) +
+      "\n" +
+      t(dict, "disputeAlert.textNext"),
   };
 }

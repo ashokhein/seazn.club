@@ -1,21 +1,22 @@
 import { paragraph, renderEmail } from "./compose";
+import { t, type Dict } from "@/lib/i18n";
 
-/** Confirmation that an account was scheduled for deletion. */
-export function accountDeletionTemplate(): { subject: string; html: string; text: string } {
-  const subject = "Your Seazn Club account has been deleted";
+/** Confirmation that an account was scheduled for deletion. `dict` = emails
+ *  namespace for the recipient's locale. */
+export function accountDeletionTemplate(
+  dict: Dict,
+): { subject: string; html: string; text: string } {
+  const subject = t(dict, "accountDeletion.subject");
   return {
     subject,
     html: renderEmail({
       subject,
-      preheader: "Your account and data are scheduled for permanent deletion within 30 days.",
-      eyebrow: "Account",
-      title: "Your account has been deleted",
-      contentHtml: paragraph(
-        "Your Seazn Club account and associated data have been scheduled for permanent deletion within 30 days. " +
-          "If this wasn't you, contact support immediately.",
-      ),
-      footerNote: "This is the last email we'll send to this address.",
+      preheader: t(dict, "accountDeletion.preheader"),
+      eyebrow: t(dict, "account.eyebrow"),
+      title: t(dict, "accountDeletion.title"),
+      contentHtml: paragraph(t(dict, "accountDeletion.body")),
+      footerNote: t(dict, "accountDeletion.footer"),
     }),
-    text: "Your Seazn Club account has been deleted. Data will be erased within 30 days.",
+    text: t(dict, "accountDeletion.text"),
   };
 }

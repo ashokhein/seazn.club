@@ -10,6 +10,7 @@ export {
   DEFAULT_LOCALE,
   PSEUDO_LOCALE,
   hasLocale,
+  toLocale,
   type Locale,
   type Namespace,
   type Dict,

@@ -1,6 +1,7 @@
 import { button, linkFallback, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
 import { formatDeadline } from "./registration";
+import { t, type Dict } from "@/lib/i18n";
 import {
   fillPaymentInstructions,
   paymentInstructionsText,
@@ -22,11 +23,14 @@ export interface RegistrationPromotedArgs {
 }
 
 /** A waitlist spot opened (spec §2): the registrant is pending again — card
- *  entries pay inside the fresh window, offline entries follow instructions. */
+ *  entries pay inside the fresh window, offline entries follow instructions.
+ *  `dict` = emails namespace for the recipient's locale. */
 export function registrationPromotedTemplate(
   opts: RegistrationPromotedArgs,
+  dict: Dict,
 ): { subject: string; html: string; text: string } {
   const paid = opts.feeCents > 0;
+  const amount = money(opts.feeCents, opts.currency);
   const deadline = opts.payDeadline ? formatDeadline(opts.payDeadline) : null;
   const card = paid && !!opts.payUrl;
   const instructions = opts.paymentInstructions
@@ -35,45 +39,84 @@ export function registrationPromotedTemplate(
 
   const nextStepHtml = card
     ? panel(
-        `Entry fee: ${money(opts.feeCents, opts.currency)}`,
-        `Your spot is held${deadline ? ` until ${deadline}` : ""} — complete payment to confirm it. Miss the window and the next person in line is offered the place.`,
-      ) + button(`Pay now — ${money(opts.feeCents, opts.currency)}`, opts.payUrl as string)
+        t(dict, "registrationPromoted.feePanelTitle", { amount }),
+        deadline
+          ? t(dict, "registrationPromoted.feeHeldUntil", { deadline })
+          : t(dict, "registrationPromoted.feeHeld"),
+      ) + button(t(dict, "registrationPromoted.payNow", { amount }), opts.payUrl as string)
     : paid
       ? panel(
-          `Entry fee: ${money(opts.feeCents, opts.currency)}`,
-          instructions ?? "The organiser will contact you with payment details.",
+          t(dict, "registrationPromoted.feePanelTitle", { amount }),
+          instructions ?? t(dict, "registrationPromoted.contactOrganiser"),
         )
-      : paragraph("No payment is needed — the organiser will confirm your entry.");
+      : paragraph(t(dict, "registrationPromoted.noPayment"));
 
   const nextStepText = card
-    ? `Entry fee: ${money(opts.feeCents, opts.currency)}\nYour spot is held${deadline ? ` until ${deadline}` : ""} — pay to confirm it:\n${opts.payUrl}`
+    ? t(dict, "registrationPromoted.textFee", { amount }) +
+      "\n" +
+      (deadline
+        ? t(dict, "registrationPromoted.textHeldUntil", { deadline })
+        : t(dict, "registrationPromoted.textHeld")) +
+      "\n" +
+      opts.payUrl
     : paid
-      ? `Entry fee: ${money(opts.feeCents, opts.currency)}\n${instructions ?? "The organiser will contact you with payment details."}`
-      : "No payment is needed — the organiser will confirm your entry.";
+      ? t(dict, "registrationPromoted.textFee", { amount }) +
+        "\n" +
+        (instructions ?? t(dict, "registrationPromoted.contactOrganiser"))
+      : t(dict, "registrationPromoted.noPayment");
 
+  const subject = t(dict, "registrationPromoted.subject", {
+    competitionName: opts.competitionName,
+  });
   return {
-    subject: `A spot opened up — ${opts.competitionName}`,
+    subject,
     html: renderEmail({
-      subject: `A spot opened up — ${opts.competitionName}`,
-      preheader: `You're off the waitlist for ${opts.competitionName}${card && deadline ? ` — pay by ${deadline}` : ""}.`,
+      subject,
+      preheader:
+        card && deadline
+          ? t(dict, "registrationPromoted.preheaderPay", {
+              competitionName: opts.competitionName,
+              deadline,
+            })
+          : t(dict, "registrationPromoted.preheader", {
+              competitionName: opts.competitionName,
+            }),
       mastheadTag: opts.orgName,
       eyebrow: `${opts.orgName} · ${opts.competitionName}`,
-      title: "You're off the waitlist",
+      title: t(dict, "registrationPromoted.title"),
       contentHtml:
         paragraph(
-          `Good news, ${escapeHtml(opts.displayName)} — a place opened up in <strong>${escapeHtml(opts.competitionName)}</strong> and it's yours.`,
+          t(dict, "registrationPromoted.intro", {
+            displayName: escapeHtml(opts.displayName),
+            competitionName: escapeHtml(opts.competitionName),
+          }),
         ) +
         nextStepHtml +
         (opts.refStatusUrl
           ? paragraph(
-              `Your reference is <strong>${escapeHtml(opts.refCode ?? "")}</strong> — check your status any time at ${opts.refStatusUrl}.`,
+              t(dict, "registrationPromoted.reference", {
+                refCode: escapeHtml(opts.refCode ?? ""),
+                url: opts.refStatusUrl,
+              }),
             ) + linkFallback(opts.refStatusUrl)
           : ""),
-      footerNote: `You received this because this address was used to enter ${opts.competitionName} at ${opts.orgName}.`,
+      footerNote: t(dict, "registrationPromoted.footer", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }),
     }),
     text:
-      `You're off the waitlist for ${opts.competitionName} (${opts.orgName}).\n\n` +
+      t(dict, "registrationPromoted.textIntro", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }) +
+      "\n\n" +
       nextStepText +
-      (opts.refStatusUrl ? `\n\nYour reference: ${opts.refCode}\nStatus: ${opts.refStatusUrl}` : ""),
+      (opts.refStatusUrl
+        ? "\n\n" +
+          t(dict, "registrationPromoted.textReference", { refCode: opts.refCode ?? "" }) +
+          "\n" +
+          t(dict, "registrationPromoted.textStatus", { url: opts.refStatusUrl })
+        : ""),
   };
 }

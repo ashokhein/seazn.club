@@ -18,6 +18,10 @@ Your organisation has a **default language** for its public pages (live scores, 
 
 The interface — buttons, labels, headings, and system messages — is translated. **Your own content is never machine-translated:** organisation, competition, and division names, descriptions, and anything you type stays exactly as you wrote it. If you run a bilingual event, write those names in the language your audience expects.
 
+## Emails
+
+Transactional emails — sign-in links, email-change and account notices, registration confirmations, payment reminders, refunds, and dispute alerts — are sent in the recipient's language. For a signed-in account we use your saved **account language**; set it from the language picker while signed in. When we don't yet know a recipient's language (for example a brand-new sign-up, or a registrant who entered before language was captured), the email is sent in English. As with the interface, the words we write are translated but your own content — names, descriptions, payment instructions — is passed through exactly as you entered it.
+
 ## Dates, times, and numbers
 
 Dates, durations, and numbers follow your language's conventions automatically. Match times still use the competition's timezone — see [Timezones](/help/scheduling/timezones).

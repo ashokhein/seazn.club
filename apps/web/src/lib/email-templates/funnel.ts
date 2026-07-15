@@ -1,4 +1,6 @@
 import { button, linkFallback, paragraph, renderEmail } from "./compose";
+import { escapeHtml } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 
 export interface FunnelEmailArgs {
   competitionName: string;
@@ -7,66 +9,62 @@ export interface FunnelEmailArgs {
 }
 
 /** Funnel claim link (v3/07 §6): the visitor configured a competition on
- *  /start; this single link signs them in AND finishes the setup. */
-export function funnelClaimTemplate(args: FunnelEmailArgs): {
+ *  /start; this single link signs them in AND finishes the setup. `dict` =
+ *  emails namespace for the recipient's locale. */
+export function funnelClaimTemplate(
+  args: FunnelEmailArgs,
+  dict: Dict,
+): {
   subject: string;
   html: string;
   text: string;
 } {
-  const subject = `“${args.competitionName}” is ready to finish setting up`;
+  const subject = t(dict, "funnelClaim.subject", { competitionName: args.competitionName });
   return {
     subject,
     html: renderEmail({
       subject,
-      preheader: "One click creates your competition and takes you inside.",
-      eyebrow: "Your competition",
-      title: `${args.competitionName} is one click away`,
+      preheader: t(dict, "funnelClaim.preheader"),
+      eyebrow: t(dict, "funnelClaim.eyebrow"),
+      title: t(dict, "funnelClaim.title", { competitionName: escapeHtml(args.competitionName) }),
       contentHtml:
-        paragraph(
-          `Your ${escapeHtml(args.sport)} competition is drafted and waiting. ` +
-            "Click below to create it and land straight on the entrant list — " +
-            "no password needed, this link signs you in.",
-        ) +
-        button("Finish setting up", args.link) +
+        paragraph(t(dict, "funnelClaim.body", { sport: escapeHtml(args.sport) })) +
+        button(t(dict, "funnelClaim.button"), args.link) +
         linkFallback(args.link),
-      footerNote:
-        "The link works once and expires in 7 days. If you didn't request this, you can safely ignore it.",
+      footerNote: t(dict, "funnelClaim.footer"),
     }),
-    text: `Finish setting up “${args.competitionName}” (link works once, expires in 7 days): ${args.link}`,
+    text: t(dict, "funnelClaim.text", { competitionName: args.competitionName, link: args.link }),
   };
 }
 
 /** +24h nudge for unclaimed drafts (one per draft, then it expires). */
-export function funnelReminderTemplate(args: FunnelEmailArgs): {
+export function funnelReminderTemplate(
+  args: FunnelEmailArgs,
+  dict: Dict,
+): {
   subject: string;
   html: string;
   text: string;
 } {
-  const subject = `Still planning “${args.competitionName}”?`;
+  const subject = t(dict, "funnelReminder.subject", { competitionName: args.competitionName });
   return {
     subject,
     html: renderEmail({
       subject,
-      preheader: "Your drafted competition expires in a few days.",
-      eyebrow: "Reminder",
-      title: "Your competition is still waiting",
+      preheader: t(dict, "funnelReminder.preheader"),
+      eyebrow: t(dict, "funnelReminder.eyebrow"),
+      title: t(dict, "funnelReminder.title"),
       contentHtml:
         paragraph(
-          `You drafted “${escapeHtml(args.competitionName)}” (${escapeHtml(args.sport)}) ` +
-            "yesterday but haven't finished setting it up. One click signs you in and creates it.",
+          t(dict, "funnelReminder.body", {
+            competitionName: escapeHtml(args.competitionName),
+            sport: escapeHtml(args.sport),
+          }),
         ) +
-        button("Finish setting up", args.link) +
+        button(t(dict, "funnelReminder.button"), args.link) +
         linkFallback(args.link),
-      footerNote: "This is the only reminder we'll send — the draft expires 7 days after it was created.",
+      footerNote: t(dict, "funnelReminder.footer"),
     }),
-    text: `Finish setting up “${args.competitionName}”: ${args.link}`,
+    text: t(dict, "funnelReminder.text", { competitionName: args.competitionName, link: args.link }),
   };
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
 }

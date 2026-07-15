@@ -1,23 +1,26 @@
 import { button, linkFallback, paragraph, renderEmail } from "./compose";
+import { t, type Dict } from "@/lib/i18n";
 
-/** Confirm-new-email link (expires in 24 hours). */
-export function emailChangeConfirmTemplate(link: string): { subject: string; html: string; text: string } {
-  const subject = "Confirm your new email address — Seazn Club";
+/** Confirm-new-email link (expires in 24 hours). `dict` = emails namespace for
+ *  the recipient's locale (see lib/email.ts senders). */
+export function emailChangeConfirmTemplate(
+  link: string,
+  dict: Dict,
+): { subject: string; html: string; text: string } {
+  const subject = t(dict, "emailChangeConfirm.subject");
   return {
     subject,
     html: renderEmail({
       subject,
-      preheader: "Confirm this address to complete your email change — expires in 24 hours.",
-      eyebrow: "Account",
-      title: "Confirm your new email",
+      preheader: t(dict, "emailChangeConfirm.preheader"),
+      eyebrow: t(dict, "account.eyebrow"),
+      title: t(dict, "emailChangeConfirm.title"),
       contentHtml:
-        paragraph(
-          "You requested a change to your email address. Click below to confirm. This link expires in 24 hours.",
-        ) +
-        button("Confirm new email", link) +
+        paragraph(t(dict, "emailChangeConfirm.body")) +
+        button(t(dict, "emailChangeConfirm.button"), link) +
         linkFallback(link),
-      footerNote: "If you didn't request this, you can safely ignore this email.",
+      footerNote: t(dict, "ignoreNote"),
     }),
-    text: `Confirm your new email address (expires in 24 hours): ${link}`,
+    text: t(dict, "emailChangeConfirm.text", { link }),
   };
 }

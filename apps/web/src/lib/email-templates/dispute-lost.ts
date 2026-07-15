@@ -1,5 +1,6 @@
 import { button, panel, paragraph, renderEmail } from "./compose";
 import { escapeHtml, money } from "./shared";
+import { t, type Dict } from "@/lib/i18n";
 
 export interface DisputeLostArgs {
   orgName: string;
@@ -19,45 +20,64 @@ export interface DisputeLostArgs {
 
 /** Organiser-facing outcome mail: a chargeback was lost. States plainly that
  *  the disputed amount was recovered from the club's Stripe balance while the
- *  platform covered Stripe's dispute fee (PROMPT-55). */
+ *  platform covered Stripe's dispute fee (PROMPT-55). `dict` = emails namespace
+ *  for the recipient's locale. */
 export function disputeLostTemplate(
   opts: DisputeLostArgs,
+  dict: Dict,
 ): { subject: string; html: string; text: string } {
   const amount = money(opts.amountCents, opts.currency);
   const recovered = money(opts.recoveredCents, opts.currency);
-  const ref = opts.refCode ? ` (ref ${opts.refCode})` : "";
-  const moneyLine =
-    opts.recoveredCents > 0
-      ? `${recovered} has been recovered from your Stripe balance — if your balance can't cover it, ` +
-        "Stripe deducts it from your upcoming payouts. Seazn Club covered Stripe's dispute fee."
-      : "We could not automatically recover the amount from your Stripe balance — our team will follow up. " +
-        "Seazn Club covered Stripe's dispute fee.";
+  const recoveredOk = opts.recoveredCents > 0;
+  const refHtml = opts.refCode
+    ? t(dict, "disputeLost.refClause", { refCode: escapeHtml(opts.refCode) })
+    : "";
+  const refText = opts.refCode ? t(dict, "disputeLost.refClause", { refCode: opts.refCode }) : "";
+  const subject = t(dict, "disputeLost.subject", { competitionName: opts.competitionName });
   return {
-    subject: `Dispute lost — ${opts.competitionName}`,
+    subject,
     html: renderEmail({
-      subject: `Dispute lost — ${opts.competitionName}`,
-      preheader: `${amount} entry-fee dispute closed against you.`,
+      subject,
+      preheader: t(dict, "disputeLost.preheader", { amount }),
       mastheadTag: opts.orgName,
       eyebrow: `${opts.orgName} · ${opts.competitionName}`,
-      title: "Dispute lost",
+      title: t(dict, "disputeLost.title"),
       contentHtml:
         paragraph(
-          `The ${amount} entry-fee dispute from <strong>${escapeHtml(opts.displayName)}</strong>` +
-            (opts.refCode ? ` (ref ${escapeHtml(opts.refCode)})` : "") +
-            ` for ${escapeHtml(opts.competitionName)} was closed in the cardholder's favour. ` +
-            "The cardholder has been repaid by Stripe and the entry is marked refunded on your console.",
+          t(dict, "disputeLost.body", {
+            amount,
+            displayName: escapeHtml(opts.displayName),
+            ref: refHtml,
+            competitionName: escapeHtml(opts.competitionName),
+          }),
         ) +
-        panel("What this means for you", escapeHtml(moneyLine)) +
-        button("Open registrations", opts.consoleUrl),
-      footerNote: "You received this because you own the organisation on seazn.club.",
+        panel(
+          t(dict, "disputeLost.panelTitle"),
+          recoveredOk
+            ? t(dict, "disputeLost.recovered", { recovered })
+            : t(dict, "disputeLost.notRecovered"),
+        ) +
+        button(t(dict, "disputeLost.button"), opts.consoleUrl),
+      footerNote: t(dict, "disputeLost.footer"),
     }),
     text:
-      `Dispute lost — ${opts.competitionName} (${opts.orgName}).\n` +
-      `Disputed: ${amount} from ${opts.displayName}${ref}.\n` +
-      `The cardholder has been repaid by Stripe and the entry is marked refunded.\n` +
-      (opts.recoveredCents > 0
-        ? `${recovered} has been recovered from your Stripe balance; Seazn Club covered Stripe's dispute fee.\n`
-        : `We could not automatically recover the amount from your Stripe balance — our team will follow up. Seazn Club covered Stripe's dispute fee.\n`) +
-      `Registrations: ${opts.consoleUrl}`,
+      t(dict, "disputeLost.textLine", {
+        competitionName: opts.competitionName,
+        orgName: opts.orgName,
+      }) +
+      "\n" +
+      t(dict, "disputeLost.textDisputed", {
+        amount,
+        displayName: opts.displayName,
+        ref: refText,
+      }) +
+      "\n" +
+      t(dict, "disputeLost.textRepaid") +
+      "\n" +
+      (recoveredOk
+        ? t(dict, "disputeLost.textRecovered", { recovered })
+        : t(dict, "disputeLost.textNotRecovered")) +
+      "\n" +
+      t(dict, "disputeLost.textConsole", { consoleUrl: opts.consoleUrl }),
   };
 }

@@ -2070,18 +2070,25 @@ export async function buildDisputeEvidence(
   // The transactional receipt, reconstructed with the exact sender inputs.
   const settings = await loadSettings(sql, reg.division_id);
   const { registrationTemplate } = await import("@/lib/email-templates");
-  const emailText = registrationTemplate({
-    orgName: ctx.org_name,
-    competitionName: ctx.comp_name,
-    displayName: reg.display_name,
-    status: reg.status,
-    feeCents: reg.amount_cents,
-    currency: reg.currency ?? settings?.currency ?? "gbp",
-    paymentInstructions: null,
-    statusUrl: `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status`,
-    refCode: reg.ref_code,
-    refStatusUrl: reg.ref_code ? `${origin}/r/${reg.ref_code}` : null,
-  }).text;
+  const { getDictionary } = await import("@/lib/i18n");
+  // Reconstruct the receipt exactly as sent — sends default to English until
+  // a per-registration locale is captured (spec cycle 46 follow-on).
+  const emailDict = await getDictionary("en", "emails");
+  const emailText = registrationTemplate(
+    {
+      orgName: ctx.org_name,
+      competitionName: ctx.comp_name,
+      displayName: reg.display_name,
+      status: reg.status,
+      feeCents: reg.amount_cents,
+      currency: reg.currency ?? settings?.currency ?? "gbp",
+      paymentInstructions: null,
+      statusUrl: `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status`,
+      refCode: reg.ref_code,
+      refStatusUrl: reg.ref_code ? `${origin}/r/${reg.ref_code}` : null,
+    },
+    emailDict,
+  ).text;
 
   const when = (d: Date | string | null) => (d ? new Date(d).toISOString() : "—");
   const ref = reg.ref_code ?? reg.id;

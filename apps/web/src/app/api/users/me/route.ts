@@ -9,6 +9,7 @@ import {
 import { handler, HttpError } from "@/lib/http";
 import { deleteAccountSchema, updateProfileSchema } from "@/lib/types";
 import { sendAccountDeletionEmail } from "@/lib/email";
+import { toLocale } from "@/lib/i18n";
 
 /**
  * Whoami (task-8): resolves the same identity AnalyticsBootstrap used to read
@@ -122,7 +123,7 @@ export async function DELETE(req: Request) {
     await invalidateUserOrgs(user.id);
 
     // Best-effort notification before destroying session
-    await sendAccountDeletionEmail(user.email);
+    await sendAccountDeletionEmail(user.email, toLocale(user.locale));
     await destroySession();
 
     return { ok: true };
