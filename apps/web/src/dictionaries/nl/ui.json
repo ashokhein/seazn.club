@@ -359,5 +359,9 @@
   "checkin.subtitle": "Laat de organisator weten dat je er bent — met één tik.",
   "checkin.signInPrompt": "Meld je aan om in te checken — geen wachtwoord nodig.",
   "checkin.busy": "Bezig met inchecken…",
-  "checkin.cta": "Ik ben er — inchecken"
+  "checkin.cta": "Ik ben er — inchecken",
+  "register.title": "Registreren",
+  "register.subtitle": "Kies een divisie, vul je gegevens in — duurt minder dan een minuut.",
+  "register.supportedBy": "Ondersteund door",
+  "register.notOpen": "Registratie is niet geopend voor deze competitie."
 }

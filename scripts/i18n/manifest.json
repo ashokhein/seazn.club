@@ -647,7 +647,11 @@
     "checkin.subtitle": "287803f8d7afb1b0",
     "checkin.signInPrompt": "90751266bc6f479a",
     "checkin.busy": "e2ac2e6c3c4fae08",
-    "checkin.cta": "4d21f1f79b2e97ac"
+    "checkin.cta": "4d21f1f79b2e97ac",
+    "register.title": "bb7234ec12451361",
+    "register.subtitle": "e7d4b63fdb84689e",
+    "register.supportedBy": "7b66a9403d6da9f6",
+    "register.notOpen": "0ec6a3bccbd78785"
   },
   "fr": {
     "app.name": "fb56d648fbb9ae92",
@@ -1297,7 +1301,11 @@
     "checkin.subtitle": "287803f8d7afb1b0",
     "checkin.signInPrompt": "90751266bc6f479a",
     "checkin.busy": "e2ac2e6c3c4fae08",
-    "checkin.cta": "4d21f1f79b2e97ac"
+    "checkin.cta": "4d21f1f79b2e97ac",
+    "register.title": "bb7234ec12451361",
+    "register.subtitle": "e7d4b63fdb84689e",
+    "register.supportedBy": "7b66a9403d6da9f6",
+    "register.notOpen": "0ec6a3bccbd78785"
   },
   "nl": {
     "app.name": "fb56d648fbb9ae92",
@@ -1947,6 +1955,10 @@
     "checkin.subtitle": "287803f8d7afb1b0",
     "checkin.signInPrompt": "90751266bc6f479a",
     "checkin.busy": "e2ac2e6c3c4fae08",
-    "checkin.cta": "4d21f1f79b2e97ac"
+    "checkin.cta": "4d21f1f79b2e97ac",
+    "register.title": "bb7234ec12451361",
+    "register.subtitle": "e7d4b63fdb84689e",
+    "register.supportedBy": "7b66a9403d6da9f6",
+    "register.notOpen": "0ec6a3bccbd78785"
   }
 }

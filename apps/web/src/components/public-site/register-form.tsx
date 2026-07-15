@@ -10,7 +10,7 @@ import { useMemo, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { apiV1 } from "@/lib/client-v1";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 import { Tip } from "@/components/ui/tip";
 
 export interface RegisterCompetition {
@@ -117,6 +117,7 @@ export function RegisterForm({
   competition: RegisterCompetition;
   divisions: RegisterDivision[];
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [divisionId, setDivisionId] = useState<string | null>(
     divisions.length === 1 ? (divisions[0]?.division_id ?? null) : null,

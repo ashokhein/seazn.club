@@ -359,5 +359,9 @@
   "checkin.subtitle": "Avisa al organizador de que has llegado, con un solo toque.",
   "checkin.signInPrompt": "Inicia sesión para registrar tu llegada, sin contraseña.",
   "checkin.busy": "Registrando llegada…",
-  "checkin.cta": "Ya estoy aquí — registrar llegada"
+  "checkin.cta": "Ya estoy aquí — registrar llegada",
+  "register.title": "Registrarse",
+  "register.subtitle": "Elige una división, completa tus datos — toma menos de un minuto.",
+  "register.supportedBy": "Con el apoyo de",
+  "register.notOpen": "La inscripción no está abierta para esta competición."
 }

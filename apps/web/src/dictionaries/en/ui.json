@@ -359,5 +359,9 @@
   "checkin.subtitle": "Tell the organiser you’ve arrived — one tap.",
   "checkin.signInPrompt": "Sign in to check in — no password needed.",
   "checkin.busy": "Checking in…",
-  "checkin.cta": "I’m here — check in"
+  "checkin.cta": "I’m here — check in",
+  "register.title": "Register",
+  "register.subtitle": "Pick a division, fill in your details — takes under a minute.",
+  "register.supportedBy": "Supported by",
+  "register.notOpen": "Registration is not open for this competition."
 }

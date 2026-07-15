@@ -6,9 +6,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 import { useConfirm } from "@/components/ui/confirm-provider";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function WithdrawByRef({ refCode, token }: { refCode: string; token: string }) {
+  const msg = useMsg();
   const router = useRouter();
   const confirmDialog = useConfirm();
   const [busy, setBusy] = useState(false);

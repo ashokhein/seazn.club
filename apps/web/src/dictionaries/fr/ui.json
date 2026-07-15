@@ -359,5 +359,9 @@
   "checkin.subtitle": "Indiquez à l’organisateur que vous êtes arrivé — un seul appui.",
   "checkin.signInPrompt": "Connectez-vous pour vous enregistrer — aucun mot de passe requis.",
   "checkin.busy": "Enregistrement en cours…",
-  "checkin.cta": "Je suis là — m’enregistrer"
+  "checkin.cta": "Je suis là — m’enregistrer",
+  "register.title": "Inscription",
+  "register.subtitle": "Choisissez une division, renseignez vos informations — moins d'une minute.",
+  "register.supportedBy": "Soutenu par",
+  "register.notOpen": "Les inscriptions ne sont pas ouvertes pour cette compétition."
 }
