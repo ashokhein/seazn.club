@@ -87,5 +87,13 @@
   "scheduling.kit.scorer.body": "Vrijwilligers langs de baan scoren via een apparaatlink — geen accounts.",
   "scheduling.kit.live.label": "Live naar spelers",
   "scheduling.kit.live.body": "Elke wijziging wordt direct opnieuw gepubliceerd naar het openbare schema.",
-  "scheduling.cta": "Bestuur je wedstrijddag"
+  "scheduling.cta": "Bestuur je wedstrijddag",
+  "formats.meta.title": "Toernooiformats — round robin, knockout, poules, swiss, americano | Seazn Club",
+  "formats.meta.description": "Elk toernooiformat uitgelegd — round robin-competities, knockoutschema's, poules + knockout, swiss, dubbele eliminatie, americano en ladders — met diagrammen, echte voorbeelden en een gratis generator.",
+  "formats.eyebrow": "Toernooiformats",
+  "formats.h1": "Elk format uitgelegd — en daarna voor je gegenereerd",
+  "formats.subhead": "Round robin, knockout, poules, swiss, americano — kies hieronder een vorm om te zien hoe het werkt en laat seazn.club vervolgens de wedstrijden opstellen, de scores bijhouden en de live stand delen.",
+  "formats.cta.title": "Teken niet langer schema's met de hand",
+  "formats.cta.body": "Kies een format, plak je deelnemers en de wedstrijden, scores en live stand zijn klaar. Gratis voor kleine clubs.",
+  "formats.cta.button": "Begin gratis"
 }

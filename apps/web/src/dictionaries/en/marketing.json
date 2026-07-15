@@ -87,5 +87,13 @@
   "scheduling.kit.scorer.body": "Courtside volunteers score from a device link — no accounts.",
   "scheduling.kit.live.label": "Live to players",
   "scheduling.kit.live.body": "Every change republished to the public schedule instantly.",
-  "scheduling.cta": "Run your matchday"
+  "scheduling.cta": "Run your matchday",
+  "formats.meta.title": "Tournament formats — round robin, knockout, groups, swiss, americano | Seazn Club",
+  "formats.meta.description": "Every tournament format explained — round robin leagues, knockout brackets, groups + knockout, swiss, double elimination, americano and ladders — with diagrams, real examples and a free generator.",
+  "formats.eyebrow": "Tournament formats",
+  "formats.h1": "Every format, explained — then generated for you",
+  "formats.subhead": "Round robin, knockout, groups, swiss, americano — pick a shape below to see how it works, then let seazn.club build the fixtures, run the scoring and share the live standings.",
+  "formats.cta.title": "Stop drawing brackets by hand",
+  "formats.cta.body": "Pick a format, paste your entrants, and the fixtures, scoring and live standings are done. Free for small clubs.",
+  "formats.cta.button": "Start free"
 }

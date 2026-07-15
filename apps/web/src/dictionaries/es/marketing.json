@@ -87,5 +87,13 @@
   "scheduling.kit.scorer.body": "Los voluntarios a pie de pista anotan desde un enlace de dispositivo, sin cuentas.",
   "scheduling.kit.live.label": "En directo para los jugadores",
   "scheduling.kit.live.body": "Cada cambio se vuelve a publicar en el horario público al instante.",
-  "scheduling.cta": "Dirige tu jornada"
+  "scheduling.cta": "Dirige tu jornada",
+  "formats.meta.title": "Formatos de torneo — liga, eliminatoria, grupos, suizo, americano | Seazn Club",
+  "formats.meta.description": "Cada formato de torneo explicado — ligas de todos contra todos, cuadros de eliminatoria, grupos + eliminatoria, suizo, doble eliminación, americano y escaleras — con diagramas, ejemplos reales y un generador gratuito.",
+  "formats.eyebrow": "Formatos de torneo",
+  "formats.h1": "Cada formato, explicado — y luego generado para ti",
+  "formats.subhead": "Liga, eliminatoria, grupos, suizo, americano — elige un formato abajo para ver cómo funciona y deja que seazn.club cree los enfrentamientos, gestione la puntuación y comparta la clasificación en directo.",
+  "formats.cta.title": "Deja de dibujar cuadros a mano",
+  "formats.cta.body": "Elige un formato, pega a tus participantes, y los enfrentamientos, la puntuación y la clasificación en directo están listos. Gratis para clubes pequeños.",
+  "formats.cta.button": "Empieza gratis"
 }

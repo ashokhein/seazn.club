@@ -904,7 +904,15 @@
     "scheduling.kit.scorer.body": "440de2487afaff59",
     "scheduling.kit.live.label": "97723558368d3f0d",
     "scheduling.kit.live.body": "37ca37c7d69fd97d",
-    "scheduling.cta": "96f0eb9fa5f5f32e"
+    "scheduling.cta": "96f0eb9fa5f5f32e",
+    "formats.meta.title": "3ad1673bf0b92e58",
+    "formats.meta.description": "f4232a414c240394",
+    "formats.eyebrow": "525c84dfca45f7f3",
+    "formats.h1": "d54f1c4bc165f49d",
+    "formats.subhead": "e6fb70cbe2ab00a7",
+    "formats.cta.title": "8e1bc4422db4d83f",
+    "formats.cta.body": "b9a1abec79c8972d",
+    "formats.cta.button": "22a1d78d60d5d6c4"
   },
   "fr": {
     "app.name": "fb56d648fbb9ae92",
@@ -1811,7 +1819,15 @@
     "scheduling.kit.scorer.body": "440de2487afaff59",
     "scheduling.kit.live.label": "97723558368d3f0d",
     "scheduling.kit.live.body": "37ca37c7d69fd97d",
-    "scheduling.cta": "96f0eb9fa5f5f32e"
+    "scheduling.cta": "96f0eb9fa5f5f32e",
+    "formats.meta.title": "3ad1673bf0b92e58",
+    "formats.meta.description": "f4232a414c240394",
+    "formats.eyebrow": "525c84dfca45f7f3",
+    "formats.h1": "d54f1c4bc165f49d",
+    "formats.subhead": "e6fb70cbe2ab00a7",
+    "formats.cta.title": "8e1bc4422db4d83f",
+    "formats.cta.body": "b9a1abec79c8972d",
+    "formats.cta.button": "22a1d78d60d5d6c4"
   },
   "nl": {
     "app.name": "fb56d648fbb9ae92",
@@ -2718,6 +2734,14 @@
     "scheduling.kit.scorer.body": "440de2487afaff59",
     "scheduling.kit.live.label": "97723558368d3f0d",
     "scheduling.kit.live.body": "37ca37c7d69fd97d",
-    "scheduling.cta": "96f0eb9fa5f5f32e"
+    "scheduling.cta": "96f0eb9fa5f5f32e",
+    "formats.meta.title": "3ad1673bf0b92e58",
+    "formats.meta.description": "f4232a414c240394",
+    "formats.eyebrow": "525c84dfca45f7f3",
+    "formats.h1": "d54f1c4bc165f49d",
+    "formats.subhead": "e6fb70cbe2ab00a7",
+    "formats.cta.title": "8e1bc4422db4d83f",
+    "formats.cta.body": "b9a1abec79c8972d",
+    "formats.cta.button": "22a1d78d60d5d6c4"
   }
 }

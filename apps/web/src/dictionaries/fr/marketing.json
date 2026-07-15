@@ -87,5 +87,13 @@
   "scheduling.kit.scorer.body": "Les bénévoles en bord de court notent les scores via un lien sur appareil — sans compte.",
   "scheduling.kit.live.label": "En direct pour les joueurs",
   "scheduling.kit.live.body": "Chaque modification est republiée instantanément sur le programme public.",
-  "scheduling.cta": "Gérez votre jour de match"
+  "scheduling.cta": "Gérez votre jour de match",
+  "formats.meta.title": "Formats de tournoi — round robin, élimination directe, poules, système suisse, americano | Seazn Club",
+  "formats.meta.description": "Chaque format de tournoi expliqué — ligues round robin, tableaux à élimination directe, poules + élimination directe, système suisse, double élimination, americano et échelles — avec schémas, exemples concrets et un générateur gratuit.",
+  "formats.eyebrow": "Formats de tournoi",
+  "formats.h1": "Chaque format, expliqué — puis généré pour vous",
+  "formats.subhead": "Round robin, élimination directe, poules, système suisse, americano — choisissez une structure ci-dessous pour voir comment elle fonctionne, puis laissez seazn.club créer les rencontres, gérer le score et partager le classement en direct.",
+  "formats.cta.title": "Arrêtez de dessiner les tableaux à la main",
+  "formats.cta.body": "Choisissez un format, collez vos participants, et les rencontres, le score et le classement en direct sont prêts. Gratuit pour les petits clubs.",
+  "formats.cta.button": "Commencer gratuitement"
 }

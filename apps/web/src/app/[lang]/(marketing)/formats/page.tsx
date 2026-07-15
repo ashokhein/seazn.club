@@ -1,36 +1,53 @@
-// Marketing /formats (v3/06 §4): the SEO landing for high-intent format
-// queries ("round robin generator", "americano tournament format") — the
-// same gallery as /help/formats wearing the marketing chrome, ending in the
-// sign-up CTA.
 import Link from "next/link";
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import { FORMAT_FAMILIES, FormatDiagram } from "@/config/format-gallery";
+import { getDictionary, t } from "@/lib/i18n";
+import { hasLocale } from "@/lib/i18n-constants";
 
-export const revalidate = 3600;
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}): Promise<Metadata> {
+  const { lang } = await params;
+  if (!hasLocale(lang)) return {};
+  const d = await getDictionary(lang, "marketing");
+  return {
+    title: t(d, "formats.meta.title"),
+    description: t(d, "formats.meta.description"),
+    alternates: {
+      canonical: `/${lang}/formats`,
+      languages: {
+        ...Object.fromEntries(["en", "fr", "es", "nl"].map((l) => [l, `/${l}/formats`])),
+        "x-default": "/en/formats",
+      },
+    },
+  };
+}
 
-export const metadata: Metadata = {
-  title: "Tournament formats — round robin, knockout, groups, swiss, americano | Seazn Club",
-  description:
-    "Every tournament format explained — round robin leagues, knockout brackets, groups + knockout, swiss, double elimination, americano and ladders — with diagrams, real examples and a free generator.",
-};
-
-export default function FormatsMarketingPage() {
+export default async function FormatsMarketingPage({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}) {
+  const { lang } = await params;
+  if (!hasLocale(lang)) notFound();
+  const d = await getDictionary(lang, "marketing");
   return (
     <div className="flex min-h-screen flex-col bg-white">
       <MarketingShell>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12">
         <p className="mk-eyebrow">
-          Tournament formats
+          {t(d, "formats.eyebrow")}
         </p>
         <h1 className="mk-display mt-3 max-w-2xl text-5xl font-bold text-purple-950">
-          Every format, explained — then generated for you
+          {t(d, "formats.h1")}
         </h1>
         <p className="mt-4 max-w-2xl text-lg text-slate-600">
-          Round robin, knockout, groups, swiss, americano — pick a shape below
-          to see how it works, then let seazn.club build the fixtures, run the
-          scoring and share the live standings.
+          {t(d, "formats.subhead")}
         </p>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
@@ -57,17 +74,16 @@ export default function FormatsMarketingPage() {
 
         <div className="mt-12 rounded-2xl bg-[linear-gradient(160deg,var(--mk-night-2),var(--mk-night))] p-8 text-center text-[var(--mk-cream)]">
           <h2 className="mk-display text-3xl font-bold">
-            Stop drawing brackets by hand
+            {t(d, "formats.cta.title")}
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm opacity-80">
-            Pick a format, paste your entrants, and the fixtures, scoring and
-            live standings are done. Free for small clubs.
+            {t(d, "formats.cta.body")}
           </p>
           <Link
             href="/login?tab=signup"
             className="mk-display mt-5 inline-block rounded-xl bg-[var(--mk-lime)] px-6 py-2.5 text-sm font-bold text-[var(--mk-night)] transition hover:opacity-90"
           >
-            Start free
+            {t(d, "formats.cta.button")}
           </Link>
         </div>
       </main>
