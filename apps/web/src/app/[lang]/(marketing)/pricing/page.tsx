@@ -87,7 +87,7 @@ export default async function PricingPage({
   return (
     <>
       <TrackOnMount event={EVENTS.PRICING_VIEWED} />
-      <MarketingShell>
+      <MarketingShell lang={lang}>
         <main>
           <section className="mx-auto max-w-5xl px-4 pb-14 pt-16 text-center">
             <p className="mk-eyebrow mb-3 justify-center">{t(d, "pricing.eyebrow")}</p>

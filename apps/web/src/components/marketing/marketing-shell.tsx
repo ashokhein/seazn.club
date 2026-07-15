@@ -14,21 +14,26 @@ const displayFont = Barlow_Condensed({
 
 export function MarketingShell({
   variant = "light",
+  lang = "en",
   children,
 }: {
   variant?: "night-scroll" | "light";
+  /** Active locale for the shared nav + footer copy. Marketing [lang] pages
+   *  pass their segment; English-canonical trees (help/developers/games/legal)
+   *  keep the default. */
+  lang?: string;
   children: React.ReactNode;
 }) {
   return (
     <div className={`${displayFont.variable} flex min-h-screen flex-col`}>
-      <MarketingNav variant={variant} />
+      <MarketingNav variant={variant} lang={lang} />
       {variant === "light" ? (
         <div className="mx-auto w-full max-w-6xl px-4 pt-4">
           <BackButton />
         </div>
       ) : null}
       <div className="flex-1">{children}</div>
-      <MarketingFooter />
+      <MarketingFooter lang={lang} />
     </div>
   );
 }

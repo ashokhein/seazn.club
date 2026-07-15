@@ -60,7 +60,7 @@ export default async function StartPage({
           }}
         />
       </main>
-      <MarketingFooter />
+      <MarketingFooter lang={lang} />
     </>
   );
 }

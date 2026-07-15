@@ -46,7 +46,7 @@ export default async function LivePage({
   ]);
 
   return (
-    <MarketingShell>
+    <MarketingShell lang={lang}>
       <main className="bg-[var(--mk-light-warm)]">
         <section className="mx-auto max-w-6xl px-4 pb-16 pt-12">
           <p className="mk-eyebrow">{t(d, "live.eyebrow")}</p>

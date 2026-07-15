@@ -38,7 +38,7 @@ export default async function FormatsMarketingPage({
   const d = await getDictionary(lang, "marketing");
   return (
     <div className="flex min-h-screen flex-col bg-white">
-      <MarketingShell>
+      <MarketingShell lang={lang}>
       <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-12">
         <p className="mk-eyebrow">
           {t(d, "formats.eyebrow")}

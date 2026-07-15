@@ -47,7 +47,7 @@ export default async function SchedulingPage({
   if (!hasLocale(lang)) notFound();
   const d = await getDictionary(lang, "marketing");
   return (
-    <MarketingShell>
+    <MarketingShell lang={lang}>
       <main className="bg-[var(--mk-light-warm)]">
         <section className="mx-auto max-w-4xl px-4 pb-14 pt-16">
           <h1 className="mk-display text-5xl font-bold text-purple-950">{t(d, "scheduling.hero.title")}</h1>

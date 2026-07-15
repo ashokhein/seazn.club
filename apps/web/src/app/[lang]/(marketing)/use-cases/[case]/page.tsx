@@ -50,7 +50,7 @@ export default async function UseCasePage({
 
   return (
     <>
-      <MarketingShell>
+      <MarketingShell lang={lang}>
       <main>
         <section className="mx-auto max-w-4xl px-4 pb-16 pt-16">
           <div className="mk-display mb-4 inline-flex items-center gap-2 rounded-full bg-[var(--mk-lime)] px-3 py-1 text-xs font-semibold tracking-[0.14em] text-[var(--mk-night)]">
