@@ -32,6 +32,8 @@ import {
   sendDisputeLostEmail,
 } from "@/lib/email";
 import { routes } from "@/lib/routes";
+import { toLocale, type Locale } from "@/lib/i18n-constants";
+import { captureRegistrantLocale } from "@/lib/registrant-locale";
 import { generateRefCode, isValidRefCode, normalizeRefCode } from "@/lib/ref-code";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -232,6 +234,8 @@ export interface RegistrationRow {
   entrant_id: string | null;
   promoted_at: Date | null;
   withdrawn_at: Date | null;
+  /** Locale frozen at signup — registrant-facing mail sends in it (cycle 47). */
+  locale: string | null;
   created_at: Date;
 }
 
@@ -241,7 +245,7 @@ const REG_COLS = [
   "answers", "roster", "amount_cents", "currency", "payment_method",
   "checkout_session_id", "payment_intent_id", "refunded_cents", "refunded_at",
   "expires_at", "reminded_at", "offline_marked_paid_at", "disputed_at",
-  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "created_at",
+  "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "locale", "created_at",
 ] as const;
 
 const SETTINGS_COLS = [
@@ -298,6 +302,9 @@ interface DivisionCtx {
   div_slug: string;
   org_slug: string;
   org_name: string;
+  /** Organiser's public default locale — the fallback for a registrant who made
+   *  no explicit locale pick (v5 i18n cycle 47). */
+  default_locale: string | null;
   payment_instructions: string | null;
   charges_enabled: boolean;
 }
@@ -307,7 +314,7 @@ async function divisionCtx(db: AnySql, divisionId: string): Promise<DivisionCtx>
     select d.id, d.competition_id, d.org_id, d.eligibility, d.slug as div_slug,
            c.name as comp_name, c.slug as comp_slug, c.visibility as comp_visibility,
            c.starts_on, c.ends_on,
-           o.slug as org_slug, o.name as org_name, o.payment_instructions,
+           o.slug as org_slug, o.name as org_name, o.default_locale, o.payment_instructions,
            o.stripe_charges_enabled as charges_enabled
     from divisions d
     join competitions c on c.id = d.competition_id
@@ -430,6 +437,7 @@ async function notifyPromoted(
     }
     await sendRegistrationPromotedEmail({
       to: promoted.contact_email,
+      locale: toLocale(promoted.locale),
       orgName: ctx.org_name,
       competitionName: ctx.comp_name,
       displayName: promoted.display_name,
@@ -735,6 +743,7 @@ export async function submitRegistration(
   compSlug: string,
   input: PublicRegisterRequest,
   origin: string,
+  opts?: { locale?: Locale | null },
 ): Promise<SubmitResult> {
   const ctx = await divisionCtx(sql, input.division_id);
   if (
@@ -819,7 +828,7 @@ export async function submitRegistration(
                 (division_id, status, ref_code, display_name, contact_email, dob, gender,
                  guardian_name, guardian_consent, privacy_consent_at, privacy_consent_version,
                  answers, roster, amount_cents, currency,
-                 payment_method, expires_at, access_token_hash)
+                 payment_method, expires_at, access_token_hash, locale)
               values
                 (${input.division_id}, ${waitlisted ? "waitlisted" : "pending"}, ${ref},
                  ${input.display_name}, ${input.contact_email}, ${input.dob ?? null},
@@ -830,7 +839,8 @@ export async function submitRegistration(
                  ${waitlisted ? 0 : settings.fee_cents}, ${settings.currency},
                  ${settings.payment_method},
                  ${useStripe && !waitlisted ? sp`now() + interval '48 hours'` : null},
-                 ${hashRegistrationToken(secret)})
+                 ${hashRegistrationToken(secret)},
+                 ${captureRegistrantLocale(opts?.locale ?? null, ctx.default_locale)})
               returning ${sql(REG_COLS as unknown as string[])}`;
             return r;
           })) as unknown as RegistrationRow;
@@ -873,6 +883,7 @@ export async function submitRegistration(
   const offlineInstructions = settings.payment_instructions ?? ctx.payment_instructions;
   void sendRegistrationEmail({
     to: reg.contact_email,
+    locale: toLocale(reg.locale),
     orgName: ctx.org_name,
     competitionName: ctx.comp_name,
     displayName: reg.display_name,
@@ -1550,6 +1561,7 @@ async function stripeRefund(
 function notifyRefund(reg: RegistrationRow, ctx: DivisionCtx, amountCents: number): void {
   void sendRefundIssuedEmail({
     to: reg.contact_email,
+    locale: toLocale(reg.locale),
     orgName: ctx.org_name,
     competitionName: ctx.comp_name,
     displayName: reg.display_name,
@@ -1669,6 +1681,7 @@ export async function sweepRegistrations(
       const url = await createRegistrationCheckout(reg, ctx, origin, null);
       await sendPaymentReminderEmail({
         to: reg.contact_email,
+        locale: toLocale(reg.locale),
         orgName: ctx.org_name,
         competitionName: ctx.comp_name,
         displayName: reg.display_name,
@@ -1874,6 +1887,7 @@ export async function sendPaymentReminder(
   const ctx = await divisionCtx(sql, reg.division_id);
   const sent = await sendPaymentReminderEmail({
     to: reg.contact_email,
+    locale: toLocale(reg.locale),
     orgName: ctx.org_name,
     competitionName: ctx.comp_name,
     displayName: reg.display_name,
@@ -2071,9 +2085,9 @@ export async function buildDisputeEvidence(
   const settings = await loadSettings(sql, reg.division_id);
   const { registrationTemplate } = await import("@/lib/email-templates");
   const { getDictionary } = await import("@/lib/i18n");
-  // Reconstruct the receipt exactly as sent — sends default to English until
-  // a per-registration locale is captured (spec cycle 46 follow-on).
-  const emailDict = await getDictionary("en", "emails");
+  // Reconstruct the receipt exactly as sent — in the registrant's captured
+  // locale (cycle 47), so replayed dispute evidence matches the original mail.
+  const emailDict = await getDictionary(toLocale(reg.locale), "emails");
   const emailText = registrationTemplate(
     {
       orgName: ctx.org_name,

@@ -1400,3 +1400,39 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
     expect(await auditRows("registration.dispute_recovered", regId)).toHaveLength(1);
   });
 });
+
+describe("per-registrant email locale (cycle 47)", () => {
+  async function openDivision(owner: AuthCtx, divisionId: string) {
+    await putRegistrationSettings(owner, divisionId, {
+      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: 8, refund_lock_at: null,
+    });
+  }
+
+  it("freezes the registrant's explicit locale pick on the row", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg();
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await openDivision(owner, division.id);
+    const res = await submitRegistration(
+      orgSlug, competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://t.local",
+      { locale: "fr" },
+    );
+    expect(res.registration.locale).toBe("fr");
+  });
+
+  it("falls back to the org's default locale when the registrant made no pick", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg();
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await openDivision(owner, division.id);
+    const res = await submitRegistration(
+      orgSlug, competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://t.local",
+    );
+    expect(res.registration.locale).toBe("en"); // fresh org default_locale
+  });
+});

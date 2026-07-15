@@ -4,6 +4,16 @@ import { baseUrl } from "@/lib/oauth";
 import { HttpError } from "@/lib/errors";
 import { PublicRegisterRequest } from "@/server/api-v1/schemas";
 import { submitRegistration } from "@/server/usecases/registrations";
+import { hasLocale, type Locale } from "@/lib/i18n-constants";
+
+/** The registrant's explicit locale pick (footer switcher → seazn_locale cookie),
+ *  or null when they never chose — then the org's public default applies. */
+function explicitLocale(req: Request): Locale | null {
+  const raw = req.headers.get("cookie")?.match(/(?:^|;\s*)seazn_locale=([^;]+)/)?.[1];
+  if (!raw) return null;
+  const v = decodeURIComponent(raw);
+  return hasLocale(v) ? v : null;
+}
 
 type Ctx = { params: Promise<{ orgSlug: string; slug: string }> };
 
@@ -25,7 +35,9 @@ export async function POST(req: Request, { params }: Ctx) {
     // Second bucket per IP+division (v3/05 §4): one address hammering a
     // single division throttles harder than the general write budget above.
     await rateLimit(`regsubmit:${ip}:${input.division_id}`, { max: 5, windowSeconds: 300 });
-    const result = await submitRegistration(orgSlug, slug, input, baseUrl(req));
+    const result = await submitRegistration(orgSlug, slug, input, baseUrl(req), {
+      locale: explicitLocale(req),
+    });
     return reply(201, {
       registration_id: result.registration.id,
       status: result.registration.status,
