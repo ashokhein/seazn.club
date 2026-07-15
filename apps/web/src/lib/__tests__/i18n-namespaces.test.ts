@@ -7,10 +7,8 @@ import { describe, expect, it } from "vitest";
 import { NAMESPACES, LOCALES, getDictionary } from "@/lib/i18n";
 
 describe("i18n namespace registry", () => {
-  it("registers the cycle-47 console feature-page namespaces", () => {
-    for (const ns of ["dashboard", "competitions", "settings"] as const) {
-      expect(NAMESPACES).toContain(ns);
-    }
+  it("registers the cycle-47 console copy-catalog namespace", () => {
+    expect(NAMESPACES).toContain("ui");
   });
 
   it("every namespace resolves for every locale (loader + file present)", async () => {
