@@ -4,19 +4,36 @@
 // filter combination.
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
 import {
   getDiscoveryDirectory,
   listDiscoverySports,
 } from "@/server/public-site/discovery";
 import { DiscoveryCard, sportEmoji } from "@/components/discovery-cards";
+import { getDictionary, t } from "@/lib/i18n";
+import { hasLocale } from "@/lib/i18n-constants";
 
-export const metadata: Metadata = {
-  title: "Discover live tournaments — Seazn Club",
-  description:
-    "Live and upcoming community tournaments running on Seazn Club — cricket, football, volleyball, chess, carrom and more. Follow live scores, or run your own.",
-  alternates: { canonical: "https://seazn.club/discover" },
-};
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ lang: string }>;
+}): Promise<Metadata> {
+  const { lang } = await params;
+  if (!hasLocale(lang)) return {};
+  const d = await getDictionary(lang, "marketing");
+  return {
+    title: t(d, "discover.meta.title"),
+    description: t(d, "discover.meta.description"),
+    alternates: {
+      canonical: `/${lang}/discover`,
+      languages: {
+        ...Object.fromEntries(["en", "fr", "es", "nl"].map((l) => [l, `/${l}/discover`])),
+        "x-default": "/en/discover",
+      },
+    },
+  };
+}
 
 interface SearchParams {
   sport?: string;
@@ -26,80 +43,84 @@ interface SearchParams {
 }
 
 export default async function DiscoverPage({
+  params,
   searchParams,
 }: {
+  params: Promise<{ lang: string }>;
   searchParams: Promise<SearchParams>;
 }) {
-  const params = await searchParams;
+  const { lang } = await params;
+  if (!hasLocale(lang)) notFound();
+  const sp = await searchParams;
   const status: "live" | "upcoming" | undefined =
-    params.status === "live" || params.status === "upcoming" ? params.status : undefined;
+    sp.status === "live" || sp.status === "upcoming" ? sp.status : undefined;
   const filters = {
-    sport: params.sport || undefined,
-    country: params.country || undefined,
+    sport: sp.sport || undefined,
+    country: sp.country || undefined,
     status,
-    q: params.q || undefined,
+    q: sp.q || undefined,
   };
-  const [entries, sports] = await Promise.all([
+  const [d, entries, sports] = await Promise.all([
+    getDictionary(lang, "marketing"),
     getDiscoveryDirectory(filters).catch(() => []),
     listDiscoverySports().catch(() => []),
   ]);
 
   return (
     <>
-      <MarketingShell>
+      <MarketingShell lang={lang}>
       <main className="mx-auto max-w-5xl px-4 py-12">
         <h1 className="mk-display text-4xl font-bold text-purple-950">
-          Discover tournaments
+          {t(d, "discover.h1")}
         </h1>
         <p className="mt-2 max-w-xl text-slate-600">
-          Live and upcoming competitions run by clubs on Seazn Club. Every one
-          of them set up in minutes — yours could be here too.
+          {t(d, "discover.subhead")}
         </p>
 
         {/* Sport chips + status filter (plain links — cacheable). */}
         <div className="mt-6 flex flex-wrap items-center gap-2">
-          <FilterChip href="/discover" active={!filters.sport && !status} label="All" />
+          <FilterChip href={`/${lang}/discover`} active={!filters.sport && !status} label={t(d, "discover.filter.all")} />
           {sports.map((s) => (
             <FilterChip
               key={s.key}
-              href={`/discover/${s.key}`}
+              href={`/${lang}/discover/${s.key}`}
               active={filters.sport === s.key}
               label={`${sportEmoji(s.key)} ${s.name}`}
             />
           ))}
           <span className="mx-2 hidden h-4 w-px bg-slate-200 sm:block" />
           <FilterChip
-            href={withParam(filters, "status", "live")}
+            href={withParam(lang, filters, "status", "live")}
             active={status === "live"}
-            label="🔴 Live"
+            label={t(d, "discover.filter.live")}
           />
           <FilterChip
-            href={withParam(filters, "status", "upcoming")}
+            href={withParam(lang, filters, "status", "upcoming")}
             active={status === "upcoming"}
-            label="Upcoming"
+            label={t(d, "discover.filter.upcoming")}
           />
         </div>
 
         {/* Search (GET form — lands back here with ?q=). */}
-        <form method="get" action="/discover" className="mt-4 flex max-w-md gap-2">
+        <form method="get" action={`/${lang}/discover`} className="mt-4 flex max-w-md gap-2">
           {filters.sport && <input type="hidden" name="sport" value={filters.sport} />}
           <input
             type="search"
             name="q"
             defaultValue={filters.q ?? ""}
-            placeholder="Search by name or club…"
+            placeholder={t(d, "discover.searchPlaceholder")}
             className="input flex-1"
           />
           <button type="submit" className="btn btn-primary">
-            Search
+            {t(d, "discover.searchButton")}
           </button>
         </form>
 
         {entries.length === 0 ? (
           <div className="mt-16 text-center">
-            <p className="text-slate-500">No tournaments match right now.</p>
+            <p className="text-slate-500">{t(d, "discover.empty")}</p>
             <Link href="/login?tab=signup" className="btn btn-primary mt-4 inline-flex">
-              Run your own →
+              {t(d, "discover.runYourOwn")} →
             </Link>
           </div>
         ) : (
@@ -112,15 +133,15 @@ export default async function DiscoverPage({
 
         {/* Acquisition loop (doc 15): spectator → organiser. */}
         <section className="mt-16 rounded-xl bg-purple-900 p-8 text-center text-white">
-          <h2 className="text-xl font-bold">Run your own tournament</h2>
+          <h2 className="text-xl font-bold">{t(d, "discover.cta.title")}</h2>
           <p className="mt-1 text-sm text-purple-200">
-            Any sport, any format — free for community clubs.
+            {t(d, "discover.cta.body")}
           </p>
           <Link
             href="/login?tab=signup"
             className="btn mt-4 inline-flex bg-white px-6 font-semibold text-purple-900 hover:bg-purple-50"
           >
-            Start free →
+            {t(d, "discover.cta.button")} →
           </Link>
         </section>
       </main>
@@ -129,7 +150,7 @@ export default async function DiscoverPage({
   );
 }
 
-function withParam(filters: SearchParams, key: string, value: string): string {
+function withParam(lang: string, filters: SearchParams, key: string, value: string): string {
   const p = new URLSearchParams();
   if (filters.sport) p.set("sport", filters.sport);
   if (filters.q) p.set("q", filters.q);
@@ -137,7 +158,7 @@ function withParam(filters: SearchParams, key: string, value: string): string {
   if (filters.status === value) p.delete(key);
   else p.set(key, value);
   const qs = p.toString();
-  return qs ? `/discover?${qs}` : "/discover";
+  return qs ? `/${lang}/discover?${qs}` : `/${lang}/discover`;
 }
 
 function FilterChip({ href, active, label }: { href: string; active: boolean; label: string }) {
