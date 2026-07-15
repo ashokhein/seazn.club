@@ -107,7 +107,10 @@ export function EntityCard({
               aria-valuemin={0}
               aria-valuemax={progress.total}
               aria-valuenow={progress.played}
-              aria-label={`${progress.played} of ${progress.total} played`}
+              aria-label={msgFor(locale, "card.progress.played", {
+                played: progress.played,
+                total: progress.total,
+              })}
               className="h-1 w-16 shrink-0 overflow-hidden rounded-full bg-slate-100"
             >
               <span
@@ -119,7 +122,10 @@ export function EntityCard({
               />
             </span>
             <span className="text-[11px] tabular-nums text-slate-500">
-              {progress.played} of {progress.total} played
+              {msgFor(locale, "card.progress.played", {
+                played: progress.played,
+                total: progress.total,
+              })}
             </span>
           </div>
         ) : (
