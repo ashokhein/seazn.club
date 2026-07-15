@@ -223,5 +223,12 @@
   "div.detail.tiebreak.label": "Cascade de départage :",
   "div.detail.tiebreak.override": "(remplacement de division)",
   "div.detail.tiebreak.default": "(par défaut du sport)",
-  "div.detail.embed.private": "Cette compétition est privée, il n'y a donc rien à intégrer. Définissez-la d'abord comme non répertoriée ou publique dans les paramètres de la compétition."
+  "div.detail.embed.private": "Cette compétition est privée, il n'y a donc rien à intégrer. Définissez-la d'abord comme non répertoriée ou publique dans les paramètres de la compétition.",
+  "comp.settings.title": "Paramètres — {name}",
+  "comp.schedule.title": "Calendrier de la compétition — {name}",
+  "comp.schedule.empty": "Aucune division pour le moment — le tableau du calendrier se remplit dès que cette compétition comporte des divisions avec des rencontres.",
+  "payments.title": "Paiements",
+  "payments.desc": "Comment vos frais d'inscription sont collectés — paiements par carte via Stripe, ou vos propres instructions de paiement en espèces / par virement bancaire. Chaque division choisit sa méthode dans ses paramètres d'inscription.",
+  "payments.planNote": "Le forfait et l'abonnement se trouvent sous",
+  "payments.planBilling": "Forfait et facturation"
 }

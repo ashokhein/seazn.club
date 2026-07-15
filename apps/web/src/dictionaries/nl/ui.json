@@ -223,5 +223,12 @@
   "div.detail.tiebreak.label": "Tiebreak-volgorde:",
   "div.detail.tiebreak.override": "(divisie-uitzondering)",
   "div.detail.tiebreak.default": "(sportstandaard)",
-  "div.detail.embed.private": "Deze competitie is privé, dus er is niets om in te sluiten. Stel deze eerst in op niet-vermeld of openbaar in de competitie-instellingen."
+  "div.detail.embed.private": "Deze competitie is privé, dus er is niets om in te sluiten. Stel deze eerst in op niet-vermeld of openbaar in de competitie-instellingen.",
+  "comp.settings.title": "Instellingen — {name}",
+  "comp.schedule.title": "Wedstrijdschema — {name}",
+  "comp.schedule.empty": "Nog geen divisies — het schemaoverzicht wordt gevuld zodra deze competitie divisies met wedstrijden heeft.",
+  "payments.title": "Betalingen",
+  "payments.desc": "Hoe je inschrijfgelden worden geïnd — kaartbetalingen via Stripe, of je eigen instructies voor contant geld / bankoverschrijving. Elke divisie kiest haar methode in haar registratie-instellingen.",
+  "payments.planNote": "Abonnement en plan vind je onder",
+  "payments.planBilling": "Plan & facturering"
 }

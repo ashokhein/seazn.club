@@ -223,5 +223,12 @@
   "div.detail.tiebreak.label": "Cascada de desempate:",
   "div.detail.tiebreak.override": "(anulación de división)",
   "div.detail.tiebreak.default": "(predeterminado del deporte)",
-  "div.detail.embed.private": "Esta competición es privada, por lo que no hay nada que insertar. Configúrala como no listada o pública en la configuración de la competición primero."
+  "div.detail.embed.private": "Esta competición es privada, por lo que no hay nada que insertar. Configúrala como no listada o pública en la configuración de la competición primero.",
+  "comp.settings.title": "Ajustes — {name}",
+  "comp.schedule.title": "Calendario de la competición — {name}",
+  "comp.schedule.empty": "Aún no hay divisiones — el panel del calendario se completa cuando esta competición tenga divisiones con partidos.",
+  "payments.title": "Pagos",
+  "payments.desc": "Cómo se cobran tus cuotas de inscripción: pagos con tarjeta a través de Stripe, o tus propias instrucciones de pago en efectivo / transferencia bancaria. Cada división elige su método en sus ajustes de inscripción.",
+  "payments.planNote": "El plan y la suscripción se encuentran en",
+  "payments.planBilling": "Plan y facturación"
 }

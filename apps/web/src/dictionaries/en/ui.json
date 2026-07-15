@@ -223,5 +223,12 @@
   "div.detail.tiebreak.label": "Tie-break cascade:",
   "div.detail.tiebreak.override": "(division override)",
   "div.detail.tiebreak.default": "(sport default)",
-  "div.detail.embed.private": "This competition is private, so there is nothing to embed. Set it to unlisted or public in competition settings first."
+  "div.detail.embed.private": "This competition is private, so there is nothing to embed. Set it to unlisted or public in competition settings first.",
+  "comp.settings.title": "Settings — {name}",
+  "comp.schedule.title": "Competition schedule — {name}",
+  "comp.schedule.empty": "No divisions yet — the schedule board fills in once this competition has divisions with fixtures.",
+  "payments.title": "Payments",
+  "payments.desc": "How your entry fees are collected — card payments via Stripe, or your own cash / bank-transfer instructions. Each division picks its method in its registration settings.",
+  "payments.planNote": "Plan and subscription live under",
+  "payments.planBilling": "Plan & billing"
 }

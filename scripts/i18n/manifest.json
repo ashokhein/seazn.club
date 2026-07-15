@@ -511,7 +511,14 @@
     "div.detail.tiebreak.label": "2404e27a6081072f",
     "div.detail.tiebreak.override": "1b55155b833386a5",
     "div.detail.tiebreak.default": "1a4b027c54b1114b",
-    "div.detail.embed.private": "210fa6c2e7f40a28"
+    "div.detail.embed.private": "210fa6c2e7f40a28",
+    "comp.settings.title": "1087cf258eedb00d",
+    "comp.schedule.title": "a1823eb919bffb37",
+    "comp.schedule.empty": "d43b5f8ae0bb2f03",
+    "payments.title": "632e1c5839411a10",
+    "payments.desc": "eaadc2942b20ad5e",
+    "payments.planNote": "9e92dc788264d349",
+    "payments.planBilling": "5878174a60bccd35"
   },
   "fr": {
     "app.name": "fb56d648fbb9ae92",
@@ -1025,7 +1032,14 @@
     "div.detail.tiebreak.label": "2404e27a6081072f",
     "div.detail.tiebreak.override": "1b55155b833386a5",
     "div.detail.tiebreak.default": "1a4b027c54b1114b",
-    "div.detail.embed.private": "210fa6c2e7f40a28"
+    "div.detail.embed.private": "210fa6c2e7f40a28",
+    "comp.settings.title": "1087cf258eedb00d",
+    "comp.schedule.title": "a1823eb919bffb37",
+    "comp.schedule.empty": "d43b5f8ae0bb2f03",
+    "payments.title": "632e1c5839411a10",
+    "payments.desc": "eaadc2942b20ad5e",
+    "payments.planNote": "9e92dc788264d349",
+    "payments.planBilling": "5878174a60bccd35"
   },
   "nl": {
     "app.name": "fb56d648fbb9ae92",
@@ -1539,6 +1553,13 @@
     "div.detail.tiebreak.label": "2404e27a6081072f",
     "div.detail.tiebreak.override": "1b55155b833386a5",
     "div.detail.tiebreak.default": "1a4b027c54b1114b",
-    "div.detail.embed.private": "210fa6c2e7f40a28"
+    "div.detail.embed.private": "210fa6c2e7f40a28",
+    "comp.settings.title": "1087cf258eedb00d",
+    "comp.schedule.title": "a1823eb919bffb37",
+    "comp.schedule.empty": "d43b5f8ae0bb2f03",
+    "payments.title": "632e1c5839411a10",
+    "payments.desc": "eaadc2942b20ad5e",
+    "payments.planNote": "9e92dc788264d349",
+    "payments.planBilling": "5878174a60bccd35"
   }
 }
