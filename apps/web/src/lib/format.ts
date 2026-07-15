@@ -133,13 +133,19 @@ export function fmtNumber(
 }
 
 /** Match/segment duration, e.g. "1 hr 5 min". Rounds to whole minutes; omits an
- *  empty hours field so short matches read "5 min", not "0 hr 5 min". */
+ *  empty hours field so short matches read "5 min", not "0 hr 5 min".
+ *  Uses Intl.NumberFormat unit style (universally supported) rather than
+ *  Intl.DurationFormat, which isn't a constructor on older Node runtimes. */
 export function fmtDuration(locale: string, seconds: number): string {
   const totalMin = Math.max(0, Math.round(seconds / 60));
   const hours = Math.floor(totalMin / 60);
   const minutes = totalMin % 60;
-  const duration = hours > 0 ? { hours, minutes } : { minutes };
-  return new Intl.DurationFormat(locale, { style: "narrow" }).format(duration);
+  const unit = (value: number, u: "hour" | "minute") =>
+    new Intl.NumberFormat(locale, { style: "unit", unit: u, unitDisplay: "short" }).format(value);
+  const parts: string[] = [];
+  if (hours > 0) parts.push(unit(hours, "hour"));
+  if (minutes > 0 || hours === 0) parts.push(unit(minutes, "minute"));
+  return parts.join(" ");
 }
 
 /** Relative time, e.g. "2 hours ago" / "in 3 days". Negative value = past. */
