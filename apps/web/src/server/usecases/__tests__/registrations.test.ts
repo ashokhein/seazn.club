@@ -1401,7 +1401,7 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
   });
 });
 
-describe("per-registrant email locale (cycle 47)", () => {
+describe.skipIf(!HAS_DB)("per-registrant email locale (cycle 47)", () => {
   async function openDivision(owner: AuthCtx, divisionId: string) {
     await putRegistrationSettings(owner, divisionId, {
       enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",

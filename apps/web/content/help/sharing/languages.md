@@ -20,7 +20,11 @@ The interface — buttons, labels, headings, and system messages — is translat
 
 ## Emails
 
-Transactional emails — sign-in links, email-change and account notices, registration confirmations, payment reminders, refunds, and dispute alerts — are sent in the recipient's language. For a signed-in account we use your saved **account language**; set it from the language picker while signed in. When we don't yet know a recipient's language (for example a brand-new sign-up, or a registrant who entered before language was captured), the email is sent in English. As with the interface, the words we write are translated but your own content — names, descriptions, payment instructions — is passed through exactly as you entered it.
+Transactional emails — sign-in links, email-change and account notices, registration confirmations, payment reminders, refunds — are sent in the recipient's language. For a signed-in account we use your saved **account language**; set it from the language picker while signed in.
+
+**Registrants** don't need an account: a registration confirmation (and any later payment reminder, promotion from the waitlist, or refund notice) is sent in the language the registrant filled the form in — their own footer pick, or otherwise the organiser's default language for that event. So a French club's entrants are emailed in French without anyone choosing anything. When we genuinely can't tell (a registrant who entered before this was added), the email falls back to English.
+
+As with the interface, the words we write are translated but your own content — names, descriptions, payment instructions — is passed through exactly as you entered it.
 
 ## Dates, times, and numbers
 

@@ -4,6 +4,15 @@
 **Branch:** `worktree-v5-i18n-cycle47` (off `origin/main` @ 8665560, which includes cycle 46 #102)
 **Prior art:** [cycle 1 #100], [cycle 46 #102] — engine, marketing `[lang]`, per-org public locale, email dict-param pattern, console *chrome* (Nav + islands). Design: `2026-07-14-v5-i18n-modernized-design.md`.
 
+## As-built addendum (pivot — read first)
+
+Two things changed once the code was in front of us; the goals held, the mechanics improved:
+
+1. **The console copy already had a purpose-built seam.** `lib/messages.ts` was a 183-key English catalog (38 call sites) explicitly built as the console i18n hook ("translation is a second map, not a rewrite of every component"). So instead of hand-extracting per-page namespaces (`dashboard`/`competitions`/`settings`), we moved that catalog into a single **`ui`** namespace (`dictionaries/*/ui.json`), ran it through the same Claude pipeline, and made the lookup locale-aware: `msg()` stays typed + English (client-safe), `useMsg()` reads the active locale from a `DictProvider` seeded in the `/o` console layout, and `msgFor()` serves server components. This localizes the whole catalog + all 38 sites at once. `useMsg()` falls back to English off-console, so shared islands convert safely.
+2. **The batch's "pages" were legacy redirects.** The top-level `/competitions`, `/divisions`, `/settings`, `/dashboard` routes 301 to the org-scoped `/o/[orgSlug]/…` tree (PROMPT-30). The real content lives under `o/[orgSlug]/…`. Converted this cycle: the org-home dashboard page (`o/[orgSlug]/page.tsx`) via `t()`/`plural()`/`msgFor`, and the competition/division console islands (`v2/*` panels, `CardMenu`, `StatusChip`, `EntityCard`). Remaining `o/` server pages (competition/division/settings/billing) and off-console islands (public/me/checkin) keep rendering English via the fallback and convert in later cycles — mechanical now that the mechanism exists.
+
+The `DictProvider`/`useT`/`usePlural`/`useLocale` client runtime (below) still ships and underpins `useMsg`. `/games/*` excluded per the user. Everything else in this spec stands.
+
 ## Goal
 
 Extend localization (en/fr/es/nl) from the console *chrome* to the first batch of authed console *feature pages*, and localize registrant-facing emails per recipient. This is batch 1 of the ~71-page console follow-on; it establishes the scalable per-page pattern (client `DictProvider` + per-domain namespaces) that later cycles repeat for the remaining areas (admin, developers, o/, discover, people, players, import, …).
