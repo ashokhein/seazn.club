@@ -1026,6 +1026,15 @@ async function i18nSuite(): Promise<void> {
     new_email: `i18nmail2_${tag}@example.com`,
   });
   check("i18n: fr-locale user renders French change-email server-side", chg.status === 200);
+
+  // Console chrome (spec cycle 46): the shared authed nav resolves the same
+  // fr locale (cookie → user.locale) and renders from the `console` dict. The
+  // signed-in mailer has locale=fr, so its nav shows the French Dashboard label.
+  const chrome = await html(mailer, "/directory");
+  check(
+    "i18n: fr-locale user sees translated console chrome (nav)",
+    chrome.status === 200 && chrome.body.includes("Tableau de bord"),
+  );
 }
 
 async function marketingSuite(): Promise<void> {

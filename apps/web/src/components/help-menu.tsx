@@ -7,14 +7,23 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { CircleHelp } from "lucide-react";
 
-const ITEMS = [
-  { href: "/help", label: "Help centre" },
-  { href: "/developers", label: "Developer docs" },
-] as const;
+export interface HelpMenuLabels {
+  /** aria-label on the trigger. */
+  menu: string;
+  centre: string;
+  developerDocs: string;
+  contactSupport: string;
+}
 
-export function HelpMenu() {
+/** `labels` is the localized copy, resolved by the server parent (Nav) and
+ *  passed in — client islands can't import the server-only t(). */
+export function HelpMenu({ labels }: { labels: HelpMenuLabels }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const items = [
+    { href: "/help", label: labels.centre },
+    { href: "/developers", label: labels.developerDocs },
+  ];
 
   useEffect(() => {
     if (!open) return;
@@ -36,7 +45,7 @@ export function HelpMenu() {
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        aria-label="Help"
+        aria-label={labels.menu}
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => setOpen((v) => !v)}
@@ -51,7 +60,7 @@ export function HelpMenu() {
           role="menu"
           className="absolute right-0 top-9 z-30 w-48 overflow-hidden rounded-xl border border-cream/10 bg-night-2 py-1 text-sm shadow-xl"
         >
-          {ITEMS.map((item) => (
+          {items.map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -68,7 +77,7 @@ export function HelpMenu() {
             onClick={() => setOpen(false)}
             className="block px-3 py-2 text-cream/85 hover:bg-cream/10 hover:text-cream"
           >
-            Contact support
+            {labels.contactSupport}
           </a>
         </div>
       )}

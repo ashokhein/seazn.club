@@ -15,6 +15,7 @@ export type Namespace =
   | "common"
   | "marketing"
   | "public"
+  | "console"
   | "emails"
   | "errors"
   | "metadata";
