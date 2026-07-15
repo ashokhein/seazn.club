@@ -3,24 +3,19 @@
   "start.meta.description": "Name your competition, get a format recommendation, and go live — in about 60 seconds, before you even sign up.",
   "start.heading": "Start your competition",
   "start.subhead": "Sixty seconds, no account needed — we'll email you the keys.",
-
   "home.meta.title": "Seazn Club — Run multi-sport community tournaments",
   "home.meta.description": "Leagues, groups, knockouts — run any format for any sport in minutes, with online registration and entry fees built in. Free for community clubs.",
   "home.og.title": "Seazn Club",
   "home.og.description": "Run multi-sport community tournaments from setup to trophy in minutes.",
-
   "home.hero.eyebrow": "FREE FOR COMMUNITY CLUBS",
   "home.hero.title": "Any sport. Live in minutes.",
   "home.hero.subhead": "Cricket, football, badminton, chess — name the sport and the field, Seazn Club draws the fixtures and puts your scoreboard live.",
   "home.hero.freeNote": "Free forever for small clubs · ",
   "home.hero.upgradeLink": "Upgrade a single event or go Pro",
-
   "home.draw.title": "The Draw",
   "home.draw.subhead": "Pick a format, set the field — the real fixture engine draws it. No account needed.",
-
   "home.tools.title": "Matchday tools",
   "home.tools.subhead": "The three jobs every organiser runs on the day.",
-
   "home.audiences.title": "Who plays here",
   "home.audiences.learnMore": "Learn more →",
   "home.audiences.clubs.title": "Sports clubs & academies",
@@ -29,13 +24,11 @@
   "home.audiences.events.body": "Open tournaments, charity cups, local derbies. Set up in 5 minutes, run all day smoothly.",
   "home.audiences.schools.title": "Schools & youth programs",
   "home.audiences.schools.body": "Inter-house competitions, lunchtime leagues, end-of-term championships. Kids love the live scoreboard.",
-
   "home.finale.eyebrow": "FULL TIME · PICK YOUR SEASON",
   "home.finale.title": "Pick your season",
   "home.finale.subhead": "Free for community clubs. One pass for the big day. Pro for the whole year.",
   "home.cta.start": "Start your tournament →",
   "home.cta.signup": "Create free account",
-
   "pricing.meta.title": "Pricing",
   "pricing.meta.description": "Free forever for small clubs. Upgrade a single event for $39, or go Pro at $20/month for unlimited competitions, entry fees, and realtime scoreboards. 14-day trial, no card required.",
   "pricing.eyebrow": "Pricing",
@@ -74,5 +67,25 @@
   "pricing.faq.cancel.a": "Yes. Cancel from Settings → Billing. Your Pro access continues until the end of the billing period.",
   "pricing.final.title": "Start for free today",
   "pricing.final.subhead": "No card required. Upgrade a single event, or the whole club, when it grows.",
-  "pricing.final.cta": "Create your free account →"
+  "pricing.final.cta": "Create your free account →",
+  "scheduling.meta.title": "Scheduling — Seazn Club",
+  "scheduling.meta.description": "Courts and time slots on one board. Drag fixtures in, catch clashes before they happen, publish to players in one click.",
+  "scheduling.hero.title": "The board runs matchday",
+  "scheduling.hero.subhead": "Courts and time slots on one board — drag fixtures in, clashes flagged before they happen. Try it: the replay below hands over to you.",
+  "scheduling.orderOfPlay": "Order of play",
+  "scheduling.rundown.build.what": "Build the board",
+  "scheduling.rundown.build.how": "courts × slots — fixtures auto-fill, drag to taste",
+  "scheduling.rundown.clash.what": "Clash caught",
+  "scheduling.rundown.clash.how": "one player in two places at 9:15 — flagged before you publish",
+  "scheduling.rundown.publish.what": "Publish",
+  "scheduling.rundown.publish.how": "schedule goes live on your public page; players see their courts",
+  "scheduling.rundown.rain.what": "Rain-delay reshuffle",
+  "scheduling.rundown.rain.how": "drag the afternoon 40 minutes right, republish",
+  "scheduling.kit.print.label": "Print & noticeboard",
+  "scheduling.kit.print.body": "The same board exports to print and full-screen slideshow.",
+  "scheduling.kit.scorer.label": "Scorer hand-off",
+  "scheduling.kit.scorer.body": "Courtside volunteers score from a device link — no accounts.",
+  "scheduling.kit.live.label": "Live to players",
+  "scheduling.kit.live.body": "Every change republished to the public schedule instantly.",
+  "scheduling.cta": "Run your matchday"
 }
