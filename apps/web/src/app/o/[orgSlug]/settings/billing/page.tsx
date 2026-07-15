@@ -22,10 +22,12 @@ import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
 import { asCurrency, formatMinor, proPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, plural, type Dict, type Locale } from "@/lib/i18n";
 
-function fmt(iso: string | null) {
+function fmt(iso: string | null, locale: Locale) {
   if (!iso) return null;
-  return new Date(iso).toLocaleDateString("en-GB", {
+  return new Date(iso).toLocaleDateString(locale, {
     day: "numeric",
     month: "short",
     year: "numeric",
@@ -56,6 +58,8 @@ export default async function BillingPage({
   const { org } = await requireOrgPage(orgSlug, { tail: "/settings/billing" });
   const orgId = org.id;
   const isOwner = org.role === "owner";
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
 
   // Reconcile straight from Stripe on return from checkout, so the plan updates
   // even if the webhook is delayed or missing (best-effort, never throws).
@@ -115,24 +119,24 @@ export default async function BillingPage({
       <main className="mx-auto max-w-3xl px-4 py-8">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="page-title">
-            Plan & Billing
+            {t(dict, "billing.title")}
           </h1>
           <Link href={routes.orgSettings(orgSlug)} className="btn btn-ghost">
-            ← Settings
+            ← {t(dict, "action.settings")}
           </Link>
         </div>
 
         {justCheckedOut && (
           <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-            Checkout complete — your plan is now <span className="font-semibold capitalize">{planKey}</span>
-            {status === "trialing" ? " (trial)" : ""}.
+            {t(dict, "billing.checkoutComplete")} <span className="font-semibold capitalize">{planKey}</span>
+            {status === "trialing" ? t(dict, "billing.trialSuffix") : ""}.
           </div>
         )}
 
         {/* Current plan */}
         <section data-tour="billing-plan" className="card mb-6 p-5">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
-            Current plan
+            {t(dict, "billing.currentPlan")}
           </h2>
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -141,32 +145,33 @@ export default async function BillingPage({
                   {planKey}
                 </span>
                 <span className={`badge ${STATUS_BADGE[status] ?? "bg-slate-100 text-slate-500"}`}>
-                  {status.replace("_", " ")}
+                  {t(dict, `billing.status.${status}`)}
                 </span>
               </div>
 
               {status === "trialing" && trialDays !== null && (
                 <p className="mt-1 text-sm text-purple-600">
                   {trialDays > 0
-                    ? `${trialDays} day${trialDays === 1 ? "" : "s"} remaining in trial`
-                    : "Trial ended"}
+                    ? plural(dict, "billing.trialRemaining", trialDays, locale)
+                    : t(dict, "billing.trialEnded")}
                 </p>
               )}
               {sub?.current_period_end && status === "active" && (
                 <p className="mt-1 text-sm text-slate-500">
                   {sub.cancel_at_period_end
-                    ? `Pro until ${fmt(sub.current_period_end)} — then Community`
-                    : `Renews ${fmt(sub.current_period_end)}${
+                    ? t(dict, "billing.proUntil", { date: fmt(sub.current_period_end, locale) ?? "" })
+                    : `${t(dict, "billing.renews", { date: fmt(sub.current_period_end, locale) ?? "" })}${
                         overview?.interval
-                          ? ` · billed ${overview.interval === "annual" ? "yearly" : "monthly"}`
+                          ? ` · ${overview.interval === "annual" ? t(dict, "billing.billedYearly") : t(dict, "billing.billedMonthly")}`
                           : ""
                       }`}
                 </p>
               )}
               {overview && overview.creditMinor > 0 && (
                 <p className="mt-1 text-sm text-emerald-600">
-                  {formatMinor(overview.creditMinor, asCurrency(overview.currency))} account credit — pays
-                  future invoices automatically.
+                  {t(dict, "billing.credit", {
+                    amount: formatMinor(overview.creditMinor, asCurrency(overview.currency)),
+                  })}
                 </p>
               )}
             </div>
@@ -180,7 +185,7 @@ export default async function BillingPage({
                 </a>
               ) : (
                 <p className="text-sm text-emerald-600">
-                  Card on file — Pro continues after the trial.
+                  {t(dict, "billing.cardOnFile")}
                 </p>
               ))}
             {isOwner && isPro && !hasStripeSubscription && <DowngradeButton />}
@@ -192,7 +197,7 @@ export default async function BillingPage({
               {status === "past_due" && overview?.hasOpenInvoice && (
                 <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 px-4 py-3">
                   <p className="text-sm text-amber-800">
-                    Your last payment failed. Fix the card below, then retry.
+                    {t(dict, "billing.paymentFailed")}
                   </p>
                   <RetryPaymentButton />
                 </div>
@@ -218,7 +223,7 @@ export default async function BillingPage({
         {isOwner && overview && (
           <section id="payment-methods" className="card mb-6 p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
-              Payment methods
+              {t(dict, "billing.paymentMethods")}
             </h2>
             <PaymentMethodsManager
               methods={overview.paymentMethods}
@@ -232,7 +237,7 @@ export default async function BillingPage({
         {isOwner && overview && (
           <section className="card mb-6 p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
-              Billing details
+              {t(dict, "billing.billingDetails")}
             </h2>
             <BillingDetailsCard
               name={overview.billingName}
@@ -246,7 +251,7 @@ export default async function BillingPage({
         {isOwner && overview && overview.invoices.length > 0 && (
           <section className="card mb-6 p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
-              Invoices
+              {t(dict, "billing.invoices")}
             </h2>
             <ul className="divide-y divide-slate-100">
               {overview.invoices.map((inv) => (
@@ -255,7 +260,7 @@ export default async function BillingPage({
                   className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm"
                 >
                   <div className="flex min-w-0 items-center gap-3">
-                    <span className="text-slate-600">{fmt(inv.createdIso)}</span>
+                    <span className="text-slate-600">{fmt(inv.createdIso, locale)}</span>
                     {inv.number && <span className="hidden text-slate-400 sm:inline">{inv.number}</span>}
                     <span className="font-medium text-slate-800">
                       {formatMinor(inv.totalMinor, asCurrency(inv.currency))}
@@ -280,7 +285,7 @@ export default async function BillingPage({
                         rel="noreferrer"
                         className="font-semibold text-amber-700 hover:underline"
                       >
-                        Pay now ↗
+                        {t(dict, "billing.payNow")} ↗
                       </a>
                     )}
                     {inv.hostedUrl && (
@@ -290,7 +295,7 @@ export default async function BillingPage({
                         rel="noreferrer"
                         className="text-purple-600 hover:underline"
                       >
-                        View ↗
+                        {t(dict, "billing.view")} ↗
                       </a>
                     )}
                     {inv.pdfUrl && (
@@ -308,24 +313,24 @@ export default async function BillingPage({
         {/* Usage */}
         <section className="card mb-6 p-5">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
-            Usage
+            {t(dict, "billing.usage")}
           </h2>
           <div className="space-y-3">
             <UsageRow
-              label="Active competitions"
+              label={t(dict, "billing.usage.competitions")}
               current={counts?.competitions_active ?? 0}
               limit={competitionsLimit}
             />
             <UsageRow
-              label="Public dashboards"
+              label={t(dict, "billing.usage.dashboards")}
               current={counts?.dashboards_public ?? 0}
               limit={dashboardsLimit}
             />
             <UsageRow
-              label="Team members"
+              label={t(dict, "billing.usage.members")}
               current={counts?.members ?? 0}
               limit={membersLimit}
-              note="scorer seats not counted"
+              note={t(dict, "billing.usage.scorerNote")}
             />
           </div>
         </section>
@@ -334,64 +339,66 @@ export default async function BillingPage({
         {!isPro && isOwner && (
           <section className="card p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
-              Upgrade to Pro
+              {t(dict, "billing.upgradeToPro")}
             </h2>
             {/* Stacks under `xs` — two 160px columns don't fit a 375px phone. */}
             <div className="mb-5 grid gap-3 text-sm xs:grid-cols-2">
               <div className="rounded-xl border border-slate-200 p-4">
                 <p className="mb-1 font-semibold text-slate-700">Community</p>
                 <p className="text-2xl font-bold text-slate-800">
-                  Free
+                  {t(dict, "billing.plan.free")}
                 </p>
                 <ul className="mt-3 space-y-1 text-slate-500">
-                  <li>✓ 1 active competition</li>
-                  <li>✓ 2 divisions, 16 entrants each</li>
-                  <li>✓ 1 public dashboard</li>
-                  <li>✓ Free-event registration</li>
-                  <li className="text-slate-300">✗ Entry fees (Stripe payouts)</li>
-                  <li className="text-slate-300">✗ Branding & exports</li>
-                  <li className="text-slate-300">✗ Realtime scoreboard</li>
+                  <li>✓ {t(dict, "billing.community.f1")}</li>
+                  <li>✓ {t(dict, "billing.community.f2")}</li>
+                  <li>✓ {t(dict, "billing.community.f3")}</li>
+                  <li>✓ {t(dict, "billing.community.f4")}</li>
+                  <li className="text-slate-300">✗ {t(dict, "billing.community.f5")}</li>
+                  <li className="text-slate-300">✗ {t(dict, "billing.community.f6")}</li>
+                  <li className="text-slate-300">✗ {t(dict, "billing.community.f7")}</li>
                 </ul>
               </div>
               <div className="rounded-xl border-2 border-purple-500 bg-purple-50 p-4">
                 <p className="mb-1 font-semibold text-purple-700">Pro</p>
                 <p className="text-2xl font-bold text-slate-800">
                   {formatMinor(proPrice("monthly", currency), currency)}
-                  <span className="text-base font-normal text-slate-500">/mo</span>
+                  <span className="text-base font-normal text-slate-500">{t(dict, "billing.perMo")}</span>
                 </p>
                 <ul className="mt-3 space-y-1 text-slate-700">
-                  <li>✓ Unlimited competitions & divisions</li>
-                  <li>✓ 256 entrants per division</li>
-                  <li>✓ Online registration + entry fees (2%)</li>
-                  <li>✓ Ball-by-ball & rally scoring</li>
-                  <li>✓ Custom branding</li>
-                  <li>✓ CSV / PDF exports</li>
-                  <li>✓ Realtime scoreboard</li>
+                  <li>✓ {t(dict, "billing.pro.f1")}</li>
+                  <li>✓ {t(dict, "billing.pro.f2")}</li>
+                  <li>✓ {t(dict, "billing.pro.f3")}</li>
+                  <li>✓ {t(dict, "billing.pro.f4")}</li>
+                  <li>✓ {t(dict, "billing.pro.f5")}</li>
+                  <li>✓ {t(dict, "billing.pro.f6")}</li>
+                  <li>✓ {t(dict, "billing.pro.f7")}</li>
                 </ul>
               </div>
             </div>
             <p className="mb-4 text-xs text-slate-500">
               {trialAvailable
-                ? "14-day free trial · no card required · cancel anytime"
-                : "Billed from day one — your free trial has already been used · cancel anytime"}
+                ? t(dict, "billing.trialCopy.available")
+                : t(dict, "billing.trialCopy.used")}
             </p>
             {/* Annual leads (v3/07 §4): 12 for the price of 10, said plainly. */}
             <div className="flex flex-wrap items-center gap-3">
               <UpgradeButton
                 interval="annual"
-                label={`${trialAvailable ? "Start free trial" : "Go Pro"} — ${formatMinor(
+                label={`${trialAvailable ? t(dict, "billing.cta.startTrial") : t(dict, "billing.cta.goPro")} — ${formatMinor(
                   Math.round(proPrice("annual", currency) / 12),
                   currency,
-                )}/mo billed yearly`}
+                )}${t(dict, "billing.perMoBilledYearly")}`}
               />
               <UpgradeButton
                 interval="monthly"
-                label={`or ${formatMinor(proPrice("monthly", currency), currency)} monthly`}
+                label={t(dict, "billing.orMonthly", {
+                  price: formatMinor(proPrice("monthly", currency), currency),
+                })}
                 ghost
               />
             </div>
             <p className="mt-2 text-xs text-emerald-600">
-              Annual saves 17% — two months free.
+              {t(dict, "billing.annualSaves")}
             </p>
           </section>
         )}
