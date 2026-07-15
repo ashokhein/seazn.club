@@ -12,7 +12,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { Tip } from "@/components/ui/tip";
 import { apiV1 } from "@/lib/client-v1";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
 import { dayLabel, dayWeekday, dayDateShort, timeLabel } from "@/lib/day-label";
 import { BoardAgenda } from "./board/board-agenda";
@@ -78,6 +78,7 @@ export function ScheduleBoard({
   venueCap = "Court",
   showSettings = true,
 }: Props) {
+  const msg = useMsg();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();

@@ -11,14 +11,22 @@ export const DEFAULT_LOCALE: Locale = "en";
 // by the switcher — reached only via an explicit audit override.
 export const PSEUDO_LOCALE = "en-XA" as const;
 
-export type Namespace =
-  | "common"
-  | "marketing"
-  | "public"
-  | "console"
-  | "emails"
-  | "errors"
-  | "metadata";
+// Runtime source of truth for the namespace set (the drift guard iterates it).
+// `console` is the shared authed-app chrome; `ui` is the console copy catalog
+// (lib/messages.ts — status vocab, dialogs, cards, panels, forms) that feature
+// pages and islands read via msg()/useMsg(). Later batches add more surfaces.
+// Truly shared nouns live in `common`.
+export const NAMESPACES = [
+  "common",
+  "marketing",
+  "public",
+  "console",
+  "ui",
+  "emails",
+  "errors",
+  "metadata",
+] as const;
+export type Namespace = (typeof NAMESPACES)[number];
 
 export type Dict = Record<string, unknown>;
 

@@ -6,7 +6,7 @@
 import Link from "@/components/ui/console-link";
 import { useEffect, useRef, useState } from "react";
 import { MoreHorizontal } from "lucide-react";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export interface CardMenuItem {
   label: string;
@@ -15,6 +15,7 @@ export interface CardMenuItem {
 }
 
 export function CardMenu({ items, name }: { items: CardMenuItem[]; name: string }) {
+  const msg = useMsg();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
 

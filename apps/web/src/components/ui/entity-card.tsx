@@ -8,7 +8,8 @@
 // strip, divisions a 56px logo-or-monogram tile. Anatomy below is unchanged.
 import Link from "@/components/ui/console-link";
 import type { ReactNode } from "react";
-import { msg } from "@/lib/messages";
+import { msgFor } from "@/lib/messages-i18n";
+import type { Locale } from "@/lib/i18n-constants";
 
 export type CardMedia =
   | { kind: "banner"; emoji: string; tint: string }
@@ -47,6 +48,7 @@ export function EntityCard({
   accent,
   menu,
   media,
+  locale = "en",
 }: {
   href: string;
   /** Sport emoji / logo block, ~20px. Ignored when `media` is present. */
@@ -64,6 +66,8 @@ export function EntityCard({
   menu?: ReactNode;
   /** v8 identity: sport banner (competitions) or logo/monogram tile (divisions). */
   media?: CardMedia;
+  /** Active locale for the built-in fallback copy; server callers pass it. */
+  locale?: Locale;
 }) {
   const banner = media?.kind === "banner" ? media : null;
   const tile = media?.kind === "tile" ? media : null;
@@ -92,7 +96,7 @@ export function EntityCard({
             <span className="font-medium text-purple-700">Next:</span> {next}
           </>
         ) : (
-          <span className="text-slate-500">{msg("card.next.none")}</span>
+          <span className="text-slate-500">{msgFor(locale, "card.next.none")}</span>
         )}
       </p>
       <div className="ecard-progress mt-2">
@@ -119,7 +123,7 @@ export function EntityCard({
             </span>
           </div>
         ) : (
-          <span className="text-[11px] text-slate-500">{msg("card.progress.none")}</span>
+          <span className="text-[11px] text-slate-500">{msgFor(locale, "card.progress.none")}</span>
         )}
       </div>
     </div>

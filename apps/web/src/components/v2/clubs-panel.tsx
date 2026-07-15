@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface PersonLite {
   id: string;
@@ -55,6 +55,7 @@ export function ClubsPanel({
   storageBase: string;
   canEdit: boolean;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const confirmDialog = useConfirm();
   const [error, setError] = useState<string | null>(null);

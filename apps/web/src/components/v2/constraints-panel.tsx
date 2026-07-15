@@ -8,7 +8,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /** 625 → "10h 25m"; 45 → "45m". The raw minute dumps read like debug output. */
 function fmtDuration(minutes: number): string {
@@ -48,6 +48,7 @@ export function ConstraintsPanel({
   initialSettings: Settings;
   canEdit: boolean;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const confirmDialog = useConfirm();
   const [error, setError] = useState<string | null>(null);

@@ -4,7 +4,7 @@
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 import { InviteClaim } from "@/components/v2/invite-claim";
 import { Tip } from "@/components/ui/tip";
 import {
@@ -33,6 +33,7 @@ export function PersonsPanel({
   storageBase: string;
   canEdit: boolean;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [filter, setFilter] = useState("");
   const [error, setError] = useState<string | null>(null);

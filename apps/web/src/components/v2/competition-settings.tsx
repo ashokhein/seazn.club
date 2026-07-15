@@ -10,7 +10,7 @@ import { VisibilityPicker } from "@/components/ui/visibility-picker";
 import { Tip } from "@/components/ui/tip";
 import { publicBrandColor, publicThemeStyleChain } from "@/lib/public-theme";
 import { ProseEditor } from "@/components/prose-editor";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface CompetitionLite {
   id: string;
@@ -73,6 +73,7 @@ export function CompetitionSettings({
   /** The Archived tab only shows when there is something to restore. */
   archivedCount?: number;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [tab, setTab] = useState<SettingsTab>("general");
   const [form, setForm] = useState({
