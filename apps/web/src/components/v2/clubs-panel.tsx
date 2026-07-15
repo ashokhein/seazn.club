@@ -164,26 +164,26 @@ export function ClubsPanel({
           }}
         >
           <label className="flex flex-col gap-1 text-sm text-slate-600">
-            Club name
+            {msg("clubs.form.name")}
             <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-600">
-            Short name
+            {msg("clubs.form.short")}
             <input className="input w-full sm:w-28" value={shortName} onChange={(e) => setShortName(e.target.value)} />
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-600">
-            Badge
+            {msg("clubs.form.badge")}
             <input
               ref={logoInput}
               type="file"
               accept="image/png,image/jpeg,image/webp,image/svg+xml"
-              aria-label="Club badge"
+              aria-label={msg("clubs.form.badgeAria")}
               className="w-full text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
               onChange={(e) => setLogo(e.target.files?.[0] ?? null)}
             />
           </label>
           <button type="submit" className="btn btn-primary w-full sm:w-auto" disabled={busy}>
-            Add club
+            {msg("clubs.form.add")}
           </button>
         </form>
       )}
@@ -197,17 +197,17 @@ export function ClubsPanel({
         <table className="table">
           <thead>
             <tr>
-              <th className="px-4 py-2 text-left">Club</th>
-              <th className="px-4 py-2 text-left">Short</th>
-              <th className="px-4 py-2 text-left">Badge</th>
-              {canEdit && <th className="px-4 py-2 text-right">Actions</th>}
+              <th className="px-4 py-2 text-left">{msg("clubs.col.club")}</th>
+              <th className="px-4 py-2 text-left">{msg("clubs.col.short")}</th>
+              <th className="px-4 py-2 text-left">{msg("clubs.col.badge")}</th>
+              {canEdit && <th className="px-4 py-2 text-right">{msg("clubs.col.actions")}</th>}
             </tr>
           </thead>
           <tbody>
             {clubs.length === 0 && (
               <tr>
                 <td colSpan={canEdit ? 4 : 3} className="px-4 py-6 text-center text-sm text-slate-400">
-                  No clubs yet — add one above or bring them in with the spreadsheet import.
+                  {msg("clubs.empty")}
                 </td>
               </tr>
             )}
@@ -247,7 +247,7 @@ export function ClubsPanel({
                         void run(() => apiV1(`/api/v1/clubs/${c.id}`, { method: "DELETE" }));
                       }}
                     >
-                      Delete
+                      {msg("clubs.delete")}
                     </button>
                   </td>
                 )}
@@ -261,14 +261,14 @@ export function ClubsPanel({
         <section className="card space-y-2 p-4" aria-label={`${detail.name} detail`}>
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-900">
-              {detail.name} — teams across divisions
+              {msg("clubs.detail.title", { name: detail.name })}
             </h2>
             <button type="button" className="text-sm text-slate-500 hover:underline" onClick={() => setDetail(null)}>
-              Close
+              {msg("clubs.detail.close")}
             </button>
           </div>
           {detail.teams.length === 0 ? (
-            <p className="text-sm text-slate-500">No teams belong to this club yet.</p>
+            <p className="text-sm text-slate-500">{msg("clubs.detail.noTeams")}</p>
           ) : (
             <ul className="space-y-2 text-sm text-slate-700">
               {detail.teams.map((t) => (
@@ -315,6 +315,7 @@ function BadgeCell({
   busy: boolean;
   onUpload: (clubId: string, file: File) => void;
 }) {
+  const msg = useMsg();
   const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className="flex items-center gap-2">
@@ -336,13 +337,13 @@ function BadgeCell({
             disabled={busy}
             onClick={() => inputRef.current?.click()}
           >
-            {club.logo_path ? "change" : "set"}
+            {club.logo_path ? msg("clubs.badge.change") : msg("clubs.badge.set")}
           </button>
           <input
             ref={inputRef}
             type="file"
             accept="image/png,image/jpeg,image/webp,image/svg+xml"
-            aria-label={`Badge for ${club.name}`}
+            aria-label={msg("clubs.badge.forAria", { name: club.name })}
             className="hidden"
             onChange={(e) => {
               const f = e.target.files?.[0];
@@ -368,6 +369,7 @@ function AddTeamForm({
   onPaywall: (feature: string) => void;
   onDone: () => void;
 }) {
+  const msg = useMsg();
   const [name, setName] = useState("");
   const [shortName, setShortName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -398,15 +400,15 @@ function AddTeamForm({
       }}
     >
       <label className="flex flex-col gap-1 text-xs text-slate-600">
-        Team name
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Riverside U12" />
+        {msg("clubs.team.name")}
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder={msg("clubs.team.namePlaceholder")} />
       </label>
       <label className="flex flex-col gap-1 text-xs text-slate-600">
-        Short
+        {msg("clubs.team.short")}
         <input className="input w-full sm:w-24" value={shortName} onChange={(e) => setShortName(e.target.value)} />
       </label>
       <button type="submit" className="btn btn-primary w-full text-sm sm:w-auto" disabled={busy || !name.trim()}>
-        Add team
+        {msg("clubs.team.add")}
       </button>
     </form>
   );
@@ -435,6 +437,7 @@ function TeamDetailRow({
   onPaywall: (feature: string) => void;
   onLogoChanged: () => void;
 }) {
+  const msg = useMsg();
   const [open, setOpen] = useState(false);
   const [squad, setSquad] = useState<SquadMember[] | null>(null);
   const logoInputRef = useRef<HTMLInputElement>(null);
@@ -511,7 +514,7 @@ function TeamDetailRow({
             onClick={() => logoInputRef.current?.click()}
             className="text-xs text-purple-600 hover:underline disabled:opacity-50"
           >
-            {logoBusy ? "Uploading…" : team.logo_path ? "Change badge" : "Set team badge"}
+            {logoBusy ? msg("clubs.team.uploading") : team.logo_path ? msg("clubs.team.changeBadge") : msg("clubs.team.setBadge")}
           </button>
           <input
             ref={logoInputRef}
@@ -528,7 +531,7 @@ function TeamDetailRow({
       {open && (
         <div className="px-2 pb-2 pl-6">
           {squad === null ? (
-            <p className="text-xs text-slate-400">Loading squad…</p>
+            <p className="text-xs text-slate-400">{msg("clubs.team.loadingSquad")}</p>
           ) : (
             <TeamSquadEditor
               teamId={team.id}
@@ -565,6 +568,7 @@ function TeamSquadEditor({
   onError: (msg: string) => void;
   onPaywall: (feature: string) => void;
 }) {
+  const msg = useMsg();
   const [members, setMembers] = useState<SquadMember[]>(initial);
   const [filter, setFilter] = useState("");
   const [busy, setBusy] = useState(false);
@@ -611,19 +615,19 @@ function TeamSquadEditor({
 
   return (
     <div className="space-y-2 rounded-md bg-slate-50 p-2 text-xs">
-      {members.length === 0 && <p className="text-slate-400">No players in this squad yet.</p>}
+      {members.length === 0 && <p className="text-slate-400">{msg("clubs.squad.empty")}</p>}
       {members.map((m, i) => (
         <div key={m.person_id} className="flex flex-wrap items-center gap-2">
           <span className="w-40 truncate font-medium text-slate-700">{m.full_name}</span>
           <input
             type="number"
             min={0}
-            placeholder="No."
+            placeholder={msg("clubs.squad.numberPlaceholder")}
             disabled={!canEdit}
             value={m.squad_number ?? ""}
             onChange={(e) => update(i, { squad_number: e.target.value ? Number(e.target.value) : null })}
             className="input w-16 px-2 py-1"
-            aria-label={`Squad number for ${m.full_name}`}
+            aria-label={msg("clubs.squad.noAria", { name: m.full_name })}
           />
           <label className="flex items-center gap-1 text-slate-500">
             <input
@@ -636,7 +640,7 @@ function TeamSquadEditor({
                 )
               }
             />
-            captain
+            {msg("clubs.squad.captain")}
           </label>
           {canEdit && (
             <button
@@ -647,7 +651,7 @@ function TeamSquadEditor({
                 setDirty(true);
               }}
             >
-              remove
+              {msg("clubs.squad.remove")}
             </button>
           )}
         </div>
@@ -658,7 +662,7 @@ function TeamSquadEditor({
           <input
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            placeholder="Find player…"
+            placeholder={msg("clubs.squad.find")}
             className="input w-40 px-2 py-1"
           />
           {candidates.map((p) => (
@@ -677,10 +681,10 @@ function TeamSquadEditor({
               + {p.full_name}
             </button>
           ))}
-          {persons.length === 0 && <span className="text-slate-400">No players yet — add them under Players.</span>}
+          {persons.length === 0 && <span className="text-slate-400">{msg("clubs.squad.noPlayers")}</span>}
           <div className="flex-1" />
           <button type="button" className="btn btn-primary px-3 py-1" disabled={busy || !dirty} onClick={save}>
-            {busy ? "Saving…" : "Save squad"}
+            {busy ? msg("clubs.squad.saving") : msg("clubs.squad.save")}
           </button>
         </div>
       )}
@@ -703,6 +707,7 @@ function LogoGrid({
   onError: (msg: string) => void;
   onPaywall: (feature: string) => void;
 }) {
+  const msg = useMsg();
   const [files, setFiles] = useState<File[]>([]);
   const [mapping, setMapping] = useState<Record<string, string>>({});
   const [assignRemaining, setAssignRemaining] = useState(false);
@@ -768,16 +773,15 @@ function LogoGrid({
         setFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
       }}
     >
-      <h2 className="text-sm font-semibold text-slate-900">Bulk logo upload</h2>
+      <h2 className="text-sm font-semibold text-slate-900">{msg("clubs.logo.title")}</h2>
       <p className="text-xs text-slate-500">
-        Drop image files named after clubs (e.g. <code>acme-sc.png</code>) — every team in a
-        club inherits its badge. Unmatched files can be re-mapped below.
+        {msg("clubs.logo.descPre")} <code>acme-sc.png</code>{msg("clubs.logo.descPost")}
       </p>
       <input
         type="file"
         accept="image/png,image/jpeg,image/webp,image/svg+xml"
         multiple
-        aria-label="Choose logo files"
+        aria-label={msg("clubs.logo.chooseAria")}
         className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
         onChange={(e) => setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])])}
       />
@@ -793,11 +797,11 @@ function LogoGrid({
                   <span className="truncate font-mono text-xs text-slate-500">{f.name}</span>
                   <select
                     className="input w-36"
-                    aria-label={`Club for ${f.name}`}
+                    aria-label={msg("clubs.logo.forAria", { name: f.name })}
                     value={mapping[f.name] ?? matched?.id ?? ""}
                     onChange={(e) => setMapping((m) => ({ ...m, [f.name]: e.target.value }))}
                   >
-                    <option value="">— unmatched —</option>
+                    <option value="">{msg("clubs.logo.unmatched")}</option>
                     {clubs.map((c) => (
                       <option key={c.id} value={c.id}>{c.name}</option>
                     ))}
@@ -813,13 +817,13 @@ function LogoGrid({
                 checked={assignRemaining}
                 onChange={(e) => setAssignRemaining(e.target.checked)}
               />
-              Assign remaining files to clubs without a badge, in order
+              {msg("clubs.logo.assignRemaining")}
             </label>
             <button type="button" className="btn btn-primary" disabled={busy || uploading} onClick={assign}>
-              Assign {files.length} logo{files.length > 1 ? "s" : ""}
+              {msg(files.length === 1 ? "clubs.logo.assign.one" : "clubs.logo.assign.other", { count: files.length })}
             </button>
             <button type="button" className="btn" onClick={() => setFiles([])} disabled={uploading}>
-              Clear
+              {msg("clubs.logo.clear")}
             </button>
           </div>
         </>
