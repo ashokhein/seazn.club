@@ -16,6 +16,9 @@ import { TearOffTicket } from "@/components/public-site/ticket";
 import { WithdrawByRef } from "@/components/public-site/withdraw-by-ref";
 import { ShareButton } from "@/components/share-button";
 import { baseUrlFromHeaders } from "@/lib/base-url";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t } from "@/lib/i18n";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 export const metadata: Metadata = { robots: { index: false, follow: false } };
 
@@ -24,13 +27,13 @@ type Props = {
   searchParams: Promise<{ token?: string; checkout?: string; session_id?: string }>;
 };
 
-const STATUS_LINE: Record<string, string> = {
-  pending: "Registration received — pending review.",
-  paid: "Payment received — confirmation is being finalised.",
-  confirmed: "Confirmed — on the entrant list.",
-  waitlisted: "On the waitlist — promoted automatically if a spot opens.",
-  withdrawn: "This registration has been withdrawn.",
-  expired: "The pay window passed — this registration expired. Register again if spots remain.",
+const STATUS_LINE_KEY: Record<string, string> = {
+  pending: "ref.line.pending",
+  paid: "ref.line.paid",
+  confirmed: "ref.line.confirmed",
+  waitlisted: "ref.line.waitlisted",
+  withdrawn: "ref.line.withdrawn",
+  expired: "ref.line.expired",
 };
 
 export default async function RefStatusPage({ params, searchParams }: Props) {
@@ -53,11 +56,14 @@ export default async function RefStatusPage({ params, searchParams }: Props) {
   const statusUrl = `${origin}/r/${view.ref_code}`;
   const qrDataUrl = await QRCode.toDataURL(statusUrl, { margin: 1, width: 224 });
   const divisionHref = `/shared/${view.org_slug}/${view.competition_slug}/${view.division_slug}`;
+  const locale = await resolveLocale();
+  const ui = await getDictionary(locale, "ui");
 
   return (
+    <DictProvider dict={ui} locale={locale}>
     <main className="mx-auto max-w-xl px-4 py-10">
       <p className="text-sm text-ink-muted" data-testid="ref-status-line">
-        {STATUS_LINE[view.status] ?? STATUS_LINE.pending}
+        {t(ui, STATUS_LINE_KEY[view.status] ?? "ref.line.pending")}
       </p>
       <div className="mt-4">
         <TearOffTicket
@@ -70,18 +76,23 @@ export default async function RefStatusPage({ params, searchParams }: Props) {
           startsOn={view.starts_on}
           endsOn={view.ends_on}
           qrDataUrl={qrDataUrl}
+          locale={locale}
           actions={
             <>
               <Link
                 href={divisionHref}
                 className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:border-zinc-500"
               >
-                View the live dashboard
+                {t(ui, "ref.viewDashboard")}
               </Link>
               {/* v3/10 #2 — "I'm in!" straight to the family group chat. */}
               <ShareButton
                 title={view.competition_name}
-                text={`I'm registered for ${view.division_name} at ${view.competition_name} (ref ${view.ref_code}). Follow it live:`}
+                text={t(ui, "ref.shareText", {
+                  division: view.division_name,
+                  competition: view.competition_name,
+                  ref: view.ref_code,
+                })}
                 url={divisionHref}
                 className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 px-4 py-2 text-sm hover:border-zinc-500"
               />
@@ -93,5 +104,6 @@ export default async function RefStatusPage({ params, searchParams }: Props) {
         />
       </div>
     </main>
+    </DictProvider>
   );
 }

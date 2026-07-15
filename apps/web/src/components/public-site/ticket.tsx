@@ -2,7 +2,8 @@
 // Sports registration's native artifact is the entry ticket: event masthead
 // up top, a perforated tear line, and the stub carrying the huge mono
 // reference + QR. Server component — the QR arrives as a data URL.
-import { msg } from "@/lib/messages";
+import { msgFor } from "@/lib/messages-i18n";
+import type { Locale } from "@/lib/i18n-constants";
 
 const STATUS_STAMP: Record<string, { label: string; tone: string }> = {
   pending: { label: "RECEIVED", tone: "text-amber-700 border-amber-400" },
@@ -23,9 +24,11 @@ export function TearOffTicket({
   endsOn,
   qrDataUrl,
   actions,
+  locale,
 }: {
   refCode: string | null;
   status: string;
+  locale: Locale;
   displayName: string;
   divisionName: string;
   competitionName: string;
@@ -63,7 +66,7 @@ export function TearOffTicket({
         {/* Holder + stamp */}
         <div className="flex items-center justify-between gap-4 px-6 py-4">
           <div className="min-w-0">
-            <p className="text-[11px] tracking-widest text-ink-muted uppercase">Entrant</p>
+            <p className="text-[11px] tracking-widest text-ink-muted uppercase">{msgFor(locale, "register.ticket.entrant")}</p>
             <p className="truncate text-lg font-semibold text-ink">{displayName}</p>
           </div>
           <span
@@ -85,7 +88,7 @@ export function TearOffTicket({
         <div className="flex flex-wrap items-center gap-5 px-6 py-5">
           <div className="min-w-0 flex-1">
             <p className="text-[11px] tracking-widest text-ink-muted uppercase">
-              {msg("register.ticket.refLabel")}
+              {msgFor(locale, "register.ticket.refLabel")}
             </p>
             {refCode ? (
               <p
@@ -96,10 +99,10 @@ export function TearOffTicket({
               </p>
             ) : (
               <p className="mt-1 text-sm text-ink-muted">
-                Issued before reference numbers — your email link is your receipt.
+                {msgFor(locale, "register.ticket.legacyRef")}
               </p>
             )}
-            <p className="mt-2 max-w-md text-xs text-ink-muted">{msg("register.ticket.keep")}</p>
+            <p className="mt-2 max-w-md text-xs text-ink-muted">{msgFor(locale, "register.ticket.keep")}</p>
           </div>
           {qrDataUrl && (
             /* data: URI QR code — generated in-memory, not storage-served; next/image
