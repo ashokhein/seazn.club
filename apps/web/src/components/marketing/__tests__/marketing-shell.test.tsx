@@ -16,8 +16,10 @@ vi.mock("next/navigation", () => ({
 // e2e (marketing-home.spec.ts). Here: footer render contract + the pure
 // variant-class logic.
 describe("marketing shell pieces", () => {
-  it("footer links the new product pages", () => {
-    const html = renderToStaticMarkup(<MarketingFooter />);
+  it("footer links the new product pages", async () => {
+    // MarketingFooter is now an async server component (getDictionary for the
+    // localized labels) — resolve it to an element, then static-render.
+    const html = renderToStaticMarkup(await MarketingFooter({ lang: "en" }));
     expect(html).toContain('href="/formats"');
     expect(html).toContain('href="/scheduling"');
     expect(html).toContain('href="/discover"');
