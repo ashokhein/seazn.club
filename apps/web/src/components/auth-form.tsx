@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { api } from "@/lib/client";
 import { LegalNotice } from "@/components/legal-notice";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /**
  * Passwordless sign-in: Google, or a one-time link emailed to the address.
@@ -11,6 +12,7 @@ import { LegalNotice } from "@/components/legal-notice";
  * through so the user returns to it after authenticating.
  */
 export function AuthForm({ next }: { next?: string }) {
+  const msg = useMsg();
   const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -21,7 +23,7 @@ export function AuthForm({ next }: { next?: string }) {
     e.preventDefault();
     setError(null);
     if (!email) {
-      setError("Enter your email to get a sign-in link.");
+      setError(msg("auth.emailRequired"));
       return;
     }
     setBusy(true);
@@ -33,7 +35,7 @@ export function AuthForm({ next }: { next?: string }) {
       setDevLink(res.login_url ?? null);
       setSentTo(email);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : msg("auth.error"));
     } finally {
       setBusy(false);
     }
@@ -45,11 +47,11 @@ export function AuthForm({ next }: { next?: string }) {
         <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-purple-100 text-2xl">
           ✉️
         </div>
-        <h3 className="text-lg font-semibold text-purple-900">Check your email</h3>
+        <h3 className="text-lg font-semibold text-purple-900">{msg("auth.check.title")}</h3>
         <p className="mt-2 text-sm text-slate-500">
-          We sent a sign-in link to{" "}
-          <span className="font-medium text-purple-700">{sentTo}</span>. Open it
-          to sign in — it expires in 15 minutes.
+          {msg("auth.check.bodyPre")}{" "}
+          <span className="font-medium text-purple-700">{sentTo}</span>
+          {msg("auth.check.bodyPost")}
         </p>
 
         {devLink && (
@@ -57,7 +59,7 @@ export function AuthForm({ next }: { next?: string }) {
             href={devLink}
             className="btn btn-primary mt-4 inline-block w-full justify-center py-2.5"
           >
-            Sign in (dev link)
+            {msg("auth.check.devLink")}
           </a>
         )}
 
@@ -68,7 +70,7 @@ export function AuthForm({ next }: { next?: string }) {
           }}
           className="btn btn-ghost mt-3"
         >
-          Use a different email
+          {msg("auth.check.differentEmail")}
         </button>
       </div>
     );
@@ -82,22 +84,22 @@ export function AuthForm({ next }: { next?: string }) {
     <div className="card w-full max-w-sm p-6">
       <a href={googleHref} className="btn btn-ghost mb-4 w-full justify-center py-2.5">
         <GoogleMark />
-        <span className="ml-2">Continue with Google</span>
+        <span className="ml-2">{msg("auth.google")}</span>
       </a>
 
       <div className="mb-4 flex items-center gap-3 text-xs text-slate-400">
         <span className="h-px flex-1 bg-purple-100" />
-        or
+        {msg("auth.or")}
         <span className="h-px flex-1 bg-purple-100" />
       </div>
 
       <form onSubmit={submit} className="space-y-3">
         <Field
-          label="Email"
+          label={msg("auth.emailLabel")}
           value={email}
           onChange={setEmail}
           type="email"
-          placeholder="you@example.com"
+          placeholder={msg("auth.emailPlaceholder")}
           autoComplete="email"
         />
 
@@ -108,12 +110,12 @@ export function AuthForm({ next }: { next?: string }) {
         )}
 
         <button disabled={busy} className="btn btn-primary w-full py-2.5">
-          {busy ? "Please wait…" : "Email me a sign-in link"}
+          {busy ? msg("auth.wait") : msg("auth.submit")}
         </button>
       </form>
 
       <p className="mt-4 text-center text-xs text-slate-400">
-        No password needed. New here? Entering your email creates your account.
+        {msg("auth.newHint")}
       </p>
       <LegalNotice className="mt-2 text-center" />
     </div>
