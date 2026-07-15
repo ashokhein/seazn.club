@@ -401,5 +401,20 @@
   "ref.viewDashboard": "Bekijk het live dashboard",
   "ref.shareText": "Ik ben geregistreerd voor {division} bij {competition} (ref {ref}). Volg het live:",
   "register.ticket.entrant": "Deelnemer",
-  "register.ticket.legacyRef": "Uitgegeven vóór referentienummers — je e-maillink is je bewijs."
+  "register.ticket.legacyRef": "Uitgegeven vóór referentienummers — je e-maillink is je bewijs.",
+  "common.dashboard": "Dashboard",
+  "import.eyebrow": "Bulk toevoegen",
+  "import.title": "Deelnemers importeren",
+  "import.desc.pre": "Breng clubs, teams en spelers binnen vanuit één spreadsheet. Er wordt niets weggeschreven totdat je het voorbeeldplan bevestigt. Divisies moeten",
+  "import.desc.link": "eerst bestaan",
+  "import.desc.post": "— een Divisie-kolom plaatst elk team als deelnemer.",
+  "directory.eyebrow": "Mensen & clubs",
+  "directory.title": "Directory",
+  "directory.desc": "De spelers en clubs van je organisatie — hergebruikt in elke competitie.",
+  "directory.tab.players": "Spelers",
+  "directory.tab.clubs": "Clubs",
+  "directory.players.desc": "Spelers die als deelnemers zijn ingedeeld over competities heen. De geboortedatum wordt alleen gebruikt voor deelnamegerechtigdheid en wordt nooit openbaar getoond; namen verschijnen alleen met toestemming op openbare pagina's. Zie je dezelfde persoon twee keer? Gebruik",
+  "directory.players.merge": "samenvoegen…",
+  "directory.clubs.desc": "Moederclubs groeperen teams over leeftijdsgroepen en divisies heen. Het clubembleem en de kleuren van een club vloeien door naar elk team dat geen eigen instelt.",
+  "directory.clubs.import": "Deelnemers bulk importeren"
 }

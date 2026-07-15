@@ -401,5 +401,20 @@
   "ref.viewDashboard": "Voir le tableau de bord en direct",
   "ref.shareText": "Je suis inscrit à {division} au {competition} (réf {ref}). Suivez-le en direct :",
   "register.ticket.entrant": "Participant",
-  "register.ticket.legacyRef": "Émis avant les numéros de référence — le lien de votre e-mail fait office de reçu."
+  "register.ticket.legacyRef": "Émis avant les numéros de référence — le lien de votre e-mail fait office de reçu.",
+  "common.dashboard": "Tableau de bord",
+  "import.eyebrow": "Ajout groupé",
+  "import.title": "Importer des participants",
+  "import.desc.pre": "Importez clubs, équipes et joueurs à partir d’un seul tableur. Rien n’est enregistré tant que vous n’avez pas validé le plan prévisualisé. Les divisions doivent",
+  "import.desc.link": "exister au préalable",
+  "import.desc.post": "— une colonne Division inscrit chaque équipe comme participant.",
+  "directory.eyebrow": "Personnes et clubs",
+  "directory.title": "Répertoire",
+  "directory.desc": "Les joueurs et clubs de votre organisation — réutilisés dans chaque compétition.",
+  "directory.tab.players": "Joueurs",
+  "directory.tab.clubs": "Clubs",
+  "directory.players.desc": "Joueurs inscrits parmi les participants à travers les compétitions. La date de naissance sert uniquement à vérifier l’éligibilité et n’est jamais affichée publiquement ; les noms n’apparaissent sur les pages publiques qu’avec consentement. Vous repérez deux fois la même personne ? Utilisez",
+  "directory.players.merge": "fusionner…",
+  "directory.clubs.desc": "Les clubs parents regroupent les équipes selon les catégories d’âge et les divisions. Le blason et les couleurs d’un club se propagent à chaque équipe qui ne définit pas les siens.",
+  "directory.clubs.import": "Importer des participants en masse"
 }

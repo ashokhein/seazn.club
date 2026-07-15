@@ -401,5 +401,20 @@
   "ref.viewDashboard": "Ver el panel en directo",
   "ref.shareText": "Estoy inscrito en {division} en {competition} (ref {ref}). Síguelo en directo:",
   "register.ticket.entrant": "Participante",
-  "register.ticket.legacyRef": "Emitido antes de los números de referencia — el enlace de tu correo electrónico es tu recibo."
+  "register.ticket.legacyRef": "Emitido antes de los números de referencia — el enlace de tu correo electrónico es tu recibo.",
+  "common.dashboard": "Panel",
+  "import.eyebrow": "Añadir en bloque",
+  "import.title": "Importar participantes",
+  "import.desc.pre": "Incorpora clubes, equipos y jugadores desde una sola hoja de cálculo. No se guarda nada hasta que confirmes el plan previsualizado. Las divisiones deben",
+  "import.desc.link": "existir primero",
+  "import.desc.post": "— una columna de División coloca cada equipo como inscrito.",
+  "directory.eyebrow": "Personas y clubes",
+  "directory.title": "Directorio",
+  "directory.desc": "Los jugadores y clubes de tu organización, reutilizados en cada competición.",
+  "directory.tab.players": "Jugadores",
+  "directory.tab.clubs": "Clubes",
+  "directory.players.desc": "Jugadores incluidos en las alineaciones de inscritos en las competiciones. La fecha de nacimiento se usa solo para la elegibilidad y nunca se muestra públicamente; los nombres aparecen en páginas públicas solo con consentimiento. ¿Ves a la misma persona dos veces? Usa",
+  "directory.players.merge": "combinar…",
+  "directory.clubs.desc": "Los clubes matrices agrupan equipos entre categorías de edad y divisiones. El escudo y los colores de un club se aplican a cada equipo que no defina los suyos.",
+  "directory.clubs.import": "Importar participantes en bloque"
 }

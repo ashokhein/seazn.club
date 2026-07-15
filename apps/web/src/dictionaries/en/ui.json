@@ -401,5 +401,20 @@
   "ref.viewDashboard": "View the live dashboard",
   "ref.shareText": "I’m registered for {division} at {competition} (ref {ref}). Follow it live:",
   "register.ticket.entrant": "Entrant",
-  "register.ticket.legacyRef": "Issued before reference numbers — your email link is your receipt."
+  "register.ticket.legacyRef": "Issued before reference numbers — your email link is your receipt.",
+  "common.dashboard": "Dashboard",
+  "import.eyebrow": "Bulk add",
+  "import.title": "Import participants",
+  "import.desc.pre": "Bring clubs, teams and players in from one spreadsheet. Nothing is written until you commit the previewed plan. Divisions must",
+  "import.desc.link": "exist first",
+  "import.desc.post": "— a Division column places each team as an entrant.",
+  "directory.eyebrow": "People & clubs",
+  "directory.title": "Directory",
+  "directory.desc": "Your organisation’s players and clubs — reused across every competition.",
+  "directory.tab.players": "Players",
+  "directory.tab.clubs": "Clubs",
+  "directory.players.desc": "Players rostered into entrants across competitions. Date of birth is used only for eligibility and is never shown publicly; names appear on public pages only with consent. Spot the same person twice? Use",
+  "directory.players.merge": "merge…",
+  "directory.clubs.desc": "Parent clubs group teams across age groups and divisions. A club’s badge and colours cascade to every team that doesn’t set its own.",
+  "directory.clubs.import": "Bulk import participants"
 }
