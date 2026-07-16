@@ -83,6 +83,10 @@ field of teams is disproportionately hard:
   (JSON + branded PDF) with an Ed25519 signature over the head hash + published
   public key for independent verification, gated by a new `scoring.audit_export`
   entitlement, plus surfacing chain-verified status on the match/console.
+- **PROMPT-64** — Presentation mode: no-login full-screen venue slideshow for a
+  division and a competition — auto-rotating standings (paginated) / fixtures /
+  in-play (pinned) / bracket slides, composed from the existing public views,
+  visibility-aware refresh. (Bracket slide soft-deps PROMPT-62.)
 
 ## Reference
 
