@@ -1,9 +1,12 @@
 import Link from "next/link";
+import { t } from "@/lib/i18n";
+import type { Dict } from "@/lib/i18n-constants";
 import { Reveal } from "./reveal";
 
 /** Matchday tools (design/v3/12 §4.5): three product-real cards, each with a
- *  tiny once-on-view animation. Replaces the emoji feature grid. */
-export function MatchdayTools() {
+ *  tiny once-on-view animation. Replaces the emoji feature grid.
+ *  Copy comes from the `marketing` dict the [lang] home page resolves. */
+export function MatchdayTools({ dict }: { dict: Dict }) {
   return (
     <div className="grid gap-6 sm:grid-cols-3">
       <Reveal className="card p-5">
@@ -23,10 +26,8 @@ export function MatchdayTools() {
             <span className="mk-display font-bold tabular-nums text-[var(--mk-cream)]">18</span>
           </div>
         </div>
-        <h3 className="mb-1 font-semibold text-slate-800">Live scoring</h3>
-        <p className="text-sm text-slate-500">
-          Point-by-point from any phone. The public scoreboard updates the moment a rally ends.
-        </p>
+        <h3 className="mb-1 font-semibold text-slate-800">{t(dict, "home.tools.live.title")}</h3>
+        <p className="text-sm text-slate-500">{t(dict, "home.tools.live.body")}</p>
       </Reveal>
 
       <Reveal>
@@ -45,10 +46,8 @@ export function MatchdayTools() {
               </div>
             ))}
           </div>
-          <h3 className="mb-1 font-semibold text-slate-800">Scheduling board</h3>
-          <p className="text-sm text-slate-500">
-            Courts × time slots on one board. Clashes flagged before you publish. →
-          </p>
+          <h3 className="mb-1 font-semibold text-slate-800">{t(dict, "home.tools.schedule.title")}</h3>
+          <p className="text-sm text-slate-500">{t(dict, "home.tools.schedule.body")} →</p>
         </Link>
       </Reveal>
 
@@ -63,29 +62,22 @@ export function MatchdayTools() {
             <span className="tabular-nums">7 pts</span>
           </div>
         </div>
-        <h3 className="mb-1 font-semibold text-slate-800">Standings</h3>
-        <p className="text-sm text-slate-500">
-          Tables recompute the second a result lands — tie-breaks included.
-        </p>
+        <h3 className="mb-1 font-semibold text-slate-800">{t(dict, "home.tools.standings.title")}</h3>
+        <p className="text-sm text-slate-500">{t(dict, "home.tools.standings.body")}</p>
       </Reveal>
     </div>
   );
 }
 
-const KIT = [
-  { label: "Registration & entry fees", body: "Public sign-up with capacity, waitlists and Stripe fees to your club." },
-  { label: "Print & slideshow", body: "Brackets and standings for the noticeboard or the TV." },
-  { label: "Roles & scorer seats", body: "Owners, admins, viewers, courtside scorer hand-off links." },
-  { label: "Secure by default", body: "Per-tenant isolation, HSTS, CSRF protection out of the box." },
-];
+const KIT = ["registration", "print", "roles", "secure"] as const;
 
-export function AlsoInTheKit() {
+export function AlsoInTheKit({ dict }: { dict: Dict }) {
   return (
     <ul className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {KIT.map((k) => (
-        <li key={k.label} className="text-sm">
-          <p className="font-semibold text-slate-800">{k.label}</p>
-          <p className="text-slate-500">{k.body}</p>
+        <li key={k} className="text-sm">
+          <p className="font-semibold text-slate-800">{t(dict, `home.kit.${k}.label`)}</p>
+          <p className="text-slate-500">{t(dict, `home.kit.${k}.body`)}</p>
         </li>
       ))}
     </ul>

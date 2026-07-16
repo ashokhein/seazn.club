@@ -7,6 +7,7 @@ import { api } from "@/lib/client";
 import { recommendFormats, type Recommendation } from "@/lib/format-recommend";
 import { FUNNEL_SPORTS } from "@/components/start-funnel-form";
 import { LegalNotice } from "@/components/legal-notice";
+import { useT } from "@/components/i18n/dict-provider";
 
 interface Initial {
   sport?: string;
@@ -15,6 +16,7 @@ interface Initial {
 }
 
 export function StartWizard({ initial }: { initial: Initial }) {
+  const t = useT();
   const [step, setStep] = useState(0);
   const [sport, setSport] = useState(initial.sport ?? "Badminton");
   const [name, setName] = useState("");
@@ -32,7 +34,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
     [entrants, courts, hours],
   );
 
-  const compName = name.trim() || `${sport} tournament`;
+  const compName = name.trim() || t("start.wizard.compNameDefault", { sport });
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -52,7 +54,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
       });
       setDone(res);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong — try again.");
+      setError(err instanceof Error ? err.message : t("start.wizard.genericError"));
     } finally {
       setBusy(false);
     }
@@ -62,10 +64,10 @@ export function StartWizard({ initial }: { initial: Initial }) {
     return (
       <div className="card p-8 text-center" data-funnel-done>
         <div className="mb-3 text-4xl">📬</div>
-        <h2 className="text-xl font-bold text-slate-900">Check your email</h2>
+        <h2 className="text-xl font-bold text-slate-900">{t("start.wizard.checkEmail")}</h2>
         <p className="mt-2 text-sm text-slate-600">{done.message}</p>
         <p className="mt-2 text-xs text-slate-400">
-          One click signs you in and creates “{compName}” — no password needed.
+          {t("start.wizard.claimNote", { name: compName })}
         </p>
         {done.claim_url && (
           <a
@@ -73,7 +75,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
             data-claim-url={done.claim_url}
             className="mt-4 inline-block text-xs text-purple-500 underline"
           >
-            Open it now (dev)
+            {t("start.wizard.openDev")}
           </a>
         )}
       </div>
@@ -84,7 +86,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
     <div data-start-wizard>
       {/* Step rail */}
       <ol className="mb-6 flex items-center justify-center gap-2 text-xs font-semibold uppercase tracking-wider">
-        {["Name it", "Pick a format", "Get the link"].map((label, i) => (
+        {[t("start.wizard.steps.name"), t("start.wizard.steps.format"), t("start.wizard.steps.link")].map((label, i) => (
           <li key={label} className="flex items-center gap-2">
             {i > 0 && <span className="text-purple-200">—</span>}
             <span className={i <= step ? "text-purple-600" : "text-slate-300"}>
@@ -103,7 +105,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
           }}
         >
           <label className="block">
-            <span className="label mb-1 block">Sport</span>
+            <span className="label mb-1 block">{t("start.wizard.sport")}</span>
             <select value={sport} onChange={(e) => setSport(e.target.value)} className="input w-full">
               {FUNNEL_SPORTS.map((s) => (
                 <option key={s}>{s}</option>
@@ -111,17 +113,17 @@ export function StartWizard({ initial }: { initial: Initial }) {
             </select>
           </label>
           <label className="block">
-            <span className="label mb-1 block">Competition name</span>
+            <span className="label mb-1 block">{t("start.wizard.compName")}</span>
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder={`${sport} tournament`}
+              placeholder={t("start.wizard.compNameDefault", { sport })}
               className="input w-full"
               maxLength={200}
             />
           </label>
           <label className="block">
-            <span className="label mb-1 block">Players or teams</span>
+            <span className="label mb-1 block">{t("start.wizard.entrants")}</span>
             <input
               type="number"
               min={2}
@@ -132,7 +134,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
             />
           </label>
           <button type="submit" className="btn btn-primary w-full justify-center py-2.5">
-            Recommend a format →
+            {t("start.wizard.recommend")} →
           </button>
         </form>
       )}
@@ -141,7 +143,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
         <div className="card space-y-4 p-6">
           <div className="grid grid-cols-2 gap-3">
             <label className="block">
-              <span className="label mb-1 block">Courts / pitches</span>
+              <span className="label mb-1 block">{t("start.wizard.courts")}</span>
               <input
                 type="number"
                 min={1}
@@ -152,7 +154,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
               />
             </label>
             <label className="block">
-              <span className="label mb-1 block">Hours available</span>
+              <span className="label mb-1 block">{t("start.wizard.hours")}</span>
               <input
                 type="number"
                 min={1}
@@ -164,7 +166,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
             </label>
           </div>
 
-          <div className="space-y-2" role="radiogroup" aria-label="Recommended formats">
+          <div className="space-y-2" role="radiogroup" aria-label={t("start.wizard.formatsLabel")}>
             {recs.map((r, i) => (
               <button
                 key={r.slug}
@@ -182,7 +184,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
                   {r.title}
                   {i === 0 && (
                     <span className="rounded-full bg-purple-100 px-2 py-0.5 text-[10px] font-bold uppercase text-purple-600">
-                      Best fit
+                      {t("start.wizard.bestFit")}
                     </span>
                   )}
                 </p>
@@ -193,7 +195,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
 
           <div className="flex gap-2">
             <button type="button" onClick={() => setStep(0)} className="btn btn-ghost flex-none">
-              ← Back
+              ← {t("start.wizard.back")}
             </button>
             <button
               type="button"
@@ -203,7 +205,7 @@ export function StartWizard({ initial }: { initial: Initial }) {
               }}
               className="btn btn-primary flex-1 justify-center"
             >
-              Looks right →
+              {t("start.wizard.looksRight")} →
             </button>
           </div>
         </div>
@@ -214,12 +216,12 @@ export function StartWizard({ initial }: { initial: Initial }) {
           <div className="rounded-xl bg-purple-50 p-4 text-sm text-purple-900">
             <p className="font-semibold">“{compName}”</p>
             <p className="mt-1 text-purple-700">
-              {sport} · {entrants} entrants ·{" "}
+              {sport} · {t("start.wizard.entrantsSuffix", { entrants })} ·{" "}
               {recs.find((r) => r.slug === format)?.title ?? recs[0]?.title}
             </p>
           </div>
           <label className="block">
-            <span className="label mb-1 block">Your email</span>
+            <span className="label mb-1 block">{t("start.wizard.email")}</span>
             <input
               type="email"
               required
@@ -230,18 +232,15 @@ export function StartWizard({ initial }: { initial: Initial }) {
               maxLength={120}
             />
           </label>
-          <p className="text-xs text-slate-400">
-            We’ll email you one link that signs you in and creates the
-            competition. No password, no spam.
-          </p>
+          <p className="text-xs text-slate-400">{t("start.wizard.emailNote")}</p>
           <LegalNotice className="text-left" />
           {error && <p className="text-sm text-red-600">{error}</p>}
           <div className="flex gap-2">
             <button type="button" onClick={() => setStep(1)} className="btn btn-ghost flex-none">
-              ← Back
+              ← {t("start.wizard.back")}
             </button>
             <button type="submit" disabled={busy} className="btn btn-primary flex-1 justify-center">
-              {busy ? "Sending…" : "Email me the link →"}
+              {busy ? t("start.wizard.sending") : `${t("start.wizard.emailMe")} →`}
             </button>
           </div>
         </form>

@@ -136,9 +136,9 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
             {t(d, "home.tools.title")}
           </h2>
           <p className="mb-10 text-center text-slate-600">{t(d, "home.tools.subhead")}</p>
-          <MatchdayTools />
+          <MatchdayTools dict={d} />
           <div className="mt-12 border-t border-purple-100 pt-8">
-            <AlsoInTheKit />
+            <AlsoInTheKit dict={d} />
           </div>
         </section>
 

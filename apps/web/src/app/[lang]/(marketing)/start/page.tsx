@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { MarketingNav } from "@/components/marketing-nav";
 import { MarketingFooter } from "@/components/marketing-footer";
 import { StartWizard } from "@/components/start-wizard";
+import { DictProvider } from "@/components/i18n/dict-provider";
 import { LOCALES, hasLocale } from "@/lib/i18n-constants";
 import { getDictionary, t } from "@/lib/i18n";
 
@@ -52,13 +53,15 @@ export default async function StartPage({
           </h1>
           <p className="mt-2 text-slate-500">{t(dict, "start.subhead")}</p>
         </div>
-        <StartWizard
-          initial={{
-            sport: sp.sport,
-            entrants: Number.isFinite(entrants) && entrants >= 2 ? entrants : undefined,
-            date: sp.date,
-          }}
-        />
+        <DictProvider dict={dict} locale={lang}>
+          <StartWizard
+            initial={{
+              sport: sp.sport,
+              entrants: Number.isFinite(entrants) && entrants >= 2 ? entrants : undefined,
+              date: sp.date,
+            }}
+          />
+        </DictProvider>
       </main>
       <MarketingFooter lang={lang} />
     </>
