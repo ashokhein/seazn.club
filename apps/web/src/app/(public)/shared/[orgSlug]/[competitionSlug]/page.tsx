@@ -256,12 +256,13 @@ export default async function CompetitionHomePage({ params }: Props) {
             // them — panels on the court-slab band that bookends the hero.
             // Tier is encoded physically: title = "presented by" lockup on
             // the board, gold/silver = sized panels, partners = the quiet
-            // ticker line beneath. Free (un-tiered) orgs get the board with
-            // uniform panels.
+            // ticker line beneath. The board itself is the Pro presentation:
+            // free (un-tiered) orgs keep the modest flat chip strip so a
+            // community sponsor never reads like a paid title placement.
             const titleRow = tiered ? sponsors.filter((s) => s.tier === "title") : [];
             const boardRows = tiered
               ? sponsors.filter((s) => s.tier === "gold" || s.tier === "silver")
-              : sponsors;
+              : [];
             const tickerRows = tiered ? sponsors.filter((s) => s.tier === "partner") : [];
 
             const PANEL: Record<SponsorTier, { text: string; logo: number; logoCls: string }> = {
@@ -369,6 +370,22 @@ export default async function CompetitionHomePage({ params }: Props) {
                       </span>
                     ))}
                   </p>
+                ) : null}
+                {!tiered ? (
+                  // Free strip: quiet light chips, no board, no hierarchy.
+                  <ul className="flex flex-wrap items-center gap-3">
+                    {sponsors.map((s) => (
+                      <li key={s.name}>
+                        {linked(
+                          s,
+                          <span className="flex items-center gap-2 rounded-lg border border-zinc-200/80 bg-surface px-3 py-2 text-sm text-zinc-600 shadow-sm">
+                            {sponsorLogo(s)}
+                            {s.name}
+                          </span>,
+                        )}
+                      </li>
+                    ))}
+                  </ul>
                 ) : null}
               </section>
             );
