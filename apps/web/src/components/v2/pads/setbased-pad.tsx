@@ -5,6 +5,7 @@
 // fidelityTiers declaration — no hardcoded sport strings.
 import { useState } from "react";
 import type { SendEvent, SideInfo, SportInfo, LiveState } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface SetView {
   home: number;
@@ -34,6 +35,7 @@ export function SetbasedPad({
   busy: boolean;
 }) {
   // Tier declarations: tier 3 carries the rally type, tier 0 the summary type.
+  const msg = useMsg();
   const rallyType = sport.fidelityTiers.find((t) => t.tier === 3)?.eventTypes[0];
   const summaryType = sport.fidelityTiers.find((t) => t.tier === 0)?.eventTypes[0];
   const state = (live.state ?? {}) as SetBasedStateView;
@@ -45,7 +47,7 @@ export function SetbasedPad({
   const pre = state.phase === "pre" || live.status === "scheduled";
 
   // Badminton/table-tennis call their sets "games" (engine unitLabel).
-  const unit = sport.key === "volleyball" ? "Set" : "Game";
+  const unit = sport.key === "volleyball" ? msg("pad.unit.set") : msg("pad.unit.game");
   // Current set number: the open set, or the next one about to start.
   const closedCount = state.sets?.filter((s) => s.closed).length ?? 0;
   const currentNo = closedCount + 1;
@@ -60,7 +62,7 @@ export function SetbasedPad({
             onClick={() => setMode("rally")}
             className={`rounded-full px-3 py-1 ${mode === "rally" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
           >
-            Rally-by-rally
+            {msg("pad.rallyByRally")}
           </button>
         )}
         {summaryType && (
@@ -69,23 +71,21 @@ export function SetbasedPad({
             onClick={() => setMode("summary")}
             className={`rounded-full px-3 py-1 ${mode === "summary" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
           >
-            {unit} totals
+            {msg("pad.unitTotals", { unit })}
           </button>
         )}
       </div>
 
       {pre && (
-        <p className="text-xs text-amber-600">
-          Start the match to open the first set.
-        </p>
+        <p className="text-xs text-amber-600">{msg("pad.startFirstSet")}</p>
       )}
 
       {mode === "rally" && rallyType ? (
         <div className="space-y-2">
           {!pre && (
             <p className="text-xs font-semibold uppercase tracking-wide text-purple-600">
-              {unit} {currentNo}
-              {bestOf ? <span className="text-slate-400"> of {bestOf}</span> : null}
+              {msg("pad.unitNo", { unit, n: currentNo })}
+              {bestOf ? <span className="text-slate-400">{msg("pad.ofBestOf", { n: bestOf })}</span> : null}
             </p>
           )}
           <div className="grid grid-cols-2 gap-3">
@@ -109,10 +109,10 @@ export function SetbasedPad({
                   {score}
                 </span>
                 <span className="mt-1 block text-xs text-slate-400">
-                  {unit.toLowerCase()}s won {sets}
+                  {msg("pad.unitsWon", { unit: unit.toLowerCase(), n: sets })}
                 </span>
                 <span className="mx-auto mt-3 block w-fit rounded-full bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white">
-                  + point
+                  {msg("pad.plusPoint")}
                 </span>
               </button>
             ))}
@@ -130,7 +130,7 @@ export function SetbasedPad({
             }}
           >
             <label className="block">
-              <span className="label">{home.name} points</span>
+              <span className="label">{msg("pad.pointsLabel", { name: home.name })}</span>
               <input
                 required
                 type="number"
@@ -141,7 +141,7 @@ export function SetbasedPad({
               />
             </label>
             <label className="block">
-              <span className="label">{away.name} points</span>
+              <span className="label">{msg("pad.pointsLabel", { name: away.name })}</span>
               <input
                 required
                 type="number"
@@ -156,10 +156,10 @@ export function SetbasedPad({
               disabled={busy || pre || sumHome === "" || sumAway === ""}
               className="btn btn-primary"
             >
-              Record {unit.toLowerCase()}
+              {msg("pad.recordUnit", { unit: unit.toLowerCase() })}
             </button>
             <span className="text-xs text-slate-400">
-              Enter each completed {unit.toLowerCase()}&apos;s final points.
+              {msg("pad.summaryHint", { unit: unit.toLowerCase() })}
             </span>
           </form>
         )
@@ -167,7 +167,7 @@ export function SetbasedPad({
 
       {(state.sets?.length ?? 0) > 0 && (
         <p className="font-mono text-xs text-slate-500">
-          {unit}s:{" "}
+          {msg("pad.unitsPrefix", { unit })}{" "}
           {state.sets!.map((s, i) => (
             <span key={i} className="mr-2">
               {s.home}–{s.away}

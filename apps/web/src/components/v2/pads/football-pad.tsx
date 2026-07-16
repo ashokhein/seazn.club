@@ -4,6 +4,8 @@
 // shootout kicks. The event log below the console is the match timeline.
 import { useState } from "react";
 import type { SendEvent, SideInfo, SportInfo, LiveState } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
 interface FootballStateView {
   phase?: string;
@@ -12,11 +14,11 @@ interface FootballStateView {
 }
 
 // Which period boundary ends the current play phase (spec 04 §1.3).
-const PERIOD_END: Record<string, { phase: string; label: string }> = {
-  H1: { phase: "HT", label: "End 1st half (HT)" },
-  H2: { phase: "FT", label: "End 2nd half (FT)" },
-  ET_H1: { phase: "ET_HT", label: "End ET 1st half" },
-  ET_H2: { phase: "ET_FT", label: "End extra time" },
+const PERIOD_END: Record<string, { phase: string; labelKey: MessageKey }> = {
+  H1: { phase: "HT", labelKey: "pad.fb.period.H1" },
+  H2: { phase: "FT", labelKey: "pad.fb.period.H2" },
+  ET_H1: { phase: "ET_HT", labelKey: "pad.fb.period.ET_H1" },
+  ET_H2: { phase: "ET_FT", labelKey: "pad.fb.period.ET_H2" },
 };
 
 export function FootballPad({
@@ -33,6 +35,7 @@ export function FootballPad({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const state = (live.state ?? {}) as FootballStateView;
   const phase = state.phase ?? "pre";
   const periodEnd = PERIOD_END[phase];
@@ -42,11 +45,11 @@ export function FootballPad({
   return (
     <div className="space-y-4">
       {phase === "pre" && (
-        <p className="text-xs text-amber-600">Start the match to open the first half.</p>
+        <p className="text-xs text-amber-600">{msg("pad.fb.startHint")}</p>
       )}
       {playing && (
         <p className="text-xs text-slate-400">
-          Phase: <span className="font-mono">{phase}</span>
+          {msg("pad.fb.phase")} <span className="font-mono">{phase}</span>
         </p>
       )}
 
@@ -63,20 +66,18 @@ export function FootballPad({
 
       {inShootout && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="mb-2 text-xs font-medium text-amber-800">
-            Penalty shootout — record each kick in order.
-          </p>
+          <p className="mb-2 text-xs font-medium text-amber-800">{msg("pad.fb.shootout")}</p>
           <div className="flex flex-wrap gap-2">
             {[home, away].map((side) => (
               <span key={side.id} className="flex items-center gap-1.5">
-                <span className="text-xs text-slate-600">{side.name}:</span>
+                <span className="text-xs text-slate-600">{msg("pad.fb.sideColon", { name: side.name })}</span>
                 <button
                   type="button"
                   disabled={busy}
                   onClick={() => send("football.shootout.kick", { by: side.id, scored: true })}
                   className="btn btn-primary px-3 py-1 text-xs"
                 >
-                  ⚽ scored
+                  {msg("pad.fb.scored")}
                 </button>
                 <button
                   type="button"
@@ -84,7 +85,7 @@ export function FootballPad({
                   onClick={() => send("football.shootout.kick", { by: side.id, scored: false })}
                   className="btn btn-danger px-3 py-1 text-xs"
                 >
-                  ✕ missed
+                  {msg("pad.fb.missed")}
                 </button>
               </span>
             ))}
@@ -99,7 +100,7 @@ export function FootballPad({
           onClick={() => send("football.period", { phase: periodEnd.phase })}
           className="btn btn-ghost"
         >
-          ⏱ {periodEnd.label}
+          ⏱ {msg(periodEnd.labelKey)}
         </button>
       )}
     </div>
@@ -115,6 +116,7 @@ function SidePad({
   disabled: boolean;
   send: SendEvent;
 }) {
+  const msg = useMsg();
   const [minute, setMinute] = useState("");
   const [person, setPerson] = useState("");
   const [assist, setAssist] = useState("");
@@ -181,7 +183,7 @@ function SidePad({
           onClick={() => setAction(action === "goal" ? null : "goal")}
           className={`btn px-3 py-1.5 text-xs ${action === "goal" ? "btn-primary" : "btn-ghost"}`}
         >
-          ⚽ Goal
+          {msg("pad.fb.goal")}
         </button>
         <button
           type="button"
@@ -189,7 +191,7 @@ function SidePad({
           onClick={() => setAction(action === "yellow" ? null : "yellow")}
           className={`btn px-3 py-1.5 text-xs ${action === "yellow" ? "btn-primary" : "btn-ghost"}`}
         >
-          🟨 Yellow
+          {msg("pad.fb.yellow")}
         </button>
         <button
           type="button"
@@ -197,7 +199,7 @@ function SidePad({
           onClick={() => setAction(action === "red" ? null : "red")}
           className={`btn px-3 py-1.5 text-xs ${action === "red" ? "btn-primary" : "btn-ghost"}`}
         >
-          🟥 Red
+          {msg("pad.fb.red")}
         </button>
         <button
           type="button"
@@ -205,7 +207,7 @@ function SidePad({
           onClick={() => setAction(action === "sub" ? null : "sub")}
           className={`btn px-3 py-1.5 text-xs ${action === "sub" ? "btn-primary" : "btn-ghost"}`}
         >
-          ⇄ Sub
+          {msg("pad.fb.sub")}
         </button>
         <button
           type="button"
@@ -213,7 +215,7 @@ function SidePad({
           onClick={() => setAction(action === "motm" ? null : "motm")}
           className={`btn px-3 py-1.5 text-xs ${action === "motm" ? "btn-primary" : "btn-ghost"}`}
         >
-          ⭐ MVP
+          {msg("pad.fb.mvp")}
         </button>
       </div>
 
@@ -221,13 +223,13 @@ function SidePad({
         <div className="mt-2 flex flex-wrap items-end gap-2">
           <label className="block">
             <span className="label">
-              {action === "sub" ? "Off" : action === "motm" ? "Man of the match" : "Player (optional)"}{" "}
+              {action === "sub" ? msg("pad.fb.off") : action === "motm" ? msg("pad.fb.motm") : msg("pad.fb.playerOptional")}{" "}
               <button
                 type="button"
                 className="text-[10px] text-purple-600 hover:underline"
                 onClick={() => setByNumber((v) => !v)}
               >
-                {byNumber ? "sort by name" : "sort by number"}
+                {byNumber ? msg("pad.fb.sortByName") : msg("pad.fb.sortByNumber")}
               </button>
             </span>
             <select
@@ -245,7 +247,7 @@ function SidePad({
           </label>
           {action === "goal" && (
             <label className="block">
-              <span className="label">Assist (optional)</span>
+              <span className="label">{msg("pad.fb.assist")}</span>
               <select
                 value={assist}
                 onChange={(e) => setAssist(e.target.value)}
@@ -264,7 +266,7 @@ function SidePad({
           )}
           {action === "sub" && (
             <label className="block">
-              <span className="label">On</span>
+              <span className="label">{msg("pad.fb.on")}</span>
               <select
                 value={subOn}
                 onChange={(e) => setSubOn(e.target.value)}
@@ -280,7 +282,7 @@ function SidePad({
             </label>
           )}
           <label className="block">
-            <span className="label">Minute</span>
+            <span className="label">{msg("pad.fb.minute")}</span>
             <input
               type="number"
               min={0}
@@ -296,7 +298,7 @@ function SidePad({
             onClick={fire}
             className="btn btn-primary px-3 py-1.5 text-xs"
           >
-            Record
+            {msg("pad.fb.record")}
           </button>
         </div>
       )}
