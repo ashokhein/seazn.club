@@ -192,5 +192,14 @@
   "sponsorReceipt.seeIt": "Bekijk het live: {url}",
   "sponsorReceipt.footer": "Je ontvangt deze e-mail omdat dit adres een sponsoring bij {orgName} heeft betaald.",
   "sponsorReceipt.textLine": "Sponsorbewijs — {packageName} ({orgName}).",
-  "sponsorReceipt.textAmount": "Betaald bedrag: {amount}. Je plek is live."
+  "sponsorReceipt.textAmount": "Betaald bedrag: {amount}. Je plek is live.",
+  "sponsorRefund.subject": "Sponsoring terugbetaald — {orgName}",
+  "sponsorRefund.preheader": "{amount} is onderweg terug naar je kaart.",
+  "sponsorRefund.title": "Sponsoring terugbetaald",
+  "sponsorRefund.body": "Hallo {sponsorName} — je betaling van <strong>{amount}</strong> voor het pakket <strong>{packageName}</strong> bij {orgName} is terugbetaald, en de plek is van de openbare pagina's gehaald.",
+  "sponsorRefund.panelTitle": "Wanneer het aankomt",
+  "sponsorRefund.panelBody": "Terugbetalingen bereiken de oorspronkelijke kaart meestal binnen 5–10 werkdagen, afhankelijk van je bank.",
+  "sponsorRefund.footer": "Je ontvangt deze e-mail omdat dit adres een sponsoring bij {orgName} heeft betaald.",
+  "sponsorRefund.textLine": "Sponsoring terugbetaald — {packageName} ({orgName}).",
+  "sponsorRefund.textAmount": "Bedrag: {amount}. Terugbetalingen komen meestal binnen 5–10 werkdagen aan."
 }

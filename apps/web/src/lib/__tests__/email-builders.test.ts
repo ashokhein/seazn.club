@@ -18,6 +18,7 @@ import {
   registrationTemplate,
   sponsorInvoiceTemplate,
   sponsorReceiptTemplate,
+  sponsorRefundTemplate,
   verificationTemplate,
 } from "../email-templates";
 import { standingsTable } from "../email-templates/compose";
@@ -149,6 +150,20 @@ function makeBuilders(
         dict,
       ),
       "sponsorReceipt.subject",
+    ],
+    [
+      "sponsor-refund",
+      sponsorRefundTemplate(
+        {
+          orgName: "Riverside Racquets",
+          packageName: "Gold — Spring Open",
+          sponsorName: "Court & Co <Ltd>",
+          amountCents: 25_000,
+          currency: "gbp",
+        },
+        dict,
+      ),
+      "sponsorRefund.subject",
     ],
   ];
 }

@@ -192,5 +192,14 @@
   "sponsorReceipt.seeIt": "Voir en ligne : {url}",
   "sponsorReceipt.footer": "Vous recevez cet e-mail car cette adresse a réglé un sponsoring chez {orgName}.",
   "sponsorReceipt.textLine": "Reçu de sponsoring — {packageName} ({orgName}).",
-  "sponsorReceipt.textAmount": "Montant payé : {amount}. Votre emplacement est en ligne."
+  "sponsorReceipt.textAmount": "Montant payé : {amount}. Votre emplacement est en ligne.",
+  "sponsorRefund.subject": "Sponsoring remboursé — {orgName}",
+  "sponsorRefund.preheader": "{amount} est en route vers votre carte.",
+  "sponsorRefund.title": "Sponsoring remboursé",
+  "sponsorRefund.body": "Bonjour {sponsorName} — votre paiement de <strong>{amount}</strong> pour l'offre <strong>{packageName}</strong> chez {orgName} a été remboursé, et l'emplacement a été retiré des pages publiques.",
+  "sponsorRefund.panelTitle": "Délai de réception",
+  "sponsorRefund.panelBody": "Les remboursements arrivent généralement sur la carte d'origine sous 5 à 10 jours ouvrés, selon votre banque.",
+  "sponsorRefund.footer": "Vous recevez cet e-mail car cette adresse a réglé un sponsoring chez {orgName}.",
+  "sponsorRefund.textLine": "Sponsoring remboursé — {packageName} ({orgName}).",
+  "sponsorRefund.textAmount": "Montant : {amount}. Les remboursements arrivent généralement sous 5 à 10 jours ouvrés."
 }

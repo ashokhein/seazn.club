@@ -192,5 +192,14 @@
   "sponsorReceipt.seeIt": "Míralo en directo: {url}",
   "sponsorReceipt.footer": "Recibes este correo porque esta dirección pagó un patrocinio en {orgName}.",
   "sponsorReceipt.textLine": "Recibo de patrocinio — {packageName} ({orgName}).",
-  "sponsorReceipt.textAmount": "Importe pagado: {amount}. Tu espacio ya está activo."
+  "sponsorReceipt.textAmount": "Importe pagado: {amount}. Tu espacio ya está activo.",
+  "sponsorRefund.subject": "Patrocinio reembolsado — {orgName}",
+  "sponsorRefund.preheader": "{amount} va de camino a tu tarjeta.",
+  "sponsorRefund.title": "Patrocinio reembolsado",
+  "sponsorRefund.body": "Hola {sponsorName}: tu pago de <strong>{amount}</strong> por el paquete <strong>{packageName}</strong> de {orgName} ha sido reembolsado, y el espacio se ha retirado de las páginas públicas.",
+  "sponsorRefund.panelTitle": "Cuándo llega",
+  "sponsorRefund.panelBody": "Los reembolsos suelen llegar a la tarjeta original en 5–10 días laborables, según tu banco.",
+  "sponsorRefund.footer": "Recibes este correo porque esta dirección pagó un patrocinio en {orgName}.",
+  "sponsorRefund.textLine": "Patrocinio reembolsado — {packageName} ({orgName}).",
+  "sponsorRefund.textAmount": "Importe: {amount}. Los reembolsos suelen llegar en 5–10 días laborables."
 }

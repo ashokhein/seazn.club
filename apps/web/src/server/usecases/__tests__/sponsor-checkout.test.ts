@@ -7,9 +7,14 @@ import { randomUUID } from "node:crypto";
 
 const stripeMock = vi.hoisted(() => {
   const checkoutCreate = vi.fn();
+  const refundCreate = vi.fn();
   return {
     checkoutCreate,
-    stripe: { checkout: { sessions: { create: checkoutCreate } } },
+    refundCreate,
+    stripe: {
+      checkout: { sessions: { create: checkoutCreate } },
+      refunds: { create: refundCreate },
+    },
   };
 });
 vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
@@ -17,11 +22,13 @@ vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 const emailMock = vi.hoisted(() => ({
   invoice: vi.fn().mockResolvedValue(true),
   receipt: vi.fn().mockResolvedValue(true),
+  refund: vi.fn().mockResolvedValue(true),
 }));
 vi.mock("@/lib/email", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email")>()),
   sendSponsorInvoiceEmail: emailMock.invoice,
   sendSponsorReceiptEmail: emailMock.receipt,
+  sendSponsorRefundEmail: emailMock.refund,
 }));
 
 import type Stripe from "stripe";
@@ -35,6 +42,7 @@ import {
   handleSponsorPaymentFailed,
   handleSponsorPaymentSucceeded,
   listSponsorRows,
+  refundSponsorOrder,
   startSponsorCheckout,
   type SponsorPackageRow,
 } from "../sponsors";
@@ -70,8 +78,10 @@ function fakeIntent(orderId: string, packageId = "", orgId = ""): Stripe.Payment
 
 beforeEach(() => {
   stripeMock.checkoutCreate.mockReset();
+  stripeMock.refundCreate.mockReset().mockResolvedValue({ id: "re_test" });
   emailMock.invoice.mockClear();
   emailMock.receipt.mockClear();
+  emailMock.refund.mockClear();
 });
 
 describe.skipIf(!HAS_DB)("sponsor monetization", () => {
@@ -216,6 +226,47 @@ describe.skipIf(!HAS_DB)("sponsor monetization", () => {
         id: "ch_stray", payment_intent: "pi_not_ours", refunded: true,
       } as unknown as Stripe.Charge),
     ).resolves.toBeUndefined();
+  });
+
+  it("console refund: entry-fee shape, order → refunded, placement deactivated", async () => {
+    const { auth, orgId } = await seedOrg("pro");
+    stripeMock.checkoutCreate.mockResolvedValue({ id: "cs_r", url: "https://stripe.test/s" });
+    const pkg = await createSponsorPackage(auth, {
+      name: "Silver package", price_cents: 8_000, currency: "gbp", tier: "silver",
+    });
+    const { order } = await startSponsorCheckout(
+      auth,
+      { package_id: pkg.id, sponsor_name: "Refundable Ltd", sponsor_email: "r@ref.test" },
+      "https://app.test",
+    );
+    // Refunding an unpaid order is refused before Stripe is touched.
+    await expect(refundSponsorOrder(auth, order.id)).rejects.toMatchObject({ status: 422 });
+    expect(stripeMock.refundCreate).not.toHaveBeenCalled();
+
+    await handleSponsorPaymentSucceeded(fakeIntent(order.id, pkg.id, orgId));
+    const refunded = await refundSponsorOrder(auth, order.id);
+    expect(refunded.status).toBe("refunded");
+
+    const [params, opts] = stripeMock.refundCreate.mock.calls[0]!;
+    expect(params).toMatchObject({
+      reverse_transfer: true,
+      refund_application_fee: true,
+    });
+    expect(params.payment_intent).toMatch(/^pi_/);
+    expect(opts).toEqual({ idempotencyKey: `sponsor-refund-${order.id}` });
+
+    const [sponsor] = await sql<{ status: string }[]>`
+      select status from sponsors where org_id = ${orgId} and name = 'Refundable Ltd'`;
+    expect(sponsor.status).toBe("inactive");
+
+    // The sponsor hears about it — once (the later Stripe event replay
+    // finds the order already refunded and stays silent).
+    expect(emailMock.refund).toHaveBeenCalledOnce();
+    expect(emailMock.refund.mock.calls[0]![0]).toMatchObject({
+      to: "r@ref.test",
+      amountCents: 8_000,
+      packageName: "Silver package",
+    });
   });
 
   it("webhook: pending order fails on payment_failed; stray intents are ignored", async () => {

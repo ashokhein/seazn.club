@@ -7,8 +7,9 @@
 // `sponsors.monetize`; checkout itself also requires Stripe Connect.
 import { useCallback, useEffect, useState } from "react";
 import Link from "@/components/ui/console-link";
-import { Copy, Send, XCircle } from "lucide-react";
+import { Copy, Send, Undo2, XCircle } from "lucide-react";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { useConfirm } from "@/components/ui/confirm-provider";
 import type { MessageKey } from "@/lib/messages";
 import { SPONSOR_TIERS, type SponsorTier } from "@/components/org-sponsors";
 
@@ -80,6 +81,7 @@ export function SponsorPackages({
   billingHref: string;
 }) {
   const msg = useMsg();
+  const confirm = useConfirm();
   const [packages, setPackages] = useState<PackageItem[]>([]);
   const [orders, setOrders] = useState<OrderItem[]>([]);
   const [draft, setDraft] = useState({
@@ -153,11 +155,36 @@ export function SponsorPackages({
     });
   }
 
-  function retirePackage(id: string) {
-    void run(async () => {
-      await api(`/sponsor-packages/${id}`, { method: "DELETE" });
-      await load();
-    });
+  function retirePackage(pkg: PackageItem) {
+    void (async () => {
+      const ok = await confirm({
+        title: msg("sponsors.pkg.retireConfirm.title"),
+        body: msg("sponsors.pkg.retireConfirm.body", { name: pkg.name }),
+        confirmLabel: msg("sponsors.pkg.retireConfirm.label"),
+      });
+      if (!ok) return;
+      await run(async () => {
+        await api(`/sponsor-packages/${pkg.id}`, { method: "DELETE" });
+        await load();
+      });
+    })();
+  }
+
+  function refundOrder(order: OrderItem) {
+    void (async () => {
+      const amount = money(order.amount_cents, order.currency);
+      const ok = await confirm({
+        title: msg("sponsors.order.refundConfirm.title"),
+        body: msg("sponsors.order.refundConfirm.body", { amount, name: order.sponsor_name }),
+        confirmLabel: msg("sponsors.order.refundConfirm.label", { amount }),
+        tone: "danger",
+      });
+      if (!ok) return;
+      await run(async () => {
+        await api(`/sponsor-orders/${order.id}/refund`, { method: "POST" });
+        await load();
+      });
+    })();
   }
 
   function sendInvoice(pkg: PackageItem) {
@@ -335,7 +362,7 @@ export function SponsorPackages({
                       type="button"
                       aria-label={msg("sponsors.pkg.retire", { name: pkg.name })}
                       disabled={busy}
-                      onClick={() => retirePackage(pkg.id)}
+                      onClick={() => retirePackage(pkg)}
                       className="grid h-7 w-7 place-items-center rounded text-slate-400 hover:bg-red-50 hover:text-red-500"
                     >
                       <XCircle className="h-4 w-4" />
@@ -403,6 +430,17 @@ export function SponsorPackages({
                 >
                   {msg(STATUS_MSG[order.status])}
                 </span>
+                {order.status === "paid" ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => refundOrder(order)}
+                    className="btn flex items-center gap-1.5 text-xs text-red-500 hover:bg-red-50"
+                  >
+                    <Undo2 className="h-3.5 w-3.5" />
+                    {msg("sponsors.order.refund")}
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>

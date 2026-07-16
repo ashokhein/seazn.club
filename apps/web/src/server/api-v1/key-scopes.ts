@@ -202,6 +202,7 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "DELETE /orgs/:id/sponsor-packages/:packageId",
   "GET /orgs/:id/sponsor-orders",
   "POST /orgs/:id/sponsor-orders",
+  "POST /orgs/:id/sponsor-orders/:orderId/refund",
   "GET /me/assigned-fixtures",
   "POST /fixtures/:id/device-links",
   "GET /fixtures/:id/device-links",

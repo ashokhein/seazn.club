@@ -14,7 +14,11 @@ import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { brandingSponsors } from "@/lib/org-branding";
 import { getStripe } from "@/lib/stripe";
-import { sendSponsorInvoiceEmail, sendSponsorReceiptEmail } from "@/lib/email";
+import {
+  sendSponsorInvoiceEmail,
+  sendSponsorReceiptEmail,
+  sendSponsorRefundEmail,
+} from "@/lib/email";
 import { deferred } from "@/lib/deferred";
 import { fireOrgRevalidate } from "@/server/public-site/revalidate";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -530,6 +534,45 @@ export async function handleSponsorPaymentFailed(
 }
 
 /**
+ * Console-initiated refund (owner action): full refund of a paid order —
+ * the transfer to the org reverses and the platform returns its
+ * application fee, exactly like entry-fee refunds. The local flip reuses
+ * the charge.refunded path, so the later Stripe event replays as a no-op.
+ */
+export async function refundSponsorOrder(
+  auth: AuthCtx,
+  orderId: string,
+): Promise<SponsorOrderRow> {
+  const order = await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<SponsorOrderRow[]>`
+      select ${tx(ORDER_COLS)} from sponsor_orders where id = ${orderId}`;
+    if (!row) throw new HttpError(404, "order not found");
+    return row;
+  });
+  if (order.status !== "paid" || !order.payment_intent_id) {
+    throw new HttpError(422, "Only a paid order can be refunded");
+  }
+  // Stripe OUTSIDE any sql transaction (house rule).
+  await getStripe().refunds.create(
+    {
+      payment_intent: order.payment_intent_id,
+      reverse_transfer: true,
+      refund_application_fee: true,
+    },
+    { idempotencyKey: `sponsor-refund-${orderId}` },
+  );
+  await handleSponsorChargeRefunded({
+    payment_intent: order.payment_intent_id,
+    refunded: true,
+  } as Stripe.Charge);
+  return withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<SponsorOrderRow[]>`
+      select ${tx(ORDER_COLS)} from sponsor_orders where id = ${orderId}`;
+    return row!;
+  });
+}
+
+/**
  * charge.refunded for a sponsor order (Stripe-dashboard refunds included):
  * flip the paid order to `refunded` and take the bought placement off the
  * public pages (status → inactive; the row survives as the audit trail).
@@ -543,11 +586,23 @@ export async function handleSponsorChargeRefunded(charge: Stripe.Charge): Promis
       : charge.payment_intent?.id;
   if (!intent || !charge.refunded) return;
   const refunded = await sql.begin(async (tx) => {
-    const [order] = await tx<{ id: string; org_id: string; sponsor_id: string | null }[]>`
+    const [order] = await tx<
+      {
+        id: string;
+        org_id: string;
+        sponsor_id: string | null;
+        sponsor_name: string;
+        sponsor_email: string;
+        amount_cents: number;
+        currency: string;
+        package_id: string;
+      }[]
+    >`
       update sponsor_orders
       set status = 'refunded'
       where payment_intent_id = ${intent} and status = 'paid'
-      returning id, org_id, sponsor_id`;
+      returning id, org_id, sponsor_id, sponsor_name, sponsor_email,
+                amount_cents, currency, package_id`;
     if (!order) return null;
     if (order.sponsor_id) {
       await tx`update sponsors set status = 'inactive' where id = ${order.sponsor_id}`;
@@ -555,7 +610,17 @@ export async function handleSponsorChargeRefunded(charge: Stripe.Charge): Promis
     return order;
   });
   if (!refunded) return;
-  const [org] = await sql<{ slug: string }[]>`
-    select slug from organizations where id = ${refunded.org_id}`;
+  const [org] = await sql<{ slug: string; name: string }[]>`
+    select slug, name from organizations where id = ${refunded.org_id}`;
   if (org) deferred(() => fireOrgRevalidate(org.slug));
+  const [pkg] = await sql<{ name: string }[]>`
+    select name from sponsor_packages where id = ${refunded.package_id}`;
+  await sendSponsorRefundEmail({
+    to: refunded.sponsor_email,
+    orgName: org?.name ?? "the organiser",
+    packageName: pkg?.name ?? "sponsorship",
+    sponsorName: refunded.sponsor_name,
+    amountCents: refunded.amount_cents,
+    currency: refunded.currency,
+  });
 }

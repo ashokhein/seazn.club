@@ -192,5 +192,14 @@
   "sponsorReceipt.seeIt": "See it live: {url}",
   "sponsorReceipt.footer": "You received this because this address paid for a sponsorship at {orgName}.",
   "sponsorReceipt.textLine": "Sponsorship receipt — {packageName} ({orgName}).",
-  "sponsorReceipt.textAmount": "Amount paid: {amount}. Your placement is live."
+  "sponsorReceipt.textAmount": "Amount paid: {amount}. Your placement is live.",
+  "sponsorRefund.subject": "Sponsorship refunded — {orgName}",
+  "sponsorRefund.preheader": "{amount} is on its way back to your card.",
+  "sponsorRefund.title": "Sponsorship refunded",
+  "sponsorRefund.body": "Hi {sponsorName} — your payment of <strong>{amount}</strong> for the <strong>{packageName}</strong> package at {orgName} has been refunded, and the placement has been taken off the public pages.",
+  "sponsorRefund.panelTitle": "When it lands",
+  "sponsorRefund.panelBody": "Refunds usually reach the original card within 5–10 business days, depending on your bank.",
+  "sponsorRefund.footer": "You received this because this address paid for a sponsorship at {orgName}.",
+  "sponsorRefund.textLine": "Sponsorship refunded — {packageName} ({orgName}).",
+  "sponsorRefund.textAmount": "Amount: {amount}. Refunds usually reach the original card within 5–10 business days."
 }

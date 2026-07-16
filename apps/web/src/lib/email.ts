@@ -31,6 +31,8 @@ import {
   type SponsorInvoiceArgs,
   sponsorReceiptTemplate,
   type SponsorReceiptArgs,
+  sponsorRefundTemplate,
+  type SponsorRefundArgs,
 } from "@/lib/email-templates";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -323,6 +325,18 @@ export async function sendSponsorReceiptEmail(opts: SponsorReceiptEmail): Promis
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...sponsorReceiptTemplate(args, dict) });
+}
+
+export interface SponsorRefundEmail extends SponsorRefundArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Refund notice to the sponsor when a paid order is refunded. */
+export async function sendSponsorRefundEmail(opts: SponsorRefundEmail): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorRefundTemplate(args, dict) });
 }
 
 /** True when Resend is configured. */
