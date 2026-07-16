@@ -43,7 +43,7 @@ export function AuthForm({ next }: { next?: string }) {
 
   if (sentTo) {
     return (
-      <div className="card w-full max-w-sm p-6 text-center">
+      <div className="card mx-auto w-full max-w-sm p-6 text-center">
         <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-purple-100 text-2xl">
           ✉️
         </div>
@@ -81,7 +81,7 @@ export function AuthForm({ next }: { next?: string }) {
     : "/api/auth/google";
 
   return (
-    <div className="card w-full max-w-sm p-6">
+    <div className="card mx-auto w-full max-w-sm p-6">
       <a href={googleHref} className="btn btn-ghost mb-4 w-full justify-center py-2.5">
         <GoogleMark />
         <span className="ml-2">{msg("auth.google")}</span>
