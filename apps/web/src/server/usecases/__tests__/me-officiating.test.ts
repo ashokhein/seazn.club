@@ -17,6 +17,7 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { claimPerson } from "../person-claims";
+import { patchFixture } from "../fixtures";
 import {
   createOfficial,
   inviteOfficial,
@@ -257,6 +258,31 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     await expect(mintMyScoreLink(ref2.id, seeded.fixtures[0]!.id)).rejects.toSatisfy(
       (e: unknown) => e instanceof HttpError && e.status === 402,
     );
+  });
+
+  it("rescheduling a fixture with a responded official runs the change-notice path", async () => {
+    const { auth } = await seedOrg();
+    const ref = await makeUser("ref");
+    const { fixtures } = await seedFutureDivision(auth);
+    const official = await createOfficial(auth, { display_name: "Ref M", role_keys: ["referee"] });
+    const invited = await inviteOfficial(auth, official.id, ref.email);
+    await claimPerson(invited.secret, ref.id, ref.email);
+    const fixtureId = fixtures[0]!.id;
+    await patchFixtureOfficials(auth, fixtureId, {
+      set: [{ official_id: official.id, role_key: "referee", locked: false }],
+    });
+    await setMyOfficiatingResponse(ref.id, fixtureId, { response: "accepted" });
+
+    // The move assembles official-assignment-changed notices in-tx (fires the
+    // v11 query) and must not disturb the response or the schedule write.
+    const moved = await patchFixture(auth, fixtureId, {
+      scheduled_at: new Date(Date.now() + 14 * 86_400_000).toISOString(),
+    });
+    expect(moved.scheduled_at).not.toBeNull();
+    const [row] = await sql<{ response: string }[]>`
+      select response from fixture_officials
+      where fixture_id = ${fixtureId} and official_id = ${official.id}`;
+    expect(row!.response).toBe("accepted");
   });
 
   it("migration backfills pre-existing assignments to accepted (no false flags)", () => {
