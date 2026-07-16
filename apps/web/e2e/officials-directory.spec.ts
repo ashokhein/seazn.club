@@ -74,7 +74,10 @@ test("schedule Officials tab: compact roster strip reflects the pool and links t
   });
 
   await page.goto(`/divisions/${divisionId}/schedule?tab=officials`);
-  await expect(page.getByText(stripName)).toBeVisible({ timeout: 20_000 });
+  // the compact roster strip is its own <ul> — scope past the assign
+  // <select> options below, which repeat the same name once per fixture.
+  const strip = page.locator("ul").filter({ hasText: stripName }).first();
+  await expect(strip.getByText(stripName)).toBeVisible({ timeout: 20_000 });
   await expect(
     page.getByRole("link", { name: /Manage officials in the directory/i }),
   ).toBeVisible();
