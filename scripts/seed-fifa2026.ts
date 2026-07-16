@@ -29,7 +29,10 @@ const EMAIL = process.env.SEED_EMAIL ?? "ashokhein@gmail.com";
 const PASSWORD = process.env.SEED_PASSWORD ?? "worldcup2026!";
 const ORG_NAME = "FIFA World Cup 2026";
 const COMP_NAME = "FIFA World Cup 2026";
-const DIV_NAME = "Main";
+const DIV_NAME = process.env.SEED_DIV_NAME ?? "Main";
+// Groups-only mode: decide every group match but stop before completing the
+// group stage or touching the knockout — the organiser drives it from there.
+const SKIP_KNOCKOUT = process.env.SEED_SKIP_KNOCKOUT === "1";
 const GROUPS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
 
 // ───────────────────────── data types ──────────────────────────
@@ -302,6 +305,11 @@ async function main() {
     applied++;
   }
   console.log(`Applied ${applied}/${data.groupMatches.length} real group results.`);
+
+  if (SKIP_KNOCKOUT) {
+    console.log(`\n✅ Seeded "${COMP_NAME}" / "${DIV_NAME}" — group matches decided, group stage NOT completed and knockout left untouched (yours to drive). Open ${BASE}.`);
+    return;
+  }
 
   // 5) Complete group stage → knockout bracket seeds from real standings.
   await call(`/api/v1/stages/${groupStage!.id}/complete`, "POST").catch((e) => { if (!/complete/i.test(String(e))) throw e; });
