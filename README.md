@@ -17,7 +17,7 @@ generic win/loss brackets.
 |------|---------|
 | [`apps/web/`](apps/web/) | Next.js app — UI, API routes, billing, auth, public dashboard |
 | [`packages/engine/`](packages/engine/) | Pure TypeScript tournament engine (`@seazn/engine`) |
-| [`engine/`](engine/) | Engine v2 **design corpus** (implemented through PROMPT-15) — domain model, sport specs, implementation prompts |
+| [`engine/`](engine/) | Engine v2 **design corpus** (PROMPT-00–15 landed) — domain model, sport specs, implementation prompts |
 | [`development/`](development/) | Product & platform **design docs** — billing, security, realtime, phased plan |
 | [`supabase/`](supabase/) | PostgreSQL schema + ordered migrations |
 | [`openapi/`](openapi/) | Generated OpenAPI spec for `/api/v1` |
@@ -90,9 +90,31 @@ Conformance tests live in `packages/engine/src/testkit/`.
 
 The [`engine/`](engine/) folder holds the full greenfield design — sport deep-dives,
 greenfield schema, API design, entitlements matrix, and ordered
-[`engine/prompts/`](engine/prompts/) for incremental implementation. Prompts 01–14+ are
-largely landed in `packages/engine` and `apps/web`; later prompts (scheduling console,
-scorer role, discovery, tier-1 features) are tracked in the design corpus.
+[`engine/prompts/`](engine/prompts/) for incremental implementation. Most prompts are landed
+in `packages/engine` and `apps/web`; each design wave under [`design/`](design/) ships as
+an ordered `PROMPT-*` batch (see status table below for per-wave status).
+
+---
+
+## Implementation status
+
+Design corpus lives in [`design/`](design/) as ordered `PROMPT-*` waves. Waves v2, v3, v5,
+v6, v7, v8, v9 are complete and merged to `main`. v4 and v10–v13 are not yet started.
+
+| Wave | Prompts | Focus | Status |
+|------|---------|-------|--------|
+| v2 | 00–29 | Engine v2 build-out + Jul3 batch (modules, scheduling, tier-1) | ✅ Complete |
+| v3 | 30–40 | Routing, UI system, mobile, pricing v3, marketing redesign | ✅ Complete |
+| v4 | 41–43 | AI schedule engine, refine/repair, board UX | ⬜ Pending |
+| v5 | 44–47 | i18n foundation (en/fr/es/nl); modernized across app + score pads | ✅ Complete |
+| v6 | 48–50 | Tennis, ice hockey, field hockey modules + pads | ✅ Complete |
+| v7 | 51–52 | Platform revenue report, registration settings redesign | ✅ Complete |
+| v8 | 53–54 | Player accounts, DB connection budget | ✅ Complete |
+| v9 | 55 | Dispute / loss recovery | ✅ Complete |
+| v10 | 56 | Sponsor CRM + monetization | ⬜ Pending |
+| v11 | 57 | Official onboarding | ⬜ Pending |
+| v12 | 58 | Scheduling docs + doc branding | ⬜ Pending |
+| v13 | 59–66 | Competition fidelity, bulk enrol, brackets, audit export, ad-hoc fixtures | ⬜ Pending |
 
 ---
 
