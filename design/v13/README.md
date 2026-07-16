@@ -14,8 +14,9 @@
 ## Theme
 
 Seeding a real, large, multi-group tournament (the FIFA World Cup 2026 demo,
-2026-07-15) surfaced five gaps that block modelling **any** real competition
-faithfully — not just football. They fall in two independent halves:
+2026-07-15) surfaced gaps that block modelling **any** real competition
+faithfully — not just football. They fall in three independent parts (a third,
+PROMPT-61, is a live bug — knockouts silently finishing as draws):
 
 **Engine fidelity (PROMPT-59).** The competition layer can't express the two
 things a real cup needs:
@@ -69,6 +70,10 @@ field of teams is disproportionately hard:
 - **PROMPT-60** — Entrant identity + bulk enrolment: `entrants.badge_url` (or
   `crest_ref`) rendered across board/bracket/public, and inline new-person
   members on entrant create.
+- **PROMPT-61** — Enforce "knockout produces a winner": wire the declared-but-
+  never-invoked `supportsDraws` predicate at finalize so a level knockout can't
+  silently persist as a draw + stall the bracket, and make shootout/extra-time
+  configurable per knockout stage. Sport-agnostic. (Bug found live on the demo.)
 
 ## Reference
 

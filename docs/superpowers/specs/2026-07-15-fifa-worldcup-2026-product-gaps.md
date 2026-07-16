@@ -62,3 +62,32 @@ person endpoint; entrants accept inline `members` only by pre-existing `person_i
 **Rough fix:** accept inline new-person members (name + number + position) on entrant create,
 or a `POST /api/v1/persons` batch body.
 
+## 6. Knockout fixtures can silently finalize as a DRAW — bracket stalls (real bug)
+
+**Hit:** in the "Group Stage" division (stg), several knockout R32 matches entered with a
+level score finalized as `outcome = {kind:"draw"}`, status `decided`. A knockout fixture with
+no winner leaves the bracket unable to advance — the round-2 (R16) feeds stayed `(TBD)` and the
+round was unplayable. No error was shown; it just stalled.
+
+**Root cause (traced):** the finalize path is **stage-blind**.
+`apps/web/src/server/engine-db/append-event.ts` folds the event stream with
+`foldMatch(sportModule, division.config, …)` and takes `sportModule.outcome(state)` — it never
+loads the fixture's **stage kind** and never calls `supportsDraws`. Every sport module declares
+`supportsDraws(cfg, stage) === false` for knockout (and the comments claim "the engine refuses
+to finalize a drawn knockout fixture via supportsDraws"), but **`supportsDraws` is invoked
+nowhere in the codebase** — the safety net is documented, not implemented. Football's
+`resolveFullTime` returns `{kind:"draw"}` on a level FT whenever `cfg.extraTime`/`cfg.shootout`
+are both off, and nothing rejects it.
+
+Compounding: shootout/extra-time are read from **`division.config`** (what `foldMatch` gets),
+not stage config — so in a groups+knockout division there's no way to say "groups may draw,
+knockout must produce a winner." Enabling shootout on the knockout **stage** config is inert.
+
+**Rough fix (sport-agnostic — see v13 PROMPT-61):**
+1. In `append-event.ts` (and `fold.ts` / `rebuild.ts`), load the fixture's stage `kind` and,
+   after computing `outcome`, reject when `outcome.kind === "draw" &&
+   !sportModule.supportsDraws(cfg, stageKind)` with a clear `EngineError` — wire the net that
+   already has a name. Applies to every draw-forbidding sport (set-based, etc.), not just football.
+2. Overlay knockout-stage `shootout`/`extraTime` into the cfg passed to `foldMatch` so a
+   knockout stage can require a decider while its sibling group stage still draws.
+
