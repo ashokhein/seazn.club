@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { ConfirmDialog } from "@/components/v2/confirm-dialog";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export interface ArchivedDivisionLite {
   id: string;
@@ -26,6 +27,7 @@ export function ArchivedDivisions({
   divisions: ArchivedDivisionLite[];
   canEdit: boolean;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,7 +49,7 @@ export function ArchivedDivisions({
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : "Restore failed");
+        setError(err instanceof Error ? err.message : msg("archived.restoreFailed"));
       }
     } finally {
       setBusy(false);
@@ -62,7 +64,7 @@ export function ArchivedDivisions({
       setPurging(null);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Purge failed");
+      setError(err instanceof Error ? err.message : msg("archived.purgeFailed"));
       setPurging(null);
     } finally {
       setBusy(false);
@@ -74,11 +76,8 @@ export function ArchivedDivisions({
 
   return (
     <section className="card p-5" data-testid="archived-divisions">
-      <h2 className="text-sm font-semibold text-slate-700">Archived divisions</h2>
-      <p className="mt-1 text-xs text-slate-500">
-        Hidden from your console and the public site; they don’t count against your plan.
-        Restore brings everything back exactly as it was.
-      </p>
+      <h2 className="text-sm font-semibold text-slate-700">{msg("archived.heading")}</h2>
+      <p className="mt-1 text-xs text-slate-500">{msg("archived.desc")}</p>
       {error && (
         <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
@@ -97,7 +96,7 @@ export function ArchivedDivisions({
               <span className="min-w-0 flex-1 truncate text-slate-700">{d.name}</span>
               <span className="chip">{d.sport_key}</span>
               <span className="shrink-0 text-xs text-slate-500">
-                archived {new Date(d.archived_at).toLocaleDateString()}
+                {msg("archived.archivedAt", { date: new Date(d.archived_at).toLocaleDateString() })}
               </span>
               {canEdit && (
                 <div className="flex w-full items-center justify-end gap-2 sm:w-auto sm:shrink-0">
@@ -107,7 +106,7 @@ export function ArchivedDivisions({
                     disabled={busy}
                     onClick={() => void restore(d.id)}
                   >
-                    Restore
+                    {msg("archived.restore")}
                   </button>
                   <button
                     type="button"
@@ -115,12 +114,12 @@ export function ArchivedDivisions({
                     disabled={busy || !purgeReady}
                     title={
                       purgeReady
-                        ? "Permanently delete this archived division"
-                        : `Purge unlocks ${purgeReadyAt(d.archived_at).toLocaleDateString()} (30-day cool-off)`
+                        ? msg("archived.purgeReadyTitle")
+                        : msg("archived.purgeCooloffTitle", { date: purgeReadyAt(d.archived_at).toLocaleDateString() })
                     }
                     onClick={() => setPurging(d)}
                   >
-                    Purge…
+                    {msg("archived.purge")}
                   </button>
                 </div>
               )}
@@ -131,21 +130,20 @@ export function ArchivedDivisions({
 
       <ConfirmDialog
         open={purging !== null}
-        title={`Purge ${purging?.name ?? ""}?`}
-        confirmLabel="Purge permanently"
+        title={msg("archived.purgeTitle", { name: purging?.name ?? "" })}
+        confirmLabel={msg("archived.purgeConfirm")}
         typedName={purging?.name ?? ""}
         busy={busy}
         onConfirm={() => purging && void purge(purging.id)}
         onCancel={() => setPurging(null)}
       >
         <p>
-          <strong>Destroyed:</strong> the division with every stage, fixture, result and
-          entrant entry — including recorded scores.
+          <strong>{msg("danger.destroyedLabel")}</strong> {msg("archived.destroyedText")}
         </p>
         <p>
-          <strong>Kept:</strong> people, teams and clubs at the organisation level.
+          <strong>{msg("danger.keptLabel")}</strong> {msg("archived.keptText")}
         </p>
-        <p>This cannot be undone.</p>
+        <p>{msg("danger.cannotUndo")}</p>
       </ConfirmDialog>
     </section>
   );

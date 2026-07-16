@@ -5,6 +5,7 @@
 // oldest entry is #1 — the same row the sweep would promote). Semantics
 // untouched: Promote calls the existing confirm/waive endpoints.
 import type { Registration } from "./registrations-panel";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function WaitlistQueue({
   rows,
@@ -23,16 +24,13 @@ export function WaitlistQueue({
   onWaive: (r: Registration) => void;
   onWithdraw: (r: Registration) => void;
 }) {
+  const msg = useMsg();
   const queue = [...rows].sort(
     (a, b) => (positions.get(a.id) ?? 0) - (positions.get(b.id) ?? 0),
   );
 
   if (queue.length === 0) {
-    return (
-      <div className="card p-6 text-sm text-slate-500">
-        Nobody is waiting. The waitlist fills once the division is at capacity.
-      </div>
-    );
+    return <div className="card p-6 text-sm text-slate-500">{msg("reg.waitlist.empty")}</div>;
   }
 
   return (
@@ -53,7 +51,7 @@ export function WaitlistQueue({
               <span className="min-w-0 flex-1">
                 <span className="block truncate font-medium text-slate-800">{r.display_name}</span>
                 <span className="block truncate text-xs text-slate-500">
-                  {r.contact_email} · joined {new Date(r.created_at).toLocaleDateString()}
+                  {r.contact_email} · {msg("reg.waitlist.joined", { date: new Date(r.created_at).toLocaleDateString() })}
                 </span>
               </span>
             </span>
@@ -65,9 +63,9 @@ export function WaitlistQueue({
                     disabled={busy}
                     onClick={() => onWaive(r)}
                     className="btn btn-ghost text-xs"
-                    title="Confirm without payment (fee waived, logged)"
+                    title={msg("reg.action.waiveTitle")}
                   >
-                    Waive fee &amp; promote
+                    {msg("reg.waitlist.waivePromote")}
                   </button>
                 ) : (
                   <button
@@ -75,9 +73,9 @@ export function WaitlistQueue({
                     disabled={busy}
                     onClick={() => onPromote(r)}
                     className="btn btn-ghost text-xs font-medium text-emerald-700"
-                    title="Confirm this entry now — same as auto-promotion when a spot frees"
+                    title={msg("reg.waitlist.promoteTitle")}
                   >
-                    Promote
+                    {msg("reg.waitlist.promote")}
                   </button>
                 )}
                 <button
@@ -86,7 +84,7 @@ export function WaitlistQueue({
                   onClick={() => onWithdraw(r)}
                   className="btn btn-ghost text-xs text-red-600"
                 >
-                  Withdraw
+                  {msg("reg.action.withdraw")}
                 </button>
               </span>
             )}

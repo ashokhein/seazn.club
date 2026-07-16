@@ -10,6 +10,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { routes } from "@/lib/routes";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface Props {
   divisionId: string;
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function LaunchActions({ divisionId, orgSlug, compSlug, divSlug, status, canEdit }: Props) {
+  const msg = useMsg();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,7 +43,7 @@ export function LaunchActions({ divisionId, orgSlug, compSlug, divSlug, status, 
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywall(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : "Failed to start");
+        setError(err instanceof Error ? err.message : msg("launch.failedStart"));
       }
     } finally {
       setBusy(false);
@@ -56,13 +58,13 @@ export function LaunchActions({ divisionId, orgSlug, compSlug, divSlug, status, 
           disabled={busy}
           onClick={start}
           className="btn btn-primary px-3 py-1.5 text-xs"
-          title="Quick-start: generate first-stage fixtures and open scoring now"
+          title={msg("launch.startTitle")}
         >
-          {busy ? "Starting…" : "Start tournament"}
+          {busy ? msg("launch.starting") : msg("launch.start")}
         </button>
       )}
       <Link href={routes.divisionSchedule(orgSlug, compSlug, divSlug)} className="btn btn-ghost px-3 py-1.5 text-xs">
-        Schedule
+        {msg("launch.schedule")}
       </Link>
       {paywall && <UpgradeGate feature={paywall} compact />}
       {error && <span className="text-xs text-red-600">{error}</span>}

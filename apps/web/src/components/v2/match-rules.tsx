@@ -4,7 +4,10 @@
 // object (previously a raw-JSON textarea). Blank = keep the variant default;
 // the pinned module's configSchema still validates server-side. Shared by
 // the division builder and the division Settings tab (v8) so the two format
-// editors can't drift.
+// editors can't drift. Field labels/options are sport-rules vocabulary, kept
+// canonical/English like sport + format names; only the picker chrome
+// (Default / On / Off) localizes.
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export interface RuleField {
   key: string;
@@ -246,6 +249,7 @@ export function MatchRuleFields({
   onChange: (next: Record<string, string>) => void;
   disabled?: boolean;
 }) {
+  const msg = useMsg();
   const fields = SPORT_RULES[sportKey] ?? [];
   if (fields.length === 0) return null;
   return (
@@ -261,7 +265,7 @@ export function MatchRuleFields({
               disabled={disabled}
               value={values[field.key] ?? ""}
               onChange={(e) => onChange({ ...values, [field.key]: e.target.value })}
-              placeholder="Default"
+              placeholder={msg("rules.default")}
               className="input"
             />
           ) : (
@@ -271,11 +275,11 @@ export function MatchRuleFields({
               onChange={(e) => onChange({ ...values, [field.key]: e.target.value })}
               className="select"
             >
-              <option value="">Default</option>
+              <option value="">{msg("rules.default")}</option>
               {field.kind === "bool" ? (
                 <>
-                  <option value="on">On</option>
-                  <option value="off">Off</option>
+                  <option value="on">{msg("rules.on")}</option>
+                  <option value="off">{msg("rules.off")}</option>
                 </>
               ) : (
                 (field.options ?? []).map((o) => (
