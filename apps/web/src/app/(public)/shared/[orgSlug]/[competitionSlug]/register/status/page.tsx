@@ -20,7 +20,9 @@ import { fillPaymentInstructions } from "@/lib/payment-instructions";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
 import { TearOffTicket } from "@/components/public-site/ticket";
 import { RegistrationActions } from "@/components/public-site/registration-actions";
-import { msg } from "@/lib/messages";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, type Dict, type Locale } from "@/lib/i18n";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 export const metadata: Metadata = { robots: { index: false, follow: false } };
 
@@ -29,64 +31,37 @@ type Props = {
   searchParams: Promise<{ rid?: string; token?: string; checkout?: string }>;
 };
 
-const STATUS_COPY: Record<string, { title: string; body: string; tone: string }> = {
-  pending: {
-    title: "Registration received",
-    body: "Your spot is held. If an entry fee is due, settle it below and the organiser confirms your entry.",
-    tone: "border-amber-200 bg-amber-50 text-amber-800",
-  },
-  pending_card: {
-    title: "Almost in — payment confirms your spot",
-    body: "Your spot is held until the deadline below. Pay by card and you're confirmed instantly.",
-    tone: "border-amber-200 bg-amber-50 text-amber-800",
-  },
-  paid: {
-    title: "Payment received",
-    body: "Your payment is in — confirmation is being finalised.",
-    tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  },
-  confirmed: {
-    title: "You're in!",
-    body: "Your registration is confirmed and you're on the entrant list.",
-    tone: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  },
-  waitlisted: {
-    title: "You're on the waitlist",
-    body: "The division is full — no payment is taken while you wait. If a spot opens you're promoted automatically; keep this page's link.",
-    tone: "border-sky-200 bg-sky-50 text-sky-800",
-  },
-  withdrawn: {
-    title: "Registration withdrawn",
-    body: "This registration has been withdrawn.",
-    tone: "border-zinc-200 bg-zinc-50 text-zinc-600",
-  },
-  expired: {
-    title: "Pay window passed",
-    body: "This registration expired unpaid and the spot was released. If places remain you can register again.",
-    tone: "border-zinc-200 bg-zinc-50 text-zinc-600",
-  },
+// Copy keys resolve against the ui catalog per request; tone stays inline.
+const STATUS_COPY: Record<string, { key: string; tone: string }> = {
+  pending: { key: "status.pending", tone: "border-amber-200 bg-amber-50 text-amber-800" },
+  pending_card: { key: "status.pending_card", tone: "border-amber-200 bg-amber-50 text-amber-800" },
+  paid: { key: "status.paid", tone: "border-emerald-200 bg-emerald-50 text-emerald-800" },
+  confirmed: { key: "status.confirmed", tone: "border-emerald-200 bg-emerald-50 text-emerald-800" },
+  waitlisted: { key: "status.waitlisted", tone: "border-sky-200 bg-sky-50 text-sky-800" },
+  withdrawn: { key: "status.withdrawn", tone: "border-zinc-200 bg-zinc-50 text-zinc-600" },
+  expired: { key: "status.expired", tone: "border-zinc-200 bg-zinc-50 text-zinc-600" },
 };
 
-function formatDeadlineUtc(iso: string): string {
-  return new Date(iso).toLocaleString("en-GB", {
+function formatDeadlineUtc(iso: string, locale: Locale): string {
+  return new Date(iso).toLocaleString(locale, {
     weekday: "short", day: "numeric", month: "short",
     hour: "2-digit", minute: "2-digit", timeZone: "UTC", timeZoneName: "short",
   });
 }
 
-function money(cents: number, currency: string | null): string {
-  return new Intl.NumberFormat("en-GB", {
+function money(cents: number, currency: string | null, locale: Locale): string {
+  return new Intl.NumberFormat(locale, {
     style: "currency",
     currency: (currency ?? "gbp").toUpperCase(),
   }).format(cents / 100);
 }
 
 /** Submitted → Payment → Confirmed strip: the whole journey at a glance. */
-function Timeline({ status, paid }: { status: string; paid: boolean }) {
+function Timeline({ status, paid, ui }: { status: string; paid: boolean; ui: Dict }) {
   const stages: { label: string; state: "done" | "now" | "todo" | "off" }[] = [
-    { label: "Submitted", state: "done" },
+    { label: t(ui, "status.timeline.submitted"), state: "done" },
     {
-      label: "Payment",
+      label: t(ui, "status.timeline.payment"),
       state: !paid
         ? "off"
         : status === "confirmed" || status === "paid"
@@ -96,7 +71,7 @@ function Timeline({ status, paid }: { status: string; paid: boolean }) {
             : "todo",
     },
     {
-      label: "Confirmed",
+      label: t(ui, "status.timeline.confirmed"),
       state: status === "confirmed" ? "done" : status === "paid" ? "now" : "todo",
     },
   ];
@@ -156,8 +131,11 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
   const qrDataUrl = view.ref_code
     ? await QRCode.toDataURL(`${origin}/r/${view.ref_code}`, { margin: 1, width: 224 })
     : null;
+  const locale = await resolveLocale();
+  const ui = await getDictionary(locale, "ui");
 
   return (
+    <DictProvider dict={ui} locale={locale}>
     <div className="mx-auto max-w-xl">
       <p className="text-xs text-ink-muted">
         <Link
@@ -166,26 +144,26 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
         >
           {view.competition_name}
         </Link>{" "}
-        / Registration
+        / {t(ui, "status.breadcrumb")}
       </p>
 
       <div className={`mt-3 rounded-xl border p-5 ${copy.tone}`}>
-        <h1 className="font-display text-2xl font-semibold">{copy.title}</h1>
-        <p className="mt-1 text-sm">{copy.body}</p>
+        <h1 className="font-display text-2xl font-semibold">{t(ui, `${copy.key}.title`)}</h1>
+        <p className="mt-1 text-sm">{t(ui, `${copy.key}.body`)}</p>
         {view.status === "waitlisted" && view.position !== null && (
           <p
             className="mt-2 inline-block rounded-md bg-white/70 px-2.5 py-1 text-xs font-semibold tabular-nums"
             data-testid="queue-position-public"
           >
-            {`You're #${view.position} in line — we'll email you if a spot opens.`}
+            {t(ui, "status.waitlistPosition", { n: view.position })}
           </p>
         )}
         {view.status === "pending" && view.can_pay_online && view.expires_at && (
           <p className="mt-2 inline-block rounded-md bg-white/70 px-2.5 py-1 text-xs font-semibold tabular-nums">
-            Spot held until {formatDeadlineUtc(view.expires_at)}
+            {t(ui, "status.spotHeld", { deadline: formatDeadlineUtc(view.expires_at, locale) })}
           </p>
         )}
-        <Timeline status={view.status} paid={view.amount_cents > 0 || view.fee_cents > 0} />
+        <Timeline status={view.status} paid={view.amount_cents > 0 || view.fee_cents > 0} ui={ui} />
       </div>
 
       {/* The tear-off ticket (v3/05 §3): masthead, entrant, huge mono ref,
@@ -201,6 +179,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
           startsOn={view.starts_on}
           endsOn={view.ends_on}
           qrDataUrl={qrDataUrl}
+          locale={locale}
           actions={
             <>
               {(view.status === "confirmed" || view.status === "paid") && (
@@ -208,7 +187,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
                   href={icsHref}
                   className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:border-zinc-500"
                 >
-                  {msg("register.ticket.calendar")}
+                  {t(ui, "register.ticket.calendar")}
                 </a>
               )}
               {view.ref_code && (
@@ -217,7 +196,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
                   download={`${view.ref_code}.png`}
                   className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:border-zinc-500"
                 >
-                  {msg("register.ticket.save")}
+                  {t(ui, "register.ticket.save")}
                 </a>
               )}
               {view.ref_code && (
@@ -225,7 +204,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
                   href={`/r/${view.ref_code}`}
                   className="rounded-md border border-zinc-300 px-4 py-2 text-sm hover:border-zinc-500"
                 >
-                  {msg("register.ticket.status")}
+                  {t(ui, "register.ticket.status")}
                 </Link>
               )}
               <RegistrationActions
@@ -233,7 +212,7 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
                 token={token}
                 status={view.status}
                 paymentDue={view.can_pay_online}
-                payLabel={`Pay entry fee — ${money(view.amount_cents, view.currency)}`}
+                payLabel={t(ui, "status.payLabel", { amount: money(view.amount_cents, view.currency, locale) })}
               />
             </>
           }
@@ -242,16 +221,16 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
 
       {view.amount_cents > 0 && (
         <p className="mt-4 text-sm text-zinc-600">
-          Entry fee: <strong>{money(view.amount_cents, view.currency)}</strong>
+          {t(ui, "status.entryFee")} <strong>{money(view.amount_cents, view.currency, locale)}</strong>
           {view.refunded_cents > 0
-            ? ` (refunded ${money(view.refunded_cents, view.currency)})`
+            ? ` ${t(ui, "status.refunded", { amount: money(view.refunded_cents, view.currency, locale) })}`
             : ""}
         </p>
       )}
 
       {view.payment_due && view.payment_method !== "stripe" && (
         <div className="mt-4 rounded-xl border border-accent-line bg-accent-soft p-5">
-          <h2 className="text-sm font-semibold text-accent-strong">How to pay your entry fee</h2>
+          <h2 className="text-sm font-semibold text-accent-strong">{t(ui, "status.howToPay")}</h2>
           {view.payment_instructions ? (
             /* Markdown through the one prose pipeline; {{reference}} becomes
                this registrant's ref code. */
@@ -264,26 +243,25 @@ export default async function RegistrationStatusPage({ params, searchParams }: P
             </div>
           ) : (
             <p className="mt-2 text-sm text-zinc-600">
-              The organiser will contact you at your registered email with payment details.
+              {t(ui, "status.contactYou")}
             </p>
           )}
           <p className="mt-3 text-xs text-zinc-500">
-            The organiser confirms your entry once the payment arrives.
+            {t(ui, "status.confirmsOnce")}
           </p>
         </div>
       )}
 
       {view.payment_due && view.payment_method === "stripe" && !view.can_pay_online && (
         <div className="mt-4 rounded-xl border border-zinc-200 bg-zinc-50 p-5 text-sm text-zinc-600">
-          Card payments are temporarily unavailable — try again shortly or contact the
-          organiser.
+          {t(ui, "status.cardUnavailable")}
         </div>
       )}
 
       <p className="mt-6 text-xs text-zinc-500">
-        Keep this page&apos;s link — it&apos;s your receipt and the only way to manage this
-        registration.
+        {t(ui, "status.keepLink")}
       </p>
     </div>
+    </DictProvider>
   );
 }

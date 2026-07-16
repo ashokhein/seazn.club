@@ -4,27 +4,19 @@ import type { OrgRole } from "@/lib/types";
 import { AuthForm } from "@/components/auth-form";
 import { JoinInvite } from "@/components/join-invite";
 import { NightStage } from "@/components/night-stage";
-
-const ROLE_BLURB: Record<string, string> = {
-  admin: "Admins can create and manage tournaments, results and members.",
-  viewer: "Viewers get read-only access to the board.",
-  owner: "Owners have full control of the organization.",
-  scorer: "Scorers record results for the matches assigned to them.",
-};
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, type Dict } from "@/lib/i18n";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 /** What accepting will do for someone who is ALREADY a member (invites are
  *  additive — they never change an existing role). */
-function memberBlurb(invite: InviteRow, existing: OrgRole): string {
+function memberBlurb(dict: Dict, invite: InviteRow, existing: OrgRole): string {
   const additive =
     invite.role === "scorer" &&
     invite.default_scope !== null &&
     (existing === "viewer" || existing === "scorer");
-  if (additive) {
-    return `You are already a ${existing} of this organization — accepting adds ` +
-      "the invited matches to your scoring assignments. Your current access is unchanged.";
-  }
-  return `You are already ${existing === "admin" || existing === "owner" ? "an" : "a"} ` +
-    `${existing} of this organization — accepting changes nothing.`;
+  const key = additive ? "join.member.additive" : "join.member.noChange";
+  return t(dict, key, { role: existing });
 }
 
 export async function generateMetadata({
@@ -55,7 +47,9 @@ export default async function JoinPage({
 }) {
   const { token } = await params;
   const [user, invite] = await Promise.all([getCurrentUser(), loadInvite(token)]);
-  const problem = invite ? inviteProblem(invite) : "Invite not found";
+  const locale = await resolveLocale();
+  const ui = await getDictionary(locale, "ui");
+  const problem = invite ? inviteProblem(invite) : t(ui, "join.notFound");
   const existingRole =
     user && invite ? await getOrgRole(invite.org_id, user.id) : null;
   // Email invites are personal (acceptInvite enforces this server-side) —
@@ -65,48 +59,40 @@ export default async function JoinPage({
 
   return (
     <NightStage maxW="max-w-md">
+      <DictProvider dict={ui} locale={locale}>
       {!invite || problem ? (
         <div className="card p-6 text-center">
-          <h1 className="text-xl font-bold text-purple-900">Invite unavailable</h1>
+          <h1 className="text-xl font-bold text-purple-900">{t(ui, "join.unavailable")}</h1>
           <p className="mt-2 text-sm text-slate-500">
-            {problem ?? "This invite link is not valid."}
+            {problem ?? t(ui, "join.invalidLink")}
           </p>
         </div>
       ) : (
         <>
           <div className="mb-6 text-center">
             <h1 className="app-display text-3xl font-bold tracking-tight text-cream">
-              Join {invite.org_name}
+              {t(ui, "join.title", { org: invite.org_name })}
             </h1>
             <p className="mt-2 text-sm text-cream/70">
-              You&apos;ve been invited as{" "}
+              {t(ui, "join.invitedAs")}{" "}
               <span className="font-medium text-lime-400">{invite.role}</span>.{" "}
-              {ROLE_BLURB[invite.role]}
+              {t(ui, `join.role.${invite.role}`)}
             </p>
           </div>
           {user ? (
             <div className="card p-6">
               <p className="mb-4 text-sm text-slate-600">
-                Signed in as{" "}
-                <span className="font-medium text-purple-700">
-                  {user.display_name}
-                </span>
-                .
+                {t(ui, "join.signedInAs", { name: user.display_name })}
               </p>
               {emailMismatch ? (
                 <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                  This is a personal invite for{" "}
-                  <span className="font-medium">{invite.email}</span>, but
-                  you&apos;re signed in as{" "}
-                  <span className="font-medium">{user.email}</span>. Sign in
-                  with the invited address, or ask the organiser to invite this
-                  one.
+                  {t(ui, "join.emailMismatch", { inviteEmail: invite.email!, userEmail: user.email })}
                 </p>
               ) : (
                 <>
                   {existingRole && (
                     <p className="mb-4 rounded-md bg-purple-50 px-3 py-2 text-sm text-purple-800">
-                      {memberBlurb(invite, existingRole)}
+                      {memberBlurb(ui, invite, existingRole)}
                     </p>
                   )}
                   <JoinInvite token={token} />
@@ -116,13 +102,14 @@ export default async function JoinPage({
           ) : (
             <>
               <p className="mb-4 text-center text-sm text-cream/70">
-                Sign in or create an account to join.
+                {t(ui, "join.signInPrompt")}
               </p>
               <AuthForm next={`/join/${token}`} />
             </>
           )}
         </>
       )}
+      </DictProvider>
     </NightStage>
   );
 }

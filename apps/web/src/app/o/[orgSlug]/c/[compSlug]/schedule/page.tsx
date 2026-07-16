@@ -16,6 +16,8 @@ import { withTenant } from "@/lib/db";
 import { ScheduleBoard } from "@/components/v2/schedule-board";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t } from "@/lib/i18n";
 
 export default async function CompetitionSchedulePage({
   params,
@@ -27,6 +29,8 @@ export default async function CompetitionSchedulePage({
   const { auth, canEdit } = page;
   const id = page.competition.id;
   const competition = await getCompetition(auth, id);
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
 
   const multiAllowed = await hasFeature(auth.orgId, "scheduling.multi_division");
   if (!multiAllowed) {
@@ -34,7 +38,7 @@ export default async function CompetitionSchedulePage({
       <>
         <main className="mx-auto max-w-3xl px-4 py-8">
           <h1 className="page-title mb-4">
-            Competition schedule — {competition.name}
+            {t(dict, "comp.schedule.title", { name: competition.name })}
           </h1>
           <UpgradeGate feature="scheduling.multi_division" />
         </main>
@@ -50,17 +54,16 @@ export default async function CompetitionSchedulePage({
       <>
         <main className="mx-auto max-w-3xl px-4 py-8">
           <h1 className="page-title mt-1 mb-4">
-            Competition schedule — {competition.name}
+            {t(dict, "comp.schedule.title", { name: competition.name })}
           </h1>
           <div className="card p-6 text-sm text-slate-500">
-            No divisions yet — the schedule board fills in once this competition
-            has divisions with fixtures.{" "}
+            {t(dict, "comp.schedule.empty")}{" "}
             {canEdit && !(competition.frozen ?? false) && (
               <Link
                 href={routes.divisionNew(orgSlug, compSlug)}
                 className="font-medium text-purple-600 hover:text-purple-700"
               >
-                Add a division
+                {t(dict, "card.empty.divisions.cta")}
               </Link>
             )}
           </div>
@@ -106,7 +109,7 @@ export default async function CompetitionSchedulePage({
       <main className="mx-auto max-w-7xl px-4 py-8">
         <div className="mb-4">
           <h1 className="page-title mt-1">
-            Competition schedule — {competition.name}
+            {t(dict, "comp.schedule.title", { name: competition.name })}
           </h1>
         </div>
 

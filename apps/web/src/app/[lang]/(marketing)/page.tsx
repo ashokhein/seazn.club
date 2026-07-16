@@ -69,7 +69,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
   const defaultDraw = marketingPreview("groups-knockout", 8);
 
   return (
-    <MarketingShell variant="night-scroll">
+    <MarketingShell variant="night-scroll" lang={lang}>
       <main>
         {/* Hero — stadium night. */}
         <section className="relative -mt-16 overflow-hidden bg-[linear-gradient(180deg,var(--mk-night-2),var(--mk-night))] pb-16 pt-28 text-[var(--mk-cream)]">

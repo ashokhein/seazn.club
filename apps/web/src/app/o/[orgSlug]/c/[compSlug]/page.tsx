@@ -14,7 +14,8 @@ import { StatusChip, divisionChipState, CHIP_SORT } from "@/components/ui/status
 import { divisionAccent, monogram } from "@/lib/division-hue";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import { routes } from "@/lib/routes";
-import { msg } from "@/lib/messages";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, plural } from "@/lib/i18n";
 
 export default async function CompetitionPage({
   params,
@@ -25,6 +26,8 @@ export default async function CompetitionPage({
   const page = await requireCompetitionPage(orgSlug, compSlug);
   const { auth, canEdit } = page;
   const id = page.competition.id;
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
   const [competition, divisions, stats] = await Promise.all([
     getCompetition(auth, id),
     listDivisions(auth, id),
@@ -48,29 +51,29 @@ export default async function CompetitionPage({
             <Link
               href={routes.slideshowCompetition(competition.id)}
               target="_blank"
-              aria-label="Slideshow (opens in a new tab)"
+              aria-label={t(dict, "aria.slideshowNewTab")}
               className="btn btn-ghost gap-1.5"
             >
               <MonitorPlay className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Slideshow ↗</span>
+              <span className="hidden sm:inline">{t(dict, "action.slideshow")} ↗</span>
             </Link>
             <Link
               href={routes.competitionSchedule(orgSlug, compSlug)}
-              aria-label="Schedule Board"
+              aria-label={t(dict, "aria.scheduleBoard")}
               className="btn btn-ghost gap-1.5"
             >
               <CalendarRange className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Schedule Board</span>
+              <span className="hidden sm:inline">{t(dict, "action.scheduleBoard")}</span>
             </Link>
             {publicPath && (
               <Link
                 href={publicPath}
                 target="_blank"
-                aria-label="View Public Page (opens in a new tab)"
+                aria-label={t(dict, "aria.viewPublicNewTab")}
                 className="btn btn-ghost gap-1.5"
               >
                 <Globe className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">View Public Page ↗</span>
+                <span className="hidden sm:inline">{t(dict, "action.viewPublic")} ↗</span>
               </Link>
             )}
             {publicPath && (
@@ -79,42 +82,42 @@ export default async function CompetitionPage({
               <a
                 href={`${publicPath}/poster.pdf`}
                 target="_blank"
-                aria-label="QR poster (PDF, opens in a new tab)"
+                aria-label={t(dict, "aria.qrPoster")}
                 className="btn btn-ghost gap-1.5"
               >
                 <Printer className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">QR</span>
+                <span className="hidden sm:inline">{t(dict, "action.qr")}</span>
               </a>
             )}
             <Link
               href={routes.competitionSettings(orgSlug, compSlug)}
-              aria-label="Settings"
+              aria-label={t(dict, "aria.settings")}
               className="btn btn-ghost gap-1.5"
             >
               <Settings className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Settings</span>
+              <span className="hidden sm:inline">{t(dict, "action.settings")}</span>
             </Link>
           </div>
         </div>
 
           <section>
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-700">Divisions</h2>
+              <h2 className="text-sm font-semibold text-slate-700">{t(dict, "comp.detail.divisions")}</h2>
               {canEdit && !competition.frozen && (
                 <Link
                   href={routes.divisionNew(orgSlug, compSlug)}
                   className="btn btn-primary"
                 >
-                  + Add division
+                  + {t(dict, "action.addDivision")}
                 </Link>
               )}
             </div>
             {divisions.length === 0 ? (
               <div className="card p-6 text-center text-sm text-slate-500">
-                <p>{msg("card.empty.divisions")}</p>
+                <p>{t(dict, "card.empty.divisions")}</p>
                 {canEdit && !competition.frozen && (
                   <Link href={routes.divisionNew(orgSlug, compSlug)} className="btn btn-primary mt-4">
-                    {msg("card.empty.divisions.cta")}
+                    {t(dict, "card.empty.divisions.cta")}
                   </Link>
                 )}
               </div>
@@ -130,8 +133,10 @@ export default async function CompetitionPage({
                   .sort((a, b) => CHIP_SORT[a.chip] - CHIP_SORT[b.chip])
                   .map(({ d, chip }) => {
                     const s = stats.get(d.id);
+                    // Plural picks the noun; the count string keeps the "used/cap"
+                    // form, so force the plural noun whenever a capacity is shown.
                     const entrantsLabel = s
-                      ? `${s.entrants}${s.capacity ? `/${s.capacity}` : ""} entrant${s.entrants === 1 && !s.capacity ? "" : "s"}`
+                      ? `${s.entrants}${s.capacity ? `/${s.capacity}` : ""} ${plural(dict, "card.meta.entrants", s.capacity ? 2 : s.entrants, locale)}`
                       : null;
                     return (
                       <EntityCard
@@ -145,7 +150,8 @@ export default async function CompetitionPage({
                         }}
                         name={d.name}
                         accent={divisionAccent(d.id)}
-                        chip={<StatusChip state={chip} />}
+                        locale={locale}
+                        chip={<StatusChip state={chip} locale={locale} />}
                         meta={[formatLabel(s?.stage_kinds ?? []), entrantsLabel]
                           .filter(Boolean)
                           .join(" · ")}
@@ -155,9 +161,9 @@ export default async function CompetitionPage({
                           <CardMenu
                             name={d.name}
                             items={[
-                              { label: "Schedule", href: routes.divisionSchedule(orgSlug, compSlug, d.slug) },
-                              { label: "Registrations", href: routes.divisionRegistrations(orgSlug, compSlug, d.slug) },
-                              { label: "Slideshow", href: routes.slideshowDivision(d.id), external: true },
+                              { label: t(dict, "action.schedule"), href: routes.divisionSchedule(orgSlug, compSlug, d.slug) },
+                              { label: t(dict, "action.registrations"), href: routes.divisionRegistrations(orgSlug, compSlug, d.slug) },
+                              { label: t(dict, "action.slideshow"), href: routes.slideshowDivision(d.id), external: true },
                             ]}
                           />
                         }

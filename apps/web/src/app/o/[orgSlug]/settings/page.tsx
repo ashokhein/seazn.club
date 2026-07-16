@@ -21,7 +21,8 @@ import { OrgBrandColor } from "@/components/org-brand-color";
 import { OrgAbout } from "@/components/org-about";
 import { OrgSponsors } from "@/components/org-sponsors";
 import { brandingSponsors } from "@/lib/org-branding";
-import { msg } from "@/lib/messages";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, type Dict } from "@/lib/i18n";
 import {
   DisplayNameForm,
   ChangeEmailForm,
@@ -67,20 +68,26 @@ const ROLE_BADGE: Record<string, string> = {
   viewer: "bg-slate-100 text-slate-600",
 };
 
+/** Localized role badge text (owner/admin/viewer/scorer). */
+function roleLabel(dict: Dict, role: string): string {
+  return t(dict, `role.${role}`);
+}
+
 type Tab = "organization" | "team" | "api" | "account";
 
 // Plan & billing lives at its own route (/settings/billing) — it owns the
 // Stripe checkout-return reconciliation and portal flows — so it links out of
-// the tabbed sidebar rather than rendering an inline panel here.
-const NAV_ITEMS: { tab: Tab; label: string; icon: LucideIcon; href?: string }[] = [
-  { tab: "organization",  label: "Organisation",   icon: Building2  },
-  { tab: "team",          label: "Team",           icon: Users      },
-  { tab: "api",           label: "Platform API",   icon: KeyRound   },
-  { tab: "account",       label: "Account",        icon: UserCircle },
+// the tabbed sidebar rather than rendering an inline panel here. `labelKey`
+// is a ui-catalog key resolved per-request (t) so the nav localizes.
+const NAV_ITEMS: { tab: Tab; labelKey: string; icon: LucideIcon; href?: string }[] = [
+  { tab: "organization",  labelKey: "settings.nav.organization", icon: Building2  },
+  { tab: "team",          labelKey: "settings.nav.team",         icon: Users      },
+  { tab: "api",           labelKey: "settings.nav.api",          icon: KeyRound   },
+  { tab: "account",       labelKey: "settings.nav.account",      icon: UserCircle },
 ];
 
-const BILLING_NAV = { label: "Plan & billing", icon: CreditCard } as const;
-const PAYMENTS_NAV = { label: "Payments", icon: Banknote } as const;
+const BILLING_NAV = { labelKey: "payments.planBilling", icon: CreditCard } as const;
+const PAYMENTS_NAV = { labelKey: "payments.title", icon: Banknote } as const;
 
 export default async function SettingsPage({
   params,
@@ -92,6 +99,8 @@ export default async function SettingsPage({
   const { orgSlug } = await params;
   const { user, org: active, canEdit } = await requireOrgPage(orgSlug, { tail: "/settings" });
   const orgs = await getUserOrgs(user.id);
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
 
   const { tab: rawTab, email_change } = await searchParams;
   const tab: Tab = (NAV_ITEMS.some((n) => n.tab === rawTab) ? rawTab : "organization") as Tab;
@@ -135,15 +144,11 @@ export default async function SettingsPage({
     }
   }
 
-  const emailChangeMessage = email_change
-    ? ({
-        success: "Email address updated successfully.",
-        invalid: "This confirmation link is invalid.",
-        expired: "This confirmation link has expired. Please request a new one.",
-        taken: "That email address is already in use by another account.",
-        error: "Something went wrong. Please try again.",
-      }[email_change] ?? null)
-    : null;
+  const emailChangeMessage =
+    email_change &&
+    ["success", "invalid", "expired", "taken", "error"].includes(email_change)
+      ? t(dict, `settings.emailChange.${email_change}`)
+      : null;
 
   return (
     <>
@@ -154,26 +159,26 @@ export default async function SettingsPage({
                  (v3/02 §3.1 — no more desktop-width rows in one long scroll). ── */}
           <aside className="w-full md:w-44 md:shrink-0">
             <p className="mb-3 hidden px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 md:block">
-              Settings
+              {t(dict, "settings.nav.title")}
             </p>
             <nav className="scroll-x scroll-x-fade sticky top-0 z-30 -mx-4 flex gap-1 whitespace-nowrap bg-[var(--background)]/90 px-4 py-2 backdrop-blur md:static md:z-auto md:mx-0 md:block md:space-y-0.5 md:bg-transparent md:p-0 md:backdrop-blur-none">
-              {NAV_ITEMS.map(({ tab: t, label, icon: Icon }) => {
-                const active = tab === t;
+              {NAV_ITEMS.map(({ tab: navTab, labelKey, icon: Icon }) => {
+                const isActive = tab === navTab;
                 return (
                   <Link
-                    key={t}
-                    href={routes.orgSettings(orgSlug, t)}
+                    key={navTab}
+                    href={routes.orgSettings(orgSlug, navTab)}
                     className={`flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm transition ${
-                      active
+                      isActive
                         ? "bg-purple-100 font-medium text-purple-800"
                         : "text-slate-600 hover:bg-purple-50 hover:text-purple-700"
                     }`}
                   >
                     <Icon
-                      className={`h-4 w-4 shrink-0 ${active ? "text-purple-600" : "text-slate-500"}`}
+                      className={`h-4 w-4 shrink-0 ${isActive ? "text-purple-600" : "text-slate-500"}`}
                       strokeWidth={1.75}
                     />
-                    {label}
+                    {t(dict, labelKey)}
                   </Link>
                 );
               })}
@@ -184,14 +189,14 @@ export default async function SettingsPage({
                 className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
               >
                 <PAYMENTS_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
-                {PAYMENTS_NAV.label}
+                {t(dict, PAYMENTS_NAV.labelKey)}
               </Link>
               <Link
                 href={routes.billing(orgSlug)}
                 className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
               >
                 <BILLING_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
-                {BILLING_NAV.label}
+                {t(dict, BILLING_NAV.labelKey)}
               </Link>
             </nav>
             <div className="my-4 hidden border-t border-purple-100 md:block" />
@@ -199,7 +204,7 @@ export default async function SettingsPage({
               href={routes.orgHome(orgSlug)}
               className="hidden rounded-lg px-3 py-2 text-sm text-slate-500 transition hover:bg-slate-50 hover:text-slate-600 md:block"
             >
-              ← Competitions
+              ← {t(dict, "settings.nav.backToCompetitions")}
             </Link>
           </aside>
 
@@ -209,7 +214,7 @@ export default async function SettingsPage({
             {/* ── ORGANISATION ── */}
             {tab === "organization" && (
               <section className="card p-6">
-                <SectionHeader icon={Building2}>Organisation</SectionHeader>
+                <SectionHeader icon={Building2}>{t(dict, "settings.nav.organization")}</SectionHeader>
 
                 <div className="flex items-center gap-3">
                   <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-purple-500 to-fuchsia-500 text-lg font-bold text-white">
@@ -219,20 +224,20 @@ export default async function SettingsPage({
                     <p className="truncate text-sm font-semibold text-slate-800">{active.name}</p>
                     <p className="truncate font-mono text-xs text-purple-600">{active.slug}</p>
                   </div>
-                  <span className={`badge ${ROLE_BADGE[active.role]}`}>{active.role}</span>
+                  <span className={`badge ${ROLE_BADGE[active.role]}`}>{roleLabel(dict, active.role)}</span>
                   <OrgSwitcher orgs={orgs} activeId={active.id} />
                 </div>
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5" data-tour="org-rename">
-                    <SubSection icon={Pencil} label="Rename" />
+                    <SubSection icon={Pencil} label={t(dict, "settings.org.rename")} />
                     <OrgRename orgId={active.id} initialName={active.name} />
                   </div>
                 )}
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={ImageIcon} label="Logo" />
+                    <SubSection icon={ImageIcon} label={t(dict, "settings.org.logo")} />
                     {canBrand ? (
                       <OrgLogo
                         orgId={active.id}
@@ -245,9 +250,9 @@ export default async function SettingsPage({
                     ) : (
                       <p className="flex items-center gap-2 text-sm text-slate-500">
                         <PlanBadge feature="branding" />
-                        Org logo requires{" "}
+                        {t(dict, "settings.upgrade.logo")}{" "}
                         <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
-                          an upgrade
+                          {t(dict, "settings.upgrade.link")}
                         </Link>
                       </p>
                     )}
@@ -256,15 +261,15 @@ export default async function SettingsPage({
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Palette} label="Brand color" />
+                    <SubSection icon={Palette} label={t(dict, "settings.org.brandColor")} />
                     {canBrand ? (
                       <OrgBrandColor orgId={active.id} initialBranding={active.branding} />
                     ) : (
                       <p className="flex items-center gap-2 text-sm text-slate-500">
                         <PlanBadge feature="branding" />
-                        Brand color requires{" "}
+                        {t(dict, "settings.upgrade.brandColor")}{" "}
                         <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
-                          an upgrade
+                          {t(dict, "settings.upgrade.link")}
                         </Link>
                       </p>
                     )}
@@ -273,14 +278,14 @@ export default async function SettingsPage({
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={BookOpen} label="About (public page)" />
+                    <SubSection icon={BookOpen} label={t(dict, "settings.org.about")} />
                     <OrgAbout orgId={active.id} initialValue={orgAbout} branding={active.branding} />
                   </div>
                 )}
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Handshake} label={msg("sponsors.title")} />
+                    <SubSection icon={Handshake} label={t(dict, "sponsors.title")} />
                     {canBrand ? (
                       <OrgSponsors
                         orgId={active.id}
@@ -289,9 +294,9 @@ export default async function SettingsPage({
                     ) : (
                       <p className="flex items-center gap-2 text-sm text-slate-500">
                         <PlanBadge feature="branding" />
-                        Sponsor slots require{" "}
+                        {t(dict, "settings.upgrade.sponsors")}{" "}
                         <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
-                          an upgrade
+                          {t(dict, "settings.upgrade.link")}
                         </Link>
                       </p>
                     )}
@@ -300,7 +305,7 @@ export default async function SettingsPage({
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Compass} label="Product tour" />
+                    <SubSection icon={Compass} label={t(dict, "settings.org.tour")} />
                     <TourReplayButton />
                   </div>
                 )}
@@ -310,7 +315,7 @@ export default async function SettingsPage({
             {/* ── TEAM ── */}
             {tab === "team" && (
               <section className="card p-6">
-                <SectionHeader icon={Users}>Team</SectionHeader>
+                <SectionHeader icon={Users}>{t(dict, "settings.nav.team")}</SectionHeader>
                 <OrgTeam orgId={active.id} role={active.role} currentUserId={user.id} />
               </section>
             )}
@@ -318,19 +323,19 @@ export default async function SettingsPage({
             {/* ── PLATFORM API ── */}
             {tab === "api" && (
               <section className="card p-6">
-                <SectionHeader icon={KeyRound}>Platform API</SectionHeader>
+                <SectionHeader icon={KeyRound}>{t(dict, "settings.nav.api")}</SectionHeader>
                 {!canEdit ? (
                   <p className="text-sm text-slate-500">
-                    Only owners and admins can manage API keys.
+                    {t(dict, "settings.api.noAccess")}
                   </p>
                 ) : hasApiAccess ? (
                   <ApiKeysPanel orgId={active.id} competitions={pinnableCompetitions} />
                 ) : (
                   <p className="flex items-center gap-2 text-sm text-slate-500">
                     <PlanBadge feature="api.access" />
-                    Platform API keys require{" "}
+                    {t(dict, "settings.upgrade.api")}{" "}
                     <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
-                      an upgrade
+                      {t(dict, "settings.upgrade.link")}
                     </Link>
                   </p>
                 )}
@@ -354,30 +359,30 @@ export default async function SettingsPage({
 
                 {/* Profile */}
                 <section className="card space-y-2 p-5">
-                  <SectionHeader icon={User}>Profile</SectionHeader>
-                  <label className="block text-sm text-slate-500">Display name</label>
+                  <SectionHeader icon={User}>{t(dict, "settings.account.profile")}</SectionHeader>
+                  <label className="block text-sm text-slate-500">{t(dict, "settings.account.displayName")}</label>
                   <DisplayNameForm currentName={user.display_name} />
                   <p className="text-sm text-slate-500">
-                    Email: <span className="font-medium text-slate-700">{user.email}</span>
+                    {t(dict, "settings.account.emailLabel")}: <span className="font-medium text-slate-700">{user.email}</span>
                   </p>
                   <p className="text-sm text-slate-500">
-                    Account ID: <span className="font-mono text-xs text-purple-600">{user.id}</span>
+                    {t(dict, "settings.account.accountId")}: <span className="font-mono text-xs text-purple-600">{user.id}</span>
                   </p>
                 </section>
 
                 {/* Preferences — timezone (spec 2026-07-14). Drives every
                     personal time + the local-time hint beside venue times. */}
                 <section className="card p-5">
-                  <SectionHeader icon={Clock}>Preferences</SectionHeader>
-                  <label className="mb-1 block text-sm text-slate-500">Timezone</label>
+                  <SectionHeader icon={Clock}>{t(dict, "settings.account.preferences")}</SectionHeader>
+                  <label className="mb-1 block text-sm text-slate-500">{t(dict, "settings.account.timezone")}</label>
                   <TimezonePreference current={user.timezone} />
-                  <label className="mb-1 mt-5 block text-sm text-slate-500">Language</label>
+                  <label className="mb-1 mt-5 block text-sm text-slate-500">{t(dict, "settings.account.language")}</label>
                   <LocalePreference current={user.locale} />
                 </section>
 
                 {/* Change email */}
                 <section className="card p-5">
-                  <SectionHeader icon={Mail}>Change email</SectionHeader>
+                  <SectionHeader icon={Mail}>{t(dict, "settings.account.changeEmail")}</SectionHeader>
                   <ChangeEmailForm currentEmail={user.email} />
                 </section>
 
@@ -387,14 +392,14 @@ export default async function SettingsPage({
                     icon={Download}
                     action={
                       <a href="/api/users/me/export" download className="btn btn-ghost text-xs">
-                        Download JSON
+                        {t(dict, "settings.account.downloadJson")}
                       </a>
                     }
                   >
-                    Export your data
+                    {t(dict, "settings.account.export")}
                   </SectionHeader>
                   <p className="text-sm text-slate-500">
-                    Download a copy of your profile, organizations, and tournaments.
+                    {t(dict, "settings.account.exportDesc")}
                   </p>
                 </section>
 
@@ -404,16 +409,16 @@ export default async function SettingsPage({
                     icon={Cookie}
                     action={
                       <CookieSettingsButton className="btn btn-ghost text-xs">
-                        Cookie settings
+                        {t(dict, "settings.account.cookieSettings")}
                       </CookieSettingsButton>
                     }
                   >
-                    Privacy &amp; cookies
+                    {t(dict, "settings.account.privacy")}
                   </SectionHeader>
                   <p className="text-sm text-slate-500">
-                    Change or withdraw your consent for PostHog product analytics. See our{" "}
+                    {t(dict, "settings.account.privacyDesc")}{" "}
                     <Link href="/legal/cookie-policy" className="text-purple-600 underline">
-                      cookie policy
+                      {t(dict, "settings.account.cookiePolicy")}
                     </Link>
                     .
                   </p>
@@ -422,7 +427,7 @@ export default async function SettingsPage({
                 {/* Org actions */}
                 {orgs.length > 0 && (
                   <section className="card p-5">
-                    <SectionHeader icon={Building2}>Organizations</SectionHeader>
+                    <SectionHeader icon={Building2}>{t(dict, "settings.account.organizations")}</SectionHeader>
                     <div className="space-y-6">
                       {orgs.map((org) => {
                         const members = orgMembersMap.get(org.id) ?? [];
@@ -442,12 +447,12 @@ export default async function SettingsPage({
                                       : "bg-slate-100 text-slate-600"
                                 }`}
                               >
-                                {org.role}
+                                {roleLabel(dict, org.role)}
                               </span>
                             </div>
                             {org.role === "owner" && members.length > 1 && (
                               <div className="pl-2 border-l-2 border-slate-100 space-y-1">
-                                <p className="text-xs font-medium text-slate-500">Transfer ownership</p>
+                                <p className="text-xs font-medium text-slate-500">{t(dict, "settings.account.transferOwnership")}</p>
                                 <TransferOwnerForm orgId={org.id} members={members} />
                               </div>
                             )}
@@ -456,7 +461,7 @@ export default async function SettingsPage({
                             )}
                             {org.role === "owner" && members.length === 1 && (
                               <p className="text-xs text-slate-500">
-                                Sole owner — invite others before you can transfer or leave.
+                                {t(dict, "settings.account.soleOwner")}
                               </p>
                             )}
                           </div>
@@ -470,11 +475,10 @@ export default async function SettingsPage({
                 <section className="card border-red-100 p-5">
                   <div className="mb-4 flex items-center gap-2">
                     <ShieldOff className="h-4 w-4 text-red-400" strokeWidth={1.75} />
-                    <h2 className="text-sm font-semibold text-red-600">Danger zone</h2>
+                    <h2 className="text-sm font-semibold text-red-600">{t(dict, "settings.account.dangerZone")}</h2>
                   </div>
                   <p className="mb-4 text-sm text-slate-500">
-                    Deleting your account removes you from all organizations and schedules your
-                    data for permanent erasure within 30 days.
+                    {t(dict, "settings.account.deleteDesc")}
                   </p>
                   <DeleteAccountButton />
                 </section>

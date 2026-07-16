@@ -6,7 +6,7 @@
 // the message is composed by the caller so each surface reads naturally.
 import { useState } from "react";
 import { Share2 } from "lucide-react";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function ShareButton({
   text,
@@ -23,6 +23,7 @@ export function ShareButton({
   /** Icon-only variant for tight rows. */
   compact?: boolean;
 }) {
+  const msg = useMsg();
   const [copied, setCopied] = useState(false);
 
   async function share() {

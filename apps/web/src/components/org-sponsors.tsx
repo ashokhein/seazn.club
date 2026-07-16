@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { ArrowDown, ArrowUp, ImagePlus, Trash2 } from "lucide-react";
 import type { Sponsor } from "@/lib/org-branding";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
@@ -17,6 +17,7 @@ export function OrgSponsors({
   orgId: string;
   initialSponsors: Sponsor[];
 }) {
+  const msg = useMsg();
   const [sponsors, setSponsors] = useState<Sponsor[]>(initialSponsors);
   const [saved, setSaved] = useState(JSON.stringify(initialSponsors));
   const [draft, setDraft] = useState({ name: "", url: "" });

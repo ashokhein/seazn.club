@@ -6,9 +6,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
 import { useConfirm } from "@/components/ui/confirm-provider";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function WithdrawByRef({ refCode, token }: { refCode: string; token: string }) {
+  const msg = useMsg();
   const router = useRouter();
   const confirmDialog = useConfirm();
   const [busy, setBusy] = useState(false);
@@ -45,7 +46,7 @@ export function WithdrawByRef({ refCode, token }: { refCode: string; token: stri
         onClick={() => void withdraw()}
         className="rounded-md border border-red-200 px-4 py-2 text-sm text-red-600 hover:border-red-400 disabled:opacity-50"
       >
-        {busy ? "Withdrawing…" : "Withdraw my entry"}
+        {busy ? msg("registration.withdrawing") : msg("registration.withdrawMy")}
       </button>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </span>

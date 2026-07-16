@@ -3,9 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /** Create an organization; the creator becomes its owner. Slug is automatic. */
 export function CreateOrgForm() {
+  const msg = useMsg();
   const router = useRouter();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -20,7 +22,7 @@ export function CreateOrgForm() {
       router.push("/dashboard");
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create");
+      setError(err instanceof Error ? err.message : msg("orgNew.failed"));
     } finally {
       setBusy(false);
     }
@@ -29,16 +31,16 @@ export function CreateOrgForm() {
   return (
     <form onSubmit={submit} className="card space-y-4 p-6">
       <label className="block">
-        <span className="label">Organization name</span>
+        <span className="label">{msg("orgNew.nameLabel")}</span>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="My Sports Club"
+          placeholder={msg("orgNew.namePlaceholder")}
           className="input"
           autoFocus
         />
         <span className="mt-1 block text-xs text-slate-400">
-          You can rename it later in Settings.
+          {msg("orgNew.renameHint")}
         </span>
       </label>
 
@@ -52,7 +54,7 @@ export function CreateOrgForm() {
         disabled={busy || name.trim().length < 1}
         className="btn btn-primary w-full py-2.5"
       >
-        {busy ? "Creating…" : "Create organization"}
+        {busy ? msg("orgNew.creating") : msg("orgNew.create")}
       </button>
     </form>
   );

@@ -5,6 +5,8 @@ import Link from "@/components/ui/console-link";
 import { ClipboardList, MonitorPlay, Printer } from "lucide-react";
 import { StatusChip, divisionChipState } from "@/components/ui/status-chip";
 import { routes } from "@/lib/routes";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t } from "@/lib/i18n";
 import { requireDivisionPage } from "@/server/page-auth";
 import { getDivision, listVariantOptions } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
@@ -52,6 +54,8 @@ export default async function DivisionPage({
   const page = await requireDivisionPage(orgSlug, compSlug, divSlug);
   const { auth, canEdit } = page;
   const id = page.division.id;
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
   const division = await getDivision(auth, id);
   // Landing tab follows the division's life: while you're building the field
   // it's entrants; once the tournament starts, match day lives on fixtures.
@@ -114,37 +118,37 @@ export default async function DivisionPage({
             <span className="chip">
               {division.sport_key} · {division.variant_key}
             </span>
-            <StatusChip state={divisionChipState(division.status)} />
-            {frozen && <StatusChip state="frozen" />}
+            <StatusChip state={divisionChipState(division.status)} locale={locale} />
+            {frozen && <StatusChip state="frozen" locale={locale} />}
             <div className="flex-1" />
             {/* Icon + label on desktop, icon-only under `sm` (v3/02 pattern 5). */}
             <Link
               href={routes.slideshowDivision(id)}
               target="_blank"
-              aria-label="Slideshow (opens in a new tab)"
+              aria-label={t(dict, "aria.slideshowNewTab")}
               className="btn btn-ghost gap-1.5"
             >
               <MonitorPlay className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Slideshow ↗</span>
+              <span className="hidden sm:inline">{t(dict, "action.slideshow")} ↗</span>
             </Link>
             <Link
               href={routes.divisionRegistrations(orgSlug, compSlug, divSlug)}
-              aria-label="Registrations"
+              aria-label={t(dict, "aria.registrations")}
               className="btn btn-ghost gap-1.5"
             >
               <ClipboardList className="h-4 w-4" strokeWidth={1.75} />
-              <span className="hidden sm:inline">Registrations</span>
+              <span className="hidden sm:inline">{t(dict, "action.registrations")}</span>
             </Link>
             {competition.visibility !== "private" && (
               // v3/10 #3: division-scoped QR poster PDF for the venue wall.
               <a
                 href={`/shared/${orgSlug}/${competition.slug}/poster.pdf?division=${divSlug}`}
                 target="_blank"
-                aria-label="QR poster (PDF, opens in a new tab)"
+                aria-label={t(dict, "aria.qrPoster")}
                 className="btn btn-ghost gap-1.5"
               >
                 <Printer className="h-4 w-4" strokeWidth={1.75} />
-                <span className="hidden sm:inline">QR</span>
+                <span className="hidden sm:inline">{t(dict, "action.qr")}</span>
               </a>
             )}
           </div>
@@ -171,17 +175,17 @@ export default async function DivisionPage({
 
         {/* v3/02 §3.3: tabs scroll horizontally with an edge fade — never wrap. */}
         <nav className="scroll-x scroll-x-fade mb-6 flex gap-1 whitespace-nowrap border-b border-slate-200">
-          {(canEdit ? EDIT_TABS : TABS).map((t) => (
+          {(canEdit ? EDIT_TABS : TABS).map((tabKey) => (
             <Link
-              key={t}
-              href={routes.division(orgSlug, compSlug, divSlug, t)}
-              className={`border-b-2 px-4 py-2 text-sm font-medium capitalize transition ${
-                tab === t
+              key={tabKey}
+              href={routes.division(orgSlug, compSlug, divSlug, tabKey)}
+              className={`border-b-2 px-4 py-2 text-sm font-medium transition ${
+                tab === tabKey
                   ? "border-purple-600 text-purple-700"
                   : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
-              {t}
+              {t(dict, `div.detail.tab.${tabKey}`)}
             </Link>
           ))}
         </nav>
@@ -236,8 +240,7 @@ export default async function DivisionPage({
           <div className="space-y-8">
             {standings.length === 0 && (
               <p className="text-sm text-slate-500">
-                No table stages in this division — standings apply to league, group
-                and swiss stages.
+                {t(dict, "div.detail.standings.empty")}
               </p>
             )}
             {standings.map(({ stage, tables }) => (
@@ -256,14 +259,17 @@ export default async function DivisionPage({
                 ))}
                 {/* Cascade trace (doc 05 §4): the exact tie-break order in force. */}
                 <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
-                  Tie-break cascade:{" "}
+                  {t(dict, "div.detail.tiebreak.label")}{" "}
                   {cascade.map((key, i) => (
                     <span key={key}>
                       {i > 0 && " → "}
                       <span className="text-slate-500">{tieBreakLabel(key)}</span>
                     </span>
                   ))}
-                  {division.tiebreakers ? " (division override)" : " (sport default)"}
+                  {" "}
+                  {division.tiebreakers
+                    ? t(dict, "div.detail.tiebreak.override")
+                    : t(dict, "div.detail.tiebreak.default")}
                 </p>
               </section>
             ))}
@@ -306,8 +312,7 @@ export default async function DivisionPage({
                 />
               ) : (
                 <p className="text-xs text-slate-500">
-                  This competition is private, so there is nothing to embed. Set it to
-                  unlisted or public in competition settings first.
+                  {t(dict, "div.detail.embed.private")}
                 </p>
               )
             }

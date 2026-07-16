@@ -12,6 +12,9 @@ import { listClubs } from "@/server/usecases/clubs";
 import { PersonsPanel } from "@/components/v2/persons-panel";
 import { ClubsPanel } from "@/components/v2/clubs-panel";
 import { Tip } from "@/components/ui/tip";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, type Dict } from "@/lib/i18n";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 const TABS = ["players", "clubs"] as const;
 type Tab = (typeof TABS)[number];
@@ -24,52 +27,52 @@ export default async function DirectoryPage({
   const { tab: rawTab } = await searchParams;
   const tab: Tab = (TABS as readonly string[]).includes(rawTab ?? "") ? (rawTab as Tab) : "players";
   await requirePageAuth();
+  const locale = await resolveLocale();
+  const ui = await getDictionary(locale, "ui");
 
   return (
-    <>
+    <DictProvider dict={ui} locale={locale}>
       <Nav />
       <main className="mx-auto max-w-4xl px-4 py-8">
-        <BackLink href="/dashboard" label="Dashboard" />
+        <BackLink href="/dashboard" label={t(ui, "common.dashboard")} />
         <div className="mb-6">
-          <p className="app-eyebrow mb-1">People &amp; clubs</p>
-          <h1 className="page-title">Directory</h1>
+          <p className="app-eyebrow mb-1">{t(ui, "directory.eyebrow")}</p>
+          <h1 className="page-title">{t(ui, "directory.title")}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            Your organisation&apos;s players and clubs — reused across every competition.
+            {t(ui, "directory.desc")}
           </p>
         </div>
 
         <nav className="mb-6 flex gap-1 border-b border-slate-200">
-          {TABS.map((t) => (
+          {TABS.map((tabKey) => (
             <Link
-              key={t}
-              href={`/directory?tab=${t}`}
-              className={`border-b-2 px-4 py-2 text-sm font-medium capitalize transition ${
-                tab === t
+              key={tabKey}
+              href={`/directory?tab=${tabKey}`}
+              className={`border-b-2 px-4 py-2 text-sm font-medium transition ${
+                tab === tabKey
                   ? "border-purple-600 text-purple-700"
                   : "border-transparent text-slate-500 hover:text-slate-800"
               }`}
             >
-              {t}
+              {t(ui, `directory.tab.${tabKey}`)}
             </Link>
           ))}
         </nav>
 
-        {tab === "players" ? <PlayersTab /> : <ClubsTab />}
+        {tab === "players" ? <PlayersTab ui={ui} /> : <ClubsTab ui={ui} />}
       </main>
-    </>
+    </DictProvider>
   );
 }
 
-async function PlayersTab() {
+async function PlayersTab({ ui }: { ui: Dict }) {
   const { auth, canEdit } = await requirePageAuth();
   const { items } = await listPersons(auth, { cursor: null, limit: 200 });
   const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/assets`;
   return (
     <div className="space-y-4">
       <p className="text-sm text-slate-500">
-        Players rostered into entrants across competitions. Date of birth is used only for
-        eligibility and is never shown publicly; names appear on public pages only with consent.
-        Spot the same person twice? Use <strong>merge…</strong> on the duplicate
+        {t(ui, "directory.players.desc")} <strong>{t(ui, "directory.players.merge")}</strong>
         <Tip id="persons.merge" className="ml-0.5 align-middle" />
       </p>
       <PersonsPanel
@@ -91,7 +94,7 @@ async function PlayersTab() {
   );
 }
 
-async function ClubsTab() {
+async function ClubsTab({ ui }: { ui: Dict }) {
   const { auth, canEdit } = await requirePageAuth();
   const clubs = await listClubs(auth);
   const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/assets`;
@@ -99,12 +102,11 @@ async function ClubsTab() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <p className="max-w-xl text-sm text-slate-500">
-          Parent clubs group teams across age groups and divisions. A club&apos;s badge and colours
-          cascade to every team that doesn&apos;t set its own.
+          {t(ui, "directory.clubs.desc")}
         </p>
         {canEdit && (
           <Link href="/import" className="btn btn-ghost text-sm">
-            Bulk import participants
+            {t(ui, "directory.clubs.import")}
           </Link>
         )}
       </div>

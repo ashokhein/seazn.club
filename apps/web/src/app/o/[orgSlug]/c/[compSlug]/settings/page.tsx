@@ -8,6 +8,8 @@ import { CompetitionSettings } from "@/components/v2/competition-settings";
 import { ArchivedDivisions } from "@/components/v2/archived-divisions";
 import { hasFeature } from "@/lib/entitlements";
 import { withTenant } from "@/lib/db";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t } from "@/lib/i18n";
 
 /** State-derived status nudge: published → live → completed as matches progress. */
 function suggestStatus(
@@ -30,6 +32,8 @@ export default async function CompetitionSettingsPage({
   const page = await requireCompetitionPage(orgSlug, compSlug, { tail: "/settings" });
   const { auth, org, canEdit } = page;
   const id = page.competition.id;
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
   const [competition, discoveryBranding, themeBranding, allDivisions] = await Promise.all([
     getCompetition(auth, id),
     hasFeature(auth.orgId, "discovery.branding"),
@@ -70,7 +74,7 @@ export default async function CompetitionSettingsPage({
       <main className="mx-auto max-w-2xl px-4 py-8">
         <div className="mb-6">
           <h1 className="mt-1 text-xl font-semibold tracking-tight text-slate-900">
-            Settings — {competition.name}
+            {t(dict, "comp.settings.title", { name: competition.name })}
           </h1>
         </div>
         <CompetitionSettings

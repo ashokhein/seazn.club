@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /** Calls the verify-email API with the token, signs in, then routes onward. */
 export function VerifyEmail({
@@ -13,6 +14,7 @@ export function VerifyEmail({
   token: string | null;
   next: string | null;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [status, setStatus] = useState<"working" | "ok" | "error">("working");
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export function VerifyEmail({
     ran.current = true;
     if (!token) {
       setStatus("error");
-      setError("Missing verification token.");
+      setError(msg("verifyEmail.missingToken"));
       return;
     }
     api<{ redirect: string }>("/api/auth/verify-email", {
@@ -37,7 +39,7 @@ export function VerifyEmail({
       })
       .catch((e) => {
         setStatus("error");
-        setError(e instanceof Error ? e.message : "Verification failed");
+        setError(e instanceof Error ? e.message : msg("verifyEmail.failed"));
       });
   }, [token, next, router]);
 
@@ -45,29 +47,29 @@ export function VerifyEmail({
     <div className="card p-6 text-center">
       {status === "working" && (
         <>
-          <h1 className="text-xl font-bold text-purple-900">Verifying…</h1>
+          <h1 className="text-xl font-bold text-purple-900">{msg("verifyEmail.verifying")}</h1>
           <p className="mt-2 text-sm text-slate-500">
-            Confirming your email and signing you in.
+            {msg("verifyEmail.confirming")}
           </p>
         </>
       )}
       {status === "ok" && (
         <>
-          <h1 className="text-xl font-bold text-purple-900">Email verified</h1>
-          <p className="mt-2 text-sm text-slate-500">Taking you to setup…</p>
+          <h1 className="text-xl font-bold text-purple-900">{msg("verifyEmail.verified")}</h1>
+          <p className="mt-2 text-sm text-slate-500">{msg("verifyEmail.takingToSetup")}</p>
         </>
       )}
       {status === "error" && (
         <>
           <h1 className="text-xl font-bold text-purple-900">
-            Verification failed
+            {msg("verifyEmail.failed")}
           </h1>
           <p className="mt-2 text-sm text-red-600">{error}</p>
           <Link
             href="/login"
             className="btn btn-primary mt-4 inline-block px-4"
           >
-            Back to sign in
+            {msg("auth.backToSignIn")}
           </Link>
         </>
       )}

@@ -7,7 +7,6 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
-import { msg } from "@/lib/messages";
 import { listMyFixtures, listMyPersons, type MyFixture, type MyResult } from "@/server/usecases/me";
 import { RsvpControl } from "@/components/me/rsvp-control";
 import { ConsentCard } from "@/components/me/consent-card";
@@ -15,6 +14,7 @@ import { LogoutButton } from "@/components/logout-button";
 import { Zoned, ViewerTzProvider } from "@/components/client-time";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t } from "@/lib/i18n";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 export default async function MePage({
   searchParams,
@@ -23,7 +23,11 @@ export default async function MePage({
 }) {
   const user = await getCurrentUser();
   if (!user) redirect("/login?next=/me");
-  const dict = await getDictionary(await resolveLocale(), "console");
+  const locale = await resolveLocale();
+  const [dict, ui] = await Promise.all([
+    getDictionary(locale, "console"),
+    getDictionary(locale, "ui"),
+  ]);
   const [{ upcoming, results, teams }, persons, orgs, activeOrgId] = await Promise.all([
     listMyFixtures(user.id),
     listMyPersons(user.id),
@@ -39,19 +43,20 @@ export default async function MePage({
 
   return (
     <ViewerTzProvider tz={user.timezone}>
+      <DictProvider dict={ui} locale={locale}>
       <header className="app-gantry">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
           <span className="app-display text-base font-bold leading-none text-cream">
             Seazn <span className="text-lime-400">Club</span>
           </span>
-          <span className="text-sm text-cream/60">{msg("me.eyebrow")}</span>
+          <span className="text-sm text-cream/60">{t(ui, "me.eyebrow")}</span>
           <div className="flex-1" />
           {activeOrg && (
             <Link
               href={routes.orgHome(activeOrg.slug)}
               className="rounded-md px-2.5 py-1.5 text-sm font-medium text-cream/70 transition-colors hover:bg-cream/10 hover:text-cream"
             >
-              ← Console
+              ← {t(ui, "me.console")}
             </Link>
           )}
           <span className="text-xs text-cream/60">{user.display_name}</span>
@@ -62,24 +67,24 @@ export default async function MePage({
       <main className="mx-auto max-w-3xl px-4 py-8">
         {claimed && (
           <p className="mb-6 rounded-lg bg-lime-100 px-4 py-3 text-sm font-medium text-lime-900">
-            {msg("me.claimed")}
+            {t(ui, "me.claimed")}
           </p>
         )}
-        <h1 className="page-title mb-6">{msg("me.title")}</h1>
+        <h1 className="page-title mb-6">{t(ui, "me.title")}</h1>
 
         {upcoming.length === 0 && results.length === 0 && (
-          <p className="card p-6 text-sm text-slate-500">{msg("me.empty")}</p>
+          <p className="card p-6 text-sm text-slate-500">{t(ui, "me.empty")}</p>
         )}
 
         {next && (
           <section className="app-empty-tile mb-8 rounded-2xl p-5 sm:p-6">
-            <p className="app-eyebrow mb-3 !text-lime-400">{msg("me.next.title")}</p>
+            <p className="app-eyebrow mb-3 !text-lime-400">{t(ui, "me.next.title")}</p>
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="min-w-0">
                 <p className="app-display text-2xl font-bold leading-tight text-cream sm:text-3xl">
-                  {next.entrant_name ?? "TBD"}{" "}
+                  {next.entrant_name ?? t(ui, "me.tbd")}{" "}
                   <span className="text-cream/50">vs</span>{" "}
-                  {next.opponent_name ?? "TBD"}
+                  {next.opponent_name ?? t(ui, "me.tbd")}
                 </p>
                 <p className="mt-1.5 text-sm text-cream/70">
                   <FixtureContext f={next} />
@@ -96,7 +101,7 @@ export default async function MePage({
                       you="subtitle"
                     />
                   ) : (
-                    "Unscheduled"
+                    t(ui, "me.unscheduled")
                   )}
                 </p>
                 {publicHref(next) && (
@@ -104,7 +109,7 @@ export default async function MePage({
                     href={publicHref(next)!}
                     className="mt-1 inline-block text-xs text-lime-400 underline decoration-lime-400/40 underline-offset-2 hover:decoration-lime-400"
                   >
-                    Match page
+                    {t(ui, "me.matchPage")}
                   </Link>
                 )}
               </div>
@@ -123,7 +128,7 @@ export default async function MePage({
         {rest.length > 0 && (
           <section className="mb-8">
             <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-              {msg("me.upcoming.title")}
+              {t(ui, "me.upcoming.title")}
             </h2>
             <ul className="space-y-2">
               {rest.map((f) => (
@@ -131,8 +136,8 @@ export default async function MePage({
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium text-slate-800">
-                        {f.entrant_name ?? "TBD"} <span className="text-slate-400">vs</span>{" "}
-                        {f.opponent_name ?? "TBD"}
+                        {f.entrant_name ?? t(ui, "me.tbd")} <span className="text-slate-400">vs</span>{" "}
+                        {f.opponent_name ?? t(ui, "me.tbd")}
                       </p>
                       <p className="mt-0.5 text-xs text-slate-400">
                         <FixtureContext f={f} />
@@ -175,15 +180,15 @@ export default async function MePage({
         {results.length > 0 && (
           <section className="mb-8">
             <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-              {msg("me.results.title")}
+              {t(ui, "me.results.title")}
             </h2>
             <ul className="space-y-2">
               {results.map((r) => (
                 <li key={r.id} className="card flex flex-wrap items-center gap-3 p-4">
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-slate-800">
-                      {r.entrant_name ?? "TBD"} <span className="text-slate-400">vs</span>{" "}
-                      {r.opponent_name ?? "TBD"}
+                      {r.entrant_name ?? t(ui, "me.tbd")} <span className="text-slate-400">vs</span>{" "}
+                      {r.opponent_name ?? t(ui, "me.tbd")}
                     </p>
                     <p className="mt-0.5 text-xs text-slate-400">
                       {r.competition_name} · {r.division_name} · {r.org_name}
@@ -201,7 +206,7 @@ export default async function MePage({
         {teams.length > 0 && (
           <section className="mb-8">
             <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-              {msg("me.teams.title")}
+              {t(ui, "me.teams.title")}
             </h2>
             <ul className="flex flex-wrap gap-2">
               {teams.map((t) => (
@@ -222,12 +227,13 @@ export default async function MePage({
         {/* Growth seam (PROMPT-53): every claimed player is a future
             organiser. Quiet, last, and only when they run nothing yet. */}
         <p className="mt-10 text-center text-xs text-slate-400">
-          Run your own league or tournament?{" "}
+          {t(ui, "me.growth.q")}{" "}
           <Link href="/orgs/new" className="text-purple-600 hover:underline">
-            Create an organisation
+            {t(ui, "me.growth.cta")}
           </Link>
         </p>
       </main>
+      </DictProvider>
     </ViewerTzProvider>
   );
 }

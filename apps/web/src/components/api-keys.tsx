@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Copy, Check, KeyRound } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface ApiKeyRow {
   id: string;
@@ -54,6 +54,7 @@ export function ApiKeysPanel({
   /** Org competitions offered as an optional key pin (v3/08 §2). */
   competitions: { id: string; name: string }[];
 }) {
+  const msg = useMsg();
   const confirmDialog = useConfirm();
   const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);

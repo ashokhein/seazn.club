@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /** Consumes a passwordless sign-in token, starts a session, then routes on. */
 export function MagicLink({
@@ -13,6 +14,7 @@ export function MagicLink({
   token: string | null;
   next: string | null;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [status, setStatus] = useState<"working" | "ok" | "error">("working");
   const [error, setError] = useState<string | null>(null);
@@ -23,7 +25,7 @@ export function MagicLink({
     ran.current = true;
     if (!token) {
       setStatus("error");
-      setError("Missing sign-in token.");
+      setError(msg("magicLink.missingToken"));
       return;
     }
     api<{ redirect: string }>("/api/auth/magic-link/consume", {
@@ -37,7 +39,7 @@ export function MagicLink({
       })
       .catch((e) => {
         setStatus("error");
-        setError(e instanceof Error ? e.message : "Sign-in failed");
+        setError(e instanceof Error ? e.message : msg("magicLink.failed"));
       });
   }, [token, next, router]);
 
@@ -45,22 +47,22 @@ export function MagicLink({
     <div className="card p-6 text-center">
       {status === "working" && (
         <>
-          <h1 className="text-xl font-bold text-purple-900">Signing you in…</h1>
-          <p className="mt-2 text-sm text-slate-500">One moment.</p>
+          <h1 className="text-xl font-bold text-purple-900">{msg("magicLink.signingIn")}</h1>
+          <p className="mt-2 text-sm text-slate-500">{msg("magicLink.oneMoment")}</p>
         </>
       )}
       {status === "ok" && (
         <>
-          <h1 className="text-xl font-bold text-purple-900">Signed in</h1>
-          <p className="mt-2 text-sm text-slate-500">Taking you in…</p>
+          <h1 className="text-xl font-bold text-purple-900">{msg("magicLink.signedIn")}</h1>
+          <p className="mt-2 text-sm text-slate-500">{msg("magicLink.takingYouIn")}</p>
         </>
       )}
       {status === "error" && (
         <>
-          <h1 className="text-xl font-bold text-purple-900">Sign-in failed</h1>
+          <h1 className="text-xl font-bold text-purple-900">{msg("magicLink.failed")}</h1>
           <p className="mt-2 text-sm text-red-600">{error}</p>
           <Link href="/login" className="btn btn-primary mt-4 inline-block px-4">
-            Back to sign in
+            {msg("auth.backToSignIn")}
           </Link>
         </>
       )}

@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { LOCALES, type Locale } from "@/lib/i18n-constants";
 
@@ -15,6 +15,15 @@ function pathLocale(pathname: string): Locale {
   return (LOCALES as readonly string[]).includes(seg) ? (seg as Locale) : "en";
 }
 
+/** The `seazn_locale` cookie this switcher writes — the source of truth on
+ *  unprefixed routes ("/", console) where the URL carries no locale. Client
+ *  only (document is undefined during SSR). */
+function cookieLocale(): Locale | null {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(/(?:^|;\s*)seazn_locale=([^;]+)/);
+  return m && (LOCALES as readonly string[]).includes(m[1]) ? (m[1] as Locale) : null;
+}
+
 /**
  * Language picker (v5 i18n §9). Writes the `seazn_locale` cookie — which
  * resolveLocale() reads first, so the pick drives locale for anon and signed-in
@@ -24,7 +33,14 @@ function pathLocale(pathname: string): Locale {
 export function LocaleSwitcher() {
   const router = useRouter();
   const pathname = usePathname();
+  // Initialize from the path only so server and client agree at hydration. The
+  // effect then reflects the cookie: on unprefixed routes the URL has no locale,
+  // and this also re-runs when router.refresh() remounts the subtree — without
+  // it the select snaps back to en while the page is already localized.
   const [value, setValue] = useState<Locale>(() => pathLocale(pathname));
+  useEffect(() => {
+    setValue(cookieLocale() ?? pathLocale(pathname));
+  }, [pathname]);
 
   function onChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const next = e.target.value as Locale;

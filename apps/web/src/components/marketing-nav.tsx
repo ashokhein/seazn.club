@@ -1,12 +1,14 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { NavScrollFlip } from "@/components/marketing/nav-scroll";
+import { getDictionary, t } from "@/lib/i18n";
+import { toLocale } from "@/lib/i18n-constants";
 
 const LINKS = [
-  { label: "Formats", href: "/formats" },
-  { label: "Scheduling", href: "/scheduling" },
-  { label: "Pricing", href: "/pricing" },
-  { label: "Use cases", href: "/use-cases/clubs" },
+  { key: "nav.formats", href: "/formats" },
+  { key: "nav.scheduling", href: "/scheduling" },
+  { key: "nav.pricing", href: "/pricing" },
+  { key: "nav.useCases", href: "/use-cases/clubs" },
 ];
 
 /** Marketing nav (design/v3/12 §4.1). `night-scroll` starts transparent over
@@ -14,10 +16,15 @@ const LINKS = [
  *  solid style permanently (all non-home marketing pages). */
 export async function MarketingNav({
   variant = "light",
+  lang = "en",
 }: {
   variant?: "night-scroll" | "light";
+  lang?: string;
 }) {
-  const user = await getCurrentUser().catch(() => null);
+  const [user, d] = await Promise.all([
+    getCurrentUser().catch(() => null),
+    getDictionary(toLocale(lang), "marketing"),
+  ]);
   const night = variant === "night-scroll";
   return (
     <header
@@ -43,20 +50,20 @@ export async function MarketingNav({
               href={l.href}
               className="mk-nav-link hidden rounded-lg px-3 py-1.5 text-sm md:inline-flex"
             >
-              {l.label}
+              {t(d, l.key)}
             </Link>
           ))}
           {user ? (
             <Link href="/dashboard" className="btn btn-primary text-sm">
-              Dashboard →
+              {t(d, "nav.dashboard")} →
             </Link>
           ) : (
             <>
               <Link href="/login" className="mk-nav-link btn btn-ghost text-sm">
-                Log in
+                {t(d, "nav.login")}
               </Link>
               <Link href="/login?tab=signup" className="mk-nav-cta btn text-sm font-semibold">
-                Start free
+                {t(d, "nav.startFree")}
               </Link>
             </>
           )}

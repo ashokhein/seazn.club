@@ -5,7 +5,7 @@
 // .ecard styles respond to, and remembers the choice per browser.
 import { useEffect, useState, type ReactNode } from "react";
 import { LayoutGrid, Rows3 } from "lucide-react";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 type View = "cards" | "list";
 
@@ -19,6 +19,7 @@ export function ViewToggleContainer({
   toggle: boolean;
   children: ReactNode;
 }) {
+  const msg = useMsg();
   const [view, setView] = useState<View>("cards");
 
   useEffect(() => {

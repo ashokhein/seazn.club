@@ -8,6 +8,8 @@ import { sql } from "@/lib/db";
 import { requireOrgPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t } from "@/lib/i18n";
 
 export default async function PaymentsSettingsPage({
   params,
@@ -17,6 +19,8 @@ export default async function PaymentsSettingsPage({
   const { orgSlug } = await params;
   const { org } = await requireOrgPage(orgSlug, { tail: "/settings/payments" });
   const isOwner = org.role === "owner";
+  const locale = await resolveLocale();
+  const dict = await getDictionary(locale, "ui");
 
   const [row] = await sql<
     { payment_instructions: string | null; default_payment_method: "offline" | "stripe" }[]
@@ -31,13 +35,11 @@ export default async function PaymentsSettingsPage({
           href={routes.orgSettings(orgSlug)}
           className="text-sm text-slate-500 hover:text-slate-700"
         >
-          ← Settings
+          ← {t(dict, "action.settings")}
         </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">Payments</h1>
+        <h1 className="mt-2 text-2xl font-bold text-slate-900">{t(dict, "payments.title")}</h1>
         <p className="mt-1 text-sm text-slate-500">
-          How your entry fees are collected — card payments via Stripe, or your own
-          cash / bank-transfer instructions. Each division picks its method in its
-          registration settings.
+          {t(dict, "payments.desc")}
         </p>
       </div>
 
@@ -51,9 +53,9 @@ export default async function PaymentsSettingsPage({
       </section>
 
       <p className="mt-4 text-xs text-slate-400">
-        Plan and subscription live under{" "}
+        {t(dict, "payments.planNote")}{" "}
         <Link href={routes.billing(orgSlug)} className="underline hover:text-slate-600">
-          Plan &amp; billing
+          {t(dict, "payments.planBilling")}
         </Link>
         .
       </p>

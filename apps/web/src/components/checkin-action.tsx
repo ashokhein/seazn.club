@@ -4,11 +4,12 @@
 // claim-first interstitial: direction, not an error.
 import { useState } from "react";
 import { api } from "@/lib/client";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 type State = "idle" | "busy" | "done" | "needs_claim";
 
 export function CheckinAction({ token }: { token: string }) {
+  const msg = useMsg();
   const [state, setState] = useState<State>("idle");
   const [error, setError] = useState<string | null>(null);
 
@@ -55,7 +56,7 @@ export function CheckinAction({ token }: { token: string }) {
         disabled={state === "busy"}
         className="btn btn-primary w-full py-2.5"
       >
-        {state === "busy" ? "Checking in…" : "I'm here — check in"}
+        {state === "busy" ? msg("checkin.busy") : msg("checkin.cta")}
       </button>
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
     </div>

@@ -6,31 +6,35 @@ import { BackLink } from "@/components/back-link";
 import { Nav } from "@/components/nav";
 import { requirePageAuth } from "@/server/page-auth";
 import { ImportWizard } from "@/components/v2/import-wizard";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t } from "@/lib/i18n";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 export default async function ImportPage() {
   await requirePageAuth();
+  const locale = await resolveLocale();
+  const ui = await getDictionary(locale, "ui");
 
   return (
-    <>
+    <DictProvider dict={ui} locale={locale}>
       <Nav />
       <main className="mx-auto max-w-4xl px-4 py-8">
-        <BackLink href="/dashboard" label="Dashboard" />
+        <BackLink href="/dashboard" label={t(ui, "common.dashboard")} />
         <div className="mb-6">
-          <p className="app-eyebrow mb-1">Bulk add</p>
+          <p className="app-eyebrow mb-1">{t(ui, "import.eyebrow")}</p>
           <h1 className="page-title">
-            Import participants
+            {t(ui, "import.title")}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            Bring clubs, teams and players in from one spreadsheet. Nothing is written
-            until you commit the previewed plan. Divisions must{" "}
+            {t(ui, "import.desc.pre")}{" "}
             <Link href="/dashboard" className="underline">
-              exist first
+              {t(ui, "import.desc.link")}
             </Link>{" "}
-            — a Division column places each team as an entrant.
+            {t(ui, "import.desc.post")}
           </p>
         </div>
         <ImportWizard />
       </main>
-    </>
+    </DictProvider>
   );
 }

@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { Info, X } from "lucide-react";
 import { TIPS, type TipId } from "@/config/tips";
 import { helpUrl } from "@/lib/help";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function Tip({
   id,
@@ -21,7 +22,10 @@ export function Tip({
   /** Table headers and other dense chrome — smaller ⓘ, same popover. */
   small?: boolean;
 }) {
-  const { title, body, helpSlug } = TIPS[id];
+  const msg = useMsg();
+  const { helpSlug } = TIPS[id];
+  const title = msg(`tips.${id}.title`);
+  const body = msg(`tips.${id}.body`);
   const href = helpUrl(helpSlug);
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLSpanElement>(null);
@@ -47,7 +51,7 @@ export function Tip({
       <button
         type="button"
         aria-expanded={open}
-        aria-label={`About: ${title}`}
+        aria-label={msg("tips.about", { title })}
         onClick={() => setOpen((v) => !v)}
         className={`grid place-items-center rounded-full text-slate-400 transition hover:text-purple-600 ${
           small ? "h-3.5 w-3.5" : "h-5 w-5"
@@ -76,7 +80,7 @@ export function Tip({
               href={href}
               className="mt-2 block text-xs font-medium text-purple-600 hover:underline"
             >
-              Learn more →
+              {msg("tips.learnMore")} →
             </Link>
           )}
         </span>
@@ -86,7 +90,10 @@ export function Tip({
 }
 
 export function TipCallout({ id, className = "" }: { id: TipId; className?: string }) {
-  const { title, body, helpSlug } = TIPS[id];
+  const msg = useMsg();
+  const { helpSlug } = TIPS[id];
+  const title = msg(`tips.${id}.title`);
+  const body = msg(`tips.${id}.body`);
   const href = helpUrl(helpSlug);
   const storageKey = `seazn.tip.${id}`;
   // Start hidden; show after the dismissed check so a dismissed callout
@@ -110,13 +117,13 @@ export function TipCallout({ id, className = "" }: { id: TipId; className?: stri
         <p className="mt-0.5 text-purple-800/80">{body}</p>
         {href && (
           <Link href={href} className="mt-1 inline-block text-xs font-medium text-purple-700 hover:underline">
-            Learn more →
+            {msg("tips.learnMore")} →
           </Link>
         )}
       </div>
       <button
         type="button"
-        aria-label="Dismiss tip"
+        aria-label={msg("tips.dismiss")}
         onClick={() => {
           window.localStorage.setItem(storageKey, "1");
           setVisible(false);

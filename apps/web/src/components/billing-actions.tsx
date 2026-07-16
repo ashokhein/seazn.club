@@ -6,7 +6,7 @@ import { track, EVENTS } from "@/lib/analytics";
 import { fetchCheckoutClientSecret } from "@/lib/billing-checkout-client";
 import { stripePromise } from "@/lib/stripe-browser";
 import { useConfirm } from "@/components/ui/confirm-provider";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /** In-page upgrade via Stripe Embedded Checkout — reveals the checkout inline
  *  (no redirect out) and only returns to the billing page on completion. We
@@ -77,6 +77,7 @@ export function UpgradeButton({
 }
 
 export function DowngradeButton() {
+  const msg = useMsg();
   const confirm = useConfirm();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -92,14 +92,14 @@ export function PersonsPanel({
       )}
       {mergeSource && (
         <p className="rounded-md bg-sky-50 px-3 py-2 text-sm text-sky-700">
-          Merging <strong>{mergeSource.full_name}</strong> into… pick the player to
-          keep below.{" "}
+          {msg("persons.mergingPre")} <strong>{mergeSource.full_name}</strong>{" "}
+          {msg("persons.mergingPost")}{" "}
           <button
             type="button"
             className="underline"
             onClick={() => setMergeSource(null)}
           >
-            cancel
+            {msg("persons.cancel")}
           </button>
         </p>
       )}
@@ -107,7 +107,7 @@ export function PersonsPanel({
       <input
         value={filter}
         onChange={(e) => setFilter(e.target.value)}
-        placeholder="Search players…"
+        placeholder={msg("persons.search")}
         className="input max-w-xs"
       />
 
@@ -144,8 +144,8 @@ export function PersonsPanel({
           <span className="inline-flex flex-wrap gap-1.5">
             {(
               [
-                { key: "public_name" as const, label: "Name" },
-                { key: "public_photo" as const, label: "Photo" },
+                { key: "public_name" as const, label: msg("persons.consent.name") },
+                { key: "public_photo" as const, label: msg("persons.consent.photo") },
               ]
             ).map(({ key, label }) => {
               const on = !!p.consent[key];
@@ -157,8 +157,8 @@ export function PersonsPanel({
                   disabled={!canEdit || busy}
                   title={
                     on
-                      ? `${label} is shown on public pages — click to hide`
-                      : `${label} is hidden from public pages — click to show`
+                      ? msg("persons.consent.shownTip", { label })
+                      : msg("persons.consent.hiddenTip", { label })
                   }
                   onClick={() =>
                     run(() =>
@@ -214,7 +214,7 @@ export function PersonsPanel({
                 }
                 className="btn btn-primary px-2 py-1 text-xs"
               >
-                Keep this one
+                {msg("persons.keepThis")}
               </button>
             ) : (
               <button
@@ -224,23 +224,23 @@ export function PersonsPanel({
                 title={msg("persons.merge.tip")}
                 className="btn btn-ghost px-2 py-1 text-xs"
               >
-                Merge…
+                {msg("persons.merge")}
               </button>
             )}
           </span>
         );
 
         const columns: ResponsiveColumn<Person>[] = [
-          { key: "player", header: "Player", render: identity },
-          { key: "public", header: "Public", render: consentPills },
-          { key: "account", header: "Account", render: accountChip },
+          { key: "player", header: msg("persons.col.player"), render: identity },
+          { key: "public", header: msg("persons.col.public"), render: consentPills },
+          { key: "account", header: msg("persons.col.account"), render: accountChip },
           ...(canEdit
             ? [
                 {
                   key: "actions",
                   header: (
                     <>
-                      Actions
+                      {msg("persons.col.actions")}
                       <Tip id="persons.actions" small className="ml-1 align-middle" />
                     </>
                   ),
@@ -255,13 +255,13 @@ export function PersonsPanel({
         return (
           <section className="card p-0 sm:p-0">
             <ResponsiveTable
-              aria-label="Players"
+              aria-label={msg("persons.tableLabel")}
               columns={columns}
               rows={filtered}
               keyOf={(p) => p.id}
               empty={
                 <p className="px-4 py-6 text-center text-sm text-slate-400">
-                  No players found.
+                  {msg("persons.empty")}
                 </p>
               }
               renderCard={(p) => (
@@ -294,6 +294,7 @@ function AddPersonForm({
   busy: boolean;
   onSubmit: (payload: Record<string, unknown>, photo: File | null) => void;
 }) {
+  const msg = useMsg();
   const [name, setName] = useState("");
   const [dob, setDob] = useState("");
   const [gender, setGender] = useState("");
@@ -326,21 +327,21 @@ function AddPersonForm({
       }}
     >
       <label className="block">
-        <span className="label">Full name</span>
+        <span className="label">{msg("persons.form.fullName")}</span>
         <input
           required
           value={name}
           onChange={(e) => setName(e.target.value)}
           className="input"
-          placeholder="Priya Sharma"
+          placeholder={msg("persons.form.namePlaceholder")}
         />
       </label>
       <label className="block">
-        <span className="label">DOB (eligibility only)</span>
+        <span className="label">{msg("persons.form.dob")}</span>
         <input type="date" value={dob} onChange={(e) => setDob(e.target.value)} className="input" />
       </label>
       <label className="block">
-        <span className="label">Gender</span>
+        <span className="label">{msg("persons.form.gender")}</span>
         <select value={gender} onChange={(e) => setGender(e.target.value)} className="select">
           <option value="">—</option>
           <option value="m">m</option>
@@ -349,12 +350,12 @@ function AddPersonForm({
         </select>
       </label>
       <label className="block">
-        <span className="label">Photo</span>
+        <span className="label">{msg("persons.form.photo")}</span>
         <input
           ref={photoInput}
           type="file"
           accept="image/png,image/jpeg,image/webp"
-          aria-label="Player photo"
+          aria-label={msg("persons.form.photoAria")}
           className="block w-full text-sm text-slate-600 file:mr-2 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
           onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
         />
@@ -366,7 +367,7 @@ function AddPersonForm({
           onChange={(e) => setPublicName(e.target.checked)}
           className="h-4 w-4 rounded border-purple-200 accent-purple-600"
         />
-        consents to public name
+        {msg("persons.form.consentName")}
       </label>
       <label className="flex items-center gap-2 text-sm text-slate-600">
         <input
@@ -375,10 +376,10 @@ function AddPersonForm({
           onChange={(e) => setPublicPhoto(e.target.checked)}
           className="h-4 w-4 rounded border-purple-200 accent-purple-600"
         />
-        consents to public photo
+        {msg("persons.form.consentPhoto")}
       </label>
       <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary w-full sm:col-span-2 sm:w-auto sm:justify-self-start">
-        {busy ? "Adding…" : "Add player"}
+        {busy ? msg("persons.form.adding") : msg("persons.form.add")}
       </button>
     </form>
   );

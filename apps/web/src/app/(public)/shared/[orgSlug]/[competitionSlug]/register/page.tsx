@@ -11,6 +11,9 @@ import { getPublicOrg } from "@/server/public-site/data";
 import { brandingSponsors } from "@/lib/org-branding";
 import { HttpError } from "@/lib/errors";
 import { RegisterForm } from "@/components/public-site/register-form";
+import { resolveLocale } from "@/lib/resolve-locale";
+import { getDictionary, t, toLocale } from "@/lib/i18n";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 type Props = { params: Promise<{ orgSlug: string; competitionSlug: string }> };
 
@@ -29,7 +32,11 @@ export default async function RegisterPage({ params }: Props) {
   const pub = await getPublicOrg(orgSlug);
   const sponsors = brandingSponsors(pub?.org.branding);
 
+  const locale = await resolveLocale({ orgDefault: toLocale(pub?.org.default_locale ?? null) });
+  const ui = await getDictionary(locale, "ui");
+
   return (
+    <DictProvider dict={ui} locale={locale}>
     <div className="mx-auto max-w-2xl">
       <p className="text-xs text-ink-muted">
         <Link
@@ -38,18 +45,18 @@ export default async function RegisterPage({ params }: Props) {
         >
           {info.competition.name}
         </Link>{" "}
-        / Register
+        / {t(ui, "register.title")}
       </p>
       <h1 className="mt-1 font-display text-4xl font-bold uppercase tracking-tight text-ink">
-        Register
+        {t(ui, "register.title")}
       </h1>
       <p className="mt-1 text-sm text-ink-muted">
-        Pick a division, fill in your details — takes under a minute.
+        {t(ui, "register.subtitle")}
       </p>
       {/* Sponsor masthead line (v3/10 #5): entitlement-gated upstream. */}
       {sponsors.length > 0 ? (
         <p className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-muted">
-          <span className="font-semibold uppercase tracking-[0.18em]">Supported by</span>
+          <span className="font-semibold uppercase tracking-[0.18em]">{t(ui, "register.supportedBy")}</span>
           {sponsors.slice(0, 5).map((s) => (
             <span key={s.name} className="inline-flex items-center gap-1.5">
               {s.logo ? (
@@ -63,11 +70,12 @@ export default async function RegisterPage({ params }: Props) {
       ) : null}
       {info.divisions.length === 0 ? (
         <p className="mt-4 text-sm text-zinc-500">
-          Registration is not open for this competition.
+          {t(ui, "register.notOpen")}
         </p>
       ) : (
         <RegisterForm org={info.org} competition={info.competition} divisions={info.divisions} />
       )}
     </div>
+    </DictProvider>
   );
 }
