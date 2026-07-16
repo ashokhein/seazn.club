@@ -227,12 +227,24 @@ export function OrgSponsors({
       headers: { "Content-Type": "application/json" },
       ...init,
     });
-    const data = (await res.json().catch(() => ({}))) as { data?: unknown; error?: string };
+    const data = (await res.json().catch(() => ({}))) as {
+      data?: unknown;
+      // v1 errors are plain strings OR structured { code, message, issues }.
+      error?: string | { message?: string };
+    };
     if (!res.ok) {
-      throw new Error(data.error ?? msg("settings.saveFailed"));
+      const message = typeof data.error === "string" ? data.error : data.error?.message;
+      throw new Error(message ?? msg("settings.saveFailed"));
     }
     // /api/v1 envelope: { ok, data } — callers want the payload.
     return data.data ?? data;
+  }
+
+  /** People type bare domains — give the link a scheme before validation. */
+  function normalizeUrl(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return "";
+    return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
   }
 
   async function run(fn: () => Promise<void>) {
@@ -291,11 +303,12 @@ export function OrgSponsors({
   function create() {
     void run(async () => {
       const logo_path = draft.file ? await uploadLogo(draft.file) : null;
+      const url = normalizeUrl(draft.url);
       await api("", {
         method: "POST",
         body: JSON.stringify({
           name: draft.name.trim(),
-          ...(draft.url.trim() ? { url: draft.url.trim() } : {}),
+          ...(url ? { url } : {}),
           ...(logo_path ? { logo_path } : {}),
           tier: hasTiers ? draft.tier : "partner",
           ...(hasTiers && draft.competition_id ? { competition_id: draft.competition_id } : {}),
@@ -324,7 +337,8 @@ export function OrgSponsors({
       // a no-op field must not trip the gate on a downgraded org's legacy row.
       const patch: Record<string, unknown> = {};
       if (edit.name.trim() && edit.name.trim() !== s.name) patch.name = edit.name.trim();
-      if ((edit.url.trim() || null) !== s.url) patch.url = edit.url.trim() || null;
+      const url = normalizeUrl(edit.url) || null;
+      if (url !== s.url) patch.url = url;
       if (edit.tier !== s.tier) patch.tier = edit.tier;
       if ((edit.competition_id || null) !== s.competition_id) {
         patch.competition_id = edit.competition_id || null;
