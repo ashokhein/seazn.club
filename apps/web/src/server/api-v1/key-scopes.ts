@@ -196,6 +196,12 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "PATCH /orgs/:id/sponsors/:sponsorId",
   "DELETE /orgs/:id/sponsors/:sponsorId",
   "POST /orgs/:id/sponsors/reorder",
+  // Sponsor monetization (v10): money surface — never key-accessible.
+  "GET /orgs/:id/sponsor-packages",
+  "POST /orgs/:id/sponsor-packages",
+  "DELETE /orgs/:id/sponsor-packages/:packageId",
+  "GET /orgs/:id/sponsor-orders",
+  "POST /orgs/:id/sponsor-orders",
   "GET /me/assigned-fixtures",
   "POST /fixtures/:id/device-links",
   "GET /fixtures/:id/device-links",

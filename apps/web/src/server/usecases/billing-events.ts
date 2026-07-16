@@ -15,6 +15,10 @@ import {
   syncRegistrationRefund,
 } from "@/server/usecases/registrations";
 import { syncConnectAccount } from "@/server/usecases/stripe-connect";
+import {
+  handleSponsorPaymentFailed,
+  handleSponsorPaymentSucceeded,
+} from "@/server/usecases/sponsors";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 
@@ -31,6 +35,11 @@ export const HANDLED_EVENT_TYPES = [
   "charge.dispute.created",
   "charge.dispute.closed",
   "charge.refunded",
+  // Sponsor package orders (v10): activation keys off the PaymentIntent
+  // because the intent metadata carries kind/order_id. Non-sponsor intents
+  // (entry fees, passes) are ignored inside the handlers.
+  "payment_intent.succeeded",
+  "payment_intent.payment_failed",
 ] as const;
 
 /** Best-effort person id for org-scoped revenue events: the org owner, falling
@@ -178,6 +187,13 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
     case "charge.refunded":
       // Refunds made in the Stripe dashboard still show on the console.
       await syncRegistrationRefund(event.data.object as Stripe.Charge);
+      break;
+    case "payment_intent.succeeded":
+      // Sponsor order paid (v10) — activates the sponsor row, replay-safe.
+      await handleSponsorPaymentSucceeded(event.data.object as Stripe.PaymentIntent);
+      break;
+    case "payment_intent.payment_failed":
+      await handleSponsorPaymentFailed(event.data.object as Stripe.PaymentIntent);
       break;
     // Unhandled events are silently ACKed
   }

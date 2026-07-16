@@ -16,6 +16,8 @@ import {
   refundIssuedTemplate,
   registrationPromotedTemplate,
   registrationTemplate,
+  sponsorInvoiceTemplate,
+  sponsorReceiptTemplate,
   verificationTemplate,
 } from "../email-templates";
 import { standingsTable } from "../email-templates/compose";
@@ -117,6 +119,36 @@ function makeBuilders(
         dict,
       ),
       "disputeLost.subject",
+    ],
+    [
+      "sponsor-invoice",
+      sponsorInvoiceTemplate(
+        {
+          orgName: "Riverside Racquets",
+          packageName: "Gold — Spring Open",
+          sponsorName: "Court & Co <Ltd>",
+          amountCents: 25_000,
+          currency: "gbp",
+          checkoutUrl: LINK,
+        },
+        dict,
+      ),
+      "sponsorInvoice.subject",
+    ],
+    [
+      "sponsor-receipt",
+      sponsorReceiptTemplate(
+        {
+          orgName: "Riverside Racquets",
+          packageName: "Gold — Spring Open",
+          sponsorName: "Court & Co <Ltd>",
+          amountCents: 25_000,
+          currency: "gbp",
+          publicUrl: "https://seazn.club/shared/riverside",
+        },
+        dict,
+      ),
+      "sponsorReceipt.subject",
     ],
   ];
 }

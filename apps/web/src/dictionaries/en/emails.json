@@ -1,21 +1,18 @@
 {
   "account.eyebrow": "Account",
   "ignoreNote": "If you didn't request this, you can safely ignore this email.",
-
   "magicLink.subject": "Your Seazn Club sign-in link",
   "magicLink.preheader": "Your one-time sign-in link — expires in 15 minutes.",
   "magicLink.title": "Sign in to Seazn Club",
   "magicLink.body": "Click the button below to sign in. This link expires in 15 minutes and can be used once.",
   "magicLink.button": "Sign in",
   "magicLink.text": "Sign in to Seazn Club (expires in 15 minutes): {link}",
-
   "passwordReset.subject": "Reset your Seazn Club password",
   "passwordReset.preheader": "Your reset link is inside — it expires in 1 hour.",
   "passwordReset.title": "Reset your password",
   "passwordReset.body": "We received a request to reset your Seazn Club password. This link expires in 1 hour.",
   "passwordReset.button": "Reset password",
   "passwordReset.text": "Reset your password (expires in 1 hour): {link}",
-
   "verification.subject": "Verify your Seazn Club account",
   "verification.preheader": "One click to verify your email and finish setting up your account.",
   "verification.title": "Confirm your email",
@@ -23,14 +20,12 @@
   "verification.button": "Verify email",
   "verification.footer": "You received this because this address was used to sign up for Seazn Club.",
   "verification.text": "Verify your account: {link}",
-
   "emailChangeConfirm.subject": "Confirm your new email address — Seazn Club",
   "emailChangeConfirm.preheader": "Confirm this address to complete your email change — expires in 24 hours.",
   "emailChangeConfirm.title": "Confirm your new email",
   "emailChangeConfirm.body": "You requested a change to your email address. Click below to confirm. This link expires in 24 hours.",
   "emailChangeConfirm.button": "Confirm new email",
   "emailChangeConfirm.text": "Confirm your new email address (expires in 24 hours): {link}",
-
   "emailChangeNotice.subject": "Your Seazn Club email address is being changed",
   "emailChangeNotice.preheader": "A change to your account email was requested — review if this wasn't you.",
   "emailChangeNotice.eyebrow": "Security",
@@ -38,14 +33,12 @@
   "emailChangeNotice.body": "Someone requested a change to the email address on your account to <strong>{newEmail}</strong>. The change will take effect once the new address is confirmed. If this wasn't you, contact support immediately.",
   "emailChangeNotice.footer": "This notice was sent to the address currently on your account.",
   "emailChangeNotice.text": "Your account email is being changed to {newEmail}. If this wasn't you, contact support.",
-
   "accountDeletion.subject": "Your Seazn Club account has been deleted",
   "accountDeletion.preheader": "Your account and data are scheduled for permanent deletion within 30 days.",
   "accountDeletion.title": "Your account has been deleted",
   "accountDeletion.body": "Your Seazn Club account and associated data have been scheduled for permanent deletion within 30 days. If this wasn't you, contact support immediately.",
   "accountDeletion.footer": "This is the last email we'll send to this address.",
   "accountDeletion.text": "Your Seazn Club account has been deleted. Data will be erased within 30 days.",
-
   "invite.subject": "You've been invited to join {orgName} on Seazn Club",
   "invite.preheader": "Accept your invite to {orgName} and get involved.",
   "invite.eyebrow": "Team invite",
@@ -54,7 +47,6 @@
   "invite.button": "Accept invite",
   "invite.footer": "You received this because an organiser at {orgName} invited this address.",
   "invite.text": "You've been invited to join {orgName}. Accept: {link}",
-
   "claimInvite.subject": "Claim your player profile at {orgName}",
   "claimInvite.preheader": "See your matches, tell organisers when you can play, and control what's public.",
   "claimInvite.title": "Claim your player profile",
@@ -62,7 +54,6 @@
   "claimInvite.button": "Claim my profile",
   "claimInvite.footer": "You received this because an organiser at {orgName} invited this address. Not you? Just ignore this email.",
   "claimInvite.text": "Claim your player profile at {orgName}: {claimUrl}",
-
   "funnelClaim.subject": "“{competitionName}” is ready to finish setting up",
   "funnelClaim.preheader": "One click creates your competition and takes you inside.",
   "funnelClaim.eyebrow": "Your competition",
@@ -71,7 +62,6 @@
   "funnelClaim.button": "Finish setting up",
   "funnelClaim.footer": "The link works once and expires in 7 days. If you didn't request this, you can safely ignore it.",
   "funnelClaim.text": "Finish setting up “{competitionName}” (link works once, expires in 7 days): {link}",
-
   "funnelReminder.subject": "Still planning “{competitionName}”?",
   "funnelReminder.preheader": "Your drafted competition expires in a few days.",
   "funnelReminder.eyebrow": "Reminder",
@@ -80,7 +70,6 @@
   "funnelReminder.button": "Finish setting up",
   "funnelReminder.footer": "This is the only reminder we'll send — the draft expires 7 days after it was created.",
   "funnelReminder.text": "Finish setting up “{competitionName}”: {link}",
-
   "refundIssued.subject": "Refund issued — {competitionName}",
   "refundIssued.preheader": "{amount} is on its way back to your card.",
   "refundIssued.title": "Refund issued",
@@ -92,7 +81,6 @@
   "refundIssued.text": "Refund issued — {competitionName} ({orgName}).",
   "refundIssued.textAmount": "Amount: {amount}. Refunds usually reach the original card within 5–10 business days.",
   "refundIssued.textReference": "Registration reference: {refCode}",
-
   "disputeAlert.subject": "Payment dispute opened — {competitionName}",
   "disputeAlert.preheader": "{amount} entry-fee payment disputed — action may be needed.",
   "disputeAlert.title": "Payment dispute opened",
@@ -104,7 +92,6 @@
   "disputeAlert.textLine": "Payment dispute opened — {competitionName} ({orgName}).",
   "disputeAlert.textDisputed": "Disputed: {amount} from {displayName}{ref}.",
   "disputeAlert.textNext": "The registration is flagged on your console. If the dispute is lost, the cardholder is repaid and the amount is recovered from your Stripe balance.",
-
   "disputeLost.subject": "Dispute lost — {competitionName}",
   "disputeLost.preheader": "{amount} entry-fee dispute closed against you.",
   "disputeLost.title": "Dispute lost",
@@ -121,7 +108,6 @@
   "disputeLost.textRecovered": "{recovered} has been recovered from your Stripe balance; Seazn Club covered Stripe's dispute fee.",
   "disputeLost.textNotRecovered": "We could not automatically recover the amount from your Stripe balance — our team will follow up. Seazn Club covered Stripe's dispute fee.",
   "disputeLost.textConsole": "Registrations: {consoleUrl}",
-
   "registration.subject": "Registration received — {competitionName}",
   "registration.preheaderWaitlist": "You're on the waitlist for {competitionName} — we'll be in touch.",
   "registration.preheaderPaid": "Your entry for {competitionName} is in — payment details inside.",
@@ -150,7 +136,6 @@
   "registration.textHowToPay": "How to pay:",
   "registration.textFeeContactOrganiser": "Entry fee: {amount}. The organiser will contact you with payment details.",
   "registration.textView": "View your registration: {url}",
-
   "paymentReminder.subject": "Payment reminder — {competitionName}",
   "paymentReminder.preheader": "Your {amount} entry fee for {competitionName} is still due.",
   "paymentReminder.title": "Entry fee still due",
@@ -169,7 +154,6 @@
   "paymentReminder.textHowToPay": "How to pay:",
   "paymentReminder.textContactOrg": "Please contact the organiser to arrange payment.",
   "paymentReminder.textAlreadyPaid": "If you've already paid, please ignore this.",
-
   "registrationPromoted.subject": "A spot opened up — {competitionName}",
   "registrationPromoted.preheaderPay": "You're off the waitlist for {competitionName} — pay by {deadline}.",
   "registrationPromoted.preheader": "You're off the waitlist for {competitionName}.",
@@ -188,5 +172,25 @@
   "registrationPromoted.textHeldUntil": "Your spot is held until {deadline} — pay to confirm it:",
   "registrationPromoted.textHeld": "Your spot is held — pay to confirm it:",
   "registrationPromoted.textReference": "Your reference: {refCode}",
-  "registrationPromoted.textStatus": "Status: {url}"
+  "registrationPromoted.textStatus": "Status: {url}",
+  "sponsorInvoice.subject": "Sponsorship invoice — {orgName}",
+  "sponsorInvoice.preheader": "Complete your {orgName} sponsorship — {amount}.",
+  "sponsorInvoice.title": "Sponsorship invoice",
+  "sponsorInvoice.body": "Hi {sponsorName} — {orgName} has set up your <strong>{packageName}</strong> sponsorship. Pay <strong>{amount}</strong> by card to activate your placement.",
+  "sponsorInvoice.panelTitle": "What happens next",
+  "sponsorInvoice.panelBody": "As soon as payment completes, your logo and link go live on the competition's public pages.",
+  "sponsorInvoice.payNow": "Pay {amount} now",
+  "sponsorInvoice.footer": "You received this because {orgName} entered this address for a sponsorship package.",
+  "sponsorInvoice.textLine": "Sponsorship invoice — {packageName} ({orgName}).",
+  "sponsorInvoice.textAmount": "Amount: {amount}. Pay by card at the link below.",
+  "sponsorReceipt.subject": "Sponsorship receipt — {orgName}",
+  "sponsorReceipt.preheader": "Your {orgName} sponsorship is live.",
+  "sponsorReceipt.title": "Sponsorship confirmed",
+  "sponsorReceipt.body": "Thanks {sponsorName} — your payment of <strong>{amount}</strong> for the <strong>{packageName}</strong> package at {orgName} is confirmed.",
+  "sponsorReceipt.panelTitle": "Your placement is live",
+  "sponsorReceipt.panelBody": "Your logo and link now appear on the competition's public pages, the registration page and the venue slideshow.",
+  "sponsorReceipt.seeIt": "See it live: {url}",
+  "sponsorReceipt.footer": "You received this because this address paid for a sponsorship at {orgName}.",
+  "sponsorReceipt.textLine": "Sponsorship receipt — {packageName} ({orgName}).",
+  "sponsorReceipt.textAmount": "Amount paid: {amount}. Your placement is live."
 }

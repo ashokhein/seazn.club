@@ -4,12 +4,21 @@ import "server-only";
 // read shim — resolveSponsors falls back to it only when the table has no
 // rows for the org. Tiers and competition scoping are the Pro line
 // (`sponsors.tiers`); the un-tiered partner strip is free on every plan.
+// Monetization (`sponsors.monetize`) sells priced packages over the entry-fee
+// Connect rail: destination charge, platform application fee, billing-events
+// webhook activation.
+import type Stripe from "stripe";
 import { z } from "zod";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { brandingSponsors } from "@/lib/org-branding";
+import { getStripe } from "@/lib/stripe";
+import { sendSponsorInvoiceEmail, sendSponsorReceiptEmail } from "@/lib/email";
+import { deferred } from "@/lib/deferred";
+import { fireOrgRevalidate } from "@/server/public-site/revalidate";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import { applicationFeeCents, feePercentFor } from "./registrations";
 
 export const SPONSOR_TIERS = ["title", "gold", "silver", "partner"] as const;
 export type SponsorTier = (typeof SPONSOR_TIERS)[number];
@@ -217,4 +226,277 @@ export async function resolveSponsors(
     return deduped.map((s) => ({ ...s, tier: "partner" as const }));
   }
   return deduped;
+}
+
+// ---------------------------------------------------------------------------
+// Monetization (Pro `sponsors.monetize`) — packages + Connect checkout
+// ---------------------------------------------------------------------------
+
+export interface SponsorPackageRow {
+  id: string;
+  competition_id: string | null;
+  name: string;
+  description: string | null;
+  price_cents: number;
+  currency: string;
+  tier: SponsorTier;
+  active: boolean;
+  created_at: string;
+}
+
+const PKG_COLS = [
+  "id", "competition_id", "name", "description", "price_cents",
+  "currency", "tier", "active", "created_at",
+] as const;
+
+export const CreateSponsorPackageInput = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(2000).nullish(),
+  price_cents: z.number().int().positive().max(5_000_000),
+  currency: z.string().length(3).toLowerCase().default("gbp"),
+  tier: z.enum(SPONSOR_TIERS).default("partner"),
+  competition_id: z.string().uuid().nullish(),
+});
+export type CreateSponsorPackageInput = z.infer<typeof CreateSponsorPackageInput>;
+
+export const StartSponsorCheckoutInput = z.object({
+  package_id: z.string().uuid(),
+  sponsor_name: z.string().min(1).max(80),
+  sponsor_email: z.string().email().max(320),
+});
+export type StartSponsorCheckoutInput = z.infer<typeof StartSponsorCheckoutInput>;
+
+export async function createSponsorPackage(
+  auth: AuthCtx,
+  input: CreateSponsorPackageInput,
+): Promise<SponsorPackageRow> {
+  await requireFeature(auth.orgId, "sponsors.monetize", input.competition_id ?? undefined);
+  return withTenant(auth.orgId, async (tx) => {
+    if (input.competition_id) {
+      const [comp] = await tx`select 1 from competitions where id = ${input.competition_id}`;
+      if (!comp) throw new HttpError(404, "competition not found");
+    }
+    const [row] = await tx<SponsorPackageRow[]>`
+      insert into sponsor_packages (org_id, competition_id, name, description,
+                                    price_cents, currency, tier)
+      values (${auth.orgId}, ${input.competition_id ?? null}, ${input.name},
+              ${input.description ?? null}, ${input.price_cents},
+              ${input.currency}, ${input.tier})
+      returning ${tx(PKG_COLS)}`;
+    return row!;
+  });
+}
+
+export async function listSponsorPackages(auth: AuthCtx): Promise<SponsorPackageRow[]> {
+  return withTenant(auth.orgId, (tx) => tx<SponsorPackageRow[]>`
+    select ${tx(PKG_COLS)} from sponsor_packages
+    order by active desc, created_at desc, id`);
+}
+
+/** Packages are referenced by orders, so retiring one is a soft flip. */
+export async function deactivateSponsorPackage(
+  auth: AuthCtx,
+  id: string,
+): Promise<SponsorPackageRow> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<SponsorPackageRow[]>`
+      update sponsor_packages set active = false
+      where id = ${id} returning ${tx(PKG_COLS)}`;
+    if (!row) throw new HttpError(404, "package not found");
+    return row;
+  });
+}
+
+export interface SponsorOrderRow {
+  id: string;
+  package_id: string;
+  sponsor_name: string;
+  sponsor_email: string;
+  payment_intent_id: string | null;
+  amount_cents: number;
+  currency: string;
+  status: "pending" | "paid" | "failed" | "refunded";
+  sponsor_id: string | null;
+  created_at: string;
+  paid_at: string | null;
+}
+
+const ORDER_COLS = [
+  "id", "package_id", "sponsor_name", "sponsor_email", "payment_intent_id",
+  "amount_cents", "currency", "status", "sponsor_id", "created_at", "paid_at",
+] as const;
+
+export async function listSponsorOrders(auth: AuthCtx): Promise<SponsorOrderRow[]> {
+  return withTenant(auth.orgId, (tx) => tx<SponsorOrderRow[]>`
+    select ${tx(ORDER_COLS)} from sponsor_orders
+    order by created_at desc, id`);
+}
+
+/**
+ * Start a package checkout: order row FIRST (pending), then the Stripe
+ * Checkout Session as a destination charge on the org's connected account —
+ * amount to the org, platform keeps the entry-fee application fee, exactly
+ * like registrations. Stripe is called OUTSIDE any sql transaction; the
+ * idempotency key `sponsor-order-<id>` pins retries to one session. The
+ * sponsor contact gets a pay-now invoice email.
+ */
+export async function startSponsorCheckout(
+  auth: AuthCtx,
+  input: StartSponsorCheckoutInput,
+  origin: string,
+): Promise<{ order: SponsorOrderRow; checkout_url: string }> {
+  const pkg = await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<SponsorPackageRow[]>`
+      select ${tx(PKG_COLS)} from sponsor_packages where id = ${input.package_id}`;
+    if (!row) throw new HttpError(404, "package not found");
+    if (!row.active) throw new HttpError(422, "This package is no longer on sale");
+    return row;
+  });
+  await requireFeature(auth.orgId, "sponsors.monetize", pkg.competition_id ?? undefined);
+
+  // Connect gate (v9 ordering): the org must be onboarded — same refusal as
+  // entry fees — before any order exists. The ToS chargeback clause was
+  // accepted when the Express account was created (createConnectOnboardingLink).
+  const [org] = await sql<
+    { slug: string; name: string; stripe_account_id: string | null; stripe_charges_enabled: boolean }[]
+  >`
+    select slug, name, stripe_account_id, stripe_charges_enabled
+    from organizations where id = ${auth.orgId}`;
+  if (!org?.stripe_account_id || !org.stripe_charges_enabled) {
+    throw new HttpError(409, "Connect Stripe (Get paid) before selling sponsorship packages");
+  }
+
+  const order = await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<SponsorOrderRow[]>`
+      insert into sponsor_orders (org_id, package_id, sponsor_name, sponsor_email,
+                                  amount_cents, currency)
+      values (${auth.orgId}, ${pkg.id}, ${input.sponsor_name}, ${input.sponsor_email},
+              ${pkg.price_cents}, ${pkg.currency})
+      returning ${tx(ORDER_COLS)}`;
+    return row!;
+  });
+
+  const returnBase = `${origin}/shared/${org.slug}`;
+  const session = await getStripe().checkout.sessions.create(
+    {
+      mode: "payment",
+      customer_email: input.sponsor_email,
+      metadata: { kind: "sponsor", order_id: order.id, org_id: auth.orgId },
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency: pkg.currency,
+            unit_amount: pkg.price_cents,
+            product_data: { name: `${pkg.name} — sponsorship (${input.sponsor_name})` },
+          },
+        },
+      ],
+      payment_intent_data: {
+        application_fee_amount: applicationFeeCents(
+          pkg.price_cents,
+          await feePercentFor(auth.orgId, pkg.competition_id ?? undefined),
+        ),
+        transfer_data: { destination: org.stripe_account_id },
+        metadata: {
+          kind: "sponsor",
+          order_id: order.id,
+          package_id: pkg.id,
+          org_id: auth.orgId,
+        },
+      },
+      success_url: `${returnBase}?sponsorship=success`,
+      cancel_url: `${returnBase}?sponsorship=cancelled`,
+    },
+    { idempotencyKey: `sponsor-order-${order.id}` },
+  );
+  if (!session.url) throw new HttpError(502, "Stripe did not return a checkout URL");
+
+  await sendSponsorInvoiceEmail({
+    to: input.sponsor_email,
+    orgName: org.name,
+    packageName: pkg.name,
+    sponsorName: input.sponsor_name,
+    amountCents: pkg.price_cents,
+    currency: pkg.currency,
+    checkoutUrl: session.url,
+  });
+
+  return { order, checkout_url: session.url };
+}
+
+// ---------------------------------------------------------------------------
+// Webhook activation (billing-events dispatch; replay-safe)
+// ---------------------------------------------------------------------------
+
+/**
+ * payment_intent.succeeded with metadata.kind === 'sponsor': mark the order
+ * paid and create the activated sponsor row at the package tier. Idempotent
+ * under /admin/billing-events replay — belt (order already paid) and braces
+ * (order already carries a sponsor_id) both short-circuit; Stripe's own
+ * idempotency keys expire ~24h so this DB guard is the real one.
+ */
+export async function handleSponsorPaymentSucceeded(
+  intent: Stripe.PaymentIntent,
+): Promise<void> {
+  if (intent.metadata?.kind !== "sponsor") return;
+  const orderId = intent.metadata.order_id;
+  if (!orderId) return;
+
+  const activated = await sql.begin(async (tx) => {
+    const [order] = await tx<(SponsorOrderRow & { org_id: string })[]>`
+      select ${sql(ORDER_COLS as unknown as string[])}, org_id
+      from sponsor_orders where id = ${orderId} for update`;
+    if (!order) return null;
+    if (order.status === "paid" || order.sponsor_id !== null) return null;
+
+    const [pkg] = await tx<{ name: string; tier: SponsorTier; competition_id: string | null }[]>`
+      select name, tier, competition_id from sponsor_packages where id = ${order.package_id}`;
+    if (!pkg) return null;
+
+    const [sponsor] = await tx<{ id: string }[]>`
+      insert into sponsors (org_id, competition_id, name, tier, status, display_order)
+      values (${order.org_id}, ${pkg.competition_id}, ${order.sponsor_name}, ${pkg.tier},
+              'active',
+              (select coalesce(max(display_order), -1) + 1 from sponsors
+               where org_id = ${order.org_id}
+                 and competition_id is not distinct from ${pkg.competition_id}
+                 and tier = ${pkg.tier}))
+      returning id`;
+    await tx`
+      update sponsor_orders
+      set status = 'paid', paid_at = now(),
+          payment_intent_id = coalesce(payment_intent_id, ${intent.id}),
+          sponsor_id = ${sponsor!.id}
+      where id = ${orderId}`;
+    return { order, packageName: pkg.name };
+  });
+  if (!activated) return;
+
+  const [org] = await sql<{ slug: string; name: string }[]>`
+    select slug, name from organizations where id = ${activated.order.org_id}`;
+  if (org) deferred(() => fireOrgRevalidate(org.slug));
+  await sendSponsorReceiptEmail({
+    to: activated.order.sponsor_email,
+    orgName: org?.name ?? "the organiser",
+    packageName: activated.packageName,
+    sponsorName: activated.order.sponsor_name,
+    amountCents: activated.order.amount_cents,
+    currency: activated.order.currency,
+    publicUrl: org ? `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/shared/${org.slug}` : null,
+  });
+}
+
+/** payment_intent.payment_failed for a sponsor order: pending → failed
+ *  (a paid order is never clobbered by a stray late failure event). */
+export async function handleSponsorPaymentFailed(
+  intent: Stripe.PaymentIntent,
+): Promise<void> {
+  if (intent.metadata?.kind !== "sponsor") return;
+  const orderId = intent.metadata.order_id;
+  if (!orderId) return;
+  await sql`
+    update sponsor_orders
+    set status = 'failed', payment_intent_id = coalesce(payment_intent_id, ${intent.id})
+    where id = ${orderId} and status = 'pending'`;
 }

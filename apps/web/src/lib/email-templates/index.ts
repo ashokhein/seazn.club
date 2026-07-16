@@ -18,3 +18,5 @@ export { disputeAlertTemplate, type DisputeAlertArgs } from "./dispute-alert";
 export { disputeLostTemplate, type DisputeLostArgs } from "./dispute-lost";
 export { funnelClaimTemplate, funnelReminderTemplate, type FunnelEmailArgs } from "./funnel";
 export { claimInviteTemplate, type ClaimInviteArgs } from "./claim-invite";
+export { sponsorInvoiceTemplate, type SponsorInvoiceArgs } from "./sponsor-invoice";
+export { sponsorReceiptTemplate, type SponsorReceiptArgs } from "./sponsor-receipt";
