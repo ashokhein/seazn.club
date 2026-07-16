@@ -23,14 +23,33 @@ export function funnelFormClasses(compact: boolean, variant: "light" | "night"):
   } ${variant === "night" ? "mk-funnel-night" : compact ? "" : "border-purple-200 bg-white/80"}`;
 }
 
+/** Field labels — English defaults so the form works with no props (tests,
+ *  non-localized callers); the marketing home passes localized copy. Sport names
+ *  stay canonical: they double as the `sport` query value handed to /start. */
+export interface FunnelLabels {
+  sport: string;
+  entrants: string;
+  date: string;
+  submit: string;
+}
+
+const DEFAULT_FUNNEL_LABELS: FunnelLabels = {
+  sport: "Sport",
+  entrants: "Players / teams",
+  date: "Start date",
+  submit: "Setup →",
+};
+
 /** Hero funnel form (v3/07 §6): sport + field size + date, no auth — the
  *  visitor invests first, authenticates later on /start. */
 export function StartFunnelForm({
   compact = false,
   variant = "light",
+  labels = DEFAULT_FUNNEL_LABELS,
 }: {
   compact?: boolean;
   variant?: "light" | "night";
+  labels?: FunnelLabels;
 }) {
   const router = useRouter();
   const [sport, setSport] = useState<string>("Football");
@@ -51,7 +70,7 @@ export function StartFunnelForm({
       className={funnelFormClasses(compact, variant)}
     >
       <label className="min-w-44 flex-1 text-left">
-        <span className="label mb-1 block text-xs">Sport</span>
+        <span className="label mb-1 block text-xs">{labels.sport}</span>
         <select
           value={sport}
           onChange={(e) => setSport(e.target.value)}
@@ -64,7 +83,7 @@ export function StartFunnelForm({
         </select>
       </label>
       <label className="w-full text-left sm:w-32">
-        <span className="label mb-1 block text-xs">Players / teams</span>
+        <span className="label mb-1 block text-xs">{labels.entrants}</span>
         <input
           type="number"
           min={2}
@@ -76,7 +95,7 @@ export function StartFunnelForm({
         />
       </label>
       <label className="w-full text-left sm:w-40">
-        <span className="label mb-1 block text-xs">Start date</span>
+        <span className="label mb-1 block text-xs">{labels.date}</span>
         <input
           type="date"
           value={date}
@@ -86,7 +105,7 @@ export function StartFunnelForm({
         />
       </label>
       <button type="submit" className="btn btn-primary whitespace-nowrap px-4 py-2.5">
-        Setup →
+        {labels.submit}
       </button>
     </form>
   );

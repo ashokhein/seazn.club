@@ -259,5 +259,9 @@
   "sched.board.trayAria": "Te plaatsen wedstrijden",
   "sched.board.replayCaption": "08:55 — WEDSTRIJDEN KOMEN BINNEN · CONFLICT GEVANGEN · OPGELOST · GEPUBLICEERD — RAAK AAN OM OVER TE NEMEN",
   "sched.board.runMatchday": "Organiseer je speeldag →",
-  "sched.board.publishToPlayers": "Publiceren voor spelers →"
+  "sched.board.publishToPlayers": "Publiceren voor spelers →",
+  "funnel.sport": "Sport",
+  "funnel.entrants": "Spelers / teams",
+  "funnel.date": "Startdatum",
+  "funnel.submit": "Instellen →"
 }

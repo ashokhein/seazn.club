@@ -260,5 +260,9 @@
   "sched.board.trayAria": "Fixtures to place",
   "sched.board.replayCaption": "08:55 — FIXTURES ARRIVE · CLASH CAUGHT · RESOLVED · PUBLISHED — TOUCH TO TAKE OVER",
   "sched.board.runMatchday": "Run your matchday →",
-  "sched.board.publishToPlayers": "Publish to players →"
+  "sched.board.publishToPlayers": "Publish to players →",
+  "funnel.sport": "Sport",
+  "funnel.entrants": "Players / teams",
+  "funnel.date": "Start date",
+  "funnel.submit": "Setup →"
 }

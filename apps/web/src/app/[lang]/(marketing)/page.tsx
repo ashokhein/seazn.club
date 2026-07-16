@@ -92,7 +92,15 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
               </h1>
               <p className="mt-4 max-w-md text-base text-[#b7aede]">{t(d, "home.hero.subhead")}</p>
               <div className="mt-8">
-                <StartFunnelForm variant="night" />
+                <StartFunnelForm
+                  variant="night"
+                  labels={{
+                    sport: t(d, "funnel.sport"),
+                    entrants: t(d, "funnel.entrants"),
+                    date: t(d, "funnel.date"),
+                    submit: t(d, "funnel.submit"),
+                  }}
+                />
               </div>
               <p className="mt-4 text-xs text-[#8d7fc0]">
                 {t(d, "home.hero.freeNote")}
