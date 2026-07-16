@@ -1104,7 +1104,6 @@ export type DictionaryKey =
   | "officials.colOfficials"
   | "officials.copied"
   | "officials.copy"
-  | "officials.crew"
   | "officials.declineReason"
   | "officials.done"
   | "officials.empty"

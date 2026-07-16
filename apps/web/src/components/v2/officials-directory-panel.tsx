@@ -20,6 +20,7 @@ export interface DirectoryOfficial {
   role_keys: string[];
   entrant_id: string | null;
   email: string | null;
+  max_per_day: number | null;
   claimed: boolean;
   invite_pending: boolean;
 }
@@ -118,7 +119,10 @@ export function OfficialsDirectoryPanel({
                   <OfficialAvatar name={o.display_name} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium text-slate-800">{o.display_name}</p>
-                    {o.email && <p className="truncate text-xs text-slate-400">{o.email}</p>}
+                    {/* review fix 2026-07-17: an official's email is contact
+                        info for whoever manages the roster — viewers browsing
+                        Directory should not see it. */}
+                    {canEdit && o.email && <p className="truncate text-xs text-slate-400">{o.email}</p>}
                     <div className="mt-0.5 flex flex-wrap items-center gap-1">
                       {o.role_keys.map((r) => (
                         <span key={r} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500">
@@ -128,6 +132,11 @@ export function OfficialsDirectoryPanel({
                       {o.entrant_id && (
                         <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
                           {msg("officials.teamRef")}
+                        </span>
+                      )}
+                      {o.max_per_day != null && (
+                        <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-400">
+                          {msg("officials.maxPerDay", { n: o.max_per_day })}
                         </span>
                       )}
                       {o.claimed ? (

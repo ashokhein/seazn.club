@@ -336,11 +336,14 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     const stranger = await makeUser("stranger-off");
     expect(await listPendingOfficiatingClaims(stranger.email)).toHaveLength(0);
 
-    // wrong email → refused, nothing consumed.
+    // wrong email → refused with the GENERIC not-found response, nothing
+    // consumed. (review fix 2026-07-17: ownership must be proven before any
+    // state — claimed/expired/revoked/not-officiating — is revealed; a
+    // non-owner must not be able to tell a pending claim from a bogus id.)
     const impostor = await makeUser("impostor-off");
     await expect(
       acceptMyOfficiatingClaim(invitedA.claim.id, impostor.id, impostor.email),
-    ).rejects.toMatchObject({ status: 403, code: "CLAIM_EMAIL_MISMATCH" });
+    ).rejects.toMatchObject({ status: 404, code: "CLAIM_INVALID" });
 
     // accept org A by id — links + consumes ONLY that claim; org B stays pending.
     const acceptedA = await acceptMyOfficiatingClaim(invitedA.claim.id, ref.id, ref.email);
@@ -351,10 +354,18 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     const mineAfterA = await getMyOfficiating(ref.id);
     expect(mineAfterA.is_official).toBe(true); // linked via org A even though org B is still pending
 
-    // re-accepting the now-claimed id 409s, doesn't silently no-op.
+    // re-accepting the now-claimed id (as the real owner) 409s, doesn't
+    // silently no-op — this differentiation is fine because ownership is
+    // proven (ref.email matches).
     await expect(
       acceptMyOfficiatingClaim(invitedA.claim.id, ref.id, ref.email),
     ).rejects.toMatchObject({ status: 409, code: "CLAIM_CLAIMED" });
+
+    // a NON-owner probing that same now-claimed id gets the identical
+    // generic 404 — never CLAIM_CLAIMED. No state leak either direction.
+    await expect(
+      acceptMyOfficiatingClaim(invitedA.claim.id, impostor.id, impostor.email),
+    ).rejects.toMatchObject({ status: 404, code: "CLAIM_INVALID" });
 
     // accept org B by id — the second org links too (multi-org proof).
     await acceptMyOfficiatingClaim(invitedB.claim.id, ref.id, ref.email);
@@ -364,13 +375,15 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     expect(consoleA.find((o) => o.id === officialA.id)).toMatchObject({ claimed: true });
     expect(consoleB.find((o) => o.id === officialB.id)).toMatchObject({ claimed: true });
 
-    // a bare player claim (no officials row) 404s here — that flow stays on
-    // the token-based /claim page, not the officiating accept-by-id route.
+    // a bare player claim (no officials row), accepted by its real owner,
+    // 404s with its OWN code — that flow stays on the token-based /claim
+    // page, not the officiating accept-by-id route.
     await expect(
       acceptMyOfficiatingClaim(playerClaimId, ref.id, ref.email),
-    ).rejects.toMatchObject({ status: 404, code: "CLAIM_INVALID" });
+    ).rejects.toMatchObject({ status: 404, code: "CLAIM_NOT_OFFICIATING" });
 
-    // expired claims never surface as pending, and accept refuses them too.
+    // expired claims never surface as pending, and their real owner is
+    // refused with CLAIM_EXPIRED (ownership proven, state may differentiate)…
     const officialC = await createOfficial(orgA.auth, { display_name: "Ref Expired", role_keys: ["referee"] });
     const invitedC = await inviteOfficial(orgA.auth, officialC.id, "expired@example.com");
     await sql`update person_claims set expires_at = now() - interval '1 minute' where id = ${invitedC.claim.id}`;
@@ -379,6 +392,12 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     await expect(
       acceptMyOfficiatingClaim(invitedC.claim.id, expiredUser.id, "expired@example.com"),
     ).rejects.toMatchObject({ code: "CLAIM_EXPIRED" });
+    // …but a non-owner probing the SAME expired claim gets the identical
+    // generic 404 as any other non-owner attempt — expiry is state, and
+    // state never leaks past ownership.
+    await expect(
+      acceptMyOfficiatingClaim(invitedC.claim.id, impostor.id, impostor.email),
+    ).rejects.toMatchObject({ status: 404, code: "CLAIM_INVALID" });
 
     // revoked claims never surface as pending either.
     const officialE = await createOfficial(orgA.auth, { display_name: "Ref Revoked", role_keys: ["referee"] });

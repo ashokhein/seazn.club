@@ -146,6 +146,7 @@ async function OfficialsTab({ ui }: { ui: Dict }) {
           role_keys: o.role_keys,
           entrant_id: o.entrant_id,
           email: o.email,
+          max_per_day: o.max_per_day,
           claimed: o.claimed,
           invite_pending: o.invite_pending,
         }))}

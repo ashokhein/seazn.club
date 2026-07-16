@@ -10,7 +10,7 @@ import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { refreshOfficialsCache } from "./officials";
 import { createDeviceLink } from "./device-links";
-import { acceptResolvedClaim, assertClaimEmail, resolveClaimById } from "./person-claims";
+import { acceptResolvedClaim, resolveClaimById } from "./person-claims";
 
 // refreshOfficialsCache is typed for the tenant tx; it only uses the tagged
 // template + .json, which the superuser `sql` shares — safe structural cast.
@@ -135,22 +135,26 @@ export async function listPendingOfficiatingClaims(email: string): Promise<Pendi
 /**
  * Accept a pending officiating invite by id (v11.1 "Pending invites" card) —
  * no token in the URL; the session's verified login email does the same job
- * the emailed token normally proves. Resolves the claim, confirms it's an
- * OFFICIATING claim (a bare player claim 404s here — that flow stays on
- * /claim/[token]) BEFORE any write, then the strict email match, then routes
- * through the exact same accept core the token flow uses
- * (acceptResolvedClaim) — no parallel claim mechanism.
+ * the emailed token normally proves. Ownership is proven FIRST, inside
+ * resolveClaimById's lookup itself (scoped to userEmail) — a non-owner (or a
+ * bogus id) gets the generic 404 CLAIM_INVALID with no hint of the claim's
+ * real state (review fix 2026-07-17: state used to differentiate before the
+ * email check, which let anyone holding an id learn whether it was pending/
+ * claimed/expired/revoked without proving ownership). Only once ownership is
+ * proven does this check officiating-ness (a bare player claim 404s here
+ * too, with its own CLAIM_NOT_OFFICIATING code — that flow stays on
+ * /claim/[token]) and route through the exact same accept core the token
+ * flow uses (acceptResolvedClaim) — no parallel claim mechanism.
  */
 export async function acceptMyOfficiatingClaim(
   claimId: string,
   userId: string,
   userEmail: string,
 ): Promise<{ org_name: string; official_name: string }> {
-  const claim = await resolveClaimById(claimId);
+  const claim = await resolveClaimById(claimId, userEmail);
   if (!claim.is_official) {
-    throw new HttpError(404, "This invite is not an officiating invite", "CLAIM_INVALID");
+    throw new HttpError(404, "This invite is not an officiating invite", "CLAIM_NOT_OFFICIATING");
   }
-  assertClaimEmail(claim, userEmail);
   const accepted = await acceptResolvedClaim(claim, userId);
   return { org_name: accepted.org_name, official_name: accepted.person_name };
 }

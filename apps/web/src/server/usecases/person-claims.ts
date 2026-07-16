@@ -162,12 +162,18 @@ export async function resolveClaimToken(token: string): Promise<ResolvedClaim> {
 }
 
 /**
- * Resolve a claim by id (v11.1 — the /me "Pending invites" card): no token in
- * the URL. Safe because the caller (acceptMyOfficiatingClaim) still proves
- * ownership via the SAME strict email match every accept path enforces — the
- * session's verified login email, not the id, is what authorizes acceptance.
+ * Resolve a claim by id AND caller email in one step (v11.1 — the /me
+ * "Pending invites" card). Unlike the token flow — where holding the emailed
+ * token IS the proof of ownership, so state differentiates before the email
+ * check — a bare id proves nothing on its own: any authenticated user could
+ * pass any id. So ownership is folded into the lookup itself: the query is
+ * scoped to `ownerEmail`, and a non-owner (wrong email, or an id that
+ * doesn't exist at all) gets the exact same generic 404 CLAIM_INVALID —
+ * never a hint of whether the claim is pending, claimed, expired, or
+ * revoked. Only once a row comes back (ownership proven) does state
+ * differentiate, via the same settleClaimRow the token flow uses.
  */
-export async function resolveClaimById(id: string): Promise<ResolvedClaim> {
+export async function resolveClaimById(id: string, ownerEmail: string): Promise<ResolvedClaim> {
   const [claim] = await sql<ClaimLookupRow[]>`
     select pc.id, pc.org_id, o.name as org_name, pc.person_id,
            p.full_name as person_name, pc.email,
@@ -177,7 +183,8 @@ export async function resolveClaimById(id: string): Promise<ResolvedClaim> {
     from person_claims pc
     join persons p on p.id = pc.person_id
     join organizations o on o.id = pc.org_id
-    where pc.id = ${id} limit 1`;
+    where pc.id = ${id} and lower(pc.email) = lower(${ownerEmail}) limit 1`;
+  if (!claim) throw new HttpError(404, "This invite could not be found", "CLAIM_INVALID");
   return settleClaimRow(claim);
 }
 
