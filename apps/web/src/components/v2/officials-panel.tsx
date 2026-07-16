@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { officialRolePreset } from "@/lib/official-roles";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 
 interface Official {
   id: string;
@@ -76,6 +77,8 @@ export function OfficialsPanel({
   /** Seeds the add-form role + crew hint from the sport's preset (v6/00 §4). */
   sportKey?: string;
 }) {
+  const msg = useMsg();
+  const locale = useLocale();
   const rolePreset = officialRolePreset(sportKey);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
@@ -105,7 +108,7 @@ export function OfficialsPanel({
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("officials.failed"));
       }
     } finally {
       setBusy(false);
@@ -115,9 +118,9 @@ export function OfficialsPanel({
   const roleList = roles.split(/[,\s]+/).filter(Boolean);
 
   return (
-    <section className="mt-8 space-y-4" aria-label="Officials">
+    <section className="mt-8 space-y-4" aria-label={msg("officials.aria")}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold tracking-tight text-slate-900">Officials</h2>
+        <h2 className="text-lg font-semibold tracking-tight text-slate-900">{msg("officials.heading")}</h2>
         {canEdit && (
           <label className="flex items-center gap-2 text-sm text-slate-600">
             <input
@@ -133,7 +136,7 @@ export function OfficialsPanel({
                 )
               }
             />
-            Hide official names on public pages
+            {msg("officials.hideNames")}
           </label>
         )}
       </div>
@@ -144,14 +147,14 @@ export function OfficialsPanel({
       {/* roster of officials */}
       <div className="card space-y-3 p-4">
         <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Roster</h3>
+          <h3 className="text-sm font-semibold text-slate-900">{msg("officials.roster")}</h3>
           {officials.length > 0 && (
-            <span className="text-xs text-slate-400">{officials.length} total</span>
+            <span className="text-xs text-slate-400">{msg("officials.total", { n: officials.length })}</span>
           )}
         </div>
         {officials.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-500">
-            No officials yet — add one below to start assigning them to fixtures.
+            {msg("officials.empty")}
           </p>
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2">
@@ -180,14 +183,14 @@ export function OfficialsPanel({
                     ))}
                     {o.entrant_id && (
                       <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
-                        team-ref
+                        {msg("officials.teamRef")}
                       </span>
                     )}
                   </div>
                 </div>
                 {o.max_per_day != null && (
                   <span className="shrink-0 text-[11px] text-slate-400">
-                    max {o.max_per_day}/day
+                    {msg("officials.maxPerDay", { n: o.max_per_day })}
                   </span>
                 )}
               </li>
@@ -213,17 +216,17 @@ export function OfficialsPanel({
             }}
           >
             <label className="flex flex-col gap-1 text-xs text-slate-500">
-              Name
+              {msg("officials.name")}
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
             </label>
             <label className="flex flex-col gap-1 text-xs text-slate-500">
-              Roles (space-separated)
+              {msg("officials.roles")}
               <input className="input w-40" value={roles} onChange={(e) => setRoles(e.target.value)} />
             </label>
-            <button type="submit" className="btn btn-primary" disabled={busy}>Add official</button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>{msg("officials.add")}</button>
             {rolePreset.crew.length > 1 && (
               <span className="basis-full text-[11px] text-slate-400">
-                Usual crew for this sport: {rolePreset.crew.join(", ")}
+                {msg("officials.crew", { crew: rolePreset.crew.join(", ") })}
               </span>
             )}
           </form>
@@ -233,25 +236,25 @@ export function OfficialsPanel({
       {/* auto assign */}
       {canEdit && (
         <div className="card space-y-3 p-4">
-          <h3 className="text-sm font-semibold text-slate-900">Auto-assign</h3>
+          <h3 className="text-sm font-semibold text-slate-900">{msg("officials.autoAssign")}</h3>
           <div className="flex flex-wrap items-center gap-4 text-sm text-slate-600">
             <label className="flex items-center gap-1.5">
               <input type="checkbox" checked={blockStay} onChange={(e) => setBlockStay(e.target.checked)} />
-              Stay on one court per block
+              {msg("officials.blockStay")}
             </label>
             <label className="flex items-center gap-1.5">
               <input type="checkbox" checked={poolLock} onChange={(e) => setPoolLock(e.target.checked)} />
-              Keep officials in their pool
+              {msg("officials.poolLock")}
             </label>
             <label className="flex items-center gap-1.5">
-              Fairness
+              {msg("officials.fairness")}
               <select
                 className="input"
                 value={fairness}
                 onChange={(e) => setFairness(e.target.value as "tournament" | "per_day")}
               >
-                <option value="tournament">whole tournament</option>
-                <option value="per_day">per day</option>
+                <option value="tournament">{msg("officials.fairnessTournament")}</option>
+                <option value="per_day">{msg("officials.fairnessPerDay")}</option>
               </select>
             </label>
             <button
@@ -270,7 +273,7 @@ export function OfficialsPanel({
                 }, false)
               }
             >
-              Propose
+              {msg("officials.propose")}
             </button>
             {proposal && proposal.assignments.length > 0 && (
               <button
@@ -295,16 +298,12 @@ export function OfficialsPanel({
                   })
                 }
               >
-                Apply {proposal.assignments.length} assignments
+                {msg("officials.apply", { n: proposal.assignments.length })}
               </button>
             )}
           </div>
           {proposal && proposal.assignments.length === 0 && (
-            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">
-              Nothing to assign yet. Officials are placed onto fixtures that have a kick-off
-              time — publish the schedule (Board tab) and add at least one official above, then
-              Propose again.
-            </p>
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">{msg("officials.nothing")}</p>
           )}
           {proposal && proposal.conflicts.length > 0 && (
             <ul className="space-y-1">
@@ -327,16 +326,11 @@ export function OfficialsPanel({
       {/* phased sourcing (17 Jun / 3 Jun) */}
       {canEdit && stages.length > 0 && (
         <div className="card space-y-3 p-4">
-          <h3 className="text-sm font-semibold text-slate-900">
-            Source officials from results
-          </h3>
-          <p className="text-xs text-slate-500">
-            e.g. &ldquo;4th of the group refs the next round&rdquo; — resolves as soon as the
-            source stage decides, so Phase 2 never blocks Phase 1.
-          </p>
+          <h3 className="text-sm font-semibold text-slate-900">{msg("officials.source")}</h3>
+          <p className="text-xs text-slate-500">{msg("officials.sourceHint")}</p>
           <div className="flex flex-wrap items-end gap-2 text-sm">
             <label className="flex flex-col gap-1 text-xs text-slate-500">
-              From stage
+              {msg("officials.fromStage")}
               <select className="input" value={sourceStage} onChange={(e) => setSourceStage(e.target.value)}>
                 {stages.map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
@@ -344,7 +338,7 @@ export function OfficialsPanel({
               </select>
             </label>
             <label className="flex flex-col gap-1 text-xs text-slate-500">
-              Rank
+              {msg("officials.rank")}
               <input
                 type="number"
                 min={1}
@@ -367,7 +361,7 @@ export function OfficialsPanel({
                 }, false)
               }
             >
-              Resolve
+              {msg("officials.resolve")}
             </button>
           </div>
           {sourced && (
@@ -378,7 +372,7 @@ export function OfficialsPanel({
                     {r.display_name}
                   </span>
                   {r.official_id ? (
-                    <span className="text-xs text-slate-400">already an official</span>
+                    <span className="text-xs text-slate-400">{msg("officials.alreadyOfficial")}</span>
                   ) : (
                     <button
                       type="button"
@@ -397,14 +391,14 @@ export function OfficialsPanel({
                         )
                       }
                     >
-                      Add as team-referee
+                      {msg("officials.addTeamRef")}
                     </button>
                   )}
                 </li>
               ))}
               {sourced.pending.map((p, i) => (
                 <li key={`p${i}`} className="rounded-md bg-amber-50 px-3 py-1.5 text-amber-700">
-                  Pending: {p.reason}
+                  {msg("officials.pending", { reason: p.reason })}
                 </li>
               ))}
             </ul>
@@ -417,10 +411,10 @@ export function OfficialsPanel({
         <table className="table">
           <thead>
             <tr>
-              <th className="px-4 py-2 text-left">Fixture</th>
-              <th className="px-4 py-2 text-left">Kick-off</th>
-              <th className="px-4 py-2 text-left">Officials</th>
-              {canEdit && <th className="px-4 py-2 text-right">Assign</th>}
+              <th className="px-4 py-2 text-left">{msg("officials.colFixture")}</th>
+              <th className="px-4 py-2 text-left">{msg("officials.colKickoff")}</th>
+              <th className="px-4 py-2 text-left">{msg("officials.colOfficials")}</th>
+              {canEdit && <th className="px-4 py-2 text-right">{msg("officials.colAssign")}</th>}
             </tr>
           </thead>
           <tbody>
@@ -429,7 +423,7 @@ export function OfficialsPanel({
                 <td className="px-4 py-2 text-sm text-slate-700">{f.label}</td>
                 <td className="px-4 py-2 text-sm text-slate-500">
                   {f.scheduled_at
-                    ? new Date(f.scheduled_at).toLocaleString("en-GB", {
+                    ? new Date(f.scheduled_at).toLocaleString(locale, {
                         weekday: "short",
                         day: "numeric",
                         month: "short",
@@ -446,7 +440,7 @@ export function OfficialsPanel({
                       {f.officials.map((o, i) => (
                         <li key={i} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
                           {o.name} <span className="text-slate-400">{o.role}</span>
-                          {o.locked && <span aria-label="locked" title="locked"> 🔒</span>}
+                          {o.locked && <span aria-label={msg("officials.locked")} title={msg("officials.locked")}> 🔒</span>}
                         </li>
                       ))}
                     </ul>
@@ -456,7 +450,7 @@ export function OfficialsPanel({
                   <td className="px-4 py-2 text-right">
                     <select
                       className="input"
-                      aria-label={`Assign referee to ${f.label}`}
+                      aria-label={msg("officials.assignAria", { label: f.label })}
                       value={f.officials[0]?.official_id ?? ""}
                       disabled={busy}
                       onChange={(e) => {
@@ -473,7 +467,7 @@ export function OfficialsPanel({
                         );
                       }}
                     >
-                      <option value="">— none —</option>
+                      <option value="">{msg("officials.none")}</option>
                       {officials.map((o) => (
                         <option key={o.id} value={o.id}>{officialName(o.id)}</option>
                       ))}
