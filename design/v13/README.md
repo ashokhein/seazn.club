@@ -78,6 +78,11 @@ field of teams is disproportionately hard:
   geometry (`twoSidedBracket`) driving three surfaces — an interactive console
   `BracketPanel`, an upgraded public bracket (columns → connected centre-Final
   tree), and a landscape results-poster PDF (`DocKind: bracket`, soft-dep v12).
+- **PROMPT-63** — Signed per-match audit export (Pro): builds on the existing
+  `score_events` hash chain (V226) — a `GET /fixtures/{id}/audit` ledger download
+  (JSON + branded PDF) with an Ed25519 signature over the head hash + published
+  public key for independent verification, gated by a new `scoring.audit_export`
+  entitlement, plus surfacing chain-verified status on the match/console.
 
 ## Reference
 
