@@ -11,6 +11,9 @@ import { Tip } from "@/components/ui/tip";
 import { publicBrandColor, publicThemeStyleChain } from "@/lib/public-theme";
 import { ProseEditor } from "@/components/prose-editor";
 import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
+
+type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
 interface CompetitionLite {
   id: string;
@@ -31,11 +34,19 @@ const STATUSES = ["draft", "published", "live", "completed", "archived"];
 
 type SettingsTab = "general" | "branding" | "archived";
 
-const STATUS_HINT: Record<string, string> = {
-  published: "A timetable is set — publish it?",
-  live: "Matches are underway — mark it live?",
-  completed: "Every match is decided — mark it completed?",
-};
+/** Localized status label; unknown values fall back to the raw token. */
+function statusLabel(msg: Msg, status: string): string {
+  const key = `compset.status.${status}` as MessageKey;
+  const label = msg(key);
+  return label === key ? status : label;
+}
+
+/** Nudge shown when the derived status differs from the saved one. */
+function statusHint(msg: Msg, status: string): string {
+  const key = `compset.statusHint.${status}` as MessageKey;
+  const hint = msg(key);
+  return hint === key ? msg("compset.statusHint.fallback", { status: statusLabel(msg, status) }) : hint;
+}
 
 // Doc 15 §1 consent copy lives in lib/messages ("showcase.*") — shared with
 // the create wizard so the two surfaces can never drift.
@@ -109,7 +120,7 @@ export function CompetitionSettings({
       setForm((f) => ({ ...f, status: next }));
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update status");
+      setError(err instanceof Error ? err.message : msg("compset.failedStatus"));
     } finally {
       setBusy(false);
     }
@@ -163,7 +174,7 @@ export function CompetitionSettings({
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("compset.failed"));
       }
     } finally {
       setBusy(false);
@@ -174,10 +185,10 @@ export function CompetitionSettings({
   // `form`, so switching tabs never loses unsaved edits. The Archived panel is
   // a separate surface (its own API calls), so it renders outside the form.
   const tabs: { key: SettingsTab; label: string }[] = [
-    { key: "general", label: "General" },
-    ...(themeBranding ? [{ key: "branding" as const, label: "Branding" }] : []),
+    { key: "general", label: msg("compset.tab.general") },
+    ...(themeBranding ? [{ key: "branding" as const, label: msg("compset.tab.branding") }] : []),
     ...(archivedCount > 0
-      ? [{ key: "archived" as const, label: `Archived (${archivedCount})` }]
+      ? [{ key: "archived" as const, label: msg("compset.tab.archived", { n: archivedCount }) }]
       : []),
   ];
   // A refresh can remove the selected tab (last archived division restored,
@@ -188,7 +199,7 @@ export function CompetitionSettings({
     <div>
       <div
         role="tablist"
-        aria-label="Competition settings"
+        aria-label={msg("compset.tablistAria")}
         className="mb-4 flex flex-wrap gap-1 border-b border-slate-200"
       >
         {tabs.map((t) => (
@@ -214,16 +225,16 @@ export function CompetitionSettings({
       ) : (
         <form onSubmit={save} className="card space-y-4 p-5">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-slate-700">Settings</h2>
+            <h2 className="text-sm font-semibold text-slate-700">{msg("compset.heading")}</h2>
             {competition.frozen && (
-              <span className="badge bg-sky-100 text-sky-700">read-only (over quota)</span>
+              <span className="badge bg-sky-100 text-sky-700">{msg("compset.readOnly")}</span>
             )}
           </div>
 
           {activeTab === "general" && (
             <>
               <label className="block">
-                <span className="label">Name</span>
+                <span className="label">{msg("compset.name")}</span>
                 <input
                   required
                   disabled={readOnly}
@@ -234,7 +245,7 @@ export function CompetitionSettings({
               </label>
 
               <div>
-                <span className="label">Description</span>
+                <span className="label">{msg("compset.description")}</span>
                 {readOnly ? (
                   <textarea disabled rows={3} value={form.description} className="textarea" />
                 ) : (
@@ -244,7 +255,7 @@ export function CompetitionSettings({
                     value={form.description}
                     onChange={(md) => setForm({ ...form, description: md })}
                     orgId={orgId}
-                    placeholder="Competition description"
+                    placeholder={msg("compset.descriptionPlaceholder")}
                     previewStyle={publicThemeStyleChain(competition.branding, orgBranding)}
                   />
                 )}
@@ -252,7 +263,7 @@ export function CompetitionSettings({
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="label">Starts</span>
+                  <span className="label">{msg("compset.starts")}</span>
                   <input
                     type="date"
                     disabled={readOnly}
@@ -262,7 +273,7 @@ export function CompetitionSettings({
                   />
                 </label>
                 <label className="block">
-                  <span className="label">Ends</span>
+                  <span className="label">{msg("compset.ends")}</span>
                   <input
                     type="date"
                     disabled={readOnly}
@@ -290,7 +301,7 @@ export function CompetitionSettings({
 
               <div className="grid grid-cols-2 gap-3">
                 <label className="block">
-                  <span className="label">Status</span>
+                  <span className="label">{msg("compset.status")}</span>
                   <select
                     disabled={!canEdit}
                     value={form.status}
@@ -299,21 +310,20 @@ export function CompetitionSettings({
                   >
                     {STATUSES.map((s) => (
                       <option key={s} value={s}>
-                        {s}
+                        {statusLabel(msg, s)}
                       </option>
                     ))}
                   </select>
                   {showSuggestion && (
                     <span className="mt-1.5 flex flex-wrap items-center gap-2 rounded-md bg-purple-50 px-2.5 py-1.5 text-xs text-purple-800">
-                      {STATUS_HINT[suggestedStatus!] ??
-                        `Looks like this should be “${suggestedStatus}”.`}
+                      {statusHint(msg, suggestedStatus!)}
                       <button
                         type="button"
                         disabled={busy}
                         onClick={() => void applyStatus(suggestedStatus!)}
                         className="btn btn-primary px-2 py-0.5 text-xs"
                       >
-                        Set to {suggestedStatus}
+                        {msg("compset.setTo", { status: statusLabel(msg, suggestedStatus!) })}
                       </button>
                     </span>
                   )}
@@ -342,14 +352,16 @@ export function CompetitionSettings({
                 </label>
                 {form.visibility !== "public" && (
                   <p className="text-xs text-amber-600">
-                    Set visibility to <b>public</b> to enable showcasing.
+                    {msg("compset.showcase.needsPublicPre")}
+                    <b>{msg("compset.showcase.needsPublicBold")}</b>
+                    {msg("compset.showcase.needsPublicPost")}
                   </p>
                 )}
                 {form.discoverable && form.visibility === "public" && (
                   <>
                     <div className="grid grid-cols-2 gap-3">
                       <label className="block">
-                        <span className="label">City (optional)</span>
+                        <span className="label">{msg("compset.city")}</span>
                         <input
                           disabled={readOnly}
                           value={form.city}
@@ -358,7 +370,7 @@ export function CompetitionSettings({
                         />
                       </label>
                       <label className="block">
-                        <span className="label">Country (optional)</span>
+                        <span className="label">{msg("compset.country")}</span>
                         <input
                           disabled={readOnly}
                           value={form.country}
@@ -369,23 +381,23 @@ export function CompetitionSettings({
                     </div>
                     <label className="block">
                       <span className="label">
-                        Tagline{" "}
-                        {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
+                        {msg("compset.tagline")}{" "}
+                        {!discoveryBranding && <span className="text-purple-500">{msg("compset.pro")}</span>}
                       </span>
                       <input
                         disabled={readOnly || !discoveryBranding}
                         value={form.tagline}
                         onChange={(e) => setForm({ ...form, tagline: e.target.value })}
                         placeholder={
-                          discoveryBranding ? "One line on your cards" : "Upgrade for card branding"
+                          discoveryBranding ? msg("compset.taglinePlaceholder") : msg("compset.taglinePlaceholderPro")
                         }
                         className="input"
                       />
                     </label>
                     <label className="block">
                       <span className="label">
-                        Hero image URL{" "}
-                        {!discoveryBranding && <span className="text-purple-500">(Pro)</span>}
+                        {msg("compset.heroUrl")}{" "}
+                        {!discoveryBranding && <span className="text-purple-500">{msg("compset.pro")}</span>}
                       </span>
                       <input
                         disabled={readOnly || !discoveryBranding}
@@ -399,22 +411,20 @@ export function CompetitionSettings({
               </fieldset>
 
               <p className="text-xs text-slate-400">
-                Slug: <span className="font-mono">{competition.slug}</span>
+                {msg("compset.slug")} <span className="font-mono">{competition.slug}</span>
               </p>
             </>
           )}
 
           {activeTab === "branding" && themeBranding && (
             <div>
-              <span className="label">Brand color</span>
-              <p className="mb-2 text-xs text-slate-500">
-                Colors this competition&apos;s public pages and TV noticeboard.
-              </p>
+              <span className="label">{msg("compset.brandColor")}</span>
+              <p className="mb-2 text-xs text-slate-500">{msg("compset.brandColorDesc")}</p>
               <BrandColorPicker
                 value={form.brand_primary}
                 onSelect={(hex) => setForm({ ...form, brand_primary: hex })}
                 disabled={readOnly}
-                defaultLabel="Same as organisation"
+                defaultLabel={msg("compset.sameAsOrg")}
                 defaultHex={publicBrandColor(orgBranding) ?? "#7c3aed"}
               />
             </div>
@@ -424,11 +434,11 @@ export function CompetitionSettings({
           {error && (
             <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
           )}
-          {saved && <p className="text-sm text-emerald-600">Saved.</p>}
+          {saved && <p className="text-sm text-emerald-600">{msg("compset.saved")}</p>}
 
           {canEdit && (
             <button type="submit" disabled={busy} className="btn btn-primary w-full">
-              {busy ? "Saving…" : "Save settings"}
+              {busy ? msg("compset.saving") : msg("compset.save")}
             </button>
           )}
         </form>

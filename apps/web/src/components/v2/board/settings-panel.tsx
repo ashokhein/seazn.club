@@ -15,6 +15,7 @@ import {
   windowsToDailyHours,
 } from "@/lib/schedule-board";
 import type { BoardConfig } from "./types";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /** Self-contained wrapper for RSC pages (constraints tab): owns the saved/
  *  error notice the board would otherwise host. Opens expanded — on a
@@ -27,6 +28,7 @@ export function StandaloneScheduleSettings(props: {
   constraintsAllowed: boolean;
   venueCap?: string;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -39,12 +41,12 @@ export function StandaloneScheduleSettings(props: {
         defaultOpen
         onSaved={() => {
           setError(null);
-          setNotice("Scheduling settings saved.");
+          setNotice(msg("boardset.saved"));
           router.refresh();
         }}
         onError={(err) => {
           setNotice(null);
-          setError(err instanceof Error ? err.message : "Something went wrong — please try again.");
+          setError(err instanceof Error ? err.message : msg("boardset.error"));
         }}
       />
     </div>
@@ -72,6 +74,7 @@ export function SettingsPanel({
   onSaved: () => void;
   onError: (err: unknown) => void;
 }) {
+  const msg = useMsg();
   const [open, setOpen] = useState(defaultOpen);
   const [startAt, setStartAt] = useState(config.startAt ? toLocalInput(config.startAt) : "");
   const [endAt, setEndAt] = useState(config.endAt ? dayKey(config.endAt) : "");
@@ -96,10 +99,10 @@ export function SettingsPanel({
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="text-xs text-purple-600 hover:underline">
-        Scheduling settings ({config.courts.length} {venueCap.toLowerCase()}{config.courts.length === 1 ? "" : "s"}, {config.matchMinutes}
-        min matches{config.gapMinutes > 0 ? ` +${config.gapMinutes}min gap` : ""}
-        {config.perEntrantMinRest > 0 ? `, ${config.perEntrantMinRest}min rest` : ""}
-        {daily ? `, play ${daily.from}–${daily.to}` : customWindows ? ", custom hours" : ""})
+        {msg("boardset.title")} ({config.courts.length} {venueCap.toLowerCase()}{config.courts.length === 1 ? "" : "s"}, {msg("boardset.sum.matches", { n: config.matchMinutes })}
+        {config.gapMinutes > 0 ? msg("boardset.sum.gap", { n: config.gapMinutes }) : ""}
+        {config.perEntrantMinRest > 0 ? msg("boardset.sum.rest", { n: config.perEntrantMinRest }) : ""}
+        {daily ? msg("boardset.sum.play", { from: daily.from, to: daily.to }) : customWindows ? msg("boardset.sum.custom") : ""})
       </button>
     );
   }
@@ -118,7 +121,7 @@ export function SettingsPanel({
       const endIso = endAt ? new Date(`${endAt}T23:59:00`).toISOString() : null;
       const expanded = dailyHoursToWindows(playFrom, playTo, startIso, endIso);
       if (!expanded) {
-        setHoursError("Play hours need both times, with the start before the end.");
+        setHoursError(msg("boardset.hoursError"));
         return;
       }
       sessionWindows = expanded;
@@ -162,40 +165,31 @@ export function SettingsPanel({
   return (
     <section className="card space-y-6 p-5">
       <div>
-        <h4 className="text-sm font-semibold text-slate-700">Scheduling settings</h4>
-        <p className="mt-0.5 text-xs text-slate-500">
-          The auto-scheduler builds the timetable from these plus anything on the constraints
-          tab; hand-placed matches are checked against them too.
-        </p>
+        <h4 className="text-sm font-semibold text-slate-700">{msg("boardset.title")}</h4>
+        <p className="mt-0.5 text-xs text-slate-500">{msg("boardset.desc")}</p>
       </div>
       {constrained && <UpgradeGate feature="scheduling.constraints" compact />}
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
-          <span className="label">Start date &amp; time</span>
+          <span className="label">{msg("boardset.startAt")}</span>
           <input type="datetime-local" value={startAt} onChange={(e) => setStartAt(e.target.value)} className="input w-full" disabled={!canEdit} />
-          <span className="mt-0.5 block text-xs text-slate-400">
-            The first slot the auto pass may use.
-          </span>
+          <span className="mt-0.5 block text-xs text-slate-400">{msg("boardset.startAtHint")}</span>
         </label>
         <label className="block">
-          <span className="label">End date</span>
+          <span className="label">{msg("boardset.endAt")}</span>
           <input type="date" value={endAt} min={startAt ? startAt.slice(0, 10) : undefined} onChange={(e) => setEndAt(e.target.value)} className="input w-full" disabled={!canEdit} />
-          <span className="mt-0.5 block text-xs text-slate-400">
-            Bounds play hours and the week view&apos;s span.
-          </span>
+          <span className="mt-0.5 block text-xs text-slate-400">{msg("boardset.endAtHint")}</span>
         </label>
         <fieldset className="block">
-          <legend className="label">Play hours (daily)</legend>
+          <legend className="label">{msg("boardset.playHours")}</legend>
           {customWindows ? (
-            <p className="text-xs text-slate-500">
-              Custom windows set on the constraints panel — edit them there.
-            </p>
+            <p className="text-xs text-slate-500">{msg("boardset.customWindows")}</p>
           ) : (
             <div className="flex items-center gap-2">
               <input
                 type="time"
-                aria-label="Play from"
+                aria-label={msg("boardset.playFrom")}
                 value={playFrom}
                 onChange={(e) => setPlayFrom(e.target.value)}
                 className="input w-full"
@@ -204,7 +198,7 @@ export function SettingsPanel({
               <span className="text-sm text-slate-500">–</span>
               <input
                 type="time"
-                aria-label="Play until"
+                aria-label={msg("boardset.playUntil")}
                 value={playTo}
                 onChange={(e) => setPlayTo(e.target.value)}
                 className="input w-full"
@@ -212,42 +206,34 @@ export function SettingsPanel({
               />
             </div>
           )}
-          <span className="mt-0.5 block text-xs text-slate-400">
-            Matches only land between these times each day. Blank = any time.
-          </span>
+          <span className="mt-0.5 block text-xs text-slate-400">{msg("boardset.playHoursHint")}</span>
         </fieldset>
         <label className="block">
-          <span className="label">Match length (minutes)</span>
+          <span className="label">{msg("boardset.matchLength")}</span>
           <input type="number" min={1} max={1440} inputMode="numeric" value={matchMinutes} onChange={(e) => setMatchMinutes(Number(e.target.value) || 30)} className="input w-full" disabled={!canEdit} />
         </label>
         <label className="block">
-          <span className="label">Gap between matches (minutes)</span>
+          <span className="label">{msg("boardset.gap")}</span>
           <input type="number" min={0} inputMode="numeric" value={gapMinutes} onChange={(e) => setGapMinutes(Number(e.target.value))} className="input w-full" disabled={!canEdit} />
-          <span className="mt-0.5 block text-xs text-slate-400">
-            Turnaround time on the same {venue} — warm-up, teardown.
-          </span>
+          <span className="mt-0.5 block text-xs text-slate-400">{msg("boardset.gapHint", { venue })}</span>
         </label>
         <label className="block">
-          <span className="label">Minimum rest per entrant (minutes)</span>
+          <span className="label">{msg("boardset.rest")}</span>
           <input type="number" min={0} inputMode="numeric" value={rest} onChange={(e) => setRest(Number(e.target.value))} className="input w-full" disabled={!canEdit || constrained} />
           <span className="mt-0.5 block text-xs text-slate-400">
-            Breathing room between one entrant&apos;s matches{constrained ? " (Pro)" : ""}.
+            {msg("boardset.restHint")}{constrained ? msg("boardset.proSuffix") : ""}
           </span>
         </label>
         <label className="block">
-          <span className="label">Timezone</span>
+          <span className="label">{msg("boardset.timezone")}</span>
           <input value={zone} onChange={(e) => setZone(e.target.value)} className="input w-full" disabled={!canEdit} />
-          <span className="mt-0.5 block text-xs text-slate-400">
-            Every schedule surface renders times in this zone.
-          </span>
+          <span className="mt-0.5 block text-xs text-slate-400">{msg("boardset.timezoneHint")}</span>
         </label>
       </div>
 
       <div>
-        <span className="label">{venueCap}s</span>
-        <p className="mb-2 text-xs text-slate-400">
-          Name each {venue} available — matches run in parallel across them.
-        </p>
+        <span className="label">{msg("boardset.venuesLabel", { venue: venueCap })}</span>
+        <p className="mb-2 text-xs text-slate-400">{msg("boardset.venuesDesc", { venue })}</p>
         <ul className="space-y-2">
           {courts.map((c, i) => (
             <li key={i} className="flex items-center gap-2">
@@ -265,7 +251,7 @@ export function SettingsPanel({
                 <button
                   type="button"
                   onClick={() => setCourts((cs) => cs.filter((_, j) => j !== i))}
-                  aria-label={`Remove ${venue} ${i + 1}`}
+                  aria-label={msg("boardset.removeVenue", { venue, n: i + 1 })}
                   className="rounded-md px-2 py-1 text-sm text-red-500 hover:bg-red-50"
                 >
                   ✕
@@ -282,7 +268,7 @@ export function SettingsPanel({
             }
             className="btn btn-ghost mt-2 text-sm"
           >
-            + Add {venue}
+            {msg("boardset.addVenue", { venue })}
           </button>
         )}
       </div>
@@ -291,12 +277,12 @@ export function SettingsPanel({
       <div className="flex flex-wrap items-center gap-2">
         {canEdit && (
           <button type="button" disabled={saving} onClick={save} className="btn btn-primary">
-            {saving ? "Saving…" : "Save settings"}
+            {saving ? msg("boardset.saving") : msg("boardset.save")}
           </button>
         )}
         {!defaultOpen && (
           <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost">
-            Close
+            {msg("boardset.close")}
           </button>
         )}
       </div>

@@ -11,6 +11,7 @@ import { apiV1 } from "@/lib/client-v1";
 import { divisionAccent, monogram } from "@/lib/division-hue";
 import { MatchRuleFields, buildRuleOverride } from "./match-rules";
 import { STAGE_TEMPLATES, buildTemplateStages, detectTemplate } from "./format-templates";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export interface DivisionSettingsInfo {
   id: string;
@@ -112,6 +113,7 @@ export function DivisionSettings({
   /** DivisionDangerZone, unchanged. */
   danger: ReactNode;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [name, setName] = useState(division.name);
   const [logoUrl, setLogoUrl] = useState(division.logo_url);
@@ -156,7 +158,7 @@ export function DivisionSettings({
       setNotice(done);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed");
+      setError(err instanceof Error ? err.message : msg("divset.failed"));
     } finally {
       setBusy(false);
     }
@@ -170,7 +172,7 @@ export function DivisionSettings({
       });
       // Renames regenerate the slug — follow it and stay on this tab.
       router.replace(`${divisionPathPrefix}${row.slug}?tab=settings`);
-    }, "Name saved.");
+    }, msg("divset.notice.nameSaved"));
 
   const uploadLogo = (file: File | undefined) => {
     if (!file) return;
@@ -192,7 +194,7 @@ export function DivisionSettings({
       });
       const base = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
       setLogoUrl(base ? `${base}/storage/v1/object/public/assets/${storage_path}` : null);
-    }, "Logo uploaded — the card tile uses it now.");
+    }, msg("divset.notice.logoUploaded"));
   };
 
   const removeLogo = () =>
@@ -202,7 +204,7 @@ export function DivisionSettings({
         json: { logo_storage_path: null },
       });
       setLogoUrl(null);
-    }, "Logo removed — the tile shows the monogram again.");
+    }, msg("divset.notice.logoRemoved"));
 
   const applyStructure = () =>
     run(async () => {
@@ -211,7 +213,7 @@ export function DivisionSettings({
         method: "PUT",
         json: drafts.map((d, i) => ({ ...d, seq: i + 1 })),
       });
-    }, "Format changed — stages rebuilt.");
+    }, msg("divset.notice.formatChanged"));
 
   const applyFormat = () =>
     run(async () => {
@@ -239,20 +241,20 @@ export function DivisionSettings({
         try {
           Object.assign(override, JSON.parse(advancedText));
         } catch {
-          throw new Error("Advanced overrides are not valid JSON");
+          throw new Error(msg("divset.invalidJson"));
         }
       }
       await apiV1(`/api/v1/divisions/${division.id}`, {
         method: "PATCH",
         json: { variant_key: variantKey, config: override },
       });
-    }, "Match rules saved.");
+    }, msg("divset.notice.rulesSaved"));
 
   return (
     <div className="max-w-2xl space-y-3" data-testid="division-settings">
-      <Group title="General" defaultOpen summary={division.name}>
+      <Group title={msg("divset.general")} defaultOpen summary={division.name}>
         <label className="block text-xs text-slate-500">
-          Division name
+          {msg("divset.name")}
           <input
             disabled={!canEdit}
             value={name}
@@ -267,7 +269,7 @@ export function DivisionSettings({
             onClick={saveName}
             className="btn btn-primary text-xs"
           >
-            Save name
+            {msg("divset.saveName")}
           </button>
         )}
 
@@ -292,18 +294,16 @@ export function DivisionSettings({
             )}
           </label>
           <div className="min-w-0 flex-1 text-xs text-slate-500">
-            <p className="font-medium text-slate-700">Card logo</p>
-            <p className="mt-0.5">
-              Shows on this division&apos;s card. Without one, the card wears the monogram.
-            </p>
+            <p className="font-medium text-slate-700">{msg("divset.cardLogo")}</p>
+            <p className="mt-0.5">{msg("divset.cardLogoDesc")}</p>
             {canEdit && (
               <span className="mt-1 flex gap-3">
                 <label htmlFor={fileInputId} className="cursor-pointer text-purple-700 underline">
-                  Upload image
+                  {msg("divset.uploadImage")}
                 </label>
                 {logoUrl && (
                   <button type="button" disabled={busy} onClick={removeLogo} className="text-red-500 underline">
-                    Remove
+                    {msg("divset.remove")}
                   </button>
                 )}
               </span>
@@ -321,8 +321,8 @@ export function DivisionSettings({
       </Group>
 
       <Group
-        title="Format"
-        summary={`${division.sport_key} · ${locked ? `${division.variant_key} (locked)` : division.variant_key}`}
+        title={msg("divset.format")}
+        summary={`${division.sport_key} · ${locked ? msg("divset.variantLocked", { variant: division.variant_key }) : division.variant_key}`}
       >
         {locked ? (
           <div data-testid="format-locked" className="rounded-md bg-slate-50 p-3 text-xs text-slate-600">
@@ -330,18 +330,19 @@ export function DivisionSettings({
               {division.sport_key} · {division.variant_key}
             </p>
             <p className="mt-1">
-              Format is locked — fixtures exist. Delete the stages first if you must change it
-              (<Link href={fixturesHref} className="text-purple-700 underline">Fixtures</Link>).
+              {msg("divset.lockedNotePre")}
+              <Link href={fixturesHref} className="text-purple-700 underline">{msg("divset.fixtures")}</Link>
+              {msg("divset.lockedNotePost")}
             </p>
           </div>
         ) : (
           <>
             <div className="space-y-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                Competition format
+                {msg("divset.competitionFormat")}
               </p>
               <label className="block text-xs text-slate-500">
-                Structure
+                {msg("divset.structure")}
                 <select
                   disabled={!canEdit}
                   value={template}
@@ -362,28 +363,28 @@ export function DivisionSettings({
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {["league_ko", "groups_ko", "group_stepladder"].includes(template) && (
                   <label className="block text-xs text-slate-500">
-                    Top N advance
+                    {msg("divset.topN")}
                     <input type="number" min={2} max={32} disabled={!canEdit} value={qualified}
                       onChange={(e) => setQualified(Number(e.target.value))} className="input mt-1 w-full" />
                   </label>
                 )}
                 {template === "groups_ko" && (
                   <label className="block text-xs text-slate-500">
-                    Groups
+                    {msg("divset.groups")}
                     <input type="number" min={2} max={8} disabled={!canEdit} value={poolCount}
                       onChange={(e) => setPoolCount(Number(e.target.value))} className="input mt-1 w-full" />
                   </label>
                 )}
                 {template === "swiss" && (
                   <label className="block text-xs text-slate-500">
-                    Rounds
+                    {msg("divset.rounds")}
                     <input type="number" min={3} max={15} disabled={!canEdit} value={swissRounds}
                       onChange={(e) => setSwissRounds(Number(e.target.value))} className="input mt-1 w-full" />
                   </label>
                 )}
                 {["league", "league_ko", "groups_ko"].includes(template) && (
                   <label className="block text-xs text-slate-500">
-                    Rounds vs each opponent
+                    {msg("divset.legs")}
                     <input type="number" min={1} max={4} disabled={!canEdit} value={legs}
                       onChange={(e) => setLegs(Number(e.target.value))} className="input mt-1 w-full" />
                   </label>
@@ -397,21 +398,19 @@ export function DivisionSettings({
                   className="btn btn-primary text-xs"
                   data-testid="apply-structure"
                 >
-                  {stages.length > 0 ? "Change format (rebuilds stages)" : "Set format"}
+                  {stages.length > 0 ? msg("divset.changeFormat") : msg("divset.setFormat")}
                 </button>
               )}
               {detected === null && stages.length > 0 && (
-                <p className="text-[11px] text-amber-600">
-                  Current structure is custom — applying a format here replaces it.
-                </p>
+                <p className="text-[11px] text-amber-600">{msg("divset.customStructure")}</p>
               )}
             </div>
 
             <p className="border-t border-slate-100 pt-3 text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Match rules
+              {msg("divset.matchRules")}
             </p>
             <label className="block text-xs text-slate-500">
-              Variant
+              {msg("divset.variant")}
               <select
                 disabled={!canEdit}
                 value={variantKey}
@@ -428,20 +427,20 @@ export function DivisionSettings({
 
             {cfg.points && (
               <div>
-                <p className="text-xs text-slate-500">Standings points</p>
+                <p className="text-xs text-slate-500">{msg("divset.standingsPoints")}</p>
                 <div className="mt-1 grid grid-cols-3 gap-2">
                   <label className="block text-xs text-slate-500">
-                    Win
+                    {msg("divset.win")}
                     <input type="number" min={0} max={99} disabled={!canEdit} value={pointsW}
                       onChange={(e) => setPointsW(e.target.value)} className="input mt-1 w-full" />
                   </label>
                   <label className="block text-xs text-slate-500">
-                    Draw
+                    {msg("divset.draw")}
                     <input type="number" min={0} max={99} disabled={!canEdit} value={pointsD}
                       onChange={(e) => setPointsD(e.target.value)} className="input mt-1 w-full" />
                   </label>
                   <label className="block text-xs text-slate-500">
-                    Loss
+                    {msg("divset.loss")}
                     <input type="number" min={0} max={99} disabled={!canEdit} value={pointsL}
                       onChange={(e) => setPointsL(e.target.value)} className="input mt-1 w-full" />
                   </label>
@@ -458,7 +457,7 @@ export function DivisionSettings({
 
             {stages.length > 0 && (
               <p className="rounded-md bg-slate-50 p-3 text-xs text-slate-500" data-testid="stage-structure">
-                Structure:{" "}
+                {msg("divset.structureLabel")}{" "}
                 {stages.map((st, i) => (
                   <span key={i}>
                     {i > 0 && " → "}
@@ -467,14 +466,14 @@ export function DivisionSettings({
                 ))}
                 {" · "}
                 <Link href={fixturesHref} className="text-purple-700 underline">
-                  edit stages on the Fixtures tab
+                  {msg("divset.editStages")}
                 </Link>
               </p>
             )}
 
             <details>
               <summary className="cursor-pointer text-[11px] text-slate-400">
-                Advanced overrides (JSON)
+                {msg("divset.advanced")}
               </summary>
               <textarea
                 disabled={!canEdit}
@@ -489,22 +488,19 @@ export function DivisionSettings({
 
             {canEdit && (
               <button type="button" disabled={busy} onClick={applyFormat} className="btn btn-primary text-xs">
-                Save match rules
+                {msg("divset.saveRules")}
               </button>
             )}
-            <p className="text-[11px] text-slate-400">
-              Blank fields keep the variant&apos;s defaults; changes re-validate against the
-              sport&apos;s rules. Once fixtures are generated the format locks for good.
-            </p>
+            <p className="text-[11px] text-slate-400">{msg("divset.rulesNote")}</p>
           </>
         )}
       </Group>
 
-      <Group title="Sharing & embed" summary="Widgets for your website">
+      <Group title={msg("divset.sharing")} summary={msg("divset.sharingSummary")}>
         {embed}
       </Group>
 
-      <Group title="Danger zone" summary="Archive or delete" danger>
+      <Group title={msg("divset.danger")} summary={msg("divset.dangerSummary")} danger>
         {danger}
       </Group>
 
