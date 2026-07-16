@@ -9,6 +9,7 @@ import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
 import { timeLabel } from "@/lib/day-label";
 import { UNASSIGNED, type BoardConflict, type BoardFixture } from "./types";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 const MIN = 60_000;
 
@@ -53,22 +54,23 @@ export function BoardGrid({
   venueCap: string;
   highlightId: string | null;
 }) {
+  const msg = useMsg();
   const columns: (string | null)[] = courts.length > 0 ? courts : [null];
 
   return (
     <div className="scroll-x scroll-x-fade rounded-lg border border-slate-200 bg-white">
-      <table className="w-full border-collapse text-xs" aria-label={`Schedule board — ${day}`}>
+      <table className="w-full border-collapse text-xs" aria-label={msg("board.grid.aria", { day })}>
         <thead>
           <tr>
             <th className="w-16 border-b border-slate-200 bg-slate-50 px-2 py-2 text-left font-medium text-slate-500">
-              Time
+              {msg("board.grid.time")}
             </th>
             {columns.map((c) => (
               <th
                 key={c ?? UNASSIGNED}
                 className="min-w-36 border-b border-l border-slate-200 bg-slate-50 px-2 py-2 text-left font-medium text-slate-600"
               >
-                {c ?? `Unassigned ${venueCap.toLowerCase()}`}
+                {c ?? msg("board.grid.unassignedCol", { venue: venueCap.toLowerCase() })}
               </th>
             ))}
           </tr>
@@ -121,7 +123,11 @@ export function BoardGrid({
                       <button
                         type="button"
                         onClick={() => onPlace(iso, court)}
-                        aria-label={`Place picked match at ${timeLabel(t)}${court ? ` on ${court}` : " (unassigned)"}`}
+                        aria-label={
+                          court
+                            ? msg("board.grid.placeAriaCourt", { time: timeLabel(t), court })
+                            : msg("board.grid.placeAriaUnassigned", { time: timeLabel(t) })
+                        }
                         className={`h-full min-h-8 w-full rounded text-[10px] transition ${
                           pickedId
                             ? "border border-dashed border-purple-300 text-purple-600 hover:border-purple-500 hover:bg-purple-50 focus-visible:border-purple-500 focus-visible:bg-purple-50"
@@ -130,7 +136,7 @@ export function BoardGrid({
                         tabIndex={pickedId ? 0 : -1}
                         disabled={!pickedId}
                       >
-                        {pickedId ? "Place here" : ""}
+                        {pickedId ? msg("board.grid.placeHere") : ""}
                       </button>
                     )}
                   </td>

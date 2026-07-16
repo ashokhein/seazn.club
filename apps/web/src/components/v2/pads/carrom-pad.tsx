@@ -8,6 +8,7 @@
 // under a details fold. Strike-by-strike stays reserved (Pro, later).
 import { useState } from "react";
 import type { LiveState, SendEvent, SideInfo } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 // The carrom fold state (engine CarromState) as the pad reads it — same
 // live.state pattern as the set-based (badminton) scoreboard.
@@ -38,6 +39,7 @@ export function CarromPad({
   busy: boolean;
   started: boolean;
 }) {
+  const msg = useMsg();
   const state = (live.state ?? {}) as CarromStateView;
   const games = state.games ?? [];
   const openIndex = games.findIndex((g) => (g.winner ?? null) === null);
@@ -71,20 +73,20 @@ export function CarromPad({
           points in the open game, games-won tally at the end. */}
       {games.length > 0 && (
         <div className="scroll-x scroll-x-fade">
-          <table className="text-sm" aria-label="Carrom games">
+          <table className="text-sm" aria-label={msg("pad.cr.gamesAria")}>
             <thead>
               <tr className="text-left text-xs tracking-wide text-slate-500 uppercase">
                 <th className="py-1 pr-4 font-medium">
-                  Game {currentNo}
-                  {bestOf ? ` of ${bestOf}` : ""}
-                  {gameTo ? ` · first to ${gameTo}` : ""}
+                  {msg("pad.cr.gameNo", { n: currentNo })}
+                  {bestOf ? msg("pad.ofBestOf", { n: bestOf }) : ""}
+                  {gameTo ? msg("pad.cr.firstTo", { n: gameTo }) : ""}
                 </th>
                 {games.map((_, i) => (
                   <th key={i} className="px-2 py-1 text-center font-medium">
                     G{i + 1}
                   </th>
                 ))}
-                <th className="px-2 py-1 text-center font-medium">Games</th>
+                <th className="px-2 py-1 text-center font-medium">{msg("pad.cr.gamesCol")}</th>
               </tr>
             </thead>
             <tbody>
@@ -125,38 +127,34 @@ export function CarromPad({
 
       {!started && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-slate-600">
-            Toss — who breaks first?
-          </span>
+          <span className="text-xs font-medium text-slate-600">{msg("pad.cr.toss")}</span>
           {[home, away].map((side) => (
             <button
               key={side.id}
               type="button"
               disabled={busy}
-              aria-label={`${side.name} breaks first`}
+              aria-label={msg("pad.cr.breaksFirst", { name: side.name })}
               onClick={() => send("carrom.toss", { firstBreak: side.id })}
               className="btn btn-ghost px-3 py-1.5 text-xs"
             >
               {side.name}
             </button>
           ))}
-          <span className="text-xs text-slate-500">
-            Optional — without a toss, {home.name} breaks.
-          </span>
+          <span className="text-xs text-slate-500">{msg("pad.cr.tossOptional", { name: home.name })}</span>
         </div>
       )}
 
       {/* One board = one event. */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs font-medium text-slate-600">Board won by</span>
+          <span className="text-xs font-medium text-slate-600">{msg("pad.cr.boardWonBy")}</span>
           {[home, away].map((side) => (
             <button
               key={side.id}
               type="button"
               disabled={busy}
               aria-pressed={winnerId === side.id}
-              aria-label={`Board won by ${side.name}`}
+              aria-label={msg("pad.cr.boardWonByName", { name: side.name })}
               onClick={() => setWinnerId(winnerId === side.id ? null : side.id)}
               className={`btn px-4 ${
                 winnerId === side.id ? "btn-primary" : "btn-ghost"
@@ -170,7 +168,7 @@ export function CarromPad({
         {winnerId && (
           <div className="flex flex-wrap items-end gap-3">
             <label className="block">
-              <span className="label">Opponent&apos;s coins left (0–9)</span>
+              <span className="label">{msg("pad.cr.coinsLeft")}</span>
               <input
                 type="number"
                 min={0}
@@ -184,13 +182,13 @@ export function CarromPad({
               />
             </label>
             <label className="block">
-              <span className="label">Queen covered by</span>
+              <span className="label">{msg("pad.cr.queenBy")}</span>
               <select
                 value={queenTo}
                 onChange={(e) => setQueenTo(e.target.value)}
                 className="select w-44"
               >
-                <option value="">No one (not credited)</option>
+                <option value="">{msg("pad.cr.noOne")}</option>
                 <option value={home.id}>{home.name}</option>
                 <option value={away.id}>{away.name}</option>
               </select>
@@ -201,24 +199,21 @@ export function CarromPad({
               onClick={() => void recordBoard()}
               className="btn btn-primary"
             >
-              Record board
+              {msg("pad.cr.recordBoard")}
             </button>
           </div>
         )}
-        <p className="text-xs text-slate-500">
-          The winner banks a point per opponent coin left, plus the queen bonus while
-          under the cap. Games and the match decide themselves from the boards.
-        </p>
+        <p className="text-xs text-slate-500">{msg("pad.cr.note")}</p>
       </div>
 
       {/* Umpire adjustment (Laws 51/55) — rare, kept out of the way. */}
       <details className="text-sm">
         <summary className="cursor-pointer text-xs font-medium text-slate-600">
-          Umpire adjustment
+          {msg("pad.cr.umpireAdjust")}
         </summary>
         <div className="mt-2 flex flex-wrap items-end gap-3">
           <label className="block">
-            <span className="label">Player</span>
+            <span className="label">{msg("pad.cr.player")}</span>
             <select
               value={adjustEntrant}
               onChange={(e) => setAdjustEntrant(e.target.value)}
@@ -229,7 +224,7 @@ export function CarromPad({
             </select>
           </label>
           <label className="block">
-            <span className="label">Points (±)</span>
+            <span className="label">{msg("pad.cr.points")}</span>
             <input
               type="number"
               value={adjustDelta}
@@ -238,11 +233,11 @@ export function CarromPad({
             />
           </label>
           <label className="block">
-            <span className="label">Reason</span>
+            <span className="label">{msg("pad.cr.reason")}</span>
             <input
               value={adjustReason}
               onChange={(e) => setAdjustReason(e.target.value)}
-              placeholder="e.g. Law 55 penalty"
+              placeholder={msg("pad.cr.reasonPlaceholder")}
               className="input w-52"
             />
           </label>
@@ -263,7 +258,7 @@ export function CarromPad({
             }
             className="btn btn-ghost"
           >
-            Apply
+            {msg("pad.cr.apply")}
           </button>
         </div>
       </details>

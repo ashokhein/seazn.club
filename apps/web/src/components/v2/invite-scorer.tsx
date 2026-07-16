@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { api } from "@/lib/client";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface Props {
   orgId: string;
@@ -15,14 +16,13 @@ interface Props {
 }
 
 export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
+  const msg = useMsg();
   const [link, setLink] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [paywall, setPaywall] = useState(false);
   const [copied, setCopied] = useState(false);
-
-  const article = /^[aeiou]/i.test(officialLabel) ? "an" : "a";
 
   async function invite() {
     setBusy(true);
@@ -41,7 +41,7 @@ export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
       const QRCode = (await import("qrcode")).default;
       setQr(await QRCode.toDataURL(url, { width: 240, margin: 1 }));
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed";
+      const message = err instanceof Error ? err.message : msg("inviteScorer.failed");
       // The 402 quota path renders the contextual paywall (message is the
       // PaymentRequiredError's "Plan upgrade required: <feature_key>").
       if (message.startsWith("Plan upgrade required")) setPaywall(true);
@@ -67,7 +67,7 @@ export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
         className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4"
         role="dialog"
         aria-modal="true"
-        aria-label={`Invite ${article} ${officialLabel}`}
+        aria-label={msg("inviteScorer.title", { label: officialLabel })}
         onClick={close}
       >
         <div
@@ -76,11 +76,11 @@ export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
         >
           <div className="flex items-start justify-between gap-2">
             <h2 className="text-sm font-semibold text-slate-800">
-              Invite {article} {officialLabel.toLowerCase()}
+              {msg("inviteScorer.title", { label: officialLabel.toLowerCase() })}
             </h2>
             <button
               type="button"
-              aria-label="Close"
+              aria-label={msg("inviteScorer.close")}
               onClick={close}
               className="-m-1 p-1 text-slate-400 hover:text-slate-700"
             >
@@ -91,7 +91,7 @@ export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={qr}
-              alt={`QR code inviting ${article} ${officialLabel} to this division`}
+              alt={msg("inviteScorer.alt", { label: officialLabel })}
               className="mx-auto rounded-lg border border-slate-200 p-1"
               width={176}
               height={176}
@@ -110,15 +110,14 @@ export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
                 setCopied(true);
               }}
             >
-              {copied ? "Copied" : "Copy"}
+              {copied ? msg("inviteScorer.copied") : msg("inviteScorer.copy")}
             </button>
           </div>
           <p className="text-[11px] text-slate-400">
-            Valid 1 hour, single use — whoever joins becomes this division&apos;s{" "}
-            {officialLabel.toLowerCase()}.
+            {msg("inviteScorer.hint", { label: officialLabel.toLowerCase() })}
           </p>
           <button type="button" onClick={close} className="btn btn-primary w-full text-xs">
-            Done
+            {msg("inviteScorer.done")}
           </button>
         </div>
       </div>
@@ -133,7 +132,7 @@ export function InviteScorer({ orgId, divisionId, officialLabel }: Props) {
         onClick={invite}
         className="btn btn-ghost px-3 py-1.5 text-xs"
       >
-        {busy ? "Creating…" : `Invite ${article} ${officialLabel}`}
+        {busy ? msg("inviteScorer.creating") : msg("inviteScorer.title", { label: officialLabel })}
       </button>
       {error && <span className="text-xs text-red-600">{error}</span>}
     </span>

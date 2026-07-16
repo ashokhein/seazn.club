@@ -10,6 +10,7 @@
 // clock sugar — the fold trusts only start/release events (v6/00 §6.1).
 import { useEffect, useRef, useState } from "react";
 import type { SendEvent, SideInfo, SportInfo, LiveState } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface SuspensionView {
   side: "home" | "away";
@@ -74,6 +75,7 @@ export function PeriodPad({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const state = (live.state ?? {}) as PeriodStateView;
   const detail = ((live.summary as { detail?: unknown } | null)?.detail ?? {}) as PeriodDetailView;
   const cfg = (sport.config ?? {}) as PeriodCfgView;
@@ -116,7 +118,7 @@ export function PeriodPad({
   function countdown(index: number, susp: SuspensionView): string | null {
     if (classes === null) return null;
     const cls = classes[susp.classKey];
-    if (!cls || cls.minutes === null) return susp.permanent ? "match" : null;
+    if (!cls || cls.minutes === null) return susp.permanent ? msg("pad.pp.matchCountdown") : null;
     const started = stampsRef.current.get(index);
     if (started === undefined) return `${cls.minutes}:00`;
     const left = Math.max(0, cls.minutes * 60 - Math.floor((Date.now() - started) / 1000));
@@ -134,12 +136,12 @@ export function PeriodPad({
 
   return (
     <div className="space-y-4">
-      {pre && <p className="text-xs text-amber-600">Start the match to open the first period.</p>}
+      {pre && <p className="text-xs text-amber-600">{msg("pad.pp.startHint")}</p>}
 
       {(playing || inShootout) && (
         <div className="flex flex-wrap items-center gap-2">
           <span className="rounded-full bg-slate-100 px-3 py-1 font-mono text-xs font-semibold text-slate-700">
-            {inShootout ? "Shoot-out" : phase}
+            {inShootout ? msg("pad.pp.shootout") : phase}
           </span>
           {detail.strength ? (
             <span className="rounded-full bg-amber-100 px-3 py-1 font-mono text-xs font-bold text-amber-800">
@@ -169,7 +171,7 @@ export function PeriodPad({
 
       {suspensions.length > 0 && suspEndType && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
-          <p className="mb-2 text-xs font-medium text-amber-800">Running penalties</p>
+          <p className="mb-2 text-xs font-medium text-amber-800">{msg("pad.pp.runningPenalties")}</p>
           <ul className="space-y-1.5">
             {suspensions.map((susp, i) => {
               const side = sideInfo(susp.side);
@@ -195,26 +197,23 @@ export function PeriodPad({
                       }
                       className="btn btn-ghost px-2 py-0.5 text-[11px]"
                     >
-                      Release
+                      {msg("pad.pp.release")}
                     </button>
                   )}
                 </li>
               );
             })}
           </ul>
-          <p className="mt-1.5 text-[10px] text-amber-800">
-            Timers are a hint — release when the clock says so (a minor ends on a
-            power-play goal).
-          </p>
+          <p className="mt-1.5 text-[10px] text-amber-800">{msg("pad.pp.timersHint")}</p>
         </div>
       )}
 
       {inShootout && attemptType && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
           <p className="mb-2 text-xs font-medium text-amber-800">
-            Shoot-out — record each attempt in order.
+            {msg("pad.pp.shootoutHint")}
             {state.shootout && cfg.shootout && state.shootout.kicks.length >= cfg.shootout.attempts * 2
-              ? " Sudden death."
+              ? msg("pad.pp.suddenDeath")
               : ""}
           </p>
           <div className="flex flex-wrap gap-2">
@@ -226,14 +225,14 @@ export function PeriodPad({
                   key={side.id}
                   className={`flex items-center gap-1.5 rounded-lg px-1.5 py-1 ${up ? "" : "opacity-40"}`}
                 >
-                  <span className="text-xs text-slate-600">{side.name}:</span>
+                  <span className="text-xs text-slate-600">{msg("pad.pp.sideColon", { name: side.name })}</span>
                   <button
                     type="button"
                     disabled={busy || !up}
                     onClick={() => send(attemptType, { by: side.id, scored: true })}
                     className="btn btn-primary px-3 py-1 text-xs"
                   >
-                    ✓ scored
+                    {msg("pad.pp.scored")}
                   </button>
                   <button
                     type="button"
@@ -241,7 +240,7 @@ export function PeriodPad({
                     onClick={() => send(attemptType, { by: side.id, scored: false })}
                     className="btn btn-danger px-3 py-1 text-xs"
                   >
-                    ✕ missed
+                    {msg("pad.pp.missed")}
                   </button>
                 </span>
               );
@@ -257,8 +256,8 @@ export function PeriodPad({
           onClick={() => send(advanceType, { to: detail.nextAdvance })}
           className="btn btn-ghost"
         >
-          ⏱ End {phase}
-          {detail.nextAdvance !== "FT" ? ` → ${detail.nextAdvance}` : ""}
+          ⏱ {msg("pad.pp.end", { phase })}
+          {detail.nextAdvance !== "FT" ? msg("pad.pp.endTo", { next: detail.nextAdvance }) : ""}
         </button>
       )}
     </div>
@@ -288,6 +287,7 @@ function PeriodSidePad({
   escalate: string[];
   send: SendEvent;
 }) {
+  const msg = useMsg();
   const [sheet, setSheet] = useState<"goal" | "penalty" | null>(null);
   const [person, setPerson] = useState("");
   const [assist1, setAssist1] = useState("");
@@ -346,7 +346,7 @@ function PeriodSidePad({
             onClick={() => send(goalType, { by: side.id })}
             className="btn btn-primary px-3 py-1.5 text-xs"
           >
-            + Goal
+            {msg("pad.pp.goal")}
           </button>
         )}
         {goalType && (
@@ -356,7 +356,7 @@ function PeriodSidePad({
             onClick={() => setSheet(sheet === "goal" ? null : "goal")}
             className={`btn px-3 py-1.5 text-xs ${sheet === "goal" ? "btn-primary" : "btn-ghost"}`}
           >
-            Goal details…
+            {msg("pad.pp.goalDetails")}
           </button>
         )}
         {suspStartType && classes && (
@@ -366,7 +366,7 @@ function PeriodSidePad({
             onClick={() => setSheet(sheet === "penalty" ? null : "penalty")}
             className={`btn px-3 py-1.5 text-xs ${sheet === "penalty" ? "btn-primary" : "btn-ghost"}`}
           >
-            ▮ Penalty / card
+            {msg("pad.pp.penaltyCard")}
           </button>
         )}
       </div>
@@ -374,7 +374,7 @@ function PeriodSidePad({
       {sheet === "goal" && (
         <div className="mt-2 flex flex-wrap items-end gap-2">
           <label className="block">
-            <span className="label">Scorer (optional)</span>
+            <span className="label">{msg("pad.pp.scorer")}</span>
             <select value={person} onChange={(e) => setPerson(e.target.value)} className="select w-36 px-2 py-1 text-xs">
               <option value="">—</option>
               {people.map((p) => (
@@ -385,7 +385,7 @@ function PeriodSidePad({
           {assists && (
             <>
               <label className="block">
-                <span className="label">Assist 1</span>
+                <span className="label">{msg("pad.pp.assist1")}</span>
                 <select value={assist1} onChange={(e) => setAssist1(e.target.value)} className="select w-32 px-2 py-1 text-xs">
                   <option value="">—</option>
                   {people.filter((p) => p.person_id !== person).map((p) => (
@@ -394,7 +394,7 @@ function PeriodSidePad({
                 </select>
               </label>
               <label className="block">
-                <span className="label">Assist 2</span>
+                <span className="label">{msg("pad.pp.assist2")}</span>
                 <select value={assist2} onChange={(e) => setAssist2(e.target.value)} className="select w-32 px-2 py-1 text-xs">
                   <option value="">—</option>
                   {people.filter((p) => p.person_id !== person && p.person_id !== assist1).map((p) => (
@@ -405,17 +405,17 @@ function PeriodSidePad({
             </>
           )}
           <label className="block">
-            <span className="label">Type</span>
+            <span className="label">{msg("pad.pp.type")}</span>
             <select value={kind} onChange={(e) => setKind(e.target.value)} className="select w-32 px-2 py-1 text-xs">
-              <option value="">Open play</option>
+              <option value="">{msg("pad.pp.openPlay")}</option>
               {goalKinds.map((k) => (
                 <option key={k} value={k}>{KIND_LABELS[k] ?? k.toUpperCase()}</option>
               ))}
-              <option value="og">Own goal</option>
+              <option value="og">{msg("pad.pp.ownGoal")}</option>
             </select>
           </label>
           <button type="button" disabled={disabled} onClick={fireGoal} className="btn btn-primary px-3 py-1.5 text-xs">
-            Record goal
+            {msg("pad.pp.recordGoal")}
           </button>
         </div>
       )}
@@ -424,7 +424,7 @@ function PeriodSidePad({
         <div className="mt-2 space-y-2">
           <div className="flex flex-wrap items-end gap-2">
             <label className="block">
-              <span className="label">Class</span>
+              <span className="label">{msg("pad.pp.class")}</span>
               <select value={classKey} onChange={(e) => setClassKey(e.target.value)} className="select w-40 px-2 py-1 text-xs">
                 <option value="">—</option>
                 {Object.entries(classes).map(([key, cls]) => (
@@ -433,7 +433,7 @@ function PeriodSidePad({
               </select>
             </label>
             <label className="block">
-              <span className="label">Player (optional)</span>
+              <span className="label">{msg("pad.pp.playerOptional")}</span>
               <select value={person} onChange={(e) => setPerson(e.target.value)} className="select w-36 px-2 py-1 text-xs">
                 <option value="">—</option>
                 {people.map((p) => (
@@ -447,13 +447,11 @@ function PeriodSidePad({
               onClick={firePenalty}
               className="btn btn-primary px-3 py-1.5 text-xs"
             >
-              Record
+              {msg("pad.pp.record")}
             </button>
           </div>
           {escalating && (
-            <p className="text-[11px] font-medium text-amber-700">
-              Prior green card this match — a yellow is the usual escalation.
-            </p>
+            <p className="text-[11px] font-medium text-amber-700">{msg("pad.pp.escalation")}</p>
           )}
         </div>
       )}

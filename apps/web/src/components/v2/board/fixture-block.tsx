@@ -6,6 +6,8 @@
 import { divisionAccent, divisionInk, divisionShortCode, divisionTint } from "@/lib/division-hue";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import { CONFLICT_LABEL, cardTitle, type BoardConflict, type BoardFixture } from "./types";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
 export function FixtureBlock({
   fixture,
@@ -35,9 +37,20 @@ export function FixtureBlock({
   /** Optional time caption (agenda/tray contexts). */
   time?: string;
 }) {
+  const msg = useMsg();
   const movable = canEdit && fixture.status === "scheduled";
   const blocking = conflicts.some((c) => c.blocking);
   const title = cardTitle(fixture, entrantNames, feedLabels);
+  const statusLabel = (s: string) => {
+    const key = `schedule.fstatus.${s}` as MessageKey;
+    const label = msg(key);
+    return label === key ? s.replace("_", " ") : label;
+  };
+  const conflictLabel = (code: string) => {
+    const key = `board.conflict.${code}` as MessageKey;
+    const label = msg(key);
+    return label === key ? (CONFLICT_LABEL[code] ?? code) : label;
+  };
   return (
     <div
       data-fixture-id={fixture.id}
@@ -68,9 +81,11 @@ export function FixtureBlock({
             type="button"
             onClick={onPick}
             aria-pressed={picked}
-            aria-label={`${title} — round ${fixture.round_no}. ${
-              picked ? "Picked — choose a slot, or press Escape to cancel" : "Pick to move"
-            }`}
+            aria-label={msg("board.block.pickAria", {
+              title,
+              n: fixture.round_no,
+              state: picked ? msg("board.block.statePicked") : msg("board.block.statePick"),
+            })}
             className="min-w-0 flex-1 truncate text-left font-medium text-slate-700 hover:text-purple-700"
           >
             {title}
@@ -84,8 +99,8 @@ export function FixtureBlock({
           <button
             type="button"
             onClick={onTogglePin}
-            aria-label={fixture.schedule_locked ? "Unlock (allow re-flow)" : "Pin/lock this slot"}
-            title={fixture.schedule_locked ? "Locked — survives re-flow" : "Pin this slot"}
+            aria-label={fixture.schedule_locked ? msg("board.block.unlock") : msg("board.block.pin")}
+            title={fixture.schedule_locked ? msg("board.block.lockedTitle") : msg("board.block.pinTitle")}
             className={fixture.schedule_locked ? "" : "opacity-30 group-hover:opacity-100"}
           >
             {fixture.schedule_locked ? "🔒" : "📌"}
@@ -108,14 +123,14 @@ export function FixtureBlock({
         )}
         {time && <span>{time}</span>}
         <span>R{fixture.round_no}</span>
-        {fixture.status !== "scheduled" && <span className="text-sky-600">{fixture.status}</span>}
+        {fixture.status !== "scheduled" && <span className="text-sky-600">{statusLabel(fixture.status)}</span>}
         {conflicts.map((c, i) => (
           <span
             key={i}
             title={c.detail}
             className={`rounded px-1 ${c.blocking ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-700"}`}
           >
-            {CONFLICT_LABEL[c.code] ?? c.code}
+            {conflictLabel(c.code)}
           </span>
         ))}
       </div>

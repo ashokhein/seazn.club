@@ -6,7 +6,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
-import { msg } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 import { dayKey } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import {
@@ -45,6 +46,7 @@ export function useBoardActions(
   feedLabels: Record<string, FeedLabelPair>,
   canEdit: boolean,
 ): BoardActions {
+  const msg = useMsg();
   const router = useRouter();
   const [overrides, setOverrides] = useState<Record<string, Override>>({});
   const [conflicts, setConflicts] = useState<BoardConflict[]>([]);
@@ -133,28 +135,33 @@ export function useBoardActions(
         const list = (err.extra.conflicts as BoardConflict[] | undefined) ?? [];
         const titleOf = (id: string) => {
           const f = board.find((x) => x.id === id);
-          return f ? cardTitle(f, entrantNames, feedLabels) : "another match";
+          return f ? cardTitle(f, entrantNames, feedLabels) : msg("board.action.anotherMatch");
+        };
+        const helpOf = (code: string) => {
+          const k = `board.conflictHelp.${code}` as MessageKey;
+          const l = msg(k);
+          return l === k ? (CONFLICT_HELP[code] ?? msg("board.action.slotFail")) : l;
         };
         const reasons = [
           ...new Set(
             list.map((c) => {
-              let m = CONFLICT_HELP[c.code] ?? "This slot doesn't work.";
+              let m = helpOf(c.code);
               const uuid = c.detail?.match(/[0-9a-f]{8}-[0-9a-f-]{27}/i)?.[0];
-              if (uuid) m += ` (with ${titleOf(uuid)})`;
+              if (uuid) m += msg("board.action.withMatch", { title: titleOf(uuid) });
               return m;
             }),
           ),
         ];
         setError(
           reasons.length > 0
-            ? `Can't schedule here. ${reasons.join(" ")}`
-            : "Can't schedule here — it clashes with another match.",
+            ? msg("board.action.cantSchedule", { reasons: reasons.join(" ") })
+            : msg("board.action.cantScheduleClash"),
         );
       } else {
         // Never surface raw codes/stack text; fall back to a friendly line.
         const raw = err instanceof Error ? err.message : "";
         const friendly = raw && !/[{}<>]|error:|\bundefined\b|[0-9a-f]{8}-[0-9a-f]{4}/i.test(raw);
-        setError(friendly ? raw : "Something went wrong — please try again.");
+        setError(friendly ? raw : msg("boardset.error"));
       }
       return false;
     },
@@ -233,7 +240,7 @@ export function useBoardActions(
           json: { only_unlocked: onlyUnlocked },
         });
         if (out.assignments.length === 0) {
-          setNotice("Nothing to schedule for this stage.");
+          setNotice(msg("board.action.nothingStage"));
           return;
         }
         const applied = await apiV1<{ applied: number; conflicts: BoardConflict[] }>(
@@ -252,8 +259,9 @@ export function useBoardActions(
         );
         setConflicts(applied.conflicts);
         setNotice(
-          `Placed ${applied.applied} fixture(s)` +
-            (applied.conflicts.length > 0 ? ` — ${applied.conflicts.length} warning(s).` : "."),
+          applied.conflicts.length > 0
+            ? msg("board.action.placedWarn", { n: applied.applied, w: applied.conflicts.length })
+            : msg("board.action.placed", { n: applied.applied }),
         );
         router.refresh();
       } catch (err) {

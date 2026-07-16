@@ -21,6 +21,8 @@ import type {
   SideInfo,
   SportInfo,
 } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
 export type PadSideInfo = SideInfo;
 
@@ -72,6 +74,12 @@ export function DeviceScorePad({
   initialState,
   initialEvents,
 }: Props) {
+  const msg = useMsg();
+  const statusLabel = (s: string) => {
+    const key = `score.status.${s}` as MessageKey;
+    const label = msg(key);
+    return label === key ? s.replace("_", " ") : label;
+  };
   const [live, setLive] = useState<LiveState>(initialState);
   const [events, setEvents] = useState<PadEventIn[]>(initialEvents);
   const [error, setError] = useState<string | null>(null);
@@ -132,9 +140,9 @@ export function DeviceScorePad({
           setDead(err.message);
         } else if (err instanceof ApiV1Error && err.code === "SEQ_CONFLICT") {
           await resync().catch(() => undefined);
-          setError("Score moved on another device — refreshed, please re-check.");
+          setError(msg("device.seqConflict"));
         } else {
-          setError(err instanceof Error ? err.message : "Failed — try again");
+          setError(err instanceof Error ? err.message : msg("device.failed"));
         }
         return false;
       } finally {
@@ -150,7 +158,7 @@ export function DeviceScorePad({
       <div className="flex min-h-[60vh] flex-col items-center justify-center text-center">
         <p className="text-4xl">⏱️</p>
         <h1 className="mt-3 text-lg font-semibold text-slate-100">{dead}</h1>
-        <p className="mt-2 text-sm text-slate-400">Ask the organiser for a fresh link.</p>
+        <p className="mt-2 text-sm text-slate-400">{msg("device.askFreshLink")}</p>
       </div>
     );
   }
@@ -184,26 +192,26 @@ export function DeviceScorePad({
               <img src={logo} alt="" className="h-5 w-5 shrink-0 rounded bg-white/10 object-cover" />
             )}
             <span className="truncate">
-              {fixture.division_name} · Round {fixture.round_no}
+              {fixture.division_name} · {msg("schedule.round", { n: fixture.round_no })}
               {fixture.court_label ? ` · ${fixture.court_label}` : ""}
             </span>
           </p>
           {inPlay ? (
             <span className="flex shrink-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest text-emerald-400">
               <span className="animate-live-pulse h-1.5 w-1.5 rounded-full bg-emerald-400" />
-              Live
+              {msg("device.live")}
             </span>
           ) : (
             <span className="shrink-0 text-[11px] uppercase tracking-widest text-slate-500">
-              {live.status.replace("_", " ")}
+              {statusLabel(live.status)}
             </span>
           )}
         </div>
         <div className="px-3 py-4 text-center sm:px-4 sm:py-5">
           <p className="flex items-baseline justify-center gap-3 text-sm font-medium text-slate-200">
-            <span className="max-w-[40%] truncate">{home?.name ?? "TBD"}</span>
-            <span className="text-[10px] uppercase tracking-widest text-slate-600">vs</span>
-            <span className="max-w-[40%] truncate">{away?.name ?? "TBD"}</span>
+            <span className="max-w-[40%] truncate">{home?.name ?? msg("schedule.tbd")}</span>
+            <span className="text-[10px] uppercase tracking-widest text-slate-600">{msg("schedule.vs")}</span>
+            <span className="max-w-[40%] truncate">{away?.name ?? msg("schedule.tbd")}</span>
           </p>
           {/* Fluid LED numerals: clamp to the phone's width so set-score
               headlines like "1 — 0 · 21-18 (16-12)" never wrap mid-number —
@@ -218,7 +226,7 @@ export function DeviceScorePad({
           </p>
         </div>
         <p className="border-t border-slate-800 px-4 py-2 text-center text-[10px] uppercase tracking-widest text-slate-600">
-          Courtside {sport.scorerLabel.toLowerCase()} pad · link active today only
+          {msg("device.courtsideFooter", { scorer: sport.scorerLabel.toLowerCase() })}
         </p>
       </header>
 
@@ -237,7 +245,7 @@ export function DeviceScorePad({
               onClick={() => send("core.start", {})}
               className="btn btn-primary h-12 flex-1 text-base"
             >
-              Start match
+              {msg("score.startMatch")}
             </button>
           )}
           {lastOwnVoidable && (
@@ -246,10 +254,10 @@ export function DeviceScorePad({
               disabled={busy}
               onClick={() => send("core.void", { event_id: lastOwnVoidable.id })}
               className="flex h-12 items-center justify-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-6 text-sm font-semibold text-amber-300 transition hover:border-amber-400/60 hover:bg-amber-500/20 active:scale-[0.98] disabled:opacity-50"
-              title={`Undo ${lastOwnVoidable.type} (seq ${lastOwnVoidable.seq})`}
+              title={msg("score.undoTitle", { type: lastOwnVoidable.type, seq: lastOwnVoidable.seq })}
             >
               <span aria-hidden className="text-base leading-none">⟲</span>
-              Undo my last entry
+              {msg("device.undoMine")}
             </button>
           )}
         </div>
@@ -279,8 +287,7 @@ export function DeviceScorePad({
 
       {decided && scoring && (
         <p className="rounded-md border border-emerald-900/50 bg-emerald-950/60 px-3 py-2 text-sm text-emerald-300">
-          Result recorded — the organiser finalizes it. Spot a mistake in your own entries?
-          Use “Undo my last”.
+          {msg("device.resultRecorded")}
         </p>
       )}
     </div>

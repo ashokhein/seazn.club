@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface Team {
   entrant_id: string;
@@ -39,6 +40,7 @@ interface View {
 }
 
 export function AmericanoPanel({ stageId, canEdit }: { stageId: string; canEdit: boolean }) {
+  const msg = useMsg();
   const [view, setView] = useState<View | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [paywall, setPaywall] = useState<string | null>(null);
@@ -51,7 +53,7 @@ export function AmericanoPanel({ stageId, canEdit }: { stageId: string; canEdit:
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywall(String(err.extra.feature_key ?? "formats.advanced"));
       } else {
-        setError(err instanceof Error ? err.message : "Failed to load");
+        setError(err instanceof Error ? err.message : msg("americano.failedLoad"));
       }
     }
   }, [stageId]);
@@ -63,26 +65,26 @@ export function AmericanoPanel({ stageId, canEdit }: { stageId: string; canEdit:
 
   if (paywall) return <UpgradeGate feature={paywall} />;
   if (error) return <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>;
-  if (!view) return <p className="text-sm text-slate-500">Loading rotation…</p>;
+  if (!view) return <p className="text-sm text-slate-500">{msg("americano.loading")}</p>;
 
   return (
-    <div className="mb-6 space-y-4" aria-label="Americano rotation">
+    <div className="mb-6 space-y-4" aria-label={msg("americano.rotationAria")}>
       <div className="flex items-center gap-2">
-        <h2 className="text-lg font-semibold text-slate-900">Rotation</h2>
+        <h2 className="text-lg font-semibold text-slate-900">{msg("americano.rotation")}</h2>
         <span className="chip capitalize">{view.mode}</span>
-        <span className="text-xs text-slate-400">rotating partners · personal points</span>
+        <span className="text-xs text-slate-400">{msg("americano.subtitle")}</span>
       </div>
 
       {view.leaderboard.length > 0 && (
-        <section className="card p-4" aria-label="Personal points leaderboard">
-          <h3 className="mb-2 text-sm font-semibold text-slate-700">Personal points</h3>
+        <section className="card p-4" aria-label={msg("americano.leaderAria")}>
+          <h3 className="mb-2 text-sm font-semibold text-slate-700">{msg("americano.personalPoints")}</h3>
           <table className="table">
             <thead>
               <tr>
                 <th className="px-3 py-1.5 text-left">#</th>
-                <th className="px-3 py-1.5 text-left">Player</th>
-                <th className="px-3 py-1.5 text-right">Pts</th>
-                <th className="px-3 py-1.5 text-right">Games</th>
+                <th className="px-3 py-1.5 text-left">{msg("americano.player")}</th>
+                <th className="px-3 py-1.5 text-right">{msg("americano.pts")}</th>
+                <th className="px-3 py-1.5 text-right">{msg("americano.games")}</th>
               </tr>
             </thead>
             <tbody>
@@ -102,7 +104,7 @@ export function AmericanoPanel({ stageId, canEdit }: { stageId: string; canEdit:
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {view.rounds.map((round) => (
           <section key={round.round_no} className="card p-4">
-            <h3 className="mb-3 text-sm font-semibold text-slate-700">Round {round.round_no}</h3>
+            <h3 className="mb-3 text-sm font-semibold text-slate-700">{msg("schedule.round", { n: round.round_no })}</h3>
             <ul className="space-y-3">
               {round.matches.map((m) => (
                 <MatchRow
@@ -117,7 +119,7 @@ export function AmericanoPanel({ stageId, canEdit }: { stageId: string; canEdit:
                       await scoreMatch(m.fixture_id, s1, s2);
                       await load();
                     } catch (err) {
-                      setError(err instanceof Error ? err.message : "Save failed");
+                      setError(err instanceof Error ? err.message : msg("americano.saveFailed"));
                     } finally {
                       setSavingId(null);
                     }
@@ -163,6 +165,7 @@ function MatchRow({
   saving: boolean;
   onSave: (s1: number, s2: number) => void;
 }) {
+  const msg = useMsg();
   const decided = match.status === "decided" || match.status === "finalized";
   const [s1, setS1] = useState(match.team1.score?.toString() ?? "");
   const [s2, setS2] = useState(match.team2.score?.toString() ?? "");
@@ -170,14 +173,14 @@ function MatchRow({
   return (
     <li className="rounded-md border border-slate-100 p-2">
       <div className="mb-1 flex items-center gap-2 text-xs text-slate-400">
-        Court {match.court}
-        {decided && <span className="text-emerald-600">✓ scored</span>}
+        {msg("americano.court", { n: match.court })}
+        {decided && <span className="text-emerald-600">{msg("americano.scored")}</span>}
       </div>
       <div className="flex items-center gap-2 text-sm">
         <span className="flex-1 font-medium text-slate-800">{match.team1.label}</span>
         {canEdit && !decided ? (
           <input
-            aria-label={`${match.team1.label} score`}
+            aria-label={msg("americano.scoreAria", { label: match.team1.label })}
             type="number"
             min={0}
             className="input w-14 px-2 py-1 text-right text-xs"
@@ -190,7 +193,7 @@ function MatchRow({
         <span className="text-slate-300">·</span>
         {canEdit && !decided ? (
           <input
-            aria-label={`${match.team2.label} score`}
+            aria-label={msg("americano.scoreAria", { label: match.team2.label })}
             type="number"
             min={0}
             className="input w-14 px-2 py-1 text-xs"
@@ -210,7 +213,7 @@ function MatchRow({
             disabled={saving || s1 === "" || s2 === ""}
             onClick={() => onSave(Number(s1), Number(s2))}
           >
-            {saving ? "Saving…" : "Save score"}
+            {saving ? msg("americano.saving") : msg("americano.saveScore")}
           </button>
         </div>
       )}

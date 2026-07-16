@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { ConfirmDialog } from "@/components/v2/confirm-dialog";
 import { routes } from "@/lib/routes";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface Props {
   divisionId: string;
@@ -18,6 +19,7 @@ interface Props {
 }
 
 export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug }: Props) {
+  const msg = useMsg();
   const router = useRouter();
   const [dialog, setDialog] = useState<"none" | "delete" | "archive">("none");
   const [busy, setBusy] = useState(false);
@@ -36,7 +38,7 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
         setSuggestArchive(true);
         setDialog("archive");
       } else {
-        setError(err instanceof Error ? err.message : "Delete failed");
+        setError(err instanceof Error ? err.message : msg("danger.deleteFailed"));
         setDialog("none");
       }
     } finally {
@@ -52,7 +54,7 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
       router.push(routes.competition(orgSlug, compSlug));
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Archive failed");
+      setError(err instanceof Error ? err.message : msg("danger.archiveFailed"));
       setDialog("none");
     } finally {
       setBusy(false);
@@ -61,12 +63,8 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
 
   return (
     <section className="card mt-8 border-red-100 p-5">
-      <h2 className="text-sm font-semibold text-red-700">Danger zone</h2>
-      <p className="mt-1 text-xs text-slate-500">
-        Archiving hides this division from your console and the public site — restore it any
-        time from competition settings. Deleting is permanent and only possible before the
-        division starts.
-      </p>
+      <h2 className="text-sm font-semibold text-red-700">{msg("danger.zone")}</h2>
+      <p className="mt-1 text-xs text-slate-500">{msg("danger.desc")}</p>
       {error && (
         <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
@@ -80,7 +78,7 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
           }}
           disabled={busy}
         >
-          Archive division
+          {msg("danger.archive")}
         </button>
         <button
           type="button"
@@ -88,49 +86,40 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
           onClick={() => setDialog("delete")}
           disabled={busy}
         >
-          Delete division…
+          {msg("danger.delete")}
         </button>
       </div>
 
       <ConfirmDialog
         open={dialog === "delete"}
-        title={`Delete ${divisionName}?`}
-        confirmLabel="Delete division"
+        title={msg("danger.deleteTitle", { name: divisionName })}
+        confirmLabel={msg("danger.deleteConfirm")}
         typedName={divisionName}
         busy={busy}
         onConfirm={() => void doDelete()}
         onCancel={() => setDialog("none")}
       >
         <p>
-          <strong>Destroyed:</strong> this division, its stages, fixtures, schedules and
-          entrant entries.
+          <strong>{msg("danger.destroyedLabel")}</strong> {msg("danger.destroyedText")}
         </p>
         <p>
-          <strong>Kept:</strong> people, teams and clubs — they belong to your organisation,
-          not this division.
+          <strong>{msg("danger.keptLabel")}</strong> {msg("danger.keptText")}
         </p>
-        <p>This cannot be undone.</p>
+        <p>{msg("danger.cannotUndo")}</p>
       </ConfirmDialog>
 
       <ConfirmDialog
         open={dialog === "archive"}
-        title={`Archive ${divisionName}?`}
-        confirmLabel="Archive division"
+        title={msg("danger.archiveTitle", { name: divisionName })}
+        confirmLabel={msg("danger.archiveConfirm")}
         busy={busy}
         onConfirm={() => void doArchive()}
         onCancel={() => setDialog("none")}
       >
         {suggestArchive && (
-          <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-700">
-            This division has started or has recorded results, so it can’t be deleted —
-            archiving keeps every result and stays restorable.
-          </p>
+          <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-700">{msg("danger.suggestArchive")}</p>
         )}
-        <p>
-          The division disappears from your console and the public site and stops counting
-          against your plan. Nothing is destroyed — restore it any time from competition
-          settings → Archived divisions.
-        </p>
+        <p>{msg("danger.archiveBody")}</p>
       </ConfirmDialog>
     </section>
   );

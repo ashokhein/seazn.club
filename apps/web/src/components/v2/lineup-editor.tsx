@@ -10,6 +10,7 @@ import type {
   LineupSlotIn,
   PersonAvailability,
 } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface Props {
   fixtureId: string;
@@ -24,10 +25,16 @@ interface Props {
 }
 
 // RSVP chip vocabulary: ✓ in / ✗ out / ? maybe / — no answer (or unclaimed).
-const AVAIL_CHIP: Record<PersonAvailability["status"], { mark: string; cls: string; label: string }> = {
-  in: { mark: "✓", cls: "bg-emerald-100 text-emerald-700", label: "available" },
-  out: { mark: "✗", cls: "bg-red-100 text-red-600", label: "unavailable" },
-  maybe: { mark: "?", cls: "bg-amber-100 text-amber-700", label: "maybe available" },
+// Marks + colours are structural; the labels come from the `ui` catalog.
+const AVAIL_CHIP: Record<PersonAvailability["status"], { mark: string; cls: string }> = {
+  in: { mark: "✓", cls: "bg-emerald-100 text-emerald-700" },
+  out: { mark: "✗", cls: "bg-red-100 text-red-600" },
+  maybe: { mark: "?", cls: "bg-amber-100 text-amber-700" },
+};
+const AVAIL_LABEL_KEY: Record<PersonAvailability["status"], "lineup.avail.in" | "lineup.avail.out" | "lineup.avail.maybe"> = {
+  in: "lineup.avail.in",
+  out: "lineup.avail.out",
+  maybe: "lineup.avail.maybe",
 };
 
 function AvailabilityChip({
@@ -37,10 +44,11 @@ function AvailabilityChip({
   personName: string;
   info: PersonAvailability | undefined;
 }) {
+  const msg = useMsg();
   if (!info) {
     return (
       <span
-        aria-label={`${personName}: no availability answer`}
+        aria-label={msg("lineup.noAnswer", { name: personName })}
         className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-slate-100 text-[11px] text-slate-400"
         data-testid="availability-chip"
       >
@@ -49,10 +57,11 @@ function AvailabilityChip({
     );
   }
   const chip = AVAIL_CHIP[info.status];
+  const label = msg(AVAIL_LABEL_KEY[info.status]);
   return (
     <span className="inline-flex items-center gap-1" data-testid="availability-chip">
       <span
-        aria-label={`${personName}: ${chip.label}${info.note ? ` — ${info.note}` : ""}`}
+        aria-label={msg("lineup.statusAria", { name: personName, label }) + (info.note ? ` — ${info.note}` : "")}
         title={info.note ?? undefined}
         className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-bold ${chip.cls}`}
       >
@@ -60,8 +69,8 @@ function AvailabilityChip({
       </span>
       {info.checked_in_at && (
         <span
-          aria-label={`${personName}: checked in at the venue`}
-          title="Checked in at the venue"
+          aria-label={msg("lineup.checkedInAria", { name: personName })}
+          title={msg("lineup.checkedInTitle")}
           className="inline-block h-2 w-2 rounded-full bg-lime-500"
           data-testid="checkedin-dot"
         />
@@ -89,6 +98,7 @@ export function LineupEditor({
   onSaved,
   availability = {},
 }: Props) {
+  const msg = useMsg();
   const [slots, setSlots] = useState<SlotDraft[]>(() =>
     side.lineup.map((s: LineupSlotIn, i) => ({
       person_id: s.person_id,
@@ -140,7 +150,7 @@ export function LineupEditor({
       setSaved(true);
       onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed");
+      setError(err instanceof Error ? err.message : msg("lineup.failed"));
     } finally {
       setBusy(false);
     }
@@ -149,17 +159,17 @@ export function LineupEditor({
   return (
     <section className="card p-4">
       <header className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-700">{side.name} lineup</h3>
+        <h3 className="text-sm font-semibold text-slate-700">{msg("lineup.title", { name: side.name })}</h3>
         <span
           className={`text-xs ${startingCount === lineupSize ? "text-emerald-600" : "text-slate-400"}`}
         >
-          {startingCount}/{lineupSize} starting
+          {msg("lineup.starting", { n: startingCount, total: lineupSize })}
         </span>
       </header>
 
       {slots.length === 0 && (
         <p className="mb-2 text-xs text-slate-400">
-          {canEdit ? "No lineup submitted — add players below." : "No lineup submitted."}
+          {canEdit ? msg("lineup.emptyEdit") : msg("lineup.empty")}
         </p>
       )}
 
@@ -178,10 +188,10 @@ export function LineupEditor({
                 setSaved(false);
               }}
               className="select w-24 px-2 py-1 text-xs"
-              aria-label={`Slot for ${s.full_name}`}
+              aria-label={msg("lineup.slotAria", { name: s.full_name })}
             >
-              <option value="starting">starting</option>
-              <option value="bench">bench</option>
+              <option value="starting">{msg("lineup.slotStarting")}</option>
+              <option value="bench">{msg("lineup.slotBench")}</option>
             </select>
             {positionGroups.length > 0 && (
               <select
@@ -195,9 +205,9 @@ export function LineupEditor({
                   setSaved(false);
                 }}
                 className="select w-32 px-2 py-1 text-xs"
-                aria-label={`Position for ${s.full_name}`}
+                aria-label={msg("lineup.positionAria", { name: s.full_name })}
               >
-                <option value="">position…</option>
+                <option value="">{msg("lineup.positionPlaceholder")}</option>
                 {positionGroups.map((g) => (
                   <option key={g.key} value={g.key}>
                     {g.name}
@@ -244,7 +254,7 @@ export function LineupEditor({
                     setSaved(false);
                   }}
                   className="text-slate-400 hover:text-slate-700"
-                  aria-label={`Move ${s.full_name} up`}
+                  aria-label={msg("lineup.moveUp", { name: s.full_name })}
                 >
                   ↑
                 </button>
@@ -260,7 +270,7 @@ export function LineupEditor({
                     setSaved(false);
                   }}
                   className="text-slate-400 hover:text-slate-700"
-                  aria-label={`Move ${s.full_name} down`}
+                  aria-label={msg("lineup.moveDown", { name: s.full_name })}
                 >
                   ↓
                 </button>
@@ -294,33 +304,30 @@ export function LineupEditor({
                     onClick={() => add(m, "starting")}
                     className="text-purple-600 hover:underline"
                   >
-                    start
+                    {msg("lineup.addStart")}
                   </button>
                   <button
                     type="button"
                     onClick={() => add(m, "bench")}
                     className="text-slate-400 hover:underline"
                   >
-                    bench
+                    {msg("lineup.addBench")}
                   </button>
                 </span>
               ))}
             {side.members.length === 0 && (
-              <span className="text-xs text-slate-400">
-                This entrant has no roster members — add them on the division&apos;s
-                Entrants tab.
-              </span>
+              <span className="text-xs text-slate-400">{msg("lineup.noRoster")}</span>
             )}
           </div>
           {error && <p className="text-xs text-red-600">{error}</p>}
-          {saved && <p className="text-xs text-emerald-600">Lineup saved.</p>}
+          {saved && <p className="text-xs text-emerald-600">{msg("lineup.saved")}</p>}
           <button
             type="button"
             disabled={busy}
             onClick={save}
             className="btn btn-primary px-3 py-1.5 text-xs"
           >
-            {busy ? "Saving…" : "Save lineup"}
+            {busy ? msg("lineup.saving") : msg("lineup.save")}
           </button>
         </div>
       )}

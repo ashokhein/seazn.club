@@ -6,6 +6,7 @@
 // anything illegal — the pad only makes the legal path fast.
 import { useEffect, useState } from "react";
 import type { SendEvent, SideInfo, SportInfo, LiveState } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface FineView {
   striker: string | null;
@@ -59,6 +60,7 @@ export function CricketPad({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const cfg = sport.config as { ballsPerOver?: number; inningsPerSide?: number };
   const bpo = cfg.ballsPerOver ?? 6;
   const state = (live.state ?? {}) as CricketStateView;
@@ -72,11 +74,7 @@ export function CricketPad({
     if (!state.tossTaken) {
       return <TossForm home={home} away={away} send={send} busy={busy} />;
     }
-    return (
-      <p className="text-sm text-slate-500">
-        Toss recorded — start the match to open the first innings.
-      </p>
-    );
+    return <p className="text-sm text-slate-500">{msg("pad.ck.tossRecorded")}</p>;
   }
 
   const battingSide = open ? (open.battingSide === "home" ? home : away) : null;
@@ -92,22 +90,22 @@ export function CricketPad({
           onClick={() => setMode("over")}
           className={`rounded-full px-3 py-1 ${mode === "over" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
         >
-          Over-by-over
+          {msg("pad.ck.overByOver")}
         </button>
         <button
           type="button"
           onClick={() => setMode("summary")}
           className={`rounded-full px-3 py-1 ${mode === "summary" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
         >
-          Innings total
+          {msg("pad.ck.inningsTotal")}
         </button>
         <button
           type="button"
           onClick={() => setMode("ball")}
           className={`rounded-full px-3 py-1 ${mode === "ball" ? "bg-purple-100 text-purple-700" : "text-slate-400 hover:bg-slate-100"}`}
-          title="Detailed per-delivery scoring (needed for full player stats)"
+          title={msg("pad.ck.ballByBallTitle")}
         >
-          ⋯ Ball-by-ball
+          {msg("pad.ck.ballByBall")}
         </button>
       </div>
 
@@ -124,9 +122,7 @@ export function CricketPad({
           busy={busy}
         />
       ) : mode === "ball" ? (
-        <p className="text-sm text-slate-500">
-          No open innings — record an innings summary, or the match is between innings.
-        </p>
+        <p className="text-sm text-slate-500">{msg("pad.ck.noOpenInnings")}</p>
       ) : (
         <SummaryForm bpo={bpo} send={send} busy={busy} />
       )}
@@ -138,7 +134,7 @@ export function CricketPad({
           onClick={() => send("cricket.innings.declare", {})}
           className="btn btn-ghost px-3 py-1.5 text-xs"
         >
-          Declare
+          {msg("pad.ck.declare")}
         </button>
         <button
           type="button"
@@ -146,7 +142,7 @@ export function CricketPad({
           onClick={() => send("cricket.innings.close", {})}
           className="btn btn-ghost px-3 py-1.5 text-xs"
         >
-          Close innings
+          {msg("pad.ck.closeInnings")}
         </button>
         {(cfg.inningsPerSide ?? 1) === 2 && (
           <button
@@ -154,9 +150,9 @@ export function CricketPad({
             disabled={busy}
             onClick={() => send("cricket.match.close", {})}
             className="btn btn-ghost px-3 py-1.5 text-xs"
-            title="Time expires in a 2-innings match — draw"
+            title={msg("pad.ck.closeMatchTitle")}
           >
-            Close match (draw)
+            {msg("pad.ck.closeMatch")}
           </button>
         )}
         <InterruptionControls send={send} busy={busy} />
@@ -203,6 +199,7 @@ function TossForm({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const [wonBy, setWonBy] = useState(home.id);
   const [elected, setElected] = useState<"bat" | "bowl">("bat");
   return (
@@ -214,14 +211,14 @@ function TossForm({
       }}
     >
       <label className="block">
-        <span className="label">Toss won by</span>
+        <span className="label">{msg("pad.ck.tossWonBy")}</span>
         <select value={wonBy} onChange={(e) => setWonBy(e.target.value)} className="select w-44">
           <option value={home.id}>{home.name}</option>
           <option value={away.id}>{away.name}</option>
         </select>
       </label>
       <label className="block">
-        <span className="label">Elected to</span>
+        <span className="label">{msg("pad.ck.electedTo")}</span>
         <select
           value={elected}
           onChange={(e) => setElected(e.target.value as "bat" | "bowl")}
@@ -232,7 +229,7 @@ function TossForm({
         </select>
       </label>
       <button type="submit" disabled={busy} className="btn btn-primary">
-        Record toss
+        {msg("pad.ck.recordToss")}
       </button>
     </form>
   );
@@ -261,6 +258,7 @@ function BallForm({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const fine = innings.fine;
   const batters = batting.lineup.length > 0 ? batting.lineup : batting.members.map((m) => ({
     person_id: m.person_id,
@@ -333,13 +331,13 @@ function BallForm({
   return (
     <div className="space-y-3">
       <p className="text-xs text-slate-400">
-        Over <span className="font-mono">{over}.{ballInOver}</span>
-        {newOver && <span className="ml-2 text-amber-600">new over — pick the bowler</span>}
+        {msg("pad.ck.over")} <span className="font-mono">{over}.{ballInOver}</span>
+        {newOver && <span className="ml-2 text-amber-600">{msg("pad.ck.newOver")}</span>}
       </p>
 
       <div className="grid gap-2 sm:grid-cols-3">
         <label className="block">
-          <span className="label">Striker</span>
+          <span className="label">{msg("pad.ck.striker")}</span>
           <select
             value={striker}
             onChange={(e) => setStriker(e.target.value)}
@@ -356,7 +354,7 @@ function BallForm({
           </select>
         </label>
         <label className="block">
-          <span className="label">Non-striker</span>
+          <span className="label">{msg("pad.ck.nonStriker")}</span>
           <select
             value={nonStriker}
             onChange={(e) => setNonStriker(e.target.value)}
@@ -373,7 +371,7 @@ function BallForm({
           </select>
         </label>
         <label className="block">
-          <span className="label">Bowler</span>
+          <span className="label">{msg("pad.ck.bowler")}</span>
           <select
             value={bowler}
             onChange={(e) => setBowler(e.target.value)}
@@ -401,7 +399,7 @@ function BallForm({
                 ? "border-purple-300 bg-purple-50 text-purple-700 hover:bg-purple-100"
                 : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
             }`}
-            title={r === 4 || r === 6 ? `${r} (boundary)` : `${r} runs`}
+            title={r === 4 || r === 6 ? msg("pad.ck.boundary", { r }) : msg("pad.ck.runs", { r })}
           >
             {r}
           </button>
@@ -410,9 +408,9 @@ function BallForm({
           value={extraKind}
           onChange={(e) => setExtraKind(e.target.value)}
           className="select w-28 px-2 py-1 text-xs"
-          aria-label="Extras"
+          aria-label={msg("pad.ck.extras")}
         >
-          <option value="">no extras</option>
+          <option value="">{msg("pad.ck.noExtras")}</option>
           {EXTRA_KINDS.map((k) => (
             <option key={k} value={k}>
               {k}
@@ -426,7 +424,7 @@ function BallForm({
             value={extraRuns}
             onChange={(e) => setExtraRuns(e.target.value)}
             className="input w-16 px-2 py-1 text-xs"
-            aria-label="Extra runs"
+            aria-label={msg("pad.ck.extraRuns")}
           />
         )}
         <select
@@ -436,9 +434,9 @@ function BallForm({
             if (e.target.value && !outWho) setOutWho(striker);
           }}
           className="select w-32 px-2 py-1 text-xs"
-          aria-label="Wicket"
+          aria-label={msg("pad.ck.wicket")}
         >
-          <option value="">no wicket</option>
+          <option value="">{msg("pad.ck.noWicket")}</option>
           {WICKET_KINDS.map((k) => (
             <option key={k} value={k}>
               W: {k}
@@ -451,11 +449,11 @@ function BallForm({
               value={outWho}
               onChange={(e) => setOutWho(e.target.value)}
               className="select w-32 px-2 py-1 text-xs"
-              aria-label="Batter out"
+              aria-label={msg("pad.ck.batterOut")}
             >
-              <option value={striker}>{striker ? personName(batting, striker) : "striker"}</option>
+              <option value={striker}>{striker ? personName(batting, striker) : msg("pad.ck.strikerLc")}</option>
               <option value={nonStriker}>
-                {nonStriker ? personName(batting, nonStriker) : "non-striker"}
+                {nonStriker ? personName(batting, nonStriker) : msg("pad.ck.nonStrikerLc")}
               </option>
             </select>
             {(wicketKind === "caught" || wicketKind === "runout" || wicketKind === "stumped") && (
@@ -463,9 +461,9 @@ function BallForm({
                 value={fielder}
                 onChange={(e) => setFielder(e.target.value)}
                 className="select w-32 px-2 py-1 text-xs"
-                aria-label="Fielder"
+                aria-label={msg("pad.ck.fielder")}
               >
-                <option value="">fielder…</option>
+                <option value="">{msg("pad.ck.fielderPlaceholder")}</option>
                 {bowlers.map((p) => (
                   <option key={p.person_id} value={p.person_id}>
                     {p.full_name}
@@ -476,11 +474,7 @@ function BallForm({
           </>
         )}
       </div>
-      <p className="text-xs text-slate-400">
-        Tap the runs off the bat to record the delivery. Wides/no-balls don&apos;t
-        advance the over; the engine enforces over/ball order, batter rotation and
-        bowling restrictions.
-      </p>
+      <p className="text-xs text-slate-400">{msg("pad.ck.ballHint")}</p>
     </div>
   );
 }
@@ -502,6 +496,7 @@ function OverByOverForm({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const [runs, setRuns] = useState("");
   const [wickets, setWickets] = useState("");
   const runsN = Number(runs || 0);
@@ -527,31 +522,31 @@ function OverByOverForm({
   return (
     <div className="space-y-3">
       <p className="text-sm text-slate-600">
-        {batting ? `${batting.name} batting` : "Next innings"} — total{" "}
+        {batting ? msg("pad.ck.sideBatting", { name: batting.name }) : msg("pad.ck.nextInnings")} — {msg("pad.ck.total")}{" "}
         <span className="font-mono font-semibold text-slate-900">
           {curRuns}/{curWkts}
         </span>{" "}
-        ({oversText(curBalls, bpo)} ov)
+        ({msg("pad.ck.oversAbbr", { overs: oversText(curBalls, bpo) })})
       </p>
       <div className="flex flex-wrap items-end gap-3">
         <label className="block">
-          <span className="label">Over {overNo} — runs</span>
+          <span className="label">{msg("pad.ck.overNoRuns", { n: overNo })}</span>
           <input
             type="number"
             min={0}
-            aria-label="Runs this over"
+            aria-label={msg("pad.ck.runsThisOver")}
             className="input w-24 px-2 py-1 text-sm"
             value={runs}
             onChange={(e) => setRuns(e.target.value)}
           />
         </label>
         <label className="block">
-          <span className="label">Wickets</span>
+          <span className="label">{msg("pad.ck.wickets")}</span>
           <input
             type="number"
             min={0}
             max={10}
-            aria-label="Wickets this over"
+            aria-label={msg("pad.ck.wicketsThisOver")}
             className="input w-20 px-2 py-1 text-sm"
             value={wickets}
             onChange={(e) => setWickets(e.target.value)}
@@ -563,18 +558,16 @@ function OverByOverForm({
           disabled={busy || runs === ""}
           onClick={() => void addOver()}
         >
-          Add over
+          {msg("pad.ck.addOver")}
         </button>
       </div>
-      <p className="text-xs text-slate-400">
-        Records a full {bpo}-ball over. Use “Close innings” below when the side is all out
-        or overs are done; the next innings opens automatically.
-      </p>
+      <p className="text-xs text-slate-400">{msg("pad.ck.overHint", { bpo })}</p>
     </div>
   );
 }
 
 function SummaryForm({ bpo, send, busy }: { bpo: number; send: SendEvent; busy: boolean }) {
+  const msg = useMsg();
   const [runs, setRuns] = useState("");
   const [wickets, setWickets] = useState("");
   const [overs, setOvers] = useState("");
@@ -603,7 +596,7 @@ function SummaryForm({ bpo, send, busy }: { bpo: number; send: SendEvent; busy: 
       }}
     >
       <label className="block">
-        <span className="label">Runs</span>
+        <span className="label">{msg("pad.ck.runsLabel")}</span>
         <input
           required
           type="number"
@@ -614,7 +607,7 @@ function SummaryForm({ bpo, send, busy }: { bpo: number; send: SendEvent; busy: 
         />
       </label>
       <label className="block">
-        <span className="label">Wickets</span>
+        <span className="label">{msg("pad.ck.wickets")}</span>
         <input
           type="number"
           min={0}
@@ -625,7 +618,7 @@ function SummaryForm({ bpo, send, busy }: { bpo: number; send: SendEvent; busy: 
         />
       </label>
       <label className="block">
-        <span className="label">Overs</span>
+        <span className="label">{msg("pad.ck.overs")}</span>
         <input
           type="number"
           min={0}
@@ -635,7 +628,7 @@ function SummaryForm({ bpo, send, busy }: { bpo: number; send: SendEvent; busy: 
         />
       </label>
       <label className="block">
-        <span className="label">+ balls</span>
+        <span className="label">{msg("pad.ck.plusBalls")}</span>
         <input
           type="number"
           min={0}
@@ -647,7 +640,7 @@ function SummaryForm({ bpo, send, busy }: { bpo: number; send: SendEvent; busy: 
       </label>
       <label className="flex items-center gap-1 pb-2 text-xs text-slate-500">
         <input type="checkbox" checked={partial} onChange={(e) => setPartial(e.target.checked)} />
-        in progress
+        {msg("pad.ck.inProgress")}
       </label>
       <label className="flex items-center gap-1 pb-2 text-xs text-slate-500">
         <input
@@ -655,16 +648,17 @@ function SummaryForm({ bpo, send, busy }: { bpo: number; send: SendEvent; busy: 
           checked={declared}
           onChange={(e) => setDeclared(e.target.checked)}
         />
-        declared
+        {msg("pad.ck.declared")}
       </label>
       <button type="submit" disabled={busy || runs === ""} className="btn btn-primary">
-        Record innings
+        {msg("pad.ck.recordInnings")}
       </button>
     </form>
   );
 }
 
 function InterruptionControls({ send, busy }: { send: SendEvent; busy: boolean }) {
+  const msg = useMsg();
   const [open, setOpen] = useState(false);
   const [oversPerSide, setOversPerSide] = useState("");
   const [target, setTarget] = useState("");
@@ -677,7 +671,7 @@ function InterruptionControls({ send, busy }: { send: SendEvent; busy: boolean }
         onClick={() => send("cricket.interruption", { kind: "rain" })}
         className="btn btn-ghost px-3 py-1.5 text-xs"
       >
-        🌧 Interruption
+        🌧 {msg("pad.ck.interruption")}
       </button>
       <button
         type="button"
@@ -685,12 +679,12 @@ function InterruptionControls({ send, busy }: { send: SendEvent; busy: boolean }
         onClick={() => setOpen(!open)}
         className="btn btn-ghost px-3 py-1.5 text-xs"
       >
-        Revise overs/target…
+        {msg("pad.ck.reviseOvers")}
       </button>
       {open && (
         <span className="flex flex-wrap items-end gap-2">
           <label className="block">
-            <span className="label">Overs per side</span>
+            <span className="label">{msg("pad.ck.oversPerSide")}</span>
             <input
               type="number"
               min={1}
@@ -700,7 +694,7 @@ function InterruptionControls({ send, busy }: { send: SendEvent; busy: boolean }
             />
           </label>
           <label className="block">
-            <span className="label">Manual target (blank = DLS)</span>
+            <span className="label">{msg("pad.ck.manualTarget")}</span>
             <input
               type="number"
               min={1}
@@ -725,7 +719,7 @@ function InterruptionControls({ send, busy }: { send: SendEvent; busy: boolean }
             }}
             className="btn btn-primary px-3 py-1.5 text-xs"
           >
-            Apply revision
+            {msg("pad.ck.applyRevision")}
           </button>
         </span>
       )}

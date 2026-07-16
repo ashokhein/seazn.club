@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface Metric {
   key: string;
@@ -25,6 +26,7 @@ interface Board {
 }
 
 export function StatsPanel({ divisionId }: { divisionId: string }) {
+  const msg = useMsg();
   const [board, setBoard] = useState<Board | null>(null);
   const [metric, setMetric] = useState<string | null>(null);
   const [sort, setSort] = useState<"desc" | "asc">("desc");
@@ -48,7 +50,7 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywall(String(err.extra.feature_key ?? "stats.player"));
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("stats.failed"));
       }
     } finally {
       setLoading(false);
@@ -62,19 +64,16 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
 
   if (paywall) return <UpgradeGate feature={paywall} />;
   if (error) return <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>;
-  if (loading && !board) return <p className="text-sm text-slate-500">Loading stats…</p>;
+  if (loading && !board) return <p className="text-sm text-slate-500">{msg("stats.loading")}</p>;
   if (!board) return null;
 
   if (board.requires_detailed_scoring) {
     return (
-      <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">
-        Player stats require detailed (ball-by-ball / event) scoring — this division was
-        scored at result level only, so per-player numbers aren&apos;t available.
-      </p>
+      <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-700">{msg("stats.requiresDetailed")}</p>
     );
   }
   if (board.rows.length === 0) {
-    return <p className="text-sm text-slate-500">No player stats recorded yet.</p>;
+    return <p className="text-sm text-slate-500">{msg("stats.empty")}</p>;
   }
 
   // Discipline report (v6/00 §5): the same board narrowed to the penalty/
@@ -102,18 +101,18 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
               }}
               className={`rounded-full px-3 py-1 ${view === v ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
             >
-              {v === "all" ? "All stats" : "Discipline"}
+              {v === "all" ? msg("stats.allStats") : msg("stats.discipline")}
             </button>
           ))}
         </div>
       )}
       <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600">
-        <span>Sort by</span>
+        <span>{msg("stats.sortBy")}</span>
         <select
           className="input"
           value={metric ?? ""}
           onChange={(e) => setMetric(e.target.value)}
-          aria-label="Sort metric"
+          aria-label={msg("stats.sortMetric")}
         >
           {cols.map((m) => (
             <option key={m.key} value={m.key}>{m.label}</option>
@@ -124,7 +123,7 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
           className="btn"
           onClick={() => setSort((s) => (s === "desc" ? "asc" : "desc"))}
         >
-          {sort === "desc" ? "↓ high to low" : "↑ low to high"}
+          {sort === "desc" ? msg("stats.highLow") : msg("stats.lowHigh")}
         </button>
       </div>
 
@@ -133,8 +132,8 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
           <thead>
             <tr>
               <th className="px-4 py-2 text-left">#</th>
-              <th className="px-4 py-2 text-left">Player</th>
-              <th className="px-4 py-2 text-left">Team</th>
+              <th className="px-4 py-2 text-left">{msg("stats.playerCol")}</th>
+              <th className="px-4 py-2 text-left">{msg("stats.teamCol")}</th>
               {cols.map((m) => (
                 <th
                   key={m.key}

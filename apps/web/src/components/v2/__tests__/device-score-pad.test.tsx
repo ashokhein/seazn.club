@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DeviceScorePad } from "@/components/v2/device-score-pad";
 import { SetbasedPad } from "@/components/v2/pads/setbased-pad";
+import { DictProvider } from "@/components/i18n/dict-provider";
+import frUi from "@/dictionaries/fr/ui.json";
+import type { Dict } from "@/lib/i18n-constants";
 import type { LiveState, SportInfo, SideInfo } from "@/components/v2/fixture-console";
 
 // Courtside-pad mobile fixes (user report, 12 Jul): set-score headlines used
@@ -82,5 +85,25 @@ describe("device score pad on phones", () => {
     expect(html).toContain("touch-manipulation");
     expect(html).toContain("bg-purple-600");
     expect(html).toContain("+ point");
+  });
+
+  // v5 i18n: score pads read chrome via useMsg(), so wrapping a pad in a
+  // <DictProvider> for a non-English locale localizes its labels (sport
+  // vocabulary stays canonical). Fails if a pad hardcodes an English string.
+  it("localizes pad chrome under a DictProvider (fr)", () => {
+    const html = renderToStaticMarkup(
+      <DictProvider dict={frUi as unknown as Dict} locale="fr">
+        <SetbasedPad
+          sport={sport}
+          home={side("h", "Nia & Marco")}
+          away={side("a", "Mira & Josh")}
+          live={live}
+          send={async () => true}
+          busy={false}
+        />
+      </DictProvider>,
+    );
+    expect(html).toContain("Échange par échange"); // pad.rallyByRally (fr)
+    expect(html).not.toContain("Rally-by-rally"); // no English leak
   });
 });

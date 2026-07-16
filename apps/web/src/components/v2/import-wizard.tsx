@@ -7,23 +7,25 @@ import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
-const FIELDS = [
-  ["", "— ignore —"],
-  ["clubName", "Club"],
-  ["clubShortName", "Club short name"],
-  ["clubExternalRef", "Club ref"],
-  ["teamName", "Team"],
-  ["teamShortName", "Team short name"],
-  ["playerFullName", "Player"],
-  ["dob", "Date of birth"],
-  ["gender", "Gender"],
-  ["squadNumber", "Squad number"],
-  ["position", "Position"],
-  ["isCaptain", "Captain"],
-  ["divisionSlug", "Division"],
-  ["entrantDisplayName", "Entrant display name"],
-] as const;
+const FIELDS: [string, MessageKey][] = [
+  ["", "import.field.ignore"],
+  ["clubName", "import.field.club"],
+  ["clubShortName", "import.field.clubShort"],
+  ["clubExternalRef", "import.field.clubRef"],
+  ["teamName", "import.field.team"],
+  ["teamShortName", "import.field.teamShort"],
+  ["playerFullName", "import.field.player"],
+  ["dob", "import.field.dob"],
+  ["gender", "import.field.gender"],
+  ["squadNumber", "import.field.squad"],
+  ["position", "import.field.position"],
+  ["isCaptain", "import.field.captain"],
+  ["divisionSlug", "import.field.division"],
+  ["entrantDisplayName", "import.field.entrant"],
+];
 
 interface ImportIssue {
   rowNo: number;
@@ -56,14 +58,14 @@ interface CommitResult {
   divisionIds: string[];
 }
 
-const OP_BADGE: Record<string, { label: string; cls: string }> = {
-  "club.create": { label: "new club", cls: "bg-emerald-50 text-emerald-700" },
-  "club.update": { label: "update club", cls: "bg-sky-50 text-sky-700" },
-  "team.create": { label: "new team", cls: "bg-emerald-50 text-emerald-700" },
-  "team.link": { label: "link to club", cls: "bg-sky-50 text-sky-700" },
-  "person.create": { label: "new player", cls: "bg-emerald-50 text-emerald-700" },
-  "entrant.create": { label: "enter division", cls: "bg-violet-50 text-violet-700" },
-  "roster.add": { label: "roster", cls: "bg-slate-100 text-slate-600" },
+const OP_BADGE: Record<string, { labelKey: MessageKey; cls: string }> = {
+  "club.create": { labelKey: "import.op.clubCreate", cls: "bg-emerald-50 text-emerald-700" },
+  "club.update": { labelKey: "import.op.clubUpdate", cls: "bg-sky-50 text-sky-700" },
+  "team.create": { labelKey: "import.op.teamCreate", cls: "bg-emerald-50 text-emerald-700" },
+  "team.link": { labelKey: "import.op.teamLink", cls: "bg-sky-50 text-sky-700" },
+  "person.create": { labelKey: "import.op.personCreate", cls: "bg-emerald-50 text-emerald-700" },
+  "entrant.create": { labelKey: "import.op.entrantCreate", cls: "bg-violet-50 text-violet-700" },
+  "roster.add": { labelKey: "import.op.rosterAdd", cls: "bg-slate-100 text-slate-600" },
 };
 
 async function postForm<T>(url: string, form: FormData, headers?: Record<string, string>): Promise<T> {
@@ -81,6 +83,7 @@ async function postForm<T>(url: string, form: FormData, headers?: Record<string,
 }
 
 export function ImportWizard() {
+  const msg = useMsg();
   const router = useRouter();
   const fileRef = useRef<HTMLInputElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -99,7 +102,7 @@ export function ImportWizard() {
     if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
       setPaywallFeature(String(err.extra.feature_key ?? ""));
     } else {
-      setError(err instanceof Error ? err.message : "Import failed");
+      setError(err instanceof Error ? err.message : msg("import.failed"));
     }
   }
 
@@ -154,7 +157,7 @@ export function ImportWizard() {
           setPaywallFeature(String(payload.error?.feature_key ?? ""));
           return;
         }
-        throw new Error(payload.error?.message ?? "Commit failed");
+        throw new Error(payload.error?.message ?? msg("import.commitFailed"));
       }
       setResult(payload.data!);
       router.refresh();
@@ -175,7 +178,7 @@ export function ImportWizard() {
           ? String(op.after?.name ?? op.ref ?? "")
           : String((op.after?.club as { ref?: string } | undefined)?.ref ?? "").replace(/^club:/, "") ||
             (op.ref?.startsWith("team:club:") ? op.ref.slice("team:club:".length).split("/")[0]! : "");
-      const key = club || "— no club —";
+      const key = club || msg("import.noClub");
       const list = groups.get(key) ?? [];
       list.push(op);
       groups.set(key, list);
@@ -187,7 +190,7 @@ export function ImportWizard() {
     <div className="space-y-5">
       <section className="card space-y-3 p-4">
         <label className="block text-sm font-medium text-slate-700" htmlFor="import-file">
-          Spreadsheet (.csv or .xlsx)
+          {msg("import.file")}
         </label>
         <input
           id="import-file"
@@ -202,11 +205,7 @@ export function ImportWizard() {
             if (f) void upload(f);
           }}
         />
-        <p className="text-xs text-slate-500">
-          One row per player (or per team) with columns like Club, Team, Player, DOB,
-          Number, Position, Captain, Division. Re-uploading the same file is always safe —
-          matching rows become no-ops.
-        </p>
+        <p className="text-xs text-slate-500">{msg("import.fileHint")}</p>
       </section>
 
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
@@ -215,10 +214,10 @@ export function ImportWizard() {
       {preview && !result && (
         <>
           <section className="card space-y-3 p-4">
-            <h2 className="text-sm font-semibold text-slate-900">Column mapping</h2>
+            <h2 className="text-sm font-semibold text-slate-900">{msg("import.mapping")}</h2>
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {Object.keys(preview.mapping ?? mapping).length === 0 && (
-                <p className="text-sm text-slate-500">No headers detected.</p>
+                <p className="text-sm text-slate-500">{msg("import.noHeaders")}</p>
               )}
               {Object.entries(mapping).map(([header, field]) => (
                 <label key={header} className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-2 py-1.5 text-sm">
@@ -226,35 +225,39 @@ export function ImportWizard() {
                   <select
                     className="input w-40"
                     value={field}
-                    aria-label={`Map column ${header}`}
+                    aria-label={msg("import.mapColumn", { header })}
                     onChange={(e) => setMapping((m) => ({ ...m, [header]: e.target.value }))}
                   >
-                    {FIELDS.map(([value, label]) => (
-                      <option key={value} value={value}>{label}</option>
+                    {FIELDS.map(([value, labelKey]) => (
+                      <option key={value} value={value}>{msg(labelKey)}</option>
                     ))}
                   </select>
                 </label>
               ))}
             </div>
             <button type="button" className="btn" onClick={remap} disabled={busy || !file}>
-              Re-map & re-preview
+              {msg("import.remap")}
             </button>
           </section>
 
           <section className="card space-y-3 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-slate-900">
-                Preview — {preview.filename} ({preview.rowCount} rows)
+                {msg("import.preview", { filename: preview.filename, rows: preview.rowCount })}
               </h2>
               <p className="text-xs text-slate-500">
-                {preview.plan.stats.clubs} clubs · {preview.plan.stats.teams} teams ·{" "}
-                {preview.plan.stats.persons} players · {preview.plan.stats.entrants} entrants ·{" "}
-                {preview.plan.stats.rosters} roster spots
+                {msg("import.stats", {
+                  clubs: preview.plan.stats.clubs,
+                  teams: preview.plan.stats.teams,
+                  persons: preview.plan.stats.persons,
+                  entrants: preview.plan.stats.entrants,
+                  rosters: preview.plan.stats.rosters,
+                })}
               </p>
             </div>
 
             {preview.plan.issues.length > 0 && (
-              <ul className="space-y-1" aria-label="Import issues">
+              <ul className="space-y-1" aria-label={msg("import.issuesAria")}>
                 {preview.plan.issues.map((issue, i) => (
                   <li
                     key={i}
@@ -264,7 +267,7 @@ export function ImportWizard() {
                         : "bg-amber-50 text-amber-700"
                     }`}
                   >
-                    Row {issue.rowNo}
+                    {msg("import.row", { n: issue.rowNo })}
                     {issue.column ? ` (${issue.column})` : ""}: {issue.message}
                     <span className="ml-2 font-mono text-xs opacity-70">{issue.code}</span>
                   </li>
@@ -273,9 +276,7 @@ export function ImportWizard() {
             )}
 
             {preview.plan.ops.length === 0 ? (
-              <p className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">
-                Everything in this file already exists — committing would change nothing.
-              </p>
+              <p className="rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-600">{msg("import.nothing")}</p>
             ) : (
               <div className="space-y-3">
                 {grouped.map(([club, ops]) => (
@@ -285,17 +286,19 @@ export function ImportWizard() {
                     </h3>
                     <ul className="flex flex-wrap gap-1.5">
                       {ops.map((op, i) => {
-                        const badge = OP_BADGE[op.kind] ?? { label: op.kind, cls: "bg-slate-100 text-slate-600" };
+                        const badge = OP_BADGE[op.kind];
+                        const badgeLabel = badge ? msg(badge.labelKey) : op.kind;
+                        const badgeCls = badge?.cls ?? "bg-slate-100 text-slate-600";
                         const name = String(
                           op.after?.name ?? op.after?.fullName ?? op.after?.displayName ?? op.ref ?? "",
                         );
                         return (
                           <li
                             key={i}
-                            className={`rounded-full px-2 py-0.5 text-xs ${badge.cls}`}
-                            title={`rows ${op.sourceRows.join(", ")}`}
+                            className={`rounded-full px-2 py-0.5 text-xs ${badgeCls}`}
+                            title={msg("import.rowsTitle", { rows: op.sourceRows.join(", ") })}
                           >
-                            <span className="font-medium">{badge.label}</span> {name}
+                            <span className="font-medium">{badgeLabel}</span> {name}
                           </li>
                         );
                       })}
@@ -313,7 +316,7 @@ export function ImportWizard() {
                     checked={warnsAcknowledged}
                     onChange={(e) => setWarnsAcknowledged(e.target.checked)}
                   />
-                  I&apos;ve reviewed the {warns.length} warning{warns.length > 1 ? "s" : ""}
+                  {msg("import.reviewedWarnings", { n: warns.length })}
                 </label>
               )}
               <button
@@ -327,7 +330,7 @@ export function ImportWizard() {
                 }
                 onClick={commit}
               >
-                {errors.length > 0 ? "Fix errors to commit" : "Commit import"}
+                {errors.length > 0 ? msg("import.fixErrors") : msg("import.commit")}
               </button>
             </div>
           </section>
@@ -336,11 +339,16 @@ export function ImportWizard() {
 
       {result && (
         <section className="card space-y-2 p-4">
-          <h2 className="text-sm font-semibold text-emerald-700">Import committed</h2>
+          <h2 className="text-sm font-semibold text-emerald-700">{msg("import.committed")}</h2>
           <p className="text-sm text-slate-600">
-            {result.stats.clubs} clubs · {result.stats.teams} teams · {result.stats.persons}{" "}
-            players · {result.stats.entrants} entrants · {result.stats.rosters} roster spots
-            {result.divisionIds.length > 0 && ` across ${result.divisionIds.length} division(s)`}.
+            {msg("import.stats", {
+              clubs: result.stats.clubs,
+              teams: result.stats.teams,
+              persons: result.stats.persons,
+              entrants: result.stats.entrants,
+              rosters: result.stats.rosters,
+            })}
+            {result.divisionIds.length > 0 ? msg("import.acrossDivisions", { n: result.divisionIds.length }) : ""}.
           </p>
           <button
             type="button"
@@ -352,7 +360,7 @@ export function ImportWizard() {
               if (fileRef.current) fileRef.current.value = "";
             }}
           >
-            Import another file
+            {msg("import.another")}
           </button>
         </section>
       )}

@@ -7,6 +7,7 @@
 import { useMemo, useState } from "react";
 import { Lightbulb } from "lucide-react";
 import { recommendFormats } from "@/lib/format-recommend";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function FormatRecommendStrip({
   initialEntrants = 16,
@@ -16,6 +17,7 @@ export function FormatRecommendStrip({
   /** Gallery family slug → wizard template selection. */
   onPick?: (familySlug: string) => void;
 }) {
+  const msg = useMsg();
   const [entrants, setEntrants] = useState(initialEntrants);
   const [courts, setCourts] = useState(2);
   const [hours, setHours] = useState(4);
@@ -34,11 +36,11 @@ export function FormatRecommendStrip({
     <div className="rounded-xl border border-purple-100 bg-purple-50/40 p-4">
       <p className="flex items-center gap-1.5 text-sm font-medium text-slate-800">
         <Lightbulb className="h-4 w-4 text-purple-500" strokeWidth={1.75} />
-        What fits your day?
+        {msg("recommend.title")}
       </p>
       <div className="mt-2 flex flex-wrap items-end gap-3 text-sm">
         <label className="block">
-          <span className="label">Entrants</span>
+          <span className="label">{msg("recommend.entrants")}</span>
           <input
             type="number" min={2} max={64} value={entrants}
             onChange={(e) => setEntrants(num(e.target.value, 2, 64, 16))}
@@ -46,7 +48,7 @@ export function FormatRecommendStrip({
           />
         </label>
         <label className="block">
-          <span className="label">Courts</span>
+          <span className="label">{msg("recommend.courts")}</span>
           <input
             type="number" min={1} max={20} value={courts}
             onChange={(e) => setCourts(num(e.target.value, 1, 20, 2))}
@@ -54,7 +56,7 @@ export function FormatRecommendStrip({
           />
         </label>
         <label className="block">
-          <span className="label">Hours</span>
+          <span className="label">{msg("recommend.hours")}</span>
           <input
             type="number" min={1} max={72} value={hours}
             onChange={(e) => setHours(num(e.target.value, 1, 72, 4))}

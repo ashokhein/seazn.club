@@ -7,6 +7,7 @@ import { useCallback, useEffect, useState } from "react";
 import QRCode from "qrcode";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface ActiveLink {
   id: string;
@@ -23,6 +24,7 @@ export function DeviceLinkPanel({
   /** Sport-aware copy (doc 13 §1): 'Umpire' / 'Referee' / 'Arbiter' / 'Scorer'. */
   scorerLabel: string;
 }) {
+  const msg = useMsg();
   const [active, setActive] = useState<ActiveLink | null>(null);
   const [minted, setMinted] = useState<{ secret: string; qr: string; expires_at: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function DeviceLinkPanel({
       await refresh();
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") setPaywall(true);
-      else setError(err instanceof Error ? err.message : "Failed");
+      else setError(err instanceof Error ? err.message : msg("dlink.failed"));
     } finally {
       setBusy(false);
     }
@@ -70,7 +72,7 @@ export function DeviceLinkPanel({
       setMinted(null);
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed");
+      setError(err instanceof Error ? err.message : msg("dlink.failed"));
     } finally {
       setBusy(false);
     }
@@ -80,11 +82,8 @@ export function DeviceLinkPanel({
 
   return (
     <section className="card p-5">
-      <h2 className="text-sm font-semibold text-slate-700">Hand this device over</h2>
-      <p className="mt-1 text-xs text-slate-500">
-        Whoever holds the phone scores this fixture as the {scorerLabel.toLowerCase()} — no
-        account needed. The link works today only, for this fixture only; they can’t finalize.
-      </p>
+      <h2 className="text-sm font-semibold text-slate-700">{msg("dlink.title")}</h2>
+      <p className="mt-1 text-xs text-slate-500">{msg("dlink.desc", { scorer: scorerLabel.toLowerCase() })}</p>
 
       {paywall && <div className="mt-3"><UpgradeGate feature="scoring.device_links" /></div>}
       {error && <p className="mt-3 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{error}</p>}
@@ -92,12 +91,12 @@ export function DeviceLinkPanel({
       {minted ? (
         <div className="mt-3 space-y-3 text-center">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={minted.qr} alt="Scoring link QR" className="mx-auto h-56 w-56" />
+          <img src={minted.qr} alt={msg("dlink.alt")} className="mx-auto h-56 w-56" />
           <p className="break-all rounded bg-slate-50 px-2 py-1 font-mono text-[10px] text-slate-500">
             {padUrl}
           </p>
           <p className="text-xs text-slate-400">
-            Shown once — scan it now. Expires {new Date(minted.expires_at).toLocaleString()}.
+            {msg("dlink.shownOnce", { date: new Date(minted.expires_at).toLocaleString() })}
           </p>
           <div className="flex justify-center gap-2">
             <button
@@ -105,7 +104,7 @@ export function DeviceLinkPanel({
               className="btn btn-ghost text-xs"
               onClick={() => padUrl && navigator.clipboard?.writeText(padUrl)}
             >
-              Copy link
+              {msg("dlink.copy")}
             </button>
             {active && (
               <button
@@ -114,7 +113,7 @@ export function DeviceLinkPanel({
                 onClick={() => revoke(active.id)}
                 className="btn btn-danger text-xs"
               >
-                Revoke now
+                {msg("dlink.revokeNow")}
               </button>
             )}
           </div>
@@ -122,8 +121,7 @@ export function DeviceLinkPanel({
       ) : active ? (
         <div className="mt-3 space-y-2">
           <p className="text-xs text-slate-600">
-            A device link is live (expires {new Date(active.expires_at).toLocaleString()}).
-            The QR was shown when it was created.
+            {msg("dlink.live", { date: new Date(active.expires_at).toLocaleString() })}
           </p>
           <div className="flex gap-2">
             <button
@@ -132,16 +130,16 @@ export function DeviceLinkPanel({
               onClick={() => revoke(active.id)}
               className="btn btn-danger text-xs"
             >
-              Revoke
+              {msg("dlink.revoke")}
             </button>
             <button type="button" disabled={busy} onClick={mint} className="btn btn-ghost text-xs">
-              New link (revokes this one)
+              {msg("dlink.newLink")}
             </button>
           </div>
         </div>
       ) : (
         <button type="button" disabled={busy} onClick={mint} className="btn btn-primary mt-3">
-          {busy ? "…" : "Create scoring link"}
+          {busy ? "…" : msg("dlink.create")}
         </button>
       )}
     </section>

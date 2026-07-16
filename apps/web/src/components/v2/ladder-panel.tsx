@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface Entrant {
   id: string;
@@ -24,6 +25,7 @@ export function LadderPanel({
   entrants: Record<string, string>; // id → display name
   canEdit: boolean;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [challenger, setChallenger] = useState("");
   const [opponent, setOpponent] = useState("");
@@ -54,7 +56,7 @@ export function LadderPanel({
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywall(String(err.extra.feature_key ?? "formats.advanced"));
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("ladder.failed"));
       }
     } finally {
       setBusy(false);
@@ -70,8 +72,8 @@ export function LadderPanel({
         <table className="table">
           <thead>
             <tr>
-              <th className="px-4 py-2 text-left">Rank</th>
-              <th className="px-4 py-2 text-left">Player</th>
+              <th className="px-4 py-2 text-left">{msg("ladder.rank")}</th>
+              <th className="px-4 py-2 text-left">{msg("ladder.player")}</th>
             </tr>
           </thead>
           <tbody>
@@ -88,7 +90,7 @@ export function LadderPanel({
       {canEdit && (
         <div className="card flex flex-wrap items-end gap-3 p-4">
           <label className="flex flex-col gap-1 text-sm text-slate-600">
-            Challenger
+            {msg("ladder.challenger")}
             <select className="input" value={challenger} onChange={(e) => setChallenger(e.target.value)}>
               <option value="">—</option>
               {ranked.map((e) => (
@@ -97,7 +99,7 @@ export function LadderPanel({
             </select>
           </label>
           <label className="flex flex-col gap-1 text-sm text-slate-600">
-            Challenges (must be above)
+            {msg("ladder.challenges")}
             <select className="input" value={opponent} onChange={(e) => setOpponent(e.target.value)}>
               <option value="">—</option>
               {ranked.filter((e) => e.id !== challenger).map((e) => (
@@ -106,12 +108,9 @@ export function LadderPanel({
             </select>
           </label>
           <button type="button" className="btn btn-primary" disabled={busy || !challenger || !opponent} onClick={submit}>
-            Issue challenge
+            {msg("ladder.issue")}
           </button>
-          <p className="w-full text-xs text-slate-500">
-            You can only challenge someone ranked above you, within the ladder&apos;s reach.
-            Winning the challenge fixture takes their position.
-          </p>
+          <p className="w-full text-xs text-slate-500">{msg("ladder.hint")}</p>
         </div>
       )}
     </div>

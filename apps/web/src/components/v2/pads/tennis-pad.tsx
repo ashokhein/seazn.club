@@ -7,6 +7,7 @@
 // sport strings, so padel reuses this pad when it lands on the nested kernel.
 import { useState } from "react";
 import type { SendEvent, SideInfo, SportInfo, LiveState } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface TennisSetView {
   home: number;
@@ -64,6 +65,7 @@ export function TennisPad({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const pointType = sport.fidelityTiers.find((t) => t.tier === 3)?.eventTypes[0];
   const summaryType = sport.fidelityTiers.find((t) => t.tier === 0)?.eventTypes[0];
   const state = (live.state ?? {}) as TennisStateView;
@@ -94,7 +96,7 @@ export function TennisPad({
             onClick={() => setMode("rally")}
             className={`rounded-full px-3 py-1 ${mode === "rally" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
           >
-            Point-by-point
+            {msg("pad.tn.pointByPoint")}
           </button>
         )}
         {summaryType && (
@@ -103,22 +105,22 @@ export function TennisPad({
             onClick={() => setMode("summary")}
             className={`rounded-full px-3 py-1 ${mode === "summary" ? "bg-purple-100 text-purple-700" : "text-slate-500 hover:bg-slate-100"}`}
           >
-            Set totals
+            {msg("pad.tn.setTotals")}
           </button>
         )}
       </div>
 
       {pre && (
-        <p className="text-xs text-amber-600">Start the match to open the first set.</p>
+        <p className="text-xs text-amber-600">{msg("pad.startFirstSet")}</p>
       )}
 
       {mode === "rally" && pointType ? (
         <div className="space-y-2">
           {!pre && (
             <p className="text-xs font-semibold uppercase tracking-wide text-purple-600">
-              {inMtb ? "Match tie-break" : inTb ? `Set ${currentNo} · tie-break` : `Set ${currentNo}`}
-              {bestOf && !inMtb ? <span className="text-slate-400"> of {bestOf}</span> : null}
-              {isDeuce ? <span className="ml-2 text-amber-600">Deuce</span> : null}
+              {inMtb ? msg("pad.tn.matchTb") : inTb ? msg("pad.tn.setTb", { n: currentNo }) : msg("pad.tn.set", { n: currentNo })}
+              {bestOf && !inMtb ? <span className="text-slate-400">{msg("pad.ofBestOf", { n: bestOf })}</span> : null}
+              {isDeuce ? <span className="ml-2 text-amber-600">{msg("pad.tn.deuce")}</span> : null}
             </p>
           )}
           <div className="grid grid-cols-2 gap-3">
@@ -139,7 +141,7 @@ export function TennisPad({
               >
                 <span className="block truncate text-sm font-medium text-slate-700">
                   {state.serving === key && !pre ? (
-                    <span aria-label="serving" className="mr-1 text-amber-500">
+                    <span aria-label={msg("pad.tn.serving")} className="mr-1 text-amber-500">
                       ●
                     </span>
                   ) : null}
@@ -149,10 +151,10 @@ export function TennisPad({
                   {callFor(points, key)}
                 </span>
                 <span className="mt-1 block text-xs text-slate-400">
-                  games {games[key]} · sets {setsWon[key]}
+                  {msg("pad.tn.gamesSets", { g: games[key], s: setsWon[key] })}
                 </span>
                 <span className="mx-auto mt-3 block w-fit rounded-full bg-purple-600 px-4 py-1.5 text-sm font-semibold text-white">
-                  + point
+                  {msg("pad.plusPoint")}
                 </span>
               </button>
             ))}
@@ -177,7 +179,7 @@ export function TennisPad({
           >
             <div className="flex flex-wrap items-end gap-3">
               <label className="block">
-                <span className="label">{home.name} games</span>
+                <span className="label">{msg("pad.tn.gamesLabel", { name: home.name })}</span>
                 <input
                   required
                   type="number"
@@ -188,7 +190,7 @@ export function TennisPad({
                 />
               </label>
               <label className="block">
-                <span className="label">{away.name} games</span>
+                <span className="label">{msg("pad.tn.gamesLabel", { name: away.name })}</span>
                 <input
                   required
                   type="number"
@@ -199,7 +201,7 @@ export function TennisPad({
                 />
               </label>
               <label className="block">
-                <span className="label">TB points (opt.)</span>
+                <span className="label">{msg("pad.tn.tbPoints")}</span>
                 <input
                   type="number"
                   min={0}
@@ -225,20 +227,17 @@ export function TennisPad({
                 disabled={busy || pre || sumHome === "" || sumAway === ""}
                 className="btn btn-primary"
               >
-                Record set
+                {msg("pad.tn.recordSet")}
               </button>
             </div>
-            <p className="text-xs text-slate-400">
-              Enter each completed set&apos;s games (7–6 needs its tie-break points). For a
-              deciding match tie-break, enter the tie-break points as the set score.
-            </p>
+            <p className="text-xs text-slate-400">{msg("pad.tn.summaryHint")}</p>
           </form>
         )
       )}
 
       {sets.length > 0 && (
         <p className="font-mono text-xs text-slate-500">
-          Sets: {sets.map((s, i) => (
+          {msg("pad.tn.setsPrefix")} {sets.map((s, i) => (
             <span key={i} className="mr-2">
               {setLine(s)}
             </span>

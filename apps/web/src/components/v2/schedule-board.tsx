@@ -13,6 +13,7 @@ import { UpgradeGate } from "@/components/upgrade-gate";
 import { Tip } from "@/components/ui/tip";
 import { apiV1 } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
 import { dayLabel, dayWeekday, dayDateShort, timeLabel } from "@/lib/day-label";
 import { BoardAgenda } from "./board/board-agenda";
@@ -37,6 +38,13 @@ import { useBoardActions } from "./board/use-board-actions";
 export type { BoardConfig, BoardConflict, BoardDivision, BoardFixture, BoardStage } from "./board/types";
 
 const MIN = 60_000;
+
+/** Localized fixture status; unknown values fall back to the raw token. */
+function fstatusLabel(msg: (k: MessageKey) => string, s: string): string {
+  const key = `schedule.fstatus.${s}` as MessageKey;
+  const label = msg(key);
+  return label === key ? s.replace("_", " ") : label;
+}
 
 interface Props {
   divisions: BoardDivision[];
@@ -155,13 +163,11 @@ export function ScheduleBoard({
         json: { schedule_locked: !single.schedule_locked },
       });
       actions.setNotice(
-        single.schedule_locked
-          ? "Schedule unfrozen — edits are open again."
-          : "Schedule frozen — all edits are blocked until you unfreeze.",
+        single.schedule_locked ? msg("board.freeze.unfrozen") : msg("board.freeze.frozen"),
       );
       router.refresh();
     } catch (err) {
-      actions.setError(err instanceof Error ? err.message : "Could not change the freeze.");
+      actions.setError(err instanceof Error ? err.message : msg("board.freeze.error"));
     }
   }, [single, actions, router]);
   const board = useMemo(
@@ -244,9 +250,9 @@ export function ScheduleBoard({
         const next = cur === fixtureId ? null : fixtureId;
         const f = actions.board.find((x) => x.id === fixtureId);
         if (next && f) {
-          setAnnounce(`Picked ${cardTitle(f, entrantNames, feedLabels)} — choose a slot.`);
+          setAnnounce(msg("board.announce.picked", { title: cardTitle(f, entrantNames, feedLabels) }));
         } else {
-          setAnnounce("Pick cancelled.");
+          setAnnounce(msg("board.announce.cancelled"));
         }
         return next;
       });
@@ -262,7 +268,9 @@ export function ScheduleBoard({
       if (ok) {
         setPickedId(null);
         setAnnounce(
-          `${title} scheduled at ${timeLabel(atIso)}${court ? ` on ${court}` : ""}.`,
+          court
+            ? msg("board.announce.scheduledCourt", { title, time: timeLabel(atIso), court })
+            : msg("board.announce.scheduledNoCourt", { title, time: timeLabel(atIso) }),
         );
       }
     },
@@ -275,7 +283,7 @@ export function ScheduleBoard({
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         setPickedId(null);
-        setAnnounce("Pick cancelled.");
+        setAnnounce(msg("board.announce.cancelled"));
       }
     };
     window.addEventListener("keydown", onKey);
@@ -350,16 +358,16 @@ export function ScheduleBoard({
                   onClick={() => void actions.autoRun(s.id, false)}
                   className="btn btn-primary px-3 py-1.5 text-xs"
                 >
-                  Auto-schedule {stages.length > 1 ? s.name : ""}
+                  {msg("board.autoSchedule", { name: stages.length > 1 ? s.name : "" })}
                 </button>
                 <button
                   type="button"
                   disabled={actions.busy}
                   onClick={() => void actions.autoRun(s.id, true)}
                   className="btn btn-ghost px-3 py-1.5 text-xs"
-                  title="Re-run the auto pass over unlocked fixtures only; pinned cards stay"
+                  title={msg("board.reflowTitle")}
                 >
-                  Re-flow remaining
+                  {msg("board.reflow")}
                 </button>
               </span>
             ))}
@@ -374,18 +382,14 @@ export function ScheduleBoard({
             type="button"
             disabled={actions.busy}
             onClick={() => void toggleFreeze()}
-            title={
-              single.schedule_locked
-                ? "Unfreeze — allow schedule edits again"
-                : "Freeze — block ALL schedule edits (yours included) until unfrozen"
-            }
+            title={single.schedule_locked ? msg("board.freezeTitle.unfreeze") : msg("board.freezeTitle.freeze")}
             className={`btn px-3 py-1.5 text-xs ${
               single.schedule_locked
                 ? "border border-amber-300 bg-amber-50 text-amber-800"
                 : "btn-ghost"
             }`}
           >
-            {single.schedule_locked ? "🔒 Frozen — unfreeze" : "Freeze schedule"}
+            {single.schedule_locked ? msg("board.frozenBtn") : msg("board.freezeBtn")}
           </button>
         )}
         <ConflictsBadge
@@ -401,12 +405,12 @@ export function ScheduleBoard({
               onClick={() =>
                 void actions.act(
                   `/api/v1/divisions/${single.id}/publish-schedule`,
-                  "Schedule published — it is now on the public dashboard and .ics feeds.",
+                  msg("board.publishNotice"),
                 )
               }
               className="btn btn-ghost px-3 py-1.5 text-xs"
             >
-              Publish schedule
+              {msg("board.publish")}
             </button>
             <button
               type="button"
@@ -414,12 +418,12 @@ export function ScheduleBoard({
               onClick={() =>
                 void actions.act(
                   `/api/v1/divisions/${single.id}/start`,
-                  "Tournament started — scoring is open.",
+                  msg("board.startNotice"),
                 )
               }
               className="btn btn-primary px-3 py-1.5 text-xs"
             >
-              Start tournament
+              {msg("board.start")}
             </button>
           </>
         )}
@@ -435,7 +439,7 @@ export function ScheduleBoard({
 
       {/* Density modes + day picker + bulk tools */}
       <div className="flex flex-wrap items-center gap-2">
-        <div role="group" aria-label="Board density" className="flex rounded-lg border border-purple-100 bg-white p-0.5">
+        <div role="group" aria-label={msg("board.densityAria")} className="flex rounded-lg border border-purple-100 bg-white p-0.5">
           {(
             [
               { v: "board" as const, label: msg("board.density.board") },
@@ -463,7 +467,7 @@ export function ScheduleBoard({
             onClick={() => setView(view === "day" ? "week" : "day")}
             className="btn btn-ghost px-3 py-1 text-xs"
           >
-            {view === "day" ? "Week view" : "Day view"}
+            {view === "day" ? msg("board.weekView") : msg("board.dayView")}
           </button>
         )}
 
@@ -473,7 +477,7 @@ export function ScheduleBoard({
               <button
                 type="button"
                 onClick={() => setDay(addDaysKey(day, -1))}
-                aria-label="Previous day"
+                aria-label={msg("board.prevDay")}
                 className="btn btn-ghost px-2 py-1 text-xs"
               >
                 ‹
@@ -484,7 +488,7 @@ export function ScheduleBoard({
               <button
                 type="button"
                 onClick={() => setDay(addDaysKey(day, 1))}
-                aria-label="Next day"
+                aria-label={msg("board.nextDay")}
                 className="btn btn-ghost px-2 py-1 text-xs"
               >
                 ›
@@ -510,7 +514,7 @@ export function ScheduleBoard({
 
         {canEdit && density === "board" && view === "day" && (
           <span className="ml-auto flex items-center gap-1 text-xs text-slate-500">
-            Shift day
+            {msg("board.shiftDay")}
             <button type="button" disabled={actions.busy} onClick={() => void actions.shiftDay(day, -15)} className="btn btn-ghost px-2 py-1 text-xs">−15m</button>
             <button type="button" disabled={actions.busy} onClick={() => void actions.shiftDay(day, 15)} className="btn btn-ghost px-2 py-1 text-xs">+15m</button>
             {courts.length >= 2 && (
@@ -519,9 +523,9 @@ export function ScheduleBoard({
                 disabled={actions.busy}
                 onClick={() => void actions.swapCourts(day, courts[0] as string, courts[1] as string)}
                 className="btn btn-ghost px-2 py-1 text-xs"
-                title={`Swap ${courts[0]} ↔ ${courts[1]} for this day`}
+                title={msg("board.swapTitle", { a: courts[0] as string, b: courts[1] as string })}
               >
-                Swap {courts[0]}↔{courts[1]}
+                {msg("board.swap", { a: courts[0] as string, b: courts[1] as string })}
               </button>
             )}
           </span>
@@ -653,10 +657,10 @@ export function ScheduleBoard({
           constraintsAllowed={constraintsAllowed}
           venueCap={venueCap}
           onSaved={() => {
-            actions.setNotice("Scheduling settings saved.");
+            actions.setNotice(msg("boardset.saved"));
             router.refresh();
           }}
-          onError={(err) => actions.setError(err instanceof Error ? err.message : "Something went wrong — please try again.")}
+          onError={(err) => actions.setError(err instanceof Error ? err.message : msg("boardset.error"))}
         />
       )}
     </div>
@@ -687,6 +691,7 @@ function WeekView({
   multi: boolean;
   onMove: (fixtureId: string, atIso: string, court: string | null) => void;
 }) {
+  const msg = useMsg();
   const [dragDay, setDragDay] = useState<string | null>(null);
 
   function moveToDay(fixtureId: string, targetDay: string) {
@@ -703,9 +708,7 @@ function WeekView({
   return (
     <div>
       {canEdit && (
-        <p className="mb-2 text-xs text-slate-500">
-          Drag a match between days to reschedule it — it keeps its kick-off time and court.
-        </p>
+        <p className="mb-2 text-xs text-slate-500">{msg("board.week.hint")}</p>
       )}
       <div className="scroll-x scroll-x-fade flex gap-3 pb-2">
         {weekDays.map((d) => {
@@ -757,7 +760,7 @@ function WeekView({
               <ul className="flex min-h-24 flex-1 flex-col gap-1.5 p-2">
                 {dayFx.length === 0 && (
                   <li className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-slate-200 px-2 py-4 text-center text-[11px] text-slate-500">
-                    {canEdit ? "Drop a match here" : "No fixtures"}
+                    {canEdit ? msg("board.week.drop") : msg("board.week.noFixtures")}
                   </li>
                 )}
                 {dayFx.map((f) => {
@@ -789,7 +792,7 @@ function WeekView({
                         </p>
                       )}
                       {f.status !== "scheduled" && (
-                        <span className="text-[10px] text-sky-600">{f.status}</span>
+                        <span className="text-[10px] text-sky-600">{fstatusLabel(msg, f.status)}</span>
                       )}
                     </li>
                   );

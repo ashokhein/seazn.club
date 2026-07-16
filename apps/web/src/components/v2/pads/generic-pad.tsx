@@ -4,6 +4,7 @@
 // or enter both scores (score mode). One terminal generic.result event.
 import { useState } from "react";
 import type { SendEvent, SideInfo, SportInfo } from "@/components/v2/fixture-console";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function GenericPad({
   sport,
@@ -18,6 +19,7 @@ export function GenericPad({
   send: SendEvent;
   busy: boolean;
 }) {
+  const msg = useMsg();
   const cfg = sport.config as { resultMode?: string; allowDraws?: boolean };
   const [p1, setP1] = useState("");
   const [p2, setP2] = useState("");
@@ -54,10 +56,10 @@ export function GenericPad({
           />
         </label>
         <button type="submit" disabled={busy || p1 === "" || p2 === ""} className="btn btn-primary">
-          Record result
+          {msg("pad.recordResult")}
         </button>
         {!cfg.allowDraws && p1 !== "" && p1 === p2 && (
-          <span className="text-xs text-amber-600">Draws are not allowed in this division.</span>
+          <span className="text-xs text-amber-600">{msg("pad.noDraws")}</span>
         )}
       </form>
     );
@@ -71,7 +73,7 @@ export function GenericPad({
         onClick={() => send("generic.result", { winnerId: home.id })}
         className="btn btn-primary"
       >
-        {home.name} won
+        {msg("pad.won", { name: home.name })}
       </button>
       {cfg.allowDraws && (
         <button
@@ -80,7 +82,7 @@ export function GenericPad({
           onClick={() => send("generic.result", { isDraw: true })}
           className="btn btn-ghost"
         >
-          Draw
+          {msg("pad.draw")}
         </button>
       )}
       <button
@@ -89,7 +91,7 @@ export function GenericPad({
         onClick={() => send("generic.result", { winnerId: away.id })}
         className="btn btn-primary"
       >
-        {away.name} won
+        {msg("pad.won", { name: away.name })}
       </button>
     </div>
   );
