@@ -8,6 +8,7 @@ import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
 import { timeLabel } from "@/lib/day-label";
 import type { BoardConflict, BoardDivision, BoardFixture } from "./types";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function BoardLanes({
   day,
@@ -35,6 +36,7 @@ export function BoardLanes({
   onTogglePin: (f: BoardFixture) => void;
   highlightId: string | null;
 }) {
+  const msg = useMsg();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   return (
     <div className="space-y-3">
@@ -52,7 +54,7 @@ export function BoardLanes({
             key={d.id}
             className="rounded-xl border border-slate-200 bg-white"
             style={{ borderLeftWidth: 3, borderLeftColor: divisionAccent(d.id) }}
-            aria-label={`${d.name} lane`}
+            aria-label={msg("board.laneAria", { name: d.name })}
           >
             <button
               type="button"
@@ -62,13 +64,13 @@ export function BoardLanes({
             >
               <span className="text-sm font-semibold text-slate-800">{d.name}</span>
               <span className="text-xs text-slate-500">
-                {lane.length} on {day} {isCollapsed ? "▸" : "▾"}
+                {msg("board.laneCount", { n: lane.length, day })} {isCollapsed ? "▸" : "▾"}
               </span>
             </button>
             {!isCollapsed && (
               <div className="grid gap-1 px-3 pb-3 sm:grid-cols-2 lg:grid-cols-4">
                 {lane.length === 0 && (
-                  <p className="text-xs text-slate-500">Nothing scheduled this day.</p>
+                  <p className="text-xs text-slate-500">{msg("board.laneEmpty")}</p>
                 )}
                 {lane.map((f) => (
                   <div key={f.id} className={highlightId === f.id ? "animate-pulse" : undefined}>

@@ -8,6 +8,7 @@ import { useState } from "react";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
 import type { BoardConflict, BoardDivision, BoardFixture } from "./types";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function BoardTray({
   unscheduled,
@@ -30,6 +31,7 @@ export function BoardTray({
   onPick: (fixtureId: string) => void;
   onTogglePin: (f: BoardFixture) => void;
 }) {
+  const msg = useMsg();
   const [openMobile, setOpenMobile] = useState(false);
   if (unscheduled.length === 0) return null;
 
@@ -44,7 +46,7 @@ export function BoardTray({
   const body = (
     <div className="space-y-3">
       {groups.map(({ division, fixtures }) => (
-        <section key={division.id} aria-label={`Unscheduled — ${division.name}`}>
+        <section key={division.id} aria-label={msg("board.tray.groupAria", { name: division.name })}>
           {multi && (
             <h5 className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-slate-600">
               {division.name}
@@ -76,18 +78,18 @@ export function BoardTray({
   );
 
   const hint = canEdit
-    ? "Drag onto the board, or pick a match then pick a slot."
-    : "View-only on your plan.";
+    ? msg("board.tray.hintEdit")
+    : msg("board.tray.hintView");
 
   return (
     <>
       {/* Desktop: right dock */}
       <aside
         className="hidden w-64 shrink-0 self-start rounded-xl border border-slate-200 bg-slate-50/60 p-3 lg:sticky lg:top-20 lg:block"
-        aria-label="Unscheduled fixtures"
+        aria-label={msg("board.tray.aria")}
       >
         <h4 className="mb-1 text-xs font-semibold text-slate-700">
-          Unscheduled ({unscheduled.length})
+          {msg("board.tray.title", { n: unscheduled.length })}
         </h4>
         <p className="mb-2 text-[11px] text-slate-500">{hint}</p>
         <div className="max-h-[60vh] overflow-y-auto pr-1">{body}</div>
@@ -102,7 +104,7 @@ export function BoardTray({
           className="fixed inset-x-3 bottom-3 z-30 flex min-h-11 items-center justify-between rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-800 shadow-lg"
         >
           <span>
-            Unscheduled
+            {msg("board.tray.mobileLabel")}
             <span className="ml-2 rounded-full bg-purple-100 px-2 py-0.5 text-xs font-semibold text-purple-800">
               {unscheduled.length}
             </span>
@@ -112,12 +114,12 @@ export function BoardTray({
         {openMobile && (
           <div
             role="region"
-            aria-label="Unscheduled fixtures"
+            aria-label={msg("board.tray.aria")}
             className="fixed inset-x-0 bottom-16 z-30 max-h-[50vh] overflow-y-auto rounded-t-2xl border border-slate-200 bg-white p-4 shadow-xl"
           >
             <div className="sheet-handle" aria-hidden />
             <p className="mb-2 text-[11px] text-slate-500">
-              {canEdit ? "Tap a match, then tap a slot on the board." : hint}
+              {canEdit ? msg("board.tray.mobileHint") : hint}
             </p>
             {body}
           </div>

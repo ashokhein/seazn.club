@@ -7,6 +7,7 @@ import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
 import { timeLabel } from "@/lib/day-label";
 import type { BoardConflict, BoardFixture } from "./types";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function BoardAgenda({
   fixtures,
@@ -36,6 +37,7 @@ export function BoardAgenda({
   onTogglePin: (f: BoardFixture) => void;
   highlightId: string | null;
 }) {
+  const msg = useMsg();
   const sorted = [...fixtures].sort(
     (a, b) =>
       new Date(a.scheduled_at as string).getTime() - new Date(b.scheduled_at as string).getTime(),
@@ -49,7 +51,7 @@ export function BoardAgenda({
   if (sorted.length === 0) {
     return (
       <p className="rounded-lg border border-dashed border-slate-200 px-4 py-8 text-center text-sm text-slate-500">
-        Nothing scheduled this day yet.
+        {msg("board.agendaEmpty")}
       </p>
     );
   }
@@ -66,7 +68,7 @@ export function BoardAgenda({
                 onClick={() => onPlace(new Date(group[0]!.scheduled_at as string).toISOString(), null)}
                 className="text-[11px] font-medium text-purple-700 hover:underline"
               >
-                Place picked match here
+                {msg("board.placePicked")}
               </button>
             )}
           </div>

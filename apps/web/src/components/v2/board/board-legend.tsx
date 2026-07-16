@@ -6,6 +6,7 @@
 import { divisionAccent, divisionInk, divisionShortCode, divisionTint } from "@/lib/division-hue";
 import { Tip } from "@/components/ui/tip";
 import type { BoardDivision } from "./types";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function BoardLegend({
   divisions,
@@ -19,9 +20,10 @@ export function BoardLegend({
   onToggle: (slug: string) => void;
   onClear: () => void;
 }) {
+  const msg = useMsg();
   if (divisions.length <= 1) return null;
   return (
-    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Filter by division">
+    <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label={msg("board.filterAria")}>
       {divisions.map((d) => {
         const active = selected.size === 0 || selected.has(d.slug);
         return (
@@ -58,7 +60,7 @@ export function BoardLegend({
           onClick={onClear}
           className="min-h-8 rounded-full px-2 text-xs font-medium text-purple-700 hover:underline"
         >
-          Show all
+          {msg("board.showAll")}
         </button>
       )}
       <Tip id="board.filter" />

@@ -12,6 +12,8 @@ import {
   type BoardConflict,
   type BoardFixture,
 } from "./types";
+import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
 export function ConflictsBadge({
   count,
@@ -22,16 +24,17 @@ export function ConflictsBadge({
   open: boolean;
   onToggle: () => void;
 }) {
+  const plural = usePlural();
   if (count === 0) return null;
   return (
     <button
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      aria-label={`${count} schedule conflict${count === 1 ? "" : "s"} — open the list`}
+      aria-label={plural("board.conflicts.badgeAria", count)}
       className="inline-flex min-h-8 items-center gap-1 rounded-full border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800 hover:bg-amber-100"
     >
-      ⚠ {count} conflict{count === 1 ? "" : "s"}
+      {plural("board.conflicts.badge", count)}
     </button>
   );
 }
@@ -53,6 +56,17 @@ export function ConflictsPanel({
   onJump: (fixtureId: string) => void;
   onClose: () => void;
 }) {
+  const msg = useMsg();
+  const conflictLabel = (code: string) => {
+    const key = `board.conflict.${code}` as MessageKey;
+    const label = msg(key);
+    return label === key ? (CONFLICT_LABEL[code] ?? code) : label;
+  };
+  const conflictHelp = (code: string, detail?: string) => {
+    const key = `board.conflictHelp.${code}` as MessageKey;
+    const help = msg(key);
+    return help === key ? (CONFLICT_HELP[code] ?? detail ?? "") : help;
+  };
   const ref = useRef<HTMLElement | null>(null);
   useEffect(() => {
     ref.current?.focus();
@@ -63,7 +77,7 @@ export function ConflictsPanel({
       ref={ref as React.RefObject<HTMLElement>}
       tabIndex={-1}
       role="region"
-      aria-label="Schedule conflicts"
+      aria-label={msg("board.conflicts.regionAria")}
       onKeyDown={(e) => {
         if (e.key === "Escape") onClose();
       }}
@@ -71,12 +85,12 @@ export function ConflictsPanel({
     >
       <div className="mb-2 flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-800">
-          Conflicts ({conflicts.length})
+          {msg("board.conflicts.title", { n: conflicts.length })}
         </h3>
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close conflicts panel"
+          aria-label={msg("board.conflicts.closeAria")}
           className="btn btn-ghost px-2 py-1 text-xs"
         >
           ✕
@@ -93,7 +107,7 @@ export function ConflictsPanel({
               }`}
             >
               <p className="font-medium text-slate-800">
-                {f ? cardTitle(f, entrantNames, feedLabels) : "Removed fixture"}
+                {f ? cardTitle(f, entrantNames, feedLabels) : msg("board.conflicts.removedFixture")}
                 {f && divisionNames[f.division_id] ? (
                   <span className="ml-1 font-normal text-slate-500">
                     · {divisionNames[f.division_id]}
@@ -106,9 +120,9 @@ export function ConflictsPanel({
                     c.blocking ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"
                   }`}
                 >
-                  {CONFLICT_LABEL[c.code] ?? c.code}
+                  {conflictLabel(c.code)}
                 </span>
-                {CONFLICT_HELP[c.code] ?? c.detail ?? ""}
+                {conflictHelp(c.code, c.detail)}
               </p>
               {f && (
                 <button
@@ -116,7 +130,7 @@ export function ConflictsPanel({
                   onClick={() => onJump(c.fixture_id)}
                   className="mt-1.5 font-medium text-purple-700 hover:underline"
                 >
-                  Jump to fixture →
+                  {msg("board.conflicts.jump")}
                 </button>
               )}
             </li>
