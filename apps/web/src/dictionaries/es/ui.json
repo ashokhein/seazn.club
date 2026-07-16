@@ -466,10 +466,12 @@
   "directory.desc": "Los jugadores y clubes de tu organización, reutilizados en cada competición.",
   "directory.tab.players": "Jugadores",
   "directory.tab.clubs": "Clubes",
+  "directory.tab.officials": "Árbitros",
   "directory.players.desc": "Jugadores incluidos en las alineaciones de inscritos en las competiciones. La fecha de nacimiento se usa solo para la elegibilidad y nunca se muestra públicamente; los nombres aparecen en páginas públicas solo con consentimiento. ¿Ves a la misma persona dos veces? Usa",
   "directory.players.merge": "combinar…",
   "directory.clubs.desc": "Los clubes matrices agrupan equipos entre categorías de edad y divisiones. El escudo y los colores de un club se aplican a cada equipo que no defina los suyos.",
   "directory.clubs.import": "Importar participantes en bloque",
+  "directory.officials.desc": "El grupo de árbitros de toda la organización: añádelos, invítalos a reclamar su perfil y elígelos de este mismo grupo al asignar un partido en el calendario de cualquier división.",
   "tips.learnMore": "Más información",
   "tips.division.visibility.title": "Quién puede ver una división",
   "tips.division.visibility.body": "Una división sigue a su competición: Privada es solo para el equipo, Solo enlace significa que cualquiera con el enlace puede verla, Pública se encuentra en Google y en nuestra página de descubrimiento.",
@@ -1750,5 +1752,8 @@
   "officials.unavailableOn": "No disponible en esta fecha",
   "officials.unavailableSuffix": "no disponible",
   "officials.bulkInvite": "Invitar a todos con correo",
-  "officials.bulkDone": "{n} invitación(es) enviada(s)"
+  "officials.bulkDone": "{n} invitación(es) enviada(s)",
+  "officials.cancel": "Cancelar",
+  "officials.done": "Listo",
+  "officials.manageInDirectory": "Gestionar árbitros en el directorio"
 }

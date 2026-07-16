@@ -466,10 +466,12 @@
   "directory.desc": "De spelers en clubs van je organisatie — hergebruikt in elke competitie.",
   "directory.tab.players": "Spelers",
   "directory.tab.clubs": "Clubs",
+  "directory.tab.officials": "Officials",
   "directory.players.desc": "Spelers die als deelnemers zijn ingedeeld over competities heen. De geboortedatum wordt alleen gebruikt voor deelnamegerechtigdheid en wordt nooit openbaar getoond; namen verschijnen alleen met toestemming op openbare pagina's. Zie je dezelfde persoon twee keer? Gebruik",
   "directory.players.merge": "samenvoegen…",
   "directory.clubs.desc": "Moederclubs groeperen teams over leeftijdsgroepen en divisies heen. Het clubembleem en de kleuren van een club vloeien door naar elk team dat geen eigen instelt.",
   "directory.clubs.import": "Deelnemers bulk importeren",
+  "directory.officials.desc": "De organisatiebrede pool met officials — voeg ze toe, nodig ze uit om hun profiel te claimen en kies uit dezelfde pool bij het toewijzen van een wedstrijd op het schema van elke divisie.",
   "tips.learnMore": "Meer informatie",
   "tips.division.visibility.title": "Wie een divisie kan zien",
   "tips.division.visibility.body": "Een divisie volgt zijn competitie: Privé is alleen voor het team, Alleen link betekent iedereen met de link, Openbaar is vindbaar op Google en onze ontdekpagina.",
@@ -1750,5 +1752,8 @@
   "officials.unavailableOn": "Niet beschikbaar op deze datum",
   "officials.unavailableSuffix": "niet beschikbaar",
   "officials.bulkInvite": "Iedereen met e-mail uitnodigen",
-  "officials.bulkDone": "{n} uitnodiging(en) verstuurd"
+  "officials.bulkDone": "{n} uitnodiging(en) verstuurd",
+  "officials.cancel": "Annuleren",
+  "officials.done": "Klaar",
+  "officials.manageInDirectory": "Officials beheren in de directory"
 }

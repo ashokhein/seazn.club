@@ -466,10 +466,12 @@
   "directory.desc": "Your organisation’s players and clubs — reused across every competition.",
   "directory.tab.players": "Players",
   "directory.tab.clubs": "Clubs",
+  "directory.tab.officials": "Officials",
   "directory.players.desc": "Players rostered into entrants across competitions. Date of birth is used only for eligibility and is never shown publicly; names appear on public pages only with consent. Spot the same person twice? Use",
   "directory.players.merge": "merge…",
   "directory.clubs.desc": "Parent clubs group teams across age groups and divisions. A club’s badge and colours cascade to every team that doesn’t set its own.",
   "directory.clubs.import": "Bulk import participants",
+  "directory.officials.desc": "The org-wide pool of officials — add them, invite them to claim their profile, and pick from this same pool when assigning a fixture on any division's schedule.",
   "tips.learnMore": "Learn more",
   "tips.division.visibility.title": "Who can see a division",
   "tips.division.visibility.body": "A division follows its competition: Private is team-only, Link only means anyone with the link, Public is findable on Google and our discover page.",
@@ -1750,5 +1752,8 @@
   "officials.unavailableOn": "Marked unavailable on this date",
   "officials.unavailableSuffix": "unavailable",
   "officials.bulkInvite": "Invite all with email",
-  "officials.bulkDone": "{n} invite(s) sent"
+  "officials.bulkDone": "{n} invite(s) sent",
+  "officials.cancel": "Cancel",
+  "officials.done": "Done",
+  "officials.manageInDirectory": "Manage officials in the directory"
 }

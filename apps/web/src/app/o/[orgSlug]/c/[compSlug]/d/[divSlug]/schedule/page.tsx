@@ -176,7 +176,6 @@ export default async function DivisionSchedulePage({
           stages={stages.map((s) => ({ id: s.id, name: s.name, seq: s.seq }))}
           hideNames={division.officials_hide_names}
           canEdit={canEdit && !frozen}
-          sportKey={division.sport_key}
           blackouts={blackouts}
           venueTz={settings.tz}
         />

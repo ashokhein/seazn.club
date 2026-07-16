@@ -466,10 +466,12 @@
   "directory.desc": "Les joueurs et clubs de votre organisation — réutilisés dans chaque compétition.",
   "directory.tab.players": "Joueurs",
   "directory.tab.clubs": "Clubs",
+  "directory.tab.officials": "Officiels",
   "directory.players.desc": "Joueurs inscrits parmi les participants à travers les compétitions. La date de naissance sert uniquement à vérifier l’éligibilité et n’est jamais affichée publiquement ; les noms n’apparaissent sur les pages publiques qu’avec consentement. Vous repérez deux fois la même personne ? Utilisez",
   "directory.players.merge": "fusionner…",
   "directory.clubs.desc": "Les clubs parents regroupent les équipes selon les catégories d’âge et les divisions. Le blason et les couleurs d’un club se propagent à chaque équipe qui ne définit pas les siens.",
   "directory.clubs.import": "Importer des participants en masse",
+  "directory.officials.desc": "Le vivier d'officiels commun à toute l'organisation — ajoutez-les, invitez-les à revendiquer leur profil, et choisissez parmi ce même vivier lors de l'affectation d'une rencontre sur le calendrier de n'importe quelle division.",
   "tips.learnMore": "En savoir plus",
   "tips.division.visibility.title": "Qui peut voir une division",
   "tips.division.visibility.body": "Une division suit sa compétition : Privé est réservé à l'équipe, Lien uniquement signifie que toute personne disposant du lien y accède, Public est trouvable sur Google et sur notre page de découverte.",
@@ -1750,5 +1752,8 @@
   "officials.unavailableOn": "Indisponible à cette date",
   "officials.unavailableSuffix": "indisponible",
   "officials.bulkInvite": "Inviter tous ceux avec e-mail",
-  "officials.bulkDone": "{n} invitation(s) envoyée(s)"
+  "officials.bulkDone": "{n} invitation(s) envoyée(s)",
+  "officials.cancel": "Annuler",
+  "officials.done": "Terminé",
+  "officials.manageInDirectory": "Gérer les officiels dans l'annuaire"
 }

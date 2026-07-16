@@ -4,11 +4,15 @@ description: Invite officials to claim their profiles, read accept/decline respo
 order: 6
 ---
 
-Officials live on the **Officials tab** of a division's schedule. You could already add referees, import them, and assign them to fixtures — now the person behind the name can join in. Inviting an official, their home view, accepting and declining, and blackout dates are **available on all plans**.
+Officials are an org-wide pool, managed from **Directory → Officials** — the same roster is shared across every competition and division, so you add and invite an official once and pick them on any schedule. A division's **schedule → Officials tab** stays where you assign them to fixtures: auto-assign, manual pick, phased sourcing from results, and blackout warnings. Inviting an official, their home view, accepting and declining, and blackout dates are **available on all plans**.
 
-## Invite an official
+## Add and invite an official
 
-Next to any official in the roster, choose **Invite** and enter their email. They get a claim link — the same claim system players use, so the rules match: **only an account signed in with the invited address can accept**, invites last 14 days, and re-inviting quietly withdraws the previous link. Once accepted the official shows a **Linked** chip; an outstanding invite shows **Invited**. **Invite all with email** re-invites everyone who has an address but no link yet.
+In **Directory → Officials**, **Add official** creates a roster entry; next to any official, choose **Invite** and enter their email. They get a claim link — the same claim system players use, so the rules match: **only an account signed in with the invited address can accept**, invites last 14 days, and re-inviting quietly withdraws the previous link. Once accepted the official shows a **Linked** chip; an outstanding invite shows **Invited**. **Invite all with email** re-invites everyone who has an address but no link yet.
+
+## Assigning on a division's schedule
+
+The schedule's **Officials tab** shows a compact roster strip (with a link back to the directory to manage it) plus the assignment tools: propose/apply an auto-assignment, phase officials in from results, or pick manually per fixture. Every official in the org-wide pool is available to every division — there's no separate roster per division.
 
 ## What the official sees
 

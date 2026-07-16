@@ -4,12 +4,16 @@
 // schedule, per-fixture manual assign with lock, phased sourcing affordance,
 // hide-names toggle. Keyboard-accessible; conflict badges mirror doc 12 §2
 // block/warn.
+// v11.1 follow-up: roster management (add / invite / bulk-invite) moved to
+// the org-wide Directory → Officials tab (officials-directory-panel.tsx) —
+// this panel now shows a compact read-only roster strip that links there.
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "@/components/ui/console-link";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
-import { officialRolePreset } from "@/lib/official-roles";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
+import { OfficialAvatar } from "@/components/v2/officials-shared";
 
 interface Official {
   id: string;
@@ -55,22 +59,6 @@ interface Sourced {
   pending: { reason: string }[];
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join("");
-}
-
-const AVATAR_COLORS = ["#7c3aed", "#0891b2", "#db2777", "#ea580c", "#16a34a", "#2563eb", "#9333ea", "#c2410c"];
-function avatarColor(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
-}
-
 export function OfficialsPanel({
   divisionId,
   officials,
@@ -78,7 +66,6 @@ export function OfficialsPanel({
   stages,
   hideNames,
   canEdit,
-  sportKey,
   blackouts = [],
   venueTz = "UTC",
 }: {
@@ -88,8 +75,6 @@ export function OfficialsPanel({
   stages: StageLite[];
   hideNames: boolean;
   canEdit: boolean;
-  /** Seeds the add-form role + crew hint from the sport's preset (v6/00 §4). */
-  sportKey?: string;
   /** v11: blackout dates per official — warns before assigning onto one. */
   blackouts?: { official_id: string; date: string }[];
   /** Venue zone for matching a fixture's date against blackout dates. */
@@ -97,13 +82,10 @@ export function OfficialsPanel({
 }) {
   const msg = useMsg();
   const locale = useLocale();
-  const rolePreset = officialRolePreset(sportKey);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [name, setName] = useState("");
-  const [roles, setRoles] = useState(rolePreset.defaultRole);
   const [blockStay, setBlockStay] = useState(true);
   const [poolLock, setPoolLock] = useState(false);
   const [fairness, setFairness] = useState<"tournament" | "per_day">("tournament");
@@ -111,12 +93,6 @@ export function OfficialsPanel({
   const [sourceStage, setSourceStage] = useState(stages[0]?.id ?? "");
   const [sourceRank, setSourceRank] = useState(4);
   const [sourced, setSourced] = useState<Sourced | null>(null);
-  // v11 invite state: one inline editor at a time; the claim link shows once.
-  const [inviteFor, setInviteFor] = useState<string | null>(null);
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteResult, setInviteResult] = useState<{ claim_url: string; email_sent: boolean } | null>(null);
-  const [copied, setCopied] = useState(false);
-  const [bulkDone, setBulkDone] = useState<number | null>(null);
 
   const officialName = (id: string) =>
     officials.find((o) => o.id === id)?.display_name ?? id;
@@ -142,33 +118,6 @@ export function OfficialsPanel({
     return d !== null && (blackoutsByOfficial.get(officialId)?.has(d) ?? false);
   };
 
-  async function sendInvite(officialId: string) {
-    await run(async () => {
-      const res = await apiV1<{ claim_url: string; email_sent: boolean }>(
-        `/api/v1/officials/${officialId}/invite`,
-        { method: "POST", json: { email: inviteEmail.trim() } },
-      );
-      setInviteResult({ claim_url: res.claim_url, email_sent: res.email_sent });
-    }, false);
-  }
-
-  // Bulk re-invite (v11 stretch): everyone with a known email who is neither
-  // linked nor already holding an open invite.
-  const bulkTargets = officials.filter((o) => o.email && !o.claimed && !o.invite_pending);
-  async function bulkInvite() {
-    await run(async () => {
-      let sent = 0;
-      for (const o of bulkTargets) {
-        await apiV1(`/api/v1/officials/${o.id}/invite`, {
-          method: "POST",
-          json: { email: o.email },
-        });
-        sent++;
-      }
-      setBulkDone(sent);
-    });
-  }
-
   async function run(fn: () => Promise<unknown>, refresh = true) {
     setError(null);
     setPaywallFeature(null);
@@ -186,8 +135,6 @@ export function OfficialsPanel({
       setBusy(false);
     }
   }
-
-  const roleList = roles.split(/[,\s]+/).filter(Boolean);
 
   return (
     <section className="mt-8 space-y-4" aria-label={msg("officials.aria")}>
@@ -216,177 +163,49 @@ export function OfficialsPanel({
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      {/* roster of officials */}
+      {/* compact read-only roster strip (v11.1): full roster management —
+          add / invite / bulk-invite — moved to Directory → Officials. */}
       <div className="card space-y-3 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-slate-900">{msg("officials.roster")}</h3>
-          <span className="flex items-center gap-2">
-            {canEdit && bulkTargets.length > 0 && (
-              <button type="button" className="btn btn-ghost py-1 text-xs" disabled={busy} onClick={() => void bulkInvite()}>
-                {msg("officials.bulkInvite")} ({bulkTargets.length})
-              </button>
-            )}
-            {bulkDone !== null && (
-              <span className="text-xs text-lime-700">{msg("officials.bulkDone", { n: bulkDone })}</span>
-            )}
-            {officials.length > 0 && (
-              <span className="text-xs text-slate-400">{msg("officials.total", { n: officials.length })}</span>
-            )}
-          </span>
+          {officials.length > 0 && (
+            <span className="text-xs text-slate-400">{msg("officials.total", { n: officials.length })}</span>
+          )}
         </div>
         {officials.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-500">
             {msg("officials.empty")}
           </p>
         ) : (
-          <ul className="grid gap-2 sm:grid-cols-2">
+          <ul className="flex flex-wrap gap-2">
             {officials.map((o) => (
-              <li key={o.id} className="rounded-lg border border-slate-200 bg-white p-2.5">
-                <div className="flex items-center gap-3">
-                  <span
-                    className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white"
-                    style={{ backgroundColor: avatarColor(o.display_name) }}
-                    aria-hidden
-                  >
-                    {initials(o.display_name)}
+              <li
+                key={o.id}
+                className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-3"
+              >
+                <OfficialAvatar name={o.display_name} size="sm" />
+                <span className="text-xs text-slate-700">{o.display_name}</span>
+                {o.claimed ? (
+                  <span className="rounded bg-lime-100 px-1.5 py-0.5 text-[10px] text-lime-700">
+                    {msg("officials.linked")}
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-800">{o.display_name}</p>
-                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                      {o.role_keys.map((r) => (
-                        <span
-                          key={r}
-                          className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500"
-                        >
-                          {r}
-                        </span>
-                      ))}
-                      {o.entrant_id && (
-                        <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
-                          {msg("officials.teamRef")}
-                        </span>
-                      )}
-                      {/* v11 claim-rail state: linked beats invited beats nothing. */}
-                      {o.claimed ? (
-                        <span className="rounded bg-lime-100 px-1.5 py-0.5 text-[11px] text-lime-700">
-                          {msg("officials.linked")}
-                        </span>
-                      ) : o.invite_pending ? (
-                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">
-                          {msg("officials.invited")}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                  {o.max_per_day != null && (
-                    <span className="shrink-0 text-[11px] text-slate-400">
-                      {msg("officials.maxPerDay", { n: o.max_per_day })}
-                    </span>
-                  )}
-                  {canEdit && !o.claimed && (
-                    <button
-                      type="button"
-                      className="btn btn-ghost shrink-0 py-1 text-xs"
-                      disabled={busy}
-                      onClick={() => {
-                        setInviteFor(inviteFor === o.id ? null : o.id);
-                        setInviteEmail(o.email ?? "");
-                        setInviteResult(null);
-                        setCopied(false);
-                      }}
-                    >
-                      {msg("officials.invite")}
-                    </button>
-                  )}
-                </div>
-                {inviteFor === o.id && (
-                  <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
-                    {!inviteResult ? (
-                      <form
-                        className="flex flex-wrap items-end gap-2"
-                        onSubmit={(e) => {
-                          e.preventDefault();
-                          if (inviteEmail.trim()) void sendInvite(o.id);
-                        }}
-                      >
-                        <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-slate-500">
-                          {msg("officials.inviteEmail")}
-                          <input
-                            type="email"
-                            className="input"
-                            value={inviteEmail}
-                            onChange={(e) => setInviteEmail(e.target.value)}
-                            required
-                          />
-                        </label>
-                        <button type="submit" className="btn btn-primary py-1.5 text-sm" disabled={busy}>
-                          {msg("officials.inviteSend")}
-                        </button>
-                      </form>
-                    ) : (
-                      <div className="space-y-1 text-xs">
-                        <p className={inviteResult.email_sent ? "text-lime-700" : "text-amber-700"}>
-                          {inviteResult.email_sent
-                            ? msg("officials.inviteSent")
-                            : msg("officials.inviteEmailFailed")}
-                        </p>
-                        <p className="text-slate-500">{msg("officials.inviteLink")}</p>
-                        <div className="flex items-center gap-2">
-                          <code className="min-w-0 flex-1 truncate rounded bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
-                            {inviteResult.claim_url}
-                          </code>
-                          <button
-                            type="button"
-                            className="btn btn-ghost py-1 text-xs"
-                            onClick={() => {
-                              void navigator.clipboard.writeText(inviteResult.claim_url);
-                              setCopied(true);
-                            }}
-                          >
-                            {copied ? msg("officials.copied") : msg("officials.copy")}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
+                ) : o.invite_pending ? (
+                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                    {msg("officials.invited")}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
         )}
         {canEdit && (
-          <form
-            className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!name.trim()) return;
-              void run(async () => {
-                await apiV1("/api/v1/officials", {
-                  method: "POST",
-                  json: {
-                    display_name: name.trim(),
-                    role_keys: roleList.length ? roleList : [rolePreset.defaultRole],
-                  },
-                });
-                setName("");
-              });
-            }}
+          <Link
+            href="/directory?tab=officials"
+            prefetch={false}
+            className="inline-block text-xs font-medium text-purple-600 hover:underline"
           >
-            <label className="flex flex-col gap-1 text-xs text-slate-500">
-              {msg("officials.name")}
-              <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-            </label>
-            <label className="flex flex-col gap-1 text-xs text-slate-500">
-              {msg("officials.roles")}
-              <input className="input w-40" value={roles} onChange={(e) => setRoles(e.target.value)} />
-            </label>
-            <button type="submit" className="btn btn-primary" disabled={busy}>{msg("officials.add")}</button>
-            {rolePreset.crew.length > 1 && (
-              <span className="basis-full text-[11px] text-slate-400">
-                {msg("officials.crew", { crew: rolePreset.crew.join(", ") })}
-              </span>
-            )}
-          </form>
+            {msg("officials.manageInDirectory")} →
+          </Link>
         )}
       </div>
 
