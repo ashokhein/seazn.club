@@ -10,6 +10,8 @@ import { getDiscoveryDirectory } from "@/server/public-site/discovery";
 import { DiscoveryCard, sportEmoji } from "@/components/discovery-cards";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
 import { hasLocale } from "@/lib/i18n-constants";
+import { sportLabel } from "@/lib/scoring-vocab";
+import { msgFor } from "@/lib/messages-i18n";
 
 // Sport keys with bespoke SEO copy in the marketing catalog; others fall back
 // to the generic block.
@@ -39,9 +41,10 @@ export async function generateMetadata({
   params: Promise<Params>;
 }): Promise<Metadata> {
   const { lang, sport } = await params;
-  const name = await sportName(sport);
-  if (!hasLocale(lang) || !name) return {};
+  const dbName = await sportName(sport);
+  if (!hasLocale(lang) || !dbName) return {};
   const d = await getDictionary(lang, "marketing");
+  const name = sportLabel(sport, (k) => msgFor(lang, k));
   const vars = { name, nameLower: name.toLowerCase() };
   return {
     title: t(d, "discover.sport.metaTitle", vars),
@@ -70,9 +73,10 @@ async function sportName(key: string): Promise<string | null> {
 
 export default async function DiscoverSportPage({ params }: { params: Promise<Params> }) {
   const { lang, sport } = await params;
-  const name = await sportName(sport);
-  if (!hasLocale(lang) || !name) notFound();
+  const dbName = await sportName(sport);
+  if (!hasLocale(lang) || !dbName) notFound();
   const d = await getDictionary(lang, "marketing");
+  const name = sportLabel(sport, (k) => msgFor(lang, k));
   const nameLower = name.toLowerCase();
   const copy = sportCopy(d, sport, nameLower);
   const entries = await getDiscoveryDirectory({ sport }).catch(() => []);
