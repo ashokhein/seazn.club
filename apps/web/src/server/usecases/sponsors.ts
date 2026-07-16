@@ -72,6 +72,16 @@ async function assertTierAllowed(
   }
 }
 
+/** Sponsor edits must show on the public tree promptly — same cache bust the
+ *  org-branding PATCH fires (tail work; slug lookup included). */
+function bustPublicSponsors(orgId: string): void {
+  deferred(async () => {
+    const [org] = await sql<{ slug: string }[]>`
+      select slug from organizations where id = ${orgId}`;
+    if (org) fireOrgRevalidate(org.slug);
+  });
+}
+
 /** Plain read for server pages (settings) — same rows as listSponsors. */
 export async function listSponsorRows(orgId: string): Promise<SponsorRow[]> {
   return withTenant(orgId, (tx) => tx<SponsorRow[]>`
@@ -105,6 +115,9 @@ export async function createSponsor(
               ${input.status})
       returning ${tx(COLS)}`;
     return row!;
+  }).then((row) => {
+    bustPublicSponsors(auth.orgId);
+    return row;
   });
 }
 
@@ -125,6 +138,9 @@ export async function patchSponsor(
       where id = ${id} returning ${tx(COLS)}`;
     if (!row) throw new HttpError(404, "sponsor not found");
     return row;
+  }).then((row) => {
+    bustPublicSponsors(auth.orgId);
+    return row;
   });
 }
 
@@ -133,7 +149,7 @@ export async function deleteSponsor(auth: AuthCtx, id: string): Promise<void> {
     const [row] = await tx<{ id: string }[]>`
       delete from sponsors where id = ${id} returning id`;
     if (!row) throw new HttpError(404, "sponsor not found");
-  });
+  }).then(() => bustPublicSponsors(auth.orgId));
 }
 
 /** Persist a new display order: `ids` in the order they should render.
@@ -153,6 +169,9 @@ export async function reorderSponsors(
       reordered++;
     }
     return { reordered };
+  }).then((res) => {
+    bustPublicSponsors(auth.orgId);
+    return res;
   });
 }
 

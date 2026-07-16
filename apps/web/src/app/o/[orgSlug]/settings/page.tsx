@@ -73,7 +73,7 @@ function roleLabel(dict: Dict, role: string): string {
   return t(dict, `role.${role}`);
 }
 
-type Tab = "organization" | "team" | "api" | "account";
+type Tab = "organization" | "sponsors" | "team" | "api" | "account";
 
 // Plan & billing lives at its own route (/settings/billing) — it owns the
 // Stripe checkout-return reconciliation and portal flows — so it links out of
@@ -81,6 +81,7 @@ type Tab = "organization" | "team" | "api" | "account";
 // is a ui-catalog key resolved per-request (t) so the nav localizes.
 const NAV_ITEMS: { tab: Tab; labelKey: string; icon: LucideIcon; href?: string }[] = [
   { tab: "organization",  labelKey: "settings.nav.organization", icon: Building2  },
+  { tab: "sponsors",      labelKey: "sponsors.title",            icon: Handshake  },
   { tab: "team",          labelKey: "settings.nav.team",         icon: Users      },
   { tab: "api",           labelKey: "settings.nav.api",          icon: KeyRound   },
   { tab: "account",       labelKey: "settings.nav.account",      icon: UserCircle },
@@ -109,15 +110,18 @@ export default async function SettingsPage({
   const canBrand =
     tab === "organization" ? await hasFeature(active.id, "branding") : false;
   let orgAbout: string | null = null;
-  // Sponsor manager (v10 PROMPT-56): table rows, not the branding blob. The
-  // basic partner strip is free; tiers/per-competition scoping are Pro.
-  let sponsorRows: Awaited<ReturnType<typeof listSponsorRows>> = [];
-  let hasSponsorTiers = false;
-  let sponsorCompetitions: { id: string; name: string }[] = [];
   if (tab === "organization") {
     const [row] = await sql<{ about: string | null }[]>`
       select about from organizations where id = ${active.id}`;
     orgAbout = row?.about ?? null;
+  }
+
+  // Sponsors tab (v10 PROMPT-56): table rows, not the branding blob. The
+  // basic partner strip is free; tiers/per-competition scoping are Pro.
+  let sponsorRows: Awaited<ReturnType<typeof listSponsorRows>> = [];
+  let hasSponsorTiers = false;
+  let sponsorCompetitions: { id: string; name: string }[] = [];
+  if (tab === "sponsors") {
     sponsorRows = await listSponsorRows(active.id);
     hasSponsorTiers = await hasFeature(active.id, "sponsors.tiers");
     sponsorCompetitions = await sql<{ id: string; name: string }[]>`
@@ -294,18 +298,6 @@ export default async function SettingsPage({
                   </div>
                 )}
 
-                {canEdit && (
-                  <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Handshake} label={t(dict, "sponsors.title")} />
-                    <OrgSponsors
-                      orgId={active.id}
-                      initialSponsors={sponsorRows}
-                      competitions={sponsorCompetitions}
-                      hasTiers={hasSponsorTiers}
-                      billingHref={routes.billing(orgSlug)}
-                    />
-                  </div>
-                )}
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
@@ -317,6 +309,20 @@ export default async function SettingsPage({
             )}
 
             {/* ── TEAM ── */}
+            {tab === "sponsors" && (
+              <section className="card p-6">
+                <SectionHeader icon={Handshake}>{t(dict, "sponsors.title")}</SectionHeader>
+                <OrgSponsors
+                  orgId={active.id}
+                  initialSponsors={sponsorRows}
+                  competitions={sponsorCompetitions}
+                  hasTiers={hasSponsorTiers}
+                  billingHref={routes.billing(orgSlug)}
+                  canEdit={canEdit}
+                />
+              </section>
+            )}
+
             {tab === "team" && (
               <section className="card p-6">
                 <SectionHeader icon={Users}>{t(dict, "settings.nav.team")}</SectionHeader>
