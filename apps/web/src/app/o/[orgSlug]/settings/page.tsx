@@ -20,7 +20,7 @@ import { OrgLogo } from "@/components/org-logo";
 import { OrgBrandColor } from "@/components/org-brand-color";
 import { OrgAbout } from "@/components/org-about";
 import { OrgSponsors } from "@/components/org-sponsors";
-import { brandingSponsors } from "@/lib/org-branding";
+import { listSponsorRows } from "@/server/usecases/sponsors";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
 import {
@@ -109,10 +109,21 @@ export default async function SettingsPage({
   const canBrand =
     tab === "organization" ? await hasFeature(active.id, "branding") : false;
   let orgAbout: string | null = null;
+  // Sponsor manager (v10 PROMPT-56): table rows, not the branding blob. The
+  // basic partner strip is free; tiers/per-competition scoping are Pro.
+  let sponsorRows: Awaited<ReturnType<typeof listSponsorRows>> = [];
+  let hasSponsorTiers = false;
+  let sponsorCompetitions: { id: string; name: string }[] = [];
   if (tab === "organization") {
     const [row] = await sql<{ about: string | null }[]>`
       select about from organizations where id = ${active.id}`;
     orgAbout = row?.about ?? null;
+    sponsorRows = await listSponsorRows(active.id);
+    hasSponsorTiers = await hasFeature(active.id, "sponsors.tiers");
+    sponsorCompetitions = await sql<{ id: string; name: string }[]>`
+      select id, name from competitions
+      where org_id = ${active.id}
+      order by created_at desc limit 100`;
   }
 
   // Platform API tab: api.access = Pro. Scope choice (read/score/manage) is
@@ -286,20 +297,13 @@ export default async function SettingsPage({
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
                     <SubSection icon={Handshake} label={t(dict, "sponsors.title")} />
-                    {canBrand ? (
-                      <OrgSponsors
-                        orgId={active.id}
-                        initialSponsors={brandingSponsors(active.branding)}
-                      />
-                    ) : (
-                      <p className="flex items-center gap-2 text-sm text-slate-500">
-                        <PlanBadge feature="branding" />
-                        {t(dict, "settings.upgrade.sponsors")}{" "}
-                        <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
-                          {t(dict, "settings.upgrade.link")}
-                        </Link>
-                      </p>
-                    )}
+                    <OrgSponsors
+                      orgId={active.id}
+                      initialSponsors={sponsorRows}
+                      competitions={sponsorCompetitions}
+                      hasTiers={hasSponsorTiers}
+                      billingHref={routes.billing(orgSlug)}
+                    />
                   </div>
                 )}
 

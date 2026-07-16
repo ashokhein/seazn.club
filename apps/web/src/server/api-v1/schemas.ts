@@ -1111,6 +1111,37 @@ export const CreateOfficial = z.object({
 
 export const PatchOfficial = CreateOfficial.partial();
 
+// Sponsor CRM (v10 PROMPT-56) -------------------------------------------------
+
+export const SponsorTier = z.enum(["title", "gold", "silver", "partner"]);
+export const SponsorStatus = z.enum(["active", "pending", "inactive"]);
+
+export const Sponsor = z.object({
+  id: z.string(),
+  competition_id: z.string().nullable(),
+  name: z.string(),
+  url: z.string().nullable(),
+  logo_path: z.string().nullable(),
+  tier: SponsorTier,
+  display_order: z.number().int(),
+  status: SponsorStatus,
+  click_count: z.number().int(),
+  created_at: z.string(),
+});
+
+export const CreateSponsor = z.object({
+  name: z.string().min(1).max(80),
+  url: z.string().url().max(500).nullish(),
+  logo_path: z.string().max(500).nullish(),
+  tier: SponsorTier.default("partner"),
+  competition_id: Uuid.nullish(),
+  status: SponsorStatus.default("active"),
+});
+
+export const PatchSponsor = CreateSponsor.partial();
+
+export const ReorderSponsors = z.object({ ids: z.array(Uuid).min(1).max(200) });
+
 const AssignPolicyBody = z.object({
   roles: z.array(z.string().min(1)).min(1),
   poolLock: z.boolean().default(false),

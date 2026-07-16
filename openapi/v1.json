@@ -54,6 +54,9 @@
       "name": "officials"
     },
     {
+      "name": "sponsors"
+    },
+    {
       "name": "history"
     },
     {
@@ -22948,6 +22951,1592 @@
           },
           "404": {
             "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orgs/{id}/sponsors": {
+      "get": {
+        "summary": "List sponsors, tier-ranked (title → gold → silver → partner)",
+        "tags": [
+          "sponsors"
+        ],
+        "x-required-scope": "none",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "competition_id": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "logo_path": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "tier": {
+                            "type": "string",
+                            "enum": [
+                              "title",
+                              "gold",
+                              "silver",
+                              "partner"
+                            ]
+                          },
+                          "display_order": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "active",
+                              "pending",
+                              "inactive"
+                            ]
+                          },
+                          "click_count": {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          },
+                          "created_at": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "competition_id",
+                          "name",
+                          "url",
+                          "logo_path",
+                          "tier",
+                          "display_order",
+                          "status",
+                          "click_count",
+                          "created_at"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "data": [
+                    {
+                      "id": "example",
+                      "competition_id": "example",
+                      "name": "example",
+                      "url": "example",
+                      "logo_path": "example",
+                      "tier": "title",
+                      "display_order": -9007199254740991,
+                      "status": "active",
+                      "click_count": -9007199254740991,
+                      "created_at": "example"
+                    }
+                  ],
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "post": {
+        "summary": "Create a sponsor (tiers above partner / competition scoping are Pro `sponsors.tiers`)",
+        "tags": [
+          "sponsors"
+        ],
+        "x-required-scope": "none",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500,
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "logo_path": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tier": {
+                    "default": "partner",
+                    "type": "string",
+                    "enum": [
+                      "title",
+                      "gold",
+                      "silver",
+                      "partner"
+                    ]
+                  },
+                  "competition_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "default": "active",
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "pending",
+                      "inactive"
+                    ]
+                  }
+                },
+                "required": [
+                  "name",
+                  "tier",
+                  "status"
+                ],
+                "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "url": "example",
+                "logo_path": "example",
+                "tier": "title",
+                "status": "active"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "competition_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "logo_path": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "title",
+                            "gold",
+                            "silver",
+                            "partner"
+                          ]
+                        },
+                        "display_order": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "pending",
+                            "inactive"
+                          ]
+                        },
+                        "click_count": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "competition_id",
+                        "name",
+                        "url",
+                        "logo_path",
+                        "tier",
+                        "display_order",
+                        "status",
+                        "click_count",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "competition_id": "example",
+                    "name": "example",
+                    "url": "example",
+                    "logo_path": "example",
+                    "tier": "title",
+                    "display_order": -9007199254740991,
+                    "status": "active",
+                    "click_count": -9007199254740991,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Plan upgrade required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orgs/{id}/sponsors/{sponsorId}": {
+      "patch": {
+        "summary": "Update a sponsor (promoting tier / scoping is Pro `sponsors.tiers`)",
+        "tags": [
+          "sponsors"
+        ],
+        "x-required-scope": "none",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "sponsorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 80
+                  },
+                  "url": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500,
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "logo_path": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "tier": {
+                    "default": "partner",
+                    "type": "string",
+                    "enum": [
+                      "title",
+                      "gold",
+                      "silver",
+                      "partner"
+                    ]
+                  },
+                  "competition_id": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "format": "uuid",
+                        "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "status": {
+                    "default": "active",
+                    "type": "string",
+                    "enum": [
+                      "active",
+                      "pending",
+                      "inactive"
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "example": {
+                "name": "example",
+                "url": "example",
+                "logo_path": "example",
+                "tier": "title"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "competition_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "url": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "logo_path": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "tier": {
+                          "type": "string",
+                          "enum": [
+                            "title",
+                            "gold",
+                            "silver",
+                            "partner"
+                          ]
+                        },
+                        "display_order": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "active",
+                            "pending",
+                            "inactive"
+                          ]
+                        },
+                        "click_count": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "created_at": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "competition_id",
+                        "name",
+                        "url",
+                        "logo_path",
+                        "tier",
+                        "display_order",
+                        "status",
+                        "click_count",
+                        "created_at"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {
+                    "id": "example",
+                    "competition_id": "example",
+                    "name": "example",
+                    "url": "example",
+                    "logo_path": "example",
+                    "tier": "title",
+                    "display_order": -9007199254740991,
+                    "status": "active",
+                    "click_count": -9007199254740991,
+                    "created_at": "example"
+                  },
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Plan upgrade required",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Delete a sponsor",
+        "tags": [
+          "sponsors"
+        ],
+        "x-required-scope": "none",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "sponsorId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {},
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          },
+          {
+            "apiKey": []
+          }
+        ]
+      }
+    },
+    "/api/v1/orgs/{id}/sponsors/reorder": {
+      "post": {
+        "summary": "Persist a new display order (ids in render order)",
+        "tags": [
+          "sponsors"
+        ],
+        "x-required-scope": "none",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ids": {
+                    "minItems": 1,
+                    "maxItems": 200,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid",
+                      "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
+                    }
+                  }
+                },
+                "required": [
+                  "ids"
+                ],
+                "additionalProperties": false
+              },
+              "example": {
+                "ids": [
+                  "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "data",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": true
+                    },
+                    "data": {},
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                },
+                "example": {
+                  "ok": true,
+                  "data": {},
+                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Not authenticated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "ok",
+                    "error",
+                    "requestId"
+                  ],
+                  "properties": {
+                    "ok": {
+                      "const": false
+                    },
+                    "error": {
+                      "type": "object",
+                      "required": [
+                        "code",
+                        "message"
+                      ],
+                      "properties": {
+                        "code": {
+                          "type": "string"
+                        },
+                        "message": {
+                          "type": "string"
+                        },
+                        "current_seq": {
+                          "type": "integer",
+                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
+                        }
+                      },
+                      "additionalProperties": true
+                    },
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Rejected by the engine",
             "content": {
               "application/json": {
                 "schema": {
