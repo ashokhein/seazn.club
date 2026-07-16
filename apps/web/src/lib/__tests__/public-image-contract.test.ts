@@ -48,10 +48,10 @@ const CASES: Case[] = [
     name: "[competitionSlug]/page.tsx sponsor logo",
     file: join(SRC_ROOT, "app/(public)/shared/[orgSlug]/[competitionSlug]/page.tsx"),
     srcExpr: "s.logo",
-    // v10 tier groups: both dimensions come from the tier chip map — still a
-    // locked width/height pair (per-tier 40/32/24/20), so no CLS drift.
-    width: "c.logo",
-    height: "c.logo",
+    // v10 perimeter board: both dimensions come from the tier panel map —
+    // still a locked width/height pair (per-tier 48/32/24/20), no CLS drift.
+    width: "c(s).logo",
+    height: "c(s).logo",
   },
   {
     name: "[orgSlug]/layout.tsx org logo",

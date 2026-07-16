@@ -154,15 +154,21 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content_type: file.type }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? msg("editor.uploadNotAllowed"));
-      const put = await fetch(data.upload_url, {
+      // handler() envelope: { ok, data } — the grant lives under data.
+      const json = (await res.json().catch(() => ({}))) as {
+        data?: { upload_url?: string; public_url?: string };
+        error?: string;
+      };
+      if (!res.ok) throw new Error(json.error ?? msg("editor.uploadNotAllowed"));
+      const grant = json.data;
+      if (!grant?.upload_url || !grant.public_url) throw new Error(msg("editor.uploadNotAllowed"));
+      const put = await fetch(grant.upload_url, {
         method: "PUT",
         headers: { "Content-Type": file.type },
         body: file,
       });
       if (!put.ok) throw new Error(msg("editor.uploadFailed"));
-      editor?.chain().focus().setImage({ src: data.public_url, alt: file.name }).run();
+      editor?.chain().focus().setImage({ src: grant.public_url, alt: file.name }).run();
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : msg("editor.uploadFailed"));
     }

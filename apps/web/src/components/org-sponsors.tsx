@@ -113,7 +113,8 @@ function SponsorForm({
           />
         </label>
         <div className="min-w-0 flex-1">
-          <div className={`grid gap-3 sm:grid-cols-2 ${hasTiers ? "xl:grid-cols-3" : ""}`}>
+          {/* 2-col rows: name+link, then tier+competition; single stack on mobile. */}
+          <div className="grid gap-3 sm:grid-cols-2">
             <label className="block">
               <span className="label">{msg("settings.org.sponsors.name")}</span>
               <input
@@ -252,15 +253,23 @@ export function OrgSponsors({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ content_type: file.type }),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? msg("settings.org.sponsors.uploadNotAllowed"));
-    const put = await fetch(data.upload_url, {
+    const json = (await res.json().catch(() => ({}))) as {
+      // handler() envelope: { ok, data } — same unwrap as api().
+      data?: { upload_url?: string; public_url?: string };
+      error?: string;
+    };
+    if (!res.ok) throw new Error(json.error ?? msg("settings.org.sponsors.uploadNotAllowed"));
+    const grant = json.data;
+    if (!grant?.upload_url || !grant.public_url) {
+      throw new Error(msg("settings.org.sponsors.uploadNotAllowed"));
+    }
+    const put = await fetch(grant.upload_url, {
       method: "PUT",
       headers: { "Content-Type": file.type },
       body: file,
     });
     if (!put.ok) throw new Error(msg("settings.org.logo.uploadFailed"));
-    return data.public_url as string;
+    return grant.public_url;
   }
 
   function pickLogo(file: File, set: (d: (prev: Draft) => Draft) => void) {

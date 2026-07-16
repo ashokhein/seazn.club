@@ -1159,9 +1159,9 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
 
   const shared = await html(newSession(), `/shared/${proOrgSlug}/${comp.slug}`);
   check(
-    "sp public page renders tier groups (title leads)",
+    "sp public page renders the perimeter board (title leads)",
     shared.status === 200 &&
-      shared.body.includes("Title sponsor") &&
+      shared.body.includes("Presented by") &&
       shared.body.includes(`Cup Title ${tag}`) &&
       shared.body.includes(`Goldco ${tag}`),
   );
@@ -1241,7 +1241,7 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
     "sp free strip renders publicly, un-tiered",
     freeShared.status === 200 &&
       freeShared.body.includes(`Corner Shop ${tag}`) &&
-      !freeShared.body.includes("Title sponsor"),
+      !freeShared.body.includes("Presented by"),
   );
   const freePkg = await v1(free, `/api/v1/orgs/${freeOrg.id}/sponsor-packages`, "POST", {
     name: "Blocked Package", price_cents: 1_000, currency: "gbp", tier: "partner",
@@ -2635,7 +2635,7 @@ async function v3ContentApiSuite(
   const freePage2 = await html(newSession(), `/shared/${freeSlug}/${freeCompData.slug}`);
   check(
     "v3→v10: free sponsor strip renders publicly, un-tiered",
-    freePage2.body.includes(`Acme Free ${tag}`) && !freePage2.body.includes("Title sponsor"),
+    freePage2.body.includes(`Acme Free ${tag}`) && !freePage2.body.includes("Presented by"),
   );
 }
 

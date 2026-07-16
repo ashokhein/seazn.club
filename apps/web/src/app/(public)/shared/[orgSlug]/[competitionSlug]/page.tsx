@@ -11,7 +11,7 @@ import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { hasFeature } from "@/lib/entitlements";
-import { resolveSponsors, SPONSOR_TIERS, type ResolvedSponsor, type SponsorTier } from "@/server/usecases/sponsors";
+import { resolveSponsors, type SponsorTier } from "@/server/usecases/sponsors";
 import { renderProse } from "@/lib/prose";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
 
@@ -61,9 +61,6 @@ export default async function CompetitionHomePage({ params }: Props) {
   // every row collapses to the free flat partner strip.
   const tiered = await hasFeature(org.id, "sponsors.tiers", competition.id);
   const sponsors = await resolveSponsors(org.id, competition.id, { tiered });
-  const sponsorGroups: [SponsorTier, ResolvedSponsor[]][] = SPONSOR_TIERS.map(
-    (t): [SponsorTier, ResolvedSponsor[]] => [t, sponsors.filter((s) => s.tier === t)],
-  ).filter(([, rows]) => rows.length > 0);
   // Register CTA (doc 16 §1.1): shown while any division accepts submissions.
   const registration = await publicRegistrationInfo(orgSlug, competitionSlug).catch(() => null);
   const registrationOpen = registration?.divisions.some((d) => d.open) ?? false;
@@ -253,92 +250,130 @@ export default async function CompetitionHomePage({ params }: Props) {
         )}
       </section>
 
-      {sponsors.length > 0 ? (
-        <section className="mt-10 border-t border-zinc-200 pt-4">
-          <h2 className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-ink-muted">
-            Sponsors
-          </h2>
-          <div className="space-y-4">
-            {sponsorGroups.map(([tier, rows]) => {
-              // Descending prominence: title reads as "presented by", partner
-              // stays the familiar small chip strip.
-              const chip: Record<SponsorTier, { box: string; logo: number; logoCls: string }> = {
-                title: {
-                  box: "gap-3 rounded-xl px-5 py-3.5 font-display text-2xl font-semibold uppercase tracking-tight text-ink",
-                  logo: 40,
-                  logoCls: "h-10 w-10",
-                },
-                gold: {
-                  box: "gap-2.5 rounded-lg px-4 py-2.5 text-base font-semibold text-zinc-700",
-                  logo: 32,
-                  logoCls: "h-8 w-8",
-                },
-                silver: {
-                  box: "gap-2 rounded-lg px-3 py-2 text-sm text-zinc-600",
-                  logo: 24,
-                  logoCls: "h-6 w-6",
-                },
-                partner: {
-                  box: "gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500",
-                  logo: 20,
-                  logoCls: "h-5 w-5",
-                },
-              };
-              const label: Record<SponsorTier, string> = {
-                title: "Title sponsor",
-                gold: "Gold",
-                silver: "Silver",
-                partner: "Partners",
-              };
-              return (
-                <div key={tier}>
-                  {tiered ? (
-                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-ink-muted">
-                      {label[tier]}
-                    </p>
-                  ) : null}
-                  <ul className="flex flex-wrap items-center gap-3">
-                    {rows.map((s) => {
-                      const c = chip[tier];
-                      const inner = (
-                        <span
-                          className={`flex items-center border border-zinc-200/80 bg-surface shadow-sm ${c.box}`}
-                        >
-                          {s.logo ? (
-                            // sponsor logo — uploaded via content-upload, always a storage URL.
-                            <Image
-                              src={s.logo}
-                              alt=""
-                              width={c.logo}
-                              height={c.logo}
-                              className={`${c.logoCls} object-contain`}
-                            />
-                          ) : null}
-                          {s.name}
-                        </span>
-                      );
-                      // Table rows go through the tracked /s redirect; blob-shim
-                      // entries (id null) link straight out.
-                      const href = s.url ? (s.id ? `/s/${s.id}` : s.url) : null;
-                      return (
-                        <li key={s.name}>
-                          {href ? (
-                            <a href={href} rel="nofollow noopener" className="hover:opacity-80">
-                              {inner}
-                            </a>
-                          ) : (
-                            inner
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </div>
+      {sponsors.length > 0
+        ? (() => {
+            // Perimeter board (v10): sponsors render the way a venue shows
+            // them — panels on the court-slab band that bookends the hero.
+            // Tier is encoded physically: title = "presented by" lockup on
+            // the board, gold/silver = sized panels, partners = the quiet
+            // ticker line beneath. Free (un-tiered) orgs get the board with
+            // uniform panels.
+            const titleRow = tiered ? sponsors.filter((s) => s.tier === "title") : [];
+            const boardRows = tiered
+              ? sponsors.filter((s) => s.tier === "gold" || s.tier === "silver")
+              : sponsors;
+            const tickerRows = tiered ? sponsors.filter((s) => s.tier === "partner") : [];
+
+            const PANEL: Record<SponsorTier, { text: string; logo: number; logoCls: string }> = {
+              title: { text: "font-display text-3xl font-bold uppercase tracking-tight sm:text-4xl", logo: 48, logoCls: "h-12 w-12" },
+              gold: { text: "font-display text-xl font-semibold uppercase tracking-tight", logo: 32, logoCls: "h-8 w-8" },
+              silver: { text: "text-sm font-semibold text-court-muted", logo: 24, logoCls: "h-6 w-6" },
+              partner: { text: "text-sm font-semibold text-court-muted", logo: 20, logoCls: "h-5 w-5" },
+            };
+            const c = (s: (typeof sponsors)[number]) => PANEL[tiered ? s.tier : "partner"];
+            // One shared logo site (public-image-contract pins this pair).
+            // Logos sit on a light chip so dark marks survive the slab.
+            const sponsorLogo = (s: (typeof sponsors)[number]) =>
+              s.logo ? (
+                <span className="shrink-0 rounded bg-white/95 p-0.5">
+                  <Image
+                    src={s.logo}
+                    alt=""
+                    width={c(s).logo}
+                    height={c(s).logo}
+                    className={`${c(s).logoCls} object-contain`}
+                  />
+                </span>
+              ) : null;
+            // Table rows go through the tracked /s redirect; blob-shim
+            // entries (id null) link straight out.
+            const hrefFor = (s: (typeof sponsors)[number]) =>
+              s.url ? (s.id ? `/s/${s.id}` : s.url) : null;
+            const linked = (s: (typeof sponsors)[number], node: React.ReactNode) => {
+              const href = hrefFor(s);
+              // New tab: the reader keeps their place at the competition;
+              // `sponsored` marks the paid placement for crawlers.
+              return href ? (
+                <a
+                  href={href}
+                  target="_blank"
+                  rel="nofollow noopener sponsored"
+                  className="transition hover:opacity-85"
+                >
+                  {node}
+                </a>
+              ) : (
+                node
               );
-            })}
-          </div>
-        </section>
-      ) : null}
+            };
+
+            return (
+              <section className="mt-10">
+                <h2 className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-ink-muted">
+                  Sponsors
+                </h2>
+                {titleRow.length > 0 || boardRows.length > 0 ? (
+                  <div className="overflow-hidden rounded-2xl bg-court text-court-ink shadow-lg">
+                    {/* Accent line mirrors the hero's — the two slabs bookend the page. */}
+                    <div aria-hidden className="h-1 bg-accent" />
+                    {titleRow.length > 0 ? (
+                      <div
+                        className={`px-6 py-6 text-center ${boardRows.length > 0 ? "border-b border-white/10" : ""}`}
+                      >
+                        <p className="text-[10px] font-semibold uppercase tracking-[0.3em] text-court-muted">
+                          Presented by
+                        </p>
+                        <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
+                          {titleRow.map((s) => (
+                            <span key={s.name}>
+                              {linked(
+                                s,
+                                <span className="flex items-center gap-3.5">
+                                  {sponsorLogo(s)}
+                                  <span className={PANEL.title.text}>{s.name}</span>
+                                </span>,
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+                    {boardRows.length > 0 ? (
+                      <ul className="flex flex-wrap items-center justify-center gap-2 px-4 py-3.5">
+                        {boardRows.map((s) => (
+                          <li key={s.name}>
+                            {linked(
+                              s,
+                              <span
+                                className={`flex items-center gap-2.5 rounded-lg bg-white/5 px-5 py-2.5 ring-1 ring-white/10 transition hover:bg-white/10 ${c(s).text}`}
+                              >
+                                {sponsorLogo(s)}
+                                {s.name}
+                              </span>,
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                ) : null}
+                {tickerRows.length > 0 ? (
+                  <p className="mt-3 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-xs text-ink-muted">
+                    <span className="text-[10px] font-semibold uppercase tracking-[0.22em]">
+                      Partners
+                    </span>
+                    {tickerRows.map((s, i) => (
+                      <span key={s.name} className="inline-flex items-baseline gap-x-3">
+                        {i > 0 ? <span aria-hidden>·</span> : null}
+                        {linked(s, <span>{s.name}</span>)}
+                      </span>
+                    ))}
+                  </p>
+                ) : null}
+              </section>
+            );
+          })()
+        : null}
     </div>
   );
 }
