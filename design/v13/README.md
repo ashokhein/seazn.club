@@ -91,6 +91,10 @@ field of teams is disproportionately hard:
   to read `player_stat_snapshots`, render a sport-neutral stat block, link
   leaderboard rows to profiles) + self-service player photo on `/me` (the upload
   already exists organiser-side; add a `me/persons/[id]/photo` route + UI).
+- **PROMPT-66** — Ad-hoc single fixture (`addFixture`): generalise the ladder-only
+  `issueChallenge` insert into a guarded `POST /stages/{id}/fixtures` — allowed for
+  league/group/swiss (folds into standings), rejected/exhibition-only for bracket
+  kinds. For replays, tie-breakers, friendlies, patching a missing fixture.
 
 ## Reference
 
