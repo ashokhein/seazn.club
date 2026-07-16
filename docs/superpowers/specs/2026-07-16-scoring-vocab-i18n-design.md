@@ -143,6 +143,32 @@ same posture as existing lookup helpers.
 line. Extend `scripts/smoke.ts` (pro + free) with one assertion that a fr
 console surface shows a localized sport name.
 
+## Added scope: two hardcoded console sub-components (found live 2026-07-16)
+
+While demoing, `/o/<org>/settings/payments` on a French org showed a whole
+sub-tree in English (page chrome was French). Same #107 root cause: the page was
+localized, the client sub-components never went through `msg()`. Both have **zero**
+i18n calls today. Fold into this branch (same "finish console i18n" goal).
+
+**`components/org-payment-instructions.tsx`** (296 lines, 1 consumer — the
+payments settings page). Hardcoded: "Card payments (Stripe)", the Connect status
+line ("● Live — charges enabled" / disabled variants), the three checklist items
+(Connect / Verify (KYC) / Go live — long copy), "How do entry fees usually
+work?", the two radios "Pay the organiser" / "Card at sign-up", "Cash / bank
+transfer instructions" + its helper paragraph, and "Save". → convert to
+`useMsg()` (client island under `/o` DictProvider); new `pay.*` keys.
+
+**`components/prose-editor.tsx`** (275 lines, shared — 3 consumers:
+`v2/competition-settings.tsx`, `org-about.tsx`, `org-payment-instructions.tsx`).
+Hardcoded toolbar button labels/titles: Heading, Subheading, Bold, Italic, Link,
+Bullet list, Numbered list, Quote, Divider, Image (up to 2 MB), Sponsor /
+call-to-action button, plus the Write / Preview tab labels. → `useMsg()`; new
+`editor.*` keys. Localizing here fixes the toolbar in all three consumers at once.
+
+These are ordinary chrome (not domain vocab) so they use `useMsg` with static
+`MessageKey`s directly — no maps needed. Same pipeline (translate + parity) and
+per-component fr-render regression test.
+
 ## Rollout
 
 Single branch, single PR. No migration (display-only). tsc 0 + full unit + smoke
