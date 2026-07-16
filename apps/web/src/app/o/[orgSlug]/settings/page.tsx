@@ -20,6 +20,7 @@ import { OrgLogo } from "@/components/org-logo";
 import { OrgBrandColor } from "@/components/org-brand-color";
 import { OrgAbout } from "@/components/org-about";
 import { OrgSponsors } from "@/components/org-sponsors";
+import { SponsorPackages } from "@/components/sponsor-packages";
 import { listSponsorRows } from "@/server/usecases/sponsors";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
@@ -120,10 +121,12 @@ export default async function SettingsPage({
   // basic partner strip is free; tiers/per-competition scoping are Pro.
   let sponsorRows: Awaited<ReturnType<typeof listSponsorRows>> = [];
   let hasSponsorTiers = false;
+  let hasSponsorMonetize = false;
   let sponsorCompetitions: { id: string; name: string }[] = [];
   if (tab === "sponsors") {
     sponsorRows = await listSponsorRows(active.id);
     hasSponsorTiers = await hasFeature(active.id, "sponsors.tiers");
+    hasSponsorMonetize = await hasFeature(active.id, "sponsors.monetize");
     sponsorCompetitions = await sql<{ id: string; name: string }[]>`
       select id, name from competitions
       where org_id = ${active.id}
@@ -320,6 +323,17 @@ export default async function SettingsPage({
                   billingHref={routes.billing(orgSlug)}
                   canEdit={canEdit}
                 />
+                {canEdit && (
+                  <div className="mt-6 border-t border-slate-100 pt-5">
+                    <SubSection icon={Banknote} label={t(dict, "sponsors.sell.title")} />
+                    <SponsorPackages
+                      orgId={active.id}
+                      competitions={sponsorCompetitions}
+                      hasMonetize={hasSponsorMonetize}
+                      billingHref={routes.billing(orgSlug)}
+                    />
+                  </div>
+                )}
               </section>
             )}
 
