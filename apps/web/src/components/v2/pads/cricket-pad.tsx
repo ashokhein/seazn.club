@@ -7,6 +7,7 @@
 import { useEffect, useState } from "react";
 import type { SendEvent, SideInfo, SportInfo, LiveState } from "@/components/v2/fixture-console";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { wicketLabel, extraLabel } from "@/lib/scoring-vocab";
 
 interface FineView {
   striker: string | null;
@@ -243,7 +244,7 @@ function personName(side: SideInfo, personId: string): string {
   );
 }
 
-function BallForm({
+export function BallForm({
   innings,
   batting,
   fielding,
@@ -413,7 +414,7 @@ function BallForm({
           <option value="">{msg("pad.ck.noExtras")}</option>
           {EXTRA_KINDS.map((k) => (
             <option key={k} value={k}>
-              {k}
+              {extraLabel(k, msg)}
             </option>
           ))}
         </select>
@@ -439,7 +440,7 @@ function BallForm({
           <option value="">{msg("pad.ck.noWicket")}</option>
           {WICKET_KINDS.map((k) => (
             <option key={k} value={k}>
-              W: {k}
+              W: {wicketLabel(k, msg)}
             </option>
           ))}
         </select>
