@@ -225,6 +225,13 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "GET /me/persons",
   "PATCH /me/persons/:id/consent",
   "POST /fixtures/:id/checkin-link",
+  // Official onboarding (PROMPT-57): the invite mints a login capability and
+  // the officiating /me surface is session-personal — same rules as players.
+  "POST /officials/:id/invite",
+  "PATCH /me/assigned-fixtures/:id/response",
+  "POST /me/assigned-fixtures/:id/score-link",
+  "POST /me/availability/officiating",
+  "DELETE /me/availability/officiating",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.

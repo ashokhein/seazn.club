@@ -337,6 +337,7 @@ await i18nSuite();
   // --- PROMPT-53: player accounts — claim → RSVP → grid → QR check-in.
   // BEFORE gapSuite: its downgrade eats org2's competition headroom.
   await playerAccountsSuite(admin, org2.id);
+  await officialOnboardingSuite(admin, org2.id);
 
   // --- design/v9 PROMPT-55: dispute-loss recovery surfaces.
   await disputeSurfacesSuite();
@@ -487,6 +488,130 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   check(
     "pa claim invite mints on a community org (no plan gate)",
     playerVer.has_org === true && freeInvite.status === 201,
+  );
+}
+
+/** PROMPT-57 official onboarding over real HTTP: create official → assign →
+ *  invite (shared claim rail, officiating copy) → claim as a second user →
+ *  the assignment shows in /me → accept → decline flags on the organiser
+ *  read → blackout date set/clear → score-pad device link opens. The free
+ *  path proves the portal has no plan gate: an invite mints on the ref's own
+ *  auto-provisioned COMMUNITY org. */
+async function officialOnboardingSuite(admin: Session, orgId: string): Promise<void> {
+  const refEmail = `ref_${tag}@example.com`;
+  const ref = newSession();
+  const refVer = await signIn(ref, refEmail);
+
+  admin.cookies["seazn_org"] = orgId;
+  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Whistle Cup ${tag}`,
+    visibility: "public",
+  });
+  const compData = v1data<{ id: string; slug: string }>(comp);
+  const div = await v1(admin, `/api/v1/competitions/${compData.id}/divisions`, "POST", {
+    name: "Open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  });
+  const divData = v1data<{ id: string; slug: string }>(div);
+  await v1(admin, `/api/v1/divisions/${divData.id}/entrants`, "POST", [
+    { kind: "individual", display_name: `Whistle A ${tag}`, seed: 1, members: [] },
+    { kind: "individual", display_name: `Whistle B ${tag}`, seed: 2, members: [] },
+    { kind: "individual", display_name: `Whistle C ${tag}`, seed: 3, members: [] },
+    { kind: "individual", display_name: `Whistle D ${tag}`, seed: 4, members: [] },
+  ]);
+  const stage = await v1(admin, `/api/v1/divisions/${divData.id}/stages`, "POST", {
+    seq: 1, kind: "league", name: "League",
+  });
+  const gen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`, "POST");
+  const fixtures = v1data<{ fixtures: { id: string }[] }>(gen).fixtures;
+  await v1(admin, `/api/v1/divisions/${divData.id}/start`, "POST");
+  // Future kickoff: the /me lane only lists today-or-later fixtures.
+  const kickoff = new Date(Date.now() + 7 * 86_400_000).toISOString();
+  await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}`, "PATCH", {
+    scheduled_at: kickoff, court_label: "Court 9",
+  });
+
+  // Create + assign BEFORE the invite: the fresh assignment must be pending.
+  const off = await v1(admin, "/api/v1/officials", "POST", {
+    display_name: `Ria Ref ${tag}`, role_keys: ["referee"],
+  });
+  const offId = v1data<{ id: string }>(off).id;
+  await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}/officials`, "PATCH", {
+    set: [{ official_id: offId, role_key: "referee", locked: false }],
+  });
+
+  // Invite through the SHARED person-claim rail (pc_ token, officiating copy).
+  const invite = await v1(admin, `/api/v1/officials/${offId}/invite`, "POST", { email: refEmail });
+  const claimUrl = v1data<{ claim_url: string }>(invite).claim_url ?? "";
+  check("off invite mints through the person-claim rail", invite.status === 201 && claimUrl.includes("/claim/pc_"));
+  const token = claimUrl.split("/claim/")[1]!;
+  const claimPage = await fetch(`${BASE}/claim/${token}`);
+  const claimHtml = await claimPage.text();
+  check("off claim page shows officiating copy", claimPage.status === 200 && claimHtml.includes("Claim your officiating profile"));
+
+  const accepted = (await call(ref, `/api/claims/${token}/accept`, "POST")) as { person_id?: string };
+  check("off claim links the official's login", !!accepted.person_id);
+
+  // /me carries the assignment card (assert on the unique fixture label, not
+  // dict copy — the /me DictProvider serialises every ui string into the HTML).
+  const meRes = await fetch(`${BASE}/me`, {
+    headers: { cookie: Object.entries(ref.cookies).map(([k, v]) => `${k}=${v}`).join("; ") },
+  });
+  const meHtml = await meRes.text();
+  check("off /me lists the assigned fixture", meRes.status === 200 && meHtml.includes(`Whistle A ${tag}`));
+
+  // Accept; then decline a second assignment with a reason → organiser flag.
+  const acceptRes = await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/response`, "PATCH", {
+    response: "accepted",
+  });
+  check("off accept lands", acceptRes.status === 200 && v1data<{ response: string }>(acceptRes).response === "accepted");
+  await v1(admin, `/api/v1/fixtures/${fixtures[1]!.id}/officials`, "PATCH", {
+    set: [{ official_id: offId, role_key: "referee", locked: false }],
+  });
+  await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[1]!.id}/response`, "PATCH", {
+    response: "declined", decline_reason: "smoke clash",
+  });
+  const flagged = await v1(admin, `/api/v1/fixtures/${fixtures[1]!.id}`);
+  const flaggedOfficials = v1data<{ officials: { response?: string; decline_reason?: string }[] }>(flagged).officials ?? [];
+  check(
+    "off decline flags on the organiser read (no auto-reassign)",
+    flaggedOfficials.length === 1 && flaggedOfficials[0]!.response === "declined" && flaggedOfficials[0]!.decline_reason === "smoke clash",
+  );
+  // accepted → declined is refused (ask the organiser)
+  const illegal = await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/response`, "PATCH", {
+    response: "declined",
+  });
+  check("off accepted assignment cannot be self-declined", illegal.status === 422);
+
+  // Blackout date: set (upsert) then clear.
+  const blackout = await v1(ref, "/api/v1/me/availability/officiating", "POST", {
+    date: "2027-03-07", note: "away",
+  });
+  check("off blackout date saved", blackout.status === 201);
+  const cleared = await v1(ref, "/api/v1/me/availability/officiating?date=2027-03-07", "DELETE");
+  check("off blackout date cleared", cleared.status === 200);
+
+  // Score this match: the official mints the fixture's device link (Pro org)
+  // and the pad answers on the secret.
+  const scoreLink = await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/score-link`, "POST");
+  const secret = v1data<{ secret: string }>(scoreLink).secret ?? "";
+  check("off score link minted for the assigned official", scoreLink.status === 201 && secret.startsWith("dl_"));
+  const pad = await fetch(`${BASE}/score/${secret}`);
+  check("off score pad opens on the device link", pad.status === 200);
+
+  // Free path: the ref's own org is a fresh COMMUNITY org — the officiating
+  // portal must have no plan gate on invite/claim.
+  const freeOff = await v1(ref, "/api/v1/officials", "POST", {
+    display_name: `Free Ref ${tag}`, role_keys: ["referee"],
+  });
+  const freeInvite = await v1(ref, `/api/v1/officials/${v1data<{ id: string }>(freeOff).id}/invite`, "POST", {
+    email: `else_${tag}@example.com`,
+  });
+  check(
+    "off invite mints on a community org (portal is free)",
+    refVer.has_org === true && freeInvite.status === 201,
   );
 }
 
@@ -2680,6 +2805,8 @@ async function cleanup(tag: string): Promise<void> {
     `pass_${tag}@example.com`,
     `funnel_${tag}@example.com`,
     `tos_${tag}@example.com`,
+    `player_${tag}@example.com`,
+    `ref_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {

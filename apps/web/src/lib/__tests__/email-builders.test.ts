@@ -11,6 +11,9 @@ import {
   emailChangeNoticeTemplate,
   inviteTemplate,
   magicLinkTemplate,
+  officialAssignedTemplate,
+  officialAssignmentChangedTemplate,
+  officialInviteTemplate,
   passwordResetTemplate,
   paymentReminderTemplate,
   refundIssuedTemplate,
@@ -164,6 +167,55 @@ function makeBuilders(
         dict,
       ),
       "sponsorRefund.subject",
+    ],
+    [
+      "official-invite",
+      officialInviteTemplate(
+        { orgName: "Riverside Racquets", personName: "Priya <Ref>", claimUrl: LINK },
+        dict,
+      ),
+      "officialInvite.subject",
+    ],
+    [
+      "official-assigned",
+      officialAssignedTemplate(
+        {
+          orgName: "Riverside Racquets",
+          officialName: "Priya",
+          meUrl: LINK,
+          fixtures: [
+            {
+              label: "A & Co <vs> B",
+              role_key: "referee",
+              scheduled_at: "2026-08-01T09:00:00Z",
+              venue_tz: "Europe/London",
+              venue: "Main Hall",
+              court_label: "Court 1",
+            },
+          ],
+        },
+        dict,
+      ),
+      "officialAssigned.subject",
+    ],
+    [
+      "official-assignment-changed",
+      officialAssignmentChangedTemplate(
+        {
+          orgName: "Riverside Racquets",
+          officialName: "Priya",
+          roleKey: "referee",
+          label: "A vs B",
+          prevAt: "2026-08-01T09:00:00Z",
+          nextAt: "2026-08-01T11:30:00Z",
+          venueTz: "Europe/London",
+          court: "Court 2",
+          venue: "Main Hall",
+          meUrl: LINK,
+        },
+        dict,
+      ),
+      "officialChanged.subject",
     ],
   ];
 }

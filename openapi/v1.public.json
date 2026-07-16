@@ -30258,6 +30258,16 @@
                           "display_name": {
                             "type": "string"
                           },
+                          "email": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "role_keys": {
                             "type": "array",
                             "items": {
@@ -30295,6 +30305,7 @@
                           "person_id",
                           "entrant_id",
                           "display_name",
+                          "email",
                           "role_keys",
                           "home_pool_id",
                           "max_per_day",
@@ -30317,6 +30328,7 @@
                       "person_id": "example",
                       "entrant_id": "example",
                       "display_name": "example",
+                      "email": "example",
                       "role_keys": [
                         "example"
                       ],
@@ -30501,6 +30513,19 @@
                     "format": "uuid",
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200,
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "role_keys": {
                     "default": [
                       "referee"
@@ -30547,6 +30572,7 @@
                 "display_name": "example",
                 "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                 "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                "email": "example",
                 "role_keys": [
                   "example"
                 ]
@@ -30599,6 +30625,16 @@
                         "display_name": {
                           "type": "string"
                         },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "role_keys": {
                           "type": "array",
                           "items": {
@@ -30636,6 +30672,7 @@
                         "person_id",
                         "entrant_id",
                         "display_name",
+                        "email",
                         "role_keys",
                         "home_pool_id",
                         "max_per_day",
@@ -30656,6 +30693,7 @@
                     "person_id": "example",
                     "entrant_id": "example",
                     "display_name": "example",
+                    "email": "example",
                     "role_keys": [
                       "example"
                     ],
@@ -30918,6 +30956,16 @@
                         "display_name": {
                           "type": "string"
                         },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "role_keys": {
                           "type": "array",
                           "items": {
@@ -30955,6 +31003,7 @@
                         "person_id",
                         "entrant_id",
                         "display_name",
+                        "email",
                         "role_keys",
                         "home_pool_id",
                         "max_per_day",
@@ -30975,6 +31024,7 @@
                     "person_id": "example",
                     "entrant_id": "example",
                     "display_name": "example",
+                    "email": "example",
                     "role_keys": [
                       "example"
                     ],
@@ -31168,6 +31218,19 @@
                     "format": "uuid",
                     "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                   },
+                  "email": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200,
+                        "format": "email",
+                        "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
                   "role_keys": {
                     "default": [
                       "referee"
@@ -31210,9 +31273,7 @@
                 "display_name": "example",
                 "person_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                 "entrant_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                "role_keys": [
-                  "example"
-                ]
+                "email": "example"
               }
             }
           }
@@ -31262,6 +31323,16 @@
                         "display_name": {
                           "type": "string"
                         },
+                        "email": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "role_keys": {
                           "type": "array",
                           "items": {
@@ -31299,6 +31370,7 @@
                         "person_id",
                         "entrant_id",
                         "display_name",
+                        "email",
                         "role_keys",
                         "home_pool_id",
                         "max_per_day",
@@ -31319,6 +31391,7 @@
                     "person_id": "example",
                     "entrant_id": "example",
                     "display_name": "example",
+                    "email": "example",
                     "role_keys": [
                       "example"
                     ],
