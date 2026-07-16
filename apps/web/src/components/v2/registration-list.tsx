@@ -8,6 +8,10 @@
 import type { Registration } from "./registrations-panel";
 import type { Tab } from "./registration-pulse";
 import { WaitlistQueue } from "./waitlist-queue";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
+
+type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
 const STATUS_STYLE: Record<string, string> = {
   pending: "bg-amber-100 text-amber-700",
@@ -19,52 +23,59 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 /** Payment chip per row (spec §8): one glanceable money state. */
-function paymentChip(r: Registration): { label: string; cls: string; title?: string } | null {
+function paymentChip(msg: Msg, r: Registration): { label: string; cls: string; title?: string } | null {
   if (r.amount_cents <= 0 && !r.payment_intent_id) return null;
   // A closed-lost dispute leaves disputed_at set for history AND marks the
   // money returned — show that outcome, not a still-open-looking flag.
   if (r.disputed_at && r.refunded_cents >= r.amount_cents && r.amount_cents > 0)
     return {
-      label: "dispute lost · refunded",
+      label: msg("reg.chip.disputeLost"),
       cls: "bg-rose-100 text-rose-700",
       // Static copy (PROMPT-55): deep history lives in the activity log.
-      title: "The cardholder was repaid by Stripe and the amount was recovered from your Stripe balance.",
+      title: msg("reg.chip.disputeLostTitle"),
     };
-  if (r.disputed_at) return { label: "⚠ disputed", cls: "bg-rose-100 text-rose-700" };
+  if (r.disputed_at) return { label: msg("reg.chip.disputed"), cls: "bg-rose-100 text-rose-700" };
   const partiallyRefunded = r.refunded_cents > 0 && r.refunded_cents < r.amount_cents;
   if (r.refunded_cents >= r.amount_cents && r.refunded_cents > 0)
-    return { label: "refunded", cls: "bg-slate-100 text-slate-600" };
+    return { label: msg("reg.chip.refunded"), cls: "bg-slate-100 text-slate-600" };
   if (r.status === "withdrawn" && r.payment_intent_id && r.refunded_cents < r.amount_cents)
-    return { label: "refund incomplete", cls: "bg-amber-100 text-amber-800" };
+    return { label: msg("reg.chip.refundIncomplete"), cls: "bg-amber-100 text-amber-800" };
   if (partiallyRefunded)
-    return { label: "partly refunded", cls: "bg-amber-100 text-amber-700" };
-  if (r.offline_marked_paid_at) return { label: "paid · cash", cls: "bg-emerald-100 text-emerald-700" };
+    return { label: msg("reg.chip.partlyRefunded"), cls: "bg-amber-100 text-amber-700" };
+  if (r.offline_marked_paid_at) return { label: msg("reg.chip.paidCash"), cls: "bg-emerald-100 text-emerald-700" };
   if (r.payment_intent_id && (r.status === "paid" || r.status === "confirmed"))
-    return { label: "paid · card", cls: "bg-emerald-100 text-emerald-700" };
+    return { label: msg("reg.chip.paidCard"), cls: "bg-emerald-100 text-emerald-700" };
   if (r.status === "pending") {
     return r.payment_method === "stripe"
-      ? { label: `due · card${hoursLeft(r.expires_at)}`, cls: "bg-amber-100 text-amber-700" }
-      : { label: "due · cash", cls: "bg-amber-100 text-amber-700" };
+      ? { label: `${msg("reg.chip.dueCard")}${hoursLeft(msg, r.expires_at)}`, cls: "bg-amber-100 text-amber-700" }
+      : { label: msg("reg.chip.dueCash"), cls: "bg-amber-100 text-amber-700" };
   }
   return null;
 }
 
-function hoursLeft(iso: string | null): string {
+/** Localized registration status; unknown values fall back to the raw token. */
+function statusLabel(msg: Msg, status: string): string {
+  const key = `reg.status.${status}` as MessageKey;
+  const label = msg(key);
+  return label === key ? status : label;
+}
+
+function hoursLeft(msg: Msg, iso: string | null): string {
   if (!iso) return "";
   const ms = new Date(iso).getTime() - Date.now();
-  if (ms <= 0) return " · expiring";
+  if (ms <= 0) return ` · ${msg("reg.chip.expiring")}`;
   const h = Math.round(ms / 3_600_000);
-  return h >= 48 ? "" : ` · ${h}h left`;
+  return h >= 48 ? "" : ` · ${msg("reg.chip.hoursLeft", { h })}`;
 }
 
 export type ActionVerb = "confirm" | "waitlist" | "withdraw" | "refund" | "mark-paid" | "waive";
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "confirmed", label: "Confirmed" },
-  { key: "pending", label: "Pending" },
-  { key: "waitlist", label: "Waitlist" },
-  { key: "disputed", label: "Disputed" },
-  { key: "all", label: "All" },
+const TABS: { key: Tab; labelKey: MessageKey }[] = [
+  { key: "confirmed", labelKey: "reg.tab.confirmed" },
+  { key: "pending", labelKey: "reg.tab.pending" },
+  { key: "waitlist", labelKey: "reg.tab.waitlist" },
+  { key: "disputed", labelKey: "reg.tab.disputed" },
+  { key: "all", labelKey: "reg.tab.all" },
 ];
 
 function inTab(r: Registration, tab: Tab): boolean {
@@ -102,6 +113,7 @@ export function RegistrationList({
   onAction: (r: Registration, verb: ActionVerb) => void;
   onRemind: (id: string) => void;
 }) {
+  const msg = useMsg();
   const counts: Record<Tab, number> = {
     confirmed: regs.filter((r) => inTab(r, "confirmed")).length,
     pending: regs.filter((r) => inTab(r, "pending")).length,
@@ -113,9 +125,9 @@ export function RegistrationList({
 
   return (
     <div>
-      <div role="tablist" aria-label="Registrations by status" className="mb-3 flex flex-wrap gap-1">
+      <div role="tablist" aria-label={msg("reg.tablistAria")} className="mb-3 flex flex-wrap gap-1">
         {/* The Disputed tab only exists while there's something disputed to see. */}
-        {TABS.filter(({ key }) => key !== "disputed" || counts.disputed > 0 || tab === "disputed").map(({ key, label }) => (
+        {TABS.filter(({ key }) => key !== "disputed" || counts.disputed > 0 || tab === "disputed").map(({ key, labelKey }) => (
           <button
             key={key}
             role="tab"
@@ -129,21 +141,15 @@ export function RegistrationList({
                 : "rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-slate-300"
             }
           >
-            {label} <span className="tabular-nums opacity-70">{counts[key]}</span>
+            {msg(labelKey)} <span className="tabular-nums opacity-70">{counts[key]}</span>
           </button>
         ))}
       </div>
 
       {regs.length === 0 ? (
-        <div className="card p-6 text-sm text-slate-500">
-          No registrations yet. Share the public competition page — the Register button
-          appears while a division is open.
-        </div>
+        <div className="card p-6 text-sm text-slate-500">{msg("reg.empty.none")}</div>
       ) : visible.length === 0 && query !== "" ? (
-        <div className="card p-6 text-sm text-slate-500">
-          Nothing matches “{query}” — check the reference for typos (letters O/I are never
-          used; try 0/1).
-        </div>
+        <div className="card p-6 text-sm text-slate-500">{msg("reg.empty.noMatch", { query })}</div>
       ) : tab === "waitlist" ? (
         <WaitlistQueue
           rows={visible}
@@ -155,29 +161,31 @@ export function RegistrationList({
           onWithdraw={(r) => onAction(r, "withdraw")}
         />
       ) : visible.length === 0 ? (
-        <div className="card p-6 text-sm text-slate-500">Nothing in this tab yet.</div>
+        <div className="card p-6 text-sm text-slate-500">{msg("reg.empty.tab")}</div>
       ) : (
         <ul className="space-y-2">
           {visible.map((r) => {
             const refundable =
               r.payment_intent_id !== null && r.refunded_cents < r.amount_cents;
-            const chip = paymentChip(r);
+            const chip = paymentChip(msg, r);
             const feeUnpaid = r.amount_cents > 0 && !r.payment_intent_id;
+            const refundIncomplete =
+              r.status === "withdrawn" && r.payment_intent_id !== null && r.refunded_cents < r.amount_cents;
             const spotActions = canEdit && (
               <>
                 {(r.status === "pending" || r.status === "waitlisted") && !feeUnpaid && (
                   <button type="button" disabled={busy} onClick={() => onAction(r, "confirm")} className="btn btn-ghost text-xs">
-                    Approve
+                    {msg("reg.action.approve")}
                   </button>
                 )}
                 {r.status === "pending" && (
                   <button type="button" disabled={busy} onClick={() => onAction(r, "waitlist")} className="btn btn-ghost text-xs">
-                    Waitlist
+                    {msg("reg.action.waitlist")}
                   </button>
                 )}
                 {r.status !== "withdrawn" && r.status !== "expired" && (
                   <button type="button" disabled={busy} onClick={() => onAction(r, "withdraw")} className="btn btn-ghost text-xs text-red-600">
-                    Withdraw
+                    {msg("reg.action.withdraw")}
                   </button>
                 )}
               </>
@@ -185,18 +193,18 @@ export function RegistrationList({
             const moneyActions = canEdit && (
               <>
                 {r.status === "pending" && feeUnpaid && (
-                  <button type="button" disabled={busy} onClick={() => onAction(r, "mark-paid")} className="btn btn-ghost text-xs font-medium text-emerald-700" title="Record a cash/bank payment and confirm the entry">
-                    Mark paid
+                  <button type="button" disabled={busy} onClick={() => onAction(r, "mark-paid")} className="btn btn-ghost text-xs font-medium text-emerald-700" title={msg("reg.action.markPaidTitle")}>
+                    {msg("reg.action.markPaid")}
                   </button>
                 )}
                 {(r.status === "pending" || r.status === "waitlisted") && feeUnpaid && (
-                  <button type="button" disabled={busy} onClick={() => onAction(r, "waive")} className="btn btn-ghost text-xs" title="Confirm without payment (fee waived, logged)">
-                    Waive fee
+                  <button type="button" disabled={busy} onClick={() => onAction(r, "waive")} className="btn btn-ghost text-xs" title={msg("reg.action.waiveTitle")}>
+                    {msg("reg.action.waive")}
                   </button>
                 )}
                 {r.status === "pending" && r.amount_cents > 0 && r.payment_method !== "stripe" && (
-                  <button type="button" disabled={busy} onClick={() => onRemind(r.id)} className="btn btn-ghost text-xs" title="Email the registrant a payment reminder">
-                    Send reminder
+                  <button type="button" disabled={busy} onClick={() => onRemind(r.id)} className="btn btn-ghost text-xs" title={msg("reg.action.remindTitle")}>
+                    {msg("reg.action.remind")}
                   </button>
                 )}
                 {refundable && (
@@ -204,10 +212,10 @@ export function RegistrationList({
                     type="button"
                     disabled={busy}
                     onClick={() => onAction(r, "refund")}
-                    className={`btn btn-ghost text-xs ${chip?.label === "refund incomplete" ? "font-medium text-amber-700" : ""}`}
-                    title={chip?.label === "refund incomplete" ? "The automatic refund failed — retry it" : "Refund the remaining amount — the entry keeps its spot"}
+                    className={`btn btn-ghost text-xs ${refundIncomplete ? "font-medium text-amber-700" : ""}`}
+                    title={refundIncomplete ? msg("reg.action.retryRefundTitle") : msg("reg.action.refundTitle")}
                   >
-                    {chip?.label === "refund incomplete" ? "Retry refund" : "Refund"}
+                    {refundIncomplete ? msg("reg.action.retryRefund") : msg("reg.action.refund")}
                   </button>
                 )}
                 {r.disputed_at && (
@@ -215,9 +223,9 @@ export function RegistrationList({
                     href={`/api/v1/registrations/${r.id}/evidence`}
                     download
                     className="btn btn-ghost text-xs font-medium text-rose-700"
-                    title="Download the dispute evidence pack — receipt, activity log and fixtures, ready for the Stripe dispute response"
+                    title={msg("reg.action.evidenceTitle")}
                   >
-                    Evidence pack
+                    {msg("reg.action.evidence")}
                   </a>
                 )}
               </>
@@ -231,7 +239,7 @@ export function RegistrationList({
               // inline row from sm: up — crowded data never squeezes the name.
               <li key={r.id} className="card flex flex-col gap-2 p-3 text-sm sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
                 <span className="flex flex-wrap items-center gap-1.5">
-                  <span className={`badge ${STATUS_STYLE[r.status] ?? ""}`}>{r.status}</span>
+                  <span className={`badge ${STATUS_STYLE[r.status] ?? ""}`}>{statusLabel(msg, r.status)}</span>
                   {r.status === "waitlisted" && positions.has(r.id) && (
                     <span className="badge bg-sky-100 font-mono text-sky-700">#{positions.get(r.id)}</span>
                   )}
@@ -244,9 +252,9 @@ export function RegistrationList({
                     <span
                       className="badge bg-amber-50 text-amber-700"
                       data-testid="duplicate-hint"
-                      title="Same contact email as another active entry in this division — may be intentional (e.g. a parent entering two kids)."
+                      title={msg("reg.duplicateTitle")}
                     >
-                      ⚠ duplicate contact
+                      {msg("reg.duplicate")}
                     </span>
                   )}
                   {r.ref_code && (
@@ -259,15 +267,15 @@ export function RegistrationList({
                   <span className="block truncate font-medium text-slate-800">
                     {r.display_name}
                     {r.entrant_id && (
-                      <span className="ml-2 text-xs font-normal text-emerald-600">entrant ✓</span>
+                      <span className="ml-2 text-xs font-normal text-emerald-600">{msg("reg.entrant")}</span>
                     )}
                   </span>
                   <span className="block truncate text-xs text-slate-500">
                     {r.contact_email}
-                    {r.guardian_name ? ` · guardian: ${r.guardian_name}` : ""}
+                    {r.guardian_name ? ` · ${msg("reg.guardian", { name: r.guardian_name })}` : ""}
                     {r.amount_cents > 0
                       ? ` · ${(r.amount_cents / 100).toFixed(2)} ${r.currency ?? ""}` +
-                        (r.refunded_cents > 0 ? ` (refunded ${(r.refunded_cents / 100).toFixed(2)})` : "")
+                        (r.refunded_cents > 0 ? ` (${msg("reg.refundedAmount", { amount: (r.refunded_cents / 100).toFixed(2) })})` : "")
                       : ""}
                   </span>
                 </span>
@@ -275,13 +283,13 @@ export function RegistrationList({
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1 border-t border-slate-100 pt-2 sm:border-0 sm:pt-0">
                     {hasSpot && (
                       <span className="flex items-center gap-1">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Spot</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{msg("reg.cluster.spot")}</span>
                         {spotActions}
                       </span>
                     )}
                     {hasMoney && (
                       <span className="flex items-center gap-1">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Money</span>
+                        <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">{msg("reg.cluster.money")}</span>
                         {moneyActions}
                       </span>
                     )}

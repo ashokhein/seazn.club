@@ -9,6 +9,7 @@ import { useState } from "react";
 import { PlanBadge } from "@/components/plan-badge";
 import type { Pulse } from "@/lib/registration-derive";
 import type { FormField, Settings } from "./registrations-panel";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 function toLocalInput(iso: string | null): string {
   if (!iso) return "";
@@ -83,6 +84,7 @@ export function RegistrationSettings({
   busy: boolean;
   saved: boolean;
 }) {
+  const msg = useMsg();
   const set = onPatch;
   const paidConfigured = settings.fee_cents > 0;
   const taken = pulse ? pulse.confirmed + pulse.holding : null;
@@ -90,9 +92,9 @@ export function RegistrationSettings({
   return (
     <div className="space-y-3">
       <Group
-        title="Open & close"
+        title={msg("reg.settings.openClose")}
         defaultOpen
-        summary={settings.enabled ? "Open" : "Closed"}
+        summary={settings.enabled ? msg("reg.settings.open") : msg("reg.settings.closed")}
       >
         <label className="flex items-center gap-2 text-sm text-slate-700">
           <input
@@ -101,26 +103,26 @@ export function RegistrationSettings({
             checked={settings.enabled}
             onChange={(e) => set({ enabled: e.target.checked })}
           />
-          Open for public registration
+          {msg("reg.settings.openForPublic")}
         </label>
 
         <label className="block text-xs text-slate-500">
-          Entrant type
+          {msg("reg.settings.entrantType")}
           <select
             disabled={!canEdit}
             value={settings.entrant_kind}
             onChange={(e) => set({ entrant_kind: e.target.value as Settings["entrant_kind"] })}
             className="input mt-1 w-full"
           >
-            <option value="individual">Individual (creates a player)</option>
-            <option value="team">Team</option>
-            <option value="pair">Pair</option>
+            <option value="individual">{msg("reg.settings.entrant.individual")}</option>
+            <option value="team">{msg("reg.settings.entrant.team")}</option>
+            <option value="pair">{msg("reg.settings.entrant.pair")}</option>
           </select>
         </label>
 
         <div className="grid grid-cols-2 gap-2">
           <label className="block text-xs text-slate-500">
-            Opens
+            {msg("reg.settings.opens")}
             <input
               type="datetime-local"
               disabled={!canEdit}
@@ -130,7 +132,7 @@ export function RegistrationSettings({
             />
           </label>
           <label className="block text-xs text-slate-500">
-            Closes
+            {msg("reg.settings.closes")}
             <input
               type="datetime-local"
               disabled={!canEdit}
@@ -143,15 +145,15 @@ export function RegistrationSettings({
       </Group>
 
       <Group
-        title="Capacity"
+        title={msg("reg.settings.capacity")}
         summary={
           settings.capacity === null
-            ? "Uncapped"
-            : `${settings.capacity} spots`
+            ? msg("reg.settings.uncapped")
+            : msg("reg.settings.spots", { n: settings.capacity })
         }
       >
         <label className="block text-xs text-slate-500">
-          Capacity (blank = uncapped; overflow joins the waitlist)
+          {msg("reg.settings.capacityHint")}
           <input
             type="number"
             min={1}
@@ -165,25 +167,25 @@ export function RegistrationSettings({
         </label>
         {pulse && taken !== null && (
           <p className="text-xs text-slate-500" data-testid="capacity-meter">
-            {taken} taken
-            {settings.capacity !== null ? ` of ${settings.capacity}` : ""} · {pulse.waitlisted}{" "}
-            waiting
+            {settings.capacity !== null
+              ? msg("reg.settings.meterOf", { taken, cap: settings.capacity, waiting: pulse.waitlisted })
+              : msg("reg.settings.meter", { taken, waiting: pulse.waitlisted })}
           </p>
         )}
       </Group>
 
       <Group
-        title="Money"
+        title={msg("reg.settings.money")}
         summary={
           paidConfigured
-            ? `${currencySymbol(settings.currency)}${(settings.fee_cents / 100).toFixed(2)} · ${settings.payment_method === "stripe" ? "card" : "pay organiser"}`
-            : "Free"
+            ? `${currencySymbol(settings.currency)}${(settings.fee_cents / 100).toFixed(2)} · ${settings.payment_method === "stripe" ? msg("reg.settings.methodCard") : msg("reg.settings.methodOrganiser")}`
+            : msg("reg.settings.free")
         }
       >
         <div className="grid grid-cols-2 gap-2">
           <label className="block text-xs text-slate-500">
             <span className="flex items-center gap-1.5">
-              Entry fee ({currencySymbol(settings.currency)}; 0 = free)
+              {msg("reg.settings.entryFee", { sym: currencySymbol(settings.currency) })}
               {!paidAllowed && <PlanBadge feature="registration.paid" />}
             </span>
             <div className="mt-1 flex items-center">
@@ -213,7 +215,7 @@ export function RegistrationSettings({
             </div>
           </label>
           <label className="block text-xs text-slate-500">
-            Currency
+            {msg("reg.settings.currency")}
             <input
               maxLength={3}
               disabled={!canEdit}
@@ -224,14 +226,12 @@ export function RegistrationSettings({
           </label>
         </div>
         {paidConfigured && (
-          <p className="text-[11px] text-slate-400">
-            Fee changes apply to new sign-ups; current entries keep their price.
-          </p>
+          <p className="text-[11px] text-slate-400">{msg("reg.settings.feeNote")}</p>
         )}
 
         {paidConfigured && (
           <fieldset className="space-y-2">
-            <legend className="text-xs text-slate-500">How is the fee collected?</legend>
+            <legend className="text-xs text-slate-500">{msg("reg.settings.howCollected")}</legend>
             <label
               className={`flex items-start gap-2.5 rounded-md border p-3 text-xs transition ${
                 settings.payment_method === "offline"
@@ -248,15 +248,13 @@ export function RegistrationSettings({
                 onChange={() => set({ payment_method: "offline" })}
               />
               <span>
-                <span className="block font-medium text-slate-800">Pay the organiser</span>
-                <span className="mt-0.5 block text-slate-500">
-                  Cash or bank transfer. Entries are pending until you mark them paid.
-                </span>
+                <span className="block font-medium text-slate-800">{msg("reg.settings.payOrganiser")}</span>
+                <span className="mt-0.5 block text-slate-500">{msg("reg.settings.payOrganiserDesc")}</span>
               </span>
             </label>
             {settings.payment_method === "offline" && (
               <label className="block text-xs text-slate-500">
-                Payment instructions for this division
+                {msg("reg.settings.payInstructions")}
                 <textarea
                   disabled={!canEdit}
                   value={settings.payment_instructions ?? ""}
@@ -265,19 +263,16 @@ export function RegistrationSettings({
                   maxLength={5000}
                   placeholder={
                     settings.org_payment_instructions
-                      ? "Leave blank to use your organisation's instructions"
-                      : "e.g. bank details or “pay cash on the day” — or set organisation-wide instructions in Settings → Payments"
+                      ? msg("reg.settings.payInstructionsPlaceholderOrg")
+                      : msg("reg.settings.payInstructionsPlaceholder")
                   }
                   className="input mt-1 w-full font-mono text-xs"
                 />
                 <span className="mt-1 block text-[11px] text-slate-400">
-                  Markdown formatting works here; {"{{reference}}"} becomes the
-                  registrant&apos;s reference number.
+                  {msg("reg.settings.markdownNote", { reference: "{{reference}}" })}
                 </span>
                 {!settings.payment_instructions && settings.org_payment_instructions && (
-                  <span className="mt-1 block text-[11px] text-slate-400">
-                    Using your organisation&apos;s instructions.
-                  </span>
+                  <span className="mt-1 block text-[11px] text-slate-400">{msg("reg.settings.usingOrgInstructions")}</span>
                 )}
               </label>
             )}
@@ -298,16 +293,13 @@ export function RegistrationSettings({
               />
               <span>
                 <span className="flex items-center gap-1.5 font-medium text-slate-800">
-                  Card payment at sign-up
+                  {msg("reg.settings.cardPayment")}
                   {!paidAllowed && <PlanBadge feature="registration.paid" />}
                 </span>
-                <span className="mt-0.5 block text-slate-500">
-                  Paid via Stripe when they register · confirmed automatically · unpaid
-                  entries expire after 48h and the waitlist moves up.
-                </span>
+                <span className="mt-0.5 block text-slate-500">{msg("reg.settings.cardPaymentDesc")}</span>
                 {!settings.charges_enabled && (
                   <a href="/settings/payments" className="mt-1 block font-medium text-purple-700 underline">
-                    Connect Stripe in Settings → Payments first
+                    {msg("reg.settings.connectStripeFirst")}
                   </a>
                 )}
               </span>
@@ -317,7 +309,7 @@ export function RegistrationSettings({
 
         {paidConfigured && (
           <label className="block text-xs text-slate-500">
-            Refund lock (withdrawals stop auto-refunding after this)
+            {msg("reg.settings.refundLock")}
             <input
               type="datetime-local"
               disabled={!canEdit}
@@ -327,14 +319,14 @@ export function RegistrationSettings({
             />
             <span className="mt-1 block text-[11px] text-slate-400">
               {settings.refund_lock_at
-                ? "After this moment withdrawals keep the fee — refunds become your call, per entry."
-                : "No date set: every paid withdrawal auto-refunds in full, right up to match day."}
+                ? msg("reg.settings.refundLockSet")
+                : msg("reg.settings.refundLockNone")}
             </span>
           </label>
         )}
       </Group>
 
-      <Group title="Sign-up form" summary={`${settings.form_fields.length} extra questions`}>
+      <Group title={msg("reg.settings.signupForm")} summary={msg("reg.settings.extraQuestions", { n: settings.form_fields.length })}>
         <FormBuilder
           fields={settings.form_fields}
           canEdit={canEdit}
@@ -344,10 +336,10 @@ export function RegistrationSettings({
 
       {canEdit && (
         <button type="button" disabled={busy} onClick={onSave} className="btn btn-primary w-full">
-          {busy ? "…" : "Save settings"}
+          {busy ? "…" : msg("reg.settings.save")}
         </button>
       )}
-      {saved && <p className="text-xs text-emerald-600">Saved.</p>}
+      {saved && <p className="text-xs text-emerald-600">{msg("reg.settings.saved")}</p>}
     </div>
   );
 }
@@ -365,6 +357,7 @@ function FormBuilder({
   canEdit: boolean;
   onChange: (fields: FormField[]) => void;
 }) {
+  const msg = useMsg();
   function update(i: number, patch: Partial<FormField>) {
     onChange(fields.map((f, j) => (j === i ? { ...f, ...patch } : f)));
   }
@@ -373,7 +366,7 @@ function FormBuilder({
     // A blank label fails validation and blocks the whole save, so seed a
     // valid default the organiser can rename.
     const n = fields.length + 1;
-    onChange([...fields, { key: `question_${n}`, label: `Question ${n}`, kind: "text", required: false }]);
+    onChange([...fields, { key: `question_${n}`, label: msg("reg.form.questionN", { n }), kind: "text", required: false }]);
   }
 
   // Lives inside a ~340px accordion column: every control gets the full row
@@ -381,21 +374,16 @@ function FormBuilder({
   // sits full-width under the list where it can't crowd the intro copy.
   return (
     <div className="space-y-3">
-      <p className="text-xs text-slate-400">
-        Ask registrants anything beyond name, email and date of birth.
-      </p>
+      <p className="text-xs text-slate-400">{msg("reg.form.intro")}</p>
       {fields.length === 0 && (
-        <p className="text-xs text-slate-400">
-          e.g. shirt size, dietary needs, emergency contact, club membership number, or a
-          &ldquo;I agree to the code of conduct&rdquo; checkbox.
-        </p>
+        <p className="text-xs text-slate-400">{msg("reg.form.examples")}</p>
       )}
       {fields.map((f, i) => (
         <div key={i} className="space-y-2 rounded-md border border-slate-200 p-3">
           <label className="block text-xs text-slate-500">
-            Question label
+            {msg("reg.form.label")}
             <input
-              placeholder="e.g. Shirt size"
+              placeholder={msg("reg.form.labelPlaceholder")}
               disabled={!canEdit}
               value={f.label}
               onChange={(e) =>
@@ -414,8 +402,8 @@ function FormBuilder({
           </label>
           {f.kind === "select" && (
             <input
-              placeholder="Options, comma-separated"
-              aria-label="Select options, comma-separated"
+              placeholder={msg("reg.form.options")}
+              aria-label={msg("reg.form.optionsAria")}
               disabled={!canEdit}
               value={(f.options ?? []).join(", ")}
               onChange={(e) =>
@@ -431,7 +419,7 @@ function FormBuilder({
           )}
           <div className="flex flex-wrap items-center gap-2">
             <select
-              aria-label="Question type"
+              aria-label={msg("reg.form.type")}
               disabled={!canEdit}
               value={f.kind}
               onChange={(e) =>
@@ -442,9 +430,9 @@ function FormBuilder({
               }
               className="input min-w-0 flex-1 text-sm"
             >
-              <option value="text">Text</option>
-              <option value="select">Select</option>
-              <option value="checkbox">Checkbox</option>
+              <option value="text">{msg("reg.form.type.text")}</option>
+              <option value="select">{msg("reg.form.type.select")}</option>
+              <option value="checkbox">{msg("reg.form.type.checkbox")}</option>
             </select>
             <label className="flex items-center gap-1.5 whitespace-nowrap text-xs text-slate-500">
               <input
@@ -453,7 +441,7 @@ function FormBuilder({
                 checked={f.required}
                 onChange={(e) => update(i, { required: e.target.checked })}
               />
-              Required
+              {msg("reg.form.required")}
             </label>
             {canEdit && (
               <button
@@ -461,7 +449,7 @@ function FormBuilder({
                 onClick={() => onChange(fields.filter((_, j) => j !== i))}
                 className="ml-auto text-xs text-red-500 hover:underline"
               >
-                Remove
+                {msg("reg.form.remove")}
               </button>
             )}
           </div>
@@ -469,10 +457,10 @@ function FormBuilder({
       ))}
       {canEdit && fields.length < 12 && (
         <button type="button" onClick={add} className="btn btn-ghost w-full text-xs">
-          + Add question
+          {msg("reg.form.add")}
         </button>
       )}
-      <p className="text-[11px] text-slate-400">Save settings to apply form changes.</p>
+      <p className="text-[11px] text-slate-400">{msg("reg.form.saveNote")}</p>
     </div>
   );
 }

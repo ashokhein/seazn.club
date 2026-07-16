@@ -3,8 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { TOUR_STORAGE_KEY } from "@/components/product-tour";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function TourReplayButton() {
+  const msg = useMsg();
   const router = useRouter();
   const [busy, setBusy] = useState(false);
 
@@ -21,11 +23,9 @@ export function TourReplayButton() {
 
   return (
     <div className="flex items-center justify-between gap-4">
-      <p className="text-sm text-slate-500">
-        Walk through the basics again — organisation, settings and creating a competition.
-      </p>
+      <p className="text-sm text-slate-500">{msg("settings.org.tour.desc")}</p>
       <button type="button" onClick={replay} disabled={busy} className="btn btn-ghost shrink-0 text-xs">
-        {busy ? "Starting…" : "Replay tour"}
+        {busy ? msg("settings.org.tour.starting") : msg("settings.org.tour.replay")}
       </button>
     </div>
   );
