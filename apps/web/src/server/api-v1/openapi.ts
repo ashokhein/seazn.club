@@ -113,6 +113,11 @@ export const ROUTES: RouteSpec[] = [
   { path: "/fixtures/{id}/device-links/{linkId}", method: "delete", summary: "Revoke a device link (immediate 401 for the holder)", tag: "device-links", response: S.DeviceLink },
   // Scorer console (doc 13 §6, PROMPT-18)
   { path: "/me/assigned-fixtures", method: "get", summary: "Fixtures covered by the caller's scorer assignments (session only)", tag: "scorers", response: z.array(S.AssignedFixture), query: { date: { schema: { type: "string", format: "date" }, description: "Narrow to one day (YYYY-MM-DD)" } } },
+  // Officiating portal (PROMPT-57)
+  { path: "/me/assigned-fixtures/{id}/response", method: "patch", summary: "Accept or decline an officiating assignment (assigned official's session only; declines flag for a manual re-pick, never auto-reassign)", tag: "officials", request: S.OfficiatingResponseInput, response: S.OfficiatingResponseOut, errors: [422] },
+  { path: "/me/assigned-fixtures/{id}/score-link", method: "post", summary: "Mint the fixture's day-of device link for an assigned official (secret shown once; Pro `scoring.device_links`)", tag: "officials", response: S.OfficiatingScoreLink, status: 201, errors: [402, 422] },
+  { path: "/me/availability/officiating", method: "post", summary: "Mark a blackout date on every officiating profile linked to the caller (upsert on note)", tag: "officials", request: S.OfficiatingBlackoutInput, response: S.OfficiatingBlackout, status: 201 },
+  { path: "/me/availability/officiating", method: "delete", summary: "Clear a blackout date (idempotent)", tag: "officials", query: { date: { schema: { type: "string", format: "date" }, description: "The date to clear (YYYY-MM-DD)" } } },
   // API keys
   { path: "/orgs/{id}/api-keys", method: "get", summary: "List API keys", tag: "api-keys", response: z.array(S.ApiKey) },
   { path: "/orgs/{id}/api-keys", method: "post", summary: "Create an API key (secret shown once)", tag: "api-keys", request: S.CreateApiKey, response: S.CreatedApiKey, status: 201, errors: [402] },
@@ -184,6 +189,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/officials/{id}", method: "patch", summary: "Update an official", tag: "officials", request: S.PatchOfficial, response: S.Official, errors: [402] },
   { path: "/officials/{id}", method: "delete", summary: "Delete an official", tag: "officials" },
   { path: "/officials/import", method: "post", summary: "Bulk CSV/XLSX import (multipart `file`: Name, Roles, MaxPerDay)", tag: "officials", status: 201, errors: [422] },
+  { path: "/officials/{id}/invite", method: "post", summary: "Invite the official to claim their profile through the shared person-claim rail (session editors only; claim_url embeds the one-time secret)", tag: "officials", request: S.CreateClaimInvite, response: S.CreatedPersonClaim, status: 201, errors: [409] },
   { path: "/divisions/{id}/officials/auto", method: "post", summary: "Propose assignments — pure engine pass with locked rows as obstacles; writes nothing (Pro `officials.auto`)", tag: "officials", request: S.AutoAssignOfficials, response: S.OfficialsProposal, errors: [402] },
   { path: "/divisions/{id}/officials/apply", method: "post", summary: "Persist a proposal transactionally; emits `officials_assigned` (Pro `officials.auto`)", tag: "officials", request: S.ApplyOfficials, errors: [402, 422] },
   { path: "/fixtures/{id}/officials", method: "patch", summary: "Manual set/move/lock — single-role manual assignment free on every plan", tag: "officials", request: S.PatchFixtureOfficials, errors: [402] },

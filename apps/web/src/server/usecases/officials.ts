@@ -19,6 +19,8 @@ import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import { sendOfficialAssignedEmail } from "@/lib/email";
+import { createClaimInvite, type ClaimRow } from "./person-claims";
 import { parseUpload } from "./import-parse";
 
 type Tx = postgres.TransactionSql;
@@ -28,6 +30,7 @@ export interface OfficialRow {
   person_id: string | null;
   entrant_id: string | null;
   display_name: string;
+  email: string | null;
   role_keys: string[];
   home_pool_id: string | null;
   max_per_day: number | null;
@@ -35,7 +38,7 @@ export interface OfficialRow {
 }
 
 const COLS = [
-  "id", "person_id", "entrant_id", "display_name", "role_keys",
+  "id", "person_id", "entrant_id", "display_name", "email", "role_keys",
   "home_pool_id", "max_per_day", "created_at",
 ] as const;
 
@@ -43,6 +46,7 @@ export const CreateOfficialInput = z.object({
   display_name: z.string().min(1).max(200),
   person_id: z.string().uuid().optional(),
   entrant_id: z.string().uuid().optional(),
+  email: z.email().max(200).nullable().optional(),
   role_keys: z.array(z.string().min(1)).min(1).default(["referee"]),
   home_pool_id: z.string().uuid().nullable().optional(),
   max_per_day: z.number().int().positive().nullable().optional(),
@@ -64,14 +68,81 @@ export async function listOfficials(auth: AuthCtx): Promise<OfficialRow[]> {
     select ${tx(COLS)} from officials order by display_name, id`);
 }
 
+export interface OfficialConsoleRow extends OfficialRow {
+  /** person_id is bound to a login — the official sees this org in /me. */
+  claimed: boolean;
+  /** An open claim invite is out (not yet accepted, not expired). */
+  invite_pending: boolean;
+}
+
+/** Officials manager read: roster + claim-rail state per official (v11). */
+export async function listOfficialsForConsole(auth: AuthCtx): Promise<OfficialConsoleRow[]> {
+  return withTenant(auth.orgId, (tx) => tx<OfficialConsoleRow[]>`
+    select o.id, o.person_id, o.entrant_id, o.display_name, o.email,
+           o.role_keys, o.home_pool_id, o.max_per_day, o.created_at,
+           (p.user_id is not null) as claimed,
+           exists(select 1 from person_claims pc
+                  where pc.person_id = o.person_id
+                    and pc.claimed_at is null and pc.revoked_at is null
+                    and pc.expires_at > now()) as invite_pending
+    from officials o left join persons p on p.id = o.person_id
+    order by o.display_name, o.id`);
+}
+
+/** Blackout dates for the org's officials (organiser-side read; the console
+ *  warns before assigning someone onto a date they marked unavailable). */
+export async function listOfficialBlackouts(
+  auth: AuthCtx,
+): Promise<{ official_id: string; date: string; note: string | null }[]> {
+  return withTenant(auth.orgId, (tx) => tx<
+    { official_id: string; date: string; note: string | null }[]
+  >`
+    select official_id, date::text as date, note
+    from official_availability order by date, official_id`);
+}
+
+/**
+ * Invite an official to claim their profile (v11): ensure a linked person
+ * (creating one mirrors how player invites need a person row to bind), stamp
+ * officials.email, then mint the claim through the SHARED person-claim rail —
+ * same tokens, same 14-day TTL, same email-bound accept. No parallel system.
+ */
+export async function inviteOfficial(
+  auth: AuthCtx,
+  officialId: string,
+  email: string,
+): Promise<{ official: OfficialRow; claim: ClaimRow; secret: string; person_name: string; org_name: string }> {
+  const official = await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<OfficialRow[]>`
+      select ${tx(COLS)} from officials where id = ${officialId}`;
+    if (!row) throw new HttpError(404, "official not found");
+    if (!row.person_id) {
+      const [person] = await tx<{ id: string }[]>`
+        insert into persons (org_id, full_name)
+        values (${auth.orgId}, ${row.display_name}) returning id`;
+      row.person_id = person!.id;
+    }
+    const [updated] = await tx<OfficialRow[]>`
+      update officials set email = ${email.trim().toLowerCase()}, person_id = ${row.person_id}
+      where id = ${officialId} returning ${tx(COLS)}`;
+    return updated!;
+  });
+  const { secret, person_name, org_name, ...claim } = await createClaimInvite(
+    auth,
+    official.person_id!,
+    email.trim().toLowerCase(),
+  );
+  return { official, claim, secret, person_name, org_name };
+}
+
 export async function createOfficial(auth: AuthCtx, input: CreateOfficialInput): Promise<OfficialRow> {
   await assertRolesAllowed(auth.orgId, input.role_keys);
   return withTenant(auth.orgId, async (tx) => {
     const [row] = await tx<OfficialRow[]>`
-      insert into officials (org_id, person_id, entrant_id, display_name,
+      insert into officials (org_id, person_id, entrant_id, display_name, email,
                              role_keys, home_pool_id, max_per_day)
       values (${auth.orgId}, ${input.person_id ?? null}, ${input.entrant_id ?? null},
-              ${input.display_name}, ${tx.json(input.role_keys as never)},
+              ${input.display_name}, ${input.email ?? null}, ${tx.json(input.role_keys as never)},
               ${input.home_pool_id ?? null}, ${input.max_per_day ?? null})
       returning ${tx(COLS)}`;
     return row!;
@@ -296,15 +367,25 @@ export async function applyOfficialAssignments(
       }
     }
 
-    const touched = await tx<{ fixture_id: string }[]>`
+    // Response carry-over (v11): re-running auto must not reset an official's
+    // accept/decline on assignments that come back identical — the deleted
+    // rows are the memory, keyed (fixture, official, role).
+    const touched = await tx<PriorAssignment[]>`
       delete from fixture_officials
       where not locked and fixture_id in (select id from fixtures where division_id = ${divisionId})
-      returning fixture_id`;
+      returning fixture_id, official_id, role_key, response, responded_at, decline_reason`;
+    const prior = new Map(touched.map((t) => [assignmentKey(t.fixture_id, t.official_id, t.role_key), t]));
     let applied = 0;
+    const fresh: { fixture_id: string; official_id: string; role_key: string }[] = [];
     for (const a of input.assignments) {
+      const prev = prior.get(assignmentKey(a.fixture_id, a.official_id, a.role_key));
+      if (!prev) fresh.push(a);
       await tx`
-        insert into fixture_officials (fixture_id, official_id, role_key, source, locked)
-        values (${a.fixture_id}, ${a.official_id}, ${a.role_key}, 'auto', ${a.locked})
+        insert into fixture_officials (fixture_id, official_id, role_key, source, locked,
+                                       response, responded_at, decline_reason)
+        values (${a.fixture_id}, ${a.official_id}, ${a.role_key}, 'auto', ${a.locked},
+                ${prev?.response ?? "pending"}, ${prev?.responded_at ?? null},
+                ${prev?.decline_reason ?? null})
         on conflict (fixture_id, role_key, official_id) do nothing`;
       applied++;
     }
@@ -318,6 +399,10 @@ export async function applyOfficialAssignments(
       insert into division_events (division_id, seq, type, payload, actor_id)
       values (${divisionId}, ${seq + 1}, 'officials_assigned',
               ${tx.json({ applied } as never)}, ${auth.userId})`;
+    const notices = await assignedNotices(tx, auth.orgId, fresh);
+    return { applied, notices };
+  }).then(({ applied, notices }) => {
+    sendAssignedNotices(notices);
     return { applied };
   });
 }
@@ -346,19 +431,126 @@ export async function patchFixtureOfficials(
   return withTenant(auth.orgId, async (tx) => {
     const [fixture] = await tx<{ id: string }[]>`select id from fixtures where id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
-    await tx`delete from fixture_officials where fixture_id = ${fixtureId}`;
+    // Same carry-over rule as the auto path: a re-set that keeps the same
+    // (official, role) must not reset the official's response or re-notify.
+    const priorRows = await tx<PriorAssignment[]>`
+      delete from fixture_officials where fixture_id = ${fixtureId}
+      returning fixture_id, official_id, role_key, response, responded_at, decline_reason`;
+    const prior = new Map(priorRows.map((t) => [assignmentKey(t.fixture_id, t.official_id, t.role_key), t]));
+    const fresh: { fixture_id: string; official_id: string; role_key: string }[] = [];
     for (const s of input.set) {
+      const prev = prior.get(assignmentKey(fixtureId, s.official_id, s.role_key));
+      if (!prev) fresh.push({ fixture_id: fixtureId, official_id: s.official_id, role_key: s.role_key });
       await tx`
-        insert into fixture_officials (fixture_id, official_id, role_key, source, locked)
-        values (${fixtureId}, ${s.official_id}, ${s.role_key}, 'manual', ${s.locked})`;
+        insert into fixture_officials (fixture_id, official_id, role_key, source, locked,
+                                       response, responded_at, decline_reason)
+        values (${fixtureId}, ${s.official_id}, ${s.role_key}, 'manual', ${s.locked},
+                ${prev?.response ?? "pending"}, ${prev?.responded_at ?? null},
+                ${prev?.decline_reason ?? null})`;
     }
     const cache = await refreshOfficialsCache(tx, [fixtureId]);
-    return { officials: cache.get(fixtureId) ?? [] };
+    const notices = await assignedNotices(tx, auth.orgId, fresh);
+    return { officials: cache.get(fixtureId) ?? [], notices };
+  }).then(({ officials, notices }) => {
+    sendAssignedNotices(notices);
+    return { officials };
   });
 }
 
-/** Rebuild fixtures.officials (the read cache) from fixture_officials. */
-async function refreshOfficialsCache(
+// ---------------------------------------------------------------------------
+// Assignment notifications (v11): who newly got a fixture, with enough detail
+// for the official-assigned email. Assembled inside the tx, sent after commit
+// (fire-and-forget — a mail hiccup must not fail the assignment).
+// ---------------------------------------------------------------------------
+
+interface PriorAssignment {
+  fixture_id: string;
+  official_id: string;
+  role_key: string;
+  response: string;
+  responded_at: string | null;
+  decline_reason: string | null;
+}
+
+function assignmentKey(fixtureId: string, officialId: string, roleKey: string): string {
+  return `${fixtureId}:${officialId}:${roleKey}`;
+}
+
+export interface AssignedNotice {
+  email: string;
+  official_name: string;
+  org_name: string;
+  fixtures: {
+    label: string;
+    role_key: string;
+    scheduled_at: string | null;
+    venue_tz: string | null;
+    venue: string | null;
+    court_label: string | null;
+  }[];
+}
+
+async function assignedNotices(
+  tx: Tx,
+  orgId: string,
+  fresh: { fixture_id: string; official_id: string; role_key: string }[],
+): Promise<AssignedNotice[]> {
+  if (fresh.length === 0) return [];
+  const officialIds = [...new Set(fresh.map((f) => f.official_id))];
+  const fixtureIds = [...new Set(fresh.map((f) => f.fixture_id))];
+  const officials = await tx<{ id: string; display_name: string; email: string | null }[]>`
+    select id, display_name, email from officials
+    where id in ${tx(officialIds)} and email is not null`;
+  if (officials.length === 0) return [];
+  const [org] = await tx<{ name: string }[]>`
+    select name from organizations where id = ${orgId}`;
+  const fixtures = await tx<{
+    id: string; scheduled_at: string | null; venue: string | null;
+    court_label: string | null; venue_tz: string | null;
+    home_name: string | null; away_name: string | null;
+  }[]>`
+    select f.id, f.scheduled_at, f.venue, f.court_label, ss.tz as venue_tz,
+           h.display_name as home_name, a.display_name as away_name
+    from fixtures f
+    left join schedule_settings ss on ss.division_id = f.division_id
+    left join entrants h on h.id = f.home_entrant_id
+    left join entrants a on a.id = f.away_entrant_id
+    where f.id in ${tx(fixtureIds)}`;
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  return officials.map((o) => ({
+    email: o.email!,
+    official_name: o.display_name,
+    org_name: org?.name ?? "",
+    fixtures: fresh
+      .filter((f) => f.official_id === o.id)
+      .map((f) => {
+        const fx = byId.get(f.fixture_id);
+        return {
+          label: `${fx?.home_name ?? "TBD"} vs ${fx?.away_name ?? "TBD"}`,
+          role_key: f.role_key,
+          scheduled_at: fx?.scheduled_at ?? null,
+          venue_tz: fx?.venue_tz ?? null,
+          venue: fx?.venue ?? null,
+          court_label: fx?.court_label ?? null,
+        };
+      }),
+  }));
+}
+
+function sendAssignedNotices(notices: AssignedNotice[]): void {
+  for (const n of notices) {
+    void sendOfficialAssignedEmail(n.email, {
+      orgName: n.org_name,
+      officialName: n.official_name,
+      fixtures: n.fixtures,
+    }).catch(() => {});
+  }
+}
+
+/** Rebuild fixtures.officials (the read cache) from fixture_officials.
+ *  Exported for the official-side response write (me-officiating.ts), which
+ *  runs on the superuser connection. */
+export async function refreshOfficialsCache(
   tx: Tx,
   fixtureIds: string[],
 ): Promise<Map<string, unknown>> {
@@ -370,7 +562,9 @@ async function refreshOfficialsCache(
                        'official_id', fo.official_id,
                        'name', o.display_name,
                        'role', fo.role_key,
-                       'locked', fo.locked)
+                       'locked', fo.locked,
+                       'response', fo.response,
+                       'decline_reason', fo.decline_reason)
                       order by fo.role_key, o.display_name)
                      from fixture_officials fo
                      join officials o on o.id = fo.official_id

@@ -109,6 +109,9 @@ export interface ResolvedClaim {
   person_id: string;
   person_name: string;
   email: string;
+  /** The person is on the officials roster (v11) — the claim page swaps to
+   *  officiating copy; the claim mechanics are identical. */
+  is_official: boolean;
 }
 
 /**
@@ -127,6 +130,8 @@ export async function resolveClaimToken(token: string): Promise<ResolvedClaim> {
   >`
     select pc.id, pc.org_id, o.name as org_name, pc.person_id,
            p.full_name as person_name, pc.email,
+           exists(select 1 from officials off where off.person_id = pc.person_id)
+             as is_official,
            pc.expires_at, pc.claimed_at, pc.revoked_at, p.user_id
     from person_claims pc
     join persons p on p.id = pc.person_id
@@ -149,6 +154,7 @@ export async function resolveClaimToken(token: string): Promise<ResolvedClaim> {
     person_id: claim.person_id,
     person_name: claim.person_name,
     email: claim.email,
+    is_official: claim.is_official,
   };
 }
 
