@@ -18,9 +18,8 @@ them leak to **spectators** on localized pages:
 2. **Card colours** (`yellow`/`red`) — football/period pad buttons (console) AND
    public shared competition page + `ticket.png`.
 3. **Wicket / extra kinds** (`bowled`, `wide`, …) — console only: cricket-pad
-   dropdowns render raw `W: bowled`; the activity feed (`describeEvent`) prints
-   `Innings · runs: 3, wickets: 5, legalBalls: 12` in English on a French console
-   (verified live on an in_play cricket fixture).
+   dropdowns render raw `W: bowled`. (The activity feed also prints these
+   English via `describeEvent` — see "Out of scope" below.)
 4. **Brand swatch names** (`Teal`, `Crimson`, …) — console only: the
    brand-colour picker. The colour themes public pages but the *name* is never
    shown publicly.
@@ -32,6 +31,15 @@ User decision: localize all four, everywhere they render.
 Chess methods (`checkmate`/`resign`), tennis point numerals + `Ad`/`Deuce`
 calls, and format / variant / official NAMES remain English. Stored enums are
 never touched.
+
+**Out of scope (deliberately skipped): the activity feed (`describeEvent` in
+`lib/event-copy.ts`).** It is the only open-ended surface — event payloads carry
+arbitrary scalar keys (`runs`/`wickets`/`legalBalls`/…) that are not a closed TS
+enum, so localizing it needs a dynamic-key lookup + a contract test rather than
+the compile-safe typed maps used everywhere else. It is also console-only (never
+public). Left English this cycle; the feed keeps showing `Innings ·
+runs: 3, wickets: 5` and `Started`. Everything else below is a **closed enum**,
+localized via fully-typed `Record<Enum, MessageKey>` maps.
 
 ## Principle
 
@@ -52,28 +60,53 @@ reachable from both client (`useMsg`/`useT`) and server (`msgFor`/`t`).
 | `extra.<kind>` | 5 | wide, noball, bye, legbye, penalty |
 | `card.<colour>` | 2 | yellow, red |
 | `swatch.<name>` | 11 | Teal, Ocean, Cobalt, Midnight, Forest, Ember, Bronze, Crimson, Magenta, Graphite (+ any palette additions) |
-| `event.scalar.<key>` | ~5 | runs, wickets, legalBalls, partial, overs (the cricket-summary scalar keys surfaced by `describeEvent`) |
 
-~43 en keys → `npm run i18n:translate` fills fr/es/nl → `npm run i18n:check`
-parity gate (hard-fails on drift).
+~38 en keys → `npm run i18n:translate` fills fr/es/nl → `npm run i18n:check`
+parity gate (hard-fails on drift). Every key added to `dictionaries/en/ui.json`
+becomes part of the `MessageKey` union after `npm run i18n:gen-keys`.
 
-## Helpers
+## Helpers — typed maps, no dynamic keys
 
-Pure lookup helpers, each taking a **bound translator** `tf: (key) => string` so
-the same helper works server-side (`tf = (k) => t(dict, k)`) and client-side
-(`tf = useMsg()` / `useT()`), matching the `familyCopy` pattern from #105.
+Every vocab is a **closed enum**, so each helper indexes a
+`Record<Enum, MessageKey>` map and takes a `MessageKey`-typed translator
+`m: (key: MessageKey) => string` (client `useMsg()`, server `msgFor(locale, …)`).
+This keeps BOTH compile-time nets: the `Record` forces every enum member to be
+mapped (exhaustive), and the `MessageKey` value type forces every referenced key
+to exist in `ui.json`. No `useT`/dynamic template strings — no silent-fallback
+risk.
 
+```ts
+// apps/web/src/lib/scoring-vocab.ts  (pure, no server-only imports)
+import type { MessageKey } from "@/lib/messages";
+import { swatchName } from "@/lib/brand-palette";
+
+export type WicketKind = "bowled"|"caught"|"lbw"|"runout"|"stumped"|"hitwicket"|"retired"|"obstructed"|"timedout";
+export type ExtraKind  = "wide"|"noball"|"bye"|"legbye"|"penalty";
+export type CardColour = "yellow"|"red";
+export type SportKey   = "badminton"|"boardgame"|"carrom"|"cricket"|"football"|"generic"|"hockey"|"icehockey"|"tabletennis"|"tennis"|"volleyball";
+
+const WICKET_KEY: Record<WicketKind, MessageKey> = { bowled:"wicket.bowled", caught:"wicket.caught", lbw:"wicket.lbw", runout:"wicket.runout", stumped:"wicket.stumped", hitwicket:"wicket.hitwicket", retired:"wicket.retired", obstructed:"wicket.obstructed", timedout:"wicket.timedout" };
+const EXTRA_KEY: Record<ExtraKind, MessageKey> = { wide:"extra.wide", noball:"extra.noball", bye:"extra.bye", legbye:"extra.legbye", penalty:"extra.penalty" };
+const CARD_KEY:  Record<CardColour, MessageKey> = { yellow:"card.yellow", red:"card.red" };
+const SPORT_KEY: Record<SportKey, MessageKey> = { badminton:"sport.badminton", boardgame:"sport.boardgame", carrom:"sport.carrom", cricket:"sport.cricket", football:"sport.football", generic:"sport.generic", hockey:"sport.hockey", icehockey:"sport.icehockey", tabletennis:"sport.tabletennis", tennis:"sport.tennis", volleyball:"sport.volleyball" };
+const SWATCH_KEY: Record<string, MessageKey> = { Teal:"swatch.Teal", Ocean:"swatch.Ocean", Cobalt:"swatch.Cobalt", Midnight:"swatch.Midnight", Forest:"swatch.Forest", Ember:"swatch.Ember", Bronze:"swatch.Bronze", Crimson:"swatch.Crimson", Magenta:"swatch.Magenta", Graphite:"swatch.Graphite" };
+
+type M = (key: MessageKey) => string;
+const title = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+export const wicketLabel = (k: string, m: M) => (k in WICKET_KEY ? m(WICKET_KEY[k as WicketKind]) : title(k));
+export const extraLabel  = (k: string, m: M) => (k in EXTRA_KEY ? m(EXTRA_KEY[k as ExtraKind]) : title(k));
+export const cardLabel   = (c: string, m: M) => (c in CARD_KEY ? m(CARD_KEY[c as CardColour]) : title(c));
+export const sportLabel  = (k: string, m: M) => (k in SPORT_KEY ? m(SPORT_KEY[k as SportKey]) : title(k));
+export function swatchLabel(hex: string | null | undefined, m: M): string | null {
+  const name = swatchName(hex);
+  return name ? (name in SWATCH_KEY ? m(SWATCH_KEY[name]) : name) : null;
+}
 ```
-sportLabel(key, tf)            -> tf(`sport.${key}`),  fallback titleCase(key)
-wicketLabel(kind, tf)          -> tf(`wicket.${kind}`)
-extraLabel(kind, tf)           -> tf(`extra.${kind}`)
-cardLabel(colour, tf)          -> tf(`card.${colour}`)
-swatchLabel(hex, tf)           -> swatchName(hex) -> tf(`swatch.${name}`)  (null-safe)
-```
 
-Location: a new `apps/web/src/lib/scoring-vocab.ts` (pure, no server-only
-imports so client bundles are safe). Unknown keys fall back to a humanized token
-(never throw) — same posture as existing lookup helpers.
+Helpers accept `string` for the enum arg (payload/DB values are `string`) but map
+lookups are typed; unknown values fall back to a humanized token (never throw) —
+same posture as existing lookup helpers.
 
 ## Wiring by surface
 
@@ -84,32 +117,17 @@ imports so client bundles are safe). Unknown keys fall back to a humanized token
 | Period pad card/class | `components/v2/pads/period-pad.tsx` | `useMsg` → `cardLabel` |
 | Discover chips (public) | `app/[lang]/(marketing)/discover/**` | server `sportLabel(key, k=>t(dict,k))` |
 | Shared public pages | `app/(public)/shared/**` | server `sportLabel` + `cardLabel` |
-| Activity feed | `lib/event-copy.ts` `describeEvent` | **optional `t` param**; scalars via `event.scalar.*`; card via `cardLabel` |
 | Swatch picker | `components/brand-color-picker.tsx` | `useMsg` → `swatchLabel` |
 | Ticket / OG images | `app/(public)/r/[ref]/ticket.png`, `app/(public)/shared/**/opengraph-image.tsx` | server `msgFor(locale, ...)` (sport + card) |
 
-### `describeEvent` backward-compat (the one nuance)
-
-`describeEvent(row, names)` is isomorphic and English-only today; its only app
-caller is `fixture-console.tsx` (client). Change the signature to
-`describeEvent(row, names, t?)`:
-
-- **No `t`** → English exactly as now. Keeps every existing test, any engine/
-  isomorphic caller, and API/log paths byte-identical.
-- **With `t`** → localizes the label (`Innings`, `Started`, …), the scalar keys
-  (`runs`/`wickets`/…), and the football card colour. `fixture-console` passes a
-  bound translator from `useMsg`.
-
-`scalars(p)` gains an optional `tf` param; when present it maps each key via
-`event.scalar.<key>` before rendering `label: value`.
+(Activity feed `describeEvent` is out of scope this cycle — see "Out of scope".)
 
 ## Testing (regression-per-change, per house rule)
 
-- `scoring-vocab.test.ts` — each helper: stub-dict returns localized, unknown
-  key falls back, `swatchLabel(null)` → null.
-- `event-copy` test — `describeEvent` with no `t` = current English strings
-  (pin); with a fr stub `t` = localized label + scalars + card, **no English
-  leak**.
+- `scoring-vocab.test.ts` — each helper: typed-map returns the mapped key's
+  value, unknown value falls back to title-case, `swatchLabel(null)` → null;
+  and an exhaustiveness assert that every `WICKET_KINDS`/`EXTRA_KINDS`/sport
+  key/palette name resolves (guards a future enum addition without a key).
 - Pad tests — cricket-pad wicket/extra options localized under a `fr`
   `<DictProvider>`; football-pad card buttons; update existing
   `device-score-pad.test`.
