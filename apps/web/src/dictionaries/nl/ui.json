@@ -154,6 +154,7 @@
   "sponsors.save": "Opslaan",
   "sponsors.clicks": "{count} klikken",
   "sponsors.uploadLogo": "Logo uploaden voor {name}",
+  "sponsors.urlInvalid": "Voer een geldige link in — example.com of https://example.com.",
   "claim.invite": "Uitnodigen om te claimen",
   "claim.invite.tip": "Mail deze speler een link om zijn profiel over te nemen — zijn wedstrijden bekijken, beschikbaarheid doorgeven, eigen toestemming beheren.",
   "claim.invite.title": "{name} uitnodigen om zijn profiel te claimen",

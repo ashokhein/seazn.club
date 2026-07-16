@@ -154,6 +154,7 @@
   "sponsors.save": "Enregistrer",
   "sponsors.clicks": "{count} clics",
   "sponsors.uploadLogo": "Téléverser le logo de {name}",
+  "sponsors.urlInvalid": "Saisissez un lien valide — example.com ou https://example.com.",
   "claim.invite": "Inviter à revendiquer",
   "claim.invite.tip": "Envoyez à ce joueur un lien par e-mail pour reprendre son profil — voir ses matchs, indiquer sa disponibilité, gérer son propre consentement.",
   "claim.invite.title": "Inviter {name} à revendiquer son profil",

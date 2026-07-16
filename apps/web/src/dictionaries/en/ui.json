@@ -154,6 +154,7 @@
   "sponsors.save": "Save",
   "sponsors.clicks": "{count} clicks",
   "sponsors.uploadLogo": "Upload logo for {name}",
+  "sponsors.urlInvalid": "Enter a valid link — example.com or https://example.com.",
   "claim.invite": "Invite to claim",
   "claim.invite.tip": "Email this player a link to take over their profile — see their matches, RSVP availability, manage their own consent.",
   "claim.invite.title": "Invite {name} to claim their profile",

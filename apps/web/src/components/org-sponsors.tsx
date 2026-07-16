@@ -60,6 +60,26 @@ const EMPTY_DRAFT: Draft = {
   name: "", url: "", tier: "partner", competition_id: "", file: null, preview: null,
 };
 
+/** People type bare domains — give the link a scheme before validation. */
+function normalizeUrl(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+/** Basic link check (field is optional): http(s), a dotted hostname, no spaces. */
+function isValidSponsorUrl(raw: string): boolean {
+  const normalized = normalizeUrl(raw);
+  if (!normalized) return true;
+  if (/\s/.test(raw.trim())) return false;
+  try {
+    const u = new URL(normalized);
+    return (u.protocol === "http:" || u.protocol === "https:") && u.hostname.includes(".");
+  } catch {
+    return false;
+  }
+}
+
 /** The one sponsor form — add and edit share it; logo travels with it.
  *  Hoisted out of OrgSponsors: a nested component definition would remount
  *  (and drop focus) on every parent render. */
@@ -88,6 +108,7 @@ function SponsorForm({
   // House uploader pattern (org-logo, prose-editor): a real button clicks a
   // ref'd hidden input — label-wrapped file inputs misfire in some browsers.
   const fileRef = useRef<HTMLInputElement>(null);
+  const urlInvalid = value.url.trim() !== "" && !isValidSponsorUrl(value.url);
   return (
       <div className="flex flex-wrap items-start gap-4">
         <button
@@ -136,8 +157,14 @@ function SponsorForm({
                 value={value.url}
                 onChange={(e) => onChange((prev) => ({ ...prev, url: e.target.value }))}
                 placeholder="https://…"
-                className="input w-full"
+                aria-invalid={urlInvalid || undefined}
+                className={`input w-full ${urlInvalid ? "border-red-400" : ""}`}
               />
+              {urlInvalid ? (
+                <span className="mt-1 block text-xs text-red-500">
+                  {msg("sponsors.urlInvalid")}
+                </span>
+              ) : null}
             </label>
             {hasTiers ? (
               <label className="block">
@@ -182,7 +209,7 @@ function SponsorForm({
           <div className="mt-3 flex items-center gap-2">
             <button
               type="button"
-              disabled={busy || !value.name.trim()}
+              disabled={busy || !value.name.trim() || urlInvalid}
               onClick={onSubmit}
               className="btn btn-primary"
             >
@@ -240,12 +267,6 @@ export function OrgSponsors({
     return data.data ?? data;
   }
 
-  /** People type bare domains — give the link a scheme before validation. */
-  function normalizeUrl(raw: string): string {
-    const trimmed = raw.trim();
-    if (!trimmed) return "";
-    return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
-  }
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
