@@ -87,6 +87,10 @@ field of teams is disproportionately hard:
   division and a competition — auto-rotating standings (paginated) / fixtures /
   in-play (pinned) / bracket slides, composed from the existing public views,
   visibility-aware refresh. (Bracket slide soft-deps PROMPT-62.)
+- **PROMPT-65** — Per-player stats on the player profile (extend `getPublicPlayer`
+  to read `player_stat_snapshots`, render a sport-neutral stat block, link
+  leaderboard rows to profiles) + self-service player photo on `/me` (the upload
+  already exists organiser-side; add a `me/persons/[id]/photo` route + UI).
 
 ## Reference
 
