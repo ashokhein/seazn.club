@@ -1202,7 +1202,10 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   );
   check(
     "v3/11 manage sections stay hidden without a Stripe customer (pro)",
-    !proBilling.body.includes("Payment methods"),
+    // Check the rendered section, not the bare label: the /o DictProvider
+    // serializes the whole `ui` dict (incl. "billing.paymentMethods") into the
+    // page's flight payload, so the localized string is always present in body.
+    !proBilling.body.includes('id="payment-methods"'),
   );
   // Product tour: the Billing and Connect steps highlight real anchors — the
   // plan card on billing, the Stripe card on payments (owner-only).

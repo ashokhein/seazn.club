@@ -279,7 +279,8 @@ describe.skipIf(!HAS_DB)("public discovery (doc 15, PROMPT-19)", () => {
 
   it("empty state: home sections collapse to nothing", async () => {
     const { LiveNowStrip, ThisWeekSection } = await import("@/components/discovery-cards");
-    expect(LiveNowStrip({ fixtures: [] })).toBeNull();
-    expect(ThisWeekSection({ entries: [] })).toBeNull();
+    // Both collapse before touching copy, so an empty dict/locale is fine here.
+    expect(LiveNowStrip({ fixtures: [], dict: {} })).toBeNull();
+    expect(ThisWeekSection({ entries: [], dict: {}, lang: "en" })).toBeNull();
   });
 });

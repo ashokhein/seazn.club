@@ -4,6 +4,7 @@
 // engine (previewDivisionFixtures). The enumeration test asserts every
 // engine StageKind maps to a family here, so a new format can't ship
 // undocumented. Client-safe: the picker side panel imports this too.
+import uiEn from "@/dictionaries/en/ui.json";
 
 export interface FormatFamily {
   slug: string;
@@ -209,32 +210,27 @@ export function FormatDiagram({ slug }: { slug: string }) {
 }
 
 // ── The families ───────────────────────────────────────────────────────────
+// Prose (title/tagline/bestFor/tradeoff/body) lives ONCE in the `ui` catalog
+// (dictionaries/*/ui.json, keys `format.<slug>.*`) so it flows through the
+// translation pipeline + parity gate — exactly like the tips registry. This
+// config keeps only the structure (kinds, canned preview stages, pro flag) and
+// stitches the English copy back on from the en catalog, so every existing
+// consumer that reads `family.title` keeps working (English). Localized surfaces
+// (marketing /formats, the console explainer panel) use familyCopy() instead.
+type FamilyStruct = Pick<FormatFamily, "slug" | "kinds" | "cannedStages"> & { pro?: boolean };
 
-export const FORMAT_FAMILIES: FormatFamily[] = [
+const enUi = uiEn as Record<string, string>;
+const enCopy = (slug: string, field: string): string => enUi[`format.${slug}.${field}`] ?? "";
+
+const FAMILY_STRUCTS: FamilyStruct[] = [
   {
     slug: "league",
-    title: "League (round robin)",
-    tagline: "Everyone plays everyone; the table decides.",
     kinds: ["league"],
-    bestFor: "Season-long divisions and social groups where everyone wants a full card of matches.",
-    tradeoff: "The fairest ranking, but the most matches — n(n−1)/2 fixtures for one leg.",
-    body: [
-      "Every entrant plays every other entrant a fixed number of times (one leg, two legs, or more). Wins and results feed a points table; the table's final order is the result.",
-      "Nobody is eliminated, so it maximises play for everyone — the trade is time: eight entrants in one leg is 28 matches. Ties in the table resolve by your tiebreaker cascade (head-to-head, difference, and so on).",
-    ],
     cannedStages: [{ kind: "league", name: "League", config: { legs: 1 }, qualification: null }],
   },
   {
     slug: "groups-knockout",
-    title: "Groups + knockout",
-    tagline: "Pools qualify their best into a bracket — the World Cup shape.",
     kinds: ["group"],
-    bestFor: "One-day tournaments: guaranteed group matches for all, a dramatic bracket for the best.",
-    tradeoff: "Great balance of fairness and drama; needs group sizes planned around your court time.",
-    body: [
-      "Entrants split into pools that each play a round robin. The top of each pool — top 2 is classic — cross over into a knockout bracket: A1 meets B2, B1 meets A2, so group winners are rewarded with the easier semi.",
-      "Everyone gets their group matches even on a losing day, and the finish is winner-takes-all. This is the default shape for most one-day multi-court events.",
-    ],
     cannedStages: [
       { kind: "group", name: "Group stage", config: { legs: 1, pools: { count: 2 } }, qualification: null },
       {
@@ -252,57 +248,25 @@ export const FORMAT_FAMILIES: FormatFamily[] = [
   },
   {
     slug: "knockout",
-    title: "Knockout (single elimination)",
-    tagline: "Lose once and you're out.",
     kinds: ["knockout"],
-    bestFor: "Big fields on tight time — a 32-draw resolves in five rounds.",
-    tradeoff: "Fastest to a champion, but half your entrants play exactly one match.",
-    body: [
-      "A seeded bracket: winners advance, losers are done. Byes fill the bracket when the entry count isn't a power of two, protecting the top seeds.",
-      "It's the most time-efficient format there is, and the least forgiving — an early upset sends a favourite home after one match. Pair it with a group stage if everyone deserves more play.",
-    ],
     cannedStages: [{ kind: "knockout", name: "Knockout", config: {}, qualification: null }],
   },
   {
     slug: "double_elim",
-    title: "Double elimination",
-    tagline: "Everyone gets a second life in the losers bracket.",
     kinds: ["double_elim"],
-    bestFor: "Competitive brackets where one bad match shouldn't end a tournament.",
-    tradeoff: "Roughly double the matches of a knockout; the grand final can need two games.",
     pro: true,
-    body: [
-      "Two brackets run side by side: lose in the winners bracket and you drop to the losers bracket, where a second defeat is final. The survivors of each meet in the grand final — and a losers-bracket champion must beat the winners-bracket champion twice.",
-      "Beloved in esports, TT and pool: fairer than single elimination, still bracket-shaped, at about twice the match count.",
-    ],
     cannedStages: [
       { kind: "double_elim", name: "Double elimination", config: {}, qualification: null },
     ],
   },
   {
     slug: "swiss",
-    title: "Swiss",
-    tagline: "Equals play equals for a fixed number of rounds.",
     kinds: ["swiss"],
-    bestFor: "Big fields, short time, nobody eliminated — chess's gift to weekend events.",
-    tradeoff: "Everyone plays every round and the ranking converges fast; pairings only exist round by round.",
-    body: [
-      "Round 1 is seeded. From round 2, entrants meet opponents on the same score — winners play winners, strugglers play strugglers. After a fixed number of rounds (5 covers up to 32 entrants well), the table decides.",
-      "Nobody is knocked out and blowout mismatches disappear after round one. The schedule can't be printed in advance — each round's pairings come from the live standings, which the app draws for you.",
-    ],
     cannedStages: [{ kind: "swiss", name: "Swiss", config: { rounds: 5 }, qualification: null }],
   },
   {
     slug: "stepladder",
-    title: "Stepladder finals",
-    tagline: "The lowest seed climbs; the top seed waits at the summit.",
     kinds: ["stepladder"],
-    bestFor: "Finals night after a league — every match eliminates someone, seeding really matters.",
-    tradeoff: "A brilliant finish for 3–5 qualifiers; the top seed plays only once.",
-    body: [
-      "Seed 4 plays seed 3; the winner plays seed 2; that winner plays seed 1 in the final. Finishing top of the league buys you rest and a single decisive match — finishing fourth means winning three in a row.",
-      "Usually staged as the finale after a league stage, turning a table into an event.",
-    ],
     cannedStages: [
       { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
       { kind: "stepladder", name: "Stepladder finals", config: {}, qualification: { topN: 4 } },
@@ -310,16 +274,8 @@ export const FORMAT_FAMILIES: FormatFamily[] = [
   },
   {
     slug: "americano",
-    title: "Americano & Mexicano",
-    tagline: "Individuals rotate partners; personal points decide.",
     kinds: ["americano"],
-    bestFor: "Padel and social doubles — solo sign-ups, everyone plays with everyone.",
-    tradeoff: "Maximum mixing and zero elimination; needs a points-based sport and even court usage.",
     pro: true,
-    body: [
-      "You enter alone. Each round the app deals new pairs — in Americano the rotation is fixed so everyone partners everyone; in Mexicano the pairings re-rank each round from live points (1st + 4th vs 2nd + 3rd), so games stay close.",
-      "Every point you win is yours personally, whoever your partner was; the individual leaderboard decides. The dominant format in padel clubs, and a joy for any doubles sport's social night.",
-    ],
     cannedStages: [
       {
         kind: "americano",
@@ -331,21 +287,44 @@ export const FORMAT_FAMILIES: FormatFamily[] = [
   },
   {
     slug: "ladder",
-    title: "Ladder",
-    tagline: "A living ranking — challenge above you, defend below.",
     kinds: ["ladder"],
-    bestFor: "Ongoing club rankings with no fixed schedule — squash boxes, TT clubs.",
-    tradeoff: "Runs forever with matches on demand; there's no printed fixture list by design.",
     pro: true,
-    body: [
-      "Entrants sit on a ranked ladder. Anyone may challenge a player within range above them (three rungs is typical); win and you take their rung. Matches happen whenever the two of you play — the app records the result and reorders the ladder.",
-      "Perfect for a club season with no fixture nights: the ladder is always current, and the year-end order is its own trophy.",
-    ],
     cannedStages: [
       { kind: "ladder", name: "Ladder", config: { challengeRange: 3 }, qualification: null },
     ],
   },
 ];
+
+export const FORMAT_FAMILIES: FormatFamily[] = FAMILY_STRUCTS.map((s) => ({
+  ...s,
+  title: enCopy(s.slug, "title"),
+  tagline: enCopy(s.slug, "tagline"),
+  bestFor: enCopy(s.slug, "bestFor"),
+  tradeoff: enCopy(s.slug, "tradeoff"),
+  body: [enCopy(s.slug, "body.0"), enCopy(s.slug, "body.1")],
+}));
+
+/** Localized prose for a family. `tf` is a bound lookup into the `ui` dict —
+ *  `(k) => t(uiDict, k)` on the server, or `useT()` in a client island under a
+ *  DictProvider. Falls back to English via the merged dict (getDictionary merges
+ *  en), so a not-yet-translated key still renders. */
+export interface FormatCopy {
+  title: string;
+  tagline: string;
+  bestFor: string;
+  tradeoff: string;
+  body: string[];
+}
+export function familyCopy(family: FormatFamily, tf: (key: string) => string): FormatCopy {
+  const k = (field: string) => tf(`format.${family.slug}.${field}`);
+  return {
+    title: k("title"),
+    tagline: k("tagline"),
+    bestFor: k("bestFor"),
+    tradeoff: k("tradeoff"),
+    body: [k("body.0"), k("body.1")],
+  };
+}
 
 export function formatFamily(slug: string): FormatFamily | null {
   return FORMAT_FAMILIES.find((f) => f.slug === slug) ?? null;

@@ -6,6 +6,7 @@ import { Reveal } from "@/components/marketing/reveal";
 import { notFound } from "next/navigation";
 import { getDictionary, t } from "@/lib/i18n";
 import { hasLocale } from "@/lib/i18n-constants";
+import { DictProvider } from "@/components/i18n/dict-provider";
 
 export async function generateMetadata({
   params,
@@ -55,7 +56,9 @@ export default async function SchedulingPage({
             {t(d, "scheduling.hero.subhead")}
           </p>
           <div className="mt-8">
-            <SchedulingBoard />
+            <DictProvider dict={d} locale={lang}>
+              <SchedulingBoard />
+            </DictProvider>
           </div>
         </section>
 

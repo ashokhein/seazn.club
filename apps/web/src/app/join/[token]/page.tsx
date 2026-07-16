@@ -1,5 +1,5 @@
 import { getCurrentUser, getOrgRole } from "@/lib/auth";
-import { inviteProblem, loadInvite, type InviteRow } from "@/lib/invites";
+import { inviteProblemCode, loadInvite, type InviteRow } from "@/lib/invites";
 import type { OrgRole } from "@/lib/types";
 import { AuthForm } from "@/components/auth-form";
 import { JoinInvite } from "@/components/join-invite";
@@ -49,7 +49,12 @@ export default async function JoinPage({
   const [user, invite] = await Promise.all([getCurrentUser(), loadInvite(token)]);
   const locale = await resolveLocale();
   const ui = await getDictionary(locale, "ui");
-  const problem = invite ? inviteProblem(invite) : t(ui, "join.notFound");
+  const problemCode = invite ? inviteProblemCode(invite) : null;
+  const problem = !invite
+    ? t(ui, "join.notFound")
+    : problemCode
+      ? t(ui, `join.problem.${problemCode}`)
+      : null;
   const existingRole =
     user && invite ? await getOrgRole(invite.org_id, user.id) : null;
   // Email invites are personal (acceptInvite enforces this server-side) —

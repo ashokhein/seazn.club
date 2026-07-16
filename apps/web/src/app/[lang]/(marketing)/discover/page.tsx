@@ -126,7 +126,7 @@ export default async function DiscoverPage({
         ) : (
           <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {entries.map((e) => (
-              <DiscoveryCard key={e.id} entry={e} withJsonLd />
+              <DiscoveryCard key={e.id} entry={e} dict={d} lang={lang} withJsonLd />
             ))}
           </div>
         )}

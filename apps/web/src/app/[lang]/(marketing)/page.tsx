@@ -163,7 +163,7 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
         </section>
 
         {/* Playing this week (collapses when empty) */}
-        <ThisWeekSection entries={thisWeek} />
+        <ThisWeekSection entries={thisWeek} dict={d} lang={lang} />
 
         {/* Floodlit finale — pricing + CTA in one night block */}
         <section className="relative overflow-hidden bg-[linear-gradient(180deg,var(--mk-night-2),var(--mk-night))] py-20 text-center">

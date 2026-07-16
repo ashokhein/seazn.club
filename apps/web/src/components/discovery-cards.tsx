@@ -4,6 +4,8 @@
 // no person data ever reaches these props.
 import Link from "next/link";
 import type { DiscoveryEntry, DiscoveryLiveFixture } from "@/server/public-site/discovery";
+import { t, type Dict } from "@/lib/i18n";
+import type { Locale } from "@/lib/i18n-constants";
 
 export const SPORT_EMOJI: Record<string, string> = {
   football: "⚽",
@@ -20,10 +22,10 @@ export function sportEmoji(key: string | null | undefined): string {
   return SPORT_EMOJI[key ?? "generic"] ?? "🏅";
 }
 
-function formatDates(startsOn: string | null, endsOn: string | null): string | null {
+function formatDates(startsOn: string | null, endsOn: string | null, lang: Locale): string | null {
   if (!startsOn) return null;
   const fmt = (d: string) =>
-    new Date(`${d}T00:00:00Z`).toLocaleDateString("en-GB", {
+    new Date(`${d}T00:00:00Z`).toLocaleDateString(lang, {
       day: "numeric",
       month: "short",
       timeZone: "UTC",
@@ -53,7 +55,13 @@ function jsonLd(entry: DiscoveryEntry): string {
 }
 
 /** "Live right now" strip (doc 15 §2) — renders nothing when empty. */
-export function LiveNowStrip({ fixtures }: { fixtures: DiscoveryLiveFixture[] }) {
+export function LiveNowStrip({
+  fixtures,
+  dict,
+}: {
+  fixtures: DiscoveryLiveFixture[];
+  dict: Dict;
+}) {
   if (fixtures.length === 0) return null;
   return (
     <section className="border-y border-purple-100 bg-white py-8">
@@ -63,7 +71,7 @@ export function LiveNowStrip({ fixtures }: { fixtures: DiscoveryLiveFixture[] })
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
             <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-500" />
           </span>
-          Live right now
+          {t(dict, "discovery.liveNow")}
         </h2>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {fixtures.map((f) => (
@@ -77,7 +85,7 @@ export function LiveNowStrip({ fixtures }: { fixtures: DiscoveryLiveFixture[] })
                 <span className="truncate">{f.competition_name}</span>
               </p>
               <p className="truncate text-sm font-semibold text-slate-800">
-                {f.headline ?? "In play"}
+                {f.headline ?? t(dict, "discovery.inPlay")}
               </p>
             </Link>
           ))}
@@ -88,8 +96,18 @@ export function LiveNowStrip({ fixtures }: { fixtures: DiscoveryLiveFixture[] })
 }
 
 /** Discovery competition card (home "this week", /discover directory). */
-export function DiscoveryCard({ entry, withJsonLd = false }: { entry: DiscoveryEntry; withJsonLd?: boolean }) {
-  const dates = formatDates(entry.starts_on, entry.ends_on);
+export function DiscoveryCard({
+  entry,
+  dict,
+  lang,
+  withJsonLd = false,
+}: {
+  entry: DiscoveryEntry;
+  dict: Dict;
+  lang: Locale;
+  withJsonLd?: boolean;
+}) {
+  const dates = formatDates(entry.starts_on, entry.ends_on, lang);
   const location = [entry.city, entry.country].filter(Boolean).join(", ");
   return (
     <Link
@@ -104,12 +122,12 @@ export function DiscoveryCard({ entry, withJsonLd = false }: { entry: DiscoveryE
         <span className="flex items-center gap-1">
           {entry.in_play_count > 0 && (
             <span className="rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-red-600">
-              Live
+              {t(dict, "discovery.badge.live")}
             </span>
           )}
           {entry.featured && (
             <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-700">
-              Featured
+              {t(dict, "discovery.badge.featured")}
             </span>
           )}
         </span>
@@ -117,7 +135,7 @@ export function DiscoveryCard({ entry, withJsonLd = false }: { entry: DiscoveryE
       <h3 className="truncate font-semibold text-slate-800">{entry.name}</h3>
       {/* tagline/hero only arrive from the view with `discovery.branding`. */}
       {entry.tagline && <p className="mt-0.5 truncate text-xs text-slate-500">{entry.tagline}</p>}
-      <p className="mt-1 truncate text-xs text-slate-400">by {entry.org_name}</p>
+      <p className="mt-1 truncate text-xs text-slate-400">{t(dict, "discovery.by", { org: entry.org_name })}</p>
       <p className="mt-2 flex flex-wrap gap-x-3 text-xs text-slate-500">
         {dates && <span>📅 {dates}</span>}
         {location && <span>📍 {location}</span>}
@@ -128,19 +146,27 @@ export function DiscoveryCard({ entry, withJsonLd = false }: { entry: DiscoveryE
 }
 
 /** "Happening this week" section (doc 15 §2) — renders nothing when empty. */
-export function ThisWeekSection({ entries }: { entries: DiscoveryEntry[] }) {
+export function ThisWeekSection({
+  entries,
+  dict,
+  lang,
+}: {
+  entries: DiscoveryEntry[];
+  dict: Dict;
+  lang: Locale;
+}) {
   if (entries.length === 0) return null;
   return (
     <section className="mx-auto max-w-5xl px-4 py-12">
       <div className="mb-4 flex items-baseline justify-between">
-        <h2 className="text-lg font-bold text-purple-900">Happening this week</h2>
-        <Link href="/discover" className="text-sm text-purple-600 hover:underline">
-          Explore all →
+        <h2 className="text-lg font-bold text-purple-900">{t(dict, "discovery.thisWeek")}</h2>
+        <Link href={`/${lang}/discover`} className="text-sm text-purple-600 hover:underline">
+          {t(dict, "discovery.exploreAll")}
         </Link>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {entries.map((e) => (
-          <DiscoveryCard key={e.id} entry={e} />
+          <DiscoveryCard key={e.id} entry={e} dict={dict} lang={lang} />
         ))}
       </div>
     </section>
