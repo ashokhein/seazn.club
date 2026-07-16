@@ -21,6 +21,10 @@ import { TennisPad } from "@/components/v2/pads/tennis-pad";
 import { PeriodPad } from "@/components/v2/pads/period-pad";
 import { FootballPad } from "@/components/v2/pads/football-pad";
 import { CricketPad } from "@/components/v2/pads/cricket-pad";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
+
+type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
 export interface MemberIn {
   person_id: string;
@@ -144,6 +148,7 @@ export function FixtureConsole({
   publicPath = null,
   availability = {},
 }: Props) {
+  const msg = useMsg();
   const router = useRouter();
   const [live, setLive] = useState<LiveState>(initialState);
   const [events, setEvents] = useState<EventIn[]>(initialEvents);
@@ -182,11 +187,11 @@ export function FixtureConsole({
         if (err instanceof ApiV1Error && err.code === "SEQ_CONFLICT") {
           // Another scorer got there first — resync and let them retry.
           await resync().catch(() => undefined);
-          setError("Score moved on another device — the view has been refreshed, please re-check.");
+          setError(msg("score.seqConflict"));
         } else if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
           setPaywallFeature(String(err.extra.feature_key ?? ""));
         } else {
-          setError(err instanceof Error ? err.message : "Failed");
+          setError(err instanceof Error ? err.message : msg("score.failed"));
         }
         return false;
       } finally {
@@ -215,18 +220,18 @@ export function FixtureConsole({
       <header className="card p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-lg font-semibold tracking-tight text-slate-900">
-            {home?.name ?? "TBD"} <span className="text-slate-400">vs</span>{" "}
-            {away?.name ?? "TBD"}
+            {home?.name ?? msg("schedule.tbd")} <span className="text-slate-400">{msg("schedule.vs")}</span>{" "}
+            {away?.name ?? msg("schedule.tbd")}
           </h1>
           <span className={`badge ${STATUS_STYLE[live.status] ?? ""}`}>
-            {live.status.replace("_", " ")}
+            {scoreStatusLabel(msg, live.status)}
           </span>
         </div>
         <p className="mt-2 font-mono text-2xl text-slate-800">
           {summary?.headline ?? "—"}
         </p>
         <p className="mt-1 text-xs text-slate-400">
-          Round {fixture.round_no}
+          {msg("schedule.round", { n: fixture.round_no })}
           {fixture.scheduled_at ? (
             <>
               {" · "}
@@ -237,7 +242,7 @@ export function FixtureConsole({
           )}
           {fixture.venue ? ` · ${fixture.venue}` : ""}
           {fixture.court_label ? ` · ${fixture.court_label}` : ""}
-          {` · recorded by the ${sport.scorerLabel.toLowerCase()}`}
+          {` · ${msg("score.recordedBy", { scorer: sport.scorerLabel.toLowerCase() })}`}
         </p>
       </header>
 
@@ -256,7 +261,7 @@ export function FixtureConsole({
               onClick={() => send("core.start", {})}
               className="btn btn-primary"
             >
-              Start match
+              {msg("score.startMatch")}
             </button>
           )}
           {decided && (
@@ -267,13 +272,13 @@ export function FixtureConsole({
                 onClick={() => send("core.finalize", {})}
                 className="btn btn-primary"
               >
-                Finalize (lock ledger)
+                {msg("score.finalize")}
               </button>
               {publicPath && home && away && (
                 // v3/10 #2: result decided → one tap to the club group chat.
                 <ShareButton
-                  title={`${home.name} vs ${away.name}`}
-                  text={`Full-time: ${home.name} vs ${away.name} — ${summary?.headline ?? "result in"}. Details:`}
+                  title={`${home.name} ${msg("schedule.vs")} ${away.name}`}
+                  text={msg("score.shareText", { home: home.name, away: away.name, headline: summary?.headline ?? msg("score.resultIn") })}
                   url={publicPath}
                   className="btn btn-ghost"
                 />
@@ -287,12 +292,12 @@ export function FixtureConsole({
                 type="button"
                 disabled={busy}
                 onClick={() => {
-                  const reason = window.prompt("Abandon reason (e.g. rain):");
+                  const reason = window.prompt(msg("score.abandonPrompt"));
                   if (reason) void send("core.abandon", { reason });
                 }}
                 className="btn btn-danger"
               >
-                Abandon
+                {msg("score.abandon")}
               </button>
             </>
           )}
@@ -302,9 +307,9 @@ export function FixtureConsole({
               disabled={busy}
               onClick={() => send("core.void", { event_id: lastVoidable.id })}
               className="btn btn-ghost"
-              title={`Undo ${lastVoidable.type} (seq ${lastVoidable.seq})`}
+              title={msg("score.undoTitle", { type: lastVoidable.type, seq: lastVoidable.seq })}
             >
-              ⟲ Undo last
+              {msg("score.undoLast")}
             </button>
           )}
         </div>
@@ -313,7 +318,7 @@ export function FixtureConsole({
       {/* Sport pad */}
       {scoring && !decided && home && away && (
         <section className="card p-5" data-testid="score-pad">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700">Scoring</h2>
+          <h2 className="mb-3 text-sm font-semibold text-slate-700">{msg("score.scoring")}</h2>
           <ScoringErrorBoundary fixtureId={fixture.id}>
             {sport.key === "cricket" ? (
               <CricketPad sport={sport} home={home} away={away} live={live} send={send} busy={busy} />
@@ -365,11 +370,11 @@ export function FixtureConsole({
       <section className="card overflow-hidden">
         <header className="border-b border-slate-100 px-4 py-3">
           <h2 className="text-sm font-semibold text-slate-700">
-            Activity <span className="font-normal text-slate-400">({events.length})</span>
+            {msg("score.activity")} <span className="font-normal text-slate-400">({events.length})</span>
           </h2>
         </header>
         {events.length === 0 ? (
-          <p className="px-4 py-4 text-sm text-slate-400">No events recorded.</p>
+          <p className="px-4 py-4 text-sm text-slate-400">{msg("score.noEvents")}</p>
         ) : (
           <ul className="max-h-96 divide-y divide-slate-50 overflow-y-auto">
             {[...events].reverse().map((e) => {
@@ -378,7 +383,7 @@ export function FixtureConsole({
               // Attribution: device-link events come from the handed device;
               // signed-in recorders show by name.
               const recorder = e.device_link_id
-                ? `Courtside ${sport.scorerLabel.toLowerCase()} pad`
+                ? msg("score.courtsidePad", { scorer: sport.scorerLabel.toLowerCase() })
                 : e.recorded_by
                   ? (recorderNames[e.recorded_by] ?? sport.scorerLabel)
                   : null;
@@ -412,7 +417,7 @@ export function FixtureConsole({
                       onClick={() => send("core.void", { event_id: e.id })}
                       className="shrink-0 text-red-500 hover:underline"
                     >
-                      void
+                      {msg("score.void")}
                     </button>
                   )}
                 </li>
@@ -429,6 +434,13 @@ function decidedLock(status: string): boolean {
   return status === "finalized" || status === "cancelled";
 }
 
+/** Localized fixture status; unknown values fall back to the raw token. */
+function scoreStatusLabel(msg: Msg, status: string): string {
+  const key = `score.status.${status}` as MessageKey;
+  const label = msg(key);
+  return label === key ? status.replace("_", " ") : label;
+}
+
 function ForfeitButton({
   busy,
   home,
@@ -440,6 +452,7 @@ function ForfeitButton({
   away: SideInfo;
   send: SendEvent;
 }) {
+  const msg = useMsg();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -458,7 +471,7 @@ function ForfeitButton({
         onClick={() => setOpen(!open)}
         className="btn btn-ghost"
       >
-        Forfeit…
+        {msg("score.forfeit")}
       </button>
       {open && (
         <div className="card absolute z-10 mt-1 w-56 space-y-1 p-2 shadow-lg">
@@ -469,11 +482,11 @@ function ForfeitButton({
               className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-purple-50"
               onClick={() => {
                 setOpen(false);
-                const reason = window.prompt(`Reason ${s.name} forfeits:`, "walkover");
+                const reason = window.prompt(msg("score.forfeitPrompt", { name: s.name }), "walkover");
                 if (reason) void send("core.forfeit", { by: s.id, reason });
               }}
             >
-              {s.name} forfeits
+              {msg("score.forfeits", { name: s.name })}
             </button>
           ))}
         </div>
