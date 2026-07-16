@@ -1714,6 +1714,8 @@
   "pay.saved": "Opgeslagen.",
   "pay.saveFailed": "Opslaan mislukt",
   "me.off.title": "Officials",
+  "me.off.pendingInvites": "Openstaande uitnodigingen",
+  "me.off.pendingInvite": "{org} heeft een official-profiel voor {name} aangemaakt.",
   "me.off.assignments": "Mijn aanstellingen",
   "me.off.empty": "Nog geen wedstrijden aan jou toegewezen.",
   "me.off.accept": "Accepteren",

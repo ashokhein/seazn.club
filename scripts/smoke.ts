@@ -601,6 +601,28 @@ async function officialOnboardingSuite(admin: Session, orgId: string): Promise<v
   const pad = await fetch(`${BASE}/score/${secret}`);
   check("off score pad opens on the device link", pad.status === 200);
 
+  // Pending-invite accept-by-id (v11.1 /me "Pending invites" card): officials
+  // belong to multiple orgs — a SECOND invite for the same ref, accepted
+  // without ever touching the emailed token (the claim id from the invite
+  // response is enough; the session's verified email does the rest).
+  const off2 = await v1(admin, "/api/v1/officials", "POST", {
+    display_name: `Ria Ref Two ${tag}`, role_keys: ["referee"],
+  });
+  const off2Id = v1data<{ id: string }>(off2).id;
+  const invite2 = await v1(admin, `/api/v1/officials/${off2Id}/invite`, "POST", { email: refEmail });
+  const claim2Id = v1data<{ id: string }>(invite2).id ?? "";
+  check("off second org invite mints its own claim id", invite2.status === 201 && !!claim2Id);
+
+  // wrong email is refused, not silently ignored.
+  const stranger = newSession();
+  await signIn(stranger, `stranger_${tag}@example.com`);
+  const wrongAccept = await v1(stranger, `/api/v1/me/officiating-claims/${claim2Id}/accept`, "POST");
+  check("off accept-by-id refuses a non-matching email", wrongAccept.status === 403);
+
+  const accept2 = await v1(ref, `/api/v1/me/officiating-claims/${claim2Id}/accept`, "POST");
+  check("off accept-by-id links the second org without the emailed token", accept2.status === 200);
+  await checkOfficialClaimed(off2Id, true);
+
   // Free path: the ref's own org is a fresh COMMUNITY org — the officiating
   // portal must have no plan gate on invite/claim.
   const freeOff = await v1(ref, "/api/v1/officials", "POST", {
@@ -842,6 +864,30 @@ async function regQueueSuite(admin: Session): Promise<void> {
     "public card shows waitlist count",
     registerPage.status === 200 && registerPage.body.includes("full — waitlist: 2"),
   );
+}
+
+/** v11.1 pending-invite accept-by-id: confirm the official's person row
+ *  actually got linked (not just a 200 on the accept call) — same ad-hoc
+ *  connection convention as checkTermsStamp/setStaff. Keyless runs skip. */
+async function checkOfficialClaimed(officialId: string, expected: boolean): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) return;
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    const [row] = await sql<{ claimed: boolean }[]>`
+      select (p.user_id is not null) as claimed
+      from officials o join persons p on p.id = o.person_id
+      where o.id = ${officialId}`;
+    check(`off official ${officialId.slice(0, 8)} claimed=${expected}`, (row?.claimed ?? false) === expected);
+  } finally {
+    await sql.end();
+  }
 }
 
 /** GDPR (spec 2026-07-14): assert the magic-link request stamped terms

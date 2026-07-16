@@ -25,8 +25,10 @@ import {
   patchFixtureOfficials,
 } from "../officials";
 import {
+  acceptMyOfficiatingClaim,
   deleteMyBlackout,
   getMyOfficiating,
+  listPendingOfficiatingClaims,
   mintMyScoreLink,
   setMyBlackout,
   setMyOfficiatingResponse,
@@ -294,5 +296,101 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     );
     expect(delta).toMatch(/update fixture_officials set response = 'accepted'/);
     expect(delta).toMatch(/default 'pending'/);
+  });
+
+  it("pending invites list across multiple orgs, accept-by-id links + consumes exactly one (v11.1)", async () => {
+    const orgA = await seedOrg();
+    const orgB = await seedOrg();
+    const [{ name: orgNameA }] = await sql<{ name: string }[]>`
+      select name from organizations where id = ${orgA.auth.orgId}`;
+    const [{ name: orgNameB }] = await sql<{ name: string }[]>`
+      select name from organizations where id = ${orgB.auth.orgId}`;
+    const ref = await makeUser("multiorg-ref");
+
+    const officialA = await createOfficial(orgA.auth, { display_name: "Ref A-side", role_keys: ["referee"] });
+    const officialB = await createOfficial(orgB.auth, { display_name: "Ref B-side", role_keys: ["umpire"] });
+    const invitedA = await inviteOfficial(orgA.auth, officialA.id, ref.email);
+    const invitedB = await inviteOfficial(orgB.auth, officialB.id, ref.email);
+
+    // A pure player claim (no officials row) must never surface here.
+    const bystander = await seedOrg();
+    const [{ id: playerPersonId }] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name) values (${bystander.auth.orgId}, 'Just A Player') returning id`;
+    const [{ id: playerClaimId }] = await sql<{ id: string }[]>`
+      insert into person_claims (org_id, person_id, email, token_hash, invited_by, expires_at)
+      values (${bystander.auth.orgId}, ${playerPersonId}, ${ref.email}, ${randomUUID()}, ${bystander.auth.userId}, now() + interval '14 days')
+      returning id`;
+
+    // before claiming anything: NOT is_official, but both officiating
+    // invites are pending — the player-claim row does NOT show up.
+    expect((await getMyOfficiating(ref.id)).is_official).toBe(false);
+    const pending = await listPendingOfficiatingClaims(ref.email);
+    expect(pending).toHaveLength(2);
+    expect(pending.map((p) => p.org_name).sort()).toEqual([orgNameA, orgNameB].sort());
+    expect(pending.every((p) => !("token" in p) && !("email" in p))).toBe(true);
+
+    // case-insensitive email match, same as the token path.
+    expect(await listPendingOfficiatingClaims(ref.email.toUpperCase())).toHaveLength(2);
+
+    // a stranger sharing no claim sees nothing.
+    const stranger = await makeUser("stranger-off");
+    expect(await listPendingOfficiatingClaims(stranger.email)).toHaveLength(0);
+
+    // wrong email → refused, nothing consumed.
+    const impostor = await makeUser("impostor-off");
+    await expect(
+      acceptMyOfficiatingClaim(invitedA.claim.id, impostor.id, impostor.email),
+    ).rejects.toMatchObject({ status: 403, code: "CLAIM_EMAIL_MISMATCH" });
+
+    // accept org A by id — links + consumes ONLY that claim; org B stays pending.
+    const acceptedA = await acceptMyOfficiatingClaim(invitedA.claim.id, ref.id, ref.email);
+    expect(acceptedA).toMatchObject({ org_name: orgNameA, official_name: "Ref A-side" });
+    const afterA = await listPendingOfficiatingClaims(ref.email);
+    expect(afterA).toHaveLength(1);
+    expect(afterA[0]!.org_name).toBe(orgNameB);
+    const mineAfterA = await getMyOfficiating(ref.id);
+    expect(mineAfterA.is_official).toBe(true); // linked via org A even though org B is still pending
+
+    // re-accepting the now-claimed id 409s, doesn't silently no-op.
+    await expect(
+      acceptMyOfficiatingClaim(invitedA.claim.id, ref.id, ref.email),
+    ).rejects.toMatchObject({ status: 409, code: "CLAIM_CLAIMED" });
+
+    // accept org B by id — the second org links too (multi-org proof).
+    await acceptMyOfficiatingClaim(invitedB.claim.id, ref.id, ref.email);
+    expect(await listPendingOfficiatingClaims(ref.email)).toHaveLength(0);
+    const consoleA = await listOfficialsForConsole(orgA.auth);
+    const consoleB = await listOfficialsForConsole(orgB.auth);
+    expect(consoleA.find((o) => o.id === officialA.id)).toMatchObject({ claimed: true });
+    expect(consoleB.find((o) => o.id === officialB.id)).toMatchObject({ claimed: true });
+
+    // a bare player claim (no officials row) 404s here — that flow stays on
+    // the token-based /claim page, not the officiating accept-by-id route.
+    await expect(
+      acceptMyOfficiatingClaim(playerClaimId, ref.id, ref.email),
+    ).rejects.toMatchObject({ status: 404, code: "CLAIM_INVALID" });
+
+    // expired claims never surface as pending, and accept refuses them too.
+    const officialC = await createOfficial(orgA.auth, { display_name: "Ref Expired", role_keys: ["referee"] });
+    const invitedC = await inviteOfficial(orgA.auth, officialC.id, "expired@example.com");
+    await sql`update person_claims set expires_at = now() - interval '1 minute' where id = ${invitedC.claim.id}`;
+    const expiredUser = await makeUser("expired-ref");
+    expect(await listPendingOfficiatingClaims("expired@example.com")).toHaveLength(0);
+    await expect(
+      acceptMyOfficiatingClaim(invitedC.claim.id, expiredUser.id, "expired@example.com"),
+    ).rejects.toMatchObject({ code: "CLAIM_EXPIRED" });
+
+    // revoked claims never surface as pending either.
+    const officialE = await createOfficial(orgA.auth, { display_name: "Ref Revoked", role_keys: ["referee"] });
+    const invitedE = await inviteOfficial(orgA.auth, officialE.id, "revoked@example.com");
+    await sql`update person_claims set revoked_at = now() where id = ${invitedE.claim.id}`;
+    expect(await listPendingOfficiatingClaims("revoked@example.com")).toHaveLength(0);
+
+    // the token flow still works after the shared-core refactor.
+    const officialD = await createOfficial(orgA.auth, { display_name: "Ref Token", role_keys: ["referee"] });
+    const invitedD = await inviteOfficial(orgA.auth, officialD.id, "token-ref@example.com");
+    const tokenUser = await makeUser("token-ref");
+    await claimPerson(invitedD.secret, tokenUser.id, "token-ref@example.com");
+    expect((await getMyOfficiating(tokenUser.id)).is_official).toBe(true);
   });
 });

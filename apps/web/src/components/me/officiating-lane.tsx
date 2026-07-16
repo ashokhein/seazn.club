@@ -13,6 +13,7 @@ import type {
   MyBlackout,
   MyOfficiatingAssignment,
   OfficiatingResponse,
+  PendingOfficiatingClaim,
 } from "@/server/usecases/me-officiating";
 
 const RAIL: Record<OfficiatingResponse, string> = {
@@ -21,36 +22,111 @@ const RAIL: Record<OfficiatingResponse, string> = {
   declined: "border-l-red-400",
 };
 
+/**
+ * Officials belong to multiple orgs (v11.1 follow-up): the lane now renders
+ * whenever there's EITHER a linked officials row OR a pending invite waiting
+ * on this email — a brand-new official with no link yet still needs to see
+ * (and accept) their very first invite. `isOfficial` gates the
+ * assignments/blackouts sections; pendingClaims renders independently of it.
+ */
 export function OfficiatingLane({
+  isOfficial,
   assignments,
   blackouts,
+  pendingClaims,
 }: {
+  isOfficial: boolean;
   assignments: MyOfficiatingAssignment[];
   blackouts: MyBlackout[];
+  pendingClaims: PendingOfficiatingClaim[];
 }) {
   const msg = useMsg();
   return (
     <section className="mb-8" aria-label={msg("me.off.title")}>
       <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-        {msg("me.off.title")} · {msg("me.off.assignments")}
+        {msg("me.off.title")}
+        {isOfficial ? ` · ${msg("me.off.assignments")}` : ""}
       </h2>
-      {assignments.length === 0 ? (
-        <p className="card p-4 text-sm text-slate-500">{msg("me.off.empty")}</p>
-      ) : (
-        <ul className="space-y-2">
-          {assignments.map((a) => (
-            <AssignmentCard key={`${a.fixture_id}:${a.official_id}:${a.role_key}`} a={a} />
-          ))}
-        </ul>
+
+      {pendingClaims.length > 0 && <PendingInvites claims={pendingClaims} />}
+
+      {isOfficial && (
+        <>
+          {assignments.length === 0 ? (
+            <p className="card p-4 text-sm text-slate-500">{msg("me.off.empty")}</p>
+          ) : (
+            <ul className="space-y-2">
+              {assignments.map((a) => (
+                <AssignmentCard key={`${a.fixture_id}:${a.official_id}:${a.role_key}`} a={a} />
+              ))}
+            </ul>
+          )}
+          <BlackoutEditor blackouts={blackouts} />
+          <p className="mt-3 text-xs text-slate-400">
+            <span className="cursor-not-allowed opacity-70" aria-disabled title={msg("me.off.comingSoon")}>
+              {msg("me.off.rota")}
+            </span>{" "}
+            · {msg("me.off.comingSoon")}
+          </p>
+        </>
       )}
-      <BlackoutEditor blackouts={blackouts} />
-      <p className="mt-3 text-xs text-slate-400">
-        <span className="cursor-not-allowed opacity-70" aria-disabled title={msg("me.off.comingSoon")}>
-          {msg("me.off.rota")}
-        </span>{" "}
-        · {msg("me.off.comingSoon")}
-      </p>
     </section>
+  );
+}
+
+/** "Pending invites" card (v11.1): one row per open officiating invite, each
+ *  accepted independently by id — no token in this URL, the session's
+ *  verified login email is what proves it. */
+function PendingInvites({ claims }: { claims: PendingOfficiatingClaim[] }) {
+  const msg = useMsg();
+  const router = useRouter();
+  const [items, setItems] = useState(claims);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function accept(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      await apiV1(`/api/v1/me/officiating-claims/${id}/accept`, { method: "POST" });
+      setItems((prev) => prev.filter((c) => c.id !== id));
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : msg("me.off.failed"));
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mb-3 space-y-2">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+        {msg("me.off.pendingInvites")}
+      </p>
+      <ul className="space-y-2">
+        {items.map((c) => (
+          <li
+            key={c.id}
+            className="card flex flex-wrap items-center justify-between gap-3 border-l-4 border-l-purple-400 p-4"
+          >
+            <p className="min-w-0 text-sm text-slate-700">
+              {msg("me.off.pendingInvite", { org: c.org_name, name: c.official_name })}
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary py-1.5 text-sm"
+              disabled={busyId === c.id}
+              onClick={() => void accept(c.id)}
+            >
+              {msg("me.off.accept")}
+            </button>
+          </li>
+        ))}
+      </ul>
+      {error && <p className="text-xs text-red-500">{error}</p>}
+    </div>
   );
 }
 

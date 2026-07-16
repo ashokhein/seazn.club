@@ -23,6 +23,10 @@ A linked official gets an **Officiating** section on their personal home (`/me`,
 - **Can't make these dates** — blackout dates that apply across every organisation they officiate for.
 - **Score this match** — opens the fixture's score pad through a day-of device link, no extra login. Minting the link needs the **Pro** device-links feature, same as the console button.
 
+## Officiating for more than one organisation
+
+Officials often work for several organisations, and each invite is its own one-claim-per-org link. If an invite is waiting on your login's email — whether or not you've linked an officiating profile yet — `/me` shows a **Pending invites** card: "*\<Org\> set up an officiating profile for \<Name\>*", with an **Accept** button right there. No token, no link to hunt down in your inbox: your signed-in email is what proves it's for you, exactly like clicking the emailed link would. Accepting one invite never touches the others — link as many organisations as you officiate for, whenever their invites arrive.
+
 ## Responses on your console
 
 Each assignment chip on the Officials tab carries the response: **✓ accepted**, **· pending**, **✗ declined** (hover for the reason). A decline is a flag for you to re-pick manually — **nothing is reassigned automatically**, and your locked assignments never move.

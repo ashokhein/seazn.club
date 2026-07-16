@@ -1714,6 +1714,8 @@
   "pay.saved": "Guardado.",
   "pay.saveFailed": "Error al guardar",
   "me.off.title": "Arbitraje",
+  "me.off.pendingInvites": "Invitaciones pendientes",
+  "me.off.pendingInvite": "{org} ha creado un perfil de árbitro para {name}.",
   "me.off.assignments": "Mis designaciones",
   "me.off.empty": "Aún no tienes partidos asignados.",
   "me.off.accept": "Aceptar",

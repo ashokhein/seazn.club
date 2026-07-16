@@ -118,6 +118,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/me/assigned-fixtures/{id}/score-link", method: "post", summary: "Mint the fixture's day-of device link for an assigned official (secret shown once; Pro `scoring.device_links`)", tag: "officials", response: S.OfficiatingScoreLink, status: 201, errors: [402, 422] },
   { path: "/me/availability/officiating", method: "post", summary: "Mark a blackout date on every officiating profile linked to the caller (upsert on note)", tag: "officials", request: S.OfficiatingBlackoutInput, response: S.OfficiatingBlackout, status: 201 },
   { path: "/me/availability/officiating", method: "delete", summary: "Clear a blackout date (idempotent)", tag: "officials", query: { date: { schema: { type: "string", format: "date" }, description: "The date to clear (YYYY-MM-DD)" } } },
+  { path: "/me/officiating-claims/{id}/accept", method: "post", summary: "Accept a pending officiating invite by id (v11.1 — /me 'Pending invites' card; no token in the URL, the session's verified email proves it; routes through the same accept core as /claim/{token})", tag: "officials", response: S.OfficiatingClaimAccepted, errors: [403, 404, 409] },
   // API keys
   { path: "/orgs/{id}/api-keys", method: "get", summary: "List API keys", tag: "api-keys", response: z.array(S.ApiKey) },
   { path: "/orgs/{id}/api-keys", method: "post", summary: "Create an API key (secret shown once)", tag: "api-keys", request: S.CreateApiKey, response: S.CreatedApiKey, status: 201, errors: [402] },

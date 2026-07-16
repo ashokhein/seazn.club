@@ -10,6 +10,7 @@ import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { refreshOfficialsCache } from "./officials";
 import { createDeviceLink } from "./device-links";
+import { acceptResolvedClaim, assertClaimEmail, resolveClaimById } from "./person-claims";
 
 // refreshOfficialsCache is typed for the tenant tx; it only uses the tagged
 // template + .json, which the superuser `sql` shares — safe structural cast.
@@ -101,6 +102,57 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     order by oa.date`;
 
   return { is_official: true, assignments, blackouts };
+}
+
+export interface PendingOfficiatingClaim {
+  /** person_claims.id — the accept endpoint takes this, never the token. */
+  id: string;
+  org_name: string;
+  official_name: string;
+}
+
+/**
+ * Pending officiating invites addressed to this email, across EVERY org
+ * (v11.1): officials belong to multiple organisations, and each invite is
+ * its own one-claim-per-org-membership token — a ref who officiates for
+ * three leagues gets three separate invites. This runs regardless of
+ * is_official (a brand-new official has no linked row yet, and must still
+ * see their very first invite here). Never returns the token — only enough
+ * to render "<Org> set up an officiating profile for <Name>" + an id to
+ * accept by.
+ */
+export async function listPendingOfficiatingClaims(email: string): Promise<PendingOfficiatingClaim[]> {
+  return sql<PendingOfficiatingClaim[]>`
+    select pc.id, org.name as org_name, o.display_name as official_name
+    from person_claims pc
+    join officials o on o.person_id = pc.person_id
+    join organizations org on org.id = pc.org_id
+    where lower(pc.email) = lower(${email})
+      and pc.claimed_at is null and pc.revoked_at is null and pc.expires_at > now()
+    order by pc.created_at desc`;
+}
+
+/**
+ * Accept a pending officiating invite by id (v11.1 "Pending invites" card) —
+ * no token in the URL; the session's verified login email does the same job
+ * the emailed token normally proves. Resolves the claim, confirms it's an
+ * OFFICIATING claim (a bare player claim 404s here — that flow stays on
+ * /claim/[token]) BEFORE any write, then the strict email match, then routes
+ * through the exact same accept core the token flow uses
+ * (acceptResolvedClaim) — no parallel claim mechanism.
+ */
+export async function acceptMyOfficiatingClaim(
+  claimId: string,
+  userId: string,
+  userEmail: string,
+): Promise<{ org_name: string; official_name: string }> {
+  const claim = await resolveClaimById(claimId);
+  if (!claim.is_official) {
+    throw new HttpError(404, "This invite is not an officiating invite", "CLAIM_INVALID");
+  }
+  assertClaimEmail(claim, userEmail);
+  const accepted = await acceptResolvedClaim(claim, userId);
+  return { org_name: accepted.org_name, official_name: accepted.person_name };
 }
 
 /** My official rows (id + org) — the write scope for responses/blackouts. */

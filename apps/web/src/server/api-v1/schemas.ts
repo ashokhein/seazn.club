@@ -1226,6 +1226,14 @@ export const OfficiatingScoreLink = z.object({
   expires_at: z.string(),
 });
 
+/** POST /me/officiating-claims/{id}/accept response (v11.1 — the /me
+ *  "Pending invites" card; the list itself is server-rendered, not an
+ *  /api/v1 route, so this is the only officiating-claim schema needed). */
+export const OfficiatingClaimAccepted = z.object({
+  org_name: z.string(),
+  official_name: z.string(),
+});
+
 const AssignPolicyBody = z.object({
   roles: z.array(z.string().min(1)).min(1),
   poolLock: z.boolean().default(false),

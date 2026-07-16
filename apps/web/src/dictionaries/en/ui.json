@@ -1714,6 +1714,8 @@
   "pay.saved": "Saved.",
   "pay.saveFailed": "Failed to save",
   "me.off.title": "Officiating",
+  "me.off.pendingInvites": "Pending invites",
+  "me.off.pendingInvite": "{org} set up an officiating profile for {name}.",
   "me.off.assignments": "My assignments",
   "me.off.empty": "No matches assigned to you yet.",
   "me.off.accept": "Accept",

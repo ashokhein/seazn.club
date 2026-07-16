@@ -1031,6 +1031,8 @@ export type DictionaryKey =
   | "me.off.empty"
   | "me.off.failed"
   | "me.off.pending"
+  | "me.off.pendingInvite"
+  | "me.off.pendingInvites"
   | "me.off.reasonPlaceholder"
   | "me.off.remove"
   | "me.off.role"

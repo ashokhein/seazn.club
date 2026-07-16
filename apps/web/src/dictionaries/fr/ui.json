@@ -1714,6 +1714,8 @@
   "pay.saved": "Enregistré.",
   "pay.saveFailed": "Échec de l'enregistrement",
   "me.off.title": "Arbitrage",
+  "me.off.pendingInvites": "Invitations en attente",
+  "me.off.pendingInvite": "{org} a créé un profil d'officiel pour {name}.",
   "me.off.assignments": "Mes désignations",
   "me.off.empty": "Aucun match ne vous est encore attribué.",
   "me.off.accept": "Accepter",
