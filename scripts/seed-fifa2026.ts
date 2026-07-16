@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import postgres from "postgres";
+import bcrypt from "bcryptjs";
 
 // ─────────────────────────── config ────────────────────────────
 const BASE = process.env.SEED_BASE ?? "http://localhost:3000";
@@ -111,22 +112,31 @@ const cookies = new Map<string, string>();
 function cookieHeader(): string { return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; "); }
 /** Unwrap a v1 list response: bare array or a paginated { items }. */
 function asList<T>(x: any): T[] { return Array.isArray(x) ? x : (x?.items ?? []); }
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function call<T = any>(path: string, method = "GET", body?: unknown): Promise<T> {
-  const res = await fetch(BASE + path, {
-    method,
-    headers: { "content-type": "application/json", cookie: cookieHeader() },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  for (const sc of res.headers.getSetCookie?.() ?? []) {
-    const [pair] = sc.split(";");
-    const idx = pair.indexOf("=");
-    cookies.set(pair.slice(0, idx), pair.slice(idx + 1));
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(BASE + path, {
+      method,
+      headers: { "content-type": "application/json", cookie: cookieHeader() },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    for (const sc of res.headers.getSetCookie?.() ?? []) {
+      const [pair] = sc.split(";");
+      const idx = pair.indexOf("=");
+      cookies.set(pair.slice(0, idx), pair.slice(idx + 1));
+    }
+    // Rate limited: honour Retry-After, else exponential backoff. Retry a while.
+    if (res.status === 429 && attempt < 8) {
+      const ra = Number(res.headers.get("retry-after"));
+      await sleep(Number.isFinite(ra) && ra > 0 ? ra * 1000 : Math.min(2000 * 2 ** attempt, 30000));
+      continue;
+    }
+    const text = await res.text();
+    const json = text ? JSON.parse(text) : ({} as any);
+    if (!res.ok || json?.ok === false)
+      throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(json?.error ?? json).slice(0, 300)}`);
+    return (json?.data ?? json) as T;
   }
-  const text = await res.text();
-  const json = text ? JSON.parse(text) : ({} as any);
-  if (!res.ok || json?.ok === false)
-    throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(json?.error ?? json).slice(0, 300)}`);
-  return (json?.data ?? json) as T;
 }
 
 // ─────────────────────────────── main ───────────────────────────────
@@ -136,14 +146,24 @@ let sql!: ReturnType<typeof postgres>;
 let data: Data;
 
 async function ensureOwnerAndLogin() {
-  // Register (idempotent: ignore "already exists"), force-verify via DB so we
-  // never depend on email delivery, then password-login for the session cookie.
-  try {
-    await call("/api/auth/signup", "POST", { email: EMAIL, password: PASSWORD });
-  } catch (e) {
-    if (!/exists|registered|taken|in use|already/i.test(String(e))) throw e;
+  // Create the account if missing, force-verify via DB (no email dependency),
+  // then password-login. A password is set ONLY when the account has none
+  // (additive for OAuth/magic-link accounts) — an existing password is never
+  // overwritten, so a real account is only touched if it had no password.
+  const existing = await sql<{ password_hash: string | null }[]>`select password_hash from users where email = ${EMAIL}`;
+  if (existing.length === 0) {
+    try {
+      await call("/api/auth/signup", "POST", { email: EMAIL, password: PASSWORD });
+    } catch (e) {
+      if (!/exists|registered|taken|in use|already/i.test(String(e))) throw e;
+    }
   }
   await sql`update users set email_verified = true where email = ${EMAIL}`;
+  const [u] = await sql<{ password_hash: string | null }[]>`select password_hash from users where email = ${EMAIL}`;
+  if (!u?.password_hash) {
+    await sql`update users set password_hash = ${await bcrypt.hash(PASSWORD, 10)} where email = ${EMAIL}`;
+    console.log(`Set an additive password on ${EMAIL} (account had none) for seeder login.`);
+  }
   await call("/api/auth/login", "POST", { email: EMAIL, password: PASSWORD });
 }
 
@@ -162,9 +182,14 @@ async function ensureOrg(): Promise<string> {
       org = await call("/api/orgs", "POST", { name: ORG_NAME });
     } catch (e) {
       // Free plan caps orgs owned per user (orgs.max_owned, judged on the best
-      // owned-org plan). Lift the cap by making an existing owned org Pro, retry.
+      // owned-org plan). Lift the cap non-destructively via an entitlement
+      // override on an existing owned org (does NOT change its plan), then retry.
       if (/max_owned|402/.test(String(e)) && orgs[0]) {
-        await setPro(orgs[0].id);
+        const has = await sql`select 1 from org_entitlement_overrides where org_id = ${orgs[0].id} and feature_key = 'orgs.max_owned'`;
+        if (has.length === 0) {
+          await sql`insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
+                    values (${orgs[0].id}, 'orgs.max_owned', 20, 'FIFA WC 2026 demo seed')`;
+        }
         org = await call("/api/orgs", "POST", { name: ORG_NAME });
       } else throw e;
     }
