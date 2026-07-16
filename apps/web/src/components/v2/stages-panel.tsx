@@ -383,10 +383,10 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                   return (
                   <div key={round}>
                     {/* Sticky round header (items 1 + 7): label + date range. */}
-                    <p className="sticky top-0 z-10 flex items-baseline gap-2 bg-slate-50 px-4 py-1.5 text-xs font-medium uppercase tracking-wide text-slate-500">
+                    <p className="sticky top-0 z-10 flex items-baseline gap-2 border-y border-slate-300 bg-slate-200 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
                       Round {round}
                       {dates.from && (
-                        <span data-testid="round-dates" className="normal-case text-slate-500">
+                        <span data-testid="round-dates" className="font-medium normal-case text-slate-500">
                           <ClientDateRange from={dates.from} to={dates.to} tz={tz} />
                         </span>
                       )}
