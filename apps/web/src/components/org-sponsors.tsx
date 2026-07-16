@@ -5,7 +5,7 @@
 // everything — logo included, uploaded on submit — for both add and edit.
 // Tiers above partner and per-competition scoping are Pro (`sponsors.tiers`);
 // without it the manager is the free un-tiered strip with an upsell note.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "@/components/ui/console-link";
 import {
   ArrowDown, ArrowUp, ImagePlus, MousePointerClick, Pencil, Trash2,
@@ -85,9 +85,14 @@ function SponsorForm({
   onPickLogo: (file: File, set: (fn: (prev: Draft) => Draft) => void) => void;
 }) {
   const msg = useMsg();
+  // House uploader pattern (org-logo, prose-editor): a real button clicks a
+  // ref'd hidden input — label-wrapped file inputs misfire in some browsers.
+  const fileRef = useRef<HTMLInputElement>(null);
   return (
       <div className="flex flex-wrap items-start gap-4">
-        <label
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
           className="group grid h-20 w-20 shrink-0 cursor-pointer place-items-center overflow-hidden rounded-xl border border-dashed border-slate-300 bg-white text-slate-400 hover:border-purple-400 hover:text-purple-600"
           aria-label={msg("sponsors.logoLabel")}
         >
@@ -101,17 +106,18 @@ function SponsorForm({
               <span className="px-1 text-[10px] leading-tight">{msg("sponsors.logoLabel")}</span>
             </span>
           )}
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) onPickLogo(f, onChange);
-              e.target.value = "";
-            }}
-          />
-        </label>
+        </button>
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0];
+            if (f) onPickLogo(f, onChange);
+            e.target.value = "";
+          }}
+        />
         <div className="min-w-0 flex-1">
           {/* 2-col rows: name+link, then tier+competition; single stack on mobile. */}
           <div className="grid gap-3 sm:grid-cols-2">
