@@ -1003,6 +1003,23 @@ async function i18nSuite(): Promise<void> {
   const bad = await fetch(`${BASE}/de/start`);
   check("i18n: unsupported locale 404s", bad.status === 404);
 
+  // Scoring vocab (2026-07-16): sport names on the public /discover chips now
+  // localize (sport.<key>). Gate on the en page actually showing the chip so
+  // the assertion is robust to whichever sports are seeded as discoverable.
+  const enDisc = await fetch(`${BASE}/en/discover`);
+  const enDiscHtml = await enDisc.text();
+  const frDisc = await fetch(`${BASE}/fr/discover`);
+  const frDiscHtml = await frDisc.text();
+  check("i18n: /fr/discover 200", frDisc.status === 200);
+  if (enDiscHtml.includes("Board game")) {
+    check(
+      "i18n: /fr/discover localizes the 'Board game' sport name",
+      !frDiscHtml.includes("Board game"),
+    );
+  } else {
+    check("i18n: /discover has no boardgame seed to assert (skipped)", true);
+  }
+
   const enHome = await fetch(`${BASE}/en`);
   const enHomeHtml = await enHome.text();
   check("i18n: /en home English", enHomeHtml.includes("Any sport. Live in minutes."));

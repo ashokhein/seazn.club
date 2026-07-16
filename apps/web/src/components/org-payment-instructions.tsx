@@ -8,6 +8,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { api } from "@/lib/client";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { ProseEditor } from "@/components/prose-editor";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 interface ConnectStatus {
   connected: boolean;
@@ -26,6 +27,7 @@ export function OrgPaymentInstructions({
   initialDefaultMethod?: "offline" | "stripe";
   isOwner?: boolean;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const searchParams = useSearchParams();
   const [value, setValue] = useState(initialValue ?? "");
@@ -61,7 +63,7 @@ export function OrgPaymentInstructions({
       setSaved(true);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(err instanceof Error ? err.message : msg("pay.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -78,7 +80,7 @@ export function OrgPaymentInstructions({
       router.refresh();
     } catch (err) {
       setMethod(prev);
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(err instanceof Error ? err.message : msg("pay.saveFailed"));
     }
   }
 
@@ -94,10 +96,10 @@ export function OrgPaymentInstructions({
     } catch (err) {
       setConnectError(
         err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED"
-          ? "Card payments need Pro or an Event Pass."
+          ? msg("pay.needPro")
           : err instanceof Error
             ? err.message
-            : "Could not start Stripe onboarding",
+            : msg("pay.onboardErr"),
       );
       setConnectBusy(false);
     }
@@ -110,23 +112,20 @@ export function OrgPaymentInstructions({
         <div data-tour="connect-stripe" className="rounded-lg border border-slate-200 p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-sm font-medium text-slate-800">Card payments (Stripe)</p>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Entry fees settle straight to your Stripe account; entries confirm
-                automatically on payment.
-              </p>
+              <p className="text-sm font-medium text-slate-800">{msg("pay.cardTitle")}</p>
+              <p className="mt-0.5 text-xs text-slate-500">{msg("pay.cardBlurb")}</p>
             </div>
             {connect?.charges_enabled ? (
               <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                ● Live — charges enabled
+                {msg("pay.statusLive")}
               </span>
             ) : connect?.connected ? (
               <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
-                Onboarding incomplete
+                {msg("pay.statusIncomplete")}
               </span>
             ) : (
               <span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500">
-                Not connected
+                {msg("pay.statusNone")}
               </span>
             )}
           </div>
@@ -135,23 +134,20 @@ export function OrgPaymentInstructions({
           <ol className="mt-3 space-y-2">
             {[
               {
-                label: "Connect",
-                detail:
-                  "You're sent to Stripe's secure onboarding — Seazn Club never sees your details.",
+                label: msg("pay.stepConnect"),
+                detail: msg("pay.stepConnectDetail"),
                 done: !!connect?.connected,
                 active: !connect?.connected,
               },
               {
-                label: "Verify (KYC)",
-                detail:
-                  "Stripe verifies who receives the money: legal name, date of birth and bank account — clubs and companies may be asked for registration documents. Usually minutes; occasionally Stripe asks for more and it takes a day or two. You can leave and resume anytime.",
+                label: msg("pay.stepVerify"),
+                detail: msg("pay.stepVerifyDetail"),
                 done: !!connect?.charges_enabled,
                 active: !!connect?.connected && !connect?.charges_enabled,
               },
               {
-                label: "Go live",
-                detail:
-                  "Charges enabled: divisions can take card entry fees, entries confirm on payment, and payouts land in your bank on Stripe's schedule — minus Stripe's processing fee and the platform fee for your plan.",
+                label: msg("pay.stepGoLive"),
+                detail: msg("pay.stepGoLiveDetail"),
                 done: !!connect?.charges_enabled,
                 active: !!connect?.charges_enabled,
               },
@@ -193,17 +189,24 @@ export function OrgPaymentInstructions({
                 className="mt-0.5 accent-purple-600"
               />
               <span>
-                I agree to the{" "}
-                <a
-                  href="/legal/terms"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-purple-600 underline"
-                >
-                  Terms of Service
-                </a>
-                , including that my organisation bears the cost of chargebacks on its
-                entry fees — lost disputes are recovered from our Stripe balance.
+                {msg("pay.tosAgree")
+                  .split("{terms}")
+                  .flatMap((part, i) =>
+                    i === 0
+                      ? [part]
+                      : [
+                          <a
+                            key="terms"
+                            href="/legal/terms"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-purple-600 underline"
+                          >
+                            {msg("pay.tosTerms")}
+                          </a>,
+                          part,
+                        ],
+                  )}
               </span>
             </label>
           )}
@@ -215,10 +218,10 @@ export function OrgPaymentInstructions({
               className="btn btn-primary mt-3 px-4 text-sm"
             >
               {connectBusy
-                ? "Opening Stripe…"
+                ? msg("pay.opening")
                 : connect?.connected
-                  ? "Resume Stripe onboarding"
-                  : "Connect Stripe"}
+                  ? msg("pay.resume")
+                  : msg("pay.connect")}
             </button>
           )}
           {connectError && <p className="mt-2 text-xs text-red-600">{connectError}</p>}
@@ -227,16 +230,13 @@ export function OrgPaymentInstructions({
 
       {/* Default method for new divisions. */}
       <fieldset>
-        <legend className="label">How do entry fees usually work?</legend>
-        <p className="mb-2 text-xs text-slate-500">
-          Preselected when you set up registration on a new division — each division can
-          still choose its own.
-        </p>
+        <legend className="label">{msg("pay.methodLegend")}</legend>
+        <p className="mb-2 text-xs text-slate-500">{msg("pay.methodHint")}</p>
         <div className="flex gap-2">
           {(
             [
-              { key: "offline", label: "Pay the organiser" },
-              { key: "stripe", label: "Card at sign-up" },
+              { key: "offline", label: msg("pay.methodOffline") },
+              { key: "stripe", label: msg("pay.methodStripe") },
             ] as const
           ).map((opt) => (
             <label
@@ -261,13 +261,11 @@ export function OrgPaymentInstructions({
 
       {/* Org-wide offline instructions. */}
       <label className="block">
-        <span className="label">Cash / bank transfer instructions</span>
+        <span className="label">{msg("pay.cashTitle")}</span>
         <p className="mb-2 text-xs text-slate-500">
-          Shown to registrants of pay-the-organiser divisions and included in their
-          confirmation email. Divisions can override these. Formatting is supported,
-          and <code className="rounded bg-slate-100 px-1">{"{{reference}}"}</code>{" "}
-          becomes each registrant&apos;s generated reference number — e.g.
-          &ldquo;quote {"{{reference}}"} on your transfer&rdquo;.
+          {msg("pay.cashHintPre")}
+          <code className="rounded bg-slate-100 px-1">{"{{reference}}"}</code>
+          {msg("pay.cashHintPost")}
         </p>
         <ProseEditor
           value={value}
@@ -285,10 +283,10 @@ export function OrgPaymentInstructions({
             disabled={busy || !dirty}
             className="btn btn-primary px-4"
           >
-            {busy ? "Saving…" : "Save"}
+            {busy ? msg("pay.saving") : msg("pay.save")}
           </button>
           {error && <span className="text-xs text-red-600">{error}</span>}
-          {saved && !error && <span className="text-xs text-green-600">Saved.</span>}
+          {saved && !error && <span className="text-xs text-green-600">{msg("pay.saved")}</span>}
         </div>
       </label>
     </div>

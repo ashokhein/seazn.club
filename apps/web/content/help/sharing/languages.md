@@ -16,7 +16,7 @@ Your organisation has a **default language** for its public pages (live scores, 
 
 ## What gets translated
 
-The whole interface — buttons, labels, headings, system messages, the interactive demos on our marketing pages, and the format guides that explain each tournament shape — is translated. **Your own content is never machine-translated:** organisation, competition, and division names, descriptions, and anything you type stays exactly as you wrote it. If you run a bilingual event, write those names in the language your audience expects.
+The whole interface — buttons, labels, headings, system messages, the interactive demos on our marketing pages, and the format guides that explain each tournament shape — is translated. This includes the built-in **scoring vocabulary** (sport names on the discover page, cricket dismissal and extra types in the scoring pad, and the brand-colour swatch names in your settings) and the **payment settings** page. **Your own content is never machine-translated:** organisation, competition, and division names, descriptions, and anything you type stays exactly as you wrote it. If you run a bilingual event, write those names in the language your audience expects.
 
 ## Emails
 

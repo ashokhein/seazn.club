@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { renderProse, DESCRIPTION_MAX } from "@/lib/prose";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
 
@@ -58,6 +59,7 @@ function ToolbarButton({
 }
 
 export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle }: Props) {
+  const msg = useMsg();
   const [tab, setTab] = useState<"write" | "preview">("write");
   const [previewHtml, setPreviewHtml] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -88,7 +90,7 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
         // prohibited (axe: aria-prohibited-attr). Declare what it really is.
         role: "textbox",
         "aria-multiline": "true",
-        "aria-label": placeholder ?? "Description",
+        "aria-label": placeholder ?? msg("editor.description"),
       },
     },
     onUpdate: ({ editor: e }) => {
@@ -113,16 +115,16 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
 
   const setLink = useCallback((e: Editor) => {
     const prev = (e.getAttributes("link").href as string) ?? "";
-    const url = window.prompt("Link URL", prev);
+    const url = window.prompt(msg("editor.linkUrl"), prev);
     if (url === null) return;
     if (url === "") e.chain().focus().unsetLink().run();
     else e.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
-  }, []);
+  }, [msg]);
 
   const insertCta = useCallback((e: Editor) => {
-    const label = window.prompt("Button label", "Register now");
+    const label = window.prompt(msg("editor.buttonLabel"), msg("editor.registerNow"));
     if (!label) return;
-    const url = window.prompt("Button link (https://…)", "https://");
+    const url = window.prompt(msg("editor.buttonLink"), "https://");
     if (!url) return;
     // The CTA grammar: its own paragraph, bold link only (lib/prose).
     e.chain()
@@ -138,12 +140,12 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
         ],
       })
       .run();
-  }, []);
+  }, [msg]);
 
   async function uploadImage(file: File) {
     setUploadError(null);
     if (file.size > MAX_IMAGE_BYTES) {
-      setUploadError("Images can be up to 2 MB.");
+      setUploadError(msg("editor.imageTooLarge"));
       return;
     }
     try {
@@ -153,16 +155,16 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
         body: JSON.stringify({ content_type: file.type }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Upload not allowed");
+      if (!res.ok) throw new Error(data.error ?? msg("editor.uploadNotAllowed"));
       const put = await fetch(data.upload_url, {
         method: "PUT",
         headers: { "Content-Type": file.type },
         body: file,
       });
-      if (!put.ok) throw new Error("Upload failed");
+      if (!put.ok) throw new Error(msg("editor.uploadFailed"));
       editor?.chain().focus().setImage({ src: data.public_url, alt: file.name }).run();
     } catch (err) {
-      setUploadError(err instanceof Error ? err.message : "Upload failed");
+      setUploadError(err instanceof Error ? err.message : msg("editor.uploadFailed"));
     }
   }
 
@@ -172,11 +174,11 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
     <div className="rounded-lg border border-purple-200 bg-white transition focus-within:border-purple-500 focus-within:ring-2 focus-within:ring-purple-200">
       {/* Write / Preview tabs */}
       <div className="flex items-center justify-between border-b border-purple-100 px-2 py-1">
-        <div role="tablist" aria-label="Editor mode" className="flex gap-1">
+        <div role="tablist" aria-label={msg("editor.mode")} className="flex gap-1">
           {(
             [
-              ["write", "Write", Pencil],
-              ["preview", "Preview", Eye],
+              ["write", msg("editor.write"), Pencil],
+              ["preview", msg("editor.preview"), Eye],
             ] as const
           ).map(([key, label, Icon]) => (
             <button
@@ -196,7 +198,7 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
         </div>
         {remaining < 2000 && (
           <span className={`text-xs ${remaining < 0 ? "text-red-600" : "text-slate-400"}`}>
-            {remaining.toLocaleString()} left
+            {msg("editor.charsLeft", { n: remaining.toLocaleString() })}
           </span>
         )}
       </div>
@@ -205,40 +207,40 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
         <>
           {editor && (
             <div className="flex flex-wrap items-center gap-0.5 border-b border-purple-50 px-2 py-1">
-              <ToolbarButton label="Heading" active={editor.isActive("heading", { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
+              <ToolbarButton label={msg("editor.heading")} active={editor.isActive("heading", { level: 2 })} onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}>
                 <Heading2 className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label="Subheading" active={editor.isActive("heading", { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}>
+              <ToolbarButton label={msg("editor.subheading")} active={editor.isActive("heading", { level: 3 })} onClick={() => editor.chain().focus().toggleHeading({ level: 3 }).run()}>
                 <Heading3 className="h-4 w-4" />
               </ToolbarButton>
               <span aria-hidden className="mx-1 h-4 w-px bg-purple-100" />
-              <ToolbarButton label="Bold" active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}>
+              <ToolbarButton label={msg("editor.bold")} active={editor.isActive("bold")} onClick={() => editor.chain().focus().toggleBold().run()}>
                 <Bold className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label="Italic" active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}>
+              <ToolbarButton label={msg("editor.italic")} active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}>
                 <Italic className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label="Link" active={editor.isActive("link")} onClick={() => setLink(editor)}>
+              <ToolbarButton label={msg("editor.link")} active={editor.isActive("link")} onClick={() => setLink(editor)}>
                 <Link2 className="h-4 w-4" />
               </ToolbarButton>
               <span aria-hidden className="mx-1 h-4 w-px bg-purple-100" />
-              <ToolbarButton label="Bullet list" active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}>
+              <ToolbarButton label={msg("editor.bulletList")} active={editor.isActive("bulletList")} onClick={() => editor.chain().focus().toggleBulletList().run()}>
                 <List className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label="Numbered list" active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
+              <ToolbarButton label={msg("editor.numberedList")} active={editor.isActive("orderedList")} onClick={() => editor.chain().focus().toggleOrderedList().run()}>
                 <ListOrdered className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label="Quote" active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
+              <ToolbarButton label={msg("editor.quote")} active={editor.isActive("blockquote")} onClick={() => editor.chain().focus().toggleBlockquote().run()}>
                 <Quote className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label="Divider" onClick={() => editor.chain().focus().setHorizontalRule().run()}>
+              <ToolbarButton label={msg("editor.divider")} onClick={() => editor.chain().focus().setHorizontalRule().run()}>
                 <Minus className="h-4 w-4" />
               </ToolbarButton>
               <span aria-hidden className="mx-1 h-4 w-px bg-purple-100" />
-              <ToolbarButton label="Image (up to 2 MB)" onClick={() => fileRef.current?.click()}>
+              <ToolbarButton label={msg("editor.image")} onClick={() => fileRef.current?.click()}>
                 <ImagePlus className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label="Sponsor / call-to-action button" onClick={() => insertCta(editor)}>
+              <ToolbarButton label={msg("editor.cta")} onClick={() => insertCta(editor)}>
                 <Megaphone className="h-4 w-4" />
               </ToolbarButton>
             </div>
@@ -266,7 +268,7 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
           {previewHtml ? (
             <CompetitionProse html={previewHtml} />
           ) : (
-            <p className="text-sm text-slate-400">Nothing to preview yet.</p>
+            <p className="text-sm text-slate-400">{msg("editor.nothingPreview")}</p>
           )}
         </div>
       )}

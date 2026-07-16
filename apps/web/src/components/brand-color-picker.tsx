@@ -5,6 +5,8 @@
 // null = the leading "default" chip (platform violet for orgs, "inherit"
 // for competitions).
 import { BRAND_PALETTE } from "@/lib/brand-palette";
+import { useMsg } from "@/components/i18n/dict-provider";
+import { swatchLabel } from "@/lib/scoring-vocab";
 
 /** Platform violet — used only to paint the default chip's disc. */
 const DEFAULT_HEX = "#7c3aed";
@@ -24,6 +26,7 @@ export function BrandColorPicker({
   /** Disc color for the null chip, e.g. the inherited org color. */
   defaultHex?: string;
 }) {
+  const msg = useMsg();
   const current = value?.toLowerCase() ?? null;
   const chips: { name: string; hex: string | null; disc: string }[] = [
     { name: defaultLabel, hex: null, disc: defaultHex },
@@ -51,7 +54,7 @@ export function BrandColorPicker({
               className="h-4 w-4 shrink-0 rounded-full ring-1 ring-inset ring-black/10"
               style={{ background: s.disc }}
             />
-            {s.name}
+            {swatchLabel(s.hex, msg) ?? s.name}
           </button>
         );
       })}

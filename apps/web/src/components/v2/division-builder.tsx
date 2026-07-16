@@ -16,6 +16,7 @@ import { defaultMatchMinutes } from "@/lib/match-length";
 import { FormatExplainerPanel } from "@/components/v2/format-explainer-panel";
 import { FormatRecommendStrip } from "@/components/v2/format-recommend-strip";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
+import { sportLabel } from "@/lib/scoring-vocab";
 
 export interface SportOption {
   key: string;
@@ -358,7 +359,7 @@ export function DivisionBuilder({
             <select value={sportKey} onChange={(e) => selectSport(e.target.value)} className="select">
               {sports.map((s) => (
                 <option key={s.key} value={s.key}>
-                  {s.name}
+                  {sportLabel(s.key, msg)}
                 </option>
               ))}
             </select>

@@ -13,6 +13,8 @@ import {
 import { DiscoveryCard, sportEmoji } from "@/components/discovery-cards";
 import { getDictionary, t } from "@/lib/i18n";
 import { hasLocale } from "@/lib/i18n-constants";
+import { sportLabel } from "@/lib/scoring-vocab";
+import { msgFor } from "@/lib/messages-i18n";
 
 export async function generateMetadata({
   params,
@@ -85,7 +87,7 @@ export default async function DiscoverPage({
               key={s.key}
               href={`/${lang}/discover/${s.key}`}
               active={filters.sport === s.key}
-              label={`${sportEmoji(s.key)} ${s.name}`}
+              label={`${sportEmoji(s.key)} ${sportLabel(s.key, (k) => msgFor(lang, k))}`}
             />
           ))}
           <span className="mx-2 hidden h-4 w-px bg-slate-200 sm:block" />
