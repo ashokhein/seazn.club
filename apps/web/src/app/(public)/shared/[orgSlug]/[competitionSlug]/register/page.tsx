@@ -8,7 +8,7 @@ import Image from "next/image";
 import type { Metadata } from "next";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
 import { getPublicOrg } from "@/server/public-site/data";
-import { brandingSponsors } from "@/lib/org-branding";
+import { resolveSponsors } from "@/server/usecases/sponsors";
 import { HttpError } from "@/lib/errors";
 import { RegisterForm } from "@/components/public-site/register-form";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -28,9 +28,11 @@ export default async function RegisterPage({ params }: Props) {
     if (err instanceof HttpError && err.status === 404) notFound();
     throw err;
   }
-  // Org sponsors, entitlement-gated by the public org read (v3/10 #5).
+  // Sponsor masthead (v10 PROMPT-56): resolver rows (org-wide scope), blob
+  // shim only for un-backfilled orgs. The line is flat — tier rank already
+  // orders it, so the title sponsor leads.
   const pub = await getPublicOrg(orgSlug);
-  const sponsors = brandingSponsors(pub?.org.branding);
+  const sponsors = pub ? await resolveSponsors(pub.org.id) : [];
 
   const locale = await resolveLocale({ orgDefault: toLocale(pub?.org.default_locale ?? null) });
   const ui = await getDictionary(locale, "ui");

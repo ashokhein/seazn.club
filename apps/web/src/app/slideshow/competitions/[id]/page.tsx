@@ -10,7 +10,7 @@ import { listDivisions } from "@/server/usecases/divisions";
 import { buildDivisionSlides, orgBoardChrome, type Slide } from "@/server/slideshow-data";
 import { hasFeature } from "@/lib/entitlements";
 import { publicThemeStyleChain } from "@/lib/public-theme";
-import { brandingSponsors } from "@/lib/org-branding";
+import { resolveSponsors } from "@/server/usecases/sponsors";
 import { Slideshow } from "@/components/v2/slideshow";
 
 export default async function CompetitionSlideshowPage({
@@ -55,7 +55,8 @@ export default async function CompetitionSlideshowPage({
         chrome.branding,
       )}
       logo={chrome.logo}
-      sponsors={brandingSponsors(chrome.branding)}
+      // v10: resolver rows (competition scope first), blob shim fallback.
+      sponsors={await resolveSponsors(auth.orgId, id)}
     />
   );
 }

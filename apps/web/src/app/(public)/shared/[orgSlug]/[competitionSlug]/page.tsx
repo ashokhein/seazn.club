@@ -10,7 +10,8 @@ import { getPublicCompetition } from "@/server/public-site/data";
 import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicRegistrationInfo } from "@/server/usecases/registrations";
 import { publicThemeStyle } from "@/lib/public-theme";
-import { brandingSponsors } from "@/lib/org-branding";
+import { hasFeature } from "@/lib/entitlements";
+import { resolveSponsors, SPONSOR_TIERS, type ResolvedSponsor, type SponsorTier } from "@/server/usecases/sponsors";
 import { renderProse } from "@/lib/prose";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
 
@@ -55,12 +56,14 @@ export default async function CompetitionHomePage({ params }: Props) {
   }
   const { org, competition, divisions, liveNow } = data;
   const branding = (competition.branding ?? {}) as Branding;
-  // Sponsor slots (v3/10 #5): competition-level first, then org-level —
-  // org.branding is already entitlement-gated (Pro / Event Pass) upstream.
-  const sponsorSeen = new Set<string>();
-  const sponsors = [...(branding.sponsors ?? []), ...brandingSponsors(org.branding)].filter(
-    (s) => !sponsorSeen.has(s.name) && sponsorSeen.add(s.name),
-  );
+  // Sponsors (v10 PROMPT-56): table rows via the resolver (blob shim only for
+  // un-backfilled orgs). Tier grouping is Pro `sponsors.tiers` — without it
+  // every row collapses to the free flat partner strip.
+  const tiered = await hasFeature(org.id, "sponsors.tiers", competition.id);
+  const sponsors = await resolveSponsors(org.id, competition.id, { tiered });
+  const sponsorGroups: [SponsorTier, ResolvedSponsor[]][] = SPONSOR_TIERS.map(
+    (t): [SponsorTier, ResolvedSponsor[]] => [t, sponsors.filter((s) => s.tier === t)],
+  ).filter(([, rows]) => rows.length > 0);
   // Register CTA (doc 16 §1.1): shown while any division accepts submissions.
   const registration = await publicRegistrationInfo(orgSlug, competitionSlug).catch(() => null);
   const registrationOpen = registration?.divisions.some((d) => d.open) ?? false;
@@ -255,30 +258,85 @@ export default async function CompetitionHomePage({ params }: Props) {
           <h2 className="mb-3 text-xs font-medium uppercase tracking-[0.18em] text-ink-muted">
             Sponsors
           </h2>
-          <ul className="flex flex-wrap items-center gap-3">
-            {sponsors.map((s) => {
-              const inner = (
-                <span className="flex items-center gap-2 rounded-lg border border-zinc-200/80 bg-surface px-3 py-2 text-sm text-zinc-600 shadow-sm">
-                  {s.logo ? (
-                    // sponsor logo — uploaded via content-upload, always a storage URL.
-                    <Image src={s.logo} alt="" width={24} height={24} className="h-6 w-6 object-contain" />
-                  ) : null}
-                  {s.name}
-                </span>
-              );
+          <div className="space-y-4">
+            {sponsorGroups.map(([tier, rows]) => {
+              // Descending prominence: title reads as "presented by", partner
+              // stays the familiar small chip strip.
+              const chip: Record<SponsorTier, { box: string; logo: number; logoCls: string }> = {
+                title: {
+                  box: "gap-3 rounded-xl px-5 py-3.5 font-display text-2xl font-semibold uppercase tracking-tight text-ink",
+                  logo: 40,
+                  logoCls: "h-10 w-10",
+                },
+                gold: {
+                  box: "gap-2.5 rounded-lg px-4 py-2.5 text-base font-semibold text-zinc-700",
+                  logo: 32,
+                  logoCls: "h-8 w-8",
+                },
+                silver: {
+                  box: "gap-2 rounded-lg px-3 py-2 text-sm text-zinc-600",
+                  logo: 24,
+                  logoCls: "h-6 w-6",
+                },
+                partner: {
+                  box: "gap-2 rounded-lg px-2.5 py-1.5 text-xs text-zinc-500",
+                  logo: 20,
+                  logoCls: "h-5 w-5",
+                },
+              };
+              const label: Record<SponsorTier, string> = {
+                title: "Title sponsor",
+                gold: "Gold",
+                silver: "Silver",
+                partner: "Partners",
+              };
               return (
-                <li key={s.name}>
-                  {s.url ? (
-                    <a href={s.url} rel="nofollow noopener" className="hover:opacity-80">
-                      {inner}
-                    </a>
-                  ) : (
-                    inner
-                  )}
-                </li>
+                <div key={tier}>
+                  {tiered ? (
+                    <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.22em] text-ink-muted">
+                      {label[tier]}
+                    </p>
+                  ) : null}
+                  <ul className="flex flex-wrap items-center gap-3">
+                    {rows.map((s) => {
+                      const c = chip[tier];
+                      const inner = (
+                        <span
+                          className={`flex items-center border border-zinc-200/80 bg-surface shadow-sm ${c.box}`}
+                        >
+                          {s.logo ? (
+                            // sponsor logo — uploaded via content-upload, always a storage URL.
+                            <Image
+                              src={s.logo}
+                              alt=""
+                              width={c.logo}
+                              height={c.logo}
+                              className={`${c.logoCls} object-contain`}
+                            />
+                          ) : null}
+                          {s.name}
+                        </span>
+                      );
+                      // Table rows go through the tracked /s redirect; blob-shim
+                      // entries (id null) link straight out.
+                      const href = s.url ? (s.id ? `/s/${s.id}` : s.url) : null;
+                      return (
+                        <li key={s.name}>
+                          {href ? (
+                            <a href={href} rel="nofollow noopener" className="hover:opacity-80">
+                              {inner}
+                            </a>
+                          ) : (
+                            inner
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
               );
             })}
-          </ul>
+          </div>
         </section>
       ) : null}
     </div>

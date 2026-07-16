@@ -7,6 +7,7 @@ import "server-only";
 // plain Postgres. The outcome enum keeps failure modes explicit.
 import { sql } from "@/lib/db";
 import { hasFeature } from "@/lib/entitlements";
+import { resolveSponsors, type ResolvedSponsor } from "@/server/usecases/sponsors";
 import type {
   PublicCompetition,
   PublicDivision,
@@ -25,6 +26,8 @@ export interface EmbedPayload {
   fixtures: PublicFixture[];
   standings: PublicStandings[];
   entrants: PublicEntrant[];
+  /** Sponsor rows (v10) — data only; embed RENDERING of sponsors is v12. */
+  sponsors: ResolvedSponsor[];
   /** Venue zone (schedule_settings.tz; UTC if unset) for schedule display. */
   tz: string;
 }
@@ -96,6 +99,7 @@ export async function embedDivisionData(divisionId: string): Promise<EmbedResolu
     ok: true,
     data: {
       org, competition, division, stages, pools, fixtures, standings, entrants,
+      sponsors: await resolveSponsors(org.id, competition.id),
       tz: ssRows[0]?.tz ?? "UTC",
     },
   };
