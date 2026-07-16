@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { api } from "@/lib/client";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function OrgLogo({
   orgId,
@@ -10,6 +11,7 @@ export function OrgLogo({
   orgId: string;
   initialLogoUrl: string | null;
 }) {
+  const msg = useMsg();
   const [logoUrl, setLogoUrl] = useState<string | null>(initialLogoUrl);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,7 +47,7 @@ export function OrgLogo({
         : preview;
       setLogoUrl(cdnUrl);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      setError(err instanceof Error ? err.message : msg("settings.org.logo.uploadFailed"));
     } finally {
       setBusy(false);
     }
@@ -58,26 +60,26 @@ export function OrgLogo({
         onClick={() => inputRef.current?.click()}
         disabled={busy}
         className="relative grid h-16 w-16 shrink-0 cursor-pointer place-items-center overflow-hidden rounded-xl border-2 border-dashed border-purple-200 bg-purple-50 transition hover:border-purple-400 hover:bg-purple-100 disabled:cursor-not-allowed"
-        aria-label="Upload org logo"
+        aria-label={msg("settings.org.logo.aria")}
       >
         {logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={logoUrl} alt="Org logo" className="h-full w-full object-cover" />
+          <img src={logoUrl} alt={msg("settings.org.logo.alt")} className="h-full w-full object-cover" />
         ) : (
           <span className="text-2xl">{busy ? "⏳" : "🏷"}</span>
         )}
         {busy && (
           <span className="absolute inset-0 flex items-center justify-center bg-white/70 text-xs text-purple-600">
-            Uploading…
+            {msg("settings.org.logo.uploading")}
           </span>
         )}
       </button>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-slate-700">Organisation logo</p>
+        <p className="text-sm font-medium text-slate-700">{msg("settings.org.logo.title")}</p>
         <p className="mt-0.5 text-xs text-slate-500">
-          Shown on public tournament pages and the navigation bar.
+          {msg("settings.org.logo.desc1")}
           <br />
-          Click the square to upload (PNG, JPG, WebP — up to 2 MB).
+          {msg("settings.org.logo.desc2")}
         </p>
         {logoUrl && (
           <button
@@ -91,7 +93,7 @@ export function OrgLogo({
             }}
             className="mt-1 text-xs text-red-400 underline"
           >
-            Remove
+            {msg("settings.org.logo.remove")}
           </button>
         )}
         {error && <p className="mt-1 text-xs text-red-500">{error}</p>}

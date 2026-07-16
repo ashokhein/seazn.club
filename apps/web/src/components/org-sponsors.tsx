@@ -35,12 +35,12 @@ export function OrgSponsors({
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.error ?? "Save failed");
+        throw new Error(d.error ?? msg("settings.saveFailed"));
       }
       setSponsors(next);
       setSaved(JSON.stringify(next));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(err instanceof Error ? err.message : msg("settings.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -48,7 +48,7 @@ export function OrgSponsors({
 
   async function uploadLogo(index: number, file: File) {
     if (file.size > MAX_LOGO_BYTES) {
-      setError("Sponsor logos can be up to 2 MB.");
+      setError(msg("settings.org.sponsors.tooBig"));
       return;
     }
     setError(null);
@@ -59,17 +59,17 @@ export function OrgSponsors({
         body: JSON.stringify({ content_type: file.type }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Upload not allowed");
+      if (!res.ok) throw new Error(data.error ?? msg("settings.org.sponsors.uploadNotAllowed"));
       const put = await fetch(data.upload_url, {
         method: "PUT",
         headers: { "Content-Type": file.type },
         body: file,
       });
-      if (!put.ok) throw new Error("Upload failed");
+      if (!put.ok) throw new Error(msg("settings.org.logo.uploadFailed"));
       const next = sponsors.map((s, i) => (i === index ? { ...s, logo: data.public_url } : s));
       await persist(next);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      setError(err instanceof Error ? err.message : msg("settings.org.logo.uploadFailed"));
     }
   }
 
@@ -124,7 +124,7 @@ export function OrgSponsors({
               <div className="flex shrink-0 items-center gap-0.5">
                 <button
                   type="button"
-                  aria-label={`Move ${s.name} up`}
+                  aria-label={msg("settings.org.sponsors.moveUp", { name: s.name })}
                   disabled={busy || i === 0}
                   onClick={() => move(i, -1)}
                   className="grid h-7 w-7 place-items-center rounded text-slate-400 hover:bg-purple-50 hover:text-purple-700 disabled:opacity-30"
@@ -133,7 +133,7 @@ export function OrgSponsors({
                 </button>
                 <button
                   type="button"
-                  aria-label={`Move ${s.name} down`}
+                  aria-label={msg("settings.org.sponsors.moveDown", { name: s.name })}
                   disabled={busy || i === sponsors.length - 1}
                   onClick={() => move(i, 1)}
                   className="grid h-7 w-7 place-items-center rounded text-slate-400 hover:bg-purple-50 hover:text-purple-700 disabled:opacity-30"
@@ -142,7 +142,7 @@ export function OrgSponsors({
                 </button>
                 <button
                   type="button"
-                  aria-label={`Remove ${s.name}`}
+                  aria-label={msg("settings.org.sponsors.remove", { name: s.name })}
                   disabled={busy}
                   onClick={() => void persist(sponsors.filter((_, j) => j !== i))}
                   className="grid h-7 w-7 place-items-center rounded text-red-400 hover:bg-red-50 hover:text-red-600"
@@ -157,7 +157,7 @@ export function OrgSponsors({
 
       <div className="flex flex-wrap items-end gap-2">
         <label className="block">
-          <span className="label">Sponsor name</span>
+          <span className="label">{msg("settings.org.sponsors.name")}</span>
           <input
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
@@ -166,7 +166,7 @@ export function OrgSponsors({
           />
         </label>
         <label className="block">
-          <span className="label">Link (optional)</span>
+          <span className="label">{msg("settings.org.sponsors.link")}</span>
           <input
             value={draft.url}
             onChange={(e) => setDraft({ ...draft, url: e.target.value })}
@@ -186,10 +186,10 @@ export function OrgSponsors({
           }}
           className="btn btn-primary"
         >
-          {busy ? "…" : "Add sponsor"}
+          {busy ? "…" : msg("settings.org.sponsors.add")}
         </button>
       </div>
-      {dirty && <p className="text-xs text-slate-400">Saving…</p>}
+      {dirty && <p className="text-xs text-slate-400">{msg("settings.saving")}</p>}
     </div>
   );
 }

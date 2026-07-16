@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { ProseEditor } from "@/components/prose-editor";
 import { publicThemeStyleChain } from "@/lib/public-theme";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function OrgAbout({
   orgId,
@@ -16,6 +17,7 @@ export function OrgAbout({
   initialValue: string | null;
   branding: unknown;
 }) {
+  const msg = useMsg();
   const [value, setValue] = useState(initialValue ?? "");
   const [saved, setSaved] = useState(initialValue ?? "");
   const [busy, setBusy] = useState(false);
@@ -32,11 +34,11 @@ export function OrgAbout({
       });
       if (!res.ok) {
         const d = await res.json().catch(() => ({}));
-        throw new Error(d.error ?? "Save failed");
+        throw new Error(d.error ?? msg("settings.saveFailed"));
       }
       setSaved(value);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(err instanceof Error ? err.message : msg("settings.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -46,15 +48,12 @@ export function OrgAbout({
 
   return (
     <div className="space-y-2">
-      <p className="text-sm text-slate-500">
-        Shown on your public organisation page — who you are, how to join,
-        who to thank.
-      </p>
+      <p className="text-sm text-slate-500">{msg("settings.org.about.desc")}</p>
       <ProseEditor
         value={value}
         onChange={setValue}
         orgId={orgId}
-        placeholder="About your organisation"
+        placeholder={msg("settings.org.about.placeholder")}
         previewStyle={publicThemeStyleChain(branding)}
       />
       <div className="flex items-center gap-3">
@@ -64,7 +63,7 @@ export function OrgAbout({
           disabled={!dirty || busy}
           className="btn btn-primary"
         >
-          {busy ? "Saving…" : "Save about"}
+          {busy ? msg("settings.saving") : msg("settings.org.about.save")}
         </button>
         {error && <p className="text-sm text-red-600">{error}</p>}
       </div>

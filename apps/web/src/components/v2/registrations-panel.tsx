@@ -135,7 +135,7 @@ export function RegistrationsPanel({
 
   useEffect(() => {
     refresh().catch((err) =>
-      setError(err instanceof Error ? err.message : "Failed to load"),
+      setError(err instanceof Error ? err.message : msg("reg.failedLoad")),
     );
   }, [refresh]);
 
@@ -158,7 +158,7 @@ export function RegistrationsPanel({
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywall((err.extra.feature_key as string) ?? "registration.paid");
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("reg.failed"));
       }
     } finally {
       setBusy(false);
@@ -214,12 +214,12 @@ export function RegistrationsPanel({
     const withdrawMoneyLine = !paidCard
       ? ""
       : lockPassed
-        ? " The fee will not auto-refund — the refund lock has passed (refund manually if owed)."
-        : " The paid fee refunds automatically (refund lock off).";
+        ? ` ${msg("reg.withdraw.moneyLockPassed")}`
+        : ` ${msg("reg.withdraw.moneyRefunds")}`;
     const dialogFor: Partial<Record<typeof verb, Parameters<typeof confirmDialog>[0]>> = {
       withdraw: {
         title: msg("confirm.withdrawRegistration.title"),
-        body: `Frees the spot — the oldest waitlisted entry moves up.${withdrawMoneyLine}`,
+        body: `${msg("reg.withdraw.body")}${withdrawMoneyLine}`,
         confirmLabel: msg("confirm.withdrawRegistration.label"),
         tone: "danger",
       },
@@ -227,7 +227,7 @@ export function RegistrationsPanel({
         title: msg("confirm.refundRegistration.title"),
         body:
           r.status === "confirmed" || r.status === "paid"
-            ? `Money only — ${r.display_name} stays confirmed and keeps the spot.`
+            ? msg("reg.refund.bodyConfirmed", { name: r.display_name })
             : msg("confirm.refundRegistration.body"),
         confirmLabel: msg("confirm.refundRegistration.label"),
       },
@@ -254,12 +254,12 @@ export function RegistrationsPanel({
         method: "POST",
         json: {},
       });
-      setNotice(res.sent ? "Payment reminder sent." : "Reminder not sent — email isn't configured.");
+      setNotice(res.sent ? msg("reg.remind.sent") : msg("reg.remind.notSent"));
     });
   }
 
   if (!settings) {
-    return <p className="text-sm text-slate-400">{error ?? "Loading…"}</p>;
+    return <p className="text-sm text-slate-400">{error ?? msg("reg.loading")}</p>;
   }
 
   const set = (patch: Partial<Settings>) => setSettings({ ...settings, ...patch });
@@ -288,15 +288,14 @@ export function RegistrationsPanel({
       <section>
         {settings.payment_method === "stripe" && !settings.charges_enabled && (
           <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-            Card payments are offline — registrants can&apos;t pay until Stripe is reconnected
-            under <a href="/settings/payments" className="underline">Settings → Payments</a>. The public
-            page shows the division as temporarily unavailable.
+            {msg("reg.stripeOffline.pre")}
+            <a href="/settings/payments" className="underline">{msg("reg.stripeOffline.link")}</a>
+            {msg("reg.stripeOffline.post")}
           </div>
         )}
         {regs.some((r) => r.disputed_at) && (
           <div className="mb-3 rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-800">
-            {regs.filter((r) => r.disputed_at).length} payment(s) disputed — check your email
-            and Stripe dashboard. Disputed rows are flagged below.
+            {msg("reg.disputed", { n: regs.filter((r) => r.disputed_at).length })}
           </div>
         )}
         <RegistrationPulse
@@ -307,7 +306,7 @@ export function RegistrationsPanel({
         />
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="flex items-center gap-1.5 text-sm font-semibold text-slate-700">
-            Registrations <span className="text-slate-500">({regs.length})</span>
+            {msg("reg.heading")} <span className="text-slate-500">({regs.length})</span>
             <Tip id="registration.ref-number" />
           </h2>
           {/* Search by ref (v3/05 §3) — day-of check-in lookup. Names match
@@ -316,8 +315,8 @@ export function RegistrationsPanel({
             type="search"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search ref or name…"
-            aria-label="Search registrations by reference or name"
+            placeholder={msg("reg.searchPlaceholder")}
+            aria-label={msg("reg.searchAria")}
             className="input w-48 px-2 py-1 text-xs"
             data-testid="reg-search"
           />
@@ -325,7 +324,7 @@ export function RegistrationsPanel({
             href={`/api/v1/divisions/${divisionId}/registrations/export`}
             className="btn btn-ghost text-xs"
           >
-            Export CSV
+            {msg("reg.exportCsv")}
           </a>
         </div>
         <RegistrationList

@@ -15,6 +15,9 @@ import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { TipCallout } from "@/components/ui/tip";
 import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
+
+type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
 interface StageRow {
   id: string;
@@ -82,11 +85,11 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
     setError(null);
     try {
       await apiV1(`/api/v1/divisions/${divisionId}/undo`, { method: "POST", json: {} });
-      setNotice("Change undone.");
+      setNotice(msg("schedule.notice.undone"));
       setUndoable(false);
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Undo failed");
+      setError(err instanceof Error ? err.message : msg("schedule.error.undoFailed"));
     }
   }
 
@@ -101,21 +104,21 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
         assignments: { fixture_id: string; scheduled_at: string; court_label: string }[];
       }>(`/api/v1/stages/${stageId}/schedule/auto`, { method: "POST", json: { only_unlocked: true } });
       if (out.assignments.length === 0) {
-        setNotice("Nothing to schedule — no free slots or nothing unscheduled.");
+        setNotice(msg("schedule.notice.nothingToSchedule"));
         return;
       }
       const applied = await apiV1<{ applied: number }>(`/api/v1/stages/${stageId}/schedule/apply`, {
         method: "POST",
         json: { assignments: out.assignments, source: "auto" },
       });
-      setNotice(`Placed ${applied.applied} fixture(s).`);
+      setNotice(msg("schedule.notice.placed", { n: applied.applied }));
       setUndoable(true);
       router.refresh();
     } catch (err) {
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
       }
     } finally {
       setBusy(null);
@@ -130,7 +133,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
     try {
       if (action === "delete") {
         await apiV1(`/api/v1/stages/${stageId}`, { method: "DELETE" });
-        setNotice("Stage deleted.");
+        setNotice(msg("schedule.notice.stageDeleted"));
       } else if (action === "generate") {
         const out = await apiV1<{ created: number; existing: number }>(
           `/api/v1/stages/${stageId}/generate`,
@@ -138,8 +141,8 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
         );
         setNotice(
           out.created > 0
-            ? `Generated ${out.created} fixture(s) (${out.existing} already existed).`
-            : "Nothing new to generate — fixtures are up to date.",
+            ? msg("schedule.notice.generated", { created: out.created, existing: out.existing })
+            : msg("schedule.notice.nothingNew"),
         );
       } else {
         const out = await apiV1<{
@@ -150,12 +153,15 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
         }>(`/api/v1/stages/${stageId}/complete`, { method: "POST", json: {} });
         setNotice(
           !out.completed
-            ? "Stage is not ready to complete (undecided fixtures remain)."
+            ? msg("schedule.notice.notReady")
             : out.division_completed
-              ? "Stage completed — that was the last stage, the division is finished. 🏆"
+              ? msg("schedule.notice.divisionFinished")
               : out.next_stage_fixtures !== undefined
-                ? `Stage completed — top ${out.qualified?.entrants.length ?? ""} advance; ${out.next_stage_fixtures} fixture(s) generated for the next stage.`
-                : "Stage completed.",
+                ? msg("schedule.notice.advanced", {
+                    n: out.qualified?.entrants.length ?? "",
+                    gen: out.next_stage_fixtures,
+                  })
+                : msg("schedule.notice.completed"),
         );
       }
       router.refresh();
@@ -163,7 +169,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
       }
     } finally {
       setBusy(null);
@@ -171,12 +177,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
   }
 
   if (stages.length === 0) {
-    return (
-      <p className="text-sm text-slate-500">
-        This division has no stages yet — recreate it with a format, or define
-        stages via the API.
-      </p>
-    );
+    return <p className="text-sm text-slate-500">{msg("schedule.noStages")}</p>;
   }
 
   const nowPlaying = fixtures.filter((f) => f.status === "in_play");
@@ -214,7 +215,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
             className="btn btn-ghost text-xs"
             href={`/api/v1/divisions/${divisionId}/exports/timetable?format=pdf`}
           >
-            Print schedule
+            {msg("schedule.print")}
           </a>
         )}
       </div>
@@ -236,8 +237,9 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                   className="inline-flex items-center gap-1.5 rounded-lg border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-800 hover:border-amber-400"
                 >
                   <span aria-hidden className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-500" />
-                  {f.home_entrant_id ? (entrantNames[f.home_entrant_id] ?? "?") : "TBD"} vs{" "}
-                  {f.away_entrant_id ? (entrantNames[f.away_entrant_id] ?? "?") : "TBD"}
+                  {f.home_entrant_id ? (entrantNames[f.home_entrant_id] ?? "?") : msg("schedule.tbd")}{" "}
+                  {msg("schedule.vs")}{" "}
+                  {f.away_entrant_id ? (entrantNames[f.away_entrant_id] ?? "?") : msg("schedule.tbd")}
                   {f.court_label ? <span className="text-slate-500">· {f.court_label}</span> : null}
                 </Link>
               </li>
@@ -288,7 +290,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                 {stage.seq}. {stage.name}
               </h3>
               <span className="chip">{stage.kind}</span>
-              <span className={`badge ${stageStatusStyle(stage.status)}`}>{stage.status}</span>
+              <span className={`badge ${stageStatusStyle(stage.status)}`}>{stageStatusLabel(msg, stage.status)}</span>
               <div className="flex-1" />
               {canEdit && stage.status !== "complete" && (
                 <>
@@ -298,7 +300,11 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                     onClick={() => act(stage.id, "generate")}
                     className="btn btn-ghost px-3 py-1.5 text-xs"
                   >
-                    {busy === stage.id ? "Working…" : stage.kind === "swiss" ? "Pair next round" : "Generate fixtures"}
+                    {busy === stage.id
+                      ? msg("schedule.working")
+                      : stage.kind === "swiss"
+                        ? msg("schedule.pairNext")
+                        : msg("schedule.generate")}
                   </button>
                   {stageFixtures.length > 0 && (
                     <button
@@ -307,7 +313,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                       onClick={() => act(stage.id, "complete")}
                       className="btn btn-primary px-3 py-1.5 text-xs"
                     >
-                      Complete stage
+                      {msg("schedule.complete")}
                     </button>
                   )}
                 </>
@@ -327,7 +333,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                   }}
                   className="btn btn-danger px-3 py-1.5 text-xs"
                 >
-                  Delete
+                  {msg("schedule.delete")}
                 </button>
               )}
             </header>
@@ -349,7 +355,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                       onClick={() => void autoScheduleStage(stage.id)}
                       className="btn btn-primary px-3 py-1 text-xs"
                     >
-                      {busy === stage.id ? "Working…" : msg("schedule.unscheduled.cta")}
+                      {busy === stage.id ? msg("schedule.working") : msg("schedule.unscheduled.cta")}
                     </button>
                   )}
                 </div>
@@ -374,7 +380,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
 
             {stageFixtures.length === 0 ? (
               <p className="px-4 py-4 text-sm text-slate-500">
-                No fixtures yet{canEdit ? " — generate them when entrants are registered." : "."}
+                {canEdit ? msg("schedule.noFixtures.can") : msg("schedule.noFixtures.view")}
               </p>
             ) : splitRounds ? null : (
               <div className="divide-y divide-slate-100">
@@ -384,7 +390,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
                   <div key={round}>
                     {/* Sticky round header (items 1 + 7): label + date range. */}
                     <p className="sticky top-0 z-10 flex items-baseline gap-2 border-y border-slate-300 bg-slate-200 px-4 py-1.5 text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      Round {round}
+                      {msg("schedule.round", { n: round })}
                       {dates.from && (
                         <span data-testid="round-dates" className="font-medium normal-case text-slate-500">
                           <ClientDateRange from={dates.from} to={dates.to} tz={tz} />
@@ -423,7 +429,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
               <section key={round} className="card overflow-hidden">
                 <header className="sticky top-0 z-10 border-b border-slate-100 bg-slate-50 px-4 py-2">
                   <h4 className="flex items-baseline gap-2 text-xs font-medium uppercase tracking-wide text-slate-500">
-                    {stage.name} — {bracketRoundLabel(stage.kind, round, maxRound)}
+                    {stage.name} — {bracketRoundLabel(msg, stage.kind, round, maxRound)}
                     {dates.from && (
                       <span data-testid="round-dates" className="normal-case text-slate-500">
                         <ClientDateRange from={dates.from} to={dates.to} tz={tz} />
@@ -460,8 +466,8 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
         <AddStageForm
           divisionId={divisionId}
           nextSeq={Math.max(0, ...stages.map((s) => s.seq)) + 1}
-          onDone={(msg) => {
-            setNotice(msg);
+          onDone={(noticeMsg) => {
+            setNotice(noticeMsg);
             router.refresh();
           }}
           onError={setError}
@@ -473,7 +479,8 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
 
 // Follow-up stage (e.g. finals after a league). Qualification resolves from
 // the previous stage's final table; if that stage is already complete the
-// server seeds + generates on the spot.
+// server seeds + generates on the spot. Kind labels are format names (kept
+// canonical/English, like the format gallery).
 const ADD_KINDS = [
   { key: "knockout", label: "Knockout" },
   { key: "stepladder", label: "Stepladder" },
@@ -491,6 +498,7 @@ function AddStageForm({
   onDone: (msg: string) => void;
   onError: (msg: string) => void;
 }) {
+  const msg = useMsg();
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("Finals");
   const [kind, setKind] = useState<string>("knockout");
@@ -516,19 +524,19 @@ function AddStageForm({
           method: "POST",
           json: {},
         });
-        onDone(`Stage added — ${gen.created} fixture(s) generated for the top ${topN}.`);
+        onDone(msg("schedule.notice.stageAdded", { n: gen.created, topN }));
       } catch (err) {
         // Previous stage not complete yet — the stage exists; completion will
         // seed + generate it.
         if (err instanceof ApiV1Error && err.code === "STAGE_NOT_READY") {
-          onDone("Stage added — fixtures will generate when the previous stage completes.");
+          onDone(msg("schedule.notice.stageAddedLater"));
         } else {
           throw err;
         }
       }
       setOpen(false);
     } catch (err) {
-      onError(err instanceof Error ? err.message : "Failed");
+      onError(err instanceof Error ? err.message : msg("schedule.error.failed"));
     } finally {
       setBusy(false);
     }
@@ -537,7 +545,7 @@ function AddStageForm({
   if (!open) {
     return (
       <button type="button" onClick={() => setOpen(true)} className="btn btn-ghost text-xs">
-        + Add stage
+        {msg("schedule.addStage")}
       </button>
     );
   }
@@ -545,7 +553,7 @@ function AddStageForm({
   return (
     <section className="card flex flex-wrap items-end gap-3 p-4">
       <label className="block">
-        <span className="label">Stage name</span>
+        <span className="label">{msg("schedule.field.stageName")}</span>
         <input
           value={name}
           onChange={(e) => setName(e.target.value)}
@@ -554,7 +562,7 @@ function AddStageForm({
         />
       </label>
       <label className="block">
-        <span className="label">Format</span>
+        <span className="label">{msg("schedule.field.format")}</span>
         <select value={kind} onChange={(e) => setKind(e.target.value)} className="select">
           {ADD_KINDS.map((k) => (
             <option key={k.key} value={k.key}>
@@ -564,20 +572,20 @@ function AddStageForm({
         </select>
       </label>
       <label className="block">
-        <span className="label">Qualify from table</span>
+        <span className="label">{msg("schedule.field.qualifyFrom")}</span>
         <select value={topN} onChange={(e) => setTopN(Number(e.target.value))} className="select">
           {[2, 3, 4, 6, 8].map((n) => (
             <option key={n} value={n}>
-              Top {n}
+              {msg("schedule.topN", { n })}
             </option>
           ))}
         </select>
       </label>
       <button type="button" disabled={busy} onClick={add} className="btn btn-primary text-xs">
-        {busy ? "Adding…" : "Add stage"}
+        {busy ? msg("schedule.adding") : msg("schedule.addStageBtn")}
       </button>
       <button type="button" onClick={() => setOpen(false)} className="btn btn-ghost text-xs">
-        Cancel
+        {msg("schedule.cancel")}
       </button>
     </section>
   );
@@ -596,15 +604,15 @@ const VOID_STATUSES = new Set(["cancelled", "abandoned", "forfeited"]);
 
 // Named bracket rounds, by distance from the last round. Double-elim round
 // numbers encode WB/LB/GF lanes, so plain "Round N" stays honest there.
-function bracketRoundLabel(kind: string, roundNo: number, maxRound: number): string {
-  if (kind === "stepladder") return `Rung ${roundNo}`;
+function bracketRoundLabel(msg: Msg, kind: string, roundNo: number, maxRound: number): string {
+  if (kind === "stepladder") return msg("schedule.bracket.rung", { n: roundNo });
   if (kind === "knockout") {
     const fromEnd = maxRound - roundNo;
-    if (fromEnd === 0) return "Final";
-    if (fromEnd === 1) return "Semi-finals";
-    if (fromEnd === 2) return "Quarter-finals";
+    if (fromEnd === 0) return msg("schedule.bracket.final");
+    if (fromEnd === 1) return msg("schedule.bracket.semi");
+    if (fromEnd === 2) return msg("schedule.bracket.quarter");
   }
-  return `Round ${roundNo}`;
+  return msg("schedule.round", { n: roundNo });
 }
 
 function stageStatusStyle(status: string): string {
@@ -613,19 +621,36 @@ function stageStatusStyle(status: string): string {
   return "bg-slate-100 text-slate-600";
 }
 
-function outcomeText(outcome: unknown, entrantNames: Record<string, string>): string | null {
+/** Localized stage status; unknown values fall back to the raw token. */
+function stageStatusLabel(msg: Msg, status: string): string {
+  if (status === "active") return msg("schedule.sstatus.active");
+  if (status === "complete") return msg("schedule.sstatus.complete");
+  if (status === "pending") return msg("schedule.sstatus.pending");
+  return status;
+}
+
+/** Localized played-fixture status; unknown values fall back to the raw token. */
+function fixtureStatusLabel(msg: Msg, status: string): string {
+  const key = `schedule.fstatus.${status}` as MessageKey;
+  const label = msg(key);
+  return label === key ? status.replace("_", " ") : label;
+}
+
+function outcomeText(msg: Msg, outcome: unknown, entrantNames: Record<string, string>): string | null {
   const o = outcome as { kind?: string; winner?: string } | null;
   if (!o?.kind) return null;
+  const winner = entrantNames[o.winner ?? ""] ?? "?";
   switch (o.kind) {
     case "win":
+      return msg("schedule.outcome.won", { name: winner });
     case "award":
-      return `${entrantNames[o.winner ?? ""] ?? "?"} won${o.kind === "award" ? " (w/o)" : ""}`;
+      return msg("schedule.outcome.wonWo", { name: winner });
     case "draw":
-      return "Draw";
+      return msg("schedule.outcome.draw");
     case "tie":
-      return "Tie";
+      return msg("schedule.outcome.tie");
     case "no_result":
-      return "No result";
+      return msg("schedule.outcome.noResult");
     default:
       return null;
   }
@@ -658,9 +683,9 @@ function FixtureLine({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const home = fixture.home_entrant_id ? (entrantNames[fixture.home_entrant_id] ?? "?") : "TBD";
-  const away = fixture.away_entrant_id ? (entrantNames[fixture.away_entrant_id] ?? "?") : "TBD";
-  const decided = outcomeText(fixture.outcome, entrantNames);
+  const home = fixture.home_entrant_id ? (entrantNames[fixture.home_entrant_id] ?? "?") : msg("schedule.tbd");
+  const away = fixture.away_entrant_id ? (entrantNames[fixture.away_entrant_id] ?? "?") : msg("schedule.tbd");
+  const decided = outcomeText(msg, fixture.outcome, entrantNames);
 
   // Bye ghost row (item 6): structural, not schedulable, no actions.
   if (isBye(fixture)) {
@@ -681,7 +706,7 @@ function FixtureLine({
       router.refresh();
       onRescheduled?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed");
+      setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
     } finally {
       setBusy(false);
     }
@@ -716,33 +741,33 @@ function FixtureLine({
           }`}
         >
           <span className="font-medium">{home}</span>
-          <span className="mx-1.5 text-slate-400">vs</span>
+          <span className="mx-1.5 text-slate-400">{msg("schedule.vs")}</span>
           <span className="font-medium">{away}</span>
           {decided && !voided && <span className="ml-2 text-xs text-slate-500 no-underline">{decided}</span>}
         </Link>
         {/* Timetable chip — reflects whether the match has a kick-off time. */}
         <span
           className={`badge ${timed ? "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200" : "bg-slate-100 text-slate-500"}`}
-          title={timed ? "This match has a kick-off time" : "No kick-off time yet"}
+          title={timed ? msg("schedule.chip.timedTitle") : msg("schedule.chip.untimedTitle")}
         >
           {timed ? (
             <>
-              Scheduled · <ClientTime value={fixture.scheduled_at} mode="datetime" tz={tz} showZone />
+              {msg("schedule.chip.scheduled")} · <ClientTime value={fixture.scheduled_at} mode="datetime" tz={tz} showZone />
             </>
           ) : (
-            "Unscheduled"
+            msg("schedule.chip.unscheduled")
           )}
           {fixture.court_label ? ` · ${fixture.court_label}` : fixture.venue ? ` · ${fixture.venue}` : ""}
         </span>
         {/* Play state only once it's under way / done. */}
         {played && (
           <span className={`badge ${FIXTURE_STATUS_STYLE[fixture.status] ?? ""}`}>
-            {fixture.status.replace("_", " ")}
+            {fixtureStatusLabel(msg, fixture.status)}
           </span>
         )}
         {/* Scoring pad. */}
         <Link href={href} className="btn btn-ghost px-3 py-1 text-xs">
-          {decided ? "View" : fixture.status === "in_play" ? "Score ●" : "Score"}
+          {decided ? msg("schedule.view") : fixture.status === "in_play" ? msg("schedule.scoreLive") : msg("schedule.score")}
         </Link>
         {/* Timetable controls only while the match is still movable — once
             it's in play or decided the server refuses moves anyway, so the
@@ -753,7 +778,7 @@ function FixtureLine({
             onClick={() => setEditing(!editing)}
             className="btn btn-ghost px-3 py-1 text-xs"
           >
-            {editing ? "Close" : timed ? "Edit time" : "Schedule"}
+            {editing ? msg("schedule.close") : timed ? msg("schedule.editTime") : msg("schedule.schedule")}
           </button>
         )}
         {canEdit && fixture.status === "scheduled" && timed && !editing && (
@@ -763,14 +788,14 @@ function FixtureLine({
             onClick={unschedule}
             className="text-xs text-slate-500 hover:text-red-600 hover:underline"
           >
-            Unschedule
+            {msg("schedule.unschedule")}
           </button>
         )}
       </div>
       {editing && (
         <div className="mt-2 flex flex-wrap items-end gap-2">
           <label className="block">
-            <span className="label">When</span>
+            <span className="label">{msg("schedule.field.when")}</span>
             <input
               type="datetime-local"
               value={when}
@@ -779,7 +804,7 @@ function FixtureLine({
             />
           </label>
           <label className="block">
-            <span className="label">Venue</span>
+            <span className="label">{msg("schedule.field.venue")}</span>
             <input
               value={venue}
               onChange={(e) => setVenue(e.target.value)}
@@ -787,7 +812,7 @@ function FixtureLine({
             />
           </label>
           <label className="block">
-            <span className="label">Court/pitch</span>
+            <span className="label">{msg("schedule.field.court")}</span>
             <input
               value={court}
               onChange={(e) => setCourt(e.target.value)}
@@ -800,7 +825,7 @@ function FixtureLine({
             onClick={saveSchedule}
             className="btn btn-primary px-3 py-1.5 text-xs"
           >
-            {busy ? "Saving…" : "Save"}
+            {busy ? msg("schedule.saving") : msg("schedule.save")}
           </button>
           {error && <span className="text-xs text-red-600">{error}</span>}
         </div>

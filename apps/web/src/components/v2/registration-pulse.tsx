@@ -9,6 +9,7 @@ import { useState } from "react";
 import { RefreshCw } from "lucide-react";
 import type { Pulse } from "@/lib/registration-derive";
 import { currencySymbol } from "./registration-settings";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export type Tab = "confirmed" | "pending" | "waitlist" | "disputed" | "all";
 
@@ -54,6 +55,7 @@ export function RegistrationPulse({
   onJump: (tab: Tab) => void;
   onRefresh?: () => Promise<void>;
 }) {
+  const msg = useMsg();
   const [refreshing, setRefreshing] = useState(false);
   const sym = currencySymbol(currency);
   const money = (cents: number) => `${sym}${(cents / 100).toFixed(2)}`;
@@ -63,7 +65,7 @@ export function RegistrationPulse({
   return (
     <div className="card mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 p-3" data-testid="reg-pulse">
       <Metric
-        label={pulse.capacity !== null ? `confirmed of ${pulse.capacity}` : "confirmed"}
+        label={pulse.capacity !== null ? msg("reg.pulse.confirmedOf", { n: pulse.capacity }) : msg("reg.pulse.confirmed")}
         value={String(pulse.confirmed)}
         tone="text-emerald-700"
         onClick={() => onJump("confirmed")}
@@ -72,8 +74,8 @@ export function RegistrationPulse({
       <Metric
         label={
           pulse.nextExpiry !== null
-            ? `holding · next expiry ${hoursUntil(pulse.nextExpiry)}`
-            : "holding a spot"
+            ? msg("reg.pulse.holdingExpiry", { h: hoursUntil(pulse.nextExpiry) })
+            : msg("reg.pulse.holding")
         }
         value={String(pulse.holding)}
         tone="text-amber-700"
@@ -81,7 +83,7 @@ export function RegistrationPulse({
         testId="pulse-holding"
       />
       <Metric
-        label="waitlisted"
+        label={msg("reg.pulse.waitlisted")}
         value={String(pulse.waitlisted)}
         tone="text-sky-700"
         onClick={() => onJump("waitlist")}
@@ -90,10 +92,10 @@ export function RegistrationPulse({
       {anyMoney && (
         <>
           <span aria-hidden className="mx-1 hidden h-8 w-px bg-slate-200 sm:block" />
-          <Metric label="paid" value={money(pulse.paidCents)} onClick={() => onJump("all")} />
+          <Metric label={msg("reg.pulse.paid")} value={money(pulse.paidCents)} onClick={() => onJump("all")} />
           {pulse.dueCents > 0 && (
             <Metric
-              label="due"
+              label={msg("reg.pulse.due")}
               value={money(pulse.dueCents)}
               tone="text-amber-700"
               onClick={() => onJump("pending")}
@@ -101,7 +103,7 @@ export function RegistrationPulse({
           )}
           {pulse.refundIncomplete > 0 && (
             <Metric
-              label="refund needs retry"
+              label={msg("reg.pulse.refundRetry")}
               value={String(pulse.refundIncomplete)}
               tone="text-amber-800"
               onClick={() => onJump("all")}
@@ -109,7 +111,7 @@ export function RegistrationPulse({
           )}
           {pulse.disputed > 0 && (
             <Metric
-              label="disputed"
+              label={msg("reg.pulse.disputed")}
               value={String(pulse.disputed)}
               tone="text-rose-700"
               onClick={() => onJump("disputed")}
@@ -120,8 +122,8 @@ export function RegistrationPulse({
       {onRefresh && (
         <button
           type="button"
-          aria-label="Refresh registrations"
-          title="Refresh registrations"
+          aria-label={msg("reg.pulse.refresh")}
+          title={msg("reg.pulse.refresh")}
           disabled={refreshing}
           onClick={async () => {
             setRefreshing(true);

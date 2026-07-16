@@ -6,6 +6,7 @@ import { useState } from "react";
 import { api } from "@/lib/client";
 import { publicBrandColor } from "@/lib/public-theme";
 import { BrandColorPicker } from "@/components/brand-color-picker";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function OrgBrandColor({
   orgId,
@@ -14,6 +15,7 @@ export function OrgBrandColor({
   orgId: string;
   initialBranding: unknown;
 }) {
+  const msg = useMsg();
   const [value, setValue] = useState<string | null>(publicBrandColor(initialBranding));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +32,7 @@ export function OrgBrandColor({
       });
     } catch (err) {
       setValue(prev);
-      setError(err instanceof Error ? err.message : "Save failed");
+      setError(err instanceof Error ? err.message : msg("settings.saveFailed"));
     } finally {
       setBusy(false);
     }
@@ -38,9 +40,7 @@ export function OrgBrandColor({
 
   return (
     <div>
-      <p className="mb-2 text-xs text-slate-500">
-        Colors your public pages and TV noticeboard. Competitions can override it.
-      </p>
+      <p className="mb-2 text-xs text-slate-500">{msg("settings.org.brand.desc")}</p>
       <BrandColorPicker value={value} onSelect={select} disabled={busy} />
       {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>
