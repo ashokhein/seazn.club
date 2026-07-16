@@ -1148,7 +1148,11 @@
     "format.explainer.tradeoff": "815c71d7d134656a",
     "format.explainer.liveExample": "7b8549c1e612b31f",
     "format.explainer.generating": "d20a4476a0a85978",
-    "format.explainer.fullGuide": "04f6b2b76e041e74"
+    "format.explainer.fullGuide": "04f6b2b76e041e74",
+    "funnel.sport": "9a085dd854f03306",
+    "funnel.entrants": "060216fd3d636e57",
+    "funnel.date": "8169693101a4536c",
+    "funnel.submit": "ada46c3034cae363"
   },
   "fr": {
     "app.name": "fb56d648fbb9ae92",
@@ -2299,7 +2303,11 @@
     "format.explainer.tradeoff": "815c71d7d134656a",
     "format.explainer.liveExample": "7b8549c1e612b31f",
     "format.explainer.generating": "d20a4476a0a85978",
-    "format.explainer.fullGuide": "04f6b2b76e041e74"
+    "format.explainer.fullGuide": "04f6b2b76e041e74",
+    "funnel.sport": "9a085dd854f03306",
+    "funnel.entrants": "060216fd3d636e57",
+    "funnel.date": "8169693101a4536c",
+    "funnel.submit": "ada46c3034cae363"
   },
   "nl": {
     "app.name": "fb56d648fbb9ae92",
@@ -3450,6 +3458,10 @@
     "format.explainer.tradeoff": "815c71d7d134656a",
     "format.explainer.liveExample": "7b8549c1e612b31f",
     "format.explainer.generating": "d20a4476a0a85978",
-    "format.explainer.fullGuide": "04f6b2b76e041e74"
+    "format.explainer.fullGuide": "04f6b2b76e041e74",
+    "funnel.sport": "9a085dd854f03306",
+    "funnel.entrants": "060216fd3d636e57",
+    "funnel.date": "8169693101a4536c",
+    "funnel.submit": "ada46c3034cae363"
   }
 }

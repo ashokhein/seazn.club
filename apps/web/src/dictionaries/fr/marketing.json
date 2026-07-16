@@ -259,5 +259,9 @@
   "sched.board.trayAria": "Rencontres à placer",
   "sched.board.replayCaption": "08:55 — ARRIVÉE DES RENCONTRES · CONFLIT DÉTECTÉ · RÉSOLU · PUBLIÉ — TOUCHEZ POUR PRENDRE LE RELAIS",
   "sched.board.runMatchday": "Gérez votre journée de match →",
-  "sched.board.publishToPlayers": "Publier pour les joueurs →"
+  "sched.board.publishToPlayers": "Publier pour les joueurs →",
+  "funnel.sport": "Sport",
+  "funnel.entrants": "Joueurs / équipes",
+  "funnel.date": "Date de début",
+  "funnel.submit": "Configuration →"
 }

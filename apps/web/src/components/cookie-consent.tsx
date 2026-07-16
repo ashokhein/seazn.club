@@ -11,7 +11,7 @@ import {
   needsConsentPrompt,
   type ConsentChoice,
 } from "@/lib/consent";
-import { readLocaleCookie, clientCommon } from "@/lib/client-dict";
+import { readActiveLocale, clientCommon } from "@/lib/client-dict";
 import { DEFAULT_LOCALE, type Locale } from "@/lib/i18n-constants";
 
 /**
@@ -28,7 +28,7 @@ export function CookieConsent() {
   const [locale, setLocale] = useState<Locale>(DEFAULT_LOCALE);
 
   useEffect(() => {
-    setLocale(readLocaleCookie());
+    setLocale(readActiveLocale());
     // Show on first visit, or when the policy version moved on since the
     // visitor last chose (policy change / new third party → re-consent).
     if (needsConsentPrompt()) setVisible(true);

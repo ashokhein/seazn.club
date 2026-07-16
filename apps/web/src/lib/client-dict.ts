@@ -25,6 +25,25 @@ export function readLocaleCookie(): Locale {
   return hasLocale(v) ? v : DEFAULT_LOCALE;
 }
 
+/** The locale of a `[lang]` route from its first path segment, or null when the
+ *  path carries no locale (root `/`, or non-localized routes like `/login`,
+ *  `/o/…`). Pure — the testable core of readActiveLocale. */
+export function localeFromPath(pathname: string): Locale | null {
+  const seg = pathname.split("/")[1] ?? "";
+  return hasLocale(seg) ? seg : null;
+}
+
+/** Locale a root-layout client island should render in: match the visible
+ *  `[lang]` path first (so the banner is English on /en even if the cookie says
+ *  fr), and fall back to the cookie on paths without a locale segment. */
+export function readActiveLocale(): Locale {
+  if (typeof window !== "undefined") {
+    const fromPath = localeFromPath(window.location.pathname);
+    if (fromPath) return fromPath;
+  }
+  return readLocaleCookie();
+}
+
 /** Look up a `common`-namespace key for `locale`, falling back to en then key. */
 export function clientCommon(locale: Locale, key: string): string {
   return COMMON[locale]?.[key] ?? COMMON[DEFAULT_LOCALE][key] ?? key;
