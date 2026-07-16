@@ -56,14 +56,25 @@ export default async function ClaimPage({
         <>
           <div className="mb-6 text-center">
             <h1 className="app-display text-3xl font-bold tracking-tight text-cream">
-              Claim your profile
+              {claim.is_official ? "Claim your officiating profile" : "Claim your profile"}
             </h1>
-            <p className="mt-2 text-sm text-cream/70">
-              <span className="font-medium text-lime-400">{claim.org_name}</span> set up a
-              player profile for <span className="font-medium text-lime-400">{claim.person_name}</span>.
-              Claiming it shows your matches in one place, lets you RSVP availability, and puts
-              your public visibility in your hands.
-            </p>
+            {/* Officiating variant (PROMPT-57): same rail, different promise —
+                the recipient is a referee, not a player. */}
+            {claim.is_official ? (
+              <p className="mt-2 text-sm text-cream/70">
+                <span className="font-medium text-lime-400">{claim.org_name}</span> set up an
+                officiating profile for <span className="font-medium text-lime-400">{claim.person_name}</span>.
+                Claiming it shows the matches you&apos;re assigned to, lets you accept or decline,
+                set the dates you can&apos;t make, and score from your phone.
+              </p>
+            ) : (
+              <p className="mt-2 text-sm text-cream/70">
+                <span className="font-medium text-lime-400">{claim.org_name}</span> set up a
+                player profile for <span className="font-medium text-lime-400">{claim.person_name}</span>.
+                Claiming it shows your matches in one place, lets you RSVP availability, and puts
+                your public visibility in your hands.
+              </p>
+            )}
           </div>
           {user ? (
             user.email.toLowerCase() === claim.email.toLowerCase() ? (

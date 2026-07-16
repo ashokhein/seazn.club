@@ -8,7 +8,9 @@ import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
 import { listMyFixtures, listMyPersons, type MyFixture, type MyResult } from "@/server/usecases/me";
+import { getMyOfficiating } from "@/server/usecases/me-officiating";
 import { RsvpControl } from "@/components/me/rsvp-control";
+import { OfficiatingLane } from "@/components/me/officiating-lane";
 import { ConsentCard } from "@/components/me/consent-card";
 import { LogoutButton } from "@/components/logout-button";
 import { Zoned, ViewerTzProvider } from "@/components/client-time";
@@ -28,8 +30,9 @@ export default async function MePage({
     getDictionary(locale, "console"),
     getDictionary(locale, "ui"),
   ]);
-  const [{ upcoming, results, teams }, persons, orgs, activeOrgId] = await Promise.all([
+  const [{ upcoming, results, teams }, officiating, persons, orgs, activeOrgId] = await Promise.all([
     listMyFixtures(user.id),
+    getMyOfficiating(user.id),
     listMyPersons(user.id),
     // Dual-role seam: organisers who are also players get a door back.
     // Read-only resolve — resolveActiveOrg repairs the cookie, which a
@@ -72,7 +75,7 @@ export default async function MePage({
         )}
         <h1 className="page-title mb-6">{t(ui, "me.title")}</h1>
 
-        {upcoming.length === 0 && results.length === 0 && (
+        {upcoming.length === 0 && results.length === 0 && !officiating.is_official && (
           <p className="card p-6 text-sm text-slate-500">{t(ui, "me.empty")}</p>
         )}
 
@@ -175,6 +178,16 @@ export default async function MePage({
               ))}
             </ul>
           </section>
+        )}
+
+        {/* Officiating lane (PROMPT-57): only when a claimed official points
+            at this login — a pure player never sees it. One identity, two
+            lanes. */}
+        {officiating.is_official && (
+          <OfficiatingLane
+            assignments={officiating.assignments}
+            blackouts={officiating.blackouts}
+          />
         )}
 
         {results.length > 0 && (

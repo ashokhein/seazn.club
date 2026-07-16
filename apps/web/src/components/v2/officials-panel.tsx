@@ -17,12 +17,24 @@ interface Official {
   role_keys: string[];
   entrant_id: string | null;
   max_per_day: number | null;
+  /** v11 claim-rail state */
+  email: string | null;
+  claimed: boolean;
+  invite_pending: boolean;
 }
 interface FixtureLite {
   id: string;
   label: string;
   scheduled_at: string | null;
-  officials: { official_id: string; name: string; role: string; locked: boolean }[];
+  officials: {
+    official_id: string;
+    name: string;
+    role: string;
+    locked: boolean;
+    /** v11: pending | accepted | declined (older cache rows omit it). */
+    response?: string;
+    decline_reason?: string | null;
+  }[];
 }
 interface StageLite {
   id: string;
@@ -67,6 +79,8 @@ export function OfficialsPanel({
   hideNames,
   canEdit,
   sportKey,
+  blackouts = [],
+  venueTz = "UTC",
 }: {
   divisionId: string;
   officials: Official[];
@@ -76,6 +90,10 @@ export function OfficialsPanel({
   canEdit: boolean;
   /** Seeds the add-form role + crew hint from the sport's preset (v6/00 §4). */
   sportKey?: string;
+  /** v11: blackout dates per official — warns before assigning onto one. */
+  blackouts?: { official_id: string; date: string }[];
+  /** Venue zone for matching a fixture's date against blackout dates. */
+  venueTz?: string;
 }) {
   const msg = useMsg();
   const locale = useLocale();
@@ -93,9 +111,63 @@ export function OfficialsPanel({
   const [sourceStage, setSourceStage] = useState(stages[0]?.id ?? "");
   const [sourceRank, setSourceRank] = useState(4);
   const [sourced, setSourced] = useState<Sourced | null>(null);
+  // v11 invite state: one inline editor at a time; the claim link shows once.
+  const [inviteFor, setInviteFor] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteResult, setInviteResult] = useState<{ claim_url: string; email_sent: boolean } | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [bulkDone, setBulkDone] = useState<number | null>(null);
 
   const officialName = (id: string) =>
     officials.find((o) => o.id === id)?.display_name ?? id;
+
+  // Blackout lookup (v11 warn-before-assign): official → set of unavailable
+  // dates, matched against the fixture's date in the venue zone.
+  const blackoutsByOfficial = new Map<string, Set<string>>();
+  for (const b of blackouts) {
+    const set = blackoutsByOfficial.get(b.official_id) ?? new Set<string>();
+    set.add(b.date);
+    blackoutsByOfficial.set(b.official_id, set);
+  }
+  const fixtureDate = (iso: string | null): string | null => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleDateString("en-CA", { timeZone: venueTz || "UTC" });
+    } catch {
+      return iso.slice(0, 10);
+    }
+  };
+  const unavailableFor = (officialId: string, scheduledAt: string | null): boolean => {
+    const d = fixtureDate(scheduledAt);
+    return d !== null && (blackoutsByOfficial.get(officialId)?.has(d) ?? false);
+  };
+
+  async function sendInvite(officialId: string) {
+    await run(async () => {
+      const res = await apiV1<{ claim_url: string; email_sent: boolean }>(
+        `/api/v1/officials/${officialId}/invite`,
+        { method: "POST", json: { email: inviteEmail.trim() } },
+      );
+      setInviteResult({ claim_url: res.claim_url, email_sent: res.email_sent });
+    }, false);
+  }
+
+  // Bulk re-invite (v11 stretch): everyone with a known email who is neither
+  // linked nor already holding an open invite.
+  const bulkTargets = officials.filter((o) => o.email && !o.claimed && !o.invite_pending);
+  async function bulkInvite() {
+    await run(async () => {
+      let sent = 0;
+      for (const o of bulkTargets) {
+        await apiV1(`/api/v1/officials/${o.id}/invite`, {
+          method: "POST",
+          json: { email: o.email },
+        });
+        sent++;
+      }
+      setBulkDone(sent);
+    });
+  }
 
   async function run(fn: () => Promise<unknown>, refresh = true) {
     setError(null);
@@ -146,11 +218,21 @@ export function OfficialsPanel({
 
       {/* roster of officials */}
       <div className="card space-y-3 p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-slate-900">{msg("officials.roster")}</h3>
-          {officials.length > 0 && (
-            <span className="text-xs text-slate-400">{msg("officials.total", { n: officials.length })}</span>
-          )}
+          <span className="flex items-center gap-2">
+            {canEdit && bulkTargets.length > 0 && (
+              <button type="button" className="btn btn-ghost py-1 text-xs" disabled={busy} onClick={() => void bulkInvite()}>
+                {msg("officials.bulkInvite")} ({bulkTargets.length})
+              </button>
+            )}
+            {bulkDone !== null && (
+              <span className="text-xs text-lime-700">{msg("officials.bulkDone", { n: bulkDone })}</span>
+            )}
+            {officials.length > 0 && (
+              <span className="text-xs text-slate-400">{msg("officials.total", { n: officials.length })}</span>
+            )}
+          </span>
         </div>
         {officials.length === 0 ? (
           <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-500">
@@ -159,39 +241,114 @@ export function OfficialsPanel({
         ) : (
           <ul className="grid gap-2 sm:grid-cols-2">
             {officials.map((o) => (
-              <li
-                key={o.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2.5"
-              >
-                <span
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white"
-                  style={{ backgroundColor: avatarColor(o.display_name) }}
-                  aria-hidden
-                >
-                  {initials(o.display_name)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-800">{o.display_name}</p>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                    {o.role_keys.map((r) => (
-                      <span
-                        key={r}
-                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500"
+              <li key={o.id} className="rounded-lg border border-slate-200 bg-white p-2.5">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white"
+                    style={{ backgroundColor: avatarColor(o.display_name) }}
+                    aria-hidden
+                  >
+                    {initials(o.display_name)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-800">{o.display_name}</p>
+                    <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                      {o.role_keys.map((r) => (
+                        <span
+                          key={r}
+                          className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500"
+                        >
+                          {r}
+                        </span>
+                      ))}
+                      {o.entrant_id && (
+                        <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
+                          {msg("officials.teamRef")}
+                        </span>
+                      )}
+                      {/* v11 claim-rail state: linked beats invited beats nothing. */}
+                      {o.claimed ? (
+                        <span className="rounded bg-lime-100 px-1.5 py-0.5 text-[11px] text-lime-700">
+                          {msg("officials.linked")}
+                        </span>
+                      ) : o.invite_pending ? (
+                        <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">
+                          {msg("officials.invited")}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                  {o.max_per_day != null && (
+                    <span className="shrink-0 text-[11px] text-slate-400">
+                      {msg("officials.maxPerDay", { n: o.max_per_day })}
+                    </span>
+                  )}
+                  {canEdit && !o.claimed && (
+                    <button
+                      type="button"
+                      className="btn btn-ghost shrink-0 py-1 text-xs"
+                      disabled={busy}
+                      onClick={() => {
+                        setInviteFor(inviteFor === o.id ? null : o.id);
+                        setInviteEmail(o.email ?? "");
+                        setInviteResult(null);
+                        setCopied(false);
+                      }}
+                    >
+                      {msg("officials.invite")}
+                    </button>
+                  )}
+                </div>
+                {inviteFor === o.id && (
+                  <div className="mt-2 space-y-2 border-t border-slate-100 pt-2">
+                    {!inviteResult ? (
+                      <form
+                        className="flex flex-wrap items-end gap-2"
+                        onSubmit={(e) => {
+                          e.preventDefault();
+                          if (inviteEmail.trim()) void sendInvite(o.id);
+                        }}
                       >
-                        {r}
-                      </span>
-                    ))}
-                    {o.entrant_id && (
-                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
-                        {msg("officials.teamRef")}
-                      </span>
+                        <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-slate-500">
+                          {msg("officials.inviteEmail")}
+                          <input
+                            type="email"
+                            className="input"
+                            value={inviteEmail}
+                            onChange={(e) => setInviteEmail(e.target.value)}
+                            required
+                          />
+                        </label>
+                        <button type="submit" className="btn btn-primary py-1.5 text-sm" disabled={busy}>
+                          {msg("officials.inviteSend")}
+                        </button>
+                      </form>
+                    ) : (
+                      <div className="space-y-1 text-xs">
+                        <p className={inviteResult.email_sent ? "text-lime-700" : "text-amber-700"}>
+                          {inviteResult.email_sent
+                            ? msg("officials.inviteSent")
+                            : msg("officials.inviteEmailFailed")}
+                        </p>
+                        <p className="text-slate-500">{msg("officials.inviteLink")}</p>
+                        <div className="flex items-center gap-2">
+                          <code className="min-w-0 flex-1 truncate rounded bg-slate-50 px-2 py-1 text-[11px] text-slate-600">
+                            {inviteResult.claim_url}
+                          </code>
+                          <button
+                            type="button"
+                            className="btn btn-ghost py-1 text-xs"
+                            onClick={() => {
+                              void navigator.clipboard.writeText(inviteResult.claim_url);
+                              setCopied(true);
+                            }}
+                          >
+                            {copied ? msg("officials.copied") : msg("officials.copy")}
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
-                </div>
-                {o.max_per_day != null && (
-                  <span className="shrink-0 text-[11px] text-slate-400">
-                    {msg("officials.maxPerDay", { n: o.max_per_day })}
-                  </span>
                 )}
               </li>
             ))}
@@ -437,12 +594,47 @@ export function OfficialsPanel({
                     <span className="text-sm text-slate-400">—</span>
                   ) : (
                     <ul className="flex flex-wrap gap-1">
-                      {f.officials.map((o, i) => (
-                        <li key={i} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
-                          {o.name} <span className="text-slate-400">{o.role}</span>
-                          {o.locked && <span aria-label={msg("officials.locked")} title={msg("officials.locked")}> 🔒</span>}
-                        </li>
-                      ))}
+                      {f.officials.map((o, i) => {
+                        // v11 response flag: a decline is the organiser's cue
+                        // for a manual re-pick — nothing is reassigned for them.
+                        const declined = o.response === "declined";
+                        const pending = o.response === "pending";
+                        return (
+                          <li
+                            key={i}
+                            title={
+                              declined && o.decline_reason
+                                ? msg("officials.declineReason", { reason: o.decline_reason })
+                                : declined
+                                  ? msg("officials.respDeclined")
+                                  : pending
+                                    ? msg("officials.respPending")
+                                    : o.response === "accepted"
+                                      ? msg("officials.respAccepted")
+                                      : undefined
+                            }
+                            className={`rounded-full px-2 py-0.5 text-xs ${
+                              declined
+                                ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+                                : pending
+                                  ? "bg-amber-50 text-amber-800"
+                                  : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {declined ? "✗ " : pending ? "· " : o.response === "accepted" ? "✓ " : ""}
+                            {o.name} <span className={declined ? "text-red-400" : "text-slate-400"}>{o.role}</span>
+                            {o.locked && <span aria-label={msg("officials.locked")} title={msg("officials.locked")}> 🔒</span>}
+                            {unavailableFor(o.official_id, f.scheduled_at) && (
+                              <span
+                                className="ml-1 text-amber-600"
+                                title={msg("officials.unavailableOn")}
+                              >
+                                ⚠
+                              </span>
+                            )}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </td>
@@ -469,7 +661,12 @@ export function OfficialsPanel({
                     >
                       <option value="">{msg("officials.none")}</option>
                       {officials.map((o) => (
-                        <option key={o.id} value={o.id}>{officialName(o.id)}</option>
+                        <option key={o.id} value={o.id}>
+                          {officialName(o.id)}
+                          {unavailableFor(o.id, f.scheduled_at)
+                            ? ` — ${msg("officials.unavailableSuffix")}`
+                            : ""}
+                        </option>
                       ))}
                     </select>
                   </td>
