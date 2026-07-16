@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { ArrowRight } from "lucide-react";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
-import { FORMAT_FAMILIES, FormatDiagram } from "@/config/format-gallery";
+import { FORMAT_FAMILIES, FormatDiagram, familyCopy } from "@/config/format-gallery";
 import { getDictionary, t } from "@/lib/i18n";
 import { hasLocale } from "@/lib/i18n-constants";
 
@@ -35,7 +35,11 @@ export default async function FormatsMarketingPage({
 }) {
   const { lang } = await params;
   if (!hasLocale(lang)) notFound();
-  const d = await getDictionary(lang, "marketing");
+  const [d, ui] = await Promise.all([
+    getDictionary(lang, "marketing"),
+    getDictionary(lang, "ui"),
+  ]);
+  const tf = (key: string) => t(ui, key);
   return (
     <div className="flex min-h-screen flex-col bg-white">
       <MarketingShell lang={lang}>
@@ -51,25 +55,28 @@ export default async function FormatsMarketingPage({
         </p>
 
         <div className="mt-10 grid gap-4 sm:grid-cols-2">
-          {FORMAT_FAMILIES.map((f) => (
-            <Link
-              key={f.slug}
-              href={`/help/formats/${f.slug}`}
-              className="group rounded-2xl border border-slate-200 p-5 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md"
-            >
-              <div aria-hidden className="mb-3">
-                <FormatDiagram slug={f.slug} />
-              </div>
-              <h2 className="flex items-center gap-1.5 font-semibold text-slate-900">
-                {f.title}
-                <ArrowRight
-                  className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-purple-500"
-                  strokeWidth={2}
-                />
-              </h2>
-              <p className="mt-1 text-sm text-slate-600">{f.tagline}</p>
-            </Link>
-          ))}
+          {FORMAT_FAMILIES.map((f) => {
+            const copy = familyCopy(f, tf);
+            return (
+              <Link
+                key={f.slug}
+                href={`/help/formats/${f.slug}`}
+                className="group rounded-2xl border border-slate-200 p-5 transition hover:-translate-y-0.5 hover:border-purple-300 hover:shadow-md"
+              >
+                <div aria-hidden className="mb-3">
+                  <FormatDiagram slug={f.slug} />
+                </div>
+                <h2 className="flex items-center gap-1.5 font-semibold text-slate-900">
+                  {copy.title}
+                  <ArrowRight
+                    className="h-4 w-4 text-slate-300 transition group-hover:translate-x-0.5 group-hover:text-purple-500"
+                    strokeWidth={2}
+                  />
+                </h2>
+                <p className="mt-1 text-sm text-slate-600">{copy.tagline}</p>
+              </Link>
+            );
+          })}
         </div>
 
         <div className="mt-12 rounded-2xl bg-[linear-gradient(160deg,var(--mk-night-2),var(--mk-night))] p-8 text-center text-[var(--mk-cream)]">

@@ -109,7 +109,7 @@ export default async function DiscoverSportPage({ params }: { params: Promise<Pa
             <h2 className="mb-4 text-lg font-bold text-purple-900">{t(d, "discover.sport.liveNow")}</h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {live.map((e) => (
-                <DiscoveryCard key={e.id} entry={e} withJsonLd />
+                <DiscoveryCard key={e.id} entry={e} dict={d} lang={lang} withJsonLd />
               ))}
             </div>
           </section>
@@ -120,7 +120,7 @@ export default async function DiscoverSportPage({ params }: { params: Promise<Pa
             <h2 className="mb-4 text-lg font-bold text-purple-900">{t(d, "discover.sport.upcoming")}</h2>
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {upcoming.map((e) => (
-                <DiscoveryCard key={e.id} entry={e} withJsonLd />
+                <DiscoveryCard key={e.id} entry={e} dict={d} lang={lang} withJsonLd />
               ))}
             </div>
           </section>

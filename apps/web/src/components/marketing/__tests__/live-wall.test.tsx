@@ -3,6 +3,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { LiveWall } from "../live-wall";
 import type { DiscoveryLiveFixture } from "@/server/public-site/discovery";
 
+const dict = {
+  "live.wall.aria": "Live matches",
+  "live.wall.emptyTitle": "EMPTY-XX",
+  "live.wall.emptyBody": "BODY-XX",
+  "live.wall.emptyDiscover": "DISCOVER-XX",
+  "live.wall.emptyStart": "START-XX",
+  "live.wall.count.one": "{count} EN DIRECT",
+  "live.wall.count.other": "{count} EN DIRECT",
+  "live.wall.watch": "WATCH-XX",
+  "discovery.inPlay": "EN JEU",
+};
+
 const fx = (n: number): DiscoveryLiveFixture => ({
   id: `f${n}`,
   sport_key: "cricket",
@@ -15,19 +27,29 @@ const fx = (n: number): DiscoveryLiveFixture => ({
 });
 
 describe("LiveWall (/live)", () => {
-  it("renders every fixture as a scorebug card with its live link", () => {
-    const html = renderToStaticMarkup(<LiveWall fixtures={[fx(1), fx(2), fx(3)]} />);
-    expect(html).toContain("3 live now");
+  it("renders every fixture as a scorebug card with its live link + localized chrome", () => {
+    const html = renderToStaticMarkup(
+      <LiveWall fixtures={[fx(1), fx(2), fx(3)]} dict={dict} lang="fr" />,
+    );
+    expect(html).toContain("3 EN DIRECT");
+    expect(html).toContain("WATCH-XX");
     expect(html).toContain("/shared/harbor/cup-2/a/fixtures/f2");
     expect(html).toContain("141/3 (12.4)");
     expect(html).toContain("Harbor Cup 3");
   });
 
-  it("empty state is honest — no filler fixtures, routes to discover/start", () => {
-    const html = renderToStaticMarkup(<LiveWall fixtures={[]} />);
-    expect(html).toContain("No one");
-    expect(html).toContain('href="/discover"');
-    expect(html).toContain('href="/start"');
+  it("falls back to the localized 'In play' headline when a fixture has none", () => {
+    const html = renderToStaticMarkup(
+      <LiveWall fixtures={[{ ...fx(1), headline: null }]} dict={dict} lang="fr" />,
+    );
+    expect(html).toContain("EN JEU");
+  });
+
+  it("empty state is honest — localized, no filler fixtures, locale-prefixed CTAs", () => {
+    const html = renderToStaticMarkup(<LiveWall fixtures={[]} dict={dict} lang="fr" />);
+    expect(html).toContain("EMPTY-XX");
+    expect(html).toContain('href="/fr/discover"');
+    expect(html).toContain('href="/fr/start"');
     expect(html).not.toContain("/shared/");
   });
 });

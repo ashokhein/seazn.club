@@ -3,21 +3,28 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createBoard, isFull, place, type BoardState } from "@/lib/marketing/board-logic";
+import { useT } from "@/components/i18n/dict-provider";
 
-const FIXTURES = ["Falcons v Comets", "Tigers v Rovers", "Aces v Smash"];
 const COURTS = 3;
 
 /** Attract-mode board (design/v3/12 §5): plays the matchday replay once,
  *  hands over to the visitor on first touch (or when the replay ends), and
  *  lights Publish when every fixture is placed clash-free. Tap-a-chip then
- *  tap-a-court is the baseline mechanism — it is also the keyboard path. */
+ *  tap-a-court is the baseline mechanism — it is also the keyboard path.
+ *  Copy comes from the `marketing` dict via a <DictProvider> the /scheduling
+ *  page wraps this island in (demo team names included, for a localized feel). */
 export function SchedulingBoard() {
+  const t = useT();
+  const fixturesRef = useRef<string[]>([
+    t("sched.board.fixture.1"),
+    t("sched.board.fixture.2"),
+    t("sched.board.fixture.3"),
+  ]);
+  const fixtures = fixturesRef.current;
   const [mode, setMode] = useState<"replay" | "play" | "published">("replay");
-  const [board, setBoard] = useState<BoardState>(() => createBoard(FIXTURES, COURTS));
+  const [board, setBoard] = useState<BoardState>(() => createBoard(fixtures, COURTS));
   const [armed, setArmed] = useState<number | null>(null);
-  const [status, setStatus] = useState(
-    "Tap a fixture, then tap a court. Two on one court = clash.",
-  );
+  const [status, setStatus] = useState(() => t("sched.board.status.initial"));
   const replayTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Attract mode: skip straight to play under reduced motion; otherwise hand
@@ -44,13 +51,11 @@ export function SchedulingBoard() {
     setBoard(next);
     setArmed(null);
     if (next.courts[court]!.clash) {
-      setStatus(
-        `Clash! Two fixtures on Court ${court + 1} — the real board blocks publish until you fix it.`,
-      );
+      setStatus(t("sched.board.status.clash", { court: court + 1 }));
     } else if (isFull(next)) {
-      setStatus("Board full and clash-free — publish it.");
+      setStatus(t("sched.board.status.full"));
     } else {
-      setStatus("Placed. Drop two on one court to see clash detection.");
+      setStatus(t("sched.board.status.placed"));
     }
   }
 
@@ -58,7 +63,7 @@ export function SchedulingBoard() {
     return (
       <div data-testid="board-player-view" className="rounded-xl bg-[var(--mk-night)] p-6 text-center">
         <p className="mk-display text-xs tracking-[0.2em] text-[var(--mk-lime)]">
-          PUBLISHED — WHAT PLAYERS SEE
+          {t("sched.board.publishedLabel")}
         </p>
         <ul className="mx-auto mt-4 max-w-sm space-y-2 text-left">
           {board.courts.map((c, i) =>
@@ -68,7 +73,7 @@ export function SchedulingBoard() {
                 className="flex justify-between rounded-lg bg-[#241650] px-3 py-2 text-sm text-[var(--mk-cream)]"
               >
                 <span>{f}</span>
-                <span className="mk-display text-[var(--mk-lime)]">Court {i + 1}</span>
+                <span className="mk-display text-[var(--mk-lime)]">{t("sched.board.court", { n: i + 1 })}</span>
               </li>
             )),
           )}
@@ -77,7 +82,7 @@ export function SchedulingBoard() {
           href="/start"
           className="mk-display mt-6 inline-block rounded-xl bg-[var(--mk-lime)] px-6 py-2.5 font-bold text-[var(--mk-night)]"
         >
-          Run your matchday →
+          {t("sched.board.runMatchday")}
         </Link>
       </div>
     );
@@ -100,12 +105,12 @@ export function SchedulingBoard() {
             ))}
           </div>
           <p className="mk-display mt-3 text-[11px] tracking-[0.18em] text-[#8d7fc0]">
-            08:55 — FIXTURES ARRIVE · CLASH CAUGHT · RESOLVED · PUBLISHED — TOUCH TO TAKE OVER
+            {t("sched.board.replayCaption")}
           </p>
         </div>
       ) : (
         <div>
-          <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Fixtures to place">
+          <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label={t("sched.board.trayAria")}>
             {board.tray.map((f, i) => (
               <button
                 key={f}
@@ -127,7 +132,12 @@ export function SchedulingBoard() {
               <button
                 key={court}
                 data-testid={`board-court-${court}`}
-                aria-label={`Court ${court + 1}${c.placed.length ? `, ${c.placed.join(" and ")}` : ", empty"}`}
+                aria-label={
+                  t("sched.board.court", { n: court + 1 }) +
+                  (c.placed.length
+                    ? `, ${c.placed.join(` ${t("sched.board.and")} `)}`
+                    : `, ${t("sched.board.courtEmpty")}`)
+                }
                 onClick={() => armed !== null && placeChip(armed, court)}
                 className={`flex min-h-11 w-full flex-wrap items-center gap-2 rounded-lg p-1.5 text-left ${
                   c.clash
@@ -136,7 +146,7 @@ export function SchedulingBoard() {
                 } ${armed !== null && !c.clash ? "outline-dashed outline-2 outline-[var(--mk-lime)]" : ""}`}
               >
                 <span className="mk-display w-16 shrink-0 text-[11px] tracking-[0.12em] text-[#8d7fc0]">
-                  COURT {court + 1}
+                  {t("sched.board.courtShort", { n: court + 1 })}
                 </span>
                 {c.placed.map((f) => (
                   <span
@@ -160,7 +170,7 @@ export function SchedulingBoard() {
               onClick={() => setMode("published")}
               className="mk-display mt-3 rounded-xl bg-[var(--mk-lime)] px-6 py-2.5 font-bold text-[var(--mk-night)]"
             >
-              Publish to players →
+              {t("sched.board.publishToPlayers")}
             </button>
           ) : null}
         </div>

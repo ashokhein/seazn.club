@@ -30,14 +30,29 @@ export async function loadInvite(token: string): Promise<InviteRow | null> {
   return rows[0] ?? null;
 }
 
-/** Returns a human reason the invite cannot be used, or null when valid. */
-export function inviteProblem(invite: InviteRow): string | null {
-  if (invite.revoked) return "This invite has been revoked";
+/** Stable reason an invite cannot be used (locale-agnostic), or null when valid.
+ *  UI surfaces map the code to localized copy (`join.problem.<code>` in `ui`);
+ *  API routes render it in English via inviteProblem(). */
+export type InviteProblem = "revoked" | "expired" | "used";
+
+const INVITE_PROBLEM_EN: Record<InviteProblem, string> = {
+  revoked: "This invite has been revoked",
+  expired: "This invite has expired",
+  used: "This invite has already been used",
+};
+
+export function inviteProblemCode(invite: InviteRow): InviteProblem | null {
+  if (invite.revoked) return "revoked";
   if (invite.expires_at && new Date(invite.expires_at).getTime() < Date.now())
-    return "This invite has expired";
-  if (invite.max_uses !== 0 && invite.used_count >= invite.max_uses)
-    return "This invite has already been used";
+    return "expired";
+  if (invite.max_uses !== 0 && invite.used_count >= invite.max_uses) return "used";
   return null;
+}
+
+/** English reason string for API responses (programmatic, not user-facing UI). */
+export function inviteProblem(invite: InviteRow): string | null {
+  const code = inviteProblemCode(invite);
+  return code ? INVITE_PROBLEM_EN[code] : null;
 }
 
 /**

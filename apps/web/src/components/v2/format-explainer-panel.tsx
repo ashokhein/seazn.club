@@ -7,10 +7,11 @@
 import Link from "@/components/ui/console-link";
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { formatFamily, FormatDiagram } from "@/config/format-gallery";
+import { formatFamily, FormatDiagram, familyCopy } from "@/config/format-gallery";
 import { FormatPreviewView } from "@/components/format-preview-view";
 import type { PreviewPhase } from "@/server/usecases/stages";
 import { apiV1 } from "@/lib/client-v1";
+import { useT } from "@/components/i18n/dict-provider";
 
 export function FormatExplainerPanel({
   familySlug,
@@ -19,6 +20,7 @@ export function FormatExplainerPanel({
   familySlug: string;
   onClose: () => void;
 }) {
+  const t = useT();
   const family = formatFamily(familySlug);
   const [phases, setPhases] = useState<PreviewPhase[] | null>(null);
 
@@ -49,12 +51,13 @@ export function FormatExplainerPanel({
   }, [onClose]);
 
   if (!family) return null;
+  const copy = familyCopy(family, t);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={`How ${family.title} works`}>
+    <div className="fixed inset-0 z-50 flex justify-end" role="dialog" aria-modal="true" aria-label={t("format.explainer.howAria", { name: copy.title })}>
       <button
         type="button"
-        aria-label="Close explainer"
+        aria-label={t("format.explainer.closeExplainer")}
         onClick={onClose}
         className="absolute inset-0 bg-purple-950/30 backdrop-blur-sm"
       />
@@ -62,15 +65,15 @@ export function FormatExplainerPanel({
         <div className="sticky top-0 flex items-start justify-between gap-3 border-b border-purple-100 bg-white/95 px-5 py-4 backdrop-blur">
           <div>
             <p className="font-mono text-[10px] uppercase tracking-[0.25em] text-purple-600">
-              How this works
+              {t("format.explainer.how")}
             </p>
             <h2 className="mt-0.5 font-display text-xl font-semibold text-slate-900">
-              {family.title}
+              {copy.title}
             </h2>
           </div>
           <button
             type="button"
-            aria-label="Close"
+            aria-label={t("format.explainer.close")}
             onClick={onClose}
             className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-slate-400 transition hover:bg-purple-50 hover:text-purple-700"
           >
@@ -82,23 +85,23 @@ export function FormatExplainerPanel({
           <div className="rounded-2xl border border-purple-100 bg-purple-50/40 p-4">
             <FormatDiagram slug={family.slug} />
           </div>
-          <p className="text-sm font-medium text-slate-800">{family.tagline}</p>
-          {family.body.map((p, i) => (
+          <p className="text-sm font-medium text-slate-800">{copy.tagline}</p>
+          {copy.body.map((p, i) => (
             <p key={i} className="text-sm leading-relaxed text-slate-600">
               {p}
             </p>
           ))}
           <div className="rounded-xl bg-purple-50/60 p-3 text-sm text-slate-600">
-            <span className="font-semibold text-slate-800">Trade-off: </span>
-            {family.tradeoff}
+            <span className="font-semibold text-slate-800">{t("format.explainer.tradeoff")}</span>
+            {copy.tradeoff}
           </div>
 
           <div>
             <h3 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-400">
-              Live example — 8 entrants
+              {t("format.explainer.liveExample")}
             </h3>
             {phases === null ? (
-              <p className="text-sm text-slate-400">Generating…</p>
+              <p className="text-sm text-slate-400">{t("format.explainer.generating")}</p>
             ) : (
               <FormatPreviewView phases={phases} />
             )}
@@ -109,7 +112,7 @@ export function FormatExplainerPanel({
             target="_blank"
             className="inline-block text-sm font-medium text-purple-700 underline"
           >
-            Full guide in the help centre →
+            {t("format.explainer.fullGuide")}
           </Link>
         </div>
       </aside>

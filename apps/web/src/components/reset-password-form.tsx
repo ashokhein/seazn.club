@@ -4,8 +4,10 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
 import Link from "next/link";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export function ResetPasswordForm({ token }: { token: string | null }) {
+  const msg = useMsg();
   const router = useRouter();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -15,11 +17,9 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
   if (!token) {
     return (
       <div className="card p-6 text-center">
-        <p className="text-sm text-red-600">
-          This reset link is missing a token. Please request a new one.
-        </p>
+        <p className="text-sm text-red-600">{msg("resetPw.missingToken")}</p>
         <Link href="/forgot-password" className="btn btn-primary mt-4 inline-block">
-          Request new link
+          {msg("resetPw.requestNew")}
         </Link>
       </div>
     );
@@ -28,11 +28,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (password !== confirm) {
-      setError("Passwords do not match.");
+      setError(msg("resetPw.mismatch"));
       return;
     }
     if (password.length < 6) {
-      setError("Password must be at least 6 characters.");
+      setError(msg("resetPw.tooShort"));
       return;
     }
     setError(null);
@@ -44,7 +44,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
       });
       router.push("/login?reset=1");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : msg("auth.error"));
     } finally {
       setBusy(false);
     }
@@ -52,13 +52,11 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
 
   return (
     <div className="card p-6">
-      <h2 className="mb-1 text-lg font-semibold text-purple-900">Choose a new password</h2>
-      <p className="mb-5 text-sm text-slate-500">
-        Your new password must be at least 6 characters.
-      </p>
+      <h2 className="mb-1 text-lg font-semibold text-purple-900">{msg("resetPw.title")}</h2>
+      <p className="mb-5 text-sm text-slate-500">{msg("resetPw.subtitle")}</p>
       <form onSubmit={submit} className="space-y-3">
         <label className="block">
-          <span className="label">New password</span>
+          <span className="label">{msg("resetPw.newLabel")}</span>
           <input
             type="password"
             value={password}
@@ -71,7 +69,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
           />
         </label>
         <label className="block">
-          <span className="label">Confirm password</span>
+          <span className="label">{msg("resetPw.confirmLabel")}</span>
           <input
             type="password"
             value={confirm}
@@ -86,7 +84,7 @@ export function ResetPasswordForm({ token }: { token: string | null }) {
           <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
         )}
         <button disabled={busy} className="btn btn-primary w-full py-2.5">
-          {busy ? "Saving…" : "Reset password"}
+          {busy ? msg("resetPw.saving") : msg("resetPw.submit")}
         </button>
       </form>
     </div>

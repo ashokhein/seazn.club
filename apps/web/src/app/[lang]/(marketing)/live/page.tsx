@@ -56,7 +56,7 @@ export default async function LivePage({
           </p>
 
           <div className="mt-8">
-            <LiveWall fixtures={fixtures} />
+            <LiveWall fixtures={fixtures} dict={d} lang={lang} />
           </div>
 
           <p className="mt-6 text-sm text-slate-600">
