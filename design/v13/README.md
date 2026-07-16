@@ -74,6 +74,10 @@ field of teams is disproportionately hard:
   never-invoked `supportsDraws` predicate at finalize so a level knockout can't
   silently persist as a draw + stall the bracket, and make shootout/extra-time
   configurable per knockout stage. Sport-agnostic. (Bug found live on the demo.)
+- **PROMPT-62** — Two-sided knockout bracket ("poster"): one pure sport-neutral
+  geometry (`twoSidedBracket`) driving three surfaces — an interactive console
+  `BracketPanel`, an upgraded public bracket (columns → connected centre-Final
+  tree), and a landscape results-poster PDF (`DocKind: bracket`, soft-dep v12).
 
 ## Reference
 
