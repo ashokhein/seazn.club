@@ -12,7 +12,6 @@ export type WicketKind =
   | "bowled" | "caught" | "lbw" | "runout" | "stumped"
   | "hitwicket" | "retired" | "obstructed" | "timedout";
 export type ExtraKind = "wide" | "noball" | "bye" | "legbye" | "penalty";
-export type CardColour = "yellow" | "red";
 export type SportKey =
   | "badminton" | "boardgame" | "carrom" | "cricket" | "football" | "generic"
   | "hockey" | "icehockey" | "tabletennis" | "tennis" | "volleyball";
@@ -25,9 +24,6 @@ const WICKET_KEY: Record<WicketKind, MessageKey> = {
 const EXTRA_KEY: Record<ExtraKind, MessageKey> = {
   wide: "extra.wide", noball: "extra.noball", bye: "extra.bye",
   legbye: "extra.legbye", penalty: "extra.penalty",
-};
-const CARD_KEY: Record<CardColour, MessageKey> = {
-  yellow: "card.yellow", red: "card.red",
 };
 const SPORT_KEY: Record<SportKey, MessageKey> = {
   badminton: "sport.badminton", boardgame: "sport.boardgame", carrom: "sport.carrom",
@@ -51,8 +47,6 @@ export const wicketLabel = (k: string, m: MsgFn): string =>
   k in WICKET_KEY ? m(WICKET_KEY[k as WicketKind]) : title(k);
 export const extraLabel = (k: string, m: MsgFn): string =>
   k in EXTRA_KEY ? m(EXTRA_KEY[k as ExtraKind]) : title(k);
-export const cardLabel = (c: string, m: MsgFn): string =>
-  c in CARD_KEY ? m(CARD_KEY[c as CardColour]) : title(c);
 export const sportLabel = (k: string, m: MsgFn): string =>
   k in SPORT_KEY ? m(SPORT_KEY[k as SportKey]) : title(k);
 
@@ -66,6 +60,5 @@ export function swatchLabel(hex: string | null | undefined, m: MsgFn): string | 
 /** Every MessageKey this module can emit — used by the exhaustiveness test. */
 export const SCORING_VOCAB_KEYS: readonly MessageKey[] = [
   ...Object.values(WICKET_KEY), ...Object.values(EXTRA_KEY),
-  ...Object.values(CARD_KEY), ...Object.values(SPORT_KEY),
-  ...Object.values(SWATCH_KEY),
+  ...Object.values(SPORT_KEY), ...Object.values(SWATCH_KEY),
 ];
