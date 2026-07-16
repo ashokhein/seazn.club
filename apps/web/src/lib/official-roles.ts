@@ -30,3 +30,30 @@ const FALLBACK: RolePreset = { defaultRole: "referee", crew: ["referee"] };
 export function officialRolePreset(sportKey?: string | null): RolePreset {
   return PRESETS[(sportKey ?? "").toLowerCase()] ?? FALLBACK;
 }
+
+/**
+ * Role chip suggestions for the org-wide Directory add-form (v11.1): the
+ * Directory has no division/sport context to seed a single preset, so this
+ * is the union of every sport's crew role keys (deduped, first-seen order),
+ * plus "judge" and "scorer" — common generic roles no preset names. A custom
+ * role stays free-text via the picker's own "add" input.
+ */
+export const ALL_OFFICIAL_ROLES: string[] = (() => {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const preset of Object.values(PRESETS)) {
+    for (const role of preset.crew) {
+      if (!seen.has(role)) {
+        seen.add(role);
+        out.push(role);
+      }
+    }
+  }
+  for (const role of ["judge", "scorer"]) {
+    if (!seen.has(role)) {
+      seen.add(role);
+      out.push(role);
+    }
+  }
+  return out;
+})();

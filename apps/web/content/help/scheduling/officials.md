@@ -8,7 +8,7 @@ Officials are an org-wide pool, managed from **Directory → Officials** — the
 
 ## Add and invite an official
 
-In **Directory → Officials**, **Add official** creates a roster entry; next to any official, choose **Invite** and enter their email. They get a claim link — the same claim system players use, so the rules match: **only an account signed in with the invited address can accept**, invites last 14 days, and re-inviting quietly withdraws the previous link. Once accepted the official shows a **Linked** chip; an outstanding invite shows **Invited**. **Invite all with email** re-invites everyone who has an address but no link yet.
+In **Directory → Officials**, **Add official** creates a roster entry; pick their role(s) as chips (referee, umpire, judge, scorer and more — or add a custom one). **Multiple roles on one official are a Pro feature**; on the free plan, picking a second chip swaps the selection instead of stacking it. Next to any official, choose **Invite** and enter their email. They get a claim link — the same claim system players use, so the rules match: **only an account signed in with the invited address can accept**, invites last 14 days, and re-inviting quietly withdraws the previous link. Once accepted the official shows a **Linked** chip; an outstanding invite shows **Invited**. **Invite all with email** re-invites everyone who has an address but no link yet.
 
 ## Assigning on a division's schedule
 

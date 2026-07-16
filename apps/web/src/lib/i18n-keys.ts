@@ -1136,6 +1136,8 @@ export type DictionaryKey =
   | "officials.respAccepted"
   | "officials.respDeclined"
   | "officials.respPending"
+  | "officials.roleCustomAdd"
+  | "officials.roleCustomPlaceholder"
   | "officials.roles"
   | "officials.roster"
   | "officials.source"

@@ -18,6 +18,31 @@ test("directory Officials tab: add and list an official", async ({ page }) => {
   await expect(page.getByText(name)).toBeVisible({ timeout: 20_000 });
 });
 
+test("directory Officials tab: role chips replace free text — multi-select on Pro", async ({ page }) => {
+  const name = `Multi Ref ${TAG}`;
+
+  await page.goto("/directory?tab=officials");
+  await page.getByLabel("Name", { exact: true }).fill(name);
+  // referee is pre-selected; add judge too (this project's storage state is
+  // the Pro account — multi-role is allowed).
+  const roleGroup = page.getByRole("group", { name: "Roles" });
+  await expect(roleGroup.getByRole("button", { name: "referee", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await roleGroup.getByRole("button", { name: "judge", exact: true }).click();
+  await expect(roleGroup.getByRole("button", { name: "judge", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.getByRole("button", { name: "Add official" }).click();
+
+  const row = page.locator("li").filter({ hasText: name });
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  await expect(row.getByText("referee", { exact: true })).toBeVisible();
+  await expect(row.getByText("judge", { exact: true })).toBeVisible();
+});
+
 test("directory Officials tab: invite falls back to a copyable claim link", async ({ page }) => {
   const name = `Kofi Ref ${TAG}`;
 

@@ -11,7 +11,8 @@ import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useMsg } from "@/components/i18n/dict-provider";
-import { OfficialAvatar, OfficialInviteEditor } from "@/components/v2/officials-shared";
+import { OfficialAvatar, OfficialInviteEditor, RoleChipPicker } from "@/components/v2/officials-shared";
+import { ALL_OFFICIAL_ROLES } from "@/lib/official-roles";
 
 export interface DirectoryOfficial {
   id: string;
@@ -26,9 +27,13 @@ export interface DirectoryOfficial {
 export function OfficialsDirectoryPanel({
   officials,
   canEdit,
+  rolesMultiAllowed,
 }: {
   officials: DirectoryOfficial[];
   canEdit: boolean;
+  /** Pro entitlement `officials.roles_multi` (v11.1): free plan picks one
+   *  role; the chip picker enforces this client-side to match the server. */
+  rolesMultiAllowed: boolean;
 }) {
   const msg = useMsg();
   const router = useRouter();
@@ -36,7 +41,7 @@ export function OfficialsDirectoryPanel({
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [name, setName] = useState("");
-  const [roles, setRoles] = useState("referee");
+  const [roles, setRoles] = useState<string[]>(["referee"]);
   const [bulkDone, setBulkDone] = useState<number | null>(null);
 
   const bulkTargets = officials.filter((o) => o.email && !o.claimed && !o.invite_pending);
@@ -72,8 +77,6 @@ export function OfficialsDirectoryPanel({
       setBulkDone(sent);
     });
   }
-
-  const roleList = roles.split(/[,\s]+/).filter(Boolean);
 
   return (
     <div className="space-y-4">
@@ -158,10 +161,11 @@ export function OfficialsDirectoryPanel({
                   method: "POST",
                   json: {
                     display_name: name.trim(),
-                    role_keys: roleList.length ? roleList : ["referee"],
+                    role_keys: roles.length ? roles : ["referee"],
                   },
                 });
                 setName("");
+                setRoles(["referee"]);
               });
             }}
           >
@@ -169,10 +173,12 @@ export function OfficialsDirectoryPanel({
               {msg("officials.name")}
               <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
             </label>
-            <label className="flex flex-col gap-1 text-xs text-slate-500">
-              {msg("officials.roles")}
-              <input className="input w-40" value={roles} onChange={(e) => setRoles(e.target.value)} />
-            </label>
+            <RoleChipPicker
+              value={roles}
+              onChange={setRoles}
+              suggestions={ALL_OFFICIAL_ROLES}
+              multiAllowed={rolesMultiAllowed}
+            />
             <button type="submit" className="btn btn-primary" disabled={busy}>
               {msg("officials.add")}
             </button>

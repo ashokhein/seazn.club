@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1 } from "@/lib/client-v1";
+import { UpgradeGate } from "@/components/upgrade-gate";
 import { useMsg } from "@/components/i18n/dict-provider";
 
 export function initials(name: string): string {
@@ -160,6 +161,116 @@ export function OfficialInviteEditor({
         </div>
       )}
       {error && <p className="text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * Pure state-transition for the role chip picker (v11.1) — exported so the
+ * free-plan swap-not-stack rule is unit-testable without a DOM. Free plan
+ * (multiAllowed=false) never holds two roles: picking a second chip SWAPS
+ * the selection and reports blocked=true (the caller shows the UpgradeGate
+ * pill), matching the server's assertRolesAllowed 1-role limit — the UI must
+ * never let a free org submit a set that would 422.
+ */
+export function nextOfficialRoles(
+  current: string[],
+  role: string,
+  multiAllowed: boolean,
+): { roles: string[]; blocked: boolean } {
+  if (current.includes(role)) {
+    if (current.length === 1) return { roles: current, blocked: false }; // keep >= 1 role
+    return { roles: current.filter((r) => r !== role), blocked: false };
+  }
+  if (multiAllowed) return { roles: [...current, role], blocked: false };
+  if (current.length === 0) return { roles: [role], blocked: false };
+  return { roles: [role], blocked: true }; // swap, never stack
+}
+
+/**
+ * Role chip toggle group (v11.1): replaces the old free-text "space
+ * separated roles" input. Free plan is single-role — picking a second chip
+ * SWAPS the selection (never submits two) and surfaces the same UpgradeGate
+ * pill every other Pro gate uses, so the UI never lets a free org 422 the
+ * server's assertRolesAllowed check. Pro toggles freely. A small text input
+ * appends a role not in the suggestion list.
+ */
+export function RoleChipPicker({
+  value,
+  onChange,
+  suggestions,
+  multiAllowed,
+}: {
+  value: string[];
+  onChange: (next: string[]) => void;
+  suggestions: string[];
+  multiAllowed: boolean;
+}) {
+  const msg = useMsg();
+  const [custom, setCustom] = useState("");
+  const [blocked, setBlocked] = useState(false);
+  const chips = [...new Set([...suggestions, ...value])];
+
+  function toggle(role: string) {
+    const next = nextOfficialRoles(value, role, multiAllowed);
+    onChange(next.roles);
+    setBlocked(next.blocked);
+  }
+
+  function addCustom() {
+    const role = custom.trim().toLowerCase().replace(/\s+/g, "_");
+    if (!role) return;
+    toggle(role);
+    setCustom("");
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <span className="label">{msg("officials.roles")}</span>
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label={msg("officials.roles")}>
+        {chips.map((role) => {
+          const active = value.includes(role);
+          return (
+            <button
+              key={role}
+              type="button"
+              aria-pressed={active}
+              onClick={() => toggle(role)}
+              className={`rounded-full border px-2.5 py-1 text-xs capitalize transition ${
+                active
+                  ? "border-purple-600 bg-purple-600 text-white"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-purple-300"
+              }`}
+            >
+              {role.replace(/_/g, " ")}
+            </button>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          className="input py-1 text-xs"
+          value={custom}
+          onChange={(e) => setCustom(e.target.value)}
+          placeholder={msg("officials.roleCustomPlaceholder")}
+          aria-label={msg("officials.roleCustomPlaceholder")}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              addCustom();
+            }
+          }}
+        />
+        <button
+          type="button"
+          className="btn btn-ghost py-1 text-xs"
+          disabled={!custom.trim()}
+          onClick={addCustom}
+        >
+          {msg("officials.roleCustomAdd")}
+        </button>
+      </div>
+      {blocked && <UpgradeGate feature="officials.roles_multi" compact />}
     </div>
   );
 }

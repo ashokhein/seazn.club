@@ -10,6 +10,7 @@ import { requirePageAuth } from "@/server/page-auth";
 import { listPersons } from "@/server/usecases/persons";
 import { listClubs } from "@/server/usecases/clubs";
 import { listOfficialsForConsole } from "@/server/usecases/officials";
+import { hasFeature } from "@/lib/entitlements";
 import { PersonsPanel } from "@/components/v2/persons-panel";
 import { ClubsPanel } from "@/components/v2/clubs-panel";
 import { OfficialsDirectoryPanel } from "@/components/v2/officials-directory-panel";
@@ -131,7 +132,10 @@ async function ClubsTab({ ui }: { ui: Dict }) {
 
 async function OfficialsTab({ ui }: { ui: Dict }) {
   const { auth, canEdit } = await requirePageAuth();
-  const officials = await listOfficialsForConsole(auth);
+  const [officials, rolesMultiAllowed] = await Promise.all([
+    listOfficialsForConsole(auth),
+    hasFeature(auth.orgId, "officials.roles_multi"),
+  ]);
   return (
     <div className="space-y-4">
       <p className="max-w-xl text-sm text-slate-500">{t(ui, "directory.officials.desc")}</p>
@@ -146,6 +150,7 @@ async function OfficialsTab({ ui }: { ui: Dict }) {
           invite_pending: o.invite_pending,
         }))}
         canEdit={canEdit}
+        rolesMultiAllowed={rolesMultiAllowed}
       />
     </div>
   );
