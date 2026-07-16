@@ -34,6 +34,9 @@ export interface SponsorRow {
   status: "active" | "pending" | "inactive";
   click_count: number;
   created_at: string;
+  /** The paid order that activated this placement, when it was bought
+   *  through a package (list reads only — write paths return it unset). */
+  paid_order_id?: string | null;
 }
 
 const COLS = [
@@ -82,10 +85,16 @@ function bustPublicSponsors(orgId: string): void {
   });
 }
 
-/** Plain read for server pages (settings) — same rows as listSponsors. */
+/** Plain read for server pages (settings) — same rows as listSponsors.
+ *  paid_order_id links a placement back to the package order that bought
+ *  it, so the manager can mark it and guard its deletion. */
 export async function listSponsorRows(orgId: string): Promise<SponsorRow[]> {
   return withTenant(orgId, (tx) => tx<SponsorRow[]>`
-    select ${tx(COLS)} from sponsors
+    select ${tx(COLS)},
+           (select o.id from sponsor_orders o
+            where o.sponsor_id = sponsors.id and o.status = 'paid'
+            limit 1) as paid_order_id
+    from sponsors
     order by array_position(array['title','gold','silver','partner'], tier),
              display_order, created_at, id`);
 }
@@ -518,4 +527,35 @@ export async function handleSponsorPaymentFailed(
     update sponsor_orders
     set status = 'failed', payment_intent_id = coalesce(payment_intent_id, ${intent.id})
     where id = ${orderId} and status = 'pending'`;
+}
+
+/**
+ * charge.refunded for a sponsor order (Stripe-dashboard refunds included):
+ * flip the paid order to `refunded` and take the bought placement off the
+ * public pages (status → inactive; the row survives as the audit trail).
+ * Idempotent — only a `paid` order flips, and non-sponsor charges don't
+ * match any order row.
+ */
+export async function handleSponsorChargeRefunded(charge: Stripe.Charge): Promise<void> {
+  const intent =
+    typeof charge.payment_intent === "string"
+      ? charge.payment_intent
+      : charge.payment_intent?.id;
+  if (!intent || !charge.refunded) return;
+  const refunded = await sql.begin(async (tx) => {
+    const [order] = await tx<{ id: string; org_id: string; sponsor_id: string | null }[]>`
+      update sponsor_orders
+      set status = 'refunded'
+      where payment_intent_id = ${intent} and status = 'paid'
+      returning id, org_id, sponsor_id`;
+    if (!order) return null;
+    if (order.sponsor_id) {
+      await tx`update sponsors set status = 'inactive' where id = ${order.sponsor_id}`;
+    }
+    return order;
+  });
+  if (!refunded) return;
+  const [org] = await sql<{ slug: string }[]>`
+    select slug from organizations where id = ${refunded.org_id}`;
+  if (org) deferred(() => fireOrgRevalidate(org.slug));
 }

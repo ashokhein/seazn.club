@@ -31,8 +31,10 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import {
   createSponsorPackage,
   deactivateSponsorPackage,
+  handleSponsorChargeRefunded,
   handleSponsorPaymentFailed,
   handleSponsorPaymentSucceeded,
+  listSponsorRows,
   startSponsorCheckout,
   type SponsorPackageRow,
 } from "../sponsors";
@@ -187,6 +189,33 @@ describe.skipIf(!HAS_DB)("sponsor monetization", () => {
     const [still] = await sql<{ status: string }[]>`
       select status from sponsor_orders where id = ${order.id}`;
     expect(still.status).toBe("paid");
+
+    // The manager list ties the bought placement back to its order.
+    const listed = await listSponsorRows(orgId);
+    expect(listed.find((s) => s.name === "Bolt Ltd")?.paid_order_id).toBe(order.id);
+
+    // charge.refunded (dashboard refund): order → refunded, placement off
+    // the public pages; a replay is a no-op.
+    const charge = {
+      id: "ch_refund",
+      payment_intent: intent.id,
+      refunded: true,
+    } as unknown as Stripe.Charge;
+    await handleSponsorChargeRefunded(charge);
+    await handleSponsorChargeRefunded(charge);
+    const [refunded] = await sql<{ status: string }[]>`
+      select status from sponsor_orders where id = ${order.id}`;
+    expect(refunded.status).toBe("refunded");
+    const [inactive] = await sql<{ status: string }[]>`
+      select status from sponsors where id = ${sponsors[0]!.id}`;
+    expect(inactive.status).toBe("inactive");
+
+    // A stray non-sponsor refunded charge touches nothing.
+    await expect(
+      handleSponsorChargeRefunded({
+        id: "ch_stray", payment_intent: "pi_not_ours", refunded: true,
+      } as unknown as Stripe.Charge),
+    ).resolves.toBeUndefined();
   });
 
   it("webhook: pending order fails on payment_failed; stray intents are ignored", async () => {

@@ -11,6 +11,7 @@ import {
   ArrowDown, ArrowUp, ImagePlus, MousePointerClick, Pencil, Trash2,
 } from "lucide-react";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { useConfirm } from "@/components/ui/confirm-provider";
 import type { MessageKey } from "@/lib/messages";
 
 const MAX_LOGO_BYTES = 2 * 1024 * 1024;
@@ -37,6 +38,8 @@ export interface SponsorItem {
   display_order: number;
   status: string;
   click_count: number;
+  /** The paid package order that activated this placement, if any. */
+  paid_order_id?: string | null;
 }
 
 const TIER_BADGE: Record<SponsorTier, string> = {
@@ -242,6 +245,7 @@ export function OrgSponsors({
   canEdit: boolean;
 }) {
   const msg = useMsg();
+  const confirm = useConfirm();
   const [sponsors, setSponsors] = useState<SponsorItem[]>(initialSponsors);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -373,11 +377,24 @@ export function OrgSponsors({
     });
   }
 
-  function remove(id: string) {
-    void run(async () => {
-      await api(`/${id}`, { method: "DELETE" });
-      setSponsors((prev) => prev.filter((s) => s.id !== id));
-    });
+  function remove(s: SponsorItem) {
+    void (async () => {
+      // A bought placement deserves a pause: deleting hides what the
+      // sponsor paid for, and the money does NOT come back by itself.
+      if (s.paid_order_id) {
+        const ok = await confirm({
+          title: msg("sponsors.deletePaid.title"),
+          body: msg("sponsors.deletePaid.body", { name: s.name }),
+          confirmLabel: msg("sponsors.deletePaid.label"),
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+      await run(async () => {
+        await api(`/${s.id}`, { method: "DELETE" });
+        setSponsors((prev) => prev.filter((row) => row.id !== s.id));
+      });
+    })();
   }
 
   /** Swap within the rendered group, persist the global order. */
@@ -486,7 +503,16 @@ export function OrgSponsors({
                       </span>
                     )}
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-slate-800">{s.name}</p>
+                      <p className="truncate text-sm font-medium text-slate-800">
+                        {s.name}
+                        {s.paid_order_id ? (
+                          // Bought through a package — ties the sponsor list
+                          // back to the Sell section's orders.
+                          <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">
+                            {msg("sponsors.paidBadge")}
+                          </span>
+                        ) : null}
+                      </p>
                       <p className="truncate text-xs text-slate-400">
                         {compName(s.competition_id) ?? msg("sponsors.scopeAll")}
                         {s.url ? ` · ${s.url}` : ""}
@@ -533,7 +559,7 @@ export function OrgSponsors({
                           type="button"
                           aria-label={msg("settings.org.sponsors.remove", { name: s.name })}
                           disabled={busy}
-                          onClick={() => remove(s.id)}
+                          onClick={() => remove(s)}
                           className="grid h-7 w-7 place-items-center rounded text-red-400 hover:bg-red-50 hover:text-red-600"
                         >
                           <Trash2 className="h-3.5 w-3.5" />

@@ -23108,6 +23108,16 @@
                           },
                           "created_at": {
                             "type": "string"
+                          },
+                          "paid_order_id": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -23479,6 +23489,16 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "paid_order_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -23896,6 +23916,16 @@
                         },
                         "created_at": {
                           "type": "string"
+                        },
+                        "paid_order_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [

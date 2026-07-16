@@ -1127,6 +1127,8 @@ export const Sponsor = z.object({
   status: SponsorStatus,
   click_count: z.number().int(),
   created_at: z.string(),
+  /** Set on list reads when a paid package order activated this placement. */
+  paid_order_id: z.string().nullable().optional(),
 });
 
 export const CreateSponsor = z.object({

@@ -16,6 +16,7 @@ import {
 } from "@/server/usecases/registrations";
 import { syncConnectAccount } from "@/server/usecases/stripe-connect";
 import {
+  handleSponsorChargeRefunded,
   handleSponsorPaymentFailed,
   handleSponsorPaymentSucceeded,
 } from "@/server/usecases/sponsors";
@@ -186,7 +187,10 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       break;
     case "charge.refunded":
       // Refunds made in the Stripe dashboard still show on the console.
+      // Registration and sponsor charges share the event type; each handler
+      // no-ops on the other's charges.
       await syncRegistrationRefund(event.data.object as Stripe.Charge);
+      await handleSponsorChargeRefunded(event.data.object as Stripe.Charge);
       break;
     case "payment_intent.succeeded":
       // Sponsor order paid (v10) — activates the sponsor row, replay-safe.
