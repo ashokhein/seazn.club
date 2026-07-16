@@ -15,6 +15,7 @@ import { venueNoun, venueLabel } from "@/lib/venue";
 import { defaultMatchMinutes } from "@/lib/match-length";
 import { FormatExplainerPanel } from "@/components/v2/format-explainer-panel";
 import { FormatRecommendStrip } from "@/components/v2/format-recommend-strip";
+import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 
 export interface SportOption {
   key: string;
@@ -75,10 +76,10 @@ interface PreviewPhase {
   sections: PreviewSection[];
 }
 
-const GENDERS = [
-  { key: "m", label: "Male" },
-  { key: "f", label: "Female" },
-  { key: "x", label: "Mixed / other" },
+const GENDERS: { key: string; labelKey: "wizard.gender.m" | "wizard.gender.f" | "wizard.gender.x" }[] = [
+  { key: "m", labelKey: "wizard.gender.m" },
+  { key: "f", labelKey: "wizard.gender.f" },
+  { key: "x", labelKey: "wizard.gender.x" },
 ];
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,8 @@ export function DivisionBuilder({
   compSlug: string;
   sports: SportOption[];
 }) {
+  const msg = useMsg();
+  const locale = useLocale();
   const router = useRouter();
   const [name, setName] = useState("");
   const [sportKey, setSportKey] = useState(sports[0]?.key ?? "");
@@ -231,7 +234,7 @@ export function DivisionBuilder({
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("wizard.failed"));
       }
       setBusy(false);
     }
@@ -248,17 +251,17 @@ export function DivisionBuilder({
 
   function tabError(t: (typeof TAB_ORDER)[number]): string | null {
     if (t === "basics") {
-      if (!name.trim()) return "Enter a division name.";
-      if (!sportKey) return "Choose a sport.";
-      if (!variantKey) return "Choose a variant.";
+      if (!name.trim()) return msg("wizard.err.name");
+      if (!sportKey) return msg("wizard.err.sport");
+      if (!variantKey) return msg("wizard.err.variant");
     }
     if (t === "eligibility" && maxAge) {
       const n = Number(maxAge);
-      if (!Number.isInteger(n) || n <= 0) return "Max age must be a whole number above 0.";
+      if (!Number.isInteger(n) || n <= 0) return msg("wizard.err.maxAge");
     }
     if (t === "scheduling") {
-      if (!(matchMinutes >= 1)) return "Match length must be at least 1 minute.";
-      if (!courts.some((c) => c.trim())) return `Add at least one ${venue}.`;
+      if (!(matchMinutes >= 1)) return msg("wizard.err.matchLength");
+      if (!courts.some((c) => c.trim())) return msg("wizard.err.addVenue", { venue });
     }
     return null;
   }
@@ -288,7 +291,7 @@ export function DivisionBuilder({
       });
       setPreview(phases);
     } catch (err) {
-      setPreviewError(err instanceof Error ? err.message : "Couldn't build example");
+      setPreviewError(err instanceof Error ? err.message : msg("wizard.previewError"));
     } finally {
       setPreviewBusy(false);
     }
@@ -314,10 +317,10 @@ export function DivisionBuilder({
       <nav className="flex flex-wrap gap-1 border-b border-slate-200">
         {(
           [
-            ["basics", "Basics"],
-            ["eligibility", "Eligibility"],
-            ["format", "Format"],
-            ["scheduling", "Scheduling"],
+            ["basics", msg("wizard.tab.basics")],
+            ["eligibility", msg("wizard.tab.eligibility")],
+            ["format", msg("wizard.tab.format")],
+            ["scheduling", msg("wizard.tab.scheduling")],
           ] as const
         ).map(([key, label]) => (
           <button
@@ -336,22 +339,22 @@ export function DivisionBuilder({
       </nav>
 
       <section className={`card space-y-4 p-6 ${tab === "basics" ? "" : "hidden"}`}>
-        <h2 className="text-sm font-semibold text-slate-700">Sport & variant</h2>
+        <h2 className="text-sm font-semibold text-slate-700">{msg("wizard.sportVariant")}</h2>
         <label className="block">
-          <span className="label">Division name</span>
+          <span className="label">{msg("wizard.divisionName")}</span>
           <input
             autoFocus
             required
             maxLength={200}
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="U16 Boys T20"
+            placeholder={msg("wizard.divisionNamePlaceholder")}
             className="input"
           />
         </label>
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="label">Sport</span>
+            <span className="label">{msg("wizard.sport")}</span>
             <select value={sportKey} onChange={(e) => selectSport(e.target.value)} className="select">
               {sports.map((s) => (
                 <option key={s.key} value={s.key}>
@@ -361,7 +364,7 @@ export function DivisionBuilder({
             </select>
           </label>
           <label className="block">
-            <span className="label">Variant</span>
+            <span className="label">{msg("wizard.variant")}</span>
             <select
               value={variantKey}
               onChange={(e) => {
@@ -373,7 +376,7 @@ export function DivisionBuilder({
               {(sport?.variants ?? []).map((v) => (
                 <option key={v.key} value={v.key}>
                   {v.name}
-                  {v.system ? "" : " (org preset)"}
+                  {v.system ? "" : msg("wizard.orgPreset")}
                 </option>
               ))}
             </select>
@@ -382,11 +385,9 @@ export function DivisionBuilder({
         {(SPORT_RULES[sportKey] ?? []).length > 0 && (
           <div className="border-t border-slate-100 pt-4">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-              Match rules
+              {msg("wizard.matchRules")}
             </h3>
-            <p className="mt-0.5 text-xs text-slate-400">
-              Leave a field on its default to use the variant&apos;s standard rules.
-            </p>
+            <p className="mt-0.5 text-xs text-slate-400">{msg("wizard.matchRulesHint")}</p>
             <div className="mt-3">
               <MatchRuleFields sportKey={sportKey} values={ruleValues} onChange={setRuleValues} />
             </div>
@@ -395,22 +396,22 @@ export function DivisionBuilder({
       </section>
 
       <section className={`card space-y-4 p-6 ${tab === "eligibility" ? "" : "hidden"}`}>
-        <h2 className="text-sm font-semibold text-slate-700">Eligibility</h2>
+        <h2 className="text-sm font-semibold text-slate-700">{msg("wizard.tab.eligibility")}</h2>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="block">
-            <span className="label">Age group (e.g. 16 = U16)</span>
+            <span className="label">{msg("wizard.ageGroup")}</span>
             <input
               type="number"
               min={4}
               max={99}
               value={maxAge}
               onChange={(e) => setMaxAge(e.target.value)}
-              placeholder="Open"
+              placeholder={msg("wizard.ageOpen")}
               className="input"
             />
           </label>
           <label className="block">
-            <span className="label">Cutoff month</span>
+            <span className="label">{msg("wizard.cutoffMonth")}</span>
             <select
               value={cutoffMonth}
               onChange={(e) => setCutoffMonth(e.target.value)}
@@ -419,13 +420,13 @@ export function DivisionBuilder({
             >
               {Array.from({ length: 12 }, (_, i) => (
                 <option key={i + 1} value={i + 1}>
-                  {new Date(2000, i, 1).toLocaleString("en", { month: "long" })}
+                  {new Date(2000, i, 1).toLocaleString(locale, { month: "long" })}
                 </option>
               ))}
             </select>
           </label>
           <label className="block">
-            <span className="label">Cutoff day</span>
+            <span className="label">{msg("wizard.cutoffDay")}</span>
             <input
               type="number"
               min={1}
@@ -438,7 +439,7 @@ export function DivisionBuilder({
           </label>
         </div>
         <fieldset>
-          <legend className="label">Gender</legend>
+          <legend className="label">{msg("wizard.gender")}</legend>
           <div className="flex flex-wrap gap-2">
             {GENDERS.map((g) => (
               <label
@@ -461,25 +462,25 @@ export function DivisionBuilder({
                   }
                   className="sr-only"
                 />
-                {g.label}
+                {msg(g.labelKey)}
               </label>
             ))}
           </div>
-          <p className="mt-1 text-xs text-slate-400">None selected = open to all.</p>
+          <p className="mt-1 text-xs text-slate-400">{msg("wizard.genderNone")}</p>
         </fieldset>
         <label className="block">
-          <span className="label">Custom rule (manual, shown as a warning)</span>
+          <span className="label">{msg("wizard.customRule")}</span>
           <input
             value={customNote}
             onChange={(e) => setCustomNote(e.target.value)}
-            placeholder="School-registered students only"
+            placeholder={msg("wizard.customRulePlaceholder")}
             className="input"
           />
         </label>
       </section>
 
       <section className={`card space-y-4 p-6 ${tab === "format" ? "" : "hidden"}`}>
-        <h2 className="text-sm font-semibold text-slate-700">Format (stage graph)</h2>
+        <h2 className="text-sm font-semibold text-slate-700">{msg("wizard.formatTitle")}</h2>
 
         {/* v3/06 §4: entrants + courts + hours → the formats that fit. */}
         <FormatRecommendStrip
@@ -525,20 +526,20 @@ export function DivisionBuilder({
             template === "groups_ko" ||
             template === "group_stepladder") && (
             <label className="block">
-              <span className="label">Legs</span>
+              <span className="label">{msg("wizard.legs")}</span>
               <select
                 value={legs}
                 onChange={(e) => setLegs(Number(e.target.value))}
                 className="select"
               >
-                <option value={1}>Single round robin</option>
-                <option value={2}>Home & away</option>
+                <option value={1}>{msg("wizard.legsSingle")}</option>
+                <option value={2}>{msg("wizard.legsHomeAway")}</option>
               </select>
             </label>
           )}
           {template === "groups_ko" && (
             <label className="block">
-              <span className="label">Pools</span>
+              <span className="label">{msg("wizard.pools")}</span>
               <input
                 type="number"
                 min={2}
@@ -551,7 +552,7 @@ export function DivisionBuilder({
           )}
           {template === "swiss" && (
             <label className="block">
-              <span className="label">Rounds</span>
+              <span className="label">{msg("wizard.rounds")}</span>
               <input
                 type="number"
                 min={1}
@@ -564,7 +565,7 @@ export function DivisionBuilder({
           )}
           {hasSecondStage && (
             <label className="block">
-              <span className="label">Qualify to finals</span>
+              <span className="label">{msg("wizard.qualify")}</span>
               <select
                 value={qualified}
                 onChange={(e) => setQualified(Number(e.target.value))}
@@ -572,7 +573,7 @@ export function DivisionBuilder({
               >
                 {(template === "group_stepladder" ? [3, 4, 5, 6] : [2, 4, 8, 16]).map((n) => (
                   <option key={n} value={n}>
-                    Top {n}
+                    {msg("schedule.topN", { n })}
                   </option>
                 ))}
               </select>
@@ -586,14 +587,11 @@ export function DivisionBuilder({
               onClick={() => setExplainOpen(true)}
               className="text-sm font-medium text-purple-700 underline underline-offset-2 hover:text-purple-900"
             >
-              How this works →
+              {msg("wizard.howWorks")}
             </button>
           )}
           {templateInfo && (
-            <p className="text-xs text-slate-400">
-              Fixtures are generated per stage from the division console — nothing is
-              locked in until you generate.
-            </p>
+            <p className="text-xs text-slate-400">{msg("wizard.generatedHint")}</p>
           )}
         </div>
         {explainOpen && TEMPLATE_FAMILY[template] && (
@@ -614,14 +612,14 @@ export function DivisionBuilder({
               }}
               className="btn btn-ghost text-sm"
             >
-              Show example fixtures
+              {msg("wizard.showExample")}
             </button>
           ) : (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium text-slate-700">Example fixtures</span>
+                <span className="text-sm font-medium text-slate-700">{msg("wizard.exampleFixtures")}</span>
                 <label className="flex items-center gap-1.5 text-xs text-slate-500">
-                  Entrants
+                  {msg("recommend.entrants")}
                   <input
                     type="number"
                     min={2}
@@ -632,12 +630,12 @@ export function DivisionBuilder({
                   />
                 </label>
                 <button type="button" onClick={() => void runPreview()} disabled={previewBusy} className="btn btn-primary px-3 py-1 text-xs">
-                  {previewBusy ? "…" : "Generate"}
+                  {previewBusy ? "…" : msg("wizard.generate")}
                 </button>
                 <button type="button" onClick={() => setPreviewOpen(false)} className="btn btn-ghost px-3 py-1 text-xs">
-                  Hide
+                  {msg("wizard.hide")}
                 </button>
-                <span className="text-[11px] text-slate-400">Same draw the server produces — names are placeholders.</span>
+                <span className="text-[11px] text-slate-400">{msg("wizard.placeholderNote")}</span>
               </div>
 
               {previewError && (
@@ -679,17 +677,14 @@ export function DivisionBuilder({
       <section className={`card space-y-4 p-6 ${tab === "scheduling" ? "" : "hidden"}`}>
         <div>
           <h2 className="text-sm font-semibold text-slate-700">
-            Scheduling <span className="ml-1 text-xs font-normal text-slate-400">optional</span>
+            {msg("wizard.tab.scheduling")} <span className="ml-1 text-xs font-normal text-slate-400">{msg("wizard.optional")}</span>
           </h2>
-          <p className="mt-0.5 text-xs text-slate-400">
-            Courts, match length and a start time for the timetable. You can change these later on
-            the schedule board.
-          </p>
+          <p className="mt-0.5 text-xs text-slate-400">{msg("wizard.schedulingHint")}</p>
         </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <label className="block">
-            <span className="label">Match length (minutes)</span>
+            <span className="label">{msg("boardset.matchLength")}</span>
             <input
               type="number"
               min={1}
@@ -701,12 +696,10 @@ export function DivisionBuilder({
               }}
               className="input w-full"
             />
-            <span className="mt-0.5 block text-xs text-slate-400">
-              Pre-filled for the selected sport &amp; variant — adjust if needed.
-            </span>
+            <span className="mt-0.5 block text-xs text-slate-400">{msg("wizard.matchLengthHint")}</span>
           </label>
           <label className="block">
-            <span className="label">Start date &amp; time</span>
+            <span className="label">{msg("boardset.startAt")}</span>
             <input
               type="datetime-local"
               value={scheduleStart}
@@ -715,7 +708,7 @@ export function DivisionBuilder({
             />
           </label>
           <label className="block">
-            <span className="label">End date</span>
+            <span className="label">{msg("boardset.endAt")}</span>
             <input
               type="date"
               value={scheduleEnd}
@@ -723,17 +716,13 @@ export function DivisionBuilder({
               onChange={(e) => setScheduleEnd(e.target.value)}
               className="input w-full"
             />
-            <span className="mt-0.5 block text-xs text-slate-400">
-              Sets how many days the schedule&apos;s week view spans.
-            </span>
+            <span className="mt-0.5 block text-xs text-slate-400">{msg("wizard.endDateHint")}</span>
           </label>
         </div>
 
         <div>
-          <span className="label">{VenueCap}s</span>
-          <p className="mb-2 text-xs text-slate-400">
-            Name each {venue} available — matches run in parallel across them.
-          </p>
+          <span className="label">{msg("boardset.venuesLabel", { venue: VenueCap })}</span>
+          <p className="mb-2 text-xs text-slate-400">{msg("boardset.venuesDesc", { venue })}</p>
           <ul className="space-y-2">
             {courts.map((c, i) => (
               <li key={i} className="flex items-center gap-2">
@@ -750,7 +739,7 @@ export function DivisionBuilder({
                   <button
                     type="button"
                     onClick={() => setCourts((cs) => cs.filter((_, j) => j !== i))}
-                    aria-label={`Remove ${venue} ${i + 1}`}
+                    aria-label={msg("boardset.removeVenue", { venue, n: i + 1 })}
                     className="rounded-md px-2 py-1 text-sm text-red-500 hover:bg-red-50"
                   >
                     ✕
@@ -766,11 +755,10 @@ export function DivisionBuilder({
             }
             className="btn btn-ghost mt-2 text-sm"
           >
-            + Add {venue}
+            {msg("boardset.addVenue", { venue })}
           </button>
           <p className="mt-1 text-xs text-slate-400">
-            {courts.filter((c) => c.trim()).length || 1} {venue}
-            {(courts.filter((c) => c.trim()).length || 1) === 1 ? "" : "s"}
+            {msg("wizard.venueCount", { n: courts.filter((c) => c.trim()).length || 1, venue })}
           </p>
         </div>
       </section>
@@ -786,7 +774,7 @@ export function DivisionBuilder({
           onClick={() => router.push(routes.competition(orgSlug, compSlug))}
           className="btn btn-ghost"
         >
-          Cancel
+          {msg("wizard.cancel")}
         </button>
         <div className="flex gap-2">
           {tabIndex > 0 && (
@@ -795,7 +783,7 @@ export function DivisionBuilder({
               onClick={() => setTab(TAB_ORDER[tabIndex - 1]!)}
               className="btn btn-ghost"
             >
-              Back
+              {msg("wizard.back")}
             </button>
           )}
           {isLastTab ? (
@@ -805,11 +793,11 @@ export function DivisionBuilder({
               disabled={busy || !name.trim() || !sportKey || !variantKey}
               className="btn btn-primary"
             >
-              {busy ? "Creating…" : "Create division"}
+              {busy ? msg("wizard.creating") : msg("wizard.create")}
             </button>
           ) : (
             <button type="button" onClick={goNext} className="btn btn-primary">
-              Next
+              {msg("wizard.next")}
             </button>
           )}
         </div>
