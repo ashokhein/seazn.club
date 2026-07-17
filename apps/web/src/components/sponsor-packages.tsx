@@ -188,20 +188,40 @@ export function SponsorPackages({
   }
 
   function sendInvoice(pkg: PackageItem) {
-    void run(async () => {
-      const result = (await api("/sponsor-orders", {
-        method: "POST",
-        body: JSON.stringify({
-          package_id: pkg.id,
-          sponsor_name: invoice.name.trim(),
-          sponsor_email: invoice.email.trim(),
-        }),
-      })) as { checkout_url: string };
-      setSentUrl(result.checkout_url);
-      setInvoice({ name: "", email: "" });
-      setInvoiceFor(null);
-      await load();
-    });
+    void (async () => {
+      // Each invoice is its own payable order — warn before minting a
+      // second one for the same sponsor + package, or they can pay twice.
+      const email = invoice.email.trim().toLowerCase();
+      const duplicate = orders.some(
+        (o) =>
+          o.status === "pending" &&
+          o.package_id === pkg.id &&
+          o.sponsor_email.toLowerCase() === email,
+      );
+      if (duplicate) {
+        const ok = await confirm({
+          title: msg("sponsors.order.dupConfirm.title"),
+          body: msg("sponsors.order.dupConfirm.body", { email: invoice.email.trim() }),
+          confirmLabel: msg("sponsors.order.dupConfirm.label"),
+          tone: "danger",
+        });
+        if (!ok) return;
+      }
+      await run(async () => {
+        const result = (await api("/sponsor-orders", {
+          method: "POST",
+          body: JSON.stringify({
+            package_id: pkg.id,
+            sponsor_name: invoice.name.trim(),
+            sponsor_email: invoice.email.trim(),
+          }),
+        })) as { checkout_url: string };
+        setSentUrl(result.checkout_url);
+        setInvoice({ name: "", email: "" });
+        setInvoiceFor(null);
+        await load();
+      });
+    })();
   }
 
   const priceInvalid = draft.price.trim() !== "" && !(Number.parseFloat(draft.price) > 0);
