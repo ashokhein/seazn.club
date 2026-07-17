@@ -266,13 +266,14 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
       await expect(cardA.getByText("Accepted")).toBeVisible({ timeout: 20_000 });
 
       // (a) Accepted fixture surfaces on My Matches — the scorer console's own
-      // landing page — and its full board opens and takes a score.
+      // landing page — and its full board opens (via the canonical slug link
+      // an official actually clicks, never the legacy /fixtures/{id} route
+      // which 301s through legacyPath and requires org membership).
       await page.goto("/my-matches");
-      await expect(
-        page.getByRole("link").filter({ hasText: /Slip|Cordon|Gully|Point/ }).first(),
-      ).toBeVisible({ timeout: 20_000 });
-
-      await page.goto(`/fixtures/${fixtureA}`);
+      const matchLink = page.getByRole("link").filter({ hasText: /Slip|Cordon|Gully|Point/ }).first();
+      await expect(matchLink).toBeVisible({ timeout: 20_000 });
+      await matchLink.click();
+      await page.waitForURL(/\/o\/[^/]+\/c\/[^/]+\/d\/[^/]+\/f\/\d+/, { timeout: 20_000 });
       await expect(page.getByText(/Slip|Cordon|Gully|Point/).first()).toBeVisible({ timeout: 20_000 });
       await scoreFixture(page.request, fixtureA, 2, 1);
       const scored = await apiJson<{ status: string }>(page.request, `/api/v1/fixtures/${fixtureA}/state`);
@@ -280,9 +281,19 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
 
       // (b) offB is a genuinely claimed official (its person is linked to this
       // account) but its fixtureB assignment is still "pending" — response
-      // must be "accepted", not just a claimed link, to open the console.
-      const pendingRes = await page.goto(`/fixtures/${fixtureB}`);
-      expect(pendingRes!.status()).toBe(404);
+      // must be "accepted", not just a claimed link, to record a score. Hit
+      // the score endpoint directly: a pending official is rejected with 403
+      // (requireScorable/requireFixtureActor), not a page-level 404.
+      const stateB = await apiJson<{ last_seq: number }>(page.request, `/api/v1/fixtures/${fixtureB}/state`);
+      const pendingRes = await page.request.post(`/api/v1/fixtures/${fixtureB}/events`, {
+        headers: { "Content-Type": "application/json" },
+        data: {
+          expected_seq: stateB.data?.last_seq ?? 0,
+          type: "generic.result",
+          payload: { p1Score: 2, p2Score: 1 },
+        },
+      });
+      expect(pendingRes.status()).toBe(403);
 
       // (c) This account holds an accepted assignment on fixtureA, but is a
       // non-member of the org — every non-fixture, organiser-only page still

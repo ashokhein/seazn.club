@@ -146,12 +146,21 @@ export async function requireFixturePage(
   // Membership is checked below, AFTER resolving comp/division/fixture and
   // the accepted-official branch — a non-member with an accepted assignment
   // still needs those to render the fixture console (design v2 §A2/§A5).
-  const competition = settle(await compBySlug(org.id, compSlug), (s) =>
-    routes.competition(orgSlug, s),
-  );
-  const division = settle(await divBySlug(competition.id, divSlug), (s) =>
-    routes.division(orgSlug, compSlug, s),
-  );
+  const compRes = await compBySlug(org.id, compSlug);
+  if (!compRes) notFound();
+  if ("renamedTo" in compRes) {
+    if (membership) permanentRedirect(routes.competition(orgSlug, compRes.renamedTo));
+    notFound(); // non-member must not learn a renamed slug (existence leak)
+  }
+  const competition = compRes;
+
+  const divRes = await divBySlug(competition.id, divSlug);
+  if (!divRes) notFound();
+  if ("renamedTo" in divRes) {
+    if (membership) permanentRedirect(routes.division(orgSlug, compSlug, divRes.renamedTo));
+    notFound();
+  }
+  const division = divRes;
   const fixture = await fixtureByNo(division.id, no);
   if (!fixture) notFound();
 
