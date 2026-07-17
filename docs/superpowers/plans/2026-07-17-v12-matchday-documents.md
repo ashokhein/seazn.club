@@ -31,7 +31,7 @@
 - Create `apps/web/src/server/doc-theme.ts` — palette constants, kind→eyebrow map, font registration helper (one responsibility: brand tokens for the renderer).
 - Modify `apps/web/src/server/doc-render.ts` — masthead/table/footer bands.
 - Modify `apps/web/src/server/usecases/exports.ts` — `brandingFor` (sponsors + orgName), `divisionMeta` org join, wire branding into `buildCompetitionTimetable`, per-kind `description`.
-- Modify `apps/web/src/app/(public)/shared/[orgSlug]/[competitionSlug]/poster.pdf/route.ts` — branding via `resolveSponsors`.
+- (Poster route `poster.pdf/route.ts` is standalone pdfkit — NOT a DocModel export — so it is out of scope; see Task 7 Step 5.)
 - Test: `packages/engine/src/exports/build.test.ts`, `apps/web/src/server/__tests__/doc-render.test.ts` (new), `apps/web/src/server/usecases/__tests__/exports.test.ts`.
 
 **PR2 — New docs + panel**
