@@ -7,9 +7,7 @@ import "server-only";
 import type postgres from "postgres";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import type { AuthCtx } from "@/server/api-v1/auth";
 import { refreshOfficialsCache } from "./officials";
-import { createDeviceLink } from "./device-links";
 import { acceptResolvedClaim, resolveClaimById } from "./person-claims";
 
 // refreshOfficialsCache is typed for the tenant tx; it only uses the tagged
@@ -262,31 +260,4 @@ export async function deleteMyBlackout(userId: string, date: string): Promise<vo
   await sql`
     delete from official_availability
     where date = ${date} and official_id in ${sql(mine.map((o) => o.id))}`;
-}
-
-/**
- * "Score this match": mint the fixture's day-of device link for an assigned
- * official (reuses the device-link mint — same revoke-prior rule, same
- * scoring.device_links gate, so Community orgs get the same 402 the console
- * shows). Declined assignments don't score.
- */
-export async function mintMyScoreLink(
-  userId: string,
-  fixtureId: string,
-): Promise<{ secret: string; expires_at: string }> {
-  const [mine] = await sql<{ org_id: string }[]>`
-    select f.org_id
-    from fixture_officials fo
-    join officials o on o.id = fo.official_id
-    join persons p on p.id = o.person_id
-    join fixtures f on f.id = fo.fixture_id
-    where fo.fixture_id = ${fixtureId} and p.user_id = ${userId}
-      and fo.response <> 'declined'
-    limit 1`;
-  if (!mine) {
-    throw new HttpError(403, "This match isn't assigned to you", "NOT_YOUR_ASSIGNMENT");
-  }
-  const auth: AuthCtx = { orgId: mine.org_id, via: "session", userId, role: null, keyId: null };
-  const link = await createDeviceLink(auth, fixtureId, "Official score pad");
-  return { secret: link.secret, expires_at: link.expires_at };
 }

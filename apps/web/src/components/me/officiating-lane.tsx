@@ -6,9 +6,11 @@
 // each card: amber = awaiting you, lime = accepted, red = declined).
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import Link from "next/link";
+import { apiV1 } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { Zoned } from "@/components/client-time";
+import { routes } from "@/lib/routes";
 import type {
   MyBlackout,
   MyOfficiatingAssignment,
@@ -138,7 +140,6 @@ function AssignmentCard({ a }: { a: MyOfficiatingAssignment }) {
   const [declining, setDeclining] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [proNote, setProNote] = useState(false);
 
   async function respond(next: "accepted" | "declined") {
     setBusy(true);
@@ -153,27 +154,6 @@ function AssignmentCard({ a }: { a: MyOfficiatingAssignment }) {
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : msg("me.off.failed"));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function openScorePad() {
-    setBusy(true);
-    setError(null);
-    setProNote(false);
-    try {
-      const link = await apiV1<{ secret: string }>(
-        `/api/v1/me/assigned-fixtures/${a.fixture_id}/score-link`,
-        { method: "POST" },
-      );
-      window.location.assign(`/score/${link.secret}`);
-    } catch (err) {
-      if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
-        setProNote(true);
-      } else {
-        setError(err instanceof Error ? err.message : msg("me.off.failed"));
-      }
     } finally {
       setBusy(false);
     }
@@ -285,15 +265,12 @@ function AssignmentCard({ a }: { a: MyOfficiatingAssignment }) {
 
       {response !== "declined" && (a.fixture_status === "scheduled" || a.fixture_status === "in_play") && (
         <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+          <Link
+            href={routes.fixture(a.org_slug, a.competition_slug, a.division_slug, a.fixture_no)}
             className="text-xs font-medium text-purple-600 hover:underline"
-            disabled={busy}
-            onClick={() => void openScorePad()}
           >
             {msg("me.off.score")} →
-          </button>
-          {proNote && <span className="text-xs text-slate-400">{msg("me.off.scorePro")}</span>}
+          </Link>
         </div>
       )}
       {error && <p className="text-xs text-red-500">{error}</p>}

@@ -1735,7 +1735,6 @@
   "me.off.confirmDecline": "Confirmar rechazo",
   "me.off.cancel": "Cancelar",
   "me.off.score": "Anotar este partido",
-  "me.off.scorePro": "Los enlaces de anotación requieren el plan Pro del organizador",
   "me.off.blackouts": "Fechas en las que no estoy disponible",
   "me.off.blackoutHint": "Los organizadores ven estas fechas al asignar partidos.",
   "me.off.blackoutAdd": "Añadir fecha",
