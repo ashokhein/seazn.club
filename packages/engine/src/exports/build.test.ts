@@ -132,6 +132,7 @@ describe("buildDocModel goldens (Jul3/06 §2)", () => {
     expect(m.sections[0]!.heading).toBe("Sam Ref");
     expect(m.sections[0]!.table?.rows[0]).toContain("Referee");
     expect(m.sections[0]!.signatures).toBeTruthy();
+    expect(m.sections[0]!.table?.landscape).toBe(true); // 6 wide columns clip on portrait A4
   });
 
   it("buildAdmitTickets: one 2-up section per ticket, QR is a URL not pixels", () => {

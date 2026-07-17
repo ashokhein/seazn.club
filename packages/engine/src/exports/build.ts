@@ -189,6 +189,7 @@ export function buildOfficialsRota(
               d.opponents,
               d.response === "accepted" ? "Accepted" : d.response === "declined" ? "Declined" : "Pending",
             ]),
+            landscape: true,
           },
         }
       : {}),
