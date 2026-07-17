@@ -34,24 +34,26 @@ export function CopyLink({ path, qrFileName }: { path: string; qrFileName?: stri
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <input
           readOnly
           value={url}
           onFocus={(e) => e.currentTarget.select()}
-          className="min-w-0 flex-1 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-600"
+          className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-2.5 py-1.5 font-mono text-xs text-slate-600 sm:flex-1"
         />
-        <button type="button" onClick={copy} className="btn btn-ghost text-xs">
-          {copied ? "Copied ✓" : "Copy"}
-        </button>
-        <a href={path} target="_blank" rel="noopener" className="btn btn-ghost text-xs">
-          Open ↗
-        </a>
-        {qrFileName && (
-          <button type="button" onClick={toggleQr} aria-expanded={showQr} className="btn btn-ghost text-xs">
-            {showQr ? "Hide QR" : "QR"}
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={copy} className="btn btn-ghost text-xs">
+            {copied ? "Copied ✓" : "Copy"}
           </button>
-        )}
+          <a href={path} target="_blank" rel="noopener" className="btn btn-ghost text-xs">
+            Open ↗
+          </a>
+          {qrFileName && (
+            <button type="button" onClick={toggleQr} aria-expanded={showQr} className="btn btn-ghost text-xs">
+              {showQr ? "Hide QR" : "QR"}
+            </button>
+          )}
+        </div>
       </div>
       {qrFileName && showQr && qrUrl && (
         <div className="mt-3 flex flex-wrap items-center gap-4">

@@ -72,8 +72,14 @@ export default async function MePage({
         )}
         <h1 className="page-title mb-6">{t(ui, "me.title")}</h1>
 
-        {upcoming.length === 0 && results.length === 0 && (
-          <p className="card p-6 text-sm text-slate-500">{t(ui, "me.empty")}</p>
+        {meEmptyState(upcoming.length, results.length, teams.length) === "unrostered" && (
+          <p className="card flex min-h-[40vh] items-center justify-center p-6 text-center text-sm text-slate-500">
+            {t(ui, "me.empty")}
+          </p>
+        )}
+
+        {meEmptyState(upcoming.length, results.length, teams.length) === "rostered" && (
+          <p className="card p-6 text-sm text-slate-500">{t(ui, "me.emptyRostered")}</p>
         )}
 
         {next && (
@@ -250,6 +256,20 @@ function FixtureContext({ f }: { f: MyFixture }) {
 function publicHref(f: MyFixture): string | null {
   if (f.competition_visibility !== "public" && f.competition_visibility !== "unlisted") return null;
   return routes.sharedFixture(f.org_slug, f.competition_slug, f.division_slug, f.id);
+}
+
+/**
+ * "Not rostered anywhere" and "rostered but nothing scheduled yet" are
+ * different situations that need different copy — see fix-ui audit
+ * 04-account-public-embed.md.
+ */
+export function meEmptyState(
+  upcomingCount: number,
+  resultsCount: number,
+  teamsCount: number,
+): "unrostered" | "rostered" | null {
+  if (upcomingCount > 0 || resultsCount > 0) return null;
+  return teamsCount > 0 ? "rostered" : "unrostered";
 }
 
 function headline(r: MyResult): string | null {

@@ -83,14 +83,14 @@ export function EntityCard({
         {/* Stretched link: the whole card is the target, the name is the label. */}
         <h3 className="min-w-0 flex-1 text-sm font-semibold text-slate-800 group-hover:text-purple-700">
           <Link href={href} className="after:absolute after:inset-0 focus-visible:outline-none">
-            <span className="block truncate">{name}</span>
+            <span className="block truncate" title={name}>{name}</span>
           </Link>
         </h3>
         {chip}
         {menu && <span className="relative z-10 -my-1 shrink-0">{menu}</span>}
       </div>
-      {meta && <p className="ecard-meta mt-1 truncate text-xs text-slate-500">{meta}</p>}
-      <p className="ecard-next mt-2 truncate text-xs text-slate-600">
+      {meta && <p className="ecard-meta mt-1 truncate text-xs text-slate-500" title={meta}>{meta}</p>}
+      <p className="ecard-next mt-2 truncate text-xs text-slate-600" title={next ?? undefined}>
         {next ? (
           <>
             <span className="font-medium text-purple-700">Next:</span> {next}

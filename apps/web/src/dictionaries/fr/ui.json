@@ -215,6 +215,7 @@
   "me.eyebrow": "Espace joueur",
   "me.claimed": "Profil revendiqué — c'est désormais votre espace joueur.",
   "me.empty": "Rien ici pour l'instant. Lorsqu'un organisateur vous intègre à une équipe ou à un tableau, vos matchs apparaissent sur cette page.",
+  "me.emptyRostered": "Vous êtes dans une équipe — vos matchs apparaîtront ici une fois que votre organisateur les aura programmés.",
   "me.next.title": "Prochain match",
   "me.upcoming.title": "À venir",
   "me.results.title": "Résultats récents",

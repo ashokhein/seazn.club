@@ -215,6 +215,7 @@
   "me.eyebrow": "Página de jugador",
   "me.claimed": "Perfil reclamado: esta es ahora tu página de jugador.",
   "me.empty": "Aquí no hay nada todavía. Cuando un organizador te incluya en un equipo o cuadro, tus partidos aparecerán en esta página.",
+  "me.emptyRostered": "Ya estás en un equipo — tus partidos aparecerán aquí en cuanto tu organizador los programe.",
   "me.next.title": "Próximo partido",
   "me.upcoming.title": "Próximamente",
   "me.results.title": "Resultados recientes",
