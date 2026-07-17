@@ -116,7 +116,7 @@ export default async function OrgHomePage({
                       ? `${plural(dict, "org.home.meta.divisions", s.divisions, locale)} · ${plural(dict, "org.home.meta.entrants", s.entrants, locale)}`
                       : null
                   }
-                  next={s ? nextLine(s.next) : null}
+                  next={s ? nextLine(s.next, locale) : null}
                   progress={s ? { played: s.played, total: s.total } : null}
                   menu={
                     <CardMenu

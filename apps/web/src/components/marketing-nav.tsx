@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getCurrentUser } from "@/lib/auth";
 import { NavScrollFlip } from "@/components/marketing/nav-scroll";
+import { MarketingMobileNav } from "@/components/marketing/mobile-nav";
 import { getDictionary, t } from "@/lib/i18n";
 import { toLocale } from "@/lib/i18n-constants";
 
@@ -67,6 +68,12 @@ export async function MarketingNav({
               </Link>
             </>
           )}
+          <MarketingMobileNav
+            links={LINKS.map((l) => ({ href: l.href, label: t(d, l.key) }))}
+            openLabel={t(d, "nav.openMenu")}
+            closeLabel={t(d, "nav.closeMenu")}
+            night={night}
+          />
         </nav>
       </div>
     </header>

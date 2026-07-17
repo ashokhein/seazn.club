@@ -46,6 +46,16 @@ const COLS = [
 import { slugify, uniqueSlug, recordSlugHistory, RESERVED_ENTITY_SLUGS } from "./slugs";
 export { slugify } from "./slugs";
 
+/** Cheap existence check (no row data) — used to gate first-login UI (e.g.
+ *  the product tour's centered welcome card, which would otherwise land on
+ *  top of the org-home empty-state CTA on a brand-new org). */
+export async function hasAnyCompetitions(auth: AuthCtx): Promise<boolean> {
+  const rows = await withTenant(auth.orgId, (tx) =>
+    tx<{ exists: boolean }[]>`select exists(select 1 from competitions) as exists`,
+  );
+  return rows[0]?.exists ?? false;
+}
+
 export async function listCompetitions(
   auth: AuthCtx,
   query: ListQuery,

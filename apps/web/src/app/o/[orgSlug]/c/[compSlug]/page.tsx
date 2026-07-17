@@ -155,7 +155,7 @@ export default async function CompetitionPage({
                         meta={[formatLabel(s?.stage_kinds ?? []), entrantsLabel]
                           .filter(Boolean)
                           .join(" · ")}
-                        next={s ? nextLine(s.next) : null}
+                        next={s ? nextLine(s.next, locale) : null}
                         progress={s ? { played: s.played, total: s.total } : null}
                         menu={
                           <CardMenu

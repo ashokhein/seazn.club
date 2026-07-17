@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/client";
 import { routes } from "@/lib/routes";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /** Inline rename for the active organization (owners and admins). */
 export function OrgRename({
@@ -13,6 +14,7 @@ export function OrgRename({
   orgId: string;
   initialName: string;
 }) {
+  const msg = useMsg();
   const router = useRouter();
   const [name, setName] = useState(initialName);
   const [busy, setBusy] = useState(false);
@@ -35,7 +37,7 @@ export function OrgRename({
       router.replace(routes.orgSettings(org.slug));
       router.refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      setError(err instanceof Error ? err.message : msg("settings.org.renameFailed"));
     } finally {
       setBusy(false);
     }
@@ -43,7 +45,7 @@ export function OrgRename({
 
   return (
     <label className="block">
-      <span className="label">Organization name</span>
+      <span className="label">{msg("settings.org.nameLabel")}</span>
       <div className="flex gap-2">
         <input
           value={name}
@@ -59,12 +61,12 @@ export function OrgRename({
           disabled={busy || !dirty}
           className="btn btn-primary px-4"
         >
-          {busy ? "Saving…" : "Save"}
+          {busy ? msg("settings.saving") : msg("settings.org.save")}
         </button>
       </div>
       {error && <span className="mt-1 block text-xs text-red-600">{error}</span>}
       {saved && !error && (
-        <span className="mt-1 block text-xs text-green-600">Saved.</span>
+        <span className="mt-1 block text-xs text-green-600">{msg("settings.org.saved")}</span>
       )}
     </label>
   );

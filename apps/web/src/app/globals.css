@@ -383,6 +383,15 @@ body {
   --mk-light-warm: #fffdf7;
   --mk-orange: #fb923c;
   --mk-live: #ef4444;
+  /* .app-gantry's rendered height: h-14 (56px) content + the 2px lime
+     hairline border. A root-scoped var (not one local to .app-gantry) so
+     any other sticky element below the header — e.g. the settings mobile
+     tab row — can pin to "just below the header" via top:var(--app-header-h)
+     instead of colliding with it at the same top:0, where both compete for
+     the position and the loser scrolls out of view entirely
+     (02-console-org.md "settings tab bar disappears entirely on scroll").
+     Update this if the gantry's height ever changes. */
+  --app-header-h: 58px;
 }
 
 .mk-display {

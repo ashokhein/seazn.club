@@ -101,7 +101,7 @@ export function DowngradeButton() {
     if (data.ok) {
       window.location.reload();
     } else {
-      setError(data.error ?? "Something went wrong");
+      setError(data.error ?? msg("billing.downgrade.genericError"));
       setLoading(false);
     }
   }
@@ -109,7 +109,7 @@ export function DowngradeButton() {
   return (
     <div>
       <button onClick={go} disabled={loading} className="btn btn-ghost disabled:opacity-60">
-        {loading ? "Downgrading…" : "Downgrade to Community"}
+        {loading ? msg("billing.downgrade.loading") : msg("billing.downgrade.button")}
       </button>
       {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>

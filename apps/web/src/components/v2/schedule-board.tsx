@@ -12,7 +12,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { Tip } from "@/components/ui/tip";
 import { apiV1 } from "@/lib/client-v1";
-import { useMsg } from "@/components/i18n/dict-provider";
+import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
 import { dayLabel, dayWeekday, dayDateShort, timeLabel } from "@/lib/day-label";
@@ -87,6 +87,7 @@ export function ScheduleBoard({
   showSettings = true,
 }: Props) {
   const msg = useMsg();
+  const locale = useLocale();
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -483,7 +484,7 @@ export function ScheduleBoard({
                 ‹
               </button>
               <span className="min-w-32 text-center text-sm font-semibold text-slate-800">
-                {dayLabel(day)}
+                {dayLabel(day, locale)}
               </span>
               <button
                 type="button"
@@ -505,7 +506,7 @@ export function ScheduleBoard({
                     d === day ? "bg-purple-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
-                  {dayLabel(d)}
+                  {dayLabel(d, locale)}
                 </button>
               ))}
             </div>
@@ -692,6 +693,7 @@ function WeekView({
   onMove: (fixtureId: string, atIso: string, court: string | null) => void;
 }) {
   const msg = useMsg();
+  const locale = useLocale();
   const [dragDay, setDragDay] = useState<string | null>(null);
 
   function moveToDay(fixtureId: string, targetDay: string) {
@@ -747,10 +749,10 @@ function WeekView({
               >
                 <div className="leading-tight">
                   <p className="text-xs font-semibold text-slate-700">
-                    {dayWeekday(d)}
+                    {dayWeekday(d, locale)}
                   </p>
                   <p className="text-[11px] text-slate-500">
-                    {dayDateShort(d)}
+                    {dayDateShort(d, locale)}
                   </p>
                 </div>
                 <span className="rounded-full bg-white px-1.5 text-[11px] font-medium text-slate-500 ring-1 ring-inset ring-slate-200">

@@ -8,6 +8,7 @@ import { needsTourAfterOnboarding } from "@/lib/activation";
 import { EDITOR_ROLES } from "@/lib/types";
 import { LogoutButton } from "@/components/logout-button";
 import { ProductTour } from "@/components/product-tour";
+import { hasAnyCompetitions } from "@/server/usecases/competitions";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
 
@@ -37,6 +38,7 @@ export async function Nav() {
   const dict = await getDictionary(locale, "console");
   const user = await getCurrentUser();
   let activeOrg: {
+    id: string;
     name: string;
     slug: string;
     role: string;
@@ -57,6 +59,22 @@ export async function Nav() {
     !!user && !!activeOrg && (EDITOR_ROLES as readonly string[]).includes(activeOrg.role);
   // Sequence: the tour only auto-starts once onboarding is complete.
   const tourPending = canTour && (await needsTourAfterOnboarding(user!.id));
+  // The tour's first step is a centered "welcome" card with no target — on a
+  // brand-new org (zero competitions) it lands directly on top of the
+  // org-home empty-state CTA it's meant to explain. That CTA already does the
+  // tour's job there, so skip the auto-open until there's a competition to
+  // walk through; the tour stays reachable manually (Settings ▸ Product tour).
+  const tourReady =
+    tourPending && activeOrg
+      ? await hasAnyCompetitions({
+          orgId: activeOrg.id,
+          userId: user!.id,
+          // Only orgId drives the tenant-scoped query below — role is unused.
+          role: null,
+          via: "session",
+          keyId: null,
+        })
+      : false;
 
   return (
     // The gantry (floodlit-console spec §4): night chrome closed by the
@@ -154,7 +172,7 @@ export async function Nav() {
         )}
       </div>
       {canTour && activeOrg && (
-        <ProductTour autoStart={tourPending} orgSlug={activeOrg.slug} dict={tourDict(dict)} />
+        <ProductTour autoStart={tourReady} orgSlug={activeOrg.slug} dict={tourDict(dict)} />
       )}
     </header>
   );

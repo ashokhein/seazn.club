@@ -57,8 +57,10 @@ export function EntityCard({
   chip: ReactNode;
   /** Format · capacity line, e.g. "Knockout · 14/16 entrants". */
   meta?: string | null;
-  /** "Next: Arun vs Dev · Court 2 · 14:30" — null renders the quiet fallback. */
-  next?: string | null;
+  /** "Arun vs Dev · Court 2 · 14:30" + whether it's live right now — null
+   *  renders the quiet fallback. The "Next:"/"Now:" label is chosen and
+   *  localized here, not baked into the string (see NextLine). */
+  next?: { text: string; live: boolean } | null;
   progress?: { played: number; total: number } | null;
   /** Division hue border color; omit for competition cards (violet hairline). */
   accent?: string;
@@ -90,10 +92,16 @@ export function EntityCard({
         {menu && <span className="relative z-10 -my-1 shrink-0">{menu}</span>}
       </div>
       {meta && <p className="ecard-meta mt-1 truncate text-xs text-slate-500">{meta}</p>}
-      <p className="ecard-next mt-2 truncate text-xs text-slate-600">
+      <p
+        className="ecard-next mt-2 truncate text-xs text-slate-600"
+        title={next ? next.text : undefined}
+      >
         {next ? (
           <>
-            <span className="font-medium text-purple-700">Next:</span> {next}
+            <span className="font-medium text-purple-700">
+              {msgFor(locale, next.live ? "card.next.live" : "card.next.upcoming")}
+            </span>{" "}
+            {next.text}
           </>
         ) : (
           <span className="text-slate-500">{msgFor(locale, "card.next.none")}</span>
