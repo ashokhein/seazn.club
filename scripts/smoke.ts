@@ -1694,32 +1694,32 @@ async function schedRegV3Suite(
       docPdfBytes.byteLength > 1024,
   );
 
-  // Matchday documents (v12, Task 17): officials rota + admit tickets also
-  // render real, valid PDFs — same magic-bytes/content-type assertion as the
-  // timetable check above (font subsetting rules out literal-text asserts).
+  // Matchday documents (v12, Task 17): the officials rota only emits duty
+  // rows for fixtures carrying a live assignment (buildOfficialsRotaDoc
+  // reads fixture_officials joined to still-scheduled fixtures) — assign one
+  // before hitting the export so it renders the real content path, not just
+  // the empty masthead. Same official/assign shape as the officials-unify
+  // suite: POST /officials → PATCH the fixture's officials.
+  const docOfficial = v1data<{ id: string }>(
+    await v1(admin, "/api/v1/officials", "POST", {
+      display_name: `Doc Umpire ${tag}`, role_keys: ["referee"],
+    }),
+  );
+  const assignDocOfficial = await v1(admin, `/api/v1/fixtures/${fixture}/officials`, "PATCH", {
+    set: [{ official_id: docOfficial.id, role_key: "referee", locked: false }],
+  });
+  check("doc-export official assigned to a fixture", assignDocOfficial.status === 200);
   const rotaPdf = await fetch(
     `${BASE}/api/v1/divisions/${div.id}/exports/officials_rota?format=pdf`,
     { headers: { cookie: cookieHeader(admin) } },
   );
   const rotaPdfBytes = Buffer.from(await rotaPdf.arrayBuffer());
   check(
-    "exports officials rota PDF renders a valid PDF (pro)",
+    "exports officials rota PDF renders a valid PDF with a real duty row (pro)",
     rotaPdf.status === 200 &&
       (rotaPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
       rotaPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
       rotaPdfBytes.byteLength > 1024,
-  );
-  const ticketsPdf = await fetch(
-    `${BASE}/api/v1/competitions/${comp.id}/exports/tickets?format=pdf`,
-    { headers: { cookie: cookieHeader(admin) } },
-  );
-  const ticketsPdfBytes = Buffer.from(await ticketsPdf.arrayBuffer());
-  check(
-    "exports admit tickets PDF renders a valid PDF (pro)",
-    ticketsPdf.status === 200 &&
-      (ticketsPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
-      ticketsPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
-      ticketsPdfBytes.byteLength > 1024,
   );
 
   // Reschedule with the current division seq — lands; replaying the same
@@ -1751,7 +1751,7 @@ async function schedRegV3Suite(
     contact_email: `refprobe_${tag}@example.com`,
     privacy_consent: true,
   });
-  const regData = v1data<{ ref_code: string }>(reg);
+  const regData = v1data<{ registration_id: string; status: string; ref_code: string }>(reg);
   check(
     "reg issues an SZ ref (pro)",
     reg.status === 201 && /^SZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(regData.ref_code ?? ""),
@@ -1766,6 +1766,29 @@ async function schedRegV3Suite(
   check(
     "reg ticket.png renders (pro)",
     png.status === 200 && (png.headers.get("content-type") ?? "").startsWith("image/png"),
+  );
+
+  // Matchday documents (v12, Task 17): admit tickets only render a section
+  // per CONFIRMED registration with a ref_code (buildAdmitTicketsDoc filters
+  // status = 'confirmed') — the fresh submission above is still 'pending',
+  // so confirm it first, then hit the export to exercise the real
+  // ticket/QR/masked-name render path, not just the empty masthead.
+  const confirmRegForTicket = await v1(admin, `/api/v1/registrations/${regData.registration_id}/confirm`, "POST", {});
+  check(
+    "reg confirmed ahead of the tickets export (pro)",
+    confirmRegForTicket.status === 200 || confirmRegForTicket.status === 201,
+  );
+  const ticketsPdf = await fetch(
+    `${BASE}/api/v1/competitions/${comp.id}/exports/tickets?format=pdf`,
+    { headers: { cookie: cookieHeader(admin) } },
+  );
+  const ticketsPdfBytes = Buffer.from(await ticketsPdf.arrayBuffer());
+  check(
+    "exports admit tickets PDF renders a valid PDF with a real ticket (pro)",
+    ticketsPdf.status === 200 &&
+      (ticketsPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      ticketsPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      ticketsPdfBytes.byteLength > 1024,
   );
 
   // Honeypot: a filled `website` field is rejected before any work.
