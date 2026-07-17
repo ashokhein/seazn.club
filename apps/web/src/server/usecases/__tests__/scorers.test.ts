@@ -537,3 +537,27 @@ describe.skipIf(!HAS_DB)("accepted-official scoring authority", () => {
     await expect(requireScorable(officialAuth, fixtureId)).rejects.toThrow(/cannot record scores/);
   });
 });
+
+describe.skipIf(!HAS_DB)("my-matches includes accepted officials", () => {
+  it("lists an accepted official's fixture, excludes a declined one", async () => {
+    const { auth } = await seedSeedOrg("pro");
+    const { fixtures } = await seedFutureDivision(auth);
+    const fixtureId = fixtures[0]!.id;
+    const user = await makeSeedUser("Ref Two");
+    const [person] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name, user_id)
+      values (${auth.orgId}, 'Ref Two', ${user.id}) returning id`;
+    const [official] = await sql<{ id: string }[]>`
+      insert into officials (org_id, person_id, display_name, role_keys)
+      values (${auth.orgId}, ${person!.id}, 'Ref Two', ${sql.json(["referee"])}) returning id`;
+    await sql`insert into fixture_officials (org_id, fixture_id, official_id, role_key, response)
+              values (${auth.orgId}, ${fixtureId}, ${official!.id}, 'referee', 'accepted')`;
+
+    let list = await listAssignedFixtures(user.id);
+    expect(list.map((f) => f.id)).toContain(fixtureId);
+
+    await sql`update fixture_officials set response = 'declined' where fixture_id = ${fixtureId}`;
+    list = await listAssignedFixtures(user.id);
+    expect(list.map((f) => f.id)).not.toContain(fixtureId);
+  });
+});
