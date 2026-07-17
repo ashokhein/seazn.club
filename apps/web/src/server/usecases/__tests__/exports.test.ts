@@ -219,4 +219,62 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(model.kind).toBe("officials_rota");
     expect(model.branding).toBeUndefined();
   });
+
+  it("Task 14: officials rota + admit tickets gate on the `exports` feature — Community 402s, Pro passes", async () => {
+    const { auth: freeAuth } = await seedOrg("community");
+    const { division: freeDiv, comp: freeComp } = await seedDivision(freeAuth);
+    await expect(
+      buildOfficialsRotaDoc(freeAuth, freeDiv.id, { printedAt: PRINTED }),
+    ).rejects.toMatchObject({ featureKey: "exports" });
+    await expect(
+      buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED }, "https://example.seazn.club"),
+    ).rejects.toMatchObject({ featureKey: "exports" });
+
+    const { auth: proAuth } = await seedOrg("pro");
+    const { division: proDiv, comp: proComp } = await seedDivision(proAuth);
+    await expect(
+      buildOfficialsRotaDoc(proAuth, proDiv.id, { printedAt: PRINTED }),
+    ).resolves.toBeTruthy();
+    await expect(
+      buildAdmitTicketsDoc(proAuth, proComp.id, { printedAt: PRINTED }, "https://example.seazn.club"),
+    ).resolves.toBeTruthy();
+  });
+
+  it("Task 14: buildMyRotaDoc is scoped to the caller — never leaks another official's assignments", async () => {
+    const { auth } = await seedOrg("pro");
+    const { fixtures } = await seedDivision(auth);
+    await patchFixture(auth, fixtures[0]!.id, {
+      scheduled_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), court_label: "Court 1",
+    });
+    await patchFixture(auth, fixtures[1]!.id, {
+      scheduled_at: new Date(Date.now() + 8 * 86_400_000).toISOString(), court_label: "Court 2",
+    });
+
+    async function makeLinkedOfficial(name: string, fixtureId: string) {
+      const suffix = randomUUID().slice(0, 8);
+      const [{ id: userId }] = await sql<{ id: string }[]>`
+        insert into users (email, display_name, email_verified)
+        values (${`${name}-${suffix}@test.local`}, ${name}, true)
+        returning id`;
+      const [{ id: personId }] = await sql<{ id: string }[]>`
+        insert into persons (org_id, full_name, user_id)
+        values (${auth.orgId}, ${name}, ${userId}) returning id`;
+      const [{ id: officialId }] = await sql<{ id: string }[]>`
+        insert into officials (org_id, person_id, display_name)
+        values (${auth.orgId}, ${personId}, ${name}) returning id`;
+      await sql`
+        insert into fixture_officials (org_id, fixture_id, official_id, role_key, response)
+        values (${auth.orgId}, ${fixtureId}, ${officialId}, 'referee', 'accepted')`;
+      return { userId, officialId };
+    }
+
+    const a = await makeLinkedOfficial("Rota User A", fixtures[0]!.id); // Court 1
+    await makeLinkedOfficial("Rota User B", fixtures[1]!.id); // Court 2
+
+    const model = await buildMyRotaDoc(a.userId, { printedAt: PRINTED }, "https://example.seazn.club");
+    const flat = JSON.stringify(model.sections);
+    // A's own duty (Court 1) shows; B's fixture (Court 2) never leaks in.
+    expect(flat).toContain("Court 1");
+    expect(flat).not.toContain("Court 2");
+  });
 });

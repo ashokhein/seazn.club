@@ -76,6 +76,7 @@ const RULES: RouteRule[] = [
   { method: "GET", path: "/competitions/:id/divisions", scope: "read", pin: "competition" },
   { method: "POST", path: "/competitions/:id/divisions", scope: "manage", pin: "competition" },
   { method: "GET", path: "/competitions/:id/exports/timetable", scope: "read", pin: "competition" },
+  { method: "GET", path: "/competitions/:id/exports/tickets", scope: "read", pin: "competition" },
 
   // divisions
   { method: "GET", path: "/divisions/:id", scope: "read", pin: "division" },
@@ -234,6 +235,9 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   // Pending officiating invites (v11.1): accepting links a login exactly
   // like the token-based /claim page — session-personal, never key-driven.
   "POST /me/officiating-claims/:id/accept",
+  // Matchday documents (v12/Task 14): the caller's own cross-org rota — same
+  // session-personal rule as every other /me surface.
+  "GET /me/rota.pdf",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.

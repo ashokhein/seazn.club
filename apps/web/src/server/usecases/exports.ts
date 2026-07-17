@@ -385,6 +385,11 @@ export async function buildOfficialsRotaDoc(
   divisionId: string,
   opts: ExportOpts,
 ): Promise<DocModel> {
+  // Exports unlock via plan or an Event Pass on this competition (v3/07 §3),
+  // same gate as buildDivisionDocModel — deferred at Task 13, added here.
+  const [expComp] = await sql<{ competition_id: string }[]>`
+    select competition_id from divisions where id = ${divisionId}`;
+  await requireFeature(auth.orgId, "exports", expComp?.competition_id);
   return withTenant(auth.orgId, async (tx) => {
     const meta = await divisionMeta(tx, divisionId);
     const branding = await brandingFor(auth, meta);
@@ -462,6 +467,7 @@ export async function buildAdmitTicketsDoc(
   opts: ExportOpts,
   origin: string,
 ): Promise<DocModel> {
+  await requireFeature(auth.orgId, "exports", competitionId);
   return withTenant(auth.orgId, async (tx) => {
     const meta = await competitionTicketMeta(tx, competitionId);
     const branding = await orgBranding(meta.org_id, meta.org_name, competitionId);
