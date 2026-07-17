@@ -268,21 +268,30 @@ export interface MyPerson {
   org_name: string;
   consent: { public_name?: boolean; public_photo?: boolean };
   consent_locked: boolean;
+  /** Officials have no photo upload anywhere in the product — the "show my
+   *  photo publicly" toggle is meaningless (and misleading) for a person
+   *  who is only ever linked as an official, never rostered as an entrant. */
+  hasPhotoFeature: boolean;
 }
 
 /** My claimed persons across all orgs, with consent state. dob stays server-side. */
 export async function listMyPersons(userId: string): Promise<MyPerson[]> {
   const rows = await sql<
-    (Omit<MyPerson, "consent_locked"> & { dob: string | null })[]
+    (Omit<MyPerson, "consent_locked" | "hasPhotoFeature"> & {
+      dob: string | null;
+      is_rostered: boolean;
+    })[]
   >`
-    select p.id, p.full_name, o.name as org_name, p.consent, p.dob
+    select p.id, p.full_name, o.name as org_name, p.consent, p.dob,
+           exists(select 1 from entrant_members em where em.person_id = p.id) as is_rostered
     from persons p join organizations o on o.id = p.org_id
     where p.user_id = ${userId}
     order by o.name, p.full_name`;
-  return rows.map(({ dob, ...p }) => ({
+  return rows.map(({ dob, is_rostered, ...p }) => ({
     ...p,
     consent: (p.consent ?? {}) as MyPerson["consent"],
     consent_locked: consentLocked(dob),
+    hasPhotoFeature: is_rostered,
   }));
 }
 

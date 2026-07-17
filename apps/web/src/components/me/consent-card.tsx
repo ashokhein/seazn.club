@@ -14,6 +14,9 @@ export interface ConsentPerson {
   org_name: string;
   consent: { public_name?: boolean; public_photo?: boolean };
   consent_locked: boolean;
+  /** false for a person only ever linked as an official — officials have no
+   *  photo anywhere in the product, so the toggle would be meaningless. */
+  hasPhotoFeature: boolean;
 }
 
 const FLAGS: { key: "public_name" | "public_photo"; labelKey: MessageKey }[] = [
@@ -55,7 +58,7 @@ export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
               {p.full_name} · {p.org_name}
             </p>
             <div className="space-y-1.5">
-              {FLAGS.map((f) => (
+              {FLAGS.filter((f) => f.key !== "public_photo" || p.hasPhotoFeature).map((f) => (
                 <label
                   key={f.key}
                   className={`flex items-center gap-2 text-sm ${
