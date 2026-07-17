@@ -32,6 +32,12 @@ export const EVENTS = {
   BILLING_INTERVAL_CHANGED: "billing_interval_changed",
   SUBSCRIPTION_CANCEL_SCHEDULED: "subscription_cancel_scheduled",
   SUBSCRIPTION_RESUMED: "subscription_resumed",
+  // PLG growth loops (2026-07-17 plan) — distribution + referral.
+  ATTRIBUTION_CLICKED: "attribution_clicked",
+  SHARE_FIRED: "share_fired",
+  PLAYER_STARTED_OWN_ORG: "player_started_own_org",
+  COMPETITION_MADE_PUBLIC: "competition_made_public",
+  EMBED_RENDERED: "embed_rendered",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];
