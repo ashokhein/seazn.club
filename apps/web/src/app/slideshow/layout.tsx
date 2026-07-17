@@ -3,6 +3,7 @@
 // site's scoreboard typography via the --ps-font-display var.
 import type { Metadata } from "next";
 import { Barlow_Condensed } from "next/font/google";
+import { KioskDevIndicatorGuard } from "@/components/kiosk-dev-indicator-guard";
 
 // Shared slideshow links get a proper title; the share image inherits the
 // root stadium-night card (app/opengraph-image.tsx).
@@ -15,5 +16,12 @@ const displayFont = Barlow_Condensed({
 });
 
 export default function SlideshowLayout({ children }: { children: React.ReactNode }) {
-  return <div className={displayFont.variable}>{children}</div>;
+  return (
+    <div className={displayFont.variable}>
+      {/* Unattended kiosk display — suppress the dev-mode route indicator
+          entirely rather than just repositioning it (design/fix-ui audit). */}
+      <KioskDevIndicatorGuard />
+      {children}
+    </div>
+  );
 }
