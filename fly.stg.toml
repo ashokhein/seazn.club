@@ -7,6 +7,9 @@ primary_region = "lhr"
 [env]
   OAUTH_BASE_URL   = "https://seazn-club-stg.fly.dev"
   NEXT_PUBLIC_BASE_URL = "https://seazn-club-stg.fly.dev"
+  # Server-side Sentry reads the DSN at RUNTIME (NEXT_PUBLIC_* build args are
+  # not in server process.env — see note above). A DSN is public, safe to commit.
+  NEXT_PUBLIC_SENTRY_DSN = "https://3c300139a524e663ef1d8bef297ad486@o4511704992382976.ingest.de.sentry.io/4511704994676816"
 
 [build]
   [build.args]
@@ -16,7 +19,9 @@ primary_region = "lhr"
     NEXT_PUBLIC_BASE_URL               = "https://seazn-club-stg.fly.dev"
     NEXT_PUBLIC_POSTHOG_KEY            = "phc_rjdhs5RCqJEg5jTH3UG4Dt9DxsLemdiejW3Upkbe4ERM"
     NEXT_PUBLIC_POSTHOG_HOST           = "https://eu.posthog.com"
-    # NEXT_PUBLIC_SENTRY_DSN           = "https://..."
+    NEXT_PUBLIC_SENTRY_DSN             = "https://3c300139a524e663ef1d8bef297ad486@o4511704992382976.ingest.de.sentry.io/4511704994676816"
+    SENTRY_ORG                         = "seazn-club"
+    SENTRY_PROJECT                     = "javascript-nextjs"
 
 [http_service]
   internal_port        = 3000
