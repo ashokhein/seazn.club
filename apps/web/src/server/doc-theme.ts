@@ -3,6 +3,7 @@ import "server-only";
 // r/[ref]/ticket.png and the email templates, made native to paged PDF.
 import fs from "node:fs";
 import path from "node:path";
+import QRCode from "qrcode";
 
 export const PALETTE = {
   night: "#150b36",
@@ -69,4 +70,13 @@ const EYEBROW: Record<string, string> = {
 
 export function eyebrowFor(kind: string): string {
   return EYEBROW[kind] ?? kind.replace(/_/g, " ").toUpperCase();
+}
+
+/** QR PNG bytes for a URL. Failure → null (ticket renders without QR). */
+export async function qrBuffer(url: string): Promise<Buffer | null> {
+  try {
+    return await QRCode.toBuffer(url, { margin: 1, width: 180 });
+  } catch {
+    return null;
+  }
 }

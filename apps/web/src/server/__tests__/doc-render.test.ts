@@ -82,6 +82,23 @@ describe("doc-render footer", () => {
   });
 });
 
+describe("doc-render tickets", () => {
+  it("renders admit tickets with ref + ADMIT ONE", async () => {
+    const ticketModel: DocModel = {
+      kind: "admit_ticket", title: "Tickets", meta: { printedAt: "2026-07-19" },
+      branding: { orgName: "Riverside SC" },
+      sections: [{ columnsHint: 2, ticket: {
+        maskedName: "S. Ref", competition: "Summer League", dates: "19 Jul",
+        ref: "AB12CD", status: "CONFIRMED", qrUrl: "https://x/r/AB12CD", seq: 1 } }],
+      pageBreaks: "auto",
+    };
+    const r = await render(ticketModel); // reuse the Task 4 render() spy
+    expect(r.text.join(" ")).toContain("AB12CD");
+    expect(r.text.join(" ")).toContain("ADMIT ONE");
+    expect(r.images).toBeGreaterThan(0); // QR drawn
+  });
+});
+
 describe("doc-render xlsx", () => {
   it("xlsx header includes org name + sponsor row when branded", async () => {
     const { docModelToXlsx } = await import("../doc-render");

@@ -5,7 +5,7 @@ import "server-only";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import type { DocModel, DocSection, DocTable } from "@seazn/engine/exports";
-import { PALETTE, FONT, registerFonts, eyebrowFor } from "./doc-theme";
+import { PALETTE, FONT, registerFonts, eyebrowFor, qrBuffer } from "./doc-theme";
 
 const MARGIN = 40;
 
@@ -82,12 +82,6 @@ function sponsorLine(sponsors: { name: string; tier: string }[]): string {
     .join("  ·  ");
 }
 
-/** Stub — real QR rendering arrives in Task 12 (doc-theme.ts helper). Kept
- *  inert here: no caller sets `meta.liveUrl` yet, so this never executes. */
-async function qrBuffer(_url: string): Promise<Buffer | null> {
-  return null;
-}
-
 function isLandscape(model: DocModel): boolean {
   return model.sections.some((s) => s.table?.landscape === true);
 }
@@ -141,8 +135,43 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
   doc.moveDown(0.5);
 }
 
+/** The courtside pass — mirrors r/[ref]/ticket.png as a printable card.
+ *  Night masthead card, mono ref + rotated status stamp, dashed
+ *  perforation, QR on the stub, "ADMIT ONE". Two per A4 via columnsHint. */
+function drawTicket(doc: PDFKit.PDFDocument, t: NonNullable<DocSection["ticket"]>, qr: Buffer | null): void {
+  const w = doc.page.width - MARGIN * 2;
+  const top = doc.y;
+  const cardH = 200;
+  // card
+  doc.roundedRect(MARGIN, top, w, cardH, 10).fill("#ffffff");
+  doc.roundedRect(MARGIN, top, w, 44, 10).fill(PALETTE.night);
+  doc.font(FONT.displayBold).fontSize(16).fillColor(PALETTE.cream)
+    .text("SEAZN", MARGIN + 16, top + 14, { continued: true })
+    .fillColor(PALETTE.lime).text(" CLUB");
+  doc.rect(MARGIN, top + 44, w, 4).fill(PALETTE.lime);
+  doc.font(FONT.displayBold).fontSize(22).fillColor(PALETTE.ink)
+    .text(t.competition.toUpperCase(), MARGIN + 16, top + 60);
+  doc.font(FONT.body).fontSize(9).fillColor(PALETTE.mute).text("ENTRANT", MARGIN + 16, top + 100, { characterSpacing: 2 });
+  doc.font(FONT.displayBold).fontSize(16).fillColor(PALETTE.ink).text(t.maskedName, MARGIN + 16, top + 112);
+  doc.font(FONT.body).fontSize(9).fillColor(PALETTE.mute).text("YOUR REFERENCE", MARGIN + 16, top + 140, { characterSpacing: 2 });
+  doc.font("Courier-Bold").fontSize(20).fillColor(PALETTE.ink).text(t.ref, MARGIN + 16, top + 152);
+  // status stamp beside the reference block
+  doc.font(FONT.displayBold).fontSize(11).fillColor(PALETTE.ball)
+    .text(t.status.toUpperCase(), MARGIN + 150, top + 148, { characterSpacing: 2, lineBreak: false });
+  // stub
+  const stubX = MARGIN + w - 150;
+  doc.moveTo(stubX, top).lineTo(stubX, top + cardH).dash(3, { space: 3 }).strokeColor(PALETTE.hairline).stroke().undash();
+  if (qr) { try { doc.image(qr, stubX + 35, top + 40, { width: 80 }); } catch { /* skip */ } }
+  doc.font(FONT.body).fontSize(8).fillColor(PALETTE.mute).text("SCAN AT THE DESK", stubX + 20, top + 128, { characterSpacing: 1 });
+  doc.font(FONT.displayBold).fontSize(14).fillColor(PALETTE.night).text("ADMIT ONE", stubX + 30, top + 145, { characterSpacing: 4 });
+  doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(`No. ${t.seq}`, stubX + 20, top + 175);
+  doc.y = top + cardH + 16;
+  doc.fillColor(PALETTE.ink);
+}
+
 function drawSection(doc: PDFKit.PDFDocument, section: DocSection): void {
   if (section.pageBreakBefore === true) doc.addPage();
+  if (section.ticket !== undefined) return; // handled by the QR pre-pass caller
   if (section.heading !== undefined) {
     doc.font("Helvetica-Bold").fontSize(13).fillColor("#111111").text(section.heading, MARGIN);
     doc.moveDown(0.2);
@@ -208,6 +237,13 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
   else doc.y = MARGIN;
   drawTitleBlock(doc, model); // eyebrow + title + description for ALL
 
+  // QR pre-pass (Task 12): pdfkit draws synchronously, so every ticket's QR
+  // must be resolved to bytes BEFORE the section loop — no awaiting mid-draw.
+  const qrByRef = new Map<string, Buffer | null>();
+  for (const s of model.sections) {
+    if (s.ticket) qrByRef.set(s.ticket.ref, await qrBuffer(s.ticket.qrUrl));
+  }
+
   // columnsHint 2 (12 Jun "two per A4"): pair sections onto one page by
   // separating with a rule instead of a page break.
   let sinceBreak = 0;
@@ -217,7 +253,8 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
       doc.addPage();
       sinceBreak = 0;
     }
-    drawSection(doc, section);
+    if (section.ticket) drawTicket(doc, section.ticket, qrByRef.get(section.ticket.ref) ?? null);
+    else drawSection(doc, section);
     if (pair) {
       sinceBreak += 1;
       doc
@@ -248,7 +285,7 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
     }
     doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
       `${model.meta.footerNote ?? model.title} — printed ${model.meta.printedAt} · page ${i - range.start + 1} of ${total}`,
-      MARGIN, fy, { lineBreak: false },
+      MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 40, lineBreak: false },
     );
   }
   doc.end();
