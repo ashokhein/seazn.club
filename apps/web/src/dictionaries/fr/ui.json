@@ -736,6 +736,8 @@
   "schedule.notice.completed": "Phase terminée.",
   "schedule.notice.stageAdded": "Phase ajoutée — {n} match(s) généré(s) pour les {topN} premiers.",
   "schedule.notice.stageAddedLater": "Phase ajoutée — les matchs seront générés à la fin de la phase précédente.",
+  "schedule.error.tooFewGroupEntrants": "Impossible de générer les matchs pour l'instant — {groups} groupes nécessitent au moins {required} participants au total (actuellement {have}). Ajoutez des participants ou répartissez-les d'abord dans les groupes.",
+  "schedule.error.tooFewEntrants": "Impossible de générer les matchs pour l'instant — ajoutez d'abord au moins 2 participants à cette phase.",
   "schedule.print": "Imprimer le calendrier",
   "schedule.working": "Traitement en cours…",
   "schedule.pairNext": "Apparier le tour suivant",

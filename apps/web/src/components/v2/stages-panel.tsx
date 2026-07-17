@@ -77,6 +77,11 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // stage id in flight
   const [notice, setNotice] = useState<string | null>(null);
+  // "Générer les matchs" precondition-not-met (design/fix-ui/03 §"misleading
+  // success message"): distinct from `notice` (success, green) and `error`
+  // (generic failure, red) — an amber, actionable "here's what to fix" state
+  // so it's never confused with the "nothing new — up to date" success copy.
+  const [warning, setWarning] = useState<string | null>(null);
   // Set after an inline reschedule lands: the notice grows an Undo button
   // that steps the division history back one event (Jul3/03).
   const [undoable, setUndoable] = useState(false);
@@ -129,6 +134,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
     setError(null);
     setPaywallFeature(null);
     setNotice(null);
+    setWarning(null);
     setBusy(stageId);
     try {
       if (action === "delete") {
@@ -169,7 +175,12 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
+        const precondition = generatePreconditionMessage(err, msg);
+        if (precondition) {
+          setWarning(precondition);
+        } else {
+          setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
+        }
       }
     } finally {
       setBusy(null);
@@ -200,6 +211,12 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
         </p>
       )}
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
+      {/* Precondition-not-met (amber, actionable) — never the green success
+          banner: "Générer les matchs" did nothing because the entrants can't
+          fill the configured groups yet, not because it was already done. */}
+      {warning && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">{warning}</p>
+      )}
       {error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
@@ -271,6 +288,23 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
             .sort();
           return { from: times[0] ?? null, to: times[times.length - 1] ?? null };
         };
+        // League/group rounds display in ACTUAL earliest-kickoff order, not
+        // generation order (round_no) — auto-scheduling (parallel courts) or a
+        // manual reschedule can leave a later-numbered round with an earlier
+        // kickoff than one before it, which would mislead an organiser reading
+        // the round list for "what's next" (design/fix-ui/03 §"rounds out of
+        // order"). Rounds with no scheduled fixture yet have no time to sort
+        // by, so they fall back to round_no order after every dated round.
+        // Bracket stages (splitRounds below) are structural, not chronological
+        // (Quarter → Semi → Final), so they keep round_no order untouched.
+        const orderedRounds = [...rounds].sort((a, b) => {
+          const da = roundDates(a).from;
+          const db = roundDates(b).from;
+          if (da !== null && db !== null) return da < db ? -1 : da > db ? 1 : a - b;
+          if (da !== null) return -1;
+          if (db !== null) return 1;
+          return a - b;
+        });
         // Mirrors the server guard (deleteStage) EXACTLY: only the last stage
         // in the graph, and only when it owns no played fixtures. No "keep one
         // stage" rule — the server deletes the sole stage of a pure League too,
@@ -384,7 +418,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
               </p>
             ) : splitRounds ? null : (
               <div className="divide-y divide-slate-100">
-                {rounds.map((round) => {
+                {orderedRounds.map((round) => {
                   const dates = roundDates(round);
                   return (
                   <div key={round}>
@@ -592,6 +626,35 @@ function AddStageForm({
 }
 
 const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
+
+/**
+ * "Générer les matchs" precondition failure (design/fix-ui/03 §"misleading
+ * success message"): generateStageFixtures throws STAGE_NOT_READY with
+ * `data.reason: "group_too_few_entrants"` when a group stage passed the
+ * total-entrant gate but can't pair fixtures once split across its
+ * configured groups. Returns the actionable, localized reason to show as a
+ * distinct (amber, non-success) banner — or null for every other error,
+ * which the caller falls through to the generic red error banner for.
+ * Exported (pure, no state) so this classification is unit-testable without
+ * a DOM/jsdom harness, which this repo's component tests don't set up.
+ */
+export function generatePreconditionMessage(err: unknown, msg: Msg): string | null {
+  if (
+    !(err instanceof ApiV1Error) ||
+    err.code !== "STAGE_NOT_READY" ||
+    err.extra.reason !== "group_too_few_entrants"
+  ) {
+    return null;
+  }
+  const groups = Number(err.extra.groups ?? 1);
+  return groups > 1
+    ? msg("schedule.error.tooFewGroupEntrants", {
+        required: Number(err.extra.required ?? groups * 2),
+        have: Number(err.extra.entrants ?? 0),
+        groups,
+      })
+    : msg("schedule.error.tooFewEntrants");
+}
 
 /** A bye: one side empty with an auto-advance award outcome (v3/04 §3 item 6). */
 function isBye(f: FixtureRow): boolean {
