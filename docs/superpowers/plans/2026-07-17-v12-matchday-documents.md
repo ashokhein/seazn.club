@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - **Builders stay pure:** `printedAt` and any QR **URL** are inputs; no `Date.now()`, no image bytes in the model. Pixels live only in `doc-render.ts`. (Goldens assert the model.)
-- **Free-tier plain output is a contract** — some orgs print it today. Pin it with a draw-call spy before touching the renderer; branded chrome is strictly additive.
+- **Free-tier reach (DECIDED 2026-07-17):** community orgs (no `exports.branded`) get the clean upgrade — brand fonts, eyebrow, title, description, and zebra tables. Only the **night masthead band, org logo, and sponsor footer** are Pro-gated. The free-tier contract is therefore: **no masthead / logo / sponsor chrome when unbranded** — pin THAT with a draw-call spy (assert no `SEAZN CLUB` wordmark and no masthead band), not byte-identical output. Tables + typography upgrade for everyone.
 - **`exports.branded` gate:** `branding` is set only when `hasFeature(orgId,'exports.branded')` passes; else `undefined` and the renderer draws the plain doc.
 - **Extending `DocKind` breaks exhaustive switches at compile time — chase them all,** never `default`.
 - **Broken asset degrades, never throws:** a missing/unreadable logo, font, or QR resolves to no-image, not a 500.
@@ -146,10 +146,10 @@ git commit -m "feat(exports): tiered sponsors, orgName, doc description on DocMo
 **Interfaces:**
 - Produces: `PALETTE` (named hex), `eyebrowFor(kind): string`, `registerFonts(doc): void` (safe; falls back to Helvetica, never throws), `FONT` = `{ display, displayBold, body, bodyMed }` (font names to pass to `doc.font()`).
 
-- [ ] **Step 1: Add the font files.** Download the OFL TTFs (Barlow Condensed SemiBold/Bold, Inter Regular/Medium) into `apps/web/assets/fonts/`. Verify:
+- [ ] **Step 1: The font files are ALREADY committed** (commit `ef56465`, "bundle Barlow Condensed + Inter fonts"). Do NOT download — just verify they are present (note Inter is `.otf`, Barlow is `.ttf`):
 
 ```bash
-ls -la apps/web/assets/fonts/*.ttf   # 4 files, non-zero
+ls -1 apps/web/assets/fonts/   # BarlowCondensed-{SemiBold,Bold}.ttf, Inter-{Regular,Medium}.otf, OFL-*.txt
 ```
 
 - [ ] **Step 2: Write the failing test** — `doc-theme.test.ts`:
@@ -231,8 +231,8 @@ const FALLBACK: Record<string, string> = {
 const FILES: Record<string, string> = {
   Display: "BarlowCondensed-SemiBold.ttf",
   DisplayBold: "BarlowCondensed-Bold.ttf",
-  Body: "Inter-Regular.ttf",
-  BodyMed: "Inter-Medium.ttf",
+  Body: "Inter-Regular.otf",   // Inter ships as OTF here (static weights)
+  BodyMed: "Inter-Medium.otf",
 };
 
 function fontDir(): string {
@@ -396,10 +396,36 @@ git commit -m "feat(exports): brandingFor resolves orgName + tiered sponsors"
 - Consumes: `PALETTE`, `FONT`, `registerFonts`, `eyebrowFor` (Task 2); `DocModel.branding`.
 - Produces: `docModelToPdf(model)` draws a masthead band + eyebrow/title/description block when `branding` present; unchanged plain output when absent.
 
-- [ ] **Step 1: Write the failing spy test** — `doc-render.test.ts` mocks pdfkit to count draw calls:
+- [ ] **Step 1: Write the failing spy test** — `doc-render.test.ts`. **Do NOT scan the PDF bytes for literal strings:** embedded-TTF subsetting encodes text as glyph IDs, so `buf.toString().toContain("…")` is unreliable. Spy on pdfkit's draw calls instead — this is the free-tier "contract" mechanism the spec names. **This harness (the `pdfkit` mock + `render()` helper) is reused by Tasks 5, 6, and 12** — put it at the top of the file:
 
 ```ts
 import { describe, it, expect, vi } from "vitest";
+
+// Font-encoding-proof spy: records every draw call by intercepting pdfkit.
+const rec = { text: [] as string[], images: 0, fills: [] as string[] };
+vi.mock("pdfkit", () => {
+  class FakeDoc {
+    page = { width: 595.28, height: 841.89 };
+    y = 40;
+    private endCb?: () => void;
+    on(ev: string, cb: () => void) { if (ev === "end") this.endCb = cb; return this; }
+    registerFont() { return this; }
+    font() { return this; } fontSize() { return this; }
+    fillColor() { return this; } strokeColor() { return this; } lineWidth() { return this; }
+    text(s: unknown) { rec.text.push(String(s)); return this; }
+    image() { rec.images++; return this; }
+    rect() { return this; } roundedRect() { return this; }
+    moveTo() { return this; } lineTo() { return this; } stroke() { return this; }
+    fill(c?: string) { if (typeof c === "string") rec.fills.push(c); return this; }
+    dash() { return this; } undash() { return this; } moveDown() { return this; }
+    addPage() { return this; } switchToPage() { return this; }
+    widthOfString() { return 10; }
+    bufferedPageRange() { return { start: 0, count: 1 }; }
+    end() { this.endCb?.(); }        // resolves docModelToPdf's `done` after all drawing
+  }
+  return { default: FakeDoc };
+});
+
 import { docModelToPdf } from "../doc-render";
 import type { DocModel } from "@seazn/engine/exports";
 
@@ -412,20 +438,26 @@ const model = (branding?: DocModel["branding"]): DocModel => ({
   pageBreaks: "auto",
 });
 
+async function render(m: DocModel) {
+  rec.text = []; rec.images = 0; rec.fills = [];
+  await docModelToPdf(m);
+  return rec;
+}
+
 describe("doc-render masthead", () => {
-  it("draws a masthead band (filled rect + wordmark) when branded", async () => {
-    const buf = await docModelToPdf(model({ orgName: "Riverside SC", colors: { primary: "#150b36" } }));
-    expect(buf.length).toBeGreaterThan(0);
-    // the branded title uses the eyebrow — assert via PDF text stream
-    const text = buf.toString("latin1");
-    expect(text).toContain("ORDER OF PLAY");
+  it("draws a night masthead wordmark + lime pitch-line when branded (Pro chrome)", async () => {
+    const r = await render(model({ orgName: "Riverside SC", colors: { primary: "#150b36" } }));
+    expect(r.text.join(" ")).toContain("SEAZN");        // masthead wordmark
+    expect(r.fills).toContain("#a3e635");               // lime pitch-line rule (the signature)
+    expect(r.text.join(" ")).toContain("ORDER OF PLAY");
   });
 
-  it("free-tier: no masthead, plain title only (contract)", async () => {
-    const buf = await docModelToPdf(model()); // no branding
-    const text = buf.toString("latin1");
-    expect(text).not.toContain("ORDER OF PLAY");
-    expect(text).toContain("Summer League");
+  it("free-tier: eyebrow + title upgrade for ALL, but NO masthead wordmark/pitch-line", async () => {
+    const r = await render(model()); // no branding
+    expect(r.text.join(" ")).toContain("ORDER OF PLAY"); // title block draws for everyone
+    expect(r.text.join(" ")).toContain("Summer League — Div 1");
+    expect(r.text.join(" ")).not.toContain("SEAZN");    // no night masthead when unbranded
+    expect(r.fills).not.toContain("#a3e635");           // no pitch-line when unbranded
   });
 });
 ```
@@ -433,7 +465,7 @@ describe("doc-render masthead", () => {
 - [ ] **Step 2: Run it, verify it fails**
 
 Run: `npm run test -w web -- doc-render.test.ts`
-Expected: FAIL (no "ORDER OF PLAY" — masthead not drawn).
+Expected: FAIL (no `SEAZN` wordmark / no lime fill — masthead + title band not drawn yet).
 
 - [ ] **Step 3: Add the masthead drawer to `doc-render.ts`.** After imports add:
 
@@ -498,25 +530,21 @@ function drawTitleBlock(doc: PDFKit.PDFDocument, model: DocModel): void {
 }
 ```
 
-Then in `docModelToPdf`, replace the plain title block (lines 116-118). Register fonts after `doc` is created, resolve the logo up front, and branch:
+Then in `docModelToPdf`, replace the plain title block (the current `doc.font("Helvetica-Bold").fontSize(16).text(model.title, MARGIN)` lines). Register fonts after `doc` is created, resolve the logo up front. **Per the free-tier decision: the masthead + logo are Pro-only; the eyebrow/title/description band draws for EVERYONE:**
 
 ```ts
   registerFonts(doc);
   const logo = model.branding ? await resolveLogo(model.branding.logos?.[0]) : null;
   // ... existing chunks/done wiring ...
-  if (model.branding) {
-    drawMasthead(doc, model, logo);
-    drawTitleBlock(doc, model);
-  } else {
-    doc.font("Helvetica-Bold").fontSize(16).text(model.title, MARGIN);
-    doc.moveDown(0.6);
-  }
+  if (model.branding) drawMasthead(doc, model, logo); // Pro-only night chrome + logo
+  else doc.y = MARGIN;
+  drawTitleBlock(doc, model);                          // eyebrow + title + description for ALL
 ```
 
 - [ ] **Step 4: Run tests, verify pass**
 
 Run: `npm run test -w web -- doc-render.test.ts`
-Expected: PASS (branded → "ORDER OF PLAY"; free → plain title).
+Expected: PASS (branded → `SEAZN` wordmark + lime fill; free → eyebrow/title but no wordmark/lime).
 
 - [ ] **Step 5: Verify pre-existing exports still build** — run the engine + web export suites:
 
@@ -546,18 +574,18 @@ git commit -m "feat(exports): branded masthead + eyebrow/title/description band"
 - [ ] **Step 1: Add a table-styling assertion** to `doc-render.test.ts`:
 
 ```ts
-it("renders a header row and a data row for a table", async () => {
-  const buf = await docModelToPdf(model()); // reuse the timetable model
-  const text = buf.toString("latin1");
-  expect(text).toContain("Time");
-  expect(text).toContain("Falcons");
+it("renders a night header row + data cells for a table", async () => {
+  const r = await render(model()); // reuse the render() spy + timetable model
+  expect(r.text.join(" ")).toContain("Time");     // header cell
+  expect(r.text.join(" ")).toContain("Falcons");  // data cell
+  expect(r.fills).toContain("#150b36");            // night header-row background
 });
 ```
 
-- [ ] **Step 2: Run it, verify it passes already or fails on new alignment** — this guards the rewrite:
+- [ ] **Step 2: Run it, verify it fails on the new header fill** — this guards the rewrite:
 
 Run: `npm run test -w web -- doc-render.test.ts`
-Expected: PASS (guard in place before refactor).
+Expected: FAIL on `#150b36` (header not yet filled) — the cell-text asserts already pass; the fill assert drives the zebra rewrite.
 
 - [ ] **Step 3: Rewrite `drawTable`** with brand styling and numeric alignment:
 
@@ -639,15 +667,14 @@ git commit -m "feat(exports): zebra tables, night header, numeric right-align"
 
 ```ts
 it("footer groups sponsors by tier, title first", async () => {
-  const buf = await docModelToPdf(model({
+  const r = await render(model({
     orgName: "Riverside SC",
     sponsors: [{ name: "Silverware Co", tier: "silver" }, { name: "Acme", tier: "title" }],
   }));
-  const text = buf.toString("latin1");
-  const iAcme = text.indexOf("Acme");
-  const iSilver = text.indexOf("Silverware");
-  expect(iAcme).toBeGreaterThan(-1);
-  expect(iAcme).toBeLessThan(iSilver); // title before silver
+  // the sponsor line is one text call: "SPONSORS   Acme  ·  Silverware Co"
+  const line = r.text.find((t) => t.includes("Acme") && t.includes("Silverware"));
+  expect(line).toBeTruthy();
+  expect(line!.indexOf("Acme")).toBeLessThan(line!.indexOf("Silverware")); // title before silver
 });
 ```
 
@@ -1085,10 +1112,10 @@ it("renders admit tickets with ref + ADMIT ONE", async () => {
       ref: "AB12CD", status: "CONFIRMED", qrUrl: "https://x/r/AB12CD", seq: 1 } }],
     pageBreaks: "auto",
   };
-  const buf = await docModelToPdf(ticketModel);
-  const text = buf.toString("latin1");
-  expect(text).toContain("AB12CD");
-  expect(text).toContain("ADMIT ONE");
+  const r = await render(ticketModel); // reuse the Task 4 render() spy
+  expect(r.text.join(" ")).toContain("AB12CD");
+  expect(r.text.join(" ")).toContain("ADMIT ONE");
+  expect(r.images).toBeGreaterThan(0); // QR drawn
 });
 ```
 
