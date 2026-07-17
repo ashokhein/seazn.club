@@ -25,6 +25,7 @@ function base(
     meta: {
       printedAt: opts.printedAt,
       ...(opts.footerNote !== undefined ? { footerNote: opts.footerNote } : {}),
+      ...(opts.liveUrl !== undefined ? { liveUrl: opts.liveUrl } : {}),
     },
     ...(opts.branding !== undefined ? { branding: opts.branding } : {}),
     sections,

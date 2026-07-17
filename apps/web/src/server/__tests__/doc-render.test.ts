@@ -68,3 +68,16 @@ describe("doc-render tables", () => {
     expect(r.fills).toContain("#150b36");            // night header-row background
   });
 });
+
+describe("doc-render footer", () => {
+  it("footer groups sponsors by tier, title first", async () => {
+    const r = await render(model({
+      orgName: "Riverside SC",
+      sponsors: [{ name: "Silverware Co", tier: "silver" }, { name: "Acme", tier: "title" }],
+    }));
+    // the sponsor line is one text call: "SPONSORS   Acme  ·  Silverware Co"
+    const line = r.text.find((t) => t.includes("Acme") && t.includes("Silverware"));
+    expect(line).toBeTruthy();
+    expect(line!.indexOf("Acme")).toBeLessThan(line!.indexOf("Silverware")); // title before silver
+  });
+});

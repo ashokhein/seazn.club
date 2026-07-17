@@ -59,6 +59,7 @@ export const DocModel = z.object({
   meta: z.object({
     printedAt: z.string(), // supplied by the caller — never Date.now()
     footerNote: z.string().optional(),
+    liveUrl: z.string().optional(), // live-page QR payload (Task 12 draws it)
   }),
   branding: DocBranding.optional(), // Pro `exports.branded` — nulled server-side otherwise
   sections: z.array(DocSection),
@@ -113,6 +114,7 @@ export interface BuildOpts {
   pageBreaks?: PageBreaks;
   branding?: DocBranding;
   footerNote?: string;
+  liveUrl?: string;
   description?: string;
   landscape?: boolean;
   metricColumns?: string[]; // standings extra columns, in order

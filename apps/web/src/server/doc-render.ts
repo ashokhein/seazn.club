@@ -73,6 +73,21 @@ function drawTitleBlock(doc: PDFKit.PDFDocument, model: DocModel): void {
   doc.fillColor(PALETTE.ink);
 }
 
+const TIER_RANK: Record<string, number> = { title: 0, gold: 1, silver: 2, partner: 3 };
+
+function sponsorLine(sponsors: { name: string; tier: string }[]): string {
+  return [...sponsors]
+    .sort((a, b) => (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9))
+    .map((s) => s.name)
+    .join("  ·  ");
+}
+
+/** Stub — real QR rendering arrives in Task 12 (doc-theme.ts helper). Kept
+ *  inert here: no caller sets `meta.liveUrl` yet, so this never executes. */
+async function qrBuffer(_url: string): Promise<Buffer | null> {
+  return null;
+}
+
 function isLandscape(model: DocModel): boolean {
   return model.sections.some((s) => s.table?.landscape === true);
 }
@@ -215,20 +230,26 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
     }
   }
 
-  // footer: printed date on every page (1 Sep ask)
+  // footer: tier-grouped sponsor line + live-page QR slot + page N of M
   const range = doc.bufferedPageRange();
-  for (let i = range.start; i < range.start + range.count; i++) {
+  const qrPng = model.meta.liveUrl ? await qrBuffer(model.meta.liveUrl) : null; // see Task 12 helper
+  const total = range.count;
+  for (let i = range.start; i < range.start + total; i++) {
     doc.switchToPage(i);
-    doc
-      .font("Helvetica")
-      .fontSize(7)
-      .fillColor("#888888")
-      .text(
-        `${model.meta.footerNote ?? model.title} — printed ${model.meta.printedAt}`,
-        MARGIN,
-        doc.page.height - MARGIN + 10,
-        { lineBreak: false },
-      );
+    const fy = doc.page.height - MARGIN + 2;
+    const sponsors = model.branding?.sponsors ?? [];
+    if (sponsors.length > 0) {
+      doc.font(FONT.bodyMed).fontSize(7).fillColor(PALETTE.slate)
+        .text(`SPONSORS   ${sponsorLine(sponsors)}`, MARGIN, fy - 12,
+          { width: doc.page.width - MARGIN * 2 - 40, characterSpacing: 1, lineBreak: false });
+    }
+    if (qrPng) {
+      try { doc.image(qrPng, doc.page.width - MARGIN - 28, fy - 20, { width: 28 }); } catch { /* skip */ }
+    }
+    doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
+      `${model.meta.footerNote ?? model.title} — printed ${model.meta.printedAt} · page ${i - range.start + 1} of ${total}`,
+      MARGIN, fy, { lineBreak: false },
+    );
   }
   doc.end();
   return done;
