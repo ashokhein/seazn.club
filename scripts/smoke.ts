@@ -337,7 +337,7 @@ await i18nSuite();
   // --- PROMPT-53: player accounts — claim → RSVP → grid → QR check-in.
   // BEFORE gapSuite: its downgrade eats org2's competition headroom.
   await playerAccountsSuite(admin, org2.id);
-  await officialOnboardingSuite(admin, org2.id);
+  await officialOnboardingSuite(admin, org2.id, renamed.slug);
 
   // --- design/v9 PROMPT-55: dispute-loss recovery surfaces.
   await disputeSurfacesSuite();
@@ -497,7 +497,7 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
  *  read → blackout date set/clear → score-pad device link opens. The free
  *  path proves the portal has no plan gate: an invite mints on the ref's own
  *  auto-provisioned COMMUNITY org. */
-async function officialOnboardingSuite(admin: Session, orgId: string): Promise<void> {
+async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: string): Promise<void> {
   const refEmail = `ref_${tag}@example.com`;
   const ref = newSession();
   const refVer = await signIn(ref, refEmail);
@@ -639,6 +639,68 @@ async function officialOnboardingSuite(admin: Session, orgId: string): Promise<v
   check(
     "off invite mints on a community org (portal is free)",
     refVer.has_org === true && freeInvite.status === 201,
+  );
+
+  // Cross-org "booked elsewhere" derived read (v11.1 follow-up): the SAME
+  // claimed official (offId, this org) also holds a scheduled assignment in
+  // a DIFFERENT org (the account's own first org from signup) — the schedule's
+  // Officials tab must warn with a time, never the other org's identity.
+  const myOrgs = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const busyOrg = myOrgs.find((o) => o.id !== orgId)!;
+  admin.cookies["seazn_org"] = busyOrg.id;
+  const busyOff = await v1(admin, "/api/v1/officials", "POST", {
+    display_name: `Ria Ref Busy ${tag}`, role_keys: ["referee"],
+  });
+  const busyOffId = v1data<{ id: string }>(busyOff).id;
+  const busyInvite = await v1(admin, `/api/v1/officials/${busyOffId}/invite`, "POST", { email: refEmail });
+  const busyClaimId = v1data<{ id: string }>(busyInvite).id ?? "";
+  await v1(ref, `/api/v1/me/officiating-claims/${busyClaimId}/accept`, "POST");
+
+  const busyComp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Busy Cup ${tag}`, visibility: "public",
+  });
+  const busyDiv = await v1(admin, `/api/v1/competitions/${v1data<{ id: string }>(busyComp).id}/divisions`, "POST", {
+    name: "Open", sport_key: "generic", variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  });
+  const busyDivId = v1data<{ id: string }>(busyDiv).id;
+  await v1(admin, `/api/v1/divisions/${busyDivId}/entrants`, "POST", [
+    { kind: "individual", display_name: `Busy A ${tag}`, seed: 1, members: [] },
+    { kind: "individual", display_name: `Busy B ${tag}`, seed: 2, members: [] },
+  ]);
+  const busyStage = await v1(admin, `/api/v1/divisions/${busyDivId}/stages`, "POST", {
+    seq: 1, kind: "league", name: "League",
+  });
+  const busyGen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(busyStage).id}/generate`, "POST");
+  const busyFixtures = v1data<{ fixtures: { id: string }[] }>(busyGen).fixtures;
+  await v1(admin, `/api/v1/divisions/${busyDivId}/start`, "POST");
+  // Same calendar day as this org's fixtures[0] kickoff, a few hours later —
+  // the warning is a same-day match, not an exact-instant one.
+  const busyKickoff = new Date(new Date(kickoff).getTime() + 3 * 3_600_000).toISOString();
+  await v1(admin, `/api/v1/fixtures/${busyFixtures[0]!.id}`, "PATCH", {
+    scheduled_at: busyKickoff, court_label: "Court 5",
+  });
+  await v1(admin, `/api/v1/fixtures/${busyFixtures[0]!.id}/officials`, "PATCH", {
+    set: [{ official_id: busyOffId, role_key: "referee", locked: false }],
+  });
+
+  // Switch back to this org and read its own schedule Officials tab: offId
+  // (the SAME claimed person, already assigned+accepted on fixtures[0]) is
+  // flagged busy with a real time — the raw {time} template lives in the
+  // page's embedded dict regardless, so only a substituted HH:MM counts.
+  admin.cookies["seazn_org"] = orgId;
+  const sched = await html(admin, `/o/${orgSlug}/c/${compData.slug}/d/${divData.slug}/schedule?tab=officials`);
+  check(
+    "off booked-elsewhere warns with a real time, not the raw {time} template",
+    sched.status === 200 && /booked elsewhere ·\s*\d{1,2}:\d{2}/.test(sched.body),
+  );
+  // The org switcher legitimately lists every org THIS admin belongs to
+  // (including busyOrg) regardless of this feature — that's normal nav
+  // chrome, not a leak. The real leak surface is the derived-read's own
+  // data: the other org's COMPETITION/DIVISION never reaches this page.
+  check(
+    "off booked-elsewhere never leaks the other org's competition/division",
+    !sched.body.includes(`Busy Cup ${tag}`) && !sched.body.includes(`Busy A ${tag}`),
   );
 }
 

@@ -14,6 +14,7 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 import { OfficialAvatar } from "@/components/v2/officials-shared";
+import { fmtTime, fmtZoneAbbrev } from "@/lib/format";
 
 interface Official {
   id: string;
@@ -67,6 +68,7 @@ export function OfficialsPanel({
   hideNames,
   canEdit,
   blackouts = [],
+  busyElsewhere = [],
   venueTz = "UTC",
 }: {
   divisionId: string;
@@ -77,6 +79,9 @@ export function OfficialsPanel({
   canEdit: boolean;
   /** v11: blackout dates per official — warns before assigning onto one. */
   blackouts?: { official_id: string; date: string }[];
+  /** v11.1: other-org booked times for MY officials — timestamp only, never
+   *  which org/competition/fixture (derived read, privacy by design). */
+  busyElsewhere?: { official_id: string; scheduled_at: string }[];
   /** Venue zone for matching a fixture's date against blackout dates. */
   venueTz?: string;
 }) {
@@ -116,6 +121,23 @@ export function OfficialsPanel({
   const unavailableFor = (officialId: string, scheduledAt: string | null): boolean => {
     const d = fixtureDate(scheduledAt);
     return d !== null && (blackoutsByOfficial.get(officialId)?.has(d) ?? false);
+  };
+
+  // Busy-elsewhere lookup (v11.1 warn-before-assign): official → other-org
+  // booked timestamps, matched against the fixture's date in the venue zone.
+  // Timestamp only — never which org/competition/fixture (derived read).
+  const busyByOfficial = new Map<string, string[]>();
+  for (const b of busyElsewhere) {
+    const list = busyByOfficial.get(b.official_id) ?? [];
+    list.push(b.scheduled_at);
+    busyByOfficial.set(b.official_id, list);
+  }
+  const busyTimeFor = (officialId: string, scheduledAt: string | null): string | null => {
+    const d = fixtureDate(scheduledAt);
+    if (d === null) return null;
+    const match = busyByOfficial.get(officialId)?.find((at) => fixtureDate(at) === d);
+    if (!match) return null;
+    return `${fmtTime(venueTz, match)} ${fmtZoneAbbrev(venueTz, match)}`;
   };
 
   async function run(fn: () => Promise<unknown>, refresh = true) {
@@ -451,6 +473,17 @@ export function OfficialsPanel({
                                 ⚠
                               </span>
                             )}
+                            {(() => {
+                              const busyTime = busyTimeFor(o.official_id, f.scheduled_at);
+                              return busyTime ? (
+                                <span
+                                  className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700 ring-1 ring-amber-200"
+                                  title={msg("officials.bookedElsewhereTitle")}
+                                >
+                                  {msg("officials.bookedElsewhere", { time: busyTime })}
+                                </span>
+                              ) : null;
+                            })()}
                           </li>
                         );
                       })}
@@ -479,14 +512,19 @@ export function OfficialsPanel({
                       }}
                     >
                       <option value="">{msg("officials.none")}</option>
-                      {officials.map((o) => (
-                        <option key={o.id} value={o.id}>
-                          {officialName(o.id)}
-                          {unavailableFor(o.id, f.scheduled_at)
-                            ? ` — ${msg("officials.unavailableSuffix")}`
-                            : ""}
-                        </option>
-                      ))}
+                      {officials.map((o) => {
+                        const busyTime = busyTimeFor(o.id, f.scheduled_at);
+                        return (
+                          <option key={o.id} value={o.id}>
+                            {officialName(o.id)}
+                            {unavailableFor(o.id, f.scheduled_at)
+                              ? ` — ${msg("officials.unavailableSuffix")}`
+                              : busyTime
+                                ? ` — ${msg("officials.bookedElsewhereSuffix", { time: busyTime })}`
+                                : ""}
+                          </option>
+                        );
+                      })}
                     </select>
                   </td>
                 )}

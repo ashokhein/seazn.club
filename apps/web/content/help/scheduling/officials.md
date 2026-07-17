@@ -37,6 +37,10 @@ Existing assignments from before this feature count as **accepted** — nothing 
 
 If an official marked a date unavailable, the assign picker suffixes their name with **unavailable** and assigned chips show a **⚠** on that date. It's a warning, not a block — you can still assign them if you've agreed it.
 
+## Booked-elsewhere warnings
+
+An official who officiates for more than one organisation can end up double-booked without either organiser knowing — blackout dates only cover time the official marked off themselves, not time another organisation already assigned them. If a claimed official has a match around the same time in a *different* organisation, the assign picker suffixes their name with **booked elsewhere · \<time\>** and an assigned chip shows the same badge on that fixture. Like the blackout warning, this is informational only — nothing is blocked or auto-reassigned. **Privacy note:** the warning shows only a time. It never reveals which organisation, competition or match the official is booked with — your console can't see another organisation's roster, schedule or name, only that a clash exists.
+
 ## Emails officials receive
 
 - **You've been assigned** — sent when you assign them to new fixtures (manually or by applying an auto-proposal), with an accept/decline link.

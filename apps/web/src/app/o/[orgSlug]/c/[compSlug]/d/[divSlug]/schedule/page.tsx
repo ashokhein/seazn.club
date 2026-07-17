@@ -18,7 +18,11 @@ import { StandaloneScheduleSettings } from "@/components/v2/board/settings-panel
 import { OfficialsPanel } from "@/components/v2/officials-panel";
 import { HistoryPanel } from "@/components/v2/history-panel";
 import { ConstraintsPanel } from "@/components/v2/constraints-panel";
-import { listOfficialsForConsole, listOfficialBlackouts } from "@/server/usecases/officials";
+import {
+  listOfficialsForConsole,
+  listOfficialBlackouts,
+  listOfficialBusyElsewhere,
+} from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
@@ -51,6 +55,7 @@ export default async function DivisionSchedulePage({
     constraints,
     officials,
     blackouts,
+    busy,
     canExport,
   ] = await Promise.all([
     getCompetition(auth, division.competition_id),
@@ -62,6 +67,7 @@ export default async function DivisionSchedulePage({
     hasFeature(auth.orgId, "scheduling.constraints"),
     listOfficialsForConsole(auth),
     listOfficialBlackouts(auth),
+    listOfficialBusyElsewhere(auth),
     hasFeature(auth.orgId, "exports"),
   ]);
 
@@ -177,6 +183,7 @@ export default async function DivisionSchedulePage({
           hideNames={division.officials_hide_names}
           canEdit={canEdit && !frozen}
           blackouts={blackouts}
+          busyElsewhere={busy}
           venueTz={settings.tz}
         />
         )}

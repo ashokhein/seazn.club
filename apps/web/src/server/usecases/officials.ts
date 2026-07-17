@@ -15,7 +15,7 @@ import {
   type OfficialSpec,
 } from "@seazn/engine/officials";
 import { z } from "zod";
-import { withTenant } from "@/lib/db";
+import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -99,6 +99,38 @@ export async function listOfficialBlackouts(
   >`
     select official_id, date::text as date, note
     from official_availability order by date, official_id`);
+}
+
+export interface OfficialBusyRow {
+  /** MY org's officials.id — never the other org's official/person id. */
+  official_id: string;
+  scheduled_at: string;
+}
+
+/**
+ * Cross-org "booked elsewhere" read (v11.1): blackout dates already fan out
+ * person-wide (V284 official_availability, written through /me), but an
+ * actual match assignment is tenant-isolated — org B assigns blind when org A
+ * already booked the same official. This surfaces ONLY a timestamp for each
+ * of MY org's officials, never which org/competition/fixture/role — the
+ * organiser gets a warning, not a leak of a rival's roster. Cross-org
+ * identity is persons.user_id (only CLAIMED officials — person linked to a
+ * user — can have a busy signal). Runs on the superuser connection, same
+ * reasoning as me-officiating.ts's cross-org aggregation: withTenant scopes
+ * to one org and this read straddles two by design.
+ */
+export async function listOfficialBusyElsewhere(auth: AuthCtx): Promise<OfficialBusyRow[]> {
+  return sql<OfficialBusyRow[]>`
+    select distinct o.id as official_id, f.scheduled_at
+    from officials o
+    join persons p on p.id = o.person_id and p.user_id is not null
+    join persons p2 on p2.user_id = p.user_id and p2.org_id <> ${auth.orgId}
+    join officials o2 on o2.person_id = p2.id
+    join fixture_officials fo on fo.official_id = o2.id and fo.response <> 'declined'
+    join fixtures f on f.id = fo.fixture_id
+      and f.scheduled_at is not null and f.scheduled_at >= now() - interval '1 day'
+    where o.org_id = ${auth.orgId}
+    order by o.id, f.scheduled_at`;
 }
 
 /**
