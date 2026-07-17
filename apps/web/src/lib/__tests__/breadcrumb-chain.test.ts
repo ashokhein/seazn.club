@@ -2,7 +2,7 @@
 // each level linked, names fall back to humanized slugs, fixture crumbs
 // send the division link back to the fixtures tab.
 import { describe, expect, it } from "vitest";
-import { buildCrumbs } from "@/lib/breadcrumb-chain";
+import { buildCrumbs, type BreadcrumbT } from "@/lib/breadcrumb-chain";
 
 const names = {
   comps: { "summer-smash": "Summer Smash 2026" },
@@ -55,5 +55,34 @@ describe("buildCrumbs", () => {
   it("returns only the org crumb on org home and [] off-console", () => {
     expect(buildCrumbs({ ...base, pathname: "/o/acme" })).toHaveLength(1);
     expect(buildCrumbs({ ...base, pathname: "/pricing" })).toEqual([]);
+  });
+
+  it("localizes fixed structural segments via the optional `t` translator — design/fix-ui/02-console-org.md: breadcrumb's 'Settings'/'Schedule'/'Registrations' segments stayed English regardless of locale", () => {
+    const fr: BreadcrumbT = (key) =>
+      ({
+        "breadcrumb.settings": "Paramètres",
+        "breadcrumb.billing": "Forfait et facturation",
+        "breadcrumb.schedule": "Calendrier",
+        "breadcrumb.registrations": "Inscriptions",
+        "breadcrumb.match": "Match {no}",
+      })[key as string] ?? String(key);
+
+    expect(
+      buildCrumbs({ ...base, pathname: "/o/acme/settings/billing", t: fr }).map((c) => c.label),
+    ).toEqual(["Acme Sports", "Paramètres", "Forfait et facturation"]);
+
+    expect(
+      buildCrumbs({
+        ...base,
+        pathname: "/o/acme/c/summer-smash/d/u16-boys/registrations",
+        t: fr,
+      }).map((c) => c.label),
+    ).toEqual(["Acme Sports", "Summer Smash 2026", "U16 Boys", "Inscriptions"]);
+  });
+
+  it("without a `t` translator falls back to the plain English catalog lookup — same values the untranslated tests above assert, so buildCrumbs stays pure/testable outside a DictProvider", () => {
+    expect(
+      buildCrumbs({ ...base, pathname: "/o/acme/settings/billing" }).map((c) => c.label),
+    ).toEqual(["Acme Sports", "Settings", "Plan & billing"]);
   });
 });

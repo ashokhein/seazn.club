@@ -52,7 +52,7 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           reason: typeof err.extra.reason === "string" ? err.extra.reason : undefined,
         });
       } else {
-        setError(err instanceof Error ? err.message : "Failed");
+        setError(err instanceof Error ? err.message : msg("comp.wizard.failed"));
       }
     } finally {
       setBusy(false);
@@ -62,26 +62,26 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
   return (
     <form onSubmit={submit} className="card space-y-5 p-6">
       <label className="block">
-        <span className="label">Name</span>
+        <span className="label">{msg("comp.wizard.name.label")}</span>
         <input
           autoFocus
           required
           maxLength={200}
           value={name}
           onChange={(e) => setName(e.target.value)}
-          placeholder="Summer Championship 2026"
+          placeholder={msg("comp.wizard.name.placeholder")}
           className="input"
         />
       </label>
 
       <label className="block">
-        <span className="label">Description</span>
+        <span className="label">{msg("comp.wizard.description.label")}</span>
         <textarea
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           rows={4}
           maxLength={5000}
-          placeholder="Shown on the public dashboard. Markdown supported."
+          placeholder={msg("comp.wizard.description.placeholder")}
           className="textarea"
         />
       </label>
@@ -117,7 +117,7 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <label className="block">
-          <span className="label">Starts on</span>
+          <span className="label">{msg("comp.wizard.startsOn")}</span>
           <input
             type="date"
             value={startsOn}
@@ -126,7 +126,7 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           />
         </label>
         <label className="block">
-          <span className="label">Ends on</span>
+          <span className="label">{msg("comp.wizard.endsOn")}</span>
           <input
             type="date"
             value={endsOn}
@@ -137,22 +137,22 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
       </div>
 
       <label className="block">
-        <span className="label">Brand accent colour (Pro branding)</span>
+        <span className="label">{msg("comp.wizard.accent.label")}</span>
         <div className="flex items-center gap-2">
           <input
             type="color"
             value={accent || "#7c3aed"}
             onChange={(e) => setAccent(e.target.value)}
             className="h-9 w-14 cursor-pointer rounded border border-slate-200"
-            aria-label="Accent colour"
+            aria-label={msg("comp.wizard.accent.aria")}
           />
           {accent && (
             <button type="button" onClick={() => setAccent("")} className="btn btn-ghost">
-              Clear
+              {msg("comp.wizard.accent.clear")}
             </button>
           )}
           <span className="text-xs text-slate-400">
-            Applied to the public dashboard when your plan includes branding.
+            {msg("comp.wizard.accent.hint")}
           </span>
         </div>
       </label>
@@ -168,10 +168,10 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           onClick={() => router.push(routes.orgHome(orgSlug))}
           className="btn btn-ghost"
         >
-          Cancel
+          {msg("comp.wizard.cancel")}
         </button>
         <button type="submit" disabled={busy || !name.trim()} className="btn btn-primary">
-          {busy ? "Creating…" : "Create competition"}
+          {busy ? msg("comp.wizard.creating") : msg("comp.wizard.create")}
         </button>
       </div>
     </form>

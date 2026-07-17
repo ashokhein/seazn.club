@@ -31,8 +31,9 @@ import { StandingsTable } from "@/components/public-site/standings-table";
 import { StatsPanel } from "@/components/v2/stats-panel";
 import { LadderPanel } from "@/components/v2/ladder-panel";
 import { AmericanoPanel } from "@/components/v2/americano-panel";
-import { tieBreakLabel, type StandingsRow } from "@seazn/engine/competition";
+import type { StandingsRow } from "@seazn/engine/competition";
 import type { MetricSpecLike } from "@/lib/public-site";
+import { localizedTieBreakLabel } from "@/lib/tiebreak-label";
 
 const TABS = ["entrants", "fixtures", "standings", "stats"] as const;
 // v8: editors get a Settings tab (general/format/sharing/danger).
@@ -263,7 +264,7 @@ export default async function DivisionPage({
                   {cascade.map((key, i) => (
                     <span key={key}>
                       {i > 0 && " → "}
-                      <span className="text-slate-500">{tieBreakLabel(key)}</span>
+                      <span className="text-slate-500">{localizedTieBreakLabel(dict, key)}</span>
                     </span>
                   ))}
                   {" "}

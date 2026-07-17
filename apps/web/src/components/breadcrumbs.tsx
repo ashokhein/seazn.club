@@ -11,6 +11,7 @@ import { usePathname } from "next/navigation";
 import { ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { routes } from "@/lib/routes";
 import { buildCrumbs, type BreadcrumbNameMap } from "@/lib/breadcrumb-chain";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 export type { BreadcrumbNameMap };
 
@@ -73,7 +74,8 @@ function OrgCrumb({ orgName, orgs }: Pick<BreadcrumbsProps, "orgName" | "orgs">)
 
 export function Breadcrumbs({ orgName, orgs, names }: BreadcrumbsProps) {
   const pathname = usePathname();
-  const crumbs = buildCrumbs({ pathname, orgName, names });
+  const msg = useMsg();
+  const crumbs = buildCrumbs({ pathname, orgName, names, t: msg });
   if (crumbs.length === 0) return null;
   const parent = crumbs.length > 1 ? crumbs[crumbs.length - 2]! : null;
 

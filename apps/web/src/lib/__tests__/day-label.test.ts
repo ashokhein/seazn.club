@@ -23,4 +23,19 @@ describe("day-label", () => {
     expect(timeLabel("2026-07-12T21:28:00")).toBe("21:28");
     expect(timeLabel("2026-07-12T09:05:00")).toBe("09:05");
   });
+
+  // design/fix-ui/05-import-schedule-freetier.md: the schedule board's day
+  // tabs always showed English weekday abbreviations ("Fri 10 Jul") even on
+  // a fully French-localized page, because the locale was hardcoded. An
+  // explicit `locale` param now threads the active app locale through.
+  it("dayLabel/dayWeekday/dayDateShort format in the given locale, not always en-GB", () => {
+    expect(dayLabel("2026-07-11", "fr")).not.toBe(dayLabel("2026-07-11", "en-GB"));
+    expect(dayLabel("2026-07-11", "fr")).toMatch(/^sam\.?\s*11\s*juil\.?$/i);
+    expect(dayWeekday("2026-07-11", "fr").toLowerCase()).toContain("sam");
+    expect(dayDateShort("2026-07-11", "fr").toLowerCase()).toContain("juil");
+  });
+
+  it("omitting locale still defaults to en-GB (existing callers unaffected)", () => {
+    expect(dayLabel("2026-07-11")).toBe(dayLabel("2026-07-11", "en-GB"));
+  });
 });

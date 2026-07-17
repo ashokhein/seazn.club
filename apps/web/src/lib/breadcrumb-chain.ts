@@ -2,6 +2,7 @@
 // entirely from the pathname + the org's slug→name maps — zero per-page
 // wiring. Client-safe (no server imports); breadcrumbs.tsx renders it.
 import { routes } from "@/lib/routes";
+import { msg, type MessageKey } from "@/lib/messages";
 
 export interface Crumb {
   label: string;
@@ -14,6 +15,15 @@ export interface BreadcrumbNameMap {
   /** `${compSlug}/${divSlug}` → division name */
   divs: Record<string, string>;
 }
+
+/** Translate function for the fixed structural labels ("Settings",
+ *  "Schedule", ...) — breadcrumbs.tsx passes its locale-aware useMsg() so
+ *  the trail localizes; defaults to the plain English catalog lookup (same
+ *  values the existing tests assert) so buildCrumbs stays pure/testable
+ *  without a <DictProvider>. Fixed structural segments only — entity names
+ *  (org/competition/division) come from `names`/`orgName`, never through
+ *  this catalog. */
+export type BreadcrumbT = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
 /** Fallback when a slug is missing from the map (e.g. created after the
  *  layout rendered): "u16-boys" → "U16 boys". */
@@ -30,7 +40,9 @@ export function buildCrumbs(args: {
   pathname: string;
   orgName: string;
   names: BreadcrumbNameMap;
+  t?: BreadcrumbT;
 }): Crumb[] {
+  const t = args.t ?? msg;
   const segments = args.pathname.split("/").filter(Boolean);
   if (segments[0] !== "o" || segments.length < 2) return [];
   const org = segments[1] as string;
@@ -38,16 +50,16 @@ export function buildCrumbs(args: {
   const crumbs: Crumb[] = [{ label: args.orgName, href: routes.orgHome(org) }];
 
   if (rest[0] === "settings") {
-    crumbs.push({ label: "Settings", href: routes.orgSettings(org) });
+    crumbs.push({ label: t("breadcrumb.settings"), href: routes.orgSettings(org) });
     if (rest[1] === "billing") {
-      crumbs.push({ label: "Plan & billing", href: routes.billing(org) });
+      crumbs.push({ label: t("breadcrumb.billing"), href: routes.billing(org) });
     }
     return crumbs;
   }
 
   if (rest[0] !== "c" || rest.length < 2) return crumbs;
   if (rest[1] === "new") {
-    crumbs.push({ label: "New competition", href: routes.competitionNew(org) });
+    crumbs.push({ label: t("breadcrumb.newCompetition"), href: routes.competitionNew(org) });
     return crumbs;
   }
   const comp = rest[1] as string;
@@ -59,7 +71,7 @@ export function buildCrumbs(args: {
   const compTail = rest[2];
   if (compTail === "settings" || compTail === "schedule") {
     crumbs.push({
-      label: compTail === "settings" ? "Settings" : "Schedule",
+      label: compTail === "settings" ? t("breadcrumb.settings") : t("breadcrumb.schedule"),
       href:
         compTail === "settings"
           ? routes.competitionSettings(org, comp)
@@ -70,7 +82,7 @@ export function buildCrumbs(args: {
 
   if (compTail !== "d" || rest.length < 4) return crumbs;
   if (rest[3] === "new") {
-    crumbs.push({ label: "New division", href: routes.divisionNew(org, comp) });
+    crumbs.push({ label: t("breadcrumb.newDivision"), href: routes.divisionNew(org, comp) });
     return crumbs;
   }
   const div = rest[3] as string;
@@ -80,15 +92,18 @@ export function buildCrumbs(args: {
   if (divTail === "f" && rest[5]) {
     // Fixture pages: the division crumb goes back to the fixtures tab.
     crumbs.push({ label: divLabel, href: routes.division(org, comp, div, "fixtures") });
-    crumbs.push({ label: `Match ${rest[5]}`, href: routes.fixture(org, comp, div, Number(rest[5])) });
+    crumbs.push({
+      label: t("breadcrumb.match", { no: rest[5] }),
+      href: routes.fixture(org, comp, div, Number(rest[5])),
+    });
     return crumbs;
   }
 
   crumbs.push({ label: divLabel, href: routes.division(org, comp, div) });
   if (divTail === "schedule") {
-    crumbs.push({ label: "Schedule", href: routes.divisionSchedule(org, comp, div) });
+    crumbs.push({ label: t("breadcrumb.schedule"), href: routes.divisionSchedule(org, comp, div) });
   } else if (divTail === "registrations") {
-    crumbs.push({ label: "Registrations", href: routes.divisionRegistrations(org, comp, div) });
+    crumbs.push({ label: t("breadcrumb.registrations"), href: routes.divisionRegistrations(org, comp, div) });
   }
   return crumbs;
 }

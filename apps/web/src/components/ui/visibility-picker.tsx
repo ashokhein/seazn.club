@@ -12,7 +12,8 @@
 import { useEffect, useState } from "react";
 import { Check, Copy } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-provider";
-import { msg, type MessageKey } from "@/lib/messages";
+import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
 export type VisibilityKey = "private" | "unlisted" | "public";
 
@@ -38,6 +39,7 @@ export function VisibilityPicker({
   /** v3/11 gap 8: raises the guardian-consent interstitial when leaving Private. */
   hasYouthDivisions?: boolean;
 }) {
+  const msg = useMsg();
   const confirm = useConfirm();
   const [copied, setCopied] = useState(false);
   const [origin, setOrigin] = useState("");

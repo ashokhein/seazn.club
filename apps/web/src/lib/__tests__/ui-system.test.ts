@@ -91,13 +91,36 @@ describe("card meta lines (v3/03 §1)", () => {
     expect(formatLabel(["group", "knockout"])).toBe("Groups + Knockout");
   });
   it("nextLine is null-safe on TBD entrants and unscheduled fixtures", () => {
-    expect(nextLine(null)).toBeNull();
+    expect(nextLine(null, "en")).toBeNull();
     expect(
-      nextLine({ home: "Arun", away: null, court_label: null, scheduled_at: null, in_play: false }),
-    ).toBe("Arun vs TBD");
-    expect(
-      nextLine({ home: "A", away: "B", court_label: "Court 2", scheduled_at: null, in_play: true }),
-    ).toBe("Now: A vs B · Court 2");
+      nextLine(
+        { home: "Arun", away: null, court_label: null, scheduled_at: null, in_play: false },
+        "en",
+      ),
+    ).toEqual({ text: "Arun vs TBD", live: false });
+  });
+
+  it("nextLine reports `live` separately instead of baking a 'Now:' prefix into the text — the caller (EntityCard) picks exactly one label, so a live fixture never renders both 'Next:' and 'Now:' stacked together (design/fix-ui/02-console-org.md)", () => {
+    const line = nextLine(
+      { home: "A", away: "B", court_label: "Court 2", scheduled_at: null, in_play: true },
+      "en",
+    );
+    expect(line).toEqual({ text: "A vs B · Court 2", live: true });
+    // No baked-in label of either kind — the raw fixture text alone.
+    expect(line?.text).not.toMatch(/^(Next|Now):/);
+  });
+
+  it("nextLine formats the scheduled time using the given locale, not a hardcoded en-GB string", () => {
+    const at = new Date();
+    at.setDate(at.getDate() + 3); // outside "same day" so weekday/month render
+    const line = nextLine(
+      { home: "A", away: "B", court_label: null, scheduled_at: at.toISOString(), in_play: false },
+      "fr",
+    );
+    // French weekday/month abbreviations use lowercase + a trailing period
+    // ("mar.", "juil."), unlike the English "Tue"/"Jul" the old hardcoded
+    // en-GB formatter always produced regardless of locale.
+    expect(line?.text).not.toMatch(/\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\b/);
   });
 });
 

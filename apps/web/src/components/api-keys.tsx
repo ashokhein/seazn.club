@@ -5,6 +5,7 @@ import { Copy, Check, KeyRound } from "lucide-react";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { Tip } from "@/components/ui/tip";
 import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
 interface ApiKeyRow {
   id: string;
@@ -35,8 +36,8 @@ async function v1<T>(url: string, options?: RequestInit & { json?: unknown }): P
   return payload.data as T;
 }
 
-function fmt(iso: string | null): string {
-  if (!iso) return "never";
+function fmt(iso: string | null, never: string): string {
+  if (!iso) return never;
   return new Date(iso).toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
@@ -69,9 +70,9 @@ export function ApiKeysPanel({
     try {
       setKeys(await v1<ApiKeyRow[]>(`/api/v1/orgs/${orgId}/api-keys`));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load API keys");
+      setError(err instanceof Error ? err.message : msg("apiKeys.loadFailed"));
     }
-  }, [orgId]);
+  }, [orgId, msg]);
 
   useEffect(() => {
     void load();
@@ -99,7 +100,7 @@ export function ApiKeysPanel({
       setPin("");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create API key");
+      setError(err instanceof Error ? err.message : msg("apiKeys.createFailed"));
     } finally {
       setBusy(false);
     }
@@ -118,7 +119,7 @@ export function ApiKeysPanel({
       await v1(`/api/v1/orgs/${orgId}/api-keys/${key.id}`, { method: "DELETE" });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to revoke API key");
+      setError(err instanceof Error ? err.message : msg("apiKeys.revokeFailed"));
     }
   }
 
@@ -141,10 +142,10 @@ export function ApiKeysPanel({
       {minted && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
           <p className="mb-2 text-sm font-semibold text-amber-800">
-            Key “{minted.name}” created — copy the secret now
+            {msg("apiKeys.minted.title", { name: minted.name })}
           </p>
           <p className="mb-3 text-xs text-amber-700">
-            This is the only time it will be shown. Store it somewhere safe.
+            {msg("apiKeys.minted.warning")}
           </p>
           <div className="flex items-center gap-2">
             <code className="min-w-0 flex-1 truncate rounded-lg bg-white px-3 py-2 font-mono text-xs text-slate-800">
@@ -152,9 +153,9 @@ export function ApiKeysPanel({
             </code>
             <button type="button" onClick={copySecret} className="btn btn-ghost shrink-0 text-xs">
               {copied ? (
-                <><Check className="mr-1 inline h-3.5 w-3.5 text-green-600" />Copied</>
+                <><Check className="mr-1 inline h-3.5 w-3.5 text-green-600" />{msg("apiKeys.minted.copied")}</>
               ) : (
-                <><Copy className="mr-1 inline h-3.5 w-3.5" />Copy</>
+                <><Copy className="mr-1 inline h-3.5 w-3.5" />{msg("apiKeys.minted.copy")}</>
               )}
             </button>
           </div>
@@ -163,7 +164,7 @@ export function ApiKeysPanel({
             onClick={() => setMinted(null)}
             className="mt-3 text-xs text-amber-700 underline"
           >
-            I&apos;ve stored it — dismiss
+            {msg("apiKeys.minted.dismiss")}
           </button>
         </div>
       )}
@@ -174,7 +175,7 @@ export function ApiKeysPanel({
           <input
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="Key name, e.g. “Scoreboard integration”"
+            placeholder={msg("apiKeys.create.namePlaceholder")}
             maxLength={100}
             className="input flex-1"
           />
@@ -184,7 +185,7 @@ export function ApiKeysPanel({
             disabled={busy || name.trim().length === 0}
             className="btn btn-primary px-4"
           >
-            {busy ? "Creating…" : "Create key"}
+            {busy ? msg("apiKeys.create.buttonBusy") : msg("apiKeys.create.button")}
           </button>
         </div>
 
@@ -192,7 +193,7 @@ export function ApiKeysPanel({
             (v3/03 §7 pattern: say what it lets the holder do, plainly). */}
         <fieldset>
           <legend className="label flex items-center gap-1.5">
-            What can this key do? <Tip id="api.key-scopes" />
+            {msg("apiKeys.scopes.legend")} <Tip id="api.key-scopes" />
           </legend>
           <div className="mt-1 grid gap-2 sm:grid-cols-3">
             {SCOPES.map((s) => (
@@ -247,10 +248,10 @@ export function ApiKeysPanel({
 
       {/* Active keys */}
       {keys === null ? (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <p className="text-sm text-slate-500">{msg("apiKeys.loading")}</p>
       ) : active.length === 0 ? (
         <p className="text-sm text-slate-500">
-          No API keys yet. Create one to call the platform API with{" "}
+          {msg("apiKeys.empty")}{" "}
           <code className="font-mono text-xs">Authorization: Bearer sc_…</code>
         </p>
       ) : (
@@ -273,17 +274,20 @@ export function ApiKeysPanel({
                             : "bg-slate-100 text-slate-600"
                         }`}
                       >
-                        {s}
+                        {msg(`apiKeys.scope.${s}.label` as MessageKey)}
                       </span>
                     ))}
                     {pinned && (
                       <span className="rounded-full bg-purple-50 px-2 py-0.5 text-[11px] font-medium text-purple-700">
-                        {pinned.name} only
+                        {msg("apiKeys.pinnedOnly", { name: pinned.name })}
                       </span>
                     )}
                   </p>
                   <p className="text-xs text-slate-500">
-                    created {fmt(key.created_at)} · last used {fmt(key.last_used_at)}
+                    {msg("apiKeys.meta", {
+                      created: fmt(key.created_at, msg("apiKeys.never")),
+                      lastUsed: fmt(key.last_used_at, msg("apiKeys.never")),
+                    })}
                   </p>
                   {scopes.includes("manage") && (
                     <p className="mt-0.5 text-xs text-amber-600">{msg("apiKeys.manage.nudge")}</p>
@@ -294,7 +298,7 @@ export function ApiKeysPanel({
                   onClick={() => revoke(key)}
                   className="btn btn-ghost shrink-0 text-xs text-red-600"
                 >
-                  Revoke
+                  {msg("apiKeys.revoke")}
                 </button>
               </li>
             );
@@ -303,7 +307,7 @@ export function ApiKeysPanel({
       )}
 
       <p className="text-xs text-slate-500">
-        Full reference, guides and a try-it console:{" "}
+        {msg("apiKeys.docs.prefix")}{" "}
         <a href="/developers" className="font-medium text-purple-600 hover:underline">
           {msg("apiKeys.docs.link")} →
         </a>
@@ -311,11 +315,11 @@ export function ApiKeysPanel({
 
       {revoked.length > 0 && (
         <details className="text-sm text-slate-500">
-          <summary className="cursor-pointer">Revoked keys ({revoked.length})</summary>
+          <summary className="cursor-pointer">{msg("apiKeys.revoked.summary", { n: revoked.length })}</summary>
           <ul className="mt-2 space-y-1">
             {revoked.map((key) => (
               <li key={key.id} className="text-xs">
-                {key.name} · revoked {fmt(key.revoked_at)}
+                {msg("apiKeys.revoked.item", { name: key.name, date: fmt(key.revoked_at, msg("apiKeys.never")) })}
               </li>
             ))}
           </ul>
