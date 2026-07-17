@@ -83,19 +83,39 @@ describe("doc-render footer", () => {
 });
 
 describe("doc-render tickets", () => {
+  const ticketModel = (status: string): DocModel => ({
+    kind: "admit_ticket", title: "Tickets", meta: { printedAt: "2026-07-19" },
+    branding: { orgName: "Riverside SC" },
+    sections: [{ columnsHint: 2, ticket: {
+      maskedName: "S. Ref", competition: "Summer League", dates: "19 Jul",
+      ref: "AB12CD", status, qrUrl: "https://x/r/AB12CD", seq: 1 } }],
+    pageBreaks: "auto",
+  });
+
   it("renders admit tickets with ref + ADMIT ONE", async () => {
-    const ticketModel: DocModel = {
-      kind: "admit_ticket", title: "Tickets", meta: { printedAt: "2026-07-19" },
-      branding: { orgName: "Riverside SC" },
-      sections: [{ columnsHint: 2, ticket: {
-        maskedName: "S. Ref", competition: "Summer League", dates: "19 Jul",
-        ref: "AB12CD", status: "CONFIRMED", qrUrl: "https://x/r/AB12CD", seq: 1 } }],
-      pageBreaks: "auto",
-    };
-    const r = await render(ticketModel); // reuse the Task 4 render() spy
+    const r = await render(ticketModel("CONFIRMED")); // reuse the Task 4 render() spy
     expect(r.text.join(" ")).toContain("AB12CD");
     expect(r.text.join(" ")).toContain("ADMIT ONE");
     expect(r.images).toBeGreaterThan(0); // QR drawn
+  });
+
+  it("stamps a CONFIRMED ticket green, not the generic ball-red (Task 12b)", async () => {
+    const r = await render(ticketModel("CONFIRMED"));
+    expect(r.fills).toContain("#047857");
+    expect(r.fills).not.toContain("#ef4444");
+  });
+
+  it("stamps a WAITLIST ticket blue (Task 12b)", async () => {
+    const r = await render(ticketModel("WAITLIST"));
+    expect(r.fills).toContain("#0369a1");
+  });
+
+  it("carries the org name on the ticket card header, uppercased (Task 12b)", async () => {
+    const r = await render(ticketModel("CONFIRMED"));
+    // page masthead draws it once already — the card must carry a SECOND
+    // copy (cut-out tickets lose the page masthead), so require >= 2 hits.
+    const hits = r.text.filter((t) => t === "RIVERSIDE SC").length;
+    expect(hits).toBeGreaterThanOrEqual(2);
   });
 });
 

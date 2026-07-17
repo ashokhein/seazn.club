@@ -135,10 +135,29 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
   doc.moveDown(0.5);
 }
 
+// Status-stamp colours — mirrors r/[ref]/ticket.png's STAMP map so a printed
+// ticket and its digital twin read the same at a glance.
+const STAMP_COLORS: Record<string, string> = {
+  paid: "#047857",
+  confirmed: "#047857",
+  waitlist: "#0369a1",
+  pending: "#b45309",
+  withdrawn: "#71717a",
+};
+
+function stampColorFor(status: string): string {
+  return STAMP_COLORS[status.toLowerCase()] ?? PALETTE.ball;
+}
+
 /** The courtside pass — mirrors r/[ref]/ticket.png as a printable card.
  *  Night masthead card, mono ref + rotated status stamp, dashed
  *  perforation, QR on the stub, "ADMIT ONE". Two per A4 via columnsHint. */
-function drawTicket(doc: PDFKit.PDFDocument, t: NonNullable<DocSection["ticket"]>, qr: Buffer | null): void {
+function drawTicket(
+  doc: PDFKit.PDFDocument,
+  t: NonNullable<DocSection["ticket"]>,
+  qr: Buffer | null,
+  orgName: string | undefined,
+): void {
   const w = doc.page.width - MARGIN * 2;
   const top = doc.y;
   const cardH = 200;
@@ -148,6 +167,14 @@ function drawTicket(doc: PDFKit.PDFDocument, t: NonNullable<DocSection["ticket"]
   doc.font(FONT.displayBold).fontSize(16).fillColor(PALETTE.cream)
     .text("SEAZN", MARGIN + 16, top + 14, { continued: true })
     .fillColor(PALETTE.lime).text(" CLUB");
+  // org identity, top-right of the card header — cut-out tickets lose the
+  // page masthead, so each card carries its own org name (mirrors ticket.png).
+  if (orgName) {
+    doc.font(FONT.bodyMed).fontSize(9).fillColor(PALETTE.cream)
+      .text(orgName.toUpperCase(), MARGIN + 16, top + 16, {
+        width: w - 32, align: "right", characterSpacing: 2, lineBreak: false,
+      });
+  }
   doc.rect(MARGIN, top + 44, w, 4).fill(PALETTE.lime);
   doc.font(FONT.displayBold).fontSize(22).fillColor(PALETTE.ink)
     .text(t.competition.toUpperCase(), MARGIN + 16, top + 60);
@@ -155,8 +182,11 @@ function drawTicket(doc: PDFKit.PDFDocument, t: NonNullable<DocSection["ticket"]
   doc.font(FONT.displayBold).fontSize(16).fillColor(PALETTE.ink).text(t.maskedName, MARGIN + 16, top + 112);
   doc.font(FONT.body).fontSize(9).fillColor(PALETTE.mute).text("YOUR REFERENCE", MARGIN + 16, top + 140, { characterSpacing: 2 });
   doc.font("Courier-Bold").fontSize(20).fillColor(PALETTE.ink).text(t.ref, MARGIN + 16, top + 152);
-  // status stamp beside the reference block
-  doc.font(FONT.displayBold).fontSize(11).fillColor(PALETTE.ball)
+  // status stamp beside the reference block — a colour-coded underline plus
+  // matching text, mirroring ticket.png's bordered STAMP chip.
+  const stampColor = stampColorFor(t.status);
+  doc.rect(MARGIN + 150, top + 163, 60, 2).fill(stampColor);
+  doc.font(FONT.displayBold).fontSize(11).fillColor(stampColor)
     .text(t.status.toUpperCase(), MARGIN + 150, top + 148, { characterSpacing: 2, lineBreak: false });
   // stub
   const stubX = MARGIN + w - 150;
@@ -169,9 +199,16 @@ function drawTicket(doc: PDFKit.PDFDocument, t: NonNullable<DocSection["ticket"]
   doc.fillColor(PALETTE.ink);
 }
 
+/** Crop ticks at the page edges, at the mid-cut line between two stacked
+ *  tickets (columnsHint 2) — a cuttable sheet instead of a full-width rule. */
+function drawCropTicks(doc: PDFKit.PDFDocument, y: number): void {
+  const tickLen = 10;
+  doc.moveTo(0, y).lineTo(tickLen, y).strokeColor("#999999").lineWidth(1).stroke();
+  doc.moveTo(doc.page.width - tickLen, y).lineTo(doc.page.width, y).strokeColor("#999999").lineWidth(1).stroke();
+}
+
 function drawSection(doc: PDFKit.PDFDocument, section: DocSection): void {
   if (section.pageBreakBefore === true) doc.addPage();
-  if (section.ticket !== undefined) return; // handled by the QR pre-pass caller
   if (section.heading !== undefined) {
     doc.font("Helvetica-Bold").fontSize(13).fillColor("#111111").text(section.heading, MARGIN);
     doc.moveDown(0.2);
@@ -253,16 +290,22 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
       doc.addPage();
       sinceBreak = 0;
     }
-    if (section.ticket) drawTicket(doc, section.ticket, qrByRef.get(section.ticket.ref) ?? null);
-    else drawSection(doc, section);
+    if (section.ticket) {
+      drawTicket(doc, section.ticket, qrByRef.get(section.ticket.ref) ?? null, model.branding?.orgName);
+    } else drawSection(doc, section);
     if (pair) {
       sinceBreak += 1;
-      doc
-        .moveTo(MARGIN, doc.y)
-        .lineTo(doc.page.width - MARGIN, doc.y)
-        .strokeColor("#999999")
-        .lineWidth(1)
-        .stroke();
+      if (section.ticket) {
+        // cuttable sheet: short crop ticks at the page edges, not a full rule
+        drawCropTicks(doc, doc.y + 4);
+      } else {
+        doc
+          .moveTo(MARGIN, doc.y)
+          .lineTo(doc.page.width - MARGIN, doc.y)
+          .strokeColor("#999999")
+          .lineWidth(1)
+          .stroke();
+      }
       doc.moveDown(0.8);
     }
   }
