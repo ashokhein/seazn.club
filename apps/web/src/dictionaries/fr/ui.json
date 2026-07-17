@@ -1464,6 +1464,8 @@
   "import.op.personCreate": "nouveau joueur",
   "import.op.entrantCreate": "inscrire à la division",
   "import.op.rosterAdd": "effectif",
+  "import.error.divisionNotFound": "la division « {division} » n'existe pas — créez les divisions avant d'importer",
+  "import.issueCode.divisionNotFound": "Division introuvable",
   "pad.recordResult": "Enregistrer le résultat",
   "pad.noDraws": "Ce sport n'autorise pas les matchs nuls",
   "pad.won": "{name} a gagné",

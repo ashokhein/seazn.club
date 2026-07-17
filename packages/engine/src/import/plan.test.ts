@@ -8,7 +8,7 @@ const CONFIG = ImportConfig.parse({});
 const EMPTY: ImportSnapshot = { clubs: [], teams: [], persons: [], divisions: [], entrants: [] };
 
 const DIVISIONS: ImportSnapshot["divisions"] = [
-  { id: "div-u12", slug: "u12", sportKey: "football", positionKeys: ["gk", "def", "mid", "fwd"] },
+  { id: "div-u12", name: "Under 12s", slug: "u12", sportKey: "football", positionKeys: ["gk", "def", "mid", "fwd"] },
 ];
 
 function row(partial: Partial<ImportRow> & { rowNo: number }): ImportRow {
@@ -191,6 +191,19 @@ describe("planImport rules (Jul3/01 §4)", () => {
       expect.objectContaining({ severity: "error", code: "DIVISION_NOT_FOUND", rowNo: 5 }),
     ]);
     expect(plan.ops.filter((o) => o.kind === "entrant.create" || o.kind === "roster.add")).toEqual([]);
+  });
+
+  it("division column matches the display name (case-insensitive), not just the slug", () => {
+    // Regression: the Division column instructions show users the display
+    // name ("Under 12s"), never the slug ("u12") — a name match must resolve
+    // the same division as a slug match, and must not raise DIVISION_NOT_FOUND.
+    const plan = planImport(
+      [row({ rowNo: 5, teamName: "U12", playerFullName: "A B", divisionSlug: "UNDER 12S" })],
+      { ...EMPTY, divisions: DIVISIONS },
+      CONFIG,
+    );
+    expect(plan.issues.filter((i) => i.code === "DIVISION_NOT_FOUND")).toEqual([]);
+    expect(plan.ops.some((o) => o.kind === "entrant.create")).toBe(true);
   });
 
   it("bad position ⇒ error BAD_POSITION and no roster op; valid position normalises to catalog key", () => {

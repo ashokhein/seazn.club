@@ -56,6 +56,7 @@ export const ImportSnapshot = z.object({
   divisions: z.array(
     z.object({
       id: z.string(),
+      name: z.string(),
       slug: z.string(),
       sportKey: z.string(),
       positionKeys: z.array(z.string()),
@@ -171,7 +172,8 @@ export const ImportIssue = z.object({
   column: z.string().optional(),
   severity: z.enum(["error", "warn"]),
   code: z.string(), // 'DIVISION_NOT_FOUND','AMBIGUOUS_PERSON','BAD_POSITION',…
-  message: z.string(),
+  message: z.string(), // english fallback; the app localizes known codes via messageArgs
+  messageArgs: z.record(z.string(), z.string()).optional(),
 });
 export type ImportIssue = z.infer<typeof ImportIssue>;
 

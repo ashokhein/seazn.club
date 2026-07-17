@@ -56,8 +56,8 @@ async function fetchSnapshot(tx: Tx): Promise<ImportSnapshot> {
   const persons = await tx<{ id: string; full_name: string; dob: string | null; external_ref: string | null }[]>`
     select id, full_name, dob::text as dob, external_ref from persons order by id`;
   // positionKeys: the sport's position_catalog group keys (doc 02 §3).
-  const divisions = await tx<{ id: string; slug: string; sport_key: string; position_keys: string[] }[]>`
-    select d.id, d.slug, d.sport_key,
+  const divisions = await tx<{ id: string; name: string; slug: string; sport_key: string; position_keys: string[] }[]>`
+    select d.id, d.name, d.slug, d.sport_key,
            coalesce((select array_agg(g->>'key')
                      from jsonb_array_elements(s.position_catalog->'groups') g), '{}') as position_keys
     from divisions d join sports s on s.key = d.sport_key
@@ -76,7 +76,7 @@ async function fetchSnapshot(tx: Tx): Promise<ImportSnapshot> {
       id: p.id, fullName: p.full_name, dob: p.dob, externalRef: p.external_ref,
     })),
     divisions: divisions.map((d) => ({
-      id: d.id, slug: d.slug, sportKey: d.sport_key, positionKeys: d.position_keys,
+      id: d.id, name: d.name, slug: d.slug, sportKey: d.sport_key, positionKeys: d.position_keys,
     })),
     entrants: entrants.map((e) => ({
       id: e.id, divisionId: e.division_id, teamId: e.team_id, memberPersonIds: e.member_ids,

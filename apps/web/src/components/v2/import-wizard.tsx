@@ -33,7 +33,17 @@ interface ImportIssue {
   severity: "error" | "warn";
   code: string;
   message: string;
+  messageArgs?: Record<string, string>;
 }
+
+// code -> localized (message key, badge key). Codes not listed here fall back
+// to the server's English message + raw code badge (Jul3/01 §4 issue codes).
+const ISSUE_I18N: Record<string, { messageKey: MessageKey; badgeKey: MessageKey }> = {
+  DIVISION_NOT_FOUND: {
+    messageKey: "import.error.divisionNotFound",
+    badgeKey: "import.issueCode.divisionNotFound",
+  },
+};
 interface ImportOp {
   kind: string;
   ref?: string;
@@ -258,20 +268,28 @@ export function ImportWizard() {
 
             {preview.plan.issues.length > 0 && (
               <ul className="space-y-1" aria-label={msg("import.issuesAria")}>
-                {preview.plan.issues.map((issue, i) => (
-                  <li
-                    key={i}
-                    className={`rounded-md px-3 py-1.5 text-sm ${
-                      issue.severity === "error"
-                        ? "bg-red-50 text-red-700"
-                        : "bg-amber-50 text-amber-700"
-                    }`}
-                  >
-                    {msg("import.row", { n: issue.rowNo })}
-                    {issue.column ? ` (${issue.column})` : ""}: {issue.message}
-                    <span className="ml-2 font-mono text-xs opacity-70">{issue.code}</span>
-                  </li>
-                ))}
+                {preview.plan.issues.map((issue, i) => {
+                  const i18nEntry = ISSUE_I18N[issue.code];
+                  const message =
+                    i18nEntry && issue.messageArgs
+                      ? msg(i18nEntry.messageKey, issue.messageArgs)
+                      : issue.message;
+                  const badgeLabel = i18nEntry ? msg(i18nEntry.badgeKey) : issue.code;
+                  return (
+                    <li
+                      key={i}
+                      className={`rounded-md px-3 py-1.5 text-sm ${
+                        issue.severity === "error"
+                          ? "bg-red-50 text-red-700"
+                          : "bg-amber-50 text-amber-700"
+                      }`}
+                    >
+                      {msg("import.row", { n: issue.rowNo })}
+                      {issue.column ? ` (${issue.column})` : ""}: {message}
+                      <span className="ml-2 font-mono text-xs opacity-70">{badgeLabel}</span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
 
