@@ -26,6 +26,78 @@ import type { MessageKey } from "@/lib/messages";
 
 type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
+/** Focus-trapped, Esc-to-close single-field text prompt — replaces the native
+ *  browser prompt dialog for the abandon/forfeit reason inputs below (same
+ *  reasoning as prose-editor.tsx's EditorDialog: stylable, localizable,
+ *  testable, consistent with the rest of the app's dialogs). */
+function TextPromptDialog({
+  title, initialValue, msg, onSubmit, onClose,
+}: {
+  title: string;
+  initialValue: string;
+  msg: Msg;
+  onSubmit: (value: string) => void;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLElement>("input")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-purple-950/30 p-4 backdrop-blur-sm"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="w-full max-w-sm rounded-2xl border border-purple-100 bg-white p-5 shadow-2xl"
+      >
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        <form
+          className="mt-3 space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            const value = (new FormData(e.currentTarget).get("reason") as string).trim();
+            if (value) onSubmit(value);
+            else onClose();
+          }}
+        >
+          <input
+            name="reason"
+            type="text"
+            autoComplete="off"
+            defaultValue={initialValue}
+            className="input w-full"
+          />
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <button type="button" className="btn btn-ghost" onClick={onClose}>
+              {msg("editor.cancel")}
+            </button>
+            <button type="submit" className="btn btn-primary">
+              {msg("editor.apply")}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export interface MemberIn {
   person_id: string;
   full_name: string;
@@ -155,6 +227,7 @@ export function FixtureConsole({
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [abandonPrompt, setAbandonPrompt] = useState(false);
 
   const resync = useCallback(async () => {
     const [state, all] = await Promise.all([
@@ -291,15 +364,24 @@ export function FixtureConsole({
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => {
-                  const reason = window.prompt(msg("score.abandonPrompt"));
-                  if (reason) void send("core.abandon", { reason });
-                }}
+                onClick={() => setAbandonPrompt(true)}
                 className="btn btn-danger"
               >
                 {msg("score.abandon")}
               </button>
             </>
+          )}
+          {abandonPrompt && (
+            <TextPromptDialog
+              title={msg("score.abandonPrompt")}
+              initialValue=""
+              msg={msg}
+              onClose={() => setAbandonPrompt(false)}
+              onSubmit={(reason) => {
+                setAbandonPrompt(false);
+                void send("core.abandon", { reason });
+              }}
+            />
           )}
           {lastVoidable && (
             <button
@@ -454,6 +536,7 @@ function ForfeitButton({
 }) {
   const msg = useMsg();
   const [open, setOpen] = useState(false);
+  const [forfeitPrompt, setForfeitPrompt] = useState<SideInfo | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -482,14 +565,26 @@ function ForfeitButton({
               className="block w-full rounded px-2 py-1.5 text-left text-sm hover:bg-purple-50"
               onClick={() => {
                 setOpen(false);
-                const reason = window.prompt(msg("score.forfeitPrompt", { name: s.name }), "walkover");
-                if (reason) void send("core.forfeit", { by: s.id, reason });
+                setForfeitPrompt(s);
               }}
             >
               {msg("score.forfeits", { name: s.name })}
             </button>
           ))}
         </div>
+      )}
+      {forfeitPrompt && (
+        <TextPromptDialog
+          title={msg("score.forfeitPrompt", { name: forfeitPrompt.name })}
+          initialValue="walkover"
+          msg={msg}
+          onClose={() => setForfeitPrompt(null)}
+          onSubmit={(reason) => {
+            const by = forfeitPrompt.id;
+            setForfeitPrompt(null);
+            void send("core.forfeit", { by, reason });
+          }}
+        />
       )}
     </div>
   );
