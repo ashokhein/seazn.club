@@ -4,6 +4,7 @@
 // vague shared error.
 import { getCurrentUser } from "@/lib/auth";
 import { HttpError } from "@/lib/errors";
+import { maskEmail } from "@/lib/mask-email";
 import { resolveClaimToken, type ResolvedClaim } from "@/server/usecases/person-claims";
 import { AuthForm } from "@/components/auth-form";
 import { NightStage } from "@/components/night-stage";
@@ -93,8 +94,8 @@ export default async function ClaimPage({
                 <h2 className="text-base font-bold text-purple-900">Wrong account for this invite</h2>
                 <p className="mt-2 text-sm text-slate-600">
                   This invite was sent to{" "}
-                  <span className="font-medium text-purple-700">{claim.email}</span>, but
-                  you&apos;re signed in as <span className="font-medium">{user.email}</span>.
+                  <span className="font-medium text-purple-700">{maskEmail(claim.email)}</span>, but
+                  you&apos;re signed in as <span className="font-medium">{maskEmail(user.email)}</span>.
                   Sign out, then sign in with the invited address to claim it. Wrong address
                   on the invite? Ask the organiser to re-send it.
                 </p>
