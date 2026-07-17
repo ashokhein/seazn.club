@@ -5,8 +5,73 @@ import "server-only";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import type { DocModel, DocSection, DocTable } from "@seazn/engine/exports";
+import { PALETTE, FONT, registerFonts, eyebrowFor } from "./doc-theme";
 
 const MARGIN = 40;
+
+const MAST_H = 64; // masthead band height, page 1
+
+import { publicStorageUrl } from "@/lib/supabase-storage";
+
+/** Resolve a logo storage path (or an already-absolute URL) to bytes. Logos
+ *  live in the PUBLIC Supabase bucket — there is no server-side byte reader,
+ *  so fetch the public URL. Missing/broken → null, never throws (a broken
+ *  export is worse than an unbranded one). */
+async function resolveLogo(logoPath: string | undefined): Promise<Buffer | null> {
+  if (!logoPath) return null;
+  try {
+    const url = /^https?:\/\//.test(logoPath) ? logoPath : publicStorageUrl(logoPath);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+function drawMasthead(
+  doc: PDFKit.PDFDocument,
+  model: DocModel,
+  logo: Buffer | null,
+): void {
+  const b = model.branding!;
+  const bar = b.colors?.primary ?? PALETTE.night;
+  const w = doc.page.width;
+  doc.rect(0, 0, w, MAST_H).fill(bar);
+  // wordmark
+  doc.font(FONT.displayBold).fontSize(18).fillColor(PALETTE.cream)
+    .text("SEAZN", MARGIN, 16, { continued: true })
+    .fillColor(PALETTE.lime).text(" CLUB", { continued: false });
+  // org name, right
+  if (b.orgName) {
+    doc.font(FONT.bodyMed).fontSize(10).fillColor("rgba(245,240,232,0.7)" as never);
+    doc.fillColor(PALETTE.cream).text(b.orgName.toUpperCase(), MARGIN, 22, {
+      width: w - MARGIN * 2, align: "right", characterSpacing: 2,
+    });
+  }
+  // logo, aspect-locked, right of wordmark
+  if (logo) {
+    try { doc.image(logo, w - MARGIN - 40, 12, { height: 40 }); } catch { /* skip */ }
+  }
+  // lime pitch-line rule — the signature
+  doc.rect(0, MAST_H, w, 4).fill(PALETTE.lime);
+  doc.fillColor(PALETTE.ink);
+  doc.y = MAST_H + 18;
+}
+
+function drawTitleBlock(doc: PDFKit.PDFDocument, model: DocModel): void {
+  doc.font(FONT.bodyMed).fontSize(8).fillColor(PALETTE.mute)
+    .text(eyebrowFor(model.kind), MARGIN, doc.y, { characterSpacing: 2 });
+  doc.moveDown(0.1);
+  doc.font(FONT.displayBold).fontSize(26).fillColor(PALETTE.night)
+    .text(model.title.toUpperCase(), MARGIN, doc.y, { characterSpacing: 0.5 });
+  if (model.description) {
+    doc.moveDown(0.15);
+    doc.font(FONT.body).fontSize(9).fillColor(PALETTE.slate).text(model.description, MARGIN);
+  }
+  doc.moveDown(0.6);
+  doc.fillColor(PALETTE.ink);
+}
 
 function isLandscape(model: DocModel): boolean {
   return model.sections.some((s) => s.table?.landscape === true);
@@ -114,8 +179,11 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
   });
 
-  doc.font("Helvetica-Bold").fontSize(16).text(model.title, MARGIN);
-  doc.moveDown(0.6);
+  registerFonts(doc);
+  const logo = model.branding ? await resolveLogo(model.branding.logos?.[0]) : null;
+  if (model.branding) drawMasthead(doc, model, logo); // Pro-only night chrome + logo
+  else doc.y = MARGIN;
+  drawTitleBlock(doc, model); // eyebrow + title + description for ALL
 
   // columnsHint 2 (12 Jun "two per A4"): pair sections onto one page by
   // separating with a rule instead of a page break.
