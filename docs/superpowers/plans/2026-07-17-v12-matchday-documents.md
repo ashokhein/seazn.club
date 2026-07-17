@@ -1332,7 +1332,17 @@ git commit -m "docs+test(exports): matchday-documents help + rota/ticket smoke"
 ### Task 18: PR2 close — full verify + live visual check
 
 - [ ] **Step 1** `npm run typecheck` → 0. `npm run test` (engine + web) → green. `npm run smoke` → green. `npm run i18n:check` → parity green.
-- [ ] **Step 2** Main-thread Playwright visual verify (implementer has no browser — this runs on the main thread): render a branded timetable, an officials rota, and an admit-ticket run; snapshot each; eyeball masthead / lime pitch-line / zebra table / QR against `r/[ref]/ticket.png` and the email templates at desktop + print widths. Confirm free-tier timetable stays plain.
+- [ ] **Step 2 — Visual walkthrough + shared artifact gallery + all sample PDFs (main-thread; user-requested deliverable).**
+  1. **Sample generator:** write `scripts/v12-doc-samples.ts` (dev script, DB-backed). It seeds one **Pro** org (branding: primary colour + logo + a title/gold/silver/partner sponsor set) and one **community** org, each with a division of scheduled fixtures, standings, roster, officials with mixed accept/decline/pending responses, and confirmed registrations. For every use case it builds the DocModel and writes a real PDF to `.superpowers/sdd/samples/`:
+     - `timetable-pro-branded.pdf`, `timetable-free-plain.pdf` (branded-vs-plain proof)
+     - `standings-pro.pdf`, `roster-pro.pdf`, `scoresheet-pro.pdf`, `participants-pro.pdf`
+     - `officials-rota-pro.pdf`, `me-rota-neutral.pdf` (SEAZN-neutral cross-org)
+     - `admit-tickets-pro.pdf` (2-up QR passes)
+  2. **Rasterize** each PDF's first page (and page 2 for tickets) to PNG for the gallery — use `pdftoppm -png -r 130` if poppler is present, else drive Playwright: `browser_navigate` to the `file://` PDF and `browser_take_screenshot` (Chrome renders PDFs natively).
+  3. **Live UI walkthrough (Playwright):** start the app (`next start` on a prod build per repo e2e convention), log in as the Pro demo org, open a division's schedule board → **Documents** menu, screenshot it, download **Order of play**; open `/me` officiating lane → **Download my rota**. Snapshot each surface at desktop + mobile widths.
+  4. **Assemble the artifact:** load the `artifact-design` skill, then build a self-contained HTML gallery — each use case as a card with its rasterized preview PNG (inline as a `data:` URI) and a **download link to the actual PDF embedded as a base64 `data:application/pdf` URI** (demo data only — safe to publish). Group: branded-vs-plain, tabular docs, officials rota + personal rota, admit tickets, plus the live-panel screenshots. Publish with the `Artifact` tool and share the URL.
+  5. Eyeball masthead / lime pitch-line / zebra table / status chips / QR against `r/[ref]/ticket.png` and the email templates. Confirm free-tier timetable stays plain (no masthead/sponsor).
+  6. List the raw PDF paths in `.superpowers/sdd/samples/` in the final report so the user has the files directly too.
 - [ ] **Step 3** Update `HANDOFF.md` per AGENTS.md protocol.
 - [ ] **Step 4: Commit**
 
