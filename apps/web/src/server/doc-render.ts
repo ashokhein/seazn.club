@@ -324,7 +324,9 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
   const total = range.count;
   for (let i = range.start; i < range.start + total; i++) {
     doc.switchToPage(i);
-    const fy = doc.page.height - MARGIN + 2;
+    // Keep the whole footer stack inside the content box — text placed at/below
+    // the bottom-margin edge (page.height - MARGIN) is suppressed by pdfkit.
+    const fy = doc.page.height - MARGIN - 10;
     const sponsors = model.branding?.sponsors ?? [];
     if (sponsors.length > 0) {
       doc.font(FONT.bodyMed).fontSize(7).fillColor(PALETTE.slate)
@@ -332,17 +334,17 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
           { width: doc.page.width - MARGIN * 2 - 40, characterSpacing: 1, lineBreak: false });
     }
     if (qrPng) {
-      try { doc.image(qrPng, doc.page.width - MARGIN - 28, fy - 20, { width: 28 }); } catch { /* skip */ }
+      try { doc.image(qrPng, doc.page.width - MARGIN - 28, fy - 22, { width: 28 }); } catch { /* skip */ }
     }
     doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
       `${model.meta.footerNote ?? model.title} — printed ${model.meta.printedAt} · page ${i - range.start + 1} of ${total}`,
-      MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 40, lineBreak: false },
+      MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 90, lineBreak: false },
     );
     // platform attribution — every tier, every page (free tier otherwise
     // carries no SEAZN identity at all since the masthead wordmark is Pro-only)
     doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
       "Powered by seazn.club",
-      MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 40, align: "right", lineBreak: false },
+      MARGIN, fy, { width: doc.page.width - MARGIN * 2, align: "right", lineBreak: false },
     );
   }
   doc.end();
