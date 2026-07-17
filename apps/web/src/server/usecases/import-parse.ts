@@ -9,7 +9,12 @@ import { HttpError } from "@/lib/errors";
 
 export type ImportField = Exclude<keyof ImportRow, "rowNo">;
 
-// normalized header → field. Normalization strips everything but [a-z0-9].
+// normalized header → field. Normalization lowercases, strips diacritics, then
+// strips everything but [a-z0-9] — so "Équipe"/"Numéro"/"División" match the
+// same alias entries as their unaccented forms. Aliases below cover the
+// exact CSV header words the page's own instructions promise work, in every
+// locale those instructions are shown in (en/fr/es/nl, see import.fileHint
+// in each src/dictionaries/<locale>/ui.json) — not just English synonyms.
 const HEADER_ALIASES: Record<string, ImportField> = {
   club: "clubName",
   clubname: "clubName",
@@ -21,8 +26,10 @@ const HEADER_ALIASES: Record<string, ImportField> = {
   clubexternalref: "clubExternalRef",
   affiliation: "clubExternalRef",
   fanumber: "clubExternalRef",
-  team: "teamName",
+  team: "teamName", // en + nl "Team"
   teamname: "teamName",
+  equipe: "teamName", // fr "Équipe"
+  equipo: "teamName", // es "Equipo"
   teamshort: "teamShortName",
   teamshortname: "teamShortName",
   player: "playerFullName",
@@ -30,10 +37,16 @@ const HEADER_ALIASES: Record<string, ImportField> = {
   playerfullname: "playerFullName",
   fullname: "playerFullName",
   name: "playerFullName",
+  joueur: "playerFullName", // fr "Joueur"
+  jugador: "playerFullName", // es "Jugador"
+  speler: "playerFullName", // nl "Speler"
   dob: "dob",
   dateofbirth: "dob",
   birthdate: "dob",
   born: "dob",
+  datedenaissance: "dob", // fr "Date de naissance"
+  fechadenacimiento: "dob", // es "Fecha de nacimiento"
+  geboortedatum: "dob", // nl "Geboortedatum"
   gender: "gender",
   sex: "gender",
   number: "squadNumber",
@@ -41,20 +54,33 @@ const HEADER_ALIASES: Record<string, ImportField> = {
   squadnumber: "squadNumber",
   shirtnumber: "squadNumber",
   jersey: "squadNumber",
+  numero: "squadNumber", // fr "Numéro" / es "Número"
+  nummer: "squadNumber", // nl "Nummer"
   position: "position",
   pos: "position",
+  poste: "position", // fr "Poste"
+  posicion: "position", // es "Posición"
+  positie: "position", // nl "Positie"
   captain: "isCaptain",
   iscaptain: "isCaptain",
   capt: "isCaptain",
-  division: "divisionSlug",
+  capitaine: "isCaptain", // fr "Capitaine"
+  capitan: "isCaptain", // es "Capitán"
+  aanvoerder: "isCaptain", // nl "Aanvoerder"
+  division: "divisionSlug", // also matches es "División" once accents are stripped
   divisionslug: "divisionSlug",
+  divisie: "divisionSlug", // nl "Divisie"
   displayname: "entrantDisplayName",
   entrantname: "entrantDisplayName",
   entrantdisplayname: "entrantDisplayName",
 };
 
 export function normalizeHeader(h: string): string {
-  return h.toLowerCase().replace(/[^a-z0-9]/g, "");
+  return h
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "") // strip diacritics (é → e, í → i, …)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
 }
 
 /** Auto-detect a column mapping from a header row (client may override). */
