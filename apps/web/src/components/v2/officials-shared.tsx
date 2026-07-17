@@ -40,23 +40,24 @@ export function OfficialAvatar({ name, size = "md" }: { name: string; size?: "sm
 }
 
 /**
- * Inline invite-to-claim editor for one official (v11): toggles open on
- * "Invite", posts through the shared claim rail, and — only on email-send
- * failure — shows the one-time claim link with a copy button. Self-contained
- * (owns its own open/result state) so any roster row can drop it in.
+ * Invite-to-claim form for one official (v11, reshaped v11.1 UX pass): the
+ * trigger button now lives with the CALLER (roster row right rail) and this
+ * form renders full-width below the row — the old self-contained toggle
+ * expanded inside the row's flex and overlapped the name/role chips. Posts
+ * through the shared claim rail; only on email-send failure shows the
+ * one-time claim link with a copy button.
  */
-export function OfficialInviteEditor({
+export function OfficialInviteForm({
   officialId,
   initialEmail,
-  disabled,
+  onClose,
 }: {
   officialId: string;
   initialEmail: string | null;
-  disabled?: boolean;
+  onClose: () => void;
 }) {
   const msg = useMsg();
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [email, setEmail] = useState(initialEmail ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,58 +81,41 @@ export function OfficialInviteEditor({
     }
   }
 
-  function close() {
-    setOpen(false);
-    setResult(null);
-    setCopied(false);
-    setError(null);
-  }
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        className="btn btn-ghost shrink-0 py-1 text-xs"
-        disabled={disabled}
-        onClick={() => {
-          setOpen(true);
-          setEmail(initialEmail ?? "");
-        }}
-      >
-        {msg("officials.invite")}
-      </button>
-    );
-  }
-
   return (
-    <div className="mt-2 w-full space-y-2 border-t border-slate-100 pt-2">
+    <div className="space-y-2">
       {!result ? (
         <form
-          className="flex flex-wrap items-end gap-2"
+          className="flex flex-col gap-2 sm:flex-row sm:items-end"
           onSubmit={(e) => {
             e.preventDefault();
             if (email.trim()) void send();
           }}
         >
-          <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs text-slate-500">
-            {msg("officials.inviteEmail")}
+          <div className="min-w-0 flex-1">
+            <label className="label" htmlFor={`off-invite-${officialId}`}>
+              {msg("officials.inviteEmail")}
+            </label>
             <input
+              id={`off-invite-${officialId}`}
               type="email"
-              className="input"
+              className="input w-full"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoFocus
             />
-          </label>
-          <button type="submit" className="btn btn-primary py-1.5 text-sm" disabled={busy}>
-            {msg("officials.inviteSend")}
-          </button>
-          <button type="button" className="btn btn-ghost py-1.5 text-xs" onClick={close}>
-            {msg("officials.cancel")}
-          </button>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="submit" className="btn btn-primary" disabled={busy}>
+              {msg("officials.inviteSend")}
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={onClose}>
+              {msg("officials.cancel")}
+            </button>
+          </div>
         </form>
       ) : (
-        <div className="space-y-1 text-xs">
+        <div className="space-y-1.5 text-xs">
           <p className={result.email_sent ? "text-lime-700" : "text-amber-700"}>
             {result.email_sent ? msg("officials.inviteSent") : msg("officials.inviteEmailFailed")}
           </p>
@@ -155,7 +139,7 @@ export function OfficialInviteEditor({
               </div>
             </>
           )}
-          <button type="button" className="btn btn-ghost py-1 text-xs" onClick={close}>
+          <button type="button" className="btn btn-ghost py-1 text-xs" onClick={onClose}>
             {msg("officials.done")}
           </button>
         </div>
@@ -249,7 +233,7 @@ export function RoleChipPicker({
       </div>
       <div className="flex items-center gap-2">
         <input
-          className="input py-1 text-xs"
+          className="input w-full sm:w-56"
           value={custom}
           onChange={(e) => setCustom(e.target.value)}
           placeholder={msg("officials.roleCustomPlaceholder")}
@@ -263,7 +247,7 @@ export function RoleChipPicker({
         />
         <button
           type="button"
-          className="btn btn-ghost py-1 text-xs"
+          className="btn btn-ghost shrink-0 whitespace-nowrap"
           disabled={!custom.trim()}
           onClick={addCustom}
         >

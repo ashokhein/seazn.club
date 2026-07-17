@@ -1342,6 +1342,7 @@
   "officials.roleCustomPlaceholder": "Ajouter un rôle personnalisé…",
   "officials.roleCustomAdd": "Ajouter le rôle",
   "officials.add": "Ajouter un officiel",
+  "officials.addTitle": "Ajouter un officiel",
   "officials.autoAssign": "Affectation automatique",
   "officials.blockStay": "Rester sur un seul terrain par bloc",
   "officials.poolLock": "Garder les officiels dans leur pool",

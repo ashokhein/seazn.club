@@ -1089,6 +1089,7 @@ export type DictionaryKey =
   | "officialInvite.title"
   | "officials.add"
   | "officials.addTeamRef"
+  | "officials.addTitle"
   | "officials.alreadyOfficial"
   | "officials.apply"
   | "officials.aria"

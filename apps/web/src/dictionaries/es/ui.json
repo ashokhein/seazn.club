@@ -1342,6 +1342,7 @@
   "officials.roleCustomPlaceholder": "Añadir un rol personalizado…",
   "officials.roleCustomAdd": "Añadir rol",
   "officials.add": "Agregar oficial",
+  "officials.addTitle": "Agregar un oficial",
   "officials.autoAssign": "Asignación automática",
   "officials.blockStay": "Mantener en una sola cancha por bloque",
   "officials.poolLock": "Mantener a los oficiales en su grupo",

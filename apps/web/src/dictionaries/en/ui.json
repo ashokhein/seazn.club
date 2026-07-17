@@ -1342,6 +1342,7 @@
   "officials.roleCustomPlaceholder": "Add a custom role…",
   "officials.roleCustomAdd": "Add role",
   "officials.add": "Add official",
+  "officials.addTitle": "Add an official",
   "officials.autoAssign": "Auto-assign",
   "officials.blockStay": "Stay on one court per block",
   "officials.poolLock": "Keep officials in their pool",
