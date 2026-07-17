@@ -1869,5 +1869,9 @@
   "div.detail.tiebreak.rule.sberger": "Sonneborn–Berger",
   "div.detail.tiebreak.rule.seed": "seeding",
   "div.detail.tiebreak.rule.lots": "drawing of lots",
-  "settings.team.copyLink.label": "Copy link"
+  "settings.team.copyLink.label": "Copy link",
+  "fixture.officials.title": "Officials",
+  "fixture.officials.accepted": "Accepted",
+  "fixture.officials.pending": "Pending",
+  "fixture.officials.declined": "Declined"
 }

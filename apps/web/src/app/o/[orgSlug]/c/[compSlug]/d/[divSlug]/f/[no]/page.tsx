@@ -24,6 +24,7 @@ import {
 import { DeviceLinkPanel } from "@/components/v2/device-link-panel";
 import { listFixtureAvailability } from "@/server/usecases/me";
 import { CheckinQr } from "@/components/v2/checkin-qr";
+import { FixtureOfficialsStrip } from "@/components/v2/fixture-officials-strip";
 
 export default async function FixturePage({
   params,
@@ -94,6 +95,12 @@ export default async function FixturePage({
               <CheckinQr fixtureId={fixture.id} />
             </div>
           )}
+
+        {/* Assigned-officials strip (design v11 §D2): organiser surface only —
+            a red "Declined" badge is the cue to re-pick. */}
+        {canEdit && Array.isArray(fixture.officials) && (
+          <FixtureOfficialsStrip officials={fixture.officials as never} />
+        )}
 
         <FixtureConsole
           fixture={{

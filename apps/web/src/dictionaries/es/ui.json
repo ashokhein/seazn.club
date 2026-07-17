@@ -1869,5 +1869,9 @@
   "div.detail.tiebreak.rule.sberger": "Sonneborn–Berger",
   "div.detail.tiebreak.rule.seed": "cabeza de serie",
   "div.detail.tiebreak.rule.lots": "sorteo",
-  "settings.team.copyLink.label": "Copiar enlace"
+  "settings.team.copyLink.label": "Copiar enlace",
+  "fixture.officials.title": "Oficiales",
+  "fixture.officials.accepted": "Aceptado",
+  "fixture.officials.pending": "Pendiente",
+  "fixture.officials.declined": "Rechazado"
 }

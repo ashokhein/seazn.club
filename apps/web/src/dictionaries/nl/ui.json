@@ -1869,5 +1869,9 @@
   "div.detail.tiebreak.rule.sberger": "Sonneborn–Berger",
   "div.detail.tiebreak.rule.seed": "reekshoofdplaatsing",
   "div.detail.tiebreak.rule.lots": "loting",
-  "settings.team.copyLink.label": "Link kopiëren"
+  "settings.team.copyLink.label": "Link kopiëren",
+  "fixture.officials.title": "Officials",
+  "fixture.officials.accepted": "Geaccepteerd",
+  "fixture.officials.pending": "In behandeling",
+  "fixture.officials.declined": "Afgewezen"
 }
