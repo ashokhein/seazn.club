@@ -26,7 +26,6 @@ import { resolveLogoUrl } from "@/server/public-site/data";
 import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
-import { InviteScorer } from "@/components/v2/invite-scorer";
 import { StandingsTable } from "@/components/public-site/standings-table";
 import { StatsPanel } from "@/components/v2/stats-panel";
 import { LadderPanel } from "@/components/v2/ladder-panel";
@@ -164,13 +163,6 @@ export default async function DivisionPage({
               status={division.status}
               canEdit={editable}
             />
-            {editable && (
-              <InviteScorer
-                orgId={auth.orgId}
-                divisionId={id}
-                officialLabel={sportModule.officialLabel.scorer}
-              />
-            )}
           </div>
         </div>
 
