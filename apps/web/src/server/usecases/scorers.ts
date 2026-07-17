@@ -46,6 +46,22 @@ export async function scorerCovers(
   return rows.length > 0;
 }
 
+/** Does the user hold an ACCEPTED official assignment covering this fixture?
+ *  Officials are usually NOT org members, so this is a superuser read pinned
+ *  through persons.user_id = the user and officials.person_id (the tenant door
+ *  never opens for them). Only 'accepted' passes — a pending or declined
+ *  assignment grants no scoring rights (design v2 §A5). */
+export async function acceptedOfficialCovers(userId: string, fixtureId: string): Promise<boolean> {
+  const rows = await sql`
+    select 1 from fixture_officials fo
+    join officials o on o.id = fo.official_id
+    join persons p on p.id = o.person_id
+    where fo.fixture_id = ${fixtureId} and p.user_id = ${userId}
+      and fo.response = 'accepted'
+    limit 1`;
+  return rows.length > 0;
+}
+
 /** Roles whose scoring rights come from assignments, not the role itself:
  *  scorers always; viewers additively (an accepted umpire invite keeps their
  *  role and adds the assignment). The scorer capability config gates bind
@@ -70,6 +86,10 @@ export async function requireScorable(auth: AuthCtx, fixtureId: string): Promise
     if (auth.userId && (await scorerCovers(auth.orgId, auth.userId, scope))) return scope;
     if (auth.role === "scorer") throw new HttpError(403, "You are not assigned to this fixture");
   }
+  // Accepted officials score the fixtures they are assigned to (design v2 §A3):
+  // fixture_officials is the authority; officials are usually non-members, so
+  // this runs off userId, not a membership role.
+  if (auth.userId && (await acceptedOfficialCovers(auth.userId, fixtureId))) return scope;
   throw new HttpError(403, "Your role cannot record scores");
 }
 

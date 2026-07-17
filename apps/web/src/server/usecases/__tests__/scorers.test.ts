@@ -24,11 +24,17 @@ import {
   createAssignment,
   listAssignedFixtures,
   isScorerOnly,
+  acceptedOfficialCovers,
 } from "../scorers";
 import {
   frozenMemberIds,
   assertMemberNotFrozen,
 } from "../entitlement-freeze";
+import {
+  makeUser as makeSeedUser,
+  seedOrg as seedSeedOrg,
+  seedFutureDivision,
+} from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -492,5 +498,42 @@ describe.skipIf(!HAS_DB)("scorer role (doc 13, PROMPT-18)", () => {
       expect(err).toBeInstanceOf(HttpError);
       expect((err as HttpError).status).toBe(403);
     }
+  });
+});
+
+describe.skipIf(!HAS_DB)("accepted-official scoring authority", () => {
+  it("acceptedOfficialCovers + requireScorable pass only for an accepted official", async () => {
+    const { auth } = await seedSeedOrg("pro");
+    const { fixtures } = await seedFutureDivision(auth);
+    const fixtureId = fixtures[0]!.id;
+    const user = await makeSeedUser("Ref One");
+    const [person] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name, user_id)
+      values (${auth.orgId}, 'Ref One', ${user.id}) returning id`;
+    const [official] = await sql<{ id: string }[]>`
+      insert into officials (org_id, person_id, display_name, role_keys)
+      values (${auth.orgId}, ${person!.id}, 'Ref One', ${sql.json(["referee"])}) returning id`;
+    await sql`
+      insert into fixture_officials (org_id, fixture_id, official_id, role_key, response)
+      values (${auth.orgId}, ${fixtureId}, ${official!.id}, 'referee', 'pending')`;
+
+    // pending → no authority
+    expect(await acceptedOfficialCovers(user.id, fixtureId)).toBe(false);
+
+    await sql`update fixture_officials set response = 'accepted'
+              where fixture_id = ${fixtureId} and official_id = ${official!.id}`;
+    expect(await acceptedOfficialCovers(user.id, fixtureId)).toBe(true);
+
+    // "official" is not (yet) part of OrgRole — requireScorable only reads
+    // userId for this branch, so the cast is safe here.
+    const officialAuth = {
+      orgId: auth.orgId, via: "session" as const, userId: user.id, role: "official", keyId: null,
+    } as unknown as AuthCtx;
+    await expect(requireScorable(officialAuth, fixtureId)).resolves.toMatchObject({ id: fixtureId });
+
+    await sql`update fixture_officials set response = 'declined'
+              where fixture_id = ${fixtureId} and official_id = ${official!.id}`;
+    expect(await acceptedOfficialCovers(user.id, fixtureId)).toBe(false);
+    await expect(requireScorable(officialAuth, fixtureId)).rejects.toThrow(/cannot record scores/);
   });
 });
