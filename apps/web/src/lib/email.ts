@@ -33,6 +33,12 @@ import {
   type SponsorReceiptArgs,
   sponsorRefundTemplate,
   type SponsorRefundArgs,
+  officialInviteTemplate,
+  type OfficialInviteArgs,
+  officialAssignedTemplate,
+  type OfficialAssignedArgs,
+  officialAssignmentChangedTemplate,
+  type OfficialAssignmentChangedArgs,
 } from "@/lib/email-templates";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -174,6 +180,55 @@ export async function sendClaimInviteEmail(
 ): Promise<boolean> {
   const dict = await getDictionary(locale, "emails");
   return send({ to, transactional: true, ...claimInviteTemplate(args, dict) });
+}
+
+/** Origin for officiating emails fired from request-less paths — same
+ *  override order as the registration senders. */
+function appOrigin(): string {
+  return (
+    process.env.OAUTH_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
+}
+
+/** Officiating claim invite (PROMPT-57) — same rail as sendClaimInviteEmail,
+ *  officiating copy. Officials default to en (no stored locale). */
+export async function sendOfficialInviteEmail(
+  to: string,
+  args: OfficialInviteArgs,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, transactional: true, ...officialInviteTemplate(args, dict) });
+}
+
+/** New officiating assignment(s) with accept/decline CTA to /me. */
+export async function sendOfficialAssignedEmail(
+  to: string,
+  args: Omit<OfficialAssignedArgs, "meUrl">,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({
+    to,
+    transactional: true,
+    ...officialAssignedTemplate({ ...args, meUrl: `${appOrigin()}/me` }, dict),
+  });
+}
+
+/** A match the official is assigned to changed time/venue. */
+export async function sendOfficialAssignmentChangedEmail(
+  to: string,
+  args: Omit<OfficialAssignmentChangedArgs, "meUrl">,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({
+    to,
+    transactional: true,
+    ...officialAssignmentChangedTemplate({ ...args, meUrl: `${appOrigin()}/me` }, dict),
+  });
 }
 
 /** One-shot +24h funnel reminder (v3/07 §6). */

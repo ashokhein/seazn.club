@@ -18,7 +18,11 @@ import { StandaloneScheduleSettings } from "@/components/v2/board/settings-panel
 import { OfficialsPanel } from "@/components/v2/officials-panel";
 import { HistoryPanel } from "@/components/v2/history-panel";
 import { ConstraintsPanel } from "@/components/v2/constraints-panel";
-import { listOfficials } from "@/server/usecases/officials";
+import {
+  listOfficialsForConsole,
+  listOfficialBlackouts,
+  listOfficialBusyElsewhere,
+} from "@/server/usecases/officials";
 import { feedLabels, type FeedRow } from "@/lib/schedule-board";
 import { UpgradeGate } from "@/components/upgrade-gate";
 
@@ -50,6 +54,8 @@ export default async function DivisionSchedulePage({
     boardEditable,
     constraints,
     officials,
+    blackouts,
+    busy,
     canExport,
   ] = await Promise.all([
     getCompetition(auth, division.competition_id),
@@ -59,7 +65,9 @@ export default async function DivisionSchedulePage({
     getScheduleSettings(auth, id),
     hasFeature(auth.orgId, "scheduling.board"),
     hasFeature(auth.orgId, "scheduling.constraints"),
-    listOfficials(auth),
+    listOfficialsForConsole(auth),
+    listOfficialBlackouts(auth),
+    listOfficialBusyElsewhere(auth),
     hasFeature(auth.orgId, "exports"),
   ]);
 
@@ -153,6 +161,9 @@ export default async function DivisionSchedulePage({
             role_keys: o.role_keys,
             entrant_id: o.entrant_id,
             max_per_day: o.max_per_day,
+            email: o.email,
+            claimed: o.claimed,
+            invite_pending: o.invite_pending,
           }))}
           fixtures={fixtures.map((f) => {
             const names = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
@@ -164,13 +175,16 @@ export default async function DivisionSchedulePage({
               scheduled_at: f.scheduled_at,
               officials: (f.officials ?? []) as {
                 official_id: string; name: string; role: string; locked: boolean;
+                response?: string; decline_reason?: string | null;
               }[],
             };
           })}
           stages={stages.map((s) => ({ id: s.id, name: s.name, seq: s.seq }))}
           hideNames={division.officials_hide_names}
           canEdit={canEdit && !frozen}
-          sportKey={division.sport_key}
+          blackouts={blackouts}
+          busyElsewhere={busy}
+          venueTz={settings.tz}
         />
         )}
 

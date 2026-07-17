@@ -1094,6 +1094,7 @@ export const Official = z.object({
   person_id: z.string().nullable(),
   entrant_id: z.string().nullable(),
   display_name: z.string(),
+  email: z.string().nullable(),
   role_keys: z.array(z.string()),
   home_pool_id: z.string().nullable(),
   max_per_day: z.number().int().nullable(),
@@ -1104,6 +1105,7 @@ export const CreateOfficial = z.object({
   display_name: z.string().min(1).max(200),
   person_id: Uuid.optional(),
   entrant_id: Uuid.optional(),
+  email: z.email().max(200).nullable().optional(),
   role_keys: z.array(z.string().min(1)).min(1).default(["referee"]),
   home_pool_id: Uuid.nullable().optional(),
   max_per_day: z.number().int().positive().nullable().optional(),
@@ -1188,6 +1190,48 @@ export const StartSponsorCheckout = z.object({
 export const SponsorCheckoutStarted = z.object({
   order: SponsorOrder,
   checkout_url: z.string(),
+});
+
+// ---------------------------------------------------------------------------
+// Officiating portal (PROMPT-57) — assignment responses, blackout dates,
+// the official's score link
+// ---------------------------------------------------------------------------
+
+export const OfficiatingResponseInput = z.object({
+  response: z.enum(["accepted", "declined"]),
+  decline_reason: z.string().max(500).nullish(),
+});
+export type OfficiatingResponseInput = z.infer<typeof OfficiatingResponseInput>;
+
+export const OfficiatingResponseOut = z.object({
+  fixture_id: Uuid,
+  response: z.enum(["pending", "accepted", "declined"]),
+  decline_reason: z.string().nullable(),
+});
+
+export const OfficiatingBlackoutInput = z.object({
+  date: z.iso.date(),
+  note: z.string().max(200).nullish(),
+});
+export type OfficiatingBlackoutInput = z.infer<typeof OfficiatingBlackoutInput>;
+
+export const OfficiatingBlackout = z.object({
+  date: z.string(),
+  note: z.string().nullable(),
+});
+
+/** POST response only — the pad URL embeds the secret, shown exactly once. */
+export const OfficiatingScoreLink = z.object({
+  secret: z.string(),
+  expires_at: z.string(),
+});
+
+/** POST /me/officiating-claims/{id}/accept response (v11.1 — the /me
+ *  "Pending invites" card; the list itself is server-rendered, not an
+ *  /api/v1 route, so this is the only officiating-claim schema needed). */
+export const OfficiatingClaimAccepted = z.object({
+  org_name: z.string(),
+  official_name: z.string(),
 });
 
 const AssignPolicyBody = z.object({

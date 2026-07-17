@@ -29,6 +29,7 @@ export const HELP_ARTICLE_SLUGS = [
   "scheduling/undo",
   "scheduling/constraints",
   "scheduling/timezones",
+  "scheduling/officials",
   "scoring/basics",
   "scoring/conflicts",
   "scoring/device-links",

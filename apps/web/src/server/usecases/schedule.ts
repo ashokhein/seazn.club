@@ -29,6 +29,7 @@ import {
   type PutScheduleSettings,
   type ScheduleConflict,
 } from "@/server/api-v1/schemas";
+import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
 
@@ -693,8 +694,58 @@ export async function moveFixture(
       });
       await tx`update divisions set seq = ${seq} where id = ${fixture.division_id}`;
     }
-    return { divisionId: fixture.division_id, competitionId: fixture.competition_id };
+
+    // v11: officials who agreed to a slot must hear when it moves. Only real
+    // timetable/venue changes notify, only non-declined assignments, only
+    // officials with an email — assembled in-tx, sent after commit.
+    const timetableChanged =
+      (movesTimetable &&
+        ((fixture.scheduled_at !== null ? iso(ms(fixture.scheduled_at)) : null) !== nextAt ||
+          fixture.court_label !== nextCourt)) ||
+      (patch.venue !== undefined && patch.venue !== fixture.venue);
+    let changeNotices: {
+      email: string; display_name: string; role_key: string; org_name: string;
+      home_name: string | null; away_name: string | null; venue_tz: string | null;
+    }[] = [];
+    if (timetableChanged) {
+      changeNotices = await tx`
+        select o.email, o.display_name, fo.role_key, org.name as org_name,
+               h.display_name as home_name, a.display_name as away_name,
+               ss.tz as venue_tz
+        from fixture_officials fo
+        join officials o on o.id = fo.official_id
+        join organizations org on org.id = o.org_id
+        left join entrants h on h.id = ${fixture.home_entrant_id}
+        left join entrants a on a.id = ${fixture.away_entrant_id}
+        left join schedule_settings ss on ss.division_id = ${fixture.division_id}
+        where fo.fixture_id = ${fixture.id}
+          and fo.response <> 'declined' and o.email is not null`;
+    }
+    return {
+      divisionId: fixture.division_id,
+      competitionId: fixture.competition_id,
+      changeNotices,
+      change: {
+        prevAt: fixture.scheduled_at !== null ? iso(ms(fixture.scheduled_at)) : null,
+        nextAt,
+        court: nextCourt,
+        venue: patch.venue !== undefined ? patch.venue : fixture.venue,
+      },
+    };
   });
+  for (const n of out.changeNotices) {
+    void sendOfficialAssignmentChangedEmail(n.email, {
+      orgName: n.org_name,
+      officialName: n.display_name,
+      roleKey: n.role_key,
+      label: `${n.home_name ?? "TBD"} vs ${n.away_name ?? "TBD"}`,
+      prevAt: out.change.prevAt,
+      nextAt: out.change.nextAt,
+      venueTz: n.venue_tz,
+      court: out.change.court,
+      venue: out.change.venue,
+    }).catch(() => {});
+  }
   afterScheduleWrite(out.divisionId, out.competitionId, "schedule");
 }
 

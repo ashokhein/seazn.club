@@ -107,6 +107,16 @@ test.describe("player accounts (PROMPT-53)", () => {
   });
 
   test("player: claim via magic link and land on /me", async () => {
+    // Logged out, the auth card must sit centred in the night-stage column
+    // (regression: the max-w-sm card sat left-aligned inside the max-w-md
+    // claim column until it got mx-auto).
+    await playerPage.goto(claimUrl);
+    const card = playerPage.locator("main .card").first();
+    await expect(card).toBeVisible();
+    const cardBox = (await card.boundingBox())!;
+    const viewport = playerPage.viewportSize()!;
+    expect(Math.abs(cardBox.x + cardBox.width / 2 - viewport.width / 2)).toBeLessThan(3);
+
     await loginUi(playerPage, playerEmail);
     await playerPage.goto(claimUrl);
     await playerPage.getByRole("button", { name: /This is me/ }).click();

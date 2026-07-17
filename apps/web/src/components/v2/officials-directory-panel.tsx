@@ -1,0 +1,326 @@
+"use client";
+
+// Officials directory tab (v11.1 follow-up): the org-wide officials pool now
+// manages here — add/roster/invite/bulk-invite — instead of on every
+// division's schedule page. The schedule's Officials tab keeps assignment
+// (auto-assign, per-fixture pick, blackout warnings) and links back here to
+// manage the roster. Same usecases + API routes as before (officials CRUD +
+// /api/v1/officials/{id}/invite) — no new mechanisms, just a new home.
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { UpgradeGate } from "@/components/upgrade-gate";
+import { useConfirm } from "@/components/ui/confirm-provider";
+import { useMsg } from "@/components/i18n/dict-provider";
+import { OfficialAvatar, OfficialInviteForm, RoleChipPicker } from "@/components/v2/officials-shared";
+import { ALL_OFFICIAL_ROLES } from "@/lib/official-roles";
+
+export interface DirectoryOfficial {
+  id: string;
+  display_name: string;
+  role_keys: string[];
+  entrant_id: string | null;
+  email: string | null;
+  max_per_day: number | null;
+  claimed: boolean;
+  invite_pending: boolean;
+}
+
+export function OfficialsDirectoryPanel({
+  officials,
+  canEdit,
+  rolesMultiAllowed,
+}: {
+  officials: DirectoryOfficial[];
+  canEdit: boolean;
+  /** Pro entitlement `officials.roles_multi` (v11.1): free plan picks one
+   *  role; the chip picker enforces this client-side to match the server. */
+  rolesMultiAllowed: boolean;
+}) {
+  const msg = useMsg();
+  const router = useRouter();
+  const [error, setError] = useState<string | null>(null);
+  const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [name, setName] = useState("");
+  const [roles, setRoles] = useState<string[]>(["referee"]);
+  const [bulkDone, setBulkDone] = useState<number | null>(null);
+  /** One expandable per row: the invite form or the roles editor. */
+  const [openRow, setOpenRow] = useState<{ id: string; mode: "invite" | "roles" } | null>(null);
+  const confirm = useConfirm();
+
+  const bulkTargets = officials.filter((o) => o.email && !o.claimed && !o.invite_pending);
+
+  async function run(fn: () => Promise<unknown>, refresh = true) {
+    setError(null);
+    setPaywallFeature(null);
+    setBusy(true);
+    try {
+      await fn();
+      if (refresh) router.refresh();
+    } catch (err) {
+      if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
+        setPaywallFeature(String(err.extra.feature_key ?? ""));
+      } else {
+        setError(err instanceof Error ? err.message : msg("officials.failed"));
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function bulkInvite() {
+    await run(async () => {
+      let sent = 0;
+      for (const o of bulkTargets) {
+        await apiV1(`/api/v1/officials/${o.id}/invite`, {
+          method: "POST",
+          json: { email: o.email },
+        });
+        sent++;
+      }
+      setBulkDone(sent);
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      {paywallFeature && <UpgradeGate feature={paywallFeature} />}
+      {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
+
+      <div className="card space-y-3 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold text-slate-900">{msg("officials.roster")}</h3>
+          <span className="flex items-center gap-2">
+            {canEdit && bulkTargets.length > 0 && (
+              <button
+                type="button"
+                className="btn btn-ghost py-1 text-xs"
+                disabled={busy}
+                onClick={() => void bulkInvite()}
+              >
+                {msg("officials.bulkInvite")} ({bulkTargets.length})
+              </button>
+            )}
+            {bulkDone !== null && (
+              <span className="text-xs text-lime-700">{msg("officials.bulkDone", { n: bulkDone })}</span>
+            )}
+            {officials.length > 0 && (
+              <span className="text-xs text-slate-400">{msg("officials.total", { n: officials.length })}</span>
+            )}
+          </span>
+        </div>
+
+        {officials.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-slate-200 px-3 py-6 text-center text-sm text-slate-500">
+            {msg("officials.empty")}
+          </p>
+        ) : (
+          <ul className="grid gap-2 lg:grid-cols-2">
+            {officials.map((o) => (
+              <li key={o.id} className="min-w-0 rounded-lg border border-slate-200 bg-white p-3">
+                <div className="flex items-start gap-3">
+                  <OfficialAvatar name={o.display_name} />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-800">{o.display_name}</p>
+                    {/* review fix 2026-07-17: an official's email is contact
+                        info for whoever manages the roster — viewers browsing
+                        Directory should not see it. */}
+                    {canEdit && o.email && <p className="truncate text-xs text-slate-400">{o.email}</p>}
+                    <div className="mt-1 flex flex-wrap items-center gap-1">
+                      {o.role_keys.map((r) => (
+                        <span key={r} className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500">
+                          {r.replace(/_/g, " ")}
+                        </span>
+                      ))}
+                      {o.entrant_id && (
+                        <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
+                          {msg("officials.teamRef")}
+                        </span>
+                      )}
+                      {o.max_per_day != null && (
+                        <span className="rounded bg-slate-50 px-1.5 py-0.5 text-[11px] text-slate-400">
+                          {msg("officials.maxPerDay", { n: o.max_per_day })}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  {/* Right rail: link status on top, actions under it — kept
+                      out of the name/roles column so nothing overlaps when
+                      the invite form opens below the row. */}
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    {o.claimed ? (
+                      <span className="rounded bg-lime-100 px-1.5 py-0.5 text-[11px] text-lime-700">
+                        {msg("officials.linked")}
+                      </span>
+                    ) : o.invite_pending ? (
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">
+                        {msg("officials.invited")}
+                      </span>
+                    ) : null}
+                    {canEdit && !o.claimed && openRow?.id !== o.id && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost py-1 text-xs"
+                        disabled={busy}
+                        onClick={() => setOpenRow({ id: o.id, mode: "invite" })}
+                      >
+                        {msg("officials.invite")}
+                      </button>
+                    )}
+                    {canEdit && !(openRow?.id === o.id && openRow.mode === "roles") && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost py-1 text-xs"
+                        disabled={busy}
+                        onClick={() => setOpenRow({ id: o.id, mode: "roles" })}
+                      >
+                        {msg("officials.editRoles")}
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                        disabled={busy}
+                        onClick={() =>
+                          void (async () => {
+                            const ok = await confirm({
+                              title: msg("officials.deleteTitle", { name: o.display_name }),
+                              body: msg("officials.deleteBody"),
+                              confirmLabel: msg("officials.deleteLabel"),
+                              tone: "danger",
+                            });
+                            if (!ok) return;
+                            await run(() => apiV1(`/api/v1/officials/${o.id}`, { method: "DELETE" }));
+                          })()
+                        }
+                      >
+                        {msg("officials.delete")}
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {openRow?.id === o.id && (
+                  <div className="mt-3 border-t border-slate-100 pt-3">
+                    {openRow.mode === "invite" ? (
+                      <OfficialInviteForm
+                        officialId={o.id}
+                        initialEmail={o.email}
+                        onClose={() => setOpenRow(null)}
+                      />
+                    ) : (
+                      <OfficialRolesEditor
+                        initial={o.role_keys}
+                        multiAllowed={rolesMultiAllowed}
+                        busy={busy}
+                        onSave={(roleKeys) =>
+                          void run(async () => {
+                            await apiV1(`/api/v1/officials/${o.id}`, {
+                              method: "PATCH",
+                              json: { role_keys: roleKeys },
+                            });
+                            setOpenRow(null);
+                          })
+                        }
+                        onClose={() => setOpenRow(null)}
+                      />
+                    )}
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {canEdit && (
+        <div className="card space-y-3 p-4">
+          <h3 className="text-sm font-semibold text-slate-900">{msg("officials.addTitle")}</h3>
+          <form
+            className="space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!name.trim()) return;
+              void run(async () => {
+                await apiV1("/api/v1/officials", {
+                  method: "POST",
+                  json: {
+                    display_name: name.trim(),
+                    role_keys: roles.length ? roles : ["referee"],
+                  },
+                });
+                setName("");
+                setRoles(["referee"]);
+              });
+            }}
+          >
+            <div>
+              <label className="label" htmlFor="off-add-name">
+                {msg("officials.name")}
+              </label>
+              <input
+                id="off-add-name"
+                className="input w-full sm:max-w-xs"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+            </div>
+            <RoleChipPicker
+              value={roles}
+              onChange={setRoles}
+              suggestions={ALL_OFFICIAL_ROLES}
+              multiAllowed={rolesMultiAllowed}
+            />
+            <button type="submit" className="btn btn-primary w-full sm:w-auto" disabled={busy}>
+              {msg("officials.add")}
+            </button>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Inline roles editor for an existing official — same chip picker (and the
+ *  same free-plan swap rule) as the add form; PATCHes role_keys on save. */
+function OfficialRolesEditor({
+  initial,
+  multiAllowed,
+  busy,
+  onSave,
+  onClose,
+}: {
+  initial: string[];
+  multiAllowed: boolean;
+  busy: boolean;
+  onSave: (roleKeys: string[]) => void;
+  onClose: () => void;
+}) {
+  const msg = useMsg();
+  const [roles, setRoles] = useState<string[]>(initial.length ? initial : ["referee"]);
+  return (
+    <div className="space-y-3">
+      <RoleChipPicker
+        value={roles}
+        onChange={setRoles}
+        suggestions={ALL_OFFICIAL_ROLES}
+        multiAllowed={multiAllowed}
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy || roles.length === 0}
+          onClick={() => onSave(roles)}
+        >
+          {msg("officials.saveRoles")}
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={onClose}>
+          {msg("officials.cancel")}
+        </button>
+      </div>
+    </div>
+  );
+}

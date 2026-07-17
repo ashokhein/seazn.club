@@ -8,7 +8,9 @@ import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
 import { listMyFixtures, listMyPersons, type MyFixture, type MyResult } from "@/server/usecases/me";
+import { getMyOfficiating, listPendingOfficiatingClaims } from "@/server/usecases/me-officiating";
 import { RsvpControl } from "@/components/me/rsvp-control";
+import { OfficiatingLane } from "@/components/me/officiating-lane";
 import { ConsentCard } from "@/components/me/consent-card";
 import { LogoutButton } from "@/components/logout-button";
 import { Zoned, ViewerTzProvider } from "@/components/client-time";
@@ -28,15 +30,21 @@ export default async function MePage({
     getDictionary(locale, "console"),
     getDictionary(locale, "ui"),
   ]);
-  const [{ upcoming, results, teams }, persons, orgs, activeOrgId] = await Promise.all([
-    listMyFixtures(user.id),
-    listMyPersons(user.id),
-    // Dual-role seam: organisers who are also players get a door back.
-    // Read-only resolve — resolveActiveOrg repairs the cookie, which a
-    // Server Component render is not allowed to do.
-    getUserOrgs(user.id),
-    getActiveOrgId(),
-  ]);
+  const [{ upcoming, results, teams }, officiating, pendingOfficiatingClaims, persons, orgs, activeOrgId] =
+    await Promise.all([
+      listMyFixtures(user.id),
+      getMyOfficiating(user.id),
+      // Pending invites run regardless of is_official (PROMPT-57 v11.1) — a
+      // brand-new official with no linked row yet still needs to see (and
+      // accept) their very first invite.
+      listPendingOfficiatingClaims(user.email),
+      listMyPersons(user.id),
+      // Dual-role seam: organisers who are also players get a door back.
+      // Read-only resolve — resolveActiveOrg repairs the cookie, which a
+      // Server Component render is not allowed to do.
+      getUserOrgs(user.id),
+      getActiveOrgId(),
+    ]);
   const activeOrg = orgs.find((o) => o.id === activeOrgId) ?? orgs[0] ?? null;
   const { claimed } = await searchParams;
   const [next, ...rest] = upcoming;
@@ -72,9 +80,12 @@ export default async function MePage({
         )}
         <h1 className="page-title mb-6">{t(ui, "me.title")}</h1>
 
-        {upcoming.length === 0 && results.length === 0 && (
-          <p className="card p-6 text-sm text-slate-500">{t(ui, "me.empty")}</p>
-        )}
+        {upcoming.length === 0 &&
+          results.length === 0 &&
+          !officiating.is_official &&
+          pendingOfficiatingClaims.length === 0 && (
+            <p className="card p-6 text-sm text-slate-500">{t(ui, "me.empty")}</p>
+          )}
 
         {next && (
           <section className="app-empty-tile mb-8 rounded-2xl p-5 sm:p-6">
@@ -175,6 +186,18 @@ export default async function MePage({
               ))}
             </ul>
           </section>
+        )}
+
+        {/* Officiating lane (PROMPT-57, v11.1 pending invites): shows once a
+            claimed official points at this login OR an invite is waiting on
+            this email — a pure player with neither never sees it. */}
+        {(officiating.is_official || pendingOfficiatingClaims.length > 0) && (
+          <OfficiatingLane
+            isOfficial={officiating.is_official}
+            assignments={officiating.assignments}
+            blackouts={officiating.blackouts}
+            pendingClaims={pendingOfficiatingClaims}
+          />
         )}
 
         {results.length > 0 && (

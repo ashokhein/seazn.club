@@ -4,12 +4,17 @@
 // schedule, per-fixture manual assign with lock, phased sourcing affordance,
 // hide-names toggle. Keyboard-accessible; conflict badges mirror doc 12 §2
 // block/warn.
+// v11.1 follow-up: roster management (add / invite / bulk-invite) moved to
+// the org-wide Directory → Officials tab (officials-directory-panel.tsx) —
+// this panel now shows a compact read-only roster strip that links there.
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "@/components/ui/console-link";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
-import { officialRolePreset } from "@/lib/official-roles";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
+import { OfficialAvatar } from "@/components/v2/officials-shared";
+import { fmtTime, fmtZoneAbbrev } from "@/lib/format";
 
 interface Official {
   id: string;
@@ -17,12 +22,24 @@ interface Official {
   role_keys: string[];
   entrant_id: string | null;
   max_per_day: number | null;
+  /** v11 claim-rail state */
+  email: string | null;
+  claimed: boolean;
+  invite_pending: boolean;
 }
 interface FixtureLite {
   id: string;
   label: string;
   scheduled_at: string | null;
-  officials: { official_id: string; name: string; role: string; locked: boolean }[];
+  officials: {
+    official_id: string;
+    name: string;
+    role: string;
+    locked: boolean;
+    /** v11: pending | accepted | declined (older cache rows omit it). */
+    response?: string;
+    decline_reason?: string | null;
+  }[];
 }
 interface StageLite {
   id: string;
@@ -43,22 +60,6 @@ interface Sourced {
   pending: { reason: string }[];
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join("");
-}
-
-const AVATAR_COLORS = ["#7c3aed", "#0891b2", "#db2777", "#ea580c", "#16a34a", "#2563eb", "#9333ea", "#c2410c"];
-function avatarColor(name: string): string {
-  let h = 0;
-  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  return AVATAR_COLORS[h % AVATAR_COLORS.length]!;
-}
-
 export function OfficialsPanel({
   divisionId,
   officials,
@@ -66,7 +67,9 @@ export function OfficialsPanel({
   stages,
   hideNames,
   canEdit,
-  sportKey,
+  blackouts = [],
+  busyElsewhere = [],
+  venueTz = "UTC",
 }: {
   divisionId: string;
   officials: Official[];
@@ -74,18 +77,20 @@ export function OfficialsPanel({
   stages: StageLite[];
   hideNames: boolean;
   canEdit: boolean;
-  /** Seeds the add-form role + crew hint from the sport's preset (v6/00 §4). */
-  sportKey?: string;
+  /** v11: blackout dates per official — warns before assigning onto one. */
+  blackouts?: { official_id: string; date: string }[];
+  /** v11.1: other-org booked times for MY officials — timestamp only, never
+   *  which org/competition/fixture (derived read, privacy by design). */
+  busyElsewhere?: { official_id: string; scheduled_at: string }[];
+  /** Venue zone for matching a fixture's date against blackout dates. */
+  venueTz?: string;
 }) {
   const msg = useMsg();
   const locale = useLocale();
-  const rolePreset = officialRolePreset(sportKey);
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [name, setName] = useState("");
-  const [roles, setRoles] = useState(rolePreset.defaultRole);
   const [blockStay, setBlockStay] = useState(true);
   const [poolLock, setPoolLock] = useState(false);
   const [fairness, setFairness] = useState<"tournament" | "per_day">("tournament");
@@ -96,6 +101,44 @@ export function OfficialsPanel({
 
   const officialName = (id: string) =>
     officials.find((o) => o.id === id)?.display_name ?? id;
+
+  // Blackout lookup (v11 warn-before-assign): official → set of unavailable
+  // dates, matched against the fixture's date in the venue zone.
+  const blackoutsByOfficial = new Map<string, Set<string>>();
+  for (const b of blackouts) {
+    const set = blackoutsByOfficial.get(b.official_id) ?? new Set<string>();
+    set.add(b.date);
+    blackoutsByOfficial.set(b.official_id, set);
+  }
+  const fixtureDate = (iso: string | null): string | null => {
+    if (!iso) return null;
+    try {
+      return new Date(iso).toLocaleDateString("en-CA", { timeZone: venueTz || "UTC" });
+    } catch {
+      return iso.slice(0, 10);
+    }
+  };
+  const unavailableFor = (officialId: string, scheduledAt: string | null): boolean => {
+    const d = fixtureDate(scheduledAt);
+    return d !== null && (blackoutsByOfficial.get(officialId)?.has(d) ?? false);
+  };
+
+  // Busy-elsewhere lookup (v11.1 warn-before-assign): official → other-org
+  // booked timestamps, matched against the fixture's date in the venue zone.
+  // Timestamp only — never which org/competition/fixture (derived read).
+  const busyByOfficial = new Map<string, string[]>();
+  for (const b of busyElsewhere) {
+    const list = busyByOfficial.get(b.official_id) ?? [];
+    list.push(b.scheduled_at);
+    busyByOfficial.set(b.official_id, list);
+  }
+  const busyTimeFor = (officialId: string, scheduledAt: string | null): string | null => {
+    const d = fixtureDate(scheduledAt);
+    if (d === null) return null;
+    const match = busyByOfficial.get(officialId)?.find((at) => fixtureDate(at) === d);
+    if (!match) return null;
+    return `${fmtTime(venueTz, match)} ${fmtZoneAbbrev(venueTz, match)}`;
+  };
 
   async function run(fn: () => Promise<unknown>, refresh = true) {
     setError(null);
@@ -114,8 +157,6 @@ export function OfficialsPanel({
       setBusy(false);
     }
   }
-
-  const roleList = roles.split(/[,\s]+/).filter(Boolean);
 
   return (
     <section className="mt-8 space-y-4" aria-label={msg("officials.aria")}>
@@ -144,9 +185,10 @@ export function OfficialsPanel({
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      {/* roster of officials */}
+      {/* compact read-only roster strip (v11.1): full roster management —
+          add / invite / bulk-invite — moved to Directory → Officials. */}
       <div className="card space-y-3 p-4">
-        <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-slate-900">{msg("officials.roster")}</h3>
           {officials.length > 0 && (
             <span className="text-xs text-slate-400">{msg("officials.total", { n: officials.length })}</span>
@@ -157,79 +199,35 @@ export function OfficialsPanel({
             {msg("officials.empty")}
           </p>
         ) : (
-          <ul className="grid gap-2 sm:grid-cols-2">
+          <ul className="flex flex-wrap gap-2">
             {officials.map((o) => (
               <li
                 key={o.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-2.5"
+                className="flex items-center gap-2 rounded-full border border-slate-200 bg-white py-1 pl-1 pr-3"
               >
-                <span
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold text-white"
-                  style={{ backgroundColor: avatarColor(o.display_name) }}
-                  aria-hidden
-                >
-                  {initials(o.display_name)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-slate-800">{o.display_name}</p>
-                  <div className="mt-0.5 flex flex-wrap items-center gap-1">
-                    {o.role_keys.map((r) => (
-                      <span
-                        key={r}
-                        className="rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500"
-                      >
-                        {r}
-                      </span>
-                    ))}
-                    {o.entrant_id && (
-                      <span className="rounded bg-violet-50 px-1.5 py-0.5 text-[11px] text-violet-600">
-                        {msg("officials.teamRef")}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                {o.max_per_day != null && (
-                  <span className="shrink-0 text-[11px] text-slate-400">
-                    {msg("officials.maxPerDay", { n: o.max_per_day })}
+                <OfficialAvatar name={o.display_name} size="sm" />
+                <span className="text-xs text-slate-700">{o.display_name}</span>
+                {o.claimed ? (
+                  <span className="rounded bg-lime-100 px-1.5 py-0.5 text-[10px] text-lime-700">
+                    {msg("officials.linked")}
                   </span>
-                )}
+                ) : o.invite_pending ? (
+                  <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700">
+                    {msg("officials.invited")}
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>
         )}
         {canEdit && (
-          <form
-            className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (!name.trim()) return;
-              void run(async () => {
-                await apiV1("/api/v1/officials", {
-                  method: "POST",
-                  json: {
-                    display_name: name.trim(),
-                    role_keys: roleList.length ? roleList : [rolePreset.defaultRole],
-                  },
-                });
-                setName("");
-              });
-            }}
+          <Link
+            href="/directory?tab=officials"
+            prefetch={false}
+            className="inline-block text-xs font-medium text-purple-600 hover:underline"
           >
-            <label className="flex flex-col gap-1 text-xs text-slate-500">
-              {msg("officials.name")}
-              <input className="input" value={name} onChange={(e) => setName(e.target.value)} required />
-            </label>
-            <label className="flex flex-col gap-1 text-xs text-slate-500">
-              {msg("officials.roles")}
-              <input className="input w-40" value={roles} onChange={(e) => setRoles(e.target.value)} />
-            </label>
-            <button type="submit" className="btn btn-primary" disabled={busy}>{msg("officials.add")}</button>
-            {rolePreset.crew.length > 1 && (
-              <span className="basis-full text-[11px] text-slate-400">
-                {msg("officials.crew", { crew: rolePreset.crew.join(", ") })}
-              </span>
-            )}
-          </form>
+            {msg("officials.manageInDirectory")} →
+          </Link>
         )}
       </div>
 
@@ -437,12 +435,58 @@ export function OfficialsPanel({
                     <span className="text-sm text-slate-400">—</span>
                   ) : (
                     <ul className="flex flex-wrap gap-1">
-                      {f.officials.map((o, i) => (
-                        <li key={i} className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
-                          {o.name} <span className="text-slate-400">{o.role}</span>
-                          {o.locked && <span aria-label={msg("officials.locked")} title={msg("officials.locked")}> 🔒</span>}
-                        </li>
-                      ))}
+                      {f.officials.map((o, i) => {
+                        // v11 response flag: a decline is the organiser's cue
+                        // for a manual re-pick — nothing is reassigned for them.
+                        const declined = o.response === "declined";
+                        const pending = o.response === "pending";
+                        return (
+                          <li
+                            key={i}
+                            title={
+                              declined && o.decline_reason
+                                ? msg("officials.declineReason", { reason: o.decline_reason })
+                                : declined
+                                  ? msg("officials.respDeclined")
+                                  : pending
+                                    ? msg("officials.respPending")
+                                    : o.response === "accepted"
+                                      ? msg("officials.respAccepted")
+                                      : undefined
+                            }
+                            className={`rounded-full px-2 py-0.5 text-xs ${
+                              declined
+                                ? "bg-red-50 text-red-700 ring-1 ring-red-200"
+                                : pending
+                                  ? "bg-amber-50 text-amber-800"
+                                  : "bg-slate-100 text-slate-700"
+                            }`}
+                          >
+                            {declined ? "✗ " : pending ? "· " : o.response === "accepted" ? "✓ " : ""}
+                            {o.name} <span className={declined ? "text-red-400" : "text-slate-400"}>{o.role}</span>
+                            {o.locked && <span aria-label={msg("officials.locked")} title={msg("officials.locked")}> 🔒</span>}
+                            {unavailableFor(o.official_id, f.scheduled_at) && (
+                              <span
+                                className="ml-1 text-amber-600"
+                                title={msg("officials.unavailableOn")}
+                              >
+                                ⚠
+                              </span>
+                            )}
+                            {(() => {
+                              const busyTime = busyTimeFor(o.official_id, f.scheduled_at);
+                              return busyTime ? (
+                                <span
+                                  className="ml-1 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] text-amber-700 ring-1 ring-amber-200"
+                                  title={msg("officials.bookedElsewhereTitle")}
+                                >
+                                  {msg("officials.bookedElsewhere", { time: busyTime })}
+                                </span>
+                              ) : null;
+                            })()}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </td>
@@ -468,9 +512,19 @@ export function OfficialsPanel({
                       }}
                     >
                       <option value="">{msg("officials.none")}</option>
-                      {officials.map((o) => (
-                        <option key={o.id} value={o.id}>{officialName(o.id)}</option>
-                      ))}
+                      {officials.map((o) => {
+                        const busyTime = busyTimeFor(o.id, f.scheduled_at);
+                        return (
+                          <option key={o.id} value={o.id}>
+                            {officialName(o.id)}
+                            {unavailableFor(o.id, f.scheduled_at)
+                              ? ` — ${msg("officials.unavailableSuffix")}`
+                              : busyTime
+                                ? ` — ${msg("officials.bookedElsewhereSuffix", { time: busyTime })}`
+                                : ""}
+                          </option>
+                        );
+                      })}
                     </select>
                   </td>
                 )}

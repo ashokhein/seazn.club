@@ -109,29 +109,22 @@ export interface ResolvedClaim {
   person_id: string;
   person_name: string;
   email: string;
+  /** The person is on the officials roster (v11) — the claim page swaps to
+   *  officiating copy; the claim mechanics are identical. */
+  is_official: boolean;
 }
 
-/**
- * Resolve a pc_ token for the /claim page. Distinct error codes so the page
- * can render each dead-end with its own copy: CLAIM_INVALID / CLAIM_REVOKED /
- * CLAIM_EXPIRED / CLAIM_CLAIMED.
- */
-export async function resolveClaimToken(token: string): Promise<ResolvedClaim> {
-  const [claim] = await sql<
-    (ResolvedClaim & {
-      expires_at: string;
-      claimed_at: string | null;
-      revoked_at: string | null;
-      user_id: string | null;
-    })[]
-  >`
-    select pc.id, pc.org_id, o.name as org_name, pc.person_id,
-           p.full_name as person_name, pc.email,
-           pc.expires_at, pc.claimed_at, pc.revoked_at, p.user_id
-    from person_claims pc
-    join persons p on p.id = pc.person_id
-    join organizations o on o.id = pc.org_id
-    where pc.token_hash = ${hashClaimToken(token)} limit 1`;
+type ClaimLookupRow = ResolvedClaim & {
+  expires_at: string;
+  claimed_at: string | null;
+  revoked_at: string | null;
+  user_id: string | null;
+};
+
+/** Distinct error codes so a dead-end renders its own copy, whichever way the
+ *  claim was looked up: CLAIM_INVALID / CLAIM_REVOKED / CLAIM_EXPIRED /
+ *  CLAIM_CLAIMED. Shared by resolveClaimToken and resolveClaimById. */
+function settleClaimRow(claim: ClaimLookupRow | undefined): ResolvedClaim {
   if (!claim) throw new HttpError(401, "This claim link is not valid", "CLAIM_INVALID");
   if (claim.claimed_at || claim.user_id) {
     throw new HttpError(409, "This profile has already been claimed", "CLAIM_CLAIMED");
@@ -149,21 +142,56 @@ export async function resolveClaimToken(token: string): Promise<ResolvedClaim> {
     person_id: claim.person_id,
     person_name: claim.person_name,
     email: claim.email,
+    is_official: claim.is_official,
   };
 }
 
+/** Resolve a pc_ token for the /claim page. */
+export async function resolveClaimToken(token: string): Promise<ResolvedClaim> {
+  const [claim] = await sql<ClaimLookupRow[]>`
+    select pc.id, pc.org_id, o.name as org_name, pc.person_id,
+           p.full_name as person_name, pc.email,
+           exists(select 1 from officials off where off.person_id = pc.person_id)
+             as is_official,
+           pc.expires_at, pc.claimed_at, pc.revoked_at, p.user_id
+    from person_claims pc
+    join persons p on p.id = pc.person_id
+    join organizations o on o.id = pc.org_id
+    where pc.token_hash = ${hashClaimToken(token)} limit 1`;
+  return settleClaimRow(claim);
+}
+
 /**
- * Link the person to the logged-in user. Strict email match (owner decision
- * 2026-07-13): only an account signed in with the INVITED address may accept —
- * the emailed link alone is not enough. Transactional: the person row is
- * locked so two racing accepts can't both win; the loser gets CLAIM_CLAIMED.
+ * Resolve a claim by id AND caller email in one step (v11.1 — the /me
+ * "Pending invites" card). Unlike the token flow — where holding the emailed
+ * token IS the proof of ownership, so state differentiates before the email
+ * check — a bare id proves nothing on its own: any authenticated user could
+ * pass any id. So ownership is folded into the lookup itself: the query is
+ * scoped to `ownerEmail`, and a non-owner (wrong email, or an id that
+ * doesn't exist at all) gets the exact same generic 404 CLAIM_INVALID —
+ * never a hint of whether the claim is pending, claimed, expired, or
+ * revoked. Only once a row comes back (ownership proven) does state
+ * differentiate, via the same settleClaimRow the token flow uses.
  */
-export async function claimPerson(
-  token: string,
-  userId: string,
-  userEmail: string,
-): Promise<ResolvedClaim> {
-  const claim = await resolveClaimToken(token);
+export async function resolveClaimById(id: string, ownerEmail: string): Promise<ResolvedClaim> {
+  const [claim] = await sql<ClaimLookupRow[]>`
+    select pc.id, pc.org_id, o.name as org_name, pc.person_id,
+           p.full_name as person_name, pc.email,
+           exists(select 1 from officials off where off.person_id = pc.person_id)
+             as is_official,
+           pc.expires_at, pc.claimed_at, pc.revoked_at, p.user_id
+    from person_claims pc
+    join persons p on p.id = pc.person_id
+    join organizations o on o.id = pc.org_id
+    where pc.id = ${id} and lower(pc.email) = lower(${ownerEmail}) limit 1`;
+  if (!claim) throw new HttpError(404, "This invite could not be found", "CLAIM_INVALID");
+  return settleClaimRow(claim);
+}
+
+/** Strict email match (owner decision 2026-07-13): only an account signed in
+ *  with the INVITED address may accept — the emailed link (or claim id)
+ *  alone is not enough. Case-insensitive. Shared by every accept path. */
+export function assertClaimEmail(claim: ResolvedClaim, userEmail: string): void {
   if (claim.email.toLowerCase() !== userEmail.toLowerCase()) {
     throw new HttpError(
       403,
@@ -171,6 +199,16 @@ export async function claimPerson(
       "CLAIM_EMAIL_MISMATCH",
     );
   }
+}
+
+/**
+ * The shared accept core (v11.1 extraction): link the person to the logged-in
+ * user. Transactional — the person row's null-user_id guard means two racing
+ * accepts can't both win; the loser gets CLAIM_CLAIMED. Both the token flow
+ * (claimPerson) and the by-id flow (acceptMyOfficiatingClaim in
+ * me-officiating.ts) call this — one acceptance mechanism, two ways in.
+ */
+export async function acceptResolvedClaim(claim: ResolvedClaim, userId: string): Promise<ResolvedClaim> {
   await sql.begin(async (tx) => {
     const [updated] = await tx<{ id: string }[]>`
       update persons set user_id = ${userId}
@@ -184,6 +222,20 @@ export async function claimPerson(
       where id = ${claim.id} and claimed_at is null`;
   });
   return claim;
+}
+
+/**
+ * Link the person to the logged-in user via the pc_ token (the /claim page).
+ * Strict email match, then the shared accept core.
+ */
+export async function claimPerson(
+  token: string,
+  userId: string,
+  userEmail: string,
+): Promise<ResolvedClaim> {
+  const claim = await resolveClaimToken(token);
+  assertClaimEmail(claim, userEmail);
+  return acceptResolvedClaim(claim, userId);
 }
 
 /**

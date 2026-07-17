@@ -9,14 +9,17 @@ import { Nav } from "@/components/nav";
 import { requirePageAuth } from "@/server/page-auth";
 import { listPersons } from "@/server/usecases/persons";
 import { listClubs } from "@/server/usecases/clubs";
+import { listOfficialsForConsole } from "@/server/usecases/officials";
+import { hasFeature } from "@/lib/entitlements";
 import { PersonsPanel } from "@/components/v2/persons-panel";
 import { ClubsPanel } from "@/components/v2/clubs-panel";
+import { OfficialsDirectoryPanel } from "@/components/v2/officials-directory-panel";
 import { Tip } from "@/components/ui/tip";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
 import { DictProvider } from "@/components/i18n/dict-provider";
 
-const TABS = ["players", "clubs"] as const;
+const TABS = ["players", "clubs", "officials"] as const;
 type Tab = (typeof TABS)[number];
 
 export default async function DirectoryPage({
@@ -59,7 +62,9 @@ export default async function DirectoryPage({
           ))}
         </nav>
 
-        {tab === "players" ? <PlayersTab ui={ui} /> : <ClubsTab ui={ui} />}
+        {tab === "players" && <PlayersTab ui={ui} />}
+        {tab === "clubs" && <ClubsTab ui={ui} />}
+        {tab === "officials" && <OfficialsTab ui={ui} />}
       </main>
     </DictProvider>
   );
@@ -120,6 +125,33 @@ async function ClubsTab({ ui }: { ui: Dict }) {
         }))}
         storageBase={storageBase}
         canEdit={canEdit}
+      />
+    </div>
+  );
+}
+
+async function OfficialsTab({ ui }: { ui: Dict }) {
+  const { auth, canEdit } = await requirePageAuth();
+  const [officials, rolesMultiAllowed] = await Promise.all([
+    listOfficialsForConsole(auth),
+    hasFeature(auth.orgId, "officials.roles_multi"),
+  ]);
+  return (
+    <div className="space-y-4">
+      <p className="max-w-xl text-sm text-slate-500">{t(ui, "directory.officials.desc")}</p>
+      <OfficialsDirectoryPanel
+        officials={officials.map((o) => ({
+          id: o.id,
+          display_name: o.display_name,
+          role_keys: o.role_keys,
+          entrant_id: o.entrant_id,
+          email: o.email,
+          max_per_day: o.max_per_day,
+          claimed: o.claimed,
+          invite_pending: o.invite_pending,
+        }))}
+        canEdit={canEdit}
+        rolesMultiAllowed={rolesMultiAllowed}
       />
     </div>
   );
