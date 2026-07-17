@@ -46,6 +46,8 @@ export const DocKind = z.enum([
   "standings",
   "match_report",
   "participants",
+  "officials_rota",
+  "admit_ticket",
 ]);
 export type DocKind = z.infer<typeof DocKind>;
 
@@ -107,6 +109,20 @@ export interface ExportParticipantRow {
   player: string;
   number: number | null;
   position: string;
+}
+
+export interface ExportOfficialDuty {
+  at: string; // pre-formatted venue-local time string (built server-side)
+  court: string | null;
+  compDivision: string;
+  role: string;
+  opponents: string; // "Falcons vs Hawks"
+  response: "pending" | "accepted" | "declined";
+}
+
+export interface ExportOfficialSchedule {
+  officialName: string;
+  duties: ExportOfficialDuty[];
 }
 
 export interface BuildOpts {

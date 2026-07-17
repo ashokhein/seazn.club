@@ -7,6 +7,7 @@ import type {
   DocModel,
   DocSection,
   ExportFixture,
+  ExportOfficialSchedule,
   ExportParticipantRow,
   ExportRosterTeam,
   ExportStandingsRow,
@@ -160,4 +161,38 @@ export function buildParticipants(
     ],
     opts,
   );
+}
+
+const ROTA_COLUMNS = ["When", "Court", "Competition · Division", "Role", "Match", "Response"];
+
+/** Officials rota (v12/PROMPT-58): one section per official, duties table +
+ *  sign-on/off block; zero-duty officials still get a page (13 May pattern). */
+export function buildOfficialsRota(
+  title: string,
+  officials: readonly ExportOfficialSchedule[],
+  opts: BuildOpts,
+): DocModel {
+  const perOfficial = (opts.pageBreaks ?? "auto") === "per_team";
+  const sections: DocSection[] = officials.map((o, i) => ({
+    heading: o.officialName,
+    ...(o.duties.length === 0 ? { subheading: "No duties assigned" } : {}),
+    ...(o.duties.length > 0
+      ? {
+          table: {
+            columns: ROTA_COLUMNS,
+            rows: o.duties.map((d) => [
+              d.at,
+              d.court ?? "—",
+              d.compDivision,
+              d.role,
+              d.opponents,
+              d.response === "accepted" ? "Accepted" : d.response === "declined" ? "Declined" : "Pending",
+            ]),
+          },
+        }
+      : {}),
+    signatures: ["Official signature", "Time on", "Time off"],
+    ...(perOfficial && i > 0 ? { pageBreakBefore: true } : {}),
+  }));
+  return base("officials_rota", title, sections, opts);
 }

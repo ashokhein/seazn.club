@@ -1,6 +1,12 @@
 // DocModel goldens (Jul3/06, PROMPT-26 acceptance): stable JSON, not pixels.
 import { describe, expect, it } from "vitest";
-import { buildParticipants, buildRoster, buildStandings, buildTimetable } from "./build.ts";
+import {
+  buildOfficialsRota,
+  buildParticipants,
+  buildRoster,
+  buildStandings,
+  buildTimetable,
+} from "./build.ts";
 import { DocBranding, DocModel, type ExportFixture } from "./types.ts";
 import { volleyball } from "../sports/setbased/volleyball.ts";
 
@@ -111,5 +117,19 @@ describe("buildDocModel goldens (Jul3/06 §2)", () => {
       description: "All fixtures, in play order.", sections: [],
     });
     expect(m.description).toBe("All fixtures, in play order.");
+  });
+
+  it("buildOfficialsRota: one section per official with a duties table", () => {
+    const m = buildOfficialsRota("Summer League — Officials", [
+      { officialName: "Sam Ref", duties: [
+        { at: "Sat 19 Jul 09:00", court: "1", compDivision: "Summer · Div 1",
+          role: "Referee", opponents: "Falcons vs Hawks", response: "accepted" },
+      ] },
+    ], { printedAt: "2026-07-19", pageBreaks: "per_team" });
+    expect(m.kind).toBe("officials_rota");
+    expect(m.sections).toHaveLength(1);
+    expect(m.sections[0]!.heading).toBe("Sam Ref");
+    expect(m.sections[0]!.table?.rows[0]).toContain("Referee");
+    expect(m.sections[0]!.signatures).toBeTruthy();
   });
 });
