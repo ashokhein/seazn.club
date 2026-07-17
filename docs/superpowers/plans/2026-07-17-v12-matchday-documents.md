@@ -294,32 +294,26 @@ git commit -m "feat(exports): courtside PDF brand tokens + safe font registratio
 - Consumes: `resolveSponsors(orgId, competitionId)` → `ResolvedSponsor[]` (Task uses `.name` + `.tier`); `hasFeature`.
 - Produces: `brandingFor` returns `{ orgName, colors?, logos?, sponsors? }` for Pro, `undefined` for free. `divisionMeta` now also returns `org_id`, `org_name`.
 
-- [ ] **Step 1: Write the failing test** (DB-backed; follow the file's existing `skipIf(!HAS_DB)` + auth-fixture pattern):
+- [ ] **Step 1: Write the failing test.** `brandingFor` is internal — do NOT export it or invent test helpers. Test it **through** `buildDivisionDocModel(...).branding`, using the file's REAL fixtures already defined at the top of `exports.test.ts`: `seedOrg("pro"|"community")`, `seedDivision(auth)`, the `describe.skipIf(!HAS_DB)("rich exports …")` block, and the `PRINTED` constant. Add this test **inside** that existing describe block:
 
 ```ts
-it("brandingFor: Pro org gets orgName + tiered sponsors; free org gets undefined", async () => {
-  // pro fixture with one title sponsor row on the competition
-  const { auth, meta } = await proDivisionWithSponsor("Acme", "title");
-  const branded = await brandingForTestExport(auth, meta); // thin test export of brandingFor
-  expect(branded?.orgName).toBeTruthy();
-  expect(branded?.sponsors).toContainEqual({ name: "Acme", tier: "title" });
-
-  const free = await freeDivision();
-  const plain = await brandingForTestExport(free.auth, free.meta);
-  expect(plain).toBeUndefined();
+it("brandingFor: Pro model carries orgName + tiered sponsors from the sponsors table", async () => {
+  const { auth } = await seedOrg("pro");
+  const { division, comp } = await seedDivision(auth);
+  await sql`insert into sponsors (org_id, competition_id, name, tier, status, display_order)
+            values (${auth.orgId}, ${comp.id}, 'Acme', 'title', 'active', 0)`;
+  const model = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
+  expect(model.branding?.orgName).toBeTruthy();
+  expect(model.branding?.sponsors).toContainEqual({ name: "Acme", tier: "title" });
 });
 ```
 
-Add a named re-export at the bottom of `exports.ts` for the test (kept internal otherwise):
-
-```ts
-export const __test = { brandingFor };
-```
+(The `sponsors` table columns come from `apps/web/src/server/usecases/sponsors.ts` — `org_id, competition_id, name, tier, status, display_order`. `resolveSponsors(orgId, compId)` returns the active row with its real `tier` since `brandingFor` calls it without `{ tiered: false }`.)
 
 - [ ] **Step 2: Run it, verify it fails**
 
-Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w @seazn/web -- exports.test.ts -t brandingFor`
-Expected: FAIL (no `orgName`, no `sponsors`).
+Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w @seazn/web -- exports.test.ts -t "orgName"`
+Expected: FAIL (`model.branding` has no `orgName`, no `sponsors`).
 
 - [ ] **Step 3: Edit `divisionMeta`** (lines 35-54) — add org to the interface + query:
 
@@ -372,10 +366,22 @@ async function brandingFor(auth: AuthCtx, meta: DivisionMeta): Promise<DocBrandi
 }
 ```
 
+- [ ] **Step 4b: Fix the EXISTING gate test that this change breaks.** The current test in `exports.test.ts` (the one titled *"branding is Pro (`exports.branded`) …"*) asserts an EXACT match that omits the new `orgName`:
+
+```ts
+// BEFORE (now fails — orgName is added):
+expect(branded.branding).toEqual({ colors: { primary: "#123456" }, logos: ["orgs/x/logo.png"] });
+// AFTER:
+expect(branded.branding).toMatchObject({ colors: { primary: "#123456" }, logos: ["orgs/x/logo.png"] });
+expect(branded.branding?.orgName).toBeTruthy();
+```
+
+Leave the `unbranded.branding` → `toBeUndefined()` and the community `rejects … featureKey: "exports"` assertions unchanged.
+
 - [ ] **Step 5: Run tests, verify pass**
 
 Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w @seazn/web -- exports.test.ts`
-Expected: PASS.
+Expected: PASS (your new test + the updated gate test + all others).
 
 - [ ] **Step 6: Commit**
 
