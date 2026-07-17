@@ -46,6 +46,22 @@ export async function scorerCovers(
   return rows.length > 0;
 }
 
+/** Does the user hold an ACCEPTED official assignment covering this fixture?
+ *  Officials are usually NOT org members, so this is a superuser read pinned
+ *  through persons.user_id = the user and officials.person_id (the tenant door
+ *  never opens for them). Only 'accepted' passes — a pending or declined
+ *  assignment grants no scoring rights (design v2 §A5). */
+export async function acceptedOfficialCovers(userId: string, fixtureId: string): Promise<boolean> {
+  const rows = await sql`
+    select 1 from fixture_officials fo
+    join officials o on o.id = fo.official_id
+    join persons p on p.id = o.person_id
+    where fo.fixture_id = ${fixtureId} and p.user_id = ${userId}
+      and fo.response = 'accepted'
+    limit 1`;
+  return rows.length > 0;
+}
+
 /** Roles whose scoring rights come from assignments, not the role itself:
  *  scorers always; viewers additively (an accepted umpire invite keeps their
  *  role and adds the assignment). The scorer capability config gates bind
@@ -70,6 +86,10 @@ export async function requireScorable(auth: AuthCtx, fixtureId: string): Promise
     if (auth.userId && (await scorerCovers(auth.orgId, auth.userId, scope))) return scope;
     if (auth.role === "scorer") throw new HttpError(403, "You are not assigned to this fixture");
   }
+  // Accepted officials score the fixtures they are assigned to (design v2 §A3):
+  // fixture_officials is the authority; officials are usually non-members, so
+  // this runs off userId, not a membership role.
+  if (auth.userId && (await acceptedOfficialCovers(auth.userId, fixtureId))) return scope;
   throw new HttpError(403, "Your role cannot record scores");
 }
 
@@ -147,37 +167,60 @@ export async function listAssignedFixtures(
   const dayFrom = date ? new Date(`${date}T00:00:00Z`) : null;
   const dayTo = dayFrom ? new Date(dayFrom.getTime() + 24 * 60 * 60 * 1000) : null;
   return sql<AssignedFixture[]>`
-    select distinct on (f.scheduled_at, f.id)
-           f.id, f.fixture_no, f.org_id, o.name as org_name, o.slug as org_slug,
-           c.id as competition_id, c.name as competition_name, c.slug as competition_slug,
-           d.id as division_id, d.name as division_name, d.slug as division_slug,
-           d.status as division_status,
-           d.sport_key, d.module_version, f.round_no,
-           f.home_entrant_id, f.away_entrant_id,
-           he.display_name as home_name, ae.display_name as away_name,
-           f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label, f.status
-    from scorer_assignments sa
-    join fixtures f on (
-         (sa.scope_type = 'fixture'     and f.id = sa.scope_id)
-      or (sa.scope_type = 'division'    and f.division_id = sa.scope_id)
-      or (sa.scope_type = 'competition' and f.division_id in
-            (select id from divisions where competition_id = sa.scope_id))
-    ) and f.org_id = sa.org_id
-    join divisions d on d.id = f.division_id
-    join competitions c on c.id = d.competition_id
-    join organizations o on o.id = f.org_id
-    left join schedule_settings ss on ss.division_id = d.id
-    left join entrants he on he.id = f.home_entrant_id
-    left join entrants ae on ae.id = f.away_entrant_id
-    where sa.user_id = ${userId}
-      and f.status in ${sql(SCORABLE_STATUSES)}
+    select distinct on (scheduled_at, id) * from (
+      select f.id, f.fixture_no, f.org_id, o.name as org_name, o.slug as org_slug,
+             c.id as competition_id, c.name as competition_name, c.slug as competition_slug,
+             d.id as division_id, d.name as division_name, d.slug as division_slug,
+             d.status as division_status,
+             d.sport_key, d.module_version, f.round_no,
+             f.home_entrant_id, f.away_entrant_id,
+             he.display_name as home_name, ae.display_name as away_name,
+             f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label, f.status
+      from scorer_assignments sa
+      join fixtures f on (
+           (sa.scope_type = 'fixture'     and f.id = sa.scope_id)
+        or (sa.scope_type = 'division'    and f.division_id = sa.scope_id)
+        or (sa.scope_type = 'competition' and f.division_id in
+              (select id from divisions where competition_id = sa.scope_id))
+      ) and f.org_id = sa.org_id
+      join divisions d on d.id = f.division_id
+      join competitions c on c.id = d.competition_id
+      join organizations o on o.id = f.org_id
+      left join schedule_settings ss on ss.division_id = d.id
+      left join entrants he on he.id = f.home_entrant_id
+      left join entrants ae on ae.id = f.away_entrant_id
+      where sa.user_id = ${userId}
+
+      union
+
+      select f.id, f.fixture_no, f.org_id, o.name as org_name, o.slug as org_slug,
+             c.id as competition_id, c.name as competition_name, c.slug as competition_slug,
+             d.id as division_id, d.name as division_name, d.slug as division_slug,
+             d.status as division_status,
+             d.sport_key, d.module_version, f.round_no,
+             f.home_entrant_id, f.away_entrant_id,
+             he.display_name as home_name, ae.display_name as away_name,
+             f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label, f.status
+      from fixture_officials fo
+      join officials ofc on ofc.id = fo.official_id
+      join persons p on p.id = ofc.person_id
+      join fixtures f on f.id = fo.fixture_id
+      join divisions d on d.id = f.division_id
+      join competitions c on c.id = d.competition_id
+      join organizations o on o.id = f.org_id
+      left join schedule_settings ss on ss.division_id = d.id
+      left join entrants he on he.id = f.home_entrant_id
+      left join entrants ae on ae.id = f.away_entrant_id
+      where p.user_id = ${userId} and fo.response = 'accepted'
+    ) merged
+    where status = any(${SCORABLE_STATUSES})
       and (
         (${date ?? null}::text is null
-          and (f.scheduled_at is null or f.scheduled_at >= date_trunc('day', now())))
+          and (scheduled_at is null or scheduled_at >= date_trunc('day', now())))
         or (${date ?? null}::text is not null
-          and f.scheduled_at >= ${dayFrom ?? null} and f.scheduled_at < ${dayTo ?? null})
+          and scheduled_at >= ${dayFrom ?? null} and scheduled_at < ${dayTo ?? null})
       )
-    order by f.scheduled_at nulls last, f.id
+    order by scheduled_at nulls last, id
     limit 200`;
 }
 

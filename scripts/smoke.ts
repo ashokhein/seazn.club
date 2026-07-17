@@ -491,10 +491,12 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   );
 }
 
-/** PROMPT-57 official onboarding over real HTTP: create official → assign →
- *  invite (shared claim rail, officiating copy) → claim as a second user →
- *  the assignment shows in /me → accept → decline flags on the organiser
- *  read → blackout date set/clear → score-pad device link opens. The free
+/** PROMPT-57/officials-unify official onboarding over real HTTP: create
+ *  official → assign → invite (shared claim rail, officiating copy) → claim
+ *  as a second user → the assignment shows in /me and on My Matches → accept
+ *  → decline flags on the organiser read → blackout date set/clear → score
+ *  straight through the fixture console, exactly like a scorer (no separate
+ *  device-mint — accepted officials pass the score-write gate). The free
  *  path proves the portal has no plan gate: an invite mints on the ref's own
  *  auto-provisioned COMMUNITY org. */
 async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: string): Promise<void> {
@@ -593,13 +595,24 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   const cleared = await v1(ref, "/api/v1/me/availability/officiating?date=2027-03-07", "DELETE");
   check("off blackout date cleared", cleared.status === 200);
 
-  // Score this match: the official mints the fixture's device link (Pro org)
-  // and the pad answers on the secret.
-  const scoreLink = await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/score-link`, "POST");
-  const secret = v1data<{ secret: string }>(scoreLink).secret ?? "";
-  check("off score link minted for the assigned official", scoreLink.status === 201 && secret.startsWith("dl_"));
-  const pad = await fetch(`${BASE}/score/${secret}`);
-  check("off score pad opens on the device link", pad.status === 200);
+  // Score this match: accepted officials score exactly like a scorer, straight
+  // through the fixture console — no separate device-mint (design v2 §A3;
+  // Tasks 1-4 wire acceptedOfficialCovers through requireFixtureActor). The
+  // accepted assignment also surfaces the fixture on My Matches, the scorer
+  // console's own landing page, unioned in from fixture_officials.
+  const myMatches = await html(ref, "/my-matches");
+  check(
+    "off accepted fixture reachable via My Matches",
+    myMatches.status === 200 && myMatches.body.includes(`Whistle A ${tag}`),
+  );
+  const offState = await v1(ref, `/api/v1/fixtures/${fixtures[0]!.id}/state`);
+  check("off accepted official reads fixture state (non-member door)", offState.status === 200);
+  const offScore = await v1(ref, `/api/v1/fixtures/${fixtures[0]!.id}/events`, "POST", {
+    expected_seq: v1data<{ last_seq: number }>(offState).last_seq,
+    type: "generic.result",
+    payload: { p1Score: 2, p2Score: 1 },
+  });
+  check("off accepted official scores via the fixture console API", offScore.status === 201);
 
   // Pending-invite accept-by-id (v11.1 /me "Pending invites" card): officials
   // belong to multiple orgs — a SECOND invite for the same ref, accepted

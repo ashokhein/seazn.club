@@ -173,6 +173,7 @@ export default async function DivisionSchedulePage({
               id: f.id,
               label: `${home} vs ${away}`,
               scheduled_at: f.scheduled_at,
+              status: f.status,
               officials: (f.officials ?? []) as {
                 official_id: string; name: string; role: string; locked: boolean;
                 response?: string; decline_reason?: string | null;

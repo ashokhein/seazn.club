@@ -31,6 +31,7 @@ interface FixtureLite {
   id: string;
   label: string;
   scheduled_at: string | null;
+  status: string;
   officials: {
     official_id: string;
     name: string;
@@ -58,6 +59,19 @@ interface Proposal {
 interface Sourced {
   resolved: { entrant_id: string; display_name: string; official_id: string | null }[];
   pending: { reason: string }[];
+}
+
+const OFFICIALS_TOP = new Set(["scheduled"]);
+/** Assignment view: matches still needing officials first (scheduled, by
+ *  kickoff), then in_play + decided (finalized/cancelled) at the bottom. */
+export function sortFixturesForOfficials<T extends { status: string; scheduled_at: string | null }>(
+  fixtures: T[],
+): T[] {
+  const byTime = (a: T, b: T) =>
+    (a.scheduled_at ?? "9999").localeCompare(b.scheduled_at ?? "9999");
+  const top = fixtures.filter((f) => OFFICIALS_TOP.has(f.status)).sort(byTime);
+  const bottom = fixtures.filter((f) => !OFFICIALS_TOP.has(f.status)).sort(byTime);
+  return [...top, ...bottom];
 }
 
 export function OfficialsPanel({
@@ -416,7 +430,7 @@ export function OfficialsPanel({
             </tr>
           </thead>
           <tbody>
-            {fixtures.map((f) => (
+            {sortFixturesForOfficials(fixtures).map((f) => (
               <tr key={f.id} className="border-t border-slate-100 align-top">
                 <td className="px-4 py-2 text-sm text-slate-700">{f.label}</td>
                 <td className="px-4 py-2 text-sm text-slate-500">

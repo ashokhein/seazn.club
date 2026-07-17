@@ -1,15 +1,13 @@
 // PROMPT-57 (design v11) — official onboarding: invite goes through the SHARED
 // person-claim rail (no parallel token system), claim links the login, the /me
 // lane gates on the link, response transitions are guarded and survive
-// re-apply, blackout dates are unique per (official, date), and the score-link
-// mint reuses the device-link gate. Real Postgres required; skipped without
-// DATABASE_URL.
+// re-apply, and blackout dates are unique per (official, date). Real Postgres
+// required; skipped without DATABASE_URL.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sql } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
@@ -29,7 +27,6 @@ import {
   deleteMyBlackout,
   getMyOfficiating,
   listPendingOfficiatingClaims,
-  mintMyScoreLink,
   setMyBlackout,
   setMyOfficiatingResponse,
 } from "../me-officiating";
@@ -227,39 +224,6 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     // an unlinked user has no blackout scope
     const stranger = await makeUser("stranger");
     await expect(setMyBlackout(stranger.id, "2027-01-10")).rejects.toMatchObject({ status: 403 });
-  });
-
-  it("score-link mint reuses the device-link gate (402 for community, dl_ for pro)", async () => {
-    const proRig = await seedOrg("pro");
-    const ref = await makeUser("ref");
-    const { fixtures } = await seedFutureDivision(proRig.auth);
-    const official = await createOfficial(proRig.auth, { display_name: "Ref S", role_keys: ["referee"] });
-    const invited = await inviteOfficial(proRig.auth, official.id, ref.email);
-    await claimPerson(invited.secret, ref.id, ref.email);
-    const fixtureId = fixtures[0]!.id;
-
-    // not assigned yet → 403
-    await expect(mintMyScoreLink(ref.id, fixtureId)).rejects.toMatchObject({ status: 403 });
-
-    await patchFixtureOfficials(proRig.auth, fixtureId, {
-      set: [{ official_id: official.id, role_key: "referee", locked: false }],
-    });
-    const link = await mintMyScoreLink(ref.id, fixtureId);
-    expect(link.secret.startsWith("dl_")).toBe(true);
-
-    // community org → the same 402 the console shows
-    const commRig = await seedOrg("community");
-    const ref2 = await makeUser("ref2");
-    const seeded = await seedFutureDivision(commRig.auth);
-    const official2 = await createOfficial(commRig.auth, { display_name: "Ref C", role_keys: ["referee"] });
-    const invited2 = await inviteOfficial(commRig.auth, official2.id, ref2.email);
-    await claimPerson(invited2.secret, ref2.id, ref2.email);
-    await patchFixtureOfficials(commRig.auth, seeded.fixtures[0]!.id, {
-      set: [{ official_id: official2.id, role_key: "referee", locked: false }],
-    });
-    await expect(mintMyScoreLink(ref2.id, seeded.fixtures[0]!.id)).rejects.toSatisfy(
-      (e: unknown) => e instanceof HttpError && e.status === 402,
-    );
   });
 
   it("rescheduling a fixture with a responded official runs the change-notice path", async () => {

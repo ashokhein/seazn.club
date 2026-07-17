@@ -667,6 +667,8 @@ export const ScheduleConflict = z.object({
     "warn.order",
     "warn.blackout",
     "warn.no_slot",
+    "warn.official_declined",
+    "warn.official_unavailable",
   ]),
   blocking: z.boolean(),
   detail: z.string().optional(),

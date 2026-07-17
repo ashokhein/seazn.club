@@ -229,7 +229,6 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   // the officiating /me surface is session-personal — same rules as players.
   "POST /officials/:id/invite",
   "PATCH /me/assigned-fixtures/:id/response",
-  "POST /me/assigned-fixtures/:id/score-link",
   "POST /me/availability/officiating",
   "DELETE /me/availability/officiating",
   // Pending officiating invites (v11.1): accepting links a login exactly

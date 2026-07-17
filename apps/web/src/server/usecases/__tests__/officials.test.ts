@@ -18,6 +18,12 @@ import {
   applyOfficialAssignments,
   patchFixtureOfficials,
 } from "../officials";
+import { acceptedOfficialCovers, fixtureScope } from "../scorers";
+import {
+  makeUser as makeSeedUser,
+  seedOrg as seedSeedOrg,
+  seedFutureDivision,
+} from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -224,5 +230,29 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     expect(officials.find((o) => o.display_name === "Jay Judge")?.role_keys).toEqual([
       "referee", "judge",
     ]);
+  });
+});
+
+describe.skipIf(!HAS_DB)("non-member official fixture access rule", () => {
+  it("accepted official (no org_members row) covers only their fixture, in-org", async () => {
+    const { auth } = await seedSeedOrg("pro");
+    const { fixtures } = await seedFutureDivision(auth);
+    const fixtureId = fixtures[0]!.id;
+    const user = await makeSeedUser("Ref Three"); // deliberately NOT inserted into org_members
+    const [person] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name, user_id)
+      values (${auth.orgId}, 'Ref Three', ${user.id}) returning id`;
+    const [official] = await sql<{ id: string }[]>`
+      insert into officials (org_id, person_id, display_name, role_keys)
+      values (${auth.orgId}, ${person!.id}, 'Ref Three', ${sql.json(["umpire"])}) returning id`;
+    await sql`insert into fixture_officials (org_id, fixture_id, official_id, role_key, response)
+              values (${auth.orgId}, ${fixtureId}, ${official!.id}, 'umpire', 'accepted')`;
+
+    const members = await sql`select 1 from org_members where user_id = ${user.id}`;
+    expect(members.length).toBe(0); // still a non-member — Option 2
+
+    expect(await acceptedOfficialCovers(user.id, fixtureId)).toBe(true);
+    const scope = await fixtureScope(fixtureId);
+    expect(scope?.org_id).toBe(auth.orgId);
   });
 });

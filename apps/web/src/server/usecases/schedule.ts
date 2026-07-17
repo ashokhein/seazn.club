@@ -776,10 +776,33 @@ export async function validateSchedule(
       division.competition_id,
       settings.config.matchMinutes,
     );
+    const officialConflicts = await tx<{ fixture_id: string; code: string }[]>`
+      -- declined: any assigned official said no
+      select fo.fixture_id, 'warn.official_declined' as code
+      from fixture_officials fo
+      join fixtures f on f.id = fo.fixture_id
+      where f.division_id = ${divisionId} and fo.response = 'declined'
+      union
+      -- unavailable: an accepted/pending official is blacked out on the
+      -- fixture's date (venue zone), i.e. a schedule clash
+      select fo.fixture_id, 'warn.official_unavailable' as code
+      from fixture_officials fo
+      join fixtures f on f.id = fo.fixture_id
+      join officials o on o.id = fo.official_id
+      join official_availability oa on oa.official_id = o.id
+      left join schedule_settings ss on ss.division_id = f.division_id
+      where f.division_id = ${divisionId}
+        and fo.response in ('accepted','pending')
+        and f.scheduled_at is not null
+        and oa.date = (f.scheduled_at at time zone coalesce(ss.tz, 'UTC'))::date`;
+
     return {
-      conflicts: mapConflicts(
-        validateAssignments(assignments, toSlotConfig(settings, 0), siblings, feedDependencies(all)),
-      ),
+      conflicts: [
+        ...mapConflicts(
+          validateAssignments(assignments, toSlotConfig(settings, 0), siblings, feedDependencies(all)),
+        ),
+        ...officialConflicts.map((c) => ({ fixture_id: c.fixture_id, code: c.code as ScheduleConflict["code"], blocking: false })),
+      ],
     };
   });
 }
