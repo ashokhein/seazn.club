@@ -614,6 +614,19 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   });
   check("off accepted official scores via the fixture console API", offScore.status === 201);
 
+  // Regression (officials-unify): the accepted official must open the fixture
+  // CONSOLE PAGE itself, not just the score API — the /o layout previously
+  // 404'd non-members (an accepted official is usually a non-member), so the
+  // page-level door stayed shut even though the API passed.
+  const offFixNo = v1data<{ fixture_no: number }>(
+    await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}`),
+  ).fixture_no;
+  const offConsole = await html(ref, `/o/${orgSlug}/c/${compData.slug}/d/${divData.slug}/f/${offFixNo}`);
+  check(
+    "off accepted official opens the fixture console PAGE (non-member layout door)",
+    offConsole.status === 200 && offConsole.body.includes(`Whistle A ${tag}`),
+  );
+
   // Pending-invite accept-by-id (v11.1 /me "Pending invites" card): officials
   // belong to multiple orgs — a SECOND invite for the same ref, accepted
   // without ever touching the emailed token (the claim id from the invite
