@@ -58,11 +58,60 @@ function ToolbarButton({
   );
 }
 
+/** Focus-trapped, Esc-to-close modal for the link/CTA prompts below — replaces
+ *  the native browser prompt dialog so these stay stylable, localizable, and
+ *  testable like the rest of the app's dialogs (see ui/confirm-provider.tsx for the same pattern
+ *  used elsewhere). */
+function EditorDialog({
+  title, children, onClose,
+}: {
+  title: string;
+  children: React.ReactNode;
+  onClose: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    dialog?.querySelector<HTMLElement>("input, button")?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-purple-950/30 p-4 backdrop-blur-sm"
+      onPointerDown={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+    >
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="w-full max-w-sm rounded-2xl border border-purple-100 bg-white p-5 shadow-2xl"
+      >
+        <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle }: Props) {
   const msg = useMsg();
   const [tab, setTab] = useState<"write" | "preview">("write");
   const [previewHtml, setPreviewHtml] = useState("");
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [linkDialog, setLinkDialog] = useState<{ url: string } | null>(null);
+  const [ctaDialog, setCtaDialog] = useState<{ label: string; url: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
@@ -113,21 +162,29 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
     };
   }, [tab, value]);
 
-  const setLink = useCallback((e: Editor) => {
-    const prev = (e.getAttributes("link").href as string) ?? "";
-    const url = window.prompt(msg("editor.linkUrl"), prev);
-    if (url === null) return;
-    if (url === "") e.chain().focus().unsetLink().run();
-    else e.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+  const openLinkDialog = useCallback((e: Editor) => {
+    setLinkDialog({ url: (e.getAttributes("link").href as string) ?? "" });
+  }, []);
+
+  const applyLink = useCallback((url: string) => {
+    if (!editor) return;
+    if (url === "") editor.chain().focus().unsetLink().run();
+    else editor.chain().focus().extendMarkRange("link").setLink({ href: url }).run();
+    setLinkDialog(null);
+  }, [editor]);
+
+  const openCtaDialog = useCallback(() => {
+    setCtaDialog({ label: msg("editor.registerNow"), url: "https://" });
   }, [msg]);
 
-  const insertCta = useCallback((e: Editor) => {
-    const label = window.prompt(msg("editor.buttonLabel"), msg("editor.registerNow"));
-    if (!label) return;
-    const url = window.prompt(msg("editor.buttonLink"), "https://");
-    if (!url) return;
+  const applyCta = useCallback((label: string, url: string) => {
+    if (!editor || !label || !url) {
+      setCtaDialog(null);
+      return;
+    }
     // The CTA grammar: its own paragraph, bold link only (lib/prose).
-    e.chain()
+    editor
+      .chain()
       .focus()
       .insertContent({
         type: "paragraph",
@@ -140,7 +197,8 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
         ],
       })
       .run();
-  }, [msg]);
+    setCtaDialog(null);
+  }, [editor]);
 
   async function uploadImage(file: File) {
     setUploadError(null);
@@ -226,7 +284,7 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
               <ToolbarButton label={msg("editor.italic")} active={editor.isActive("italic")} onClick={() => editor.chain().focus().toggleItalic().run()}>
                 <Italic className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label={msg("editor.link")} active={editor.isActive("link")} onClick={() => setLink(editor)}>
+              <ToolbarButton label={msg("editor.link")} active={editor.isActive("link")} onClick={() => openLinkDialog(editor)}>
                 <Link2 className="h-4 w-4" />
               </ToolbarButton>
               <span aria-hidden className="mx-1 h-4 w-px bg-purple-100" />
@@ -246,7 +304,7 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
               <ToolbarButton label={msg("editor.image")} onClick={() => fileRef.current?.click()}>
                 <ImagePlus className="h-4 w-4" />
               </ToolbarButton>
-              <ToolbarButton label={msg("editor.cta")} onClick={() => insertCta(editor)}>
+              <ToolbarButton label={msg("editor.cta")} onClick={openCtaDialog}>
                 <Megaphone className="h-4 w-4" />
               </ToolbarButton>
             </div>
@@ -277,6 +335,87 @@ export function ProseEditor({ value, onChange, orgId, placeholder, previewStyle 
             <p className="text-sm text-slate-400">{msg("editor.nothingPreview")}</p>
           )}
         </div>
+      )}
+
+      {linkDialog && (
+        <EditorDialog title={msg("editor.link")} onClose={() => setLinkDialog(null)}>
+          <form
+            className="mt-3 space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const url = (new FormData(e.currentTarget).get("url") as string).trim();
+              applyLink(url);
+            }}
+          >
+            <label className="block">
+              <span className="label">{msg("editor.linkUrl")}</span>
+              <input
+                name="url"
+                type="url"
+                autoComplete="off"
+                defaultValue={linkDialog.url}
+                className="input w-full"
+              />
+            </label>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" className="btn btn-ghost" onClick={() => setLinkDialog(null)}>
+                {msg("editor.cancel")}
+              </button>
+              {linkDialog.url !== "" && (
+                <button type="button" className="btn btn-ghost" onClick={() => applyLink("")}>
+                  {msg("editor.removeLink")}
+                </button>
+              )}
+              <button type="submit" className="btn btn-primary">
+                {msg("editor.apply")}
+              </button>
+            </div>
+          </form>
+        </EditorDialog>
+      )}
+
+      {ctaDialog && (
+        <EditorDialog title={msg("editor.cta")} onClose={() => setCtaDialog(null)}>
+          <form
+            className="mt-3 space-y-3"
+            onSubmit={(e) => {
+              e.preventDefault();
+              const data = new FormData(e.currentTarget);
+              const label = (data.get("label") as string).trim();
+              const url = (data.get("url") as string).trim();
+              applyCta(label, url);
+            }}
+          >
+            <label className="block">
+              <span className="label">{msg("editor.buttonLabel")}</span>
+              <input
+                name="label"
+                type="text"
+                autoComplete="off"
+                defaultValue={ctaDialog.label}
+                className="input w-full"
+              />
+            </label>
+            <label className="block">
+              <span className="label">{msg("editor.buttonLink")}</span>
+              <input
+                name="url"
+                type="url"
+                autoComplete="off"
+                defaultValue={ctaDialog.url}
+                className="input w-full"
+              />
+            </label>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" className="btn btn-ghost" onClick={() => setCtaDialog(null)}>
+                {msg("editor.cancel")}
+              </button>
+              <button type="submit" className="btn btn-primary">
+                {msg("editor.apply")}
+              </button>
+            </div>
+          </form>
+        </EditorDialog>
       )}
     </div>
   );
