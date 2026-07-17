@@ -103,15 +103,7 @@ export default async function FixturePage({ params }: Props) {
         />
       </div>
       <p className="mb-4 text-sm text-ink-muted">
-        {fixture.scheduled_at
-          ? new Date(fixture.scheduled_at).toLocaleString("en-GB", {
-              weekday: "long",
-              day: "numeric",
-              month: "long",
-              hour: "2-digit",
-              minute: "2-digit",
-            })
-          : "Time TBD"}
+        {fixtureSubheading(fixture.status, fixture.scheduled_at)}
         {fixture.venue ? ` · ${fixture.venue}` : ""}
         {fixture.court_label ? ` · ${fixture.court_label}` : ""}
       </p>
@@ -125,4 +117,25 @@ export default async function FixturePage({ params }: Props) {
       />
     </div>
   );
+}
+
+/**
+ * "Time TBD" only makes sense pre-match — a live fixture with no
+ * scheduled_at (started ad hoc) should say so instead of implying it
+ * hasn't started, which contradicts the LIVE scorebug right below it.
+ */
+export function fixtureSubheading(
+  status: string,
+  scheduledAt: string | null | undefined,
+): string {
+  if (scheduledAt) {
+    return new Date(scheduledAt).toLocaleString("en-GB", {
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+  return status === "in_play" ? "Live" : "Time TBD";
 }

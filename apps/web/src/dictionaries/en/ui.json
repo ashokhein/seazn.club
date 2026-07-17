@@ -215,6 +215,7 @@
   "me.eyebrow": "Player home",
   "me.claimed": "Profile claimed — this is your player home now.",
   "me.empty": "Nothing here yet. When an organiser rosters you into a team or draw, your matches land on this page.",
+  "me.emptyRostered": "You're on a team — matches will appear here once your organiser schedules them.",
   "me.next.title": "Next match",
   "me.upcoming.title": "Coming up",
   "me.results.title": "Recent results",

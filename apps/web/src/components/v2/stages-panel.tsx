@@ -796,10 +796,10 @@ function FixtureLine({
 
   return (
     <li className="px-4 py-2">
-      <div className="flex flex-wrap items-center gap-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:gap-3">
         <Link
           href={href}
-          className={`min-w-0 flex-1 text-sm hover:text-purple-700 ${
+          className={`min-w-0 sm:flex-1 text-sm hover:text-purple-700 ${
             voided ? "text-slate-500 line-through" : "text-slate-800"
           }`}
         >
@@ -808,52 +808,56 @@ function FixtureLine({
           <span className="font-medium">{away}</span>
           {decided && !voided && <span className="ml-2 text-xs text-slate-500 no-underline">{decided}</span>}
         </Link>
-        {/* Timetable chip — reflects whether the match has a kick-off time. */}
-        <span
-          className={`badge ${timed ? "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200" : "bg-slate-100 text-slate-500"}`}
-          title={timed ? msg("schedule.chip.timedTitle") : msg("schedule.chip.untimedTitle")}
-        >
-          {timed ? (
-            <>
-              {msg("schedule.chip.scheduled")} · <ClientTime value={fixture.scheduled_at} mode="datetime" tz={tz} showZone />
-            </>
-          ) : (
-            msg("schedule.chip.unscheduled")
-          )}
-          {fixture.court_label ? ` · ${fixture.court_label}` : fixture.venue ? ` · ${fixture.venue}` : ""}
-        </span>
-        {/* Play state only once it's under way / done. */}
-        {played && (
-          <span className={`badge ${FIXTURE_STATUS_STYLE[fixture.status] ?? ""}`}>
-            {fixtureStatusLabel(msg, fixture.status)}
+        {/* Badges/buttons cluster — own line on mobile so it never collides
+            with the team names above it (fix-ui audit 03-console-division.md). */}
+        <div className="flex flex-wrap items-center gap-2 sm:contents">
+          {/* Timetable chip — reflects whether the match has a kick-off time. */}
+          <span
+            className={`badge ${timed ? "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200" : "bg-slate-100 text-slate-500"}`}
+            title={timed ? msg("schedule.chip.timedTitle") : msg("schedule.chip.untimedTitle")}
+          >
+            {timed ? (
+              <>
+                {msg("schedule.chip.scheduled")} · <ClientTime value={fixture.scheduled_at} mode="datetime" tz={tz} showZone />
+              </>
+            ) : (
+              msg("schedule.chip.unscheduled")
+            )}
+            {fixture.court_label ? ` · ${fixture.court_label}` : fixture.venue ? ` · ${fixture.venue}` : ""}
           </span>
-        )}
-        {/* Scoring pad. */}
-        <Link href={href} className="btn btn-ghost px-3 py-1 text-xs">
-          {decided ? msg("schedule.view") : fixture.status === "in_play" ? msg("schedule.scoreLive") : msg("schedule.score")}
-        </Link>
-        {/* Timetable controls only while the match is still movable — once
-            it's in play or decided the server refuses moves anyway, so the
-            buttons would just be a dead end. */}
-        {canEdit && fixture.status === "scheduled" && (
-          <button
-            type="button"
-            onClick={() => setEditing(!editing)}
-            className="btn btn-ghost px-3 py-1 text-xs"
-          >
-            {editing ? msg("schedule.close") : timed ? msg("schedule.editTime") : msg("schedule.schedule")}
-          </button>
-        )}
-        {canEdit && fixture.status === "scheduled" && timed && !editing && (
-          <button
-            type="button"
-            disabled={busy}
-            onClick={unschedule}
-            className="text-xs text-slate-500 hover:text-red-600 hover:underline"
-          >
-            {msg("schedule.unschedule")}
-          </button>
-        )}
+          {/* Play state only once it's under way / done. */}
+          {played && (
+            <span className={`badge ${FIXTURE_STATUS_STYLE[fixture.status] ?? ""}`}>
+              {fixtureStatusLabel(msg, fixture.status)}
+            </span>
+          )}
+          {/* Scoring pad. */}
+          <Link href={href} className="btn btn-ghost px-3 py-1 text-xs">
+            {decided ? msg("schedule.view") : fixture.status === "in_play" ? msg("schedule.scoreLive") : msg("schedule.score")}
+          </Link>
+          {/* Timetable controls only while the match is still movable — once
+              it's in play or decided the server refuses moves anyway, so the
+              buttons would just be a dead end. */}
+          {canEdit && fixture.status === "scheduled" && (
+            <button
+              type="button"
+              onClick={() => setEditing(!editing)}
+              className="btn btn-ghost px-3 py-1 text-xs"
+            >
+              {editing ? msg("schedule.close") : timed ? msg("schedule.editTime") : msg("schedule.schedule")}
+            </button>
+          )}
+          {canEdit && fixture.status === "scheduled" && timed && !editing && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={unschedule}
+              className="text-xs text-slate-500 hover:text-red-600 hover:underline"
+            >
+              {msg("schedule.unschedule")}
+            </button>
+          )}
+        </div>
       </div>
       {editing && (
         <div className="mt-2 flex flex-wrap items-end gap-2">
