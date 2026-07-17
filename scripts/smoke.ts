@@ -299,6 +299,10 @@ async function main() {
   // seq-tokened reschedule + stale 409, SZ refs + /r/[ref] on pro AND free.
   await schedRegV3Suite(admin, renamed.slug);
 
+  // --- v10 sponsor CRM: tiers + placement + tracked clicks + Connect rail
+  // on the pro org; flat free strip + 402 gates on a fresh community owner.
+  await sponsorsSuite(admin, org2.id, renamed.slug);
+
   // --- v3 content + API wave (PROMPT-35/37/39): markdown editor render,
   // /help + /developers, scoped keys, OG/poster/embed/sponsors — pro + free.
   await v3ContentApiSuite(admin, org2.id, renamed.slug);
@@ -1128,6 +1132,121 @@ async function html(s: Session, path: string): Promise<{ status: number; body: s
     headers: Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {},
   });
   return { status: res.status, body: await res.text() };
+}
+
+/** v10 sponsor CRM smoke: tiered manager + public placement + tracked click
+ *  on the pro org; free path keeps the flat partner strip and gets 402 on
+ *  tiers/packages. Checkout runs the order-first Connect rail; keyless envs
+ *  assert the 409 gate + order insert (webhook activation is unit-tested —
+ *  smoke can't complete a hosted card payment). */
+async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  // --- Pro path: tiers, per-competition scoping, placement, click tracking.
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `Sponsor Cup ${tag}`,
+      visibility: "public",
+    }),
+  );
+  const gold = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`, "POST", {
+    name: `Goldco ${tag}`, tier: "gold", url: "https://goldco.example",
+  });
+  check("sp pro creates a gold sponsor", gold.status === 201);
+  const goldId = v1data<{ id: string }>(gold).id;
+  const scoped = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`, "POST", {
+    name: `Cup Title ${tag}`, tier: "title", competition_id: comp.id,
+  });
+  check("sp pro creates a competition-scoped title sponsor", scoped.status === 201);
+
+  const shared = await html(newSession(), `/shared/${proOrgSlug}/${comp.slug}`);
+  check(
+    "sp public page renders the perimeter board (title leads)",
+    shared.status === 200 &&
+      shared.body.includes("Presented by") &&
+      shared.body.includes(`Cup Title ${tag}`) &&
+      shared.body.includes(`Goldco ${tag}`),
+  );
+  check("sp public logo links via tracked redirect", shared.body.includes(`/s/${goldId}`));
+
+  const click = await pageRedirect(newSession(), `/s/${goldId}`);
+  // Response.redirect normalizes the URL (adds the trailing slash).
+  check(
+    "sp click 302s to the sponsor url",
+    click.status === 302 && (click.location ?? "").startsWith("https://goldco.example"),
+  );
+  const afterClick = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`);
+  check(
+    "sp click_count incremented",
+    v1data<{ id: string; click_count: number }[]>(afterClick).find((s) => s.id === goldId)
+      ?.click_count === 1,
+  );
+
+  // --- Monetization: package + order-first Connect checkout.
+  const pkgRes = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-packages`, "POST", {
+    name: `Gold Package ${tag}`, price_cents: 25_000, currency: "gbp", tier: "gold",
+  });
+  check("sp pro creates a package", pkgRes.status === 201);
+  const pkg = v1data<{ id: string }>(pkgRes);
+
+  // Connect gate: same refusal as entry fees, before any order row exists.
+  await setConnect(proOrgId, false);
+  const gated = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-orders`, "POST", {
+    package_id: pkg.id, sponsor_name: "Gate Probe", sponsor_email: `gate_${tag}@example.com`,
+  });
+  check("sp checkout refused without Connect (409)", gated.status === 409);
+  await setConnect(proOrgId, true);
+
+  const started = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-orders`, "POST", {
+    package_id: pkg.id, sponsor_name: `Acme ${tag}`, sponsor_email: `acme_${tag}@example.com`,
+  });
+  if (process.env.STRIPE_SECRET_KEY) {
+    check(
+      "sp checkout starts (order + session url)",
+      started.status === 201 && !!v1data<{ checkout_url: string }>(started).checkout_url,
+    );
+  } else {
+    // Keyless: the Stripe mint fails AFTER the pending order landed — the
+    // order-before-intent rail is still observable below.
+    check("sp checkout keyless fails after the order insert", started.status >= 500);
+  }
+  const orders = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-orders`);
+  check(
+    "sp order row landed pending (order-before-intent)",
+    orders.status === 200 &&
+      v1data<{ status: string; sponsor_name: string }[]>(orders).some(
+        (o) => o.status === "pending" && o.sponsor_name === `Acme ${tag}`,
+      ),
+  );
+
+  // --- Free path: flat partner strip stays free; tiers + packages are 402.
+  const free = newSession();
+  const freeVer = await signIn(free, `sponsor_free_${tag}@example.com`);
+  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
+  const freeComp = v1data<{ id: string; slug: string }>(
+    await v1(free, "/api/v1/competitions", "POST", {
+      name: `Sponsor Free ${tag}`,
+      visibility: "public",
+    }),
+  );
+  const partner = await v1(free, `/api/v1/orgs/${freeOrg.id}/sponsors`, "POST", {
+    name: `Corner Shop ${tag}`, url: "https://corner.example",
+  });
+  check("sp free adds a partner sponsor", partner.status === 201);
+  const freeGold = await v1(free, `/api/v1/orgs/${freeOrg.id}/sponsors`, "POST", {
+    name: "Blocked Gold", tier: "gold",
+  });
+  check("sp free tiering gated (402)", freeGold.status === 402);
+  const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
+  check(
+    "sp free strip renders publicly, un-tiered",
+    freeShared.status === 200 &&
+      freeShared.body.includes(`Corner Shop ${tag}`) &&
+      !freeShared.body.includes("Presented by"),
+  );
+  const freePkg = await v1(free, `/api/v1/orgs/${freeOrg.id}/sponsor-packages`, "POST", {
+    name: "Blocked Package", price_cents: 1_000, currency: "gbp", tier: "partner",
+  });
+  check("sp free packages gated (402)", freePkg.status === 402);
 }
 
 /** PROMPT-32 smoke: match-day cards render server-side and the visibility
@@ -2460,8 +2579,15 @@ async function v3ContentApiSuite(
     sponsors: [{ name: `Acme ${tag}`, url: "https://acme.example" }],
   })) as { id?: string };
   check("v3: sponsors saved", !!sponsorPatch.id);
+  // v10: the blob is a read shim only — once the org has sponsors table rows
+  // (sponsorsSuite created them), public pages render rows, not the blob.
+  const stripRow = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`, "POST", {
+    name: `Strip ${tag}`, url: "https://strip.example",
+  });
+  check("v3: sponsor row created for strip", stripRow.status === 201);
   const compPage2 = await html(newSession(), `/shared/${proOrgSlug}/${compData.slug}`);
-  check("v3: sponsor strip on pro dashboard", compPage2.body.includes(`Acme ${tag}`));
+  check("v3: sponsor strip on pro dashboard", compPage2.body.includes(`Strip ${tag}`));
+  check("v3: blob sponsor stays shim-only once rows exist", !compPage2.body.includes(`Acme ${tag}`));
 
   // ---- FREE PATH ------------------------------------------------------
   const free = newSession();
@@ -2503,8 +2629,14 @@ async function v3ContentApiSuite(
   await call(free, `/api/orgs/${freeOrgId}`, "PATCH", {
     sponsors: [{ name: `Acme Free ${tag}` }],
   });
+  // v10 policy change: the un-tiered partner strip is free — a community
+  // org's sponsors (here via the blob shim: no table rows yet) render
+  // publicly, flat, with no tier labels.
   const freePage2 = await html(newSession(), `/shared/${freeSlug}/${freeCompData.slug}`);
-  check("v3: sponsors hidden on free dashboard", !freePage2.body.includes(`Acme Free ${tag}`));
+  check(
+    "v3→v10: free sponsor strip renders publicly, un-tiered",
+    freePage2.body.includes(`Acme Free ${tag}`) && !freePage2.body.includes("Presented by"),
+  );
 }
 
 /** Flip an org's plan directly in the DB — smoke targets a disposable DB and

@@ -74,6 +74,7 @@ test("console routes: no horizontal scroll", async ({ page }) => {
     `/divisions/${divisionId}?tab=standings`,
     `/divisions/${divisionId}/registrations`,
     "/settings?tab=organization",
+    "/settings?tab=sponsors",
     "/settings?tab=team",
     "/settings?tab=api",
     "/settings?tab=account",

@@ -24,8 +24,9 @@ interface Case {
   file: string;
   /** The exact `src={...}` expression at the converted call site. */
   srcExpr: string;
-  width: number;
-  height: number;
+  /** Literal pixel pair, or the source expression both dimensions share. */
+  width: number | string;
+  height: number | string;
 }
 
 const CASES: Case[] = [
@@ -47,8 +48,10 @@ const CASES: Case[] = [
     name: "[competitionSlug]/page.tsx sponsor logo",
     file: join(SRC_ROOT, "app/(public)/shared/[orgSlug]/[competitionSlug]/page.tsx"),
     srcExpr: "s.logo",
-    width: 24,
-    height: 24,
+    // v10 perimeter board: both dimensions come from the tier panel map —
+    // still a locked width/height pair (per-tier 48/32/24/20), no CLS drift.
+    width: "c(s).logo",
+    height: "c(s).logo",
   },
   {
     name: "[orgSlug]/layout.tsx org logo",

@@ -20,7 +20,8 @@ import { OrgLogo } from "@/components/org-logo";
 import { OrgBrandColor } from "@/components/org-brand-color";
 import { OrgAbout } from "@/components/org-about";
 import { OrgSponsors } from "@/components/org-sponsors";
-import { brandingSponsors } from "@/lib/org-branding";
+import { SponsorPackages } from "@/components/sponsor-packages";
+import { listSponsorRows } from "@/server/usecases/sponsors";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
 import {
@@ -73,7 +74,7 @@ function roleLabel(dict: Dict, role: string): string {
   return t(dict, `role.${role}`);
 }
 
-type Tab = "organization" | "team" | "api" | "account";
+type Tab = "organization" | "sponsors" | "team" | "api" | "account";
 
 // Plan & billing lives at its own route (/settings/billing) — it owns the
 // Stripe checkout-return reconciliation and portal flows — so it links out of
@@ -81,6 +82,7 @@ type Tab = "organization" | "team" | "api" | "account";
 // is a ui-catalog key resolved per-request (t) so the nav localizes.
 const NAV_ITEMS: { tab: Tab; labelKey: string; icon: LucideIcon; href?: string }[] = [
   { tab: "organization",  labelKey: "settings.nav.organization", icon: Building2  },
+  { tab: "sponsors",      labelKey: "sponsors.title",            icon: Handshake  },
   { tab: "team",          labelKey: "settings.nav.team",         icon: Users      },
   { tab: "api",           labelKey: "settings.nav.api",          icon: KeyRound   },
   { tab: "account",       labelKey: "settings.nav.account",      icon: UserCircle },
@@ -113,6 +115,22 @@ export default async function SettingsPage({
     const [row] = await sql<{ about: string | null }[]>`
       select about from organizations where id = ${active.id}`;
     orgAbout = row?.about ?? null;
+  }
+
+  // Sponsors tab (v10 PROMPT-56): table rows, not the branding blob. The
+  // basic partner strip is free; tiers/per-competition scoping are Pro.
+  let sponsorRows: Awaited<ReturnType<typeof listSponsorRows>> = [];
+  let hasSponsorTiers = false;
+  let hasSponsorMonetize = false;
+  let sponsorCompetitions: { id: string; name: string }[] = [];
+  if (tab === "sponsors") {
+    sponsorRows = await listSponsorRows(active.id);
+    hasSponsorTiers = await hasFeature(active.id, "sponsors.tiers");
+    hasSponsorMonetize = await hasFeature(active.id, "sponsors.monetize");
+    sponsorCompetitions = await sql<{ id: string; name: string }[]>`
+      select id, name from competitions
+      where org_id = ${active.id}
+      order by created_at desc limit 100`;
   }
 
   // Platform API tab: api.access = Pro. Scope choice (read/score/manage) is
@@ -283,25 +301,6 @@ export default async function SettingsPage({
                   </div>
                 )}
 
-                {canEdit && (
-                  <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Handshake} label={t(dict, "sponsors.title")} />
-                    {canBrand ? (
-                      <OrgSponsors
-                        orgId={active.id}
-                        initialSponsors={brandingSponsors(active.branding)}
-                      />
-                    ) : (
-                      <p className="flex items-center gap-2 text-sm text-slate-500">
-                        <PlanBadge feature="branding" />
-                        {t(dict, "settings.upgrade.sponsors")}{" "}
-                        <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
-                          {t(dict, "settings.upgrade.link")}
-                        </Link>
-                      </p>
-                    )}
-                  </div>
-                )}
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
@@ -313,6 +312,31 @@ export default async function SettingsPage({
             )}
 
             {/* ── TEAM ── */}
+            {tab === "sponsors" && (
+              <section className="card p-6">
+                <SectionHeader icon={Handshake}>{t(dict, "sponsors.title")}</SectionHeader>
+                <OrgSponsors
+                  orgId={active.id}
+                  initialSponsors={sponsorRows}
+                  competitions={sponsorCompetitions}
+                  hasTiers={hasSponsorTiers}
+                  billingHref={routes.billing(orgSlug)}
+                  canEdit={canEdit}
+                />
+                {canEdit && (
+                  <div className="mt-6 border-t border-slate-100 pt-5">
+                    <SubSection icon={Banknote} label={t(dict, "sponsors.sell.title")} />
+                    <SponsorPackages
+                      orgId={active.id}
+                      competitions={sponsorCompetitions}
+                      hasMonetize={hasSponsorMonetize}
+                      billingHref={routes.billing(orgSlug)}
+                    />
+                  </div>
+                )}
+              </section>
+            )}
+
             {tab === "team" && (
               <section className="card p-6">
                 <SectionHeader icon={Users}>{t(dict, "settings.nav.team")}</SectionHeader>

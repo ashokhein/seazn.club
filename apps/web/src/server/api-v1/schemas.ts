@@ -1111,6 +1111,85 @@ export const CreateOfficial = z.object({
 
 export const PatchOfficial = CreateOfficial.partial();
 
+// Sponsor CRM (v10 PROMPT-56) -------------------------------------------------
+
+export const SponsorTier = z.enum(["title", "gold", "silver", "partner"]);
+export const SponsorStatus = z.enum(["active", "pending", "inactive"]);
+
+export const Sponsor = z.object({
+  id: z.string(),
+  competition_id: z.string().nullable(),
+  name: z.string(),
+  url: z.string().nullable(),
+  logo_path: z.string().nullable(),
+  tier: SponsorTier,
+  display_order: z.number().int(),
+  status: SponsorStatus,
+  click_count: z.number().int(),
+  created_at: z.string(),
+  /** Set on list reads when a paid package order activated this placement. */
+  paid_order_id: z.string().nullable().optional(),
+});
+
+export const CreateSponsor = z.object({
+  name: z.string().min(1).max(80),
+  url: z.string().url().max(500).nullish(),
+  logo_path: z.string().max(500).nullish(),
+  tier: SponsorTier.default("partner"),
+  competition_id: Uuid.nullish(),
+  status: SponsorStatus.default("active"),
+});
+
+export const PatchSponsor = CreateSponsor.partial();
+
+export const ReorderSponsors = z.object({ ids: z.array(Uuid).min(1).max(200) });
+
+export const SponsorPackage = z.object({
+  id: z.string(),
+  competition_id: z.string().nullable(),
+  name: z.string(),
+  description: z.string().nullable(),
+  price_cents: z.number().int(),
+  currency: z.string(),
+  tier: SponsorTier,
+  active: z.boolean(),
+  created_at: z.string(),
+});
+
+export const CreateSponsorPackage = z.object({
+  name: z.string().min(1).max(120),
+  description: z.string().max(2000).nullish(),
+  price_cents: z.number().int().positive().max(5_000_000),
+  currency: z.string().length(3).toLowerCase().default("gbp"),
+  tier: SponsorTier.default("partner"),
+  competition_id: Uuid.nullish(),
+});
+
+export const SponsorOrder = z.object({
+  id: z.string(),
+  package_id: z.string(),
+  sponsor_name: z.string(),
+  sponsor_email: z.string(),
+  payment_intent_id: z.string().nullable(),
+  amount_cents: z.number().int(),
+  currency: z.string(),
+  status: z.enum(["pending", "paid", "failed", "refunded"]),
+  sponsor_id: z.string().nullable(),
+  created_at: z.string(),
+  paid_at: z.string().nullable(),
+});
+
+export const StartSponsorCheckout = z.object({
+  package_id: Uuid,
+  sponsor_name: z.string().min(1).max(80),
+  sponsor_email: z.string().email().max(320),
+});
+
+export const SponsorCheckoutStarted = z.object({
+  order: SponsorOrder,
+  checkout_url: z.string(),
+});
+
 const AssignPolicyBody = z.object({
   roles: z.array(z.string().min(1)).min(1),
   poolLock: z.boolean().default(false),

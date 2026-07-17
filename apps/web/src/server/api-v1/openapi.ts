@@ -117,6 +117,18 @@ export const ROUTES: RouteSpec[] = [
   { path: "/orgs/{id}/api-keys", method: "get", summary: "List API keys", tag: "api-keys", response: z.array(S.ApiKey) },
   { path: "/orgs/{id}/api-keys", method: "post", summary: "Create an API key (secret shown once)", tag: "api-keys", request: S.CreateApiKey, response: S.CreatedApiKey, status: 201, errors: [402] },
   { path: "/orgs/{id}/api-keys/{keyId}", method: "delete", summary: "Revoke an API key", tag: "api-keys", response: S.ApiKey },
+  // Sponsor CRM (v10 PROMPT-56)
+  { path: "/orgs/{id}/sponsors", method: "get", summary: "List sponsors, tier-ranked (title → gold → silver → partner)", tag: "sponsors", response: z.array(S.Sponsor) },
+  { path: "/orgs/{id}/sponsors", method: "post", summary: "Create a sponsor (tiers above partner / competition scoping are Pro `sponsors.tiers`)", tag: "sponsors", request: S.CreateSponsor, response: S.Sponsor, status: 201, errors: [402] },
+  { path: "/orgs/{id}/sponsors/{sponsorId}", method: "patch", summary: "Update a sponsor (promoting tier / scoping is Pro `sponsors.tiers`)", tag: "sponsors", request: S.PatchSponsor, response: S.Sponsor, errors: [402] },
+  { path: "/orgs/{id}/sponsors/{sponsorId}", method: "delete", summary: "Delete a sponsor", tag: "sponsors" },
+  { path: "/orgs/{id}/sponsors/reorder", method: "post", summary: "Persist a new display order (ids in render order)", tag: "sponsors", request: S.ReorderSponsors, errors: [422] },
+  { path: "/orgs/{id}/sponsor-packages", method: "get", summary: "List sponsorship packages", tag: "sponsors", response: z.array(S.SponsorPackage) },
+  { path: "/orgs/{id}/sponsor-packages", method: "post", summary: "Create a priced sponsorship package (Pro `sponsors.monetize`)", tag: "sponsors", request: S.CreateSponsorPackage, response: S.SponsorPackage, status: 201, errors: [402] },
+  { path: "/orgs/{id}/sponsor-packages/{packageId}", method: "delete", summary: "Retire a package (soft — orders keep referencing it)", tag: "sponsors", response: S.SponsorPackage },
+  { path: "/orgs/{id}/sponsor-orders", method: "get", summary: "List sponsor orders (payment audit trail)", tag: "sponsors", response: z.array(S.SponsorOrder) },
+  { path: "/orgs/{id}/sponsor-orders", method: "post", summary: "Start a package checkout — pending order + Connect destination-charge session + invoice email; 409 when the org isn't Connect-onboarded", tag: "sponsors", request: S.StartSponsorCheckout, response: S.SponsorCheckoutStarted, status: 201, errors: [402, 409, 422] },
+  { path: "/orgs/{id}/sponsor-orders/{orderId}/refund", method: "post", summary: "Full refund of a paid order — transfer reversed, platform fee returned, placement deactivated", tag: "sponsors", response: S.SponsorOrder, errors: [422] },
   // Public (no auth, cacheable, consent-filtered)
   { path: "/public/orgs/{orgSlug}/competitions/{slug}", method: "get", summary: "Public competition: description + divisions", tag: "public", public: true },
   { path: "/public/orgs/{orgSlug}/competitions/{slug}/divisions/{divisionSlug}/schedule", method: "get", summary: "Public schedule", tag: "public", public: true },
@@ -401,7 +413,7 @@ export function buildOpenApiDocument(
     { name: "persons" }, { name: "stages" }, { name: "fixtures" },
     { name: "scoring" }, { name: "scheduling" }, { name: "scorers" },
     { name: "device-links" }, { name: "api-keys" }, { name: "registration" },
-    { name: "clubs" }, { name: "officials" }, { name: "history" },
+    { name: "clubs" }, { name: "officials" }, { name: "sponsors" }, { name: "history" },
     { name: "exports" }, { name: "stats" }, { name: "public" },
   ].filter((t) => usedTags.has(t.name));
   return {

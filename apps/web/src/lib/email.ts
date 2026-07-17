@@ -27,6 +27,12 @@ import {
   type FunnelEmailArgs,
   claimInviteTemplate,
   type ClaimInviteArgs,
+  sponsorInvoiceTemplate,
+  type SponsorInvoiceArgs,
+  sponsorReceiptTemplate,
+  type SponsorReceiptArgs,
+  sponsorRefundTemplate,
+  type SponsorRefundArgs,
 } from "@/lib/email-templates";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
@@ -295,6 +301,42 @@ export async function sendDisputeLostEmail(opts: DisputeLostEmail): Promise<bool
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...disputeLostTemplate(args, dict) });
+}
+
+export interface SponsorInvoiceEmail extends SponsorInvoiceArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Pay-now invoice to the sponsor contact at checkout start (v10). */
+export async function sendSponsorInvoiceEmail(opts: SponsorInvoiceEmail): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorInvoiceTemplate(args, dict) });
+}
+
+export interface SponsorReceiptEmail extends SponsorReceiptArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Receipt to the sponsor once the order is paid and the placement is live. */
+export async function sendSponsorReceiptEmail(opts: SponsorReceiptEmail): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorReceiptTemplate(args, dict) });
+}
+
+export interface SponsorRefundEmail extends SponsorRefundArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Refund notice to the sponsor when a paid order is refunded. */
+export async function sendSponsorRefundEmail(opts: SponsorRefundEmail): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorRefundTemplate(args, dict) });
 }
 
 /** True when Resend is configured. */
