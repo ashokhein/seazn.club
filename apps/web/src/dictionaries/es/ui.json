@@ -1460,6 +1460,8 @@
   "import.op.personCreate": "nuevo jugador",
   "import.op.entrantCreate": "inscribir división",
   "import.op.rosterAdd": "plantilla",
+  "import.error.divisionNotFound": "la división «{division}» no existe — crea las divisiones antes de importar",
+  "import.issueCode.divisionNotFound": "División no encontrada",
   "pad.recordResult": "Registrar resultado",
   "pad.noDraws": "Este deporte no permite empates",
   "pad.won": "{name} ganó",

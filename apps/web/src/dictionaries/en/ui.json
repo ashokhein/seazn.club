@@ -1460,6 +1460,8 @@
   "import.op.personCreate": "new player",
   "import.op.entrantCreate": "enter division",
   "import.op.rosterAdd": "roster",
+  "import.error.divisionNotFound": "division '{division}' does not exist — create divisions before importing",
+  "import.issueCode.divisionNotFound": "Division not found",
   "pad.recordResult": "Record result",
   "pad.noDraws": "This sport does not allow draws",
   "pad.won": "{name} won",

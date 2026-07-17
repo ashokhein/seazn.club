@@ -9,7 +9,7 @@ import { applyPlanToSnapshot } from "./plan.test.ts";
 const CONFIG = ImportConfig.parse({});
 
 const DIVISIONS: ImportSnapshot["divisions"] = [
-  { id: "d1", slug: "open", sportKey: "football", positionKeys: ["gk", "mid"] },
+  { id: "d1", name: "Open League", slug: "open", sportKey: "football", positionKeys: ["gk", "mid"] },
 ];
 const SNAPSHOT: ImportSnapshot = { clubs: [], teams: [], persons: [], divisions: DIVISIONS, entrants: [] };
 
