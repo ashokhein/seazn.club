@@ -30,7 +30,7 @@ interface Official {
 interface FixtureLite {
   id: string;
   label: string;
-  scheduled_at: string | null;
+  scheduled_at: string | Date | null;
   status: string;
   officials: {
     official_id: string;
@@ -64,11 +64,13 @@ interface Sourced {
 const OFFICIALS_TOP = new Set(["scheduled"]);
 /** Assignment view: matches still needing officials first (scheduled, by
  *  kickoff), then in_play + decided (finalized/cancelled) at the bottom. */
-export function sortFixturesForOfficials<T extends { status: string; scheduled_at: string | null }>(
+export function sortFixturesForOfficials<T extends { status: string; scheduled_at: string | Date | null }>(
   fixtures: T[],
 ): T[] {
-  const byTime = (a: T, b: T) =>
-    (a.scheduled_at ?? "9999").localeCompare(b.scheduled_at ?? "9999");
+  // scheduled_at crosses the RSC boundary as a Date (not an ISO string), so
+  // compare on epoch ms — never string methods. Unscheduled sorts last.
+  const key = (f: T) => (f.scheduled_at == null ? Infinity : new Date(f.scheduled_at).getTime());
+  const byTime = (a: T, b: T) => key(a) - key(b);
   const top = fixtures.filter((f) => OFFICIALS_TOP.has(f.status)).sort(byTime);
   const bottom = fixtures.filter((f) => !OFFICIALS_TOP.has(f.status)).sort(byTime);
   return [...top, ...bottom];
@@ -124,15 +126,15 @@ export function OfficialsPanel({
     set.add(b.date);
     blackoutsByOfficial.set(b.official_id, set);
   }
-  const fixtureDate = (iso: string | null): string | null => {
+  const fixtureDate = (iso: string | Date | null): string | null => {
     if (!iso) return null;
     try {
       return new Date(iso).toLocaleDateString("en-CA", { timeZone: venueTz || "UTC" });
     } catch {
-      return iso.slice(0, 10);
+      return (typeof iso === "string" ? iso : iso.toISOString()).slice(0, 10);
     }
   };
-  const unavailableFor = (officialId: string, scheduledAt: string | null): boolean => {
+  const unavailableFor = (officialId: string, scheduledAt: string | Date | null): boolean => {
     const d = fixtureDate(scheduledAt);
     return d !== null && (blackoutsByOfficial.get(officialId)?.has(d) ?? false);
   };
@@ -146,7 +148,7 @@ export function OfficialsPanel({
     list.push(b.scheduled_at);
     busyByOfficial.set(b.official_id, list);
   }
-  const busyTimeFor = (officialId: string, scheduledAt: string | null): string | null => {
+  const busyTimeFor = (officialId: string, scheduledAt: string | Date | null): string | null => {
     const d = fixtureDate(scheduledAt);
     if (d === null) return null;
     const match = busyByOfficial.get(officialId)?.find((at) => fixtureDate(at) === d);
