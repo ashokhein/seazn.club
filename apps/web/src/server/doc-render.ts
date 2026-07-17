@@ -260,6 +260,9 @@ export async function docModelToXlsx(model: DocModel): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(model.kind);
   sheet.addRow([model.title]).font = { bold: true, size: 14 };
+  if (model.branding?.orgName) sheet.addRow([model.branding.orgName]).font = { size: 11, color: { argb: "FF52525B" } };
+  const sp = model.branding?.sponsors ?? [];
+  if (sp.length > 0) sheet.addRow([`Sponsors: ${sp.map((s) => s.name).join(", ")}`]).font = { italic: true, size: 9 };
   sheet.addRow([]);
   for (const section of model.sections) {
     if (section.heading !== undefined) {

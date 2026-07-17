@@ -81,3 +81,16 @@ describe("doc-render footer", () => {
     expect(line!.indexOf("Acme")).toBeLessThan(line!.indexOf("Silverware")); // title before silver
   });
 });
+
+describe("doc-render xlsx", () => {
+  it("xlsx header includes org name + sponsor row when branded", async () => {
+    const { docModelToXlsx } = await import("../doc-render");
+    const ExcelJS = (await import("exceljs")).default;
+    const buf = await docModelToXlsx(model({ orgName: "Riverside SC", sponsors: [{ name: "Acme", tier: "title" }] }));
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf as unknown as ArrayBuffer);
+    const cells = wb.worksheets[0].getSheetValues().flat().map(String).join(" ");
+    expect(cells).toContain("Riverside SC");
+    expect(cells).toContain("Acme");
+  });
+});
