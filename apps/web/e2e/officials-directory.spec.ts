@@ -62,6 +62,54 @@ test("directory Officials tab: invite falls back to a copyable claim link", asyn
   await expect(row.getByText(/\/claim\/pc_/)).toBeVisible();
 });
 
+test("directory Officials tab: edit roles on an existing official", async ({ page, request }) => {
+  const name = `Edit Ref ${TAG}`;
+  await apiJson(request, "/api/v1/officials", "POST", {
+    display_name: name,
+    role_keys: ["referee"],
+  });
+
+  await page.goto("/directory?tab=officials");
+  const row = page.locator("li").filter({ hasText: name });
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  await row.getByRole("button", { name: "Edit roles" }).click();
+
+  // the row's inline editor gets its own chip group (Pro account — stacking
+  // allowed); referee stays pressed, scorer joins it.
+  const editGroup = row.getByRole("group", { name: "Roles" });
+  await editGroup.getByRole("button", { name: "scorer", exact: true }).click();
+  await row.getByRole("button", { name: "Save roles" }).click();
+
+  // the editor closes on a successful PATCH; only then are the row's chip
+  // spans unambiguous (while it is open, the picker buttons repeat the names).
+  await expect(row.getByRole("button", { name: "Save roles" })).toHaveCount(0, { timeout: 20_000 });
+  await expect(row.locator("span").filter({ hasText: /^scorer$/ })).toBeVisible();
+  await expect(row.locator("span").filter({ hasText: /^referee$/ })).toBeVisible();
+});
+
+test("directory Officials tab: delete removes the official after an explicit confirm", async ({
+  page,
+  request,
+}) => {
+  const name = `Del Ref ${TAG}`;
+  await apiJson(request, "/api/v1/officials", "POST", {
+    display_name: name,
+    role_keys: ["referee"],
+  });
+
+  await page.goto("/directory?tab=officials");
+  const row = page.locator("li").filter({ hasText: name });
+  await expect(row).toBeVisible({ timeout: 20_000 });
+  await row.getByRole("button", { name: "Delete", exact: true }).click();
+
+  // tone:"danger" confirm — the row is only removed after the explicit click.
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Delete official" }).click();
+
+  await expect(page.locator("li").filter({ hasText: name })).toHaveCount(0, { timeout: 20_000 });
+});
+
 test("schedule Officials tab: compact roster strip reflects the pool and links to the directory; assign still works", async ({
   page,
   request,

@@ -1762,5 +1762,11 @@
   "officials.bulkDone": "{n} invitation(s) envoyée(s)",
   "officials.cancel": "Annuler",
   "officials.done": "Terminé",
+  "officials.delete": "Supprimer",
+  "officials.deleteBody": "Le retire du vivier d'officiels de cette organisation, ainsi que ses affectations et ses disponibilités ici. Son compte et les autres organisations ne sont pas affectés. Cette action est irréversible.",
+  "officials.deleteLabel": "Supprimer l'officiel",
+  "officials.deleteTitle": "Supprimer {name} ?",
+  "officials.editRoles": "Modifier les rôles",
+  "officials.saveRoles": "Enregistrer les rôles",
   "officials.manageInDirectory": "Gérer les officiels dans l'annuaire"
 }

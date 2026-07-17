@@ -1762,5 +1762,11 @@
   "officials.bulkDone": "{n} uitnodiging(en) verstuurd",
   "officials.cancel": "Annuleren",
   "officials.done": "Klaar",
+  "officials.delete": "Verwijderen",
+  "officials.deleteBody": "Verwijdert deze official uit de pool van deze organisatie, samen met de wedstrijdtoewijzingen en beschikbaarheid hier. Het account en andere organisaties blijven ongewijzigd. Dit kan niet ongedaan worden gemaakt.",
+  "officials.deleteLabel": "Official verwijderen",
+  "officials.deleteTitle": "{name} verwijderen?",
+  "officials.editRoles": "Rollen bewerken",
+  "officials.saveRoles": "Rollen opslaan",
   "officials.manageInDirectory": "Officials beheren in de directory"
 }

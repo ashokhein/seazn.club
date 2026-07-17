@@ -10,6 +10,10 @@ Officials are an org-wide pool, managed from **Directory → Officials** — the
 
 In **Directory → Officials**, **Add official** creates a roster entry; pick their role(s) as chips (referee, umpire, judge, scorer and more — or add a custom one). **Multiple roles on one official are a Pro feature**; on the free plan, picking a second chip swaps the selection instead of stacking it. Next to any official, choose **Invite** and enter their email. They get a claim link — the same claim system players use, so the rules match: **only an account signed in with the invited address can accept**, invites last 14 days, and re-inviting quietly withdraws the previous link. Once accepted the official shows a **Linked** chip; an outstanding invite shows **Invited**. **Invite all with email** re-invites everyone who has an address but no link yet.
 
+## Edit roles or remove an official
+
+On any roster row, **Edit roles** opens the same chip picker to change an existing official's roles (the free-plan single-role rule applies here too), and **Delete** removes them after an explicit confirmation. Deleting removes the official from *this organisation only* — their roster entry, their fixture assignments and their availability dates here. It never touches their account: a linked official keeps their login, their `/me` home, any player profiles, and their officiating profiles with other organisations. If they should come back later, just add and invite them again.
+
 ## Assigning on a division's schedule
 
 The schedule's **Officials tab** shows a compact roster strip (with a link back to the directory to manage it) plus the assignment tools: propose/apply an auto-assignment, phase officials in from results, or pick manually per fixture. Every official in the org-wide pool is available to every division — there's no separate roster per division.

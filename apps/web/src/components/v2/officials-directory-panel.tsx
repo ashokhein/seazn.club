@@ -10,6 +10,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
+import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { OfficialAvatar, OfficialInviteForm, RoleChipPicker } from "@/components/v2/officials-shared";
 import { ALL_OFFICIAL_ROLES } from "@/lib/official-roles";
@@ -44,7 +45,9 @@ export function OfficialsDirectoryPanel({
   const [name, setName] = useState("");
   const [roles, setRoles] = useState<string[]>(["referee"]);
   const [bulkDone, setBulkDone] = useState<number | null>(null);
-  const [invitingId, setInvitingId] = useState<string | null>(null);
+  /** One expandable per row: the invite form or the roles editor. */
+  const [openRow, setOpenRow] = useState<{ id: string; mode: "invite" | "roles" } | null>(null);
+  const confirm = useConfirm();
 
   const bulkTargets = officials.filter((o) => o.email && !o.claimed && !o.invite_pending);
 
@@ -155,25 +158,74 @@ export function OfficialsDirectoryPanel({
                         {msg("officials.invited")}
                       </span>
                     ) : null}
-                    {canEdit && !o.claimed && invitingId !== o.id && (
+                    {canEdit && !o.claimed && openRow?.id !== o.id && (
                       <button
                         type="button"
                         className="btn btn-ghost py-1 text-xs"
                         disabled={busy}
-                        onClick={() => setInvitingId(o.id)}
+                        onClick={() => setOpenRow({ id: o.id, mode: "invite" })}
                       >
                         {msg("officials.invite")}
                       </button>
                     )}
+                    {canEdit && !(openRow?.id === o.id && openRow.mode === "roles") && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost py-1 text-xs"
+                        disabled={busy}
+                        onClick={() => setOpenRow({ id: o.id, mode: "roles" })}
+                      >
+                        {msg("officials.editRoles")}
+                      </button>
+                    )}
+                    {canEdit && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                        disabled={busy}
+                        onClick={() =>
+                          void (async () => {
+                            const ok = await confirm({
+                              title: msg("officials.deleteTitle", { name: o.display_name }),
+                              body: msg("officials.deleteBody"),
+                              confirmLabel: msg("officials.deleteLabel"),
+                              tone: "danger",
+                            });
+                            if (!ok) return;
+                            await run(() => apiV1(`/api/v1/officials/${o.id}`, { method: "DELETE" }));
+                          })()
+                        }
+                      >
+                        {msg("officials.delete")}
+                      </button>
+                    )}
                   </div>
                 </div>
-                {invitingId === o.id && (
+                {openRow?.id === o.id && (
                   <div className="mt-3 border-t border-slate-100 pt-3">
-                    <OfficialInviteForm
-                      officialId={o.id}
-                      initialEmail={o.email}
-                      onClose={() => setInvitingId(null)}
-                    />
+                    {openRow.mode === "invite" ? (
+                      <OfficialInviteForm
+                        officialId={o.id}
+                        initialEmail={o.email}
+                        onClose={() => setOpenRow(null)}
+                      />
+                    ) : (
+                      <OfficialRolesEditor
+                        initial={o.role_keys}
+                        multiAllowed={rolesMultiAllowed}
+                        busy={busy}
+                        onSave={(roleKeys) =>
+                          void run(async () => {
+                            await apiV1(`/api/v1/officials/${o.id}`, {
+                              method: "PATCH",
+                              json: { role_keys: roleKeys },
+                            });
+                            setOpenRow(null);
+                          })
+                        }
+                        onClose={() => setOpenRow(null)}
+                      />
+                    )}
                   </div>
                 )}
               </li>
@@ -227,6 +279,48 @@ export function OfficialsDirectoryPanel({
           </form>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Inline roles editor for an existing official — same chip picker (and the
+ *  same free-plan swap rule) as the add form; PATCHes role_keys on save. */
+function OfficialRolesEditor({
+  initial,
+  multiAllowed,
+  busy,
+  onSave,
+  onClose,
+}: {
+  initial: string[];
+  multiAllowed: boolean;
+  busy: boolean;
+  onSave: (roleKeys: string[]) => void;
+  onClose: () => void;
+}) {
+  const msg = useMsg();
+  const [roles, setRoles] = useState<string[]>(initial.length ? initial : ["referee"]);
+  return (
+    <div className="space-y-3">
+      <RoleChipPicker
+        value={roles}
+        onChange={setRoles}
+        suggestions={ALL_OFFICIAL_ROLES}
+        multiAllowed={multiAllowed}
+      />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          className="btn btn-primary"
+          disabled={busy || roles.length === 0}
+          onClick={() => onSave(roles)}
+        >
+          {msg("officials.saveRoles")}
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={onClose}>
+          {msg("officials.cancel")}
+        </button>
+      </div>
     </div>
   );
 }

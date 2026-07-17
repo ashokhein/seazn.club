@@ -1762,5 +1762,11 @@
   "officials.bulkDone": "{n} invite(s) sent",
   "officials.cancel": "Cancel",
   "officials.done": "Done",
+  "officials.delete": "Delete",
+  "officials.deleteBody": "Removes them from this organisation's officials pool, along with their fixture assignments and availability here. Their account and other organisations are not affected. This cannot be undone.",
+  "officials.deleteLabel": "Delete official",
+  "officials.deleteTitle": "Delete {name}?",
+  "officials.editRoles": "Edit roles",
+  "officials.saveRoles": "Save roles",
   "officials.manageInDirectory": "Manage officials in the directory"
 }

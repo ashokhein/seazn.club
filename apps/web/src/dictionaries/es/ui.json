@@ -1762,5 +1762,11 @@
   "officials.bulkDone": "{n} invitación(es) enviada(s)",
   "officials.cancel": "Cancelar",
   "officials.done": "Listo",
+  "officials.delete": "Eliminar",
+  "officials.deleteBody": "Lo elimina del grupo de oficiales de esta organización, junto con sus asignaciones de partidos y su disponibilidad aquí. Su cuenta y las demás organizaciones no se ven afectadas. Esta acción no se puede deshacer.",
+  "officials.deleteLabel": "Eliminar oficial",
+  "officials.deleteTitle": "¿Eliminar a {name}?",
+  "officials.editRoles": "Editar roles",
+  "officials.saveRoles": "Guardar roles",
   "officials.manageInDirectory": "Gestionar árbitros en el directorio"
 }
