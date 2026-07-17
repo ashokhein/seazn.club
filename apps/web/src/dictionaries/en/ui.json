@@ -736,6 +736,8 @@
   "schedule.notice.completed": "Stage completed.",
   "schedule.notice.stageAdded": "Stage added — {n} fixture(s) generated for the top {topN}.",
   "schedule.notice.stageAddedLater": "Stage added — fixtures will generate when the previous stage completes.",
+  "schedule.error.tooFewGroupEntrants": "Can't generate matches yet — {groups} groups need at least {required} entrants in total (have {have}). Add more entrants or assign them to groups first.",
+  "schedule.error.tooFewEntrants": "Can't generate matches yet — add at least 2 entrants to this stage first.",
   "schedule.print": "Print schedule",
   "schedule.working": "Working…",
   "schedule.pairNext": "Pair next round",

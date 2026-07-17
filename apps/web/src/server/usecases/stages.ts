@@ -872,6 +872,29 @@ export async function generateStageFixtures(auth: AuthCtx, stageId: string): Pro
             ? [] // Jul3/08 §6: ladder fixtures come from challenges, on demand
             : generate(stage.kind, stage.config, entrants, poolIds);
 
+    // Guard against the misleading "nothing new — up to date" success shape
+    // (design/fix-ui/03 §"misleading success message"): a `group` stage with
+    // enough TOTAL entrants to pass the `entrants.length < 2` check above can
+    // still produce zero pairings once those entrants are split across N
+    // configured groups (e.g. 2 entrants snake-distributed into 4 groups —
+    // every group ends up with 0 or 1 entrant, so roundRobinGen has nothing to
+    // pair). Before this guard, that returned `created: 0, existing: 0` — the
+    // exact same shape as "already generated, run again, nothing changed" —
+    // so the UI showed a green "up to date" banner while zero fixtures ever
+    // existed. Distinguish the two: this is a precondition failure, not a
+    // no-op success, so it must throw (a real reason), not return quietly.
+    if ((stage.kind === "group" || stage.kind === "league") && gen.length === 0 && existing.length === 0) {
+      const groups = stage.kind === "group" ? poolCount(stage.config) : 1;
+      const required = Math.max(2, groups * 2);
+      throw new EngineError(
+        "STAGE_NOT_READY",
+        groups > 1
+          ? `not enough entrants to fill ${groups} groups — each group needs at least 2 (have ${entrants.length}, need ${required})`
+          : "not enough entrants to generate any matches",
+        { stageId, reason: "group_too_few_entrants", groups, entrants: entrants.length, required },
+      );
+    }
+
     const byKey = new Map<string, string>(); // ext_key → fixture uuid
     for (const f of existing) if (f.ext_key) byKey.set(f.ext_key, f.id);
 

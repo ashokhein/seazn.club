@@ -77,6 +77,11 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
   const [paywallFeature, setPaywallFeature] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null); // stage id in flight
   const [notice, setNotice] = useState<string | null>(null);
+  // "Générer les matchs" precondition-not-met (design/fix-ui/03 §"misleading
+  // success message"): distinct from `notice` (success, green) and `error`
+  // (generic failure, red) — an amber, actionable "here's what to fix" state
+  // so it's never confused with the "nothing new — up to date" success copy.
+  const [warning, setWarning] = useState<string | null>(null);
   // Set after an inline reschedule lands: the notice grows an Undo button
   // that steps the division history back one event (Jul3/03).
   const [undoable, setUndoable] = useState(false);
@@ -129,6 +134,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
     setError(null);
     setPaywallFeature(null);
     setNotice(null);
+    setWarning(null);
     setBusy(stageId);
     try {
       if (action === "delete") {
@@ -169,7 +175,12 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
       if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED") {
         setPaywallFeature(String(err.extra.feature_key ?? ""));
       } else {
-        setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
+        const precondition = generatePreconditionMessage(err, msg);
+        if (precondition) {
+          setWarning(precondition);
+        } else {
+          setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
+        }
       }
     } finally {
       setBusy(null);
@@ -200,6 +211,12 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
         </p>
       )}
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
+      {/* Precondition-not-met (amber, actionable) — never the green success
+          banner: "Générer les matchs" did nothing because the entrants can't
+          fill the configured groups yet, not because it was already done. */}
+      {warning && (
+        <p className="rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">{warning}</p>
+      )}
       {error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
@@ -609,6 +626,35 @@ function AddStageForm({
 }
 
 const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
+
+/**
+ * "Générer les matchs" precondition failure (design/fix-ui/03 §"misleading
+ * success message"): generateStageFixtures throws STAGE_NOT_READY with
+ * `data.reason: "group_too_few_entrants"` when a group stage passed the
+ * total-entrant gate but can't pair fixtures once split across its
+ * configured groups. Returns the actionable, localized reason to show as a
+ * distinct (amber, non-success) banner — or null for every other error,
+ * which the caller falls through to the generic red error banner for.
+ * Exported (pure, no state) so this classification is unit-testable without
+ * a DOM/jsdom harness, which this repo's component tests don't set up.
+ */
+export function generatePreconditionMessage(err: unknown, msg: Msg): string | null {
+  if (
+    !(err instanceof ApiV1Error) ||
+    err.code !== "STAGE_NOT_READY" ||
+    err.extra.reason !== "group_too_few_entrants"
+  ) {
+    return null;
+  }
+  const groups = Number(err.extra.groups ?? 1);
+  return groups > 1
+    ? msg("schedule.error.tooFewGroupEntrants", {
+        required: Number(err.extra.required ?? groups * 2),
+        have: Number(err.extra.entrants ?? 0),
+        groups,
+      })
+    : msg("schedule.error.tooFewEntrants");
+}
 
 /** A bye: one side empty with an auto-advance award outcome (v3/04 §3 item 6). */
 function isBye(f: FixtureRow): boolean {

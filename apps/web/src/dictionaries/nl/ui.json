@@ -736,6 +736,8 @@
   "schedule.notice.completed": "Fase afgerond.",
   "schedule.notice.stageAdded": "Fase toegevoegd — {n} wedstrijd(en) gegenereerd voor de top {topN}.",
   "schedule.notice.stageAddedLater": "Fase toegevoegd — wedstrijden worden gegenereerd wanneer de vorige fase is afgerond.",
+  "schedule.error.tooFewGroupEntrants": "Kan nog geen wedstrijden genereren — {groups} groepen hebben in totaal minstens {required} deelnemers nodig (nu {have}). Voeg deelnemers toe of wijs ze eerst aan groepen toe.",
+  "schedule.error.tooFewEntrants": "Kan nog geen wedstrijden genereren — voeg eerst minstens 2 deelnemers toe aan deze fase.",
   "schedule.print": "Schema afdrukken",
   "schedule.working": "Bezig…",
   "schedule.pairNext": "Volgende ronde koppelen",

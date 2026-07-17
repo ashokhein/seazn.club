@@ -736,6 +736,8 @@
   "schedule.notice.completed": "Fase completada.",
   "schedule.notice.stageAdded": "Fase añadida: se generaron {n} enfrentamiento(s) para los {topN} primeros.",
   "schedule.notice.stageAddedLater": "Fase añadida: los enfrentamientos se generarán cuando se complete la fase anterior.",
+  "schedule.error.tooFewGroupEntrants": "Aún no se pueden generar los partidos — {groups} grupos necesitan al menos {required} participantes en total (hay {have}). Añade más participantes o asígnalos primero a los grupos.",
+  "schedule.error.tooFewEntrants": "Aún no se pueden generar los partidos — añade primero al menos 2 participantes a esta fase.",
   "schedule.print": "Imprimir calendario",
   "schedule.working": "Procesando…",
   "schedule.pairNext": "Emparejar siguiente ronda",

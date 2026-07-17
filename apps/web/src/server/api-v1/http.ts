@@ -129,6 +129,18 @@ async function v1Inner<T>(
       ) {
         extra = { conflicts: (err.data as { conflicts: unknown[] }).conflicts };
       }
+      // "Générer les matchs" precondition failure (design/fix-ui/03 §"misleading
+      // success message"): a group stage that can't pair its entrants into the
+      // configured groups throws STAGE_NOT_READY with reason
+      // "group_too_few_entrants" — forward it so the client can render an
+      // actionable reason instead of the generic "up to date" success copy.
+      if (
+        err.code === "STAGE_NOT_READY" &&
+        (err.data as { reason?: unknown } | undefined)?.reason === "group_too_few_entrants"
+      ) {
+        const d = err.data as { groups: number; entrants: number; required: number };
+        extra = { reason: "group_too_few_entrants", groups: d.groups, entrants: d.entrants, required: d.required };
+      }
       return errorResponse(requestId, status, err.code, err.message, extra);
     }
     if (err instanceof PaymentRequiredError) {
