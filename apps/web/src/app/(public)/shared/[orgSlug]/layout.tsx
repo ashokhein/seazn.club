@@ -83,9 +83,21 @@ export default async function PublicOrgLayout({
           >
             {org.name}
           </Link>
+          {/* Was `hidden sm:block` — silently dropped below `sm` with no
+              replacement (design/fix-ui README.md cross-cutting #3). This is
+              a plain descriptor, not links to other pages (Live/Schedule/
+              Standings live as sections/tabs further down each competition
+              page, not top-level routes off this org-level layout), so
+              there's nothing to reach via a hamburger — the fix is to stop
+              hiding it. Kept inline (with the primary row's real estate) at
+              `sm`+; below that it moves to its own line instead so it never
+              crowds the org name/logo on a narrow header. */}
           <span className="ml-auto hidden shrink-0 text-[11px] font-medium uppercase tracking-[0.18em] text-court-muted sm:block">
             Live scores · Schedules · Standings
           </span>
+        </div>
+        <div className="border-t border-white/10 px-4 py-1 text-center text-[10px] font-medium uppercase tracking-[0.18em] text-court-muted sm:hidden">
+          Live scores · Schedules · Standings
         </div>
         {/* Accent keel — the one line of brand color on the slab. */}
         <div aria-hidden className="h-0.5 bg-accent" />

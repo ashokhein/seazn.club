@@ -300,5 +300,7 @@
   "funnel.sport": "Deporte",
   "funnel.entrants": "Jugadores / equipos",
   "funnel.date": "Fecha de inicio",
-  "funnel.submit": "Configurar →"
+  "funnel.submit": "Configurar →",
+  "nav.openMenu": "Abrir menú",
+  "nav.closeMenu": "Cerrar menú"
 }
