@@ -613,11 +613,16 @@ async function officialOnboardingSuite(admin: Session, orgId: string): Promise<v
   const claim2Id = v1data<{ id: string }>(invite2).id ?? "";
   check("off second org invite mints its own claim id", invite2.status === 201 && !!claim2Id);
 
-  // wrong email is refused, not silently ignored.
+  // wrong email gets the generic 404 — same as a bogus id, so a non-owner
+  // can't even learn the claim exists (review fix 2026-07-17).
   const stranger = newSession();
   await signIn(stranger, `stranger_${tag}@example.com`);
   const wrongAccept = await v1(stranger, `/api/v1/me/officiating-claims/${claim2Id}/accept`, "POST");
-  check("off accept-by-id refuses a non-matching email", wrongAccept.status === 403);
+  const bogusAccept = await v1(stranger, `/api/v1/me/officiating-claims/${crypto.randomUUID()}/accept`, "POST");
+  check(
+    "off accept-by-id refuses a non-matching email with the generic 404",
+    wrongAccept.status === 404 && bogusAccept.status === 404,
+  );
 
   const accept2 = await v1(ref, `/api/v1/me/officiating-claims/${claim2Id}/accept`, "POST");
   check("off accept-by-id links the second org without the emailed token", accept2.status === 200);
