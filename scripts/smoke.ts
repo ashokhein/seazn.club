@@ -1677,6 +1677,23 @@ async function schedRegV3Suite(
     board.status === 200 && board.body.includes("Board density"),
   );
 
+  // Matchday documents (v12 PR1, Task 9): timetable PDF export renders a
+  // real PDF for this division's fixtures. It renders REAL PDFs, so assert
+  // validity via magic bytes + content-type, not literal text (font
+  // subsetting encodes glyph IDs, not characters) — the branded-vs-plain
+  // visual proof is the Task 18 gallery, not a byte assertion.
+  const docPdf = await fetch(`${BASE}/api/v1/divisions/${div.id}/exports/timetable?format=pdf`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
+  const docPdfBytes = Buffer.from(await docPdf.arrayBuffer());
+  check(
+    "exports timetable PDF renders a valid branded PDF (pro)",
+    docPdf.status === 200 &&
+      (docPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      docPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      docPdfBytes.byteLength > 1024,
+  );
+
   // Reschedule with the current division seq — lands; replaying the same
   // (now stale) token 409s with SEQ_CONFLICT (v3/11 gap 10).
   const seq0 = v1data<{ seq: number }>(await v1(admin, `/api/v1/divisions/${div.id}`)).seq;
@@ -2644,6 +2661,22 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     form_fields: [],
   });
   check("gap offline entry fee allowed on community", fFee.status === 200);
+
+  // Matchday documents (v12 PR1, Task 9): same export renders a valid PDF on
+  // a community org — tables upgrade for every plan, only the masthead/
+  // sponsor chrome differs (a visual difference the Task 18 gallery proves,
+  // not a byte-level one).
+  const freeDocPdf = await fetch(`${BASE}/api/v1/divisions/${fDivId}/exports/timetable?format=pdf`, {
+    headers: { cookie: cookieHeader(free) },
+  });
+  const freeDocPdfBytes = Buffer.from(await freeDocPdf.arrayBuffer());
+  check(
+    "exports timetable PDF renders a valid plain PDF (free)",
+    freeDocPdf.status === 200 &&
+      (freeDocPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      freeDocPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      freeDocPdfBytes.byteLength > 1024,
+  );
 
   // --- Ownership transfer on org1 (owner + the invited members): away & back ---
   const members = (await call(admin, `/api/orgs/${org1Id}/members`)) as {
