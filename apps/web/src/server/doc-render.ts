@@ -53,6 +53,9 @@ function drawMasthead(
   if (logo) {
     try { doc.image(logo, w - MARGIN - 40, 12, { height: 40 }); } catch { /* skip */ }
   }
+  // red ball riding the lime line, right-aligned — mirrors ticket.png's mark
+  // (wordmark + ball + pitch line is the full SEAZN brand, not just the line)
+  doc.circle(w - MARGIN - 4, MAST_H - 10, 4).fill(PALETTE.ball);
   // lime pitch-line rule — the signature
   doc.rect(0, MAST_H, w, 4).fill(PALETTE.lime);
   doc.fillColor(PALETTE.ink);
@@ -177,6 +180,9 @@ function drawTicket(
         width: w - 32, align: "right", characterSpacing: 2, lineBreak: false,
       });
   }
+  // red ball riding the lime line, right-aligned — mirrors ticket.png's mark
+  // so cut-out tickets (which lose the page masthead) carry the full mark.
+  doc.circle(MARGIN + w - 12, top + 36, 3.5).fill(PALETTE.ball);
   doc.rect(MARGIN, top + 44, w, 4).fill(PALETTE.lime);
   doc.font(FONT.displayBold).fontSize(22).fillColor(PALETTE.ink)
     .text(t.competition.toUpperCase(), MARGIN + 16, top + 60);
@@ -331,6 +337,12 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
     doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
       `${model.meta.footerNote ?? model.title} — printed ${model.meta.printedAt} · page ${i - range.start + 1} of ${total}`,
       MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 40, lineBreak: false },
+    );
+    // platform attribution — every tier, every page (free tier otherwise
+    // carries no SEAZN identity at all since the masthead wordmark is Pro-only)
+    doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
+      "Powered by seazn.club",
+      MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 40, align: "right", lineBreak: false },
     );
   }
   doc.end();

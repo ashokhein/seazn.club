@@ -13,7 +13,7 @@ vi.mock("pdfkit", () => {
     fillColor() { return this; } strokeColor() { return this; } lineWidth() { return this; }
     text(s: unknown) { rec.text.push(String(s)); return this; }
     image() { rec.images++; return this; }
-    rect() { return this; } roundedRect() { return this; }
+    rect() { return this; } roundedRect() { return this; } circle() { return this; }
     moveTo() { return this; } lineTo() { return this; } stroke() { return this; }
     fill(c?: string) { if (typeof c === "string") rec.fills.push(c); return this; }
     dash() { return this; } undash() { return this; } moveDown() { return this; }
@@ -51,6 +51,13 @@ describe("doc-render masthead", () => {
     expect(r.text.join(" ")).toContain("ORDER OF PLAY");
   });
 
+  it("draws the red ball alongside the wordmark + lime line (the full mark)", async () => {
+    // a timetable model has no other red element, so this is a clean,
+    // non-tautological assertion for PALETTE.ball (#ef4444).
+    const r = await render(model({ orgName: "Riverside SC", colors: { primary: "#150b36" } }));
+    expect(r.fills).toContain("#ef4444");
+  });
+
   it("free-tier: eyebrow + title upgrade for ALL, but NO masthead wordmark/pitch-line", async () => {
     const r = await render(model()); // no branding
     expect(r.text.join(" ")).toContain("ORDER OF PLAY"); // title block draws for everyone
@@ -80,6 +87,16 @@ describe("doc-render footer", () => {
     expect(line).toBeTruthy();
     expect(line!.indexOf("Acme")).toBeLessThan(line!.indexOf("Silverware")); // title before silver
   });
+
+  it("carries a 'Powered by seazn.club' attribution on unbranded (free-tier) docs", async () => {
+    const r = await render(model()); // no branding
+    expect(r.text.join(" ")).toContain("seazn.club");
+  });
+
+  it("carries a 'Powered by seazn.club' attribution on branded (Pro) docs too", async () => {
+    const r = await render(model({ orgName: "Riverside SC" }));
+    expect(r.text.join(" ")).toContain("seazn.club");
+  });
 });
 
 describe("doc-render tickets", () => {
@@ -102,7 +119,10 @@ describe("doc-render tickets", () => {
   it("stamps a CONFIRMED ticket green, not the generic ball-red (Task 12b)", async () => {
     const r = await render(ticketModel("CONFIRMED"));
     expect(r.fills).toContain("#047857");
-    expect(r.fills).not.toContain("#ef4444");
+    // the brand ball itself is legitimately ball-red — one on the page
+    // masthead (branded ticketModel) + one on the ticket card — but the
+    // CONFIRMED stamp colour must never reuse ball-red, so no THIRD hit.
+    expect(r.fills.filter((c) => c === "#ef4444")).toHaveLength(2);
   });
 
   it("stamps a WAITLISTED ticket blue (Task 12b)", async () => {
@@ -115,7 +135,9 @@ describe("doc-render tickets", () => {
   it("falls back to pending amber for an unrecognized status (Task 12b)", async () => {
     const r = await render(ticketModel("SOME_UNKNOWN_STATUS"));
     expect(r.fills).toContain("#b45309");
-    expect(r.fills).not.toContain("#ef4444");
+    // brand ball contributes two #ef4444 fills (masthead + ticket card, see
+    // above); the fallback stamp colour itself must not add a third.
+    expect(r.fills.filter((c) => c === "#ef4444")).toHaveLength(2);
   });
 
   it("carries the org name on the ticket card header, uppercased (Task 12b)", async () => {
