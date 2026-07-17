@@ -105,9 +105,17 @@ describe("doc-render tickets", () => {
     expect(r.fills).not.toContain("#ef4444");
   });
 
-  it("stamps a WAITLIST ticket blue (Task 12b)", async () => {
-    const r = await render(ticketModel("WAITLIST"));
+  it("stamps a WAITLISTED ticket blue (Task 12b)", async () => {
+    // real domain value is "waitlisted" (registrations.status enum;
+    // r/[ref]/ticket.png/route.tsx STAMP map) — not "waitlist".
+    const r = await render(ticketModel("WAITLISTED"));
     expect(r.fills).toContain("#0369a1");
+  });
+
+  it("falls back to pending amber for an unrecognized status (Task 12b)", async () => {
+    const r = await render(ticketModel("SOME_UNKNOWN_STATUS"));
+    expect(r.fills).toContain("#b45309");
+    expect(r.fills).not.toContain("#ef4444");
   });
 
   it("carries the org name on the ticket card header, uppercased (Task 12b)", async () => {

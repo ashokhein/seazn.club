@@ -140,13 +140,15 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
 const STAMP_COLORS: Record<string, string> = {
   paid: "#047857",
   confirmed: "#047857",
-  waitlist: "#0369a1",
+  waitlisted: "#0369a1",
   pending: "#b45309",
   withdrawn: "#71717a",
 };
 
 function stampColorFor(status: string): string {
-  return STAMP_COLORS[status.toLowerCase()] ?? PALETTE.ball;
+  // unrecognized status falls back to pending amber, mirroring ticket.png's
+  // `STAMP[status] ?? STAMP.pending` — not the ball-red default.
+  return STAMP_COLORS[status.toLowerCase()] ?? STAMP_COLORS.pending!;
 }
 
 /** The courtside pass — mirrors r/[ref]/ticket.png as a printable card.
