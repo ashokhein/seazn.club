@@ -44,6 +44,7 @@ function drawMasthead(
     .fillColor(PALETTE.lime).text(" CLUB", { continued: false });
   // org name, right
   if (b.orgName) {
+    doc.font(FONT.bodyMed).fontSize(10);
     doc.fillColor(PALETTE.cream).text(b.orgName.toUpperCase(), MARGIN, 22, {
       width: w - MARGIN * 2, align: "right", characterSpacing: 2,
     });
