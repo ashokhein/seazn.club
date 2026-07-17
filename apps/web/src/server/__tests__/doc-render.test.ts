@@ -59,3 +59,12 @@ describe("doc-render masthead", () => {
     expect(r.fills).not.toContain("#a3e635");           // no pitch-line when unbranded
   });
 });
+
+describe("doc-render tables", () => {
+  it("renders a night header row + data cells for a table", async () => {
+    const r = await render(model()); // reuse the render() spy + timetable model
+    expect(r.text.join(" ")).toContain("Time");     // header cell
+    expect(r.text.join(" ")).toContain("Falcons");  // data cell
+    expect(r.fills).toContain("#150b36");            // night header-row background
+  });
+});

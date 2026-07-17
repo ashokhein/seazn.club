@@ -44,7 +44,6 @@ function drawMasthead(
     .fillColor(PALETTE.lime).text(" CLUB", { continued: false });
   // org name, right
   if (b.orgName) {
-    doc.font(FONT.bodyMed).fontSize(10).fillColor("rgba(245,240,232,0.7)" as never);
     doc.fillColor(PALETTE.cream).text(b.orgName.toUpperCase(), MARGIN, 22, {
       width: w - MARGIN * 2, align: "right", characterSpacing: 2,
     });
@@ -77,6 +76,12 @@ function isLandscape(model: DocModel): boolean {
   return model.sections.some((s) => s.table?.landscape === true);
 }
 
+function isNumericColumn(table: DocTable, i: number): boolean {
+  return table.rows.length > 0 &&
+    table.rows.every((r) => r[i] === "" || typeof r[i] === "number" ||
+      /^[\d.,:%+\-–—\s]*$/.test(String(r[i] ?? "")));
+}
+
 function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
   const width = doc.page.width - MARGIN * 2;
   // proportional widths: text-heavy columns get more room
@@ -89,32 +94,34 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
   });
   const total = weights.reduce((a, b) => a + b, 0);
   const colW = weights.map((w) => (w / total) * width);
+  const numeric = table.columns.map((_, i) => isNumericColumn(table, i));
+  const rowHeight = 18;
 
-  const rowHeight = 16;
-  const drawRow = (cells: readonly (string | number)[], bold: boolean) => {
+  const drawRow = (cells: readonly (string | number)[], header: boolean, zebra: boolean) => {
     if (doc.y + rowHeight > doc.page.height - MARGIN) doc.addPage();
     const y = doc.y;
+    if (header) doc.rect(MARGIN, y, width, rowHeight).fill(PALETTE.night);
+    else if (zebra) doc.rect(MARGIN, y, width, rowHeight).fill(PALETTE.cream);
     let x = MARGIN;
-    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(8);
+    doc.font(header ? FONT.bodyMed : FONT.body).fontSize(header ? 8.5 : 9)
+      .fillColor(header ? PALETTE.cream : PALETTE.ink);
     cells.forEach((cell, i) => {
-      doc.text(String(cell ?? ""), x + 2, y + 3, {
-        width: colW[i]! - 4,
-        height: rowHeight,
-        ellipsis: true,
-        lineBreak: false,
+      doc.text(String(cell ?? ""), x + 4, y + 5, {
+        width: colW[i]! - 8, height: rowHeight, ellipsis: true, lineBreak: false,
+        align: numeric[i] ? "right" : "left",
       });
       x += colW[i]!;
     });
-    doc
-      .moveTo(MARGIN, y + rowHeight)
-      .lineTo(MARGIN + width, y + rowHeight)
-      .strokeColor("#dddddd")
-      .lineWidth(0.5)
-      .stroke();
+    if (!header) {
+      doc.moveTo(MARGIN, y + rowHeight).lineTo(MARGIN + width, y + rowHeight)
+        .strokeColor(PALETTE.hairline).lineWidth(0.5).stroke();
+    }
     doc.y = y + rowHeight;
+    doc.fillColor(PALETTE.ink);
   };
-  drawRow(table.columns, true);
-  for (const row of table.rows) drawRow(row, false);
+
+  drawRow(table.columns, true, false);
+  table.rows.forEach((row, i) => drawRow(row, false, i % 2 === 1));
   doc.moveDown(0.5);
 }
 
