@@ -271,6 +271,23 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
             .sort();
           return { from: times[0] ?? null, to: times[times.length - 1] ?? null };
         };
+        // League/group rounds display in ACTUAL earliest-kickoff order, not
+        // generation order (round_no) — auto-scheduling (parallel courts) or a
+        // manual reschedule can leave a later-numbered round with an earlier
+        // kickoff than one before it, which would mislead an organiser reading
+        // the round list for "what's next" (design/fix-ui/03 §"rounds out of
+        // order"). Rounds with no scheduled fixture yet have no time to sort
+        // by, so they fall back to round_no order after every dated round.
+        // Bracket stages (splitRounds below) are structural, not chronological
+        // (Quarter → Semi → Final), so they keep round_no order untouched.
+        const orderedRounds = [...rounds].sort((a, b) => {
+          const da = roundDates(a).from;
+          const db = roundDates(b).from;
+          if (da !== null && db !== null) return da < db ? -1 : da > db ? 1 : a - b;
+          if (da !== null) return -1;
+          if (db !== null) return 1;
+          return a - b;
+        });
         // Mirrors the server guard (deleteStage) EXACTLY: only the last stage
         // in the graph, and only when it owns no played fixtures. No "keep one
         // stage" rule — the server deletes the sole stage of a pure League too,
@@ -384,7 +401,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
               </p>
             ) : splitRounds ? null : (
               <div className="divide-y divide-slate-100">
-                {rounds.map((round) => {
+                {orderedRounds.map((round) => {
                   const dates = roundDates(round);
                   return (
                   <div key={round}>
