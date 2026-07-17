@@ -28,6 +28,18 @@ export const DocSection = z.object({
   columnsHint: z.number().int().min(1).max(2).optional(),
   /** Start this section on a fresh page (per-pitch / per-team scoping). */
   pageBreakBefore: z.boolean().optional(),
+  /** Admit-ticket payload (v12/Task 11) — QR carried as a URL, never pixels. */
+  ticket: z
+    .object({
+      maskedName: z.string(),
+      competition: z.string(),
+      dates: z.string(),
+      ref: z.string(),
+      status: z.string(),
+      qrUrl: z.string(),
+      seq: z.number(),
+    })
+    .optional(),
 });
 export type DocSection = z.infer<typeof DocSection>;
 
@@ -123,6 +135,16 @@ export interface ExportOfficialDuty {
 export interface ExportOfficialSchedule {
   officialName: string;
   duties: ExportOfficialDuty[];
+}
+
+export interface ExportTicket {
+  maskedName: string;
+  competition: string;
+  dates: string;
+  ref: string;
+  status: string; // "CONFIRMED" | "PAID" | ...
+  qrUrl: string; // `${origin}/r/${ref}` — URL only, never pixels
+  seq: number; // 1-based sequence for cutting
 }
 
 export interface BuildOpts {

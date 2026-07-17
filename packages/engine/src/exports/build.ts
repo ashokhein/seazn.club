@@ -11,6 +11,7 @@ import type {
   ExportParticipantRow,
   ExportRosterTeam,
   ExportStandingsRow,
+  ExportTicket,
 } from "./types.ts";
 
 function base(
@@ -195,4 +196,15 @@ export function buildOfficialsRota(
     ...(perOfficial && i > 0 ? { pageBreakBefore: true } : {}),
   }));
   return base("officials_rota", title, sections, opts);
+}
+
+/** Admit tickets (v12/Task 11): one 2-up section per ticket; the QR is carried
+ *  as a URL on the model — pixels are never generated here (Task 12 draws it). */
+export function buildAdmitTickets(
+  title: string,
+  tickets: readonly ExportTicket[],
+  opts: BuildOpts,
+): DocModel {
+  const sections: DocSection[] = tickets.map((t) => ({ columnsHint: 2, ticket: t }));
+  return base("admit_ticket", title, sections, opts);
 }

@@ -1,6 +1,7 @@
 // DocModel goldens (Jul3/06, PROMPT-26 acceptance): stable JSON, not pixels.
 import { describe, expect, it } from "vitest";
 import {
+  buildAdmitTickets,
   buildOfficialsRota,
   buildParticipants,
   buildRoster,
@@ -131,5 +132,16 @@ describe("buildDocModel goldens (Jul3/06 §2)", () => {
     expect(m.sections[0]!.heading).toBe("Sam Ref");
     expect(m.sections[0]!.table?.rows[0]).toContain("Referee");
     expect(m.sections[0]!.signatures).toBeTruthy();
+  });
+
+  it("buildAdmitTickets: one 2-up section per ticket, QR is a URL not pixels", () => {
+    const m = buildAdmitTickets("Summer League — Tickets", [
+      { maskedName: "S. Ref", competition: "Summer League", dates: "19 Jul",
+        ref: "AB12CD", status: "CONFIRMED", qrUrl: "https://x/r/AB12CD", seq: 1 },
+    ], { printedAt: "2026-07-19" });
+    expect(m.kind).toBe("admit_ticket");
+    expect(m.sections[0]!.columnsHint).toBe(2);
+    expect(m.sections[0]!.ticket?.qrUrl).toBe("https://x/r/AB12CD");
+    expect(JSON.stringify(m)).not.toMatch(/data:image/); // no pixels in the model
   });
 });
