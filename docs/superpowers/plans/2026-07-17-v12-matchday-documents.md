@@ -900,14 +900,17 @@ git commit -m "feat(exports): name the org + sponsors in xlsx header"
 - Modify: `scripts/smoke.ts`
 - Modify: `content/help/**` (branded-vs-plain note; fuller page in PR2)
 
-- [ ] **Step 1** Add to `scripts/smoke.ts`: pro path downloads a division timetable PDF and asserts the bytes contain `ORDER OF PLAY`; free path asserts they do not. Follow the file's existing pro/free harness.
-- [ ] **Step 2** Run `npm run typecheck` — expect 0 errors. Fix any exhaustive-switch fallout.
-- [ ] **Step 3** Run `npm run smoke` (or the documented command) — expect green.
-- [ ] **Step 4: Commit**
+> **Note on smoke:** `scripts/smoke.ts` is an HTTP harness that hits a running app on `http://localhost:3000` (see `BASE`). It renders REAL PDFs, so you CANNOT scan bytes for "ORDER OF PLAY" (font subsetting encodes text as glyph IDs). Assert the response is a valid PDF instead. Also: a subagent should NOT try to host a Next server — you ADD the smoke code and typecheck it; the actual `npm run smoke` green-run happens on the MAIN THREAD at Task 18 (which starts the app anyway).
+
+- [ ] **Step 1** Add to `scripts/smoke.ts`, following the file's existing pro/free session harness (it already provisions a Pro org and a community owner): for the Pro org, `GET /api/v1/divisions/{id}/exports/timetable?format=pdf` and assert `res.status === 200`, `content-type` is `application/pdf`, and the body starts with `%PDF-` and is > 1 KB. Do the same for the community/free org (also a valid PDF — tables upgrade for all; only masthead/sponsor chrome differs, which bytes can't distinguish). The branded-vs-plain VISUAL proof is the Task 18 gallery, not a byte assertion.
+- [ ] **Step 2** Run `npm run typecheck` — expect 0 errors. Fix any exhaustive-switch fallout from earlier tasks.
+- [ ] **Step 3** Run the deterministic suites (no server needed): `npm run test -w @seazn/engine` and, with `DATABASE_URL` exported, `npm run test -w @seazn/web -- doc-render.test.ts exports.test.ts` — all green. (Do NOT run `npm run smoke` here — it needs a live server; deferred to Task 18.)
+- [ ] **Step 4** Add a short branded-vs-plain note to an existing help page under `content/help/` (the full "Matchday documents" page is Task 17). One paragraph: Pro exports carry the org masthead + logo + sponsor line; community exports get the same clean tables without the chrome.
+- [ ] **Step 5: Commit**
 
 ```bash
 git add scripts/smoke.ts content/help
-git commit -m "test(exports): smoke asserts branded vs plain timetable"
+git commit -m "test(exports): smoke checks timetable PDF renders (pro + free)"
 ```
 
 ---
