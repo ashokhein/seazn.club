@@ -190,7 +190,7 @@ describe("doc-theme", () => {
 
 - [ ] **Step 3: Run it, verify it fails**
 
-Run: `npm run test -w web -- doc-theme.test.ts`
+Run: `npm run test -w @seazn/web -- doc-theme.test.ts`
 Expected: FAIL (module not found).
 
 - [ ] **Step 4: Create `doc-theme.ts`**
@@ -272,7 +272,7 @@ export function eyebrowFor(kind: string): string {
 
 - [ ] **Step 5: Run tests, verify pass**
 
-Run: `npm run test -w web -- doc-theme.test.ts`
+Run: `npm run test -w @seazn/web -- doc-theme.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -318,7 +318,7 @@ export const __test = { brandingFor };
 
 - [ ] **Step 2: Run it, verify it fails**
 
-Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w web -- exports.test.ts -t brandingFor`
+Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w @seazn/web -- exports.test.ts -t brandingFor`
 Expected: FAIL (no `orgName`, no `sponsors`).
 
 - [ ] **Step 3: Edit `divisionMeta`** (lines 35-54) — add org to the interface + query:
@@ -374,7 +374,7 @@ async function brandingFor(auth: AuthCtx, meta: DivisionMeta): Promise<DocBrandi
 
 - [ ] **Step 5: Run tests, verify pass**
 
-Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w web -- exports.test.ts`
+Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w @seazn/web -- exports.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -464,7 +464,7 @@ describe("doc-render masthead", () => {
 
 - [ ] **Step 2: Run it, verify it fails**
 
-Run: `npm run test -w web -- doc-render.test.ts`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts`
 Expected: FAIL (no `SEAZN` wordmark / no lime fill — masthead + title band not drawn yet).
 
 - [ ] **Step 3: Add the masthead drawer to `doc-render.ts`.** After imports add:
@@ -550,12 +550,12 @@ Then in `docModelToPdf`, replace the plain title block (the current `doc.font("H
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `npm run test -w web -- doc-render.test.ts`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts`
 Expected: PASS (branded → `SEAZN` wordmark + lime fill; free → eyebrow/title but no wordmark/lime).
 
 - [ ] **Step 5: Verify pre-existing exports still build** — run the engine + web export suites:
 
-Run: `npm run test -w web -- exports && npm run test -w @seazn/engine -- exports`
+Run: `npm run test -w @seazn/web -- exports && npm run test -w @seazn/engine -- exports`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
@@ -591,7 +591,7 @@ it("renders a night header row + data cells for a table", async () => {
 
 - [ ] **Step 2: Run it, verify it fails on the new header fill** — this guards the rewrite:
 
-Run: `npm run test -w web -- doc-render.test.ts`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts`
 Expected: FAIL on `#150b36` (header not yet filled) — the cell-text asserts already pass; the fill assert drives the zebra rewrite.
 
 - [ ] **Step 3: Rewrite `drawTable`** with brand styling and numeric alignment:
@@ -648,7 +648,7 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `npm run test -w web -- doc-render.test.ts && npm run test -w web -- exports`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts && npm run test -w @seazn/web -- exports`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -687,7 +687,7 @@ it("footer groups sponsors by tier, title first", async () => {
 
 - [ ] **Step 2: Run it, verify it fails**
 
-Run: `npm run test -w web -- doc-render.test.ts -t "footer groups"`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts -t "footer groups"`
 Expected: FAIL (sponsors not drawn).
 
 - [ ] **Step 3: Replace the footer loop** in `docModelToPdf`:
@@ -730,7 +730,7 @@ function sponsorLine(sponsors: { name: string; tier: string }[]): string {
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `npm run test -w web -- doc-render.test.ts`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -770,7 +770,7 @@ it("division timetable sets a description", async () => {
 
 - [ ] **Step 2: Run it, verify it fails**
 
-Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w web -- exports.test.ts -t "branding for a Pro org"`
+Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w @seazn/web -- exports.test.ts -t "branding for a Pro org"`
 Expected: FAIL.
 
 - [ ] **Step 3: Edit `buildDivisionDocModel`** — add a per-kind description + liveUrl to `common` (after line 143):
@@ -828,7 +828,7 @@ For the `scoresheet` `DocModel.parse` block (line 255) add `description: DESCRIP
 
 - [ ] **Step 6: Run tests, verify pass**
 
-Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w web -- exports.test.ts`
+Run: `DATABASE_URL=$TEST_DATABASE_URL npm run test -w @seazn/web -- exports.test.ts`
 Expected: PASS.
 
 - [ ] **Step 7: Commit**
@@ -863,7 +863,7 @@ it("xlsx header includes org name + sponsor row when branded", async () => {
 
 - [ ] **Step 2: Run it, verify it fails**
 
-Run: `npm run test -w web -- doc-render.test.ts -t "xlsx header"`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts -t "xlsx header"`
 Expected: FAIL.
 
 - [ ] **Step 3: Edit `docModelToXlsx`** — after the title row (line 165) insert:
@@ -876,7 +876,7 @@ Expected: FAIL.
 
 - [ ] **Step 4: Run tests, verify pass**
 
-Run: `npm run test -w web -- doc-render.test.ts`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
@@ -1128,7 +1128,7 @@ it("renders admit tickets with ref + ADMIT ONE", async () => {
 
 - [ ] **Step 3: Run it, verify it fails**
 
-Run: `npm run test -w web -- doc-render.test.ts -t "admit tickets"`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts -t "admit tickets"`
 Expected: FAIL (ticket section not drawn).
 
 - [ ] **Step 4: Add a QR pre-pass + `drawTicket`.** In `docModelToPdf`, before the section loop, resolve all ticket QRs:
@@ -1174,7 +1174,7 @@ function drawTicket(doc: PDFKit.PDFDocument, t: NonNullable<DocSection["ticket"]
 
 - [ ] **Step 5: Run tests, verify pass**
 
-Run: `npm run test -w web -- doc-render.test.ts`
+Run: `npm run test -w @seazn/web -- doc-render.test.ts`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
