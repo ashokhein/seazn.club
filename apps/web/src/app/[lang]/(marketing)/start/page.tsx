@@ -40,7 +40,13 @@ export default async function StartPage({
 }) {
   const { lang } = await params;
   if (!hasLocale(lang)) notFound();
-  const dict = await getDictionary(lang, "marketing");
+  const marketingDict = await getDictionary(lang, "marketing");
+  // StartWizard renders <LegalNotice/>, which reads legal.notice.* from the
+  // shared `ui` catalog via useMsg(). A DictProvider scoped to `marketing`
+  // alone left legal.notice.body leaking as a raw key on step 3 (see
+  // design/fix-ui/01-marketing-auth.md) — merge `ui` in, same pattern as
+  // /login's page.tsx passing the full ui dict into its DictProvider.
+  const dict = { ...marketingDict, ...(await getDictionary(lang, "ui")) };
   const sp = await searchParams;
   const entrants = Number(sp.entrants);
   return (
