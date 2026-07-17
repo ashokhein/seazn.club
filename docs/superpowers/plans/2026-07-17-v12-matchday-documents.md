@@ -474,12 +474,19 @@ import { PALETTE, FONT, registerFonts, eyebrowFor } from "./doc-theme";
 
 const MAST_H = 64; // masthead band height, page 1
 
-/** Resolve a storage logo path to bytes. Missing/broken → null, never throws. */
+import { publicStorageUrl } from "@/lib/supabase-storage";
+
+/** Resolve a logo storage path (or an already-absolute URL) to bytes. Logos
+ *  live in the PUBLIC Supabase bucket — there is no server-side byte reader,
+ *  so fetch the public URL. Missing/broken → null, never throws (a broken
+ *  export is worse than an unbranded one). */
 async function resolveLogo(logoPath: string | undefined): Promise<Buffer | null> {
   if (!logoPath) return null;
   try {
-    const { readObject } = await import("./storage"); // existing storage read
-    return await readObject(logoPath);
+    const url = /^https?:\/\//.test(logoPath) ? logoPath : publicStorageUrl(logoPath);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
   } catch {
     return null;
   }
@@ -558,7 +565,7 @@ git add apps/web/src/server/doc-render.ts apps/web/src/server/__tests__/doc-rend
 git commit -m "feat(exports): branded masthead + eyebrow/title/description band"
 ```
 
-> **Note (implementer):** confirm the storage read helper name — grep `apps/web/src/server` for the function `r/[ref]/ticket.png` or logo rendering uses to fetch a stored object; wire `resolveLogo` to that instead of the illustrative `./storage#readObject` if the real name differs. Missing helper → keep `resolveLogo` returning `null` and flag it.
+> **Note (implementer):** logos are in the PUBLIC Supabase bucket, referenced via `publicStorageUrl(path)` from `apps/web/src/lib/supabase-storage.ts` (verified — there is NO server-side byte reader; fetch the public URL as shown). `logo_path` on the branding blob may be a bare storage path or an absolute URL — the regex handles both. A missing/broken logo returns `null`, never throws.
 
 ---
 
