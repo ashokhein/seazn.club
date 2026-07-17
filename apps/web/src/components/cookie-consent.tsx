@@ -66,7 +66,15 @@ export function CookieConsent() {
   if (!visible) return null;
 
   return (
-    <div className="fixed bottom-4 left-4 right-4 z-50 mx-auto max-w-xl rounded-2xl border border-purple-100 bg-white p-4 shadow-xl sm:left-6 sm:right-auto sm:max-w-sm">
+    <div
+      // Bottom-left, opposite corner from the dev-mode route indicator
+      // (next.config.js devIndicators.position: "bottom-right" —
+      // design/fix-ui audit, cross-cutting finding #1). On mobile this
+      // banner still spans most of the viewport width (left-4..right-20,
+      // not full-bleed), so it keeps clearing that corner instead of
+      // resting flush against it.
+      className="fixed bottom-4 left-4 right-20 z-50 mx-auto max-w-xl rounded-2xl border border-purple-100 bg-white p-4 shadow-xl sm:left-6 sm:right-auto sm:max-w-sm"
+    >
       <p className="text-sm text-slate-600">
         {clientCommon(locale, "cookie.message")}{" "}
         <Link href="/legal/cookie-policy" className="text-purple-600 underline">

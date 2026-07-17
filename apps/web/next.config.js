@@ -92,6 +92,18 @@ const nextConfig = {
     ],
     minimumCacheTTL: 86400,
   },
+  // Dev-mode route indicator (the black-circle "N" badge) defaults to
+  // bottom-left, where it overlapped primary content/CTAs across marketing,
+  // console, and public pages (design/fix-ui audit, cross-cutting finding
+  // #1) and competed for the same corner as the cookie-consent banner
+  // (see cookie-consent.tsx). Every left-aligned/centered CTA and card on
+  // this site leaves the bottom-right corner clear, so move it there
+  // instead of reserving space around it everywhere. Dev-only — never
+  // rendered in a production build regardless of this setting (see
+  // node_modules/next/dist/docs/.../devIndicators.md).
+  devIndicators: {
+    position: "bottom-right",
+  },
 };
 
 // Pre-wrap config, re-exported by name: withSentryConfig's returned object
