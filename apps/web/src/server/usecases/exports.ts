@@ -59,22 +59,38 @@ async function divisionMeta(tx: Tx, divisionId: string): Promise<DivisionMeta> {
   return row;
 }
 
-// Jul3/06 §6: branding (club colours, sponsor logos, tournament styling) is
-// the Pro layer — resolved server-side and simply absent otherwise.
-async function brandingFor(auth: AuthCtx, meta: DivisionMeta): Promise<DocBranding | undefined> {
-  if (!(await hasFeature(auth.orgId, "exports.branded"))) return undefined;
-  const branding = meta.branding ?? {};
-  const colors: Record<string, string> = {};
-  if (typeof branding.primary_color === "string") colors.primary = branding.primary_color;
-  const sponsors = (await resolveSponsors(meta.org_id, meta.competition_id)).map((s) => ({
+// Jul3/06 §6 / v12: branding (club colours, sponsor logos, tournament
+// styling) is the Pro layer — resolved server-side and simply absent
+// otherwise. Shared by every caller so `resolveSponsors` is only ever
+// called once per export: `brandingFor` layers division-level colour/logo
+// overrides on top for the per-division exports; `buildCompetitionTimetable`
+// (no DivisionMeta in hand) calls this directly.
+async function orgBranding(
+  orgId: string,
+  orgName: string,
+  competitionId: string,
+): Promise<DocBranding | undefined> {
+  if (!(await hasFeature(orgId, "exports.branded"))) return undefined;
+  const sponsors = (await resolveSponsors(orgId, competitionId)).map((s) => ({
     name: s.name,
     tier: s.tier,
   }));
   return {
-    orgName: meta.org_name,
+    orgName,
+    ...(sponsors.length > 0 ? { sponsors } : {}),
+  };
+}
+
+async function brandingFor(auth: AuthCtx, meta: DivisionMeta): Promise<DocBranding | undefined> {
+  const base = await orgBranding(auth.orgId, meta.org_name, meta.competition_id);
+  if (base === undefined) return undefined;
+  const branding = meta.branding ?? {};
+  const colors: Record<string, string> = {};
+  if (typeof branding.primary_color === "string") colors.primary = branding.primary_color;
+  return {
+    ...base,
     ...(Object.keys(colors).length > 0 ? { colors } : {}),
     ...(typeof branding.logo_path === "string" ? { logos: [branding.logo_path] } : {}),
-    ...(sponsors.length > 0 ? { sponsors } : {}),
   };
 }
 
@@ -131,6 +147,15 @@ function toExportFixture(f: FixtureExportRow, divisionName: string): ExportFixtu
   };
 }
 
+// v12: per-kind blurb shown under the masthead (doc-render §Task 3).
+const DESCRIPTIONS: Record<string, string> = {
+  timetable: "All fixtures across every court, in play order.",
+  standings: "Current table, updated as results land.",
+  roster: "Squads by team — sign each player in before play.",
+  participants: "All registered players by club and division.",
+  scoresheet: "One sheet per match — record the score and sign off.",
+};
+
 /** The pure model for a division export — separated for golden-style tests;
  *  the route renders it to bytes. */
 export async function buildDivisionDocModel(
@@ -149,6 +174,7 @@ export async function buildDivisionDocModel(
     const title = `${meta.competition_name} — ${meta.name}`;
     const common = {
       printedAt: opts.printedAt,
+      description: DESCRIPTIONS[kind],
       ...(branding !== undefined ? { branding } : {}),
       ...(opts.pageBreaks !== undefined ? { pageBreaks: opts.pageBreaks } : {}),
       ...(opts.landscape !== undefined ? { landscape: opts.landscape } : {}),
@@ -267,6 +293,7 @@ export async function buildDivisionDocModel(
         return DocModel.parse({
           kind: "scoresheet",
           title,
+          description: DESCRIPTIONS.scoresheet,
           meta: { printedAt: opts.printedAt },
           ...(branding !== undefined ? { branding } : {}),
           sections,
@@ -285,9 +312,12 @@ export async function buildCompetitionTimetable(
 ): Promise<DocModel> {
   await requireFeature(auth.orgId, "exports", competitionId);
   return withTenant(auth.orgId, async (tx) => {
-    const [comp] = await tx<{ name: string }[]>`
-      select name from competitions where id = ${competitionId}`;
+    const [comp] = await tx<{ name: string; org_id: string; org_name: string }[]>`
+      select c.name, c.org_id, org.name as org_name
+      from competitions c join organizations org on org.id = c.org_id
+      where c.id = ${competitionId}`;
     if (!comp) throw new HttpError(404, "competition not found");
+    const branding = await orgBranding(comp.org_id, comp.org_name, competitionId);
     const divisions = await tx<{ id: string; name: string }[]>`
       select id, name from divisions where competition_id = ${competitionId} order by name`;
     const all: ExportFixture[] = [];
@@ -297,6 +327,8 @@ export async function buildCompetitionTimetable(
     }
     return buildTimetable(comp.name, all, {
       printedAt: opts.printedAt,
+      description: "Every fixture across all divisions.",
+      ...(branding !== undefined ? { branding } : {}),
       pageBreaks: opts.pageBreaks ?? "per_division",
     });
   });

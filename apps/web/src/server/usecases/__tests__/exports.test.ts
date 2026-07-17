@@ -152,4 +152,18 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(model.pageBreaks).toBe("per_division");
     expect(model.sections.some((s) => s.heading === "Open")).toBe(true);
   });
+
+  it("buildCompetitionTimetable carries branding for a Pro org", async () => {
+    const { auth } = await seedOrg("pro");
+    const { comp } = await seedDivision(auth);
+    const model = await buildCompetitionTimetable(auth, comp.id, { printedAt: PRINTED });
+    expect(model.branding?.orgName).toBeTruthy();
+  });
+
+  it("division timetable sets a description", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division } = await seedDivision(auth);
+    const model = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
+    expect(model.description).toMatch(/fixtures/i);
+  });
 });
