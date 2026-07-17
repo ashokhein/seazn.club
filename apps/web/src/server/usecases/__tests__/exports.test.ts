@@ -116,7 +116,8 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     await sql`update competitions set branding = ${sql.json({ primary_color: "#123456", logo_path: "orgs/x/logo.png" } as never)}
               where id = ${comp.id}`;
     const branded = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
-    expect(branded.branding).toEqual({ colors: { primary: "#123456" }, logos: ["orgs/x/logo.png"] });
+    expect(branded.branding).toMatchObject({ colors: { primary: "#123456" }, logos: ["orgs/x/logo.png"] });
+    expect(branded.branding?.orgName).toBeTruthy();
 
     // drop to a plan without exports.branded via override
     await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
@@ -131,6 +132,16 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     await expect(
       buildDivisionDocModel(freeAuth, freeDiv.id, "timetable", { printedAt: PRINTED }),
     ).rejects.toMatchObject({ featureKey: "exports" });
+  });
+
+  it("brandingFor: Pro model carries orgName + tiered sponsors from the sponsors table", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, comp } = await seedDivision(auth);
+    await sql`insert into sponsors (org_id, competition_id, name, tier, status, display_order)
+              values (${auth.orgId}, ${comp.id}, 'Acme', 'title', 'active', 0)`;
+    const model = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
+    expect(model.branding?.orgName).toBeTruthy();
+    expect(model.branding?.sponsors).toContainEqual({ name: "Acme", tier: "title" });
   });
 
   it("competition-wide timetable groups per division", async () => {

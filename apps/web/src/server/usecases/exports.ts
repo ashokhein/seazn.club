@@ -22,6 +22,7 @@ import { hasFeature, requireFeature } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { resolveModule } from "@/server/engine-db";
 import { participantRows } from "./clubs";
+import { resolveSponsors } from "./sponsors";
 
 type Tx = postgres.TransactionSql;
 
@@ -35,6 +36,8 @@ export interface ExportOpts {
 interface DivisionMeta {
   id: string;
   name: string;
+  org_id: string;
+  org_name: string;
   competition_id: string;
   competition_name: string;
   branding: Record<string, unknown> | null;
@@ -45,9 +48,12 @@ interface DivisionMeta {
 
 async function divisionMeta(tx: Tx, divisionId: string): Promise<DivisionMeta> {
   const [row] = await tx<DivisionMeta[]>`
-    select d.id, d.name, d.competition_id, c.name as competition_name,
+    select d.id, d.name, d.org_id, org.name as org_name,
+           d.competition_id, c.name as competition_name,
            c.branding, d.sport_key, d.module_version, d.config
-    from divisions d join competitions c on c.id = d.competition_id
+    from divisions d
+    join competitions c on c.id = d.competition_id
+    join organizations org on org.id = d.org_id
     where d.id = ${divisionId}`;
   if (!row) throw new HttpError(404, "division not found");
   return row;
@@ -60,9 +66,15 @@ async function brandingFor(auth: AuthCtx, meta: DivisionMeta): Promise<DocBrandi
   const branding = meta.branding ?? {};
   const colors: Record<string, string> = {};
   if (typeof branding.primary_color === "string") colors.primary = branding.primary_color;
+  const sponsors = (await resolveSponsors(meta.org_id, meta.competition_id)).map((s) => ({
+    name: s.name,
+    tier: s.tier,
+  }));
   return {
+    orgName: meta.org_name,
     ...(Object.keys(colors).length > 0 ? { colors } : {}),
     ...(typeof branding.logo_path === "string" ? { logos: [branding.logo_path] } : {}),
+    ...(sponsors.length > 0 ? { sponsors } : {}),
   };
 }
 
