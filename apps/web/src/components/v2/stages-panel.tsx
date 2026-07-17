@@ -16,6 +16,7 @@ import { useConfirm } from "@/components/ui/confirm-provider";
 import { TipCallout } from "@/components/ui/tip";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
+import { DocumentsMenu } from "@/components/v2/board/documents-menu";
 
 type Msg = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
@@ -46,6 +47,8 @@ interface FixtureRow {
 
 interface Props {
   divisionId: string;
+  /** Competition id — the Admit tickets export is competition-scoped. */
+  competitionId: string;
   orgSlug: string;
   compSlug: string;
   divSlug: string;
@@ -55,7 +58,7 @@ interface Props {
   canEdit: boolean;
   /** Competition timezone (schedule settings) — every time renders in it. */
   tz: string;
-  /** Print goes through the Jul3/06 timetable export (Pro `exports` gate). */
+  /** Documents menu goes through the Jul3/06 / v12 exports (Pro `exports` gate). */
   canExport: boolean;
 }
 
@@ -69,7 +72,7 @@ const FIXTURE_STATUS_STYLE: Record<string, string> = {
   cancelled: "bg-slate-100 text-slate-400",
 };
 
-export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fixtures, entrantNames, canEdit, tz, canExport }: Props) {
+export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divSlug, stages, fixtures, entrantNames, canEdit, tz, canExport }: Props) {
   const msg = useMsg();
   const confirmDialog = useConfirm();
   const router = useRouter();
@@ -227,14 +230,7 @@ export function StagesPanel({ divisionId, orgSlug, compSlug, divSlug, stages, fi
           {msg("schedule.tz.caption", { tz })}
         </p>
         <div className="flex-1" />
-        {canExport && (
-          <a
-            className="btn btn-ghost text-xs"
-            href={`/api/v1/divisions/${divisionId}/exports/timetable?format=pdf`}
-          >
-            {msg("schedule.print")}
-          </a>
-        )}
+        {canExport && <DocumentsMenu divisionId={divisionId} competitionId={competitionId} />}
       </div>
 
       {/* "Now playing" strip (item 4): in-play matches float above the rounds. */}
