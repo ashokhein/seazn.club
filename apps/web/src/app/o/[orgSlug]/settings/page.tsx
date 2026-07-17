@@ -179,7 +179,11 @@ export default async function SettingsPage({
             <p className="mb-3 hidden px-3 text-[11px] font-semibold uppercase tracking-wider text-slate-500 md:block">
               {t(dict, "settings.nav.title")}
             </p>
-            <nav className="scroll-x scroll-x-fade sticky top-0 z-30 -mx-4 flex gap-1 whitespace-nowrap bg-[var(--background)]/90 px-4 py-2 backdrop-blur md:static md:z-auto md:mx-0 md:block md:space-y-0.5 md:bg-transparent md:p-0 md:backdrop-blur-none">
+            {/* Sticky just below the gantry header (which is also sticky
+                top:0) — pinning both to top:0 makes them compete for the
+                same position and this row loses, scrolling fully out of
+                view (02-console-org.md). */}
+            <nav className="scroll-x scroll-x-fade sticky top-[var(--app-header-h)] z-30 -mx-4 flex gap-1 whitespace-nowrap bg-[var(--background)]/90 px-4 py-2 backdrop-blur md:static md:z-auto md:mx-0 md:block md:space-y-0.5 md:bg-transparent md:p-0 md:backdrop-blur-none">
               {NAV_ITEMS.map(({ tab: navTab, labelKey, icon: Icon }) => {
                 const isActive = tab === navTab;
                 return (
