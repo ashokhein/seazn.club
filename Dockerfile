@@ -23,6 +23,17 @@ ENV NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY=$NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY
 ENV NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN
 ENV NEXT_PUBLIC_BASE_URL=$NEXT_PUBLIC_BASE_URL
 
+# Sentry source-map upload during `next build` (next.config.js). ORG/PROJECT
+# come from fly.toml [build.args]; AUTH_TOKEN is passed via `fly deploy
+# --build-arg` from CI — it is a SECRET, never committed. Upload self-disables
+# when SENTRY_AUTH_TOKEN is absent (local builds).
+ARG SENTRY_ORG
+ARG SENTRY_PROJECT
+ARG SENTRY_AUTH_TOKEN
+ENV SENTRY_ORG=$SENTRY_ORG
+ENV SENTRY_PROJECT=$SENTRY_PROJECT
+ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
+
 RUN npm run build --workspace apps/web
 
 # ── Stage 2: minimal production image ────────────────────────────────────────
