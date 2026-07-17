@@ -10,7 +10,13 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { patchFixture } from "../fixtures";
-import { buildDivisionDocModel, buildCompetitionTimetable } from "../exports";
+import {
+  buildDivisionDocModel,
+  buildCompetitionTimetable,
+  buildOfficialsRotaDoc,
+  buildAdmitTicketsDoc,
+  buildMyRotaDoc,
+} from "../exports";
 import { docModelToPdf, docModelToXlsx } from "@/server/doc-render";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -165,5 +171,52 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     const { division } = await seedDivision(auth);
     const model = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
     expect(model.description).toMatch(/fixtures/i);
+  });
+
+  it("officials rota (v12/Task 13): lists an official's duties with response", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, fixtures } = await seedDivision(auth);
+    const [{ id: officialId }] = await sql<{ id: string }[]>`
+      insert into officials (org_id, display_name) values (${auth.orgId}, 'Sam Ref')
+      returning id`;
+    await sql`
+      insert into fixture_officials (fixture_id, official_id, role_key, response)
+      values (${fixtures[0]!.id}, ${officialId}, 'referee', 'accepted')`;
+
+    const model = await buildOfficialsRotaDoc(auth, division.id, { printedAt: PRINTED });
+    expect(model.kind).toBe("officials_rota");
+    const section = model.sections.find((s) => s.heading === "Sam Ref");
+    expect(section).toBeTruthy();
+    const rows = section!.table!.rows;
+    expect(rows.some((r) => r.includes("referee") && r.includes("Accepted"))).toBe(true);
+  });
+
+  it("admit tickets (v12/Task 13): masked names + /r/[ref] QR URLs", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, comp } = await seedDivision(auth);
+    await sql`update divisions set player_name_display = 'first_initial' where id = ${division.id}`;
+    const suffix = randomUUID().slice(0, 8);
+    const [{ ref_code }] = await sql<{ ref_code: string }[]>`
+      insert into registrations
+        (division_id, org_id, status, display_name, contact_email, access_token_hash, ref_code)
+      values
+        (${division.id}, ${auth.orgId}, 'confirmed', 'Jamie Doe', ${"jamie+" + suffix + "@example.com"},
+         ${randomUUID()}, ${"TIX-" + suffix})
+      returning ref_code`;
+
+    const model = await buildAdmitTicketsDoc(
+      auth, comp.id, { printedAt: PRINTED }, "https://example.seazn.club",
+    );
+    expect(model.kind).toBe("admit_ticket");
+    const ticket = model.sections[0]!.ticket!;
+    expect(ticket.maskedName).toBeTruthy();
+    expect(ticket.maskedName).not.toBe("Jamie Doe"); // youth-default division masks
+    expect(ticket.qrUrl).toContain(`/r/${ref_code}`);
+  });
+
+  it("buildMyRotaDoc: SEAZN-neutral — no org branding", async () => {
+    const model = await buildMyRotaDoc(randomUUID(), { printedAt: PRINTED }, "https://example.seazn.club");
+    expect(model.kind).toBe("officials_rota");
+    expect(model.branding).toBeUndefined();
   });
 });

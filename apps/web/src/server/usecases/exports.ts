@@ -5,6 +5,8 @@ import "server-only";
 // stays clock-free.
 import type postgres from "postgres";
 import {
+  buildAdmitTickets,
+  buildOfficialsRota,
   buildParticipants,
   buildRoster,
   buildStandings,
@@ -13,16 +15,21 @@ import {
   type DocBranding,
   type DocSection,
   type ExportFixture,
+  type ExportOfficialSchedule,
+  type ExportTicket,
   type PageBreaks,
 } from "@seazn/engine/exports";
 import type { StandingsRow } from "@seazn/engine/competition";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { hasFeature, requireFeature } from "@/lib/entitlements";
+import { fixtureWhen } from "@/lib/email-templates/official-assigned";
+import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { resolveModule } from "@/server/engine-db";
 import { participantRows } from "./clubs";
 import { resolveSponsors } from "./sponsors";
+import { getMyOfficiating } from "./me-officiating";
 
 type Tx = postgres.TransactionSql;
 
@@ -331,5 +338,179 @@ export async function buildCompetitionTimetable(
       ...(branding !== undefined ? { branding } : {}),
       pageBreaks: opts.pageBreaks ?? "per_division",
     });
+  });
+}
+
+// --- v12: officials rota + admit tickets (Task 13) --------------------------
+
+interface OfficialDutyRow {
+  official_id: string;
+  official_name: string;
+  scheduled_at: string | null;
+  venue_tz: string | null;
+  court_label: string | null;
+  comp_name: string;
+  div_name: string;
+  role_key: string;
+  response: "pending" | "accepted" | "declined";
+  home: string | null;
+  away: string | null;
+}
+
+async function officialDutyRows(tx: Tx, divisionId: string): Promise<OfficialDutyRow[]> {
+  return tx<OfficialDutyRow[]>`
+    select o.id as official_id, o.display_name as official_name,
+           f.scheduled_at::text as scheduled_at, ss.tz as venue_tz, f.court_label,
+           c.name as comp_name, d.name as div_name,
+           fo.role_key, fo.response,
+           h.display_name as home, a.display_name as away
+    from fixture_officials fo
+    join officials o on o.id = fo.official_id
+    join fixtures f on f.id = fo.fixture_id
+    join divisions d on d.id = f.division_id
+    join competitions c on c.id = d.competition_id
+    left join schedule_settings ss on ss.division_id = d.id
+    left join entrants h on h.id = f.home_entrant_id
+    left join entrants a on a.id = f.away_entrant_id
+    where f.division_id = ${divisionId}
+      and f.status in ('scheduled', 'in_play')
+    order by o.display_name, f.scheduled_at nulls last`;
+}
+
+/** Officials rota for a single division (v12/Task 13): every official with a
+ *  duty on a still-live fixture, grouped by official, one section per page
+ *  (13 May pattern). Org-scoped read; branding via the Task 7 helper. */
+export async function buildOfficialsRotaDoc(
+  auth: AuthCtx,
+  divisionId: string,
+  opts: ExportOpts,
+): Promise<DocModel> {
+  return withTenant(auth.orgId, async (tx) => {
+    const meta = await divisionMeta(tx, divisionId);
+    const branding = await brandingFor(auth, meta);
+    const rows = await officialDutyRows(tx, divisionId);
+    const byOfficial = new Map<string, ExportOfficialSchedule>();
+    for (const r of rows) {
+      const s = byOfficial.get(r.official_id) ?? { officialName: r.official_name, duties: [] };
+      s.duties.push({
+        at: fixtureWhen(r.scheduled_at, r.venue_tz),
+        court: r.court_label,
+        compDivision: `${r.comp_name} · ${r.div_name}`,
+        role: r.role_key,
+        opponents: `${r.home ?? "TBD"} vs ${r.away ?? "TBD"}`,
+        response: r.response,
+      });
+      byOfficial.set(r.official_id, s);
+    }
+    return buildOfficialsRota(
+      `${meta.competition_name} — Officials rota`,
+      [...byOfficial.values()],
+      {
+        printedAt: opts.printedAt,
+        description: "Assigned officials and their duties.",
+        ...(branding !== undefined ? { branding } : {}),
+        pageBreaks: "per_team",
+      },
+    );
+  });
+}
+
+interface CompetitionTicketMeta {
+  name: string;
+  starts_on: string | null;
+  ends_on: string | null;
+  org_id: string;
+  org_name: string;
+}
+
+async function competitionTicketMeta(tx: Tx, competitionId: string): Promise<CompetitionTicketMeta> {
+  const [row] = await tx<CompetitionTicketMeta[]>`
+    select c.name, c.starts_on::text as starts_on, c.ends_on::text as ends_on,
+           c.org_id, org.name as org_name
+    from competitions c
+    join organizations org on org.id = c.org_id
+    where c.id = ${competitionId}`;
+  if (!row) throw new HttpError(404, "competition not found");
+  return row;
+}
+
+interface TicketRegistrationRow {
+  ref_code: string;
+  display_name: string;
+  status: string;
+  player_name_display: string | null;
+  youth: boolean;
+}
+
+async function ticketRegistrationRows(tx: Tx, competitionId: string): Promise<TicketRegistrationRow[]> {
+  return tx<TicketRegistrationRow[]>`
+    select r.ref_code, r.display_name, r.status, d.player_name_display, d.youth
+    from registrations r
+    join divisions d on d.id = r.division_id
+    where d.competition_id = ${competitionId}
+      and r.status = 'confirmed' and r.ref_code is not null
+    order by r.created_at`;
+}
+
+/** Admit tickets for a competition (v12/Task 13): every confirmed
+ *  registration becomes a 2-up ticket, name-masked the same way the public
+ *  /r/[ref] status page does; the QR is carried as a URL only (Task 12
+ *  draws pixels). Org-scoped read; branding via the Task 7 helper. */
+export async function buildAdmitTicketsDoc(
+  auth: AuthCtx,
+  competitionId: string,
+  opts: ExportOpts,
+  origin: string,
+): Promise<DocModel> {
+  return withTenant(auth.orgId, async (tx) => {
+    const meta = await competitionTicketMeta(tx, competitionId);
+    const branding = await orgBranding(meta.org_id, meta.org_name, competitionId);
+    const rows = await ticketRegistrationRows(tx, competitionId);
+    const dates = `${meta.starts_on ?? "—"} – ${meta.ends_on ?? meta.starts_on ?? "—"}`;
+    const tickets: ExportTicket[] = rows.map((r, i) => ({
+      maskedName: maskDisplayName(r.display_name, resolveNameDisplay(r.player_name_display, r.youth)),
+      competition: meta.name,
+      dates,
+      ref: r.ref_code,
+      status: r.status.toUpperCase(),
+      qrUrl: `${origin}/r/${r.ref_code}`,
+      seq: i + 1,
+    }));
+    return buildAdmitTickets(meta.name, tickets, {
+      printedAt: opts.printedAt,
+      description: "Present at check-in — scan or show the reference below.",
+      ...(branding !== undefined ? { branding } : {}),
+    });
+  });
+}
+
+/** My officiating rota (v12/Task 13): cross-org, SEAZN-neutral (no org
+ *  branding — the reader officiates for many organisations at once).
+ *  Sourced from the same superuser read the /me officiating lane uses. */
+export async function buildMyRotaDoc(
+  userId: string,
+  opts: ExportOpts,
+  origin: string,
+): Promise<DocModel> {
+  void origin; // no per-fixture links in this doc yet — kept for signature parity
+  const { assignments } = await getMyOfficiating(userId);
+  const byOfficial = new Map<string, ExportOfficialSchedule>();
+  for (const a of assignments) {
+    const key = a.official_id;
+    const s = byOfficial.get(key) ?? { officialName: a.org_name, duties: [] };
+    s.duties.push({
+      at: fixtureWhen(a.scheduled_at, a.venue_tz),
+      court: a.court_label,
+      compDivision: `${a.competition_name} · ${a.division_name}`,
+      role: a.role_key,
+      opponents: `${a.home_name ?? "TBD"} vs ${a.away_name ?? "TBD"}`,
+      response: a.response,
+    });
+    byOfficial.set(key, s);
+  }
+  return buildOfficialsRota("My officiating rota", [...byOfficial.values()], {
+    printedAt: opts.printedAt,
+    description: "Your upcoming duties across every organisation.",
+    pageBreaks: "per_team",
   });
 }
