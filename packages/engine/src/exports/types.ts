@@ -32,9 +32,10 @@ export const DocSection = z.object({
 export type DocSection = z.infer<typeof DocSection>;
 
 export const DocBranding = z.object({
+  orgName: z.string().optional(),
   colors: z.record(z.string(), z.string()).optional(),
   logos: z.array(z.string()).optional(), // storage paths
-  sponsors: z.array(z.string()).optional(),
+  sponsors: z.array(z.object({ name: z.string(), tier: z.string() })).optional(),
 });
 export type DocBranding = z.infer<typeof DocBranding>;
 
@@ -54,6 +55,7 @@ export type PageBreaks = z.infer<typeof PageBreaks>;
 export const DocModel = z.object({
   kind: DocKind,
   title: z.string(), // tournament + division name (1 Sep)
+  description: z.string().optional(), // one-line "what this sheet is"
   meta: z.object({
     printedAt: z.string(), // supplied by the caller — never Date.now()
     footerNote: z.string().optional(),
@@ -111,6 +113,7 @@ export interface BuildOpts {
   pageBreaks?: PageBreaks;
   branding?: DocBranding;
   footerNote?: string;
+  description?: string;
   landscape?: boolean;
   metricColumns?: string[]; // standings extra columns, in order
 }

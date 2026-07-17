@@ -1,7 +1,7 @@
 // DocModel goldens (Jul3/06, PROMPT-26 acceptance): stable JSON, not pixels.
 import { describe, expect, it } from "vitest";
 import { buildParticipants, buildRoster, buildStandings, buildTimetable } from "./build.ts";
-import { DocModel, type ExportFixture } from "./types.ts";
+import { DocBranding, DocModel, type ExportFixture } from "./types.ts";
 import { volleyball } from "../sports/setbased/volleyball.ts";
 
 const OPTS = { printedAt: "2026-07-20T09:00:00.000Z" };
@@ -93,5 +93,23 @@ describe("buildDocModel goldens (Jul3/06 §2)", () => {
     expect(s.table!.rows[0]![2]).toContain("25");
     expect(s.table!.rows[8]![2]).not.toContain("16"); // final set to 15
     expect(s.swatches).toEqual([{ label: "A", color: "#ff0000" }]);
+  });
+
+  it("DocBranding carries tiered sponsors + orgName", () => {
+    const b = DocBranding.parse({
+      orgName: "Riverside SC",
+      colors: { primary: "#123456" },
+      sponsors: [{ name: "Acme", tier: "title" }],
+    });
+    expect(b.sponsors?.[0]).toEqual({ name: "Acme", tier: "title" });
+    expect(b.orgName).toBe("Riverside SC");
+  });
+
+  it("DocModel carries an optional description", () => {
+    const m = DocModel.parse({
+      kind: "timetable", title: "T", meta: { printedAt: "2026-07-19" },
+      description: "All fixtures, in play order.", sections: [],
+    });
+    expect(m.description).toBe("All fixtures, in play order.");
   });
 });

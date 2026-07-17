@@ -21,6 +21,7 @@ function base(
   return {
     kind,
     title,
+    ...(opts.description !== undefined ? { description: opts.description } : {}),
     meta: {
       printedAt: opts.printedAt,
       ...(opts.footerNote !== undefined ? { footerNote: opts.footerNote } : {}),
