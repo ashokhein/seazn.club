@@ -752,8 +752,8 @@ git commit -m "feat(exports): footer sponsor line, live-page QR slot, page N of 
 
 **Files:**
 - Modify: `apps/web/src/server/usecases/exports.ts:124-291`
-- Modify: `apps/web/src/app/(public)/shared/[orgSlug]/[competitionSlug]/poster.pdf/route.ts`
 - Test: `apps/web/src/server/usecases/__tests__/exports.test.ts`
+- (Poster route is standalone pdfkit, not a DocModel export — out of scope, see Step 5.)
 
 **Interfaces:**
 - Produces: `buildCompetitionTimetable` attaches branding; every kind sets a `description`; timetable/standings set `liveUrl` to the public page.
@@ -830,7 +830,7 @@ For the `scoresheet` `DocModel.parse` block (line 255) add `description: DESCRIP
 
 > Refactor note: extract a small `orgBranding(tx, orgId, orgName, competitionId)` helper to avoid the double `resolveSponsors` call above; the illustrative inline is intentionally un-DRY — the implementer should factor it into one call. Keep `hasFeature`/`requireFeature` imports.
 
-- [ ] **Step 5: Edit `poster.pdf/route.ts`** — feed `resolveSponsors(org.id, competition.id)` into the model's branding sponsors (match the existing branding shape in that route; if it already renders sponsor names, convert them to `{name, tier}`).
+- [ ] **Step 5: Poster route — OUT OF SCOPE (verified 2026-07-17).** `poster.pdf/route.ts` builds its PDF **directly with pdfkit** (its own designed one-page layout, violet accent, already carries org logo + big QR) — it does NOT go through `DocModel`/`doc-render`, so there is no `branding` to wire. Do NOT touch it. (Optional future follow-up: add a `resolveSponsors` line to the poster's own layout — not part of v12.) Skip straight to Step 6.
 
 - [ ] **Step 6: Run tests, verify pass**
 
@@ -840,8 +840,8 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add apps/web/src/server/usecases/exports.ts "apps/web/src/app/(public)/shared/[orgSlug]/[competitionSlug]/poster.pdf/route.ts" apps/web/src/server/usecases/__tests__/exports.test.ts
-git commit -m "feat(exports): brand competition timetable + poster; per-kind descriptions"
+git add apps/web/src/server/usecases/exports.ts apps/web/src/server/usecases/__tests__/exports.test.ts
+git commit -m "feat(exports): brand competition timetable; per-kind doc descriptions"
 ```
 
 ---
