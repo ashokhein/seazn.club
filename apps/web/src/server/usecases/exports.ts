@@ -38,6 +38,9 @@ export interface ExportOpts {
   landscape?: boolean;
   blank?: boolean;
   printedAt: string; // request time — injected, never Date.now() in the engine
+  /** Request origin (Task 16) — used to build the `/shared/...` live-page
+   *  QR link on timetable/standings. Absent in tests that don't care. */
+  origin?: string;
 }
 
 interface DivisionMeta {
@@ -45,8 +48,12 @@ interface DivisionMeta {
   name: string;
   org_id: string;
   org_name: string;
+  org_slug: string;
   competition_id: string;
   competition_name: string;
+  comp_slug: string;
+  visibility: string;
+  div_slug: string;
   branding: Record<string, unknown> | null;
   sport_key: string;
   module_version: string;
@@ -55,8 +62,9 @@ interface DivisionMeta {
 
 async function divisionMeta(tx: Tx, divisionId: string): Promise<DivisionMeta> {
   const [row] = await tx<DivisionMeta[]>`
-    select d.id, d.name, d.org_id, org.name as org_name,
-           d.competition_id, c.name as competition_name,
+    select d.id, d.name, d.org_id, org.name as org_name, org.slug as org_slug,
+           d.competition_id, c.name as competition_name, c.slug as comp_slug,
+           c.visibility, d.slug as div_slug,
            c.branding, d.sport_key, d.module_version, d.config
     from divisions d
     join competitions c on c.id = d.competition_id
@@ -64,6 +72,14 @@ async function divisionMeta(tx: Tx, divisionId: string): Promise<DivisionMeta> {
     where d.id = ${divisionId}`;
   if (!row) throw new HttpError(404, "division not found");
   return row;
+}
+
+// v12/Task 16: the live-page QR only points somewhere reachable — a
+// `private` competition's `/shared/...` page 404s (V230 public_competitions_v
+// gate), so no QR when private. `public`/`unlisted` both resolve.
+function liveUrlFor(meta: DivisionMeta, origin: string | undefined): string | undefined {
+  if (origin === undefined || meta.visibility === "private") return undefined;
+  return `${origin}/shared/${meta.org_slug}/${meta.comp_slug}/${meta.div_slug}`;
 }
 
 // Jul3/06 §6 / v12: branding (club colours, sponsor logos, tournament
@@ -187,10 +203,15 @@ export async function buildDivisionDocModel(
       ...(opts.landscape !== undefined ? { landscape: opts.landscape } : {}),
     };
 
+    const liveUrl = liveUrlFor(meta, opts.origin);
+
     switch (kind) {
       case "timetable": {
         const fixtures = await exportFixtures(tx, divisionId);
-        return buildTimetable(title, fixtures.map((f) => toExportFixture(f, meta.name)), common);
+        return buildTimetable(title, fixtures.map((f) => toExportFixture(f, meta.name)), {
+          ...common,
+          ...(liveUrl !== undefined ? { liveUrl } : {}),
+        });
       }
       case "standings": {
         const [snapshot] = await tx<{ rows: StandingsRow[] }[]>`
@@ -215,7 +236,11 @@ export async function buildDivisionDocModel(
             points: r.points,
             metrics: r.metrics,
           }));
-        return buildStandings(title, rows, { ...common, metricColumns });
+        return buildStandings(title, rows, {
+          ...common,
+          metricColumns,
+          ...(liveUrl !== undefined ? { liveUrl } : {}),
+        });
       }
       case "roster": {
         const teams = await tx<{

@@ -173,6 +173,32 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(model.description).toMatch(/fixtures/i);
   });
 
+  it("live-page QR (Task 16): public competition's timetable carries meta.liveUrl to /shared/...; private carries none", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, comp } = await seedDivision(auth);
+    const [{ slug: orgSlug }] = await sql<{ slug: string }[]>`
+      select slug from organizations where id = ${auth.orgId}`;
+
+    // seedDivision creates the competition as visibility: "private" — its
+    // /shared/... page 404s, so no QR should be set even with an origin.
+    const privateModel = await buildDivisionDocModel(auth, division.id, "timetable", {
+      printedAt: PRINTED, origin: "https://seazn.club",
+    });
+    expect(privateModel.meta.liveUrl).toBeUndefined();
+
+    // no origin at all (e.g. a test/caller that never threads one): still no QR.
+    await sql`update competitions set visibility = 'public' where id = ${comp.id}`;
+    const noOrigin = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
+    expect(noOrigin.meta.liveUrl).toBeUndefined();
+
+    const model = await buildDivisionDocModel(auth, division.id, "timetable", {
+      printedAt: PRINTED, origin: "https://seazn.club",
+    });
+    expect(model.meta.liveUrl).toBe(
+      `https://seazn.club/shared/${orgSlug}/${comp.slug}/${division.slug}`,
+    );
+  });
+
   it("officials rota (v12/Task 13): lists an official's duties with response", async () => {
     const { auth } = await seedOrg("pro");
     const { division, fixtures } = await seedDivision(auth);

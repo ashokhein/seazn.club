@@ -26,6 +26,7 @@ export async function GET(req: Request, { params }: Ctx) {
     if (format !== "pdf" && format !== "xlsx") throw new HttpError(400, "format must be pdf or xlsx");
     const opts = {
       printedAt: new Date().toISOString(),
+      origin: url.origin,
       ...(url.searchParams.get("pageBreaks")
         ? { pageBreaks: Breaks.parse(url.searchParams.get("pageBreaks")) }
         : {}),
