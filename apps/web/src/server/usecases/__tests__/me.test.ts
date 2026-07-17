@@ -136,6 +136,27 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
     expect(Object.keys(personsList[0])).not.toContain("dob");
   });
 
+  it("hasPhotoFeature is false for a person only linked as an official — officials have no photo upload", async () => {
+    const { owner, orgId } = await seedOrg("official-photo");
+    const { persons } = await rig(owner);
+    const refPerson = await createPerson(owner, { full_name: "Ref Sam", consent: {}, dob: null } as never);
+    const [official] = await sql<{ id: string }[]>`
+      insert into officials (org_id, person_id, display_name, role_keys)
+      values (${orgId}, ${refPerson.id}, ${refPerson.full_name}, ${sql.json(["referee"])})
+      returning id`;
+    expect(official).toBeDefined();
+
+    const player = await makeUser("player");
+    await sql`update persons set user_id = ${player} where id = ${persons[0].id}`;
+    await sql`update persons set user_id = ${player} where id = ${refPerson.id}`;
+
+    const personsList = await listMyPersons(player);
+    const rostered = personsList.find((p) => p.id === persons[0].id)!;
+    const officialOnly = personsList.find((p) => p.id === refPerson.id)!;
+    expect(rostered.hasPhotoFeature).toBe(true);
+    expect(officialOnly.hasPhotoFeature).toBe(false);
+  });
+
   it("withdrawn entrants drop out of /me", async () => {
     const { owner } = await seedOrg("w");
     const { persons, entrants } = await rig(owner);
