@@ -30,6 +30,7 @@ export const HELP_ARTICLE_SLUGS = [
   "scheduling/constraints",
   "scheduling/timezones",
   "scheduling/officials",
+  "scheduling/matchday-documents",
   "scoring/basics",
   "scoring/conflicts",
   "scoring/device-links",

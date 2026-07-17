@@ -1694,6 +1694,34 @@ async function schedRegV3Suite(
       docPdfBytes.byteLength > 1024,
   );
 
+  // Matchday documents (v12, Task 17): officials rota + admit tickets also
+  // render real, valid PDFs — same magic-bytes/content-type assertion as the
+  // timetable check above (font subsetting rules out literal-text asserts).
+  const rotaPdf = await fetch(
+    `${BASE}/api/v1/divisions/${div.id}/exports/officials_rota?format=pdf`,
+    { headers: { cookie: cookieHeader(admin) } },
+  );
+  const rotaPdfBytes = Buffer.from(await rotaPdf.arrayBuffer());
+  check(
+    "exports officials rota PDF renders a valid PDF (pro)",
+    rotaPdf.status === 200 &&
+      (rotaPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      rotaPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      rotaPdfBytes.byteLength > 1024,
+  );
+  const ticketsPdf = await fetch(
+    `${BASE}/api/v1/competitions/${comp.id}/exports/tickets?format=pdf`,
+    { headers: { cookie: cookieHeader(admin) } },
+  );
+  const ticketsPdfBytes = Buffer.from(await ticketsPdf.arrayBuffer());
+  check(
+    "exports admit tickets PDF renders a valid PDF (pro)",
+    ticketsPdf.status === 200 &&
+      (ticketsPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      ticketsPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      ticketsPdfBytes.byteLength > 1024,
+  );
+
   // Reschedule with the current division seq — lands; replaying the same
   // (now stale) token 409s with SEQ_CONFLICT (v3/11 gap 10).
   const seq0 = v1data<{ seq: number }>(await v1(admin, `/api/v1/divisions/${div.id}`)).seq;
