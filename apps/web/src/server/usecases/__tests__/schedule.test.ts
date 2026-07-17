@@ -27,6 +27,7 @@ import {
 import { patchFixture } from "../fixtures";
 import { scoreEvent } from "../scoring";
 import { publicSchedule } from "../public";
+import { seedOrg as seedOfficialsOrg, seedFutureDivision } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -459,5 +460,24 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
 
     // Writes without the token stay accepted (older clients keep working).
     await patchFixture(auth, fa!.id, { scheduled_at: at(120) });
+  });
+});
+
+describe.skipIf(!HAS_DB)("official conflicts on the board", () => {
+  it("emits warn.official_declined for a declined assignment", async () => {
+    const { auth } = await seedOfficialsOrg("pro");
+    const { division, fixtures } = await seedFutureDivision(auth);
+    const fixtureId = fixtures[0]!.id;
+    const [person] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name) values (${auth.orgId}, 'Ref X') returning id`;
+    const [official] = await sql<{ id: string }[]>`
+      insert into officials (org_id, person_id, display_name, role_keys)
+      values (${auth.orgId}, ${person!.id}, 'Ref X', ${sql.json(["referee"])}) returning id`;
+    await sql`insert into fixture_officials (org_id, fixture_id, official_id, role_key, response)
+              values (${auth.orgId}, ${fixtureId}, ${official!.id}, 'referee', 'declined')`;
+
+    const { conflicts } = await validateSchedule(auth, division.id);
+    expect(conflicts.some((c) => c.code === "warn.official_declined" && c.fixture_id === fixtureId)).toBe(true);
+    expect(conflicts.find((c) => c.code === "warn.official_declined")!.blocking).toBe(false);
   });
 });

@@ -13568,7 +13568,9 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
-                                  "warn.no_slot"
+                                  "warn.no_slot",
+                                  "warn.official_declined",
+                                  "warn.official_unavailable"
                                 ]
                               },
                               "blocking": {
@@ -13915,7 +13917,9 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
-                                  "warn.no_slot"
+                                  "warn.no_slot",
+                                  "warn.official_declined",
+                                  "warn.official_unavailable"
                                 ]
                               },
                               "blocking": {
@@ -14295,7 +14299,9 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
-                                  "warn.no_slot"
+                                  "warn.no_slot",
+                                  "warn.official_declined",
+                                  "warn.official_unavailable"
                                 ]
                               },
                               "blocking": {

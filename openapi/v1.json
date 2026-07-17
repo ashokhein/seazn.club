@@ -16593,7 +16593,9 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
-                                  "warn.no_slot"
+                                  "warn.no_slot",
+                                  "warn.official_declined",
+                                  "warn.official_unavailable"
                                 ]
                               },
                               "blocking": {
@@ -16940,7 +16942,9 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
-                                  "warn.no_slot"
+                                  "warn.no_slot",
+                                  "warn.official_declined",
+                                  "warn.official_unavailable"
                                 ]
                               },
                               "blocking": {
@@ -17320,7 +17324,9 @@
                                   "warn.person_overlap",
                                   "warn.order",
                                   "warn.blackout",
-                                  "warn.no_slot"
+                                  "warn.no_slot",
+                                  "warn.official_declined",
+                                  "warn.official_unavailable"
                                 ]
                               },
                               "blocking": {
@@ -22243,304 +22249,6 @@
           },
           "401": {
             "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "error",
-                    "requestId"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "const": false
-                    },
-                    "error": {
-                      "type": "object",
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "current_seq": {
-                          "type": "integer",
-                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
-                        }
-                      },
-                      "additionalProperties": true
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "error",
-                    "requestId"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "const": false
-                    },
-                    "error": {
-                      "type": "object",
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "current_seq": {
-                          "type": "integer",
-                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
-                        }
-                      },
-                      "additionalProperties": true
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Rejected by the engine",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "error",
-                    "requestId"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "const": false
-                    },
-                    "error": {
-                      "type": "object",
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "current_seq": {
-                          "type": "integer",
-                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
-                        }
-                      },
-                      "additionalProperties": true
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
-        "security": [
-          {
-            "sessionCookie": []
-          },
-          {
-            "apiKey": []
-          }
-        ]
-      }
-    },
-    "/api/v1/me/assigned-fixtures/{id}/score-link": {
-      "post": {
-        "summary": "Mint the fixture's day-of device link for an assigned official (secret shown once; Pro `scoring.device_links`)",
-        "tags": [
-          "officials"
-        ],
-        "x-required-scope": "none",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid"
-            }
-          }
-        ],
-        "responses": {
-          "201": {
-            "description": "Success",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "data",
-                    "requestId"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "const": true
-                    },
-                    "data": {
-                      "type": "object",
-                      "properties": {
-                        "secret": {
-                          "type": "string"
-                        },
-                        "expires_at": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "secret",
-                        "expires_at"
-                      ],
-                      "additionalProperties": false
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                },
-                "example": {
-                  "ok": true,
-                  "data": {
-                    "secret": "example",
-                    "expires_at": "example"
-                  },
-                  "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Validation error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "error",
-                    "requestId"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "const": false
-                    },
-                    "error": {
-                      "type": "object",
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "current_seq": {
-                          "type": "integer",
-                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
-                        }
-                      },
-                      "additionalProperties": true
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Not authenticated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": [
-                    "ok",
-                    "error",
-                    "requestId"
-                  ],
-                  "properties": {
-                    "ok": {
-                      "const": false
-                    },
-                    "error": {
-                      "type": "object",
-                      "required": [
-                        "code",
-                        "message"
-                      ],
-                      "properties": {
-                        "code": {
-                          "type": "string"
-                        },
-                        "message": {
-                          "type": "string"
-                        },
-                        "current_seq": {
-                          "type": "integer",
-                          "description": "On SEQ_CONFLICT (409): the ledger tip to resync from"
-                        }
-                      },
-                      "additionalProperties": true
-                    },
-                    "requestId": {
-                      "type": "string",
-                      "format": "uuid"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "402": {
-            "description": "Plan upgrade required",
             "content": {
               "application/json": {
                 "schema": {
