@@ -10,6 +10,7 @@ import Link from "next/link";
 import { notFound, permanentRedirect } from "next/navigation";
 import Image from "next/image";
 import { Barlow_Condensed } from "next/font/google";
+import { AttributionLink } from "@/components/attribution-link";
 import { isReservedSlug } from "@/lib/public-site";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { getPublicOrg } from "@/server/public-site/data";
@@ -108,10 +109,8 @@ export default async function PublicOrgLayout({
             (branding entitlement, resolved server-side). */}
         {org.branded ? null : (
           <p>
-            Powered by{" "}
-            <a href="https://seazn.club" className="font-medium text-accent-strong underline">
-              seazn.club
-            </a>
+            Powered by <span className="font-medium">Seazn Club</span> ·{" "}
+            <AttributionLink surface="badge" />
           </p>
         )}
       </footer>

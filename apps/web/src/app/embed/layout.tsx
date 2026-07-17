@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { AttributionLink } from "@/components/attribution-link";
 
 export const metadata: Metadata = {
   robots: { index: false, follow: false }, // widgets live inside other sites
@@ -25,14 +26,7 @@ export default function EmbedLayout({ children }: { children: React.ReactNode })
     <div className="min-h-4 bg-white p-3">
       {children}
       <p className="mt-3 text-right text-[10px] text-zinc-400">
-        <a
-          href="https://seazn.club"
-          target="_blank"
-          rel="noreferrer"
-          className="hover:text-zinc-600"
-        >
-          live on seazn.club
-        </a>
+        <AttributionLink surface="embed" />
       </p>
       <script dangerouslySetInnerHTML={{ __html: AUTO_HEIGHT }} />
     </div>
