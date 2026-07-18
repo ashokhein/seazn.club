@@ -1,22 +1,16 @@
 import "server-only";
-// Constraints-v2 extras (Jul3/04 §4–§6): bulk shift (undoable), wait-time
-// report, and the AI prose → constraints layer. The model only ever emits a
-// Zod-validated constraints object — the deterministic solver does the rest.
+// Constraints-v2 extras (Jul3/04 §4, §6): bulk shift (undoable) and the
+// pre-publish wait-time report. Deterministic solver work only.
 import { z } from "zod";
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import {
   scheduleReport,
   shiftSchedule,
   type Assignment,
 } from "@seazn/engine/scheduling";
 import { withTenant } from "@/lib/db";
-import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, withinLimit } from "@/lib/entitlements";
-import { isServerFeatureEnabled } from "@/lib/posthog-server";
+import { HttpError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { appendDivisionEvent } from "@/server/engine-db";
-import type { ScheduleConfig } from "@/server/api-v1/schemas";
 
 const MS_PER_MIN = 60_000;
 
@@ -121,187 +115,5 @@ export async function divisionScheduleReport(auth: AuthCtx, divisionId: string) 
       display_name: nameById.get(r.entrantId) ?? r.entrantId,
     });
     return { perEntrant: report.perEntrant.map(label), worst: report.worst.map(label) };
-  });
-}
-
-// ---------------------------------------------------------------------------
-// AI-assisted planning (Jul3/04 §5) — prose → validated constraints. The
-// model never writes the DB or a schedule; unparseable output is refused.
-// ---------------------------------------------------------------------------
-
-// What the model may emit. Targets are free-text names the organiser used;
-// the server resolves them to ids after validation. Times are HH:MM local.
-const AiStartWindow = z.object({
-  targetKind: z.enum(["entrant", "pool", "division"]),
-  targetName: z.string(),
-  notBefore: z.string().optional(), // "09:30"
-  notAfter: z.string().optional(),
-});
-const AiConstraints = z.object({
-  restMin: z.number().int().optional(),
-  noBackToBack: z.boolean().default(false),
-  fieldFairness: z.enum(["off", "balance", "rotate"]).default("off"),
-  parallelism: z.enum(["block", "mixed"]).default("mixed"),
-  crossPersonClash: z.enum(["warn", "hard"]).default("warn"),
-  startWindows: z.array(AiStartWindow).default([]),
-});
-export type AiConstraints = z.infer<typeof AiConstraints>;
-
-const SYSTEM = `You translate a tournament organiser's scheduling wishes into a constraints object.
-Rules:
-- "no player plays two teams/matches at once", "player in two categories" → crossPersonClash: "hard".
-- "at least one break between games", "no back to back" → noBackToBack: true. An explicit "N minutes rest" → restMin: N.
-- "team/category X not before HH:MM" or "starts later" → a startWindows entry (targetKind "entrant"/"pool", notBefore, 24h HH:MM).
-- A blanket start time with no specific team — "matches start at 9am", "kick off at HH:MM", "everything from HH:MM" → a single startWindows entry with targetKind "division", targetName "all", notBefore in 24h HH:MM (e.g. "09:00").
-- "don't keep a team on one field", "alternate fields" → fieldFairness: "balance" (or "rotate" if they ask to rotate every game).
-- "divisions play in parallel / mixed" → parallelism: "mixed"; "one division at a time / block" → "block".
-- Only include what the organiser asked for. If the prose contains no recognisable scheduling constraint, emit the defaults with an empty startWindows array.`;
-
-/** The LLM call, isolated for tests: prose → AiConstraints (Zod-parsed). */
-export async function parseAiConstraints(
-  prose: string,
-  generate?: (system: string, prose: string) => Promise<unknown>,
-): Promise<AiConstraints> {
-  if (generate) {
-    return AiConstraints.parse(await generate(SYSTEM, prose));
-  }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    // Optional feature — fail with a clear message, not the raw SDK auth error.
-    throw new HttpError(503, "AI-assisted scheduling isn't set up on this server yet.");
-  }
-  const client = new Anthropic();
-  const response = await client.messages.parse({
-    // Overridable without a redeploy; Opus is the default. Prose → schema-
-    // constrained JSON works on any tier (zodOutputFormat guarantees shape).
-    model: process.env.SCHEDULING_AI_MODEL ?? "claude-opus-4-8",
-    max_tokens: 2048,
-    system: SYSTEM,
-    messages: [{ role: "user", content: prose }],
-    output_config: { format: zodOutputFormat(AiConstraints) },
-  });
-  if (!response.parsed_output) {
-    // Jul3/04 §5: unparseable output is refused, never guessed.
-    throw new HttpError(422, "could not derive constraints from that description");
-  }
-  return response.parsed_output;
-}
-
-export interface AiConstraintsOut {
-  constraints: NonNullable<ScheduleConfig["constraints"]>;
-  unresolved: { kind: string; name: string }[];
-}
-
-/** POST /divisions/{id}/schedule/ai-constraints — propose only; the organiser
- *  reviews and applies via schedule-settings (Pro `scheduling.ai`). */
-export async function aiConstraintsForDivision(
-  auth: AuthCtx,
-  divisionId: string,
-  prose: string,
-  generate?: (system: string, prose: string) => Promise<unknown>,
-): Promise<AiConstraintsOut> {
-  // Feature 3 — server-side flag as a rollout kill-switch, evaluated BEFORE the
-  // billing entitlement. fallback:true means "on unless PostHog explicitly
-  // turns it off", so an unconfigured PostHog (or a lookup blip) never breaks
-  // the paid feature. Flip the `ai-scheduling` flag off in PostHog to disable
-  // it for everyone (or a % / group cohort) without a redeploy. This is
-  // rollout control, NOT entitlement — the paid gate below is still enforced.
-  const flagOn = await isServerFeatureEnabled(
-    "ai-scheduling",
-    auth.userId ?? `org:${auth.orgId}`,
-    { orgId: auth.orgId, fallback: true },
-  );
-  if (!flagOn) {
-    throw new HttpError(503, "AI-assisted scheduling is temporarily unavailable.");
-  }
-  await requireFeature(auth.orgId, "scheduling.ai");
-
-  // Pro AI cap (owner 2026-07-18, amends pro-plus D4): Pro keeps AI scheduling
-  // but is limited to N generations per division; Pro Plus is unlimited (null
-  // int_value → withinLimit returns ok). Count prior runs from the audit ledger
-  // and refuse the (cap+1)th here, before the LLM call, so an over-quota org
-  // never burns a request.
-  const gate = await withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ competition_id: string }[]>`
-      select competition_id from divisions where id = ${divisionId}`;
-    if (!division) throw new HttpError(404, "division not found");
-    const [row] = await tx<{ n: number }[]>`
-      select count(*)::int as n from competition_events
-      where competition_id = ${division.competition_id}
-        and type = 'schedule.ai_generated'
-        and payload->>'division_id' = ${divisionId}`;
-    return { competitionId: division.competition_id, priorRuns: row?.n ?? 0 };
-  });
-  const cap = await withinLimit(
-    auth.orgId,
-    "scheduling.ai.runs_per_division.max",
-    gate.priorRuns + 1,
-    gate.competitionId,
-  );
-  if (!cap.ok) throw new PaymentRequiredError("scheduling.ai.runs_per_division.max");
-
-  const parsed = await parseAiConstraints(prose, generate);
-
-  return withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ id: string; slug: string; name: string; competition_id: string }[]>`
-      select id, slug, name, competition_id from divisions where id = ${divisionId}`;
-    if (!division) throw new HttpError(404, "division not found");
-    const entrants = await tx<{ id: string; display_name: string }[]>`
-      select id, display_name from entrants where division_id = ${divisionId}`;
-    const pools = await tx<{ id: string; key: string; name: string }[]>`
-      select p.id, p.key, p.name from pools p
-      join stages s on s.id = p.stage_id where s.division_id = ${divisionId}`;
-    const [settings] = await tx<{ config: { startAt?: string | null } }[]>`
-      select config from schedule_settings where division_id = ${divisionId}`;
-    const baseDate = settings?.config?.startAt
-      ? new Date(settings.config.startAt).toISOString().slice(0, 10)
-      : new Date().toISOString().slice(0, 10);
-
-    const fold = (s: string) => s.trim().toLowerCase();
-    const unresolved: { kind: string; name: string }[] = [];
-    const startWindows: NonNullable<ScheduleConfig["constraints"]>["startWindows"] = [];
-    for (const w of parsed.startWindows) {
-      let id: string | null = null;
-      if (w.targetKind === "entrant") {
-        id = entrants.find((e) => fold(e.display_name) === fold(w.targetName))?.id ?? null;
-      } else if (w.targetKind === "pool") {
-        id = pools.find((p) => fold(p.key) === fold(w.targetName) || fold(p.name) === fold(w.targetName))?.id ?? null;
-      } else {
-        // A division-level window applies to the whole division — the name is
-        // just a hint ("all" / the division name), so always target this one.
-        id = division.id;
-      }
-      if (id === null) {
-        unresolved.push({ kind: w.targetKind, name: w.targetName });
-        continue;
-      }
-      const toIso = (hhmm: string | undefined) =>
-        hhmm !== undefined && /^\d{1,2}:\d{2}$/.test(hhmm)
-          ? `${baseDate}T${hhmm.padStart(5, "0")}:00.000Z`
-          : undefined;
-      const notBefore = toIso(w.notBefore);
-      const notAfter = toIso(w.notAfter);
-      startWindows.push({
-        target: { kind: w.targetKind, id },
-        ...(notBefore !== undefined ? { notBefore } : {}),
-        ...(notAfter !== undefined ? { notAfter } : {}),
-      });
-    }
-    // Record this generation against the per-division cap counted above (owner
-    // 2026-07-18). Append-only audit; org_id is set by the trg_set_org trigger.
-    await tx`
-      insert into competition_events (competition_id, org_id, type, payload, actor_id)
-      values (${division.competition_id}, ${auth.orgId}, 'schedule.ai_generated',
-              ${tx.json({ division_id: divisionId } as never)}, ${auth.userId})`;
-    return {
-      constraints: {
-        ...(parsed.restMin !== undefined ? { restMin: parsed.restMin } : {}),
-        noBackToBack: parsed.noBackToBack,
-        fieldFairness: parsed.fieldFairness,
-        parallelism: parsed.parallelism,
-        crossPersonClash: parsed.crossPersonClash,
-        startWindows,
-      },
-      unresolved,
-    };
   });
 }

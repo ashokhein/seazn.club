@@ -221,7 +221,6 @@ export const ROUTES: RouteSpec[] = [
   // Scheduling constraints v2 & AI (Jul3/04, PROMPT-24)
   { path: "/schedule/shift", method: "post", summary: "Bulk time shift: push everything in scope by ±N minutes (schedule_shifted event; undoable; all plans)", tag: "scheduling", request: S.ScheduleShift, errors: [422] },
   { path: "/divisions/{id}/schedule/report", method: "get", summary: "Wait-time diagnostics: min/max gap per entrant + worst waits (16 Sep; all plans)", tag: "scheduling" },
-  { path: "/divisions/{id}/schedule/ai-constraints", method: "post", summary: "Prose → Zod-validated SchedulingConstraints; propose-only, human applies (Pro `scheduling.ai`)", tag: "scheduling", request: S.AiConstraintsRequest, errors: [402, 422] },
   // Custom points & rank control (Jul3/05, PROMPT-25)
   { path: "/stages/{id}/standings/override", method: "post", summary: "Pin final ranks (placement games decide 3rd/4th); cascade orders the unlocked remainder; audited rank_overridden (Pro `tiebreakers.custom`)", tag: "stages", request: S.OverrideStandings, errors: [402, 422] },
   // Rich exports & print templates (Jul3/06, PROMPT-26)

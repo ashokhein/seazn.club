@@ -1498,8 +1498,6 @@ export const ScheduleShift = z.object({
   delta_minutes: z.number().int().min(-1440).max(1440),
 });
 
-export const AiConstraintsRequest = z.object({ prose: z.string().min(3).max(4000) });
-
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
 export const OverrideStandings = z.object({
