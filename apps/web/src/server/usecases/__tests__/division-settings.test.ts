@@ -164,17 +164,21 @@ describe.skipIf(!HAS_DB)("entrant-kind guard (spec 2026-07-18)", () => {
       { kind: "team", display_name: "Team A", seed: 1, members: [] },
     ]);
 
+    // The settings UI sends the FULL stored config plus the override (the
+    // sport schema alone may not parse a bare preset) — mirror that here.
+    const storedConfig = (await getDivision(owner, division.id)).config as Record<string, unknown>;
+    const narrowed = {
+      ...storedConfig,
+      entrants: { kinds: ["individual"], defaultKind: "individual" },
+    };
+
     await expect(
-      patchDivision(owner, division.id, {
-        config: { entrants: { kinds: ["individual"], defaultKind: "individual" } },
-      }),
+      patchDivision(owner, division.id, { config: narrowed }),
     ).rejects.toMatchObject({ status: 422, code: "ENTRANT_KIND_IN_USE" });
 
     // Withdraw the team → the same narrowing now lands, and the override sticks.
     await sql`update entrants set status = 'withdrawn' where id = ${team!.id}`;
-    const patched = await patchDivision(owner, division.id, {
-      config: { entrants: { kinds: ["individual"], defaultKind: "individual" } },
-    });
+    const patched = await patchDivision(owner, division.id, { config: narrowed });
     expect((patched.config as { entrants?: { kinds: string[] } }).entrants?.kinds).toEqual([
       "individual",
     ]);

@@ -89,9 +89,13 @@ async function makeDivision(auth: AuthCtx, competitionId: string, sport: string,
 /** division + 2 entrants + generated league fixture — the scoring probe rig. */
 async function makeFixture(auth: AuthCtx, competitionId: string, sport: string, config: object) {
   const division = await makeDivision(auth, competitionId, sport, config);
+  // Team-declared sports (football, cricket — entrant shapes, spec
+  // 2026-07-18) reject individual entrants at the write path now; generic
+  // keeps the legacy anything-goes.
+  const kind = sport === "generic" ? "individual" : "team";
   const entrants = await createEntrants(auth, division.id, [
-    { kind: "individual", display_name: "A", seed: 1, members: [] },
-    { kind: "individual", display_name: "B", seed: 2, members: [] },
+    { kind, display_name: "A", seed: 1, members: [] },
+    { kind, display_name: "B", seed: 2, members: [] },
   ] as never);
   const [stage] = await createStages(auth, division.id, {
     seq: 1, kind: "league", name: "L", config: {},

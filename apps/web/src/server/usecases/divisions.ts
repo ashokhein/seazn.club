@@ -437,10 +437,31 @@ export async function patchDivision(
       if (!variant) {
         throw new HttpError(422, `unknown variant '${variantKey}' for ${current.sport_key}`);
       }
+      // Format lock (v8 spec §2): once a stage owns fixtures the format is
+      // immutable — the ONE exception is an entrants-only settings save
+      // (entrant shapes are not format; the ENTRANT_KIND_IN_USE guard below
+      // covers the dangerous narrowing). The lock keeps its original
+      // precedence: any variant_key touch, any config that doesn't parse, or
+      // any non-entrants config change 409s BEFORE other validation — the v8
+      // contract tests assert 409, never 422, while locked.
+      const [{ locked }] = await tx<{ locked: boolean }[]>`
+        select exists(
+          select 1 from fixtures f
+          join stages s on s.id = f.stage_id
+          where s.division_id = ${id}
+        ) as locked`;
+      const formatLocked = () =>
+        new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
+      // ANY variant_key in the patch is format intent — even re-sending the
+      // current one resets config to the preset, and a "no-op" that only holds
+      // because schema defaults reconstruct the stored config must not soften
+      // the contract. The entrants-only door is config-shaped saves alone.
+      if (locked && patch.variant_key !== undefined) throw formatLocked();
       const sportModule = resolveModule(current.sport_key, current.module_version);
       const merged = { ...variant.config, ...(patch.config ?? {}) };
       const parsed = sportModule.configSchema.safeParse(merged);
       if (!parsed.success) {
+        if (locked) throw formatLocked();
         throw new EngineError("CONFIG_INVALID", `invalid ${current.sport_key} config`, {
           issues: parsed.error.issues,
         });
@@ -454,28 +475,11 @@ export async function patchDivision(
       if (incomingEntrants != null && typeof incomingEntrants === "object") {
         finalConfig.entrants = incomingEntrants;
       }
-      // Format lock (v8 spec §2): once a stage owns fixtures the format is
-      // immutable — EXCEPT an entrants-only change. Entrant shapes are not
-      // format; organisers may legitimately widen kinds or flip captain/№
-      // mid-season, and the ENTRANT_KIND_IN_USE guard below already blocks a
-      // narrowing that would orphan an entrant. So when locked, allow the patch
-      // only if the variant is unchanged and the merged config differs from the
-      // stored one solely in `entrants`; anything else → 409 FORMAT_LOCKED.
-      const [{ locked }] = await tx<{ locked: boolean }[]>`
-        select exists(
-          select 1 from fixtures f
-          join stages s on s.id = f.stage_id
-          where s.division_id = ${id}
-        ) as locked`;
       if (locked) {
-        const variantChanged =
-          patch.variant_key !== undefined && patch.variant_key !== current.variant_key;
         const nonEntrantsChanged =
           canonicalJson(withoutEntrants(finalConfig)) !==
           canonicalJson(withoutEntrants((current.config ?? {}) as Record<string, unknown>));
-        if (variantChanged || nonEntrantsChanged) {
-          throw new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
-        }
+        if (nonEntrantsChanged) throw formatLocked();
       }
       // Narrowing the allowed kinds must not orphan entrants that already exist:
       // an active entrant of a kind the new model no longer accepts would become

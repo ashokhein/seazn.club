@@ -19,8 +19,8 @@ Ask: *who is named on a fixture?* If the answer is "Riverside Rockets", it's tea
 The sport sets the starting shape, so most divisions need no thought here:
 
 - **Board games** (chess, draughts, go) — one player per side.
-- **Tennis** and **carrom** — a player *or* a pair, so singles and doubles can live in the same division.
-- **Football, cricket, hockey** — a squad, with shirt numbers and a captain.
+- **Tennis, badminton, table tennis, carrom** — a player *or* a pair, so singles and doubles can live in the same division.
+- **Football, cricket, hockey, ice hockey, volleyball** — a squad, with shirt numbers and a captain.
 
 To change the shape for one division, open its **Settings → Entrants**. You can widen the kinds it accepts, or turn squad numbers and the captain marker on or off. These are entrant settings, not format — they **stay editable after fixtures exist**, so you can open a division up to teams mid-season. The one guard: you can't remove a kind while an entrant of that kind is still registered — withdraw it first.
 
