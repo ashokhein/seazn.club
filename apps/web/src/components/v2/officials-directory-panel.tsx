@@ -145,20 +145,22 @@ export function OfficialsDirectoryPanel({
                       )}
                     </div>
                   </div>
-                  {/* Right rail: link status on top, actions under it — kept
-                      out of the name/roles column so nothing overlaps when
-                      the invite form opens below the row. */}
-                  <div className="flex shrink-0 flex-col items-end gap-1.5">
-                    {o.claimed ? (
-                      <span className="rounded bg-lime-100 px-1.5 py-0.5 text-[11px] text-lime-700">
-                        {msg("officials.linked")}
-                      </span>
-                    ) : o.invite_pending ? (
-                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">
-                        {msg("officials.invited")}
-                      </span>
-                    ) : null}
-                    {canEdit && !o.claimed && openRow?.id !== o.id && (
+                  {/* Top-right holds ONLY the link-status chip; the actions
+                      moved to a single row under the content (G5) so the
+                      name/roles column keeps the full card width. */}
+                  {o.claimed ? (
+                    <span className="shrink-0 rounded bg-lime-100 px-1.5 py-0.5 text-[11px] text-lime-700">
+                      {msg("officials.linked")}
+                    </span>
+                  ) : o.invite_pending ? (
+                    <span className="shrink-0 rounded bg-amber-50 px-1.5 py-0.5 text-[11px] text-amber-700">
+                      {msg("officials.invited")}
+                    </span>
+                  ) : null}
+                </div>
+                {canEdit && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-2">
+                    {!o.claimed && openRow?.id !== o.id && (
                       <button
                         type="button"
                         className="btn btn-ghost py-1 text-xs"
@@ -168,7 +170,7 @@ export function OfficialsDirectoryPanel({
                         {msg("officials.invite")}
                       </button>
                     )}
-                    {canEdit && !(openRow?.id === o.id && openRow.mode === "roles") && (
+                    {!(openRow?.id === o.id && openRow.mode === "roles") && (
                       <button
                         type="button"
                         className="btn btn-ghost py-1 text-xs"
@@ -178,29 +180,27 @@ export function OfficialsDirectoryPanel({
                         {msg("officials.editRoles")}
                       </button>
                     )}
-                    {canEdit && (
-                      <button
-                        type="button"
-                        className="btn btn-ghost py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
-                        disabled={busy}
-                        onClick={() =>
-                          void (async () => {
-                            const ok = await confirm({
-                              title: msg("officials.deleteTitle", { name: o.display_name }),
-                              body: msg("officials.deleteBody"),
-                              confirmLabel: msg("officials.deleteLabel"),
-                              tone: "danger",
-                            });
-                            if (!ok) return;
-                            await run(() => apiV1(`/api/v1/officials/${o.id}`, { method: "DELETE" }));
-                          })()
-                        }
-                      >
-                        {msg("officials.delete")}
-                      </button>
-                    )}
+                    <button
+                      type="button"
+                      className="btn btn-ghost ml-auto py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
+                      disabled={busy}
+                      onClick={() =>
+                        void (async () => {
+                          const ok = await confirm({
+                            title: msg("officials.deleteTitle", { name: o.display_name }),
+                            body: msg("officials.deleteBody"),
+                            confirmLabel: msg("officials.deleteLabel"),
+                            tone: "danger",
+                          });
+                          if (!ok) return;
+                          await run(() => apiV1(`/api/v1/officials/${o.id}`, { method: "DELETE" }));
+                        })()
+                      }
+                    >
+                      {msg("officials.delete")}
+                    </button>
                   </div>
-                </div>
+                )}
                 {openRow?.id === o.id && (
                   <div className="mt-3 border-t border-slate-100 pt-3">
                     {openRow.mode === "invite" ? (
