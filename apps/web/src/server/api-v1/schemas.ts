@@ -98,6 +98,15 @@ export const Competition = z.object({
 // Divisions
 // ---------------------------------------------------------------------------
 
+/** F5: the engine's TiebreakerKey union, enforced at the edge — an unknown
+ *  key (e.g. the preset NAME "fifa2026") silently no-ops every comparison and
+ *  standings degrade to the deterministic seed-order fallback. 400 instead. */
+export const TiebreakerKeyS = z.enum([
+  "points", "wins", "h2h_points", "h2h_diff", "h2h_for", "diff", "for", "nrr",
+  "set_ratio", "game_ratio", "board_ratio", "point_ratio", "buchholz",
+  "buchholz_cut1", "sberger", "direct", "fair_play", "seed", "lots",
+]);
+
 export const CreateDivision = z.object({
   name: z.string().min(1).max(200),
   slug: Slug.optional(),
@@ -106,7 +115,7 @@ export const CreateDivision = z.object({
   /** Merged over the variant preset, then validated by the sport module. */
   config: z.record(z.string(), z.unknown()).default({}),
   eligibility: z.array(z.record(z.string(), z.unknown())).default([]),
-  tiebreakers: z.array(z.string()).nullish(),
+  tiebreakers: z.array(TiebreakerKeyS).nullish(),
 });
 export type CreateDivision = z.infer<typeof CreateDivision>;
 
@@ -116,7 +125,7 @@ export const PatchDivision = z
     /** Markdown (v3/06 §2), shown on the public division page. */
     description: z.string().max(20_000).nullable(),
     eligibility: z.array(z.record(z.string(), z.unknown())),
-    tiebreakers: z.array(z.string()).nullable(),
+    tiebreakers: z.array(TiebreakerKeyS).nullable(),
     status: DivisionStatus,
     /** Hide official names on all public reads (Jul3/02, 25 Jun). */
     officials_hide_names: z.boolean(),
@@ -151,7 +160,7 @@ export const Division = z.object({
   config: z.unknown(),
   module_version: z.string(),
   eligibility: z.array(z.unknown()),
-  tiebreakers: z.array(z.string()).nullable(),
+  tiebreakers: z.array(TiebreakerKeyS).nullable(),
   status: DivisionStatus,
   officials_hide_names: z.boolean(),
   scheduling_mode: z.enum(["timed", "flexible"]),

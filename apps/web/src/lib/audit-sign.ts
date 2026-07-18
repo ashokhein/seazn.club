@@ -60,13 +60,29 @@ export function auditPublicKeys(): { key_id: string; public_key_pem: string }[] 
       public_key_pem: createPublicKey(key).export({ format: "pem", type: "spki" }).toString(),
     });
   }
+  const pem = (v: string) =>
+    v.includes("BEGIN PUBLIC KEY") ? v : Buffer.from(v, "base64").toString("utf8");
+  // F1: any number of retired keys — AUDIT_SIGNING_PREV_PUBKEYS is a JSON
+  // array of { key_id, public_key_pem } (PEM or base64(PEM)). Retired PUBLIC
+  // keys stay published forever so old downloads keep verifying by key_id.
+  const list = process.env.AUDIT_SIGNING_PREV_PUBKEYS;
+  if (list) {
+    try {
+      for (const k of JSON.parse(list) as { key_id: string; public_key_pem: string }[]) {
+        if (k?.key_id && k?.public_key_pem) {
+          keys.push({ key_id: k.key_id, public_key_pem: pem(k.public_key_pem) });
+        }
+      }
+    } catch {
+      // malformed env — publish what we can, never 500 the keys endpoint
+    }
+  }
+  // Single-slot form kept for back-compat with the first rotation's runbook.
   const prev = process.env.AUDIT_SIGNING_PREV_PUBKEY;
   if (prev) {
     keys.push({
       key_id: process.env.AUDIT_SIGNING_PREV_KEY_ID ?? "k0",
-      public_key_pem: prev.includes("BEGIN PUBLIC KEY")
-        ? prev
-        : Buffer.from(prev, "base64").toString("utf8"),
+      public_key_pem: pem(prev),
     });
   }
   return keys;

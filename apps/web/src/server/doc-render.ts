@@ -122,10 +122,13 @@ function drawBracket(doc: PDFKit.PDFDocument, model: DocModel): void {
       doc.rect(r.x, r.y, 2, r.h).fill(PALETTE.night);
     }
     const textW = r.w - 10 - (r.headline !== null ? 34 : 0);
+    // F6: hard one-line clamp — pdfkit still wraps some long names with
+    // lineBreak:false, overlapping the second side; bound height too.
+    const oneLine = { width: textW, height: 10, lineBreak: false, ellipsis: true } as const;
     doc.font(r.isCenter ? FONT.bodyMed : FONT.body).fontSize(8).fillColor(PALETTE.ink)
-      .text(r.home, r.x + 6, r.y + r.h / 2 - 10, { width: textW, lineBreak: false, ellipsis: true });
+      .text(r.home, r.x + 6, r.y + r.h / 2 - 10, oneLine);
     doc.font(FONT.body).fontSize(8).fillColor(PALETTE.ink)
-      .text(r.away, r.x + 6, r.y + r.h / 2 + 2, { width: textW, lineBreak: false, ellipsis: true });
+      .text(r.away, r.x + 6, r.y + r.h / 2 + 2, oneLine);
     if (r.headline !== null) {
       doc.font(FONT.bodyMed).fontSize(8).fillColor(PALETTE.ink)
         .text(r.headline, r.x + r.w - 36, r.y + r.h / 2 - 4, { width: 32, align: "right", lineBreak: false });

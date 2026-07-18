@@ -758,6 +758,7 @@
   "documents.rota": "Officialsrooster",
   "documents.tickets": "Toegangskaarten",
   "documents.bracket": "Schema-poster",
+  "documents.error": "Kon dat document niet voorbereiden.",
   "documents.pdf": "PDF",
   "documents.xlsx": "XLSX",
   "schedule.working": "Bezig…",

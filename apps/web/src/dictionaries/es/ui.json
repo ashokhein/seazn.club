@@ -758,6 +758,7 @@
   "documents.rota": "Turno de árbitros",
   "documents.tickets": "Entradas",
   "documents.bracket": "Póster del cuadro",
+  "documents.error": "No se pudo preparar ese documento.",
   "documents.pdf": "PDF",
   "documents.xlsx": "XLSX",
   "schedule.working": "Procesando…",

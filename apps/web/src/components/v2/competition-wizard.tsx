@@ -20,7 +20,6 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
   const [discoverable, setDiscoverable] = useState(false);
   const [startsOn, setStartsOn] = useState("");
   const [endsOn, setEndsOn] = useState("");
-  const [accent, setAccent] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [paywall, setPaywall] = useState<{ feature: string; reason?: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -41,7 +40,8 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           discoverable: visibility === "public" && discoverable,
           starts_on: startsOn || null,
           ends_on: endsOn || null,
-          branding: accent ? { accent } : {},
+          // Branding (accent, logo, sponsors) lives in Settings post-create (F7).
+          branding: {},
         },
       });
       router.push(routes.competition(orgSlug, created.slug));
@@ -135,27 +135,6 @@ export function CompetitionWizard({ orgSlug }: { orgSlug: string }) {
           />
         </label>
       </div>
-
-      <label className="block">
-        <span className="label">{msg("comp.wizard.accent.label")}</span>
-        <div className="flex items-center gap-2">
-          <input
-            type="color"
-            value={accent || "#7c3aed"}
-            onChange={(e) => setAccent(e.target.value)}
-            className="h-9 w-14 cursor-pointer rounded border border-slate-200"
-            aria-label={msg("comp.wizard.accent.aria")}
-          />
-          {accent && (
-            <button type="button" onClick={() => setAccent("")} className="btn btn-ghost">
-              {msg("comp.wizard.accent.clear")}
-            </button>
-          )}
-          <span className="text-xs text-slate-400">
-            {msg("comp.wizard.accent.hint")}
-          </span>
-        </div>
-      </label>
 
       {paywall && <UpgradeGate feature={paywall.feature} />}
       {error && (

@@ -1,7 +1,7 @@
 // Schema-level regression tests (no DB) for the entrant/team contract added
 // with the unified Add-Entrant + team-squad work.
 import { describe, expect, it } from "vitest";
-import { CreateEntrant, CreateStage, CreateTeam, PatchEntrant, SetTeamSquad } from "../schemas";
+import { CreateDivision, CreateEntrant, CreateStage, CreateTeam, PatchEntrant, SetTeamSquad } from "../schemas";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 
@@ -123,5 +123,21 @@ describe("CreateEntrant.members — inline new persons (PROMPT-60 §2)", () => {
     ).toBe(true);
     expect(PatchEntrant.safeParse({ badge_url: null }).success).toBe(true);
     expect(PatchEntrant.safeParse({ badge_url: "entrant-badges/a.png" }).success).toBe(true);
+  });
+});
+
+describe("division tiebreakers are validated keys (F5)", () => {
+  it("accepts the expanded fifa2026 cascade, rejects the preset NAME", () => {
+    const good = ["points", "h2h_points", "h2h_diff", "h2h_for", "diff", "for", "fair_play", "lots"];
+    expect(
+      CreateDivision.safeParse({
+        name: "Open", sport_key: "football", variant_key: "std", tiebreakers: good,
+      }).success,
+    ).toBe(true);
+    expect(
+      CreateDivision.safeParse({
+        name: "Open", sport_key: "football", variant_key: "std", tiebreakers: ["fifa2026"],
+      }).success,
+    ).toBe(false); // silent seed-order standings, never again
   });
 });

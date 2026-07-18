@@ -228,7 +228,10 @@ async function ensureCompetitionDivision(): Promise<{ compId: string; divId: str
   let fresh = false;
   if (!div) {
     div = await call(`/api/v1/competitions/${comp!.id}/divisions`, "POST", {
-      name: DIV_NAME, sport_key: "football", variant_key: "11-a-side", config: {}, tiebreakers: ["fifa2026"],
+      name: DIV_NAME, sport_key: "football", variant_key: "11-a-side", config: {}, // FOOTBALL_TIEBREAKERS.fifa2026 EXPANDED — "fifa2026" is a preset NAME, not a
+      // cascade key; passing it literally no-ops every comparison and standings
+      // silently fall back to seed order (found on stg, F5 follow-up).
+      tiebreakers: ["points", "h2h_points", "h2h_diff", "h2h_for", "diff", "for", "fair_play", "lots"],
     });
     fresh = true;
   }
@@ -297,7 +300,8 @@ async function main() {
         qualification: { combine: [
           { take: GROUPS.map((g) => ({ pool: g, rank: 1 })) },
           { take: GROUPS.map((g) => ({ pool: g, rank: 2 })) },
-          { bestOfRank: { rank: 3, count: 8, normaliseUnequalPools: true } },
+          // FIFA 2026: equal pools — thirds rank on FULL results (no UEFA drop-bottom).
+          { bestOfRank: { rank: 3, count: 8 } },
         ] } },
     ]);
     const arr: { id: string; kind: string; seq: number }[] = Array.isArray(created) ? created : [created];
@@ -324,6 +328,7 @@ async function main() {
     if (!hId || !aId) continue;
     const f = fxByPair.get([hId, aId].sort().join("|"));
     if (!f) { console.log(`  ⚠ no fixture for ${m.home}-${m.away}`); continue; }
+    if (f.status && f.status !== "scheduled") { applied++; continue; } // rerun: already scored
     await call(`/api/v1/fixtures/${f.id}`, "PATCH", { scheduled_at: `${m.date}T18:00:00+00:00` }).catch(() => {});
     let seq = 0;
     for (const ev of goalEvents(hId, aId, m.hs, m.as)) {

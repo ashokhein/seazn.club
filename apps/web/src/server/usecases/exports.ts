@@ -351,7 +351,7 @@ export async function buildDivisionDocModel(
         const [stage] = await tx<{ id: string }[]>`
           select id from stages where division_id = ${divisionId} and kind = 'knockout'
           order by seq limit 1`;
-        if (!stage) throw new HttpError(422, "this division has no knockout stage to poster");
+        if (!stage) throw new HttpError(422, "this division has no knockout stage to poster", "BRACKET_NOT_AVAILABLE");
         const fixtures = await tx<
           {
             id: string; round_no: number; seq_in_round: number;
@@ -366,7 +366,7 @@ export async function buildDivisionDocModel(
           where f.stage_id = ${stage.id}
           order by f.round_no, f.seq_in_round`;
         if (fixtures.length === 0) {
-          throw new HttpError(422, "the knockout bracket hasn't been generated yet");
+          throw new HttpError(422, "the knockout bracket hasn't been generated yet", "BRACKET_NOT_AVAILABLE");
         }
         const names = await tx<{ id: string; display_name: string }[]>`
           select id, display_name from entrants where division_id = ${divisionId}`;

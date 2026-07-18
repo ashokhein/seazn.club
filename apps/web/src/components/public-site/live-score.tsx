@@ -123,7 +123,7 @@ export function LiveScore({ fixtureId, initial, realtime, entrantNames, sportKey
             </p>
           ) : (
             <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.22em] text-court-muted">
-              {decided ? "Final" : data.status.replace("_", " ")}
+              {decided ? "Ended" : data.status.replace("_", " ")}
             </p>
           )}
           <p className="font-display text-5xl font-bold tabular-nums leading-none tracking-tight sm:text-6xl">
