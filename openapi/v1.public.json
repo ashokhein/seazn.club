@@ -34376,7 +34376,7 @@
         ]
       },
       "post": {
-        "summary": "Create a save point at the current watermark (>1 is Pro `schedule.versioning`)",
+        "summary": "Create a save point at the current watermark (quota `schedule.checkpoints.max`: 1 free / 5 Pro / unlimited Pro Plus)",
         "tags": [
           "history"
         ],
