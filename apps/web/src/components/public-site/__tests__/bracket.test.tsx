@@ -58,6 +58,38 @@ describe("public Bracket", () => {
     expect(html).not.toContain('data-bracket="two-sided"');
   });
 
+  it("renders the two-lane double-elim geometry (G1)", () => {
+    // 4-entrant DE with the persisted round numbering (k=2):
+    // WB rounds 1–2, LB rounds 5–6, grand final round 9.
+    const fixtures = [
+      F("w1", 1, 1, "a", "b", null),
+      F("w2", 1, 2, "c", "d", null),
+      F("wf", 2, 1, null, null, null),
+      F("l1", 5, 1, null, null, null),
+      F("lf", 6, 1, null, null, null),
+      F("gf", 9, 1, null, null, null),
+    ];
+    const html = renderToStaticMarkup(
+      createElement(Bracket, { kind: "double_elim", fixtures: fixtures as never, entrantNames: names, fixtureHref: href }),
+    );
+    expect(html).toContain('data-bracket="double-elim"');
+    expect(html).toContain("Winners bracket");
+    expect(html).toContain("Losers bracket");
+    expect(html).toContain("Grand final");
+    expect(html.match(/data-lane="WB"/g)?.length).toBe(3);
+    expect(html.match(/data-lane="LB"/g)?.length).toBe(2);
+    expect(html.match(/data-lane="GF"/g)?.length).toBe(1);
+    expect(html).toContain("<svg");
+  });
+
+  it("keeps the column fallback for irregular double-elim shapes", () => {
+    const fixtures = [F("f1", 1, 1, "a", "b", null), F("f2", 2, 1, "c", "d", null), F("f3", 2, 2, "a", "c", null)];
+    const html = renderToStaticMarkup(
+      createElement(Bracket, { kind: "double_elim", fixtures: fixtures as never, entrantNames: names, fixtureHref: href }),
+    );
+    expect(html).not.toContain('data-bracket="double-elim"');
+  });
+
   it("renders badge chips in nodes when entrantLogos provides them (F4)", () => {
     const fixtures = [
       F("f1", 0, 1, "a", "d", null),

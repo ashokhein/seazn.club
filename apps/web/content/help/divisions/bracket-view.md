@@ -11,4 +11,6 @@ Knockout stages render as the classic **two-sided bracket**: quarter-finals on t
 - **Big screen** — the [slideshow](/help/sharing/slideshow) and [presentation mode](/help/sharing/presentation-mode) get a bracket slide.
 - **Poster** — Documents → *Bracket poster* exports a landscape PDF of the tree, scaled to one sheet, with your branding on Pro.
 
-Double-elimination and stepladder stages keep their own views — the two-sided shape is single-elimination's.
+**Double elimination** gets its own geometry on the public page: the winners bracket on top, the losers bracket beneath it, and the grand final (plus the bracket-reset match, when configured) joining the two lanes on the right. Stepladder stages keep their rung-by-rung view — that ladder *is* their shape.
+
+**Round-robin stages** (leagues and groups) have no tree — their visual is the **results grid**: a team-by-team crosstable under each standings table on the public page, home side down the rows, away side across the columns, every played score linked to its match and a pulsing dot for matches in play.

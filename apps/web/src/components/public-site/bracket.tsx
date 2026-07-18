@@ -7,10 +7,13 @@
 import Link from "next/link";
 import type { PublicFixture } from "@/server/public-site/data";
 import {
+  doubleElimBracket,
+  lbRowUnit,
   rowCenter,
   twoSidedBracket,
   type BracketLayout,
   type BracketNode,
+  type DoubleElimLayout,
 } from "@seazn/engine/scheduling";
 
 interface Props {
@@ -195,6 +198,99 @@ function TwoSided({
   );
 }
 
+// G1 — double-elimination two-lane geometry: winners lane on top, losers lane
+// below, grand final (+ optional reset) joining the two lane finals on the
+// right. In-lane connectors come from the layout; the two GF joins are drawn
+// here from the known lane-final positions.
+function DoubleElim({
+  layout,
+  fixtures,
+  entrantNames,
+  entrantLogos,
+  fixtureHref,
+}: {
+  layout: DoubleElimLayout;
+  fixtures: PublicFixture[];
+  entrantNames: Record<string, string>;
+  entrantLogos?: Record<string, string | null>;
+  fixtureHref: (fixtureId: string) => string;
+}) {
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const LANE_GAP = 48;
+  const LABEL_H = 24;
+  const wbH = Math.max(layout.wbRows, 1) * SLOT_H;
+  const lbH = Math.max(layout.lbRows, 0) * SLOT_H;
+  const wbTop = LABEL_H;
+  const lbTop = wbTop + wbH + LANE_GAP + (lbH > 0 ? LABEL_H : 0);
+  const gfX = Math.max(layout.k, layout.lbCols) * COL_W;
+  const totalW = gfX + COL_W * (layout.resetId !== undefined ? 2 : 1);
+  const totalH = lbTop + lbH;
+  const wbY = (col: number, row: number) => wbTop + rowCenter(col, row) * SLOT_H;
+  const lbY = (col: number, row: number) => lbTop + rowCenter(lbRowUnit(col), row) * SLOT_H;
+  const gfY = (wbTop + (lbH > 0 ? lbTop + lbH : wbTop + wbH)) / 2;
+  const wbFinalY = wbY(layout.k - 1, 0);
+  const lbFinalY = layout.lbCols > 0 ? lbY(layout.lbCols - 1, 0) : wbFinalY;
+  const laneLabel = "font-display text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted";
+
+  return (
+    <div className="overflow-x-auto" data-bracket="double-elim">
+      <div className="relative" style={{ width: totalW, height: totalH }}>
+        <span className={`absolute ${laneLabel}`} style={{ left: 0, top: 0 }}>
+          Winners bracket
+        </span>
+        {lbH > 0 && (
+          <span className={`absolute ${laneLabel}`} style={{ left: 0, top: wbTop + wbH + LANE_GAP }}>
+            Losers bracket
+          </span>
+        )}
+        <svg aria-hidden className="absolute inset-0" width={totalW} height={totalH} viewBox={`0 0 ${totalW} ${totalH}`}>
+          {layout.connectors.map((c, i) => {
+            const y = c.lane === "WB" ? wbY : lbY;
+            const fx = (c.col - 1) * COL_W + NODE_W;
+            const tx = c.col * COL_W;
+            const fy = y(c.col - 1, c.fromRow);
+            const ty = y(c.col, c.toRow);
+            const midX = (fx + tx) / 2;
+            return (
+              <path key={i} d={`M ${fx} ${fy} H ${midX} V ${ty} H ${tx}`} fill="none" className="stroke-zinc-300" strokeWidth="1.5" />
+            );
+          })}
+          {/* Grand-final joins from both lane finals. */}
+          <path
+            d={`M ${(layout.k - 1) * COL_W + NODE_W} ${wbFinalY} H ${gfX - 12} V ${gfY} H ${gfX}`}
+            fill="none" className="stroke-zinc-300" strokeWidth="1.5"
+          />
+          {layout.lbCols > 0 && (
+            <path
+              d={`M ${(layout.lbCols - 1) * COL_W + NODE_W} ${lbFinalY} H ${gfX - 12} V ${gfY} H ${gfX}`}
+              fill="none" className="stroke-zinc-300" strokeWidth="1.5"
+            />
+          )}
+        </svg>
+        {layout.nodes.map((node) => {
+          const f = byId.get(node.fixtureId);
+          if (!f) return null;
+          const top =
+            node.lane === "WB"
+              ? wbY(node.col, node.row) - NODE_H / 2
+              : node.lane === "LB"
+                ? lbY(node.col, node.row) - NODE_H / 2
+                : gfY - NODE_H / 2;
+          const left = node.lane === "GF" ? gfX + node.col * COL_W : node.col * COL_W;
+          return (
+            <div key={node.fixtureId} data-lane={node.lane} className="absolute" style={{ left, top, width: NODE_W }}>
+              {node.lane === "GF" && (
+                <p className={`mb-1 ${laneLabel}`}>{node.col === 0 ? "Grand final" : "Reset"}</p>
+              )}
+              <FixtureCard fixture={f} entrantNames={entrantNames} entrantLogos={entrantLogos} href={fixtureHref(f.id)} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function Bracket({ kind, fixtures, entrantNames, entrantLogos, fixtureHref }: Props) {
   // PROMPT-62: the connected two-sided tree, when the shape allows it.
   if (kind === "knockout") {
@@ -202,6 +298,21 @@ export function Bracket({ kind, fixtures, entrantNames, entrantLogos, fixtureHre
     if (result.ok) {
       return (
         <TwoSided
+          layout={result.layout}
+          fixtures={fixtures}
+          entrantNames={entrantNames}
+          entrantLogos={entrantLogos}
+          fixtureHref={fixtureHref}
+        />
+      );
+    }
+  }
+  // G1: the two-lane double-elim geometry, when the shape allows it.
+  if (kind === "double_elim") {
+    const result = doubleElimBracket(fixtures);
+    if (result.ok) {
+      return (
+        <DoubleElim
           layout={result.layout}
           fixtures={fixtures}
           entrantNames={entrantNames}
