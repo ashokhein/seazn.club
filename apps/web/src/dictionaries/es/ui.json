@@ -212,6 +212,8 @@
   "confirm.unlinkPlayer.body": "{name} perderá el acceso a este perfil en su página de jugador. Los partidos y resultados se mantienen. Puedes volver a invitarlo a reclamar más tarde.",
   "confirm.unlinkPlayer.label": "Desvincular",
   "me.title": "Mis partidos y equipos",
+  "me.runYourOwn.title": "Organiza tu propio torneo — gratis.",
+  "me.runYourOwn.cta": "Empezar gratis →",
   "me.eyebrow": "Página de jugador",
   "me.claimed": "Perfil reclamado: esta es ahora tu página de jugador.",
   "me.empty": "Aquí no hay nada todavía. Cuando un organizador te incluya en un equipo o cuadro, tus partidos aparecerán en esta página.",

@@ -1120,6 +1120,8 @@ export type DictionaryKey =
   | "me.rsvp.notePlaceholder"
   | "me.rsvp.out"
   | "me.rsvp.saved"
+  | "me.runYourOwn.cta"
+  | "me.runYourOwn.title"
   | "me.tbd"
   | "me.teams.title"
   | "me.title"
