@@ -1084,6 +1084,10 @@ export const Club = z.object({
   logo_path: z.string().nullable(),
   colors: z.record(z.string(), z.string()).nullable(),
   external_ref: z.string().nullable(),
+  slug: z.string().nullable(),
+  home_ground: z.string().nullable(),
+  website: z.string().nullable(),
+  notes: z.string().nullable(),
   created_at: z.string(),
 });
 
@@ -1092,6 +1096,9 @@ export const CreateClub = z.object({
   short_name: z.string().min(1).max(40).optional(),
   colors: z.record(z.string(), z.string()).optional(),
   external_ref: z.string().min(1).max(100).optional(),
+  home_ground: z.string().min(1).max(200).optional(),
+  website: z.string().url().max(200).optional(),
+  notes: z.string().max(2000).optional(),
 });
 export type CreateClub = z.infer<typeof CreateClub>;
 
@@ -1101,6 +1108,10 @@ export const PatchClub = z.object({
   colors: z.record(z.string(), z.string()).nullable().optional(),
   external_ref: z.string().min(1).max(100).nullable().optional(),
   logo_path: z.string().nullable().optional(),
+  slug: z.string().min(1).max(80).nullable().optional(),
+  home_ground: z.string().min(1).max(200).nullable().optional(),
+  website: z.string().url().max(200).nullable().optional(),
+  notes: z.string().max(2000).nullable().optional(),
 });
 export type PatchClub = z.infer<typeof PatchClub>;
 

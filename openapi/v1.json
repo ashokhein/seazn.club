@@ -38711,6 +38711,46 @@
                               }
                             ]
                           },
+                          "slug": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "home_ground": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "website": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "notes": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
                           "created_at": {
                             "type": "string"
                           }
@@ -38722,6 +38762,10 @@
                           "logo_path",
                           "colors",
                           "external_ref",
+                          "slug",
+                          "home_ground",
+                          "website",
+                          "notes",
                           "created_at"
                         ],
                         "additionalProperties": false
@@ -38743,6 +38787,10 @@
                       "logo_path": "example",
                       "colors": {},
                       "external_ref": "example",
+                      "slug": "example",
+                      "home_ground": "example",
+                      "website": "example",
+                      "notes": "example",
                       "created_at": "example"
                     }
                   ],
@@ -38930,6 +38978,20 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 100
+                  },
+                  "home_ground": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "website": {
+                    "type": "string",
+                    "maxLength": 200,
+                    "format": "uri"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "maxLength": 2000
                   }
                 },
                 "required": [
@@ -39017,6 +39079,46 @@
                             }
                           ]
                         },
+                        "slug": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "home_ground": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "notes": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -39028,6 +39130,10 @@
                         "logo_path",
                         "colors",
                         "external_ref",
+                        "slug",
+                        "home_ground",
+                        "website",
+                        "notes",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -39047,6 +39153,10 @@
                     "logo_path": "example",
                     "colors": {},
                     "external_ref": "example",
+                    "slug": "example",
+                    "home_ground": "example",
+                    "website": "example",
+                    "notes": "example",
                     "created_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -39374,6 +39484,46 @@
                             }
                           ]
                         },
+                        "slug": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "home_ground": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "notes": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
                         },
@@ -39454,6 +39604,10 @@
                         "logo_path",
                         "colors",
                         "external_ref",
+                        "slug",
+                        "home_ground",
+                        "website",
+                        "notes",
                         "created_at",
                         "teams"
                       ],
@@ -39474,6 +39628,10 @@
                     "logo_path": "example",
                     "colors": {},
                     "external_ref": "example",
+                    "slug": "example",
+                    "home_ground": "example",
+                    "website": "example",
+                    "notes": "example",
                     "created_at": "example",
                     "teams": [
                       {
@@ -39717,6 +39875,53 @@
                         "type": "null"
                       }
                     ]
+                  },
+                  "slug": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 80
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "home_ground": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 200
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "website": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 200,
+                        "format": "uri"
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "notes": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "maxLength": 2000
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "additionalProperties": false
@@ -39801,6 +40006,46 @@
                             }
                           ]
                         },
+                        "slug": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "home_ground": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "website": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "notes": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
                         "created_at": {
                           "type": "string"
                         }
@@ -39812,6 +40057,10 @@
                         "logo_path",
                         "colors",
                         "external_ref",
+                        "slug",
+                        "home_ground",
+                        "website",
+                        "notes",
                         "created_at"
                       ],
                       "additionalProperties": false
@@ -39831,6 +40080,10 @@
                     "logo_path": "example",
                     "colors": {},
                     "external_ref": "example",
+                    "slug": "example",
+                    "home_ground": "example",
+                    "website": "example",
+                    "notes": "example",
                     "created_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"

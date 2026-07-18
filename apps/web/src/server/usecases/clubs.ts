@@ -9,6 +9,7 @@ import { HttpError } from "@/lib/errors";
 import { requireFeature, withinLimit, PaymentRequiredError } from "@/lib/entitlements";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import { slugify, uniqueSlug } from "@/server/usecases/slugs";
 import { fold } from "@seazn/engine/import";
 
 export interface ClubRow {
@@ -18,10 +19,17 @@ export interface ClubRow {
   logo_path: string | null;
   colors: unknown;
   external_ref: string | null;
+  slug: string | null;
+  home_ground: string | null;
+  website: string | null;
+  notes: string | null;
   created_at: string;
 }
 
-const COLS = ["id", "name", "short_name", "logo_path", "colors", "external_ref", "created_at"] as const;
+const COLS = [
+  "id", "name", "short_name", "logo_path", "colors", "external_ref",
+  "slug", "home_ground", "website", "notes", "created_at",
+] as const;
 
 export async function listClubs(auth: AuthCtx): Promise<ClubRow[]> {
   return withTenant(auth.orgId, (tx) => tx<ClubRow[]>`
@@ -33,6 +41,9 @@ export interface CreateClubInput {
   short_name?: string;
   colors?: unknown;
   external_ref?: string;
+  home_ground?: string;
+  website?: string;
+  notes?: string;
 }
 
 export async function createClub(auth: AuthCtx, input: CreateClubInput): Promise<ClubRow> {
@@ -43,11 +54,18 @@ export async function createClub(auth: AuthCtx, input: CreateClubInput): Promise
   if (!cap.ok) throw new PaymentRequiredError("clubs.max");
   return withTenant(auth.orgId, async (tx) => {
     try {
+      const slug = await uniqueSlug(slugify(input.name), async (s) => {
+        const [hit] = await tx`select 1 from clubs where slug = ${s}`;
+        return !!hit;
+      });
       const [row] = await tx<ClubRow[]>`
-        insert into clubs (org_id, name, short_name, colors, external_ref)
+        insert into clubs (org_id, name, short_name, colors, external_ref,
+                           slug, home_ground, website, notes)
         values (${auth.orgId}, ${input.name}, ${input.short_name ?? null},
                 ${input.colors === undefined ? null : tx.json(input.colors as never)},
-                ${input.external_ref ?? null})
+                ${input.external_ref ?? null},
+                ${slug}, ${input.home_ground ?? null},
+                ${input.website ?? null}, ${input.notes ?? null})
         returning ${tx(COLS)}`;
       return row!;
     } catch (err) {
@@ -89,11 +107,22 @@ export interface PatchClubInput {
   colors?: unknown;
   external_ref?: string | null;
   logo_path?: string | null;
+  slug?: string | null;
+  home_ground?: string | null;
+  website?: string | null;
+  notes?: string | null;
 }
 
 export async function patchClub(auth: AuthCtx, id: string, patch: PatchClubInput): Promise<ClubRow> {
   await requireFeature(auth.orgId, "clubs.hierarchy");
   return withTenant(auth.orgId, async (tx) => {
+    // Re-slug only on an explicit `slug` set — a rename keeps the public URL
+    // stable (W2 adds slug_history if we ever auto-rename).
+    if (patch.slug !== undefined && patch.slug !== null) {
+      patch.slug = slugify(patch.slug);
+      const [dup] = await tx`select 1 from clubs where slug = ${patch.slug} and id <> ${id}`;
+      if (dup) throw new HttpError(409, `slug '${patch.slug}' is taken — try '${patch.slug}-2'`);
+    }
     const cols = Object.keys(patch);
     if (cols.length === 0) {
       const [row] = await tx<ClubRow[]>`select ${tx(COLS)} from clubs where id = ${id}`;
