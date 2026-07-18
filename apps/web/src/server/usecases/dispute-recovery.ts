@@ -87,7 +87,9 @@ export async function recoverDisputedTransfer(
     }
     await stripe.transfers.createReversal(
       transfer.id,
-      { amount, metadata: { dispute_id: dispute.id, ...opts.reversalMetadata } },
+      // dispute_id is spread LAST so a caller's reversalMetadata can never
+      // clobber the durable replay-guard key the listReversals check reads.
+      { amount, metadata: { ...opts.reversalMetadata, dispute_id: dispute.id } },
       { idempotencyKey: `dispute-reversal-${dispute.id}` },
     );
     await note("dispute_recovered", {
