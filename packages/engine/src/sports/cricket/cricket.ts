@@ -1353,6 +1353,7 @@ export const cricket: SportModule<CricketCfg, CricketEv, CricketState> = {
   configSchema: CricketCfg,
   eventSchema: CricketEv,
   positions,
+  entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   variants: {
     // spec 04 §2.1
     t20: { ballsPerInnings: 120, maxOversPerBowler: 4 },

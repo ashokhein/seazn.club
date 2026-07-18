@@ -31,6 +31,7 @@ import type {
   TiebreakerKey,
 } from "../../sport/module.ts";
 import type { PlayerStatsModel } from "../../stats/stats.ts";
+import type { EntrantModel } from "../../sport/entrant-model.ts";
 import {
   escalationHints,
   pimOf,
@@ -524,6 +525,7 @@ export interface PeriodPreset {
   shootoutLabel: string; // 'GWS' (ice) | 'SO' (FIH)
   timelineEntitlement: string; // FeatureKey for tier-2/3 attributed scoring
   playerStats?: PlayerStatsModel;
+  entrantModel?: EntrantModel;
 }
 
 export function makePeriodModule(
@@ -757,6 +759,7 @@ export function makePeriodModule(
     fidelityTiers,
     officialLabel: preset.officialLabel,
     ...(preset.playerStats === undefined ? {} : { playerStats: preset.playerStats }),
+    ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
 
     // spec 03 §6 — deterministic valid-event generator.
     arbitraryEvent(state, rng: Rng): ModuleEvent<PeriodEv> | null {

@@ -524,6 +524,7 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
   configSchema: FootballCfg,
   eventSchema: FootballEv,
   positions,
+  entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   variants: {
     // spec 04 §1.1
     "11-a-side": {},

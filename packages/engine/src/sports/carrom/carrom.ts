@@ -394,6 +394,7 @@ export const carrom: SportModule<CarromCfg, CarromEv, CarromState> = {
   configSchema: CarromCfg,
   eventSchema: CarromEv,
   positions,
+  entrantModel: { kinds: ["individual", "pair"], defaultKind: "individual" },
   variants: {
     // ICF Laws of Carrom (Laws 52–57) — the system default.
     icf: {},
