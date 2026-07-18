@@ -81,6 +81,13 @@ export interface SingleElimOptions {
    *  as the top bracket seeds); everyone else fills the remaining positions in
    *  seed order. Length must equal nextPowerOfTwo(n) − n. */
   byeEntrants?: readonly EntrantId[];
+  /** PROMPT-59 §2 — explicit round-0 slot order as seed numbers (1-based into
+   *  the seeded entrant list, i.e. into the resolved qualification order).
+   *  Length must equal nextPowerOfTwo(n); `null` is a bye line. When present it
+   *  is used verbatim in place of seedPositions(size), so a published slot map
+   *  (fixed pairings, third-place lookups, regional protection) can be
+   *  reproduced. Incompatible with byeEntrants. */
+  slotOrder?: readonly (number | null)[];
 }
 
 interface SEResult {
@@ -117,7 +124,37 @@ function buildSingleElim(opts: SingleElimOptions): SEResult {
   if (n < 2) return empty;
 
   const size = nextPowerOfTwo(n);
-  const positions = seedPositions(size);
+  let positions: number[];
+  if (opts.slotOrder !== undefined) {
+    if (opts.byeEntrants !== undefined) {
+      throw new EngineError("CONFIG_INVALID", "slotOrder and byes (byeEntrants) cannot be combined", {});
+    }
+    const so = opts.slotOrder;
+    const real = so.filter((s): s is number => s !== null);
+    if (
+      so.length !== size ||
+      real.length !== n ||
+      real.some((s) => !Number.isInteger(s) || s < 1 || s > n) ||
+      new Set(real).size !== real.length
+    ) {
+      throw new EngineError(
+        "CONFIG_INVALID",
+        `slotOrder must list each seed 1..${n} exactly once across ${size} slots (null = bye)`,
+        { slots: size, entrants: n },
+      );
+    }
+    for (let i = 0; i < size; i += 2) {
+      if (so[i] === null && so[i + 1] === null) {
+        throw new EngineError("CONFIG_INVALID", "a round-0 pairing cannot be two byes", {
+          pair: i / 2,
+        });
+      }
+    }
+    // null → a seed number beyond n, which entrantOfSeed resolves to a bye.
+    positions = so.map((s) => s ?? size + 1);
+  } else {
+    positions = seedPositions(size);
+  }
   const rounds = Math.log2(size);
   const entrantOfSeed = (k: number): EntrantId | null => (k <= n ? (ordered[k - 1] as EntrantId) : null);
 

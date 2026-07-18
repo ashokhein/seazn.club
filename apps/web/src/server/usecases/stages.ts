@@ -610,6 +610,11 @@ function generate(
         thirdPlace: cfg.thirdPlace === true,
         // Jul3/08 §4 (7 Jan): organiser-chosen bye recipients
         ...(Array.isArray(cfg.byes) ? { byeEntrants: cfg.byes as string[] } : {}),
+        // PROMPT-59 §2: explicit published slot map (seed numbers index into
+        // the resolved qualification order); engine validates the shape.
+        ...(Array.isArray(cfg.slotOrder)
+          ? { slotOrder: (cfg.slotOrder as unknown[]).map((s) => (s === null ? null : Number(s))) }
+          : {}),
       });
       return bracketToGen(bracket, bracket.rounds);
     }
