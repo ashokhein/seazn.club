@@ -326,13 +326,15 @@ help pages updated in the same PR (house rules).
   tax decision implementation; pass→Pro credit + refund-policy disclosure
   (quick growth wins from §4).
 
-## 6. Open questions (owner)
+## 6. Decisions (owner, 2026-07-18)
 
-1. P2-10: keep or close post-downgrade card intake? (Recommend close.)
-2. Sub-dispute policy: lost dispute → auto-downgrade OK? Created → alert-only?
-3. Tax stance for connected charges: "clubs own their VAT" ToS line vs.
-   Stripe Tax on destination charges (bigger build)?
-4. Cancel-now prorated refund: staff-only goodwill tool (recommended) or
-   self-serve for annual?
-5. /admin/payments: fold existing pages in now (redirects) or keep both
-   during transition?
+1. P2-10 post-downgrade card intake: **CLOSE** — stripe-method divisions show
+   `payments_unavailable` once the org loses `registration.paid`.
+2. Sub-dispute policy: created → staff alert only; **lost → auto-downgrade**
+   to community + staff notified.
+3. Tax on connected charges: **ToS clause — clubs own their VAT** + VAT-number
+   field on sponsor invoices. No Stripe Tax build on destination charges now.
+4. Cancel-now prorated refund: **staff-only** /admin goodwill tool. No
+   self-serve.
+5. /admin/payments fold-in: existing pages move under the new layout with
+   redirects from old paths (same pattern as the Payments→Connect rename).
