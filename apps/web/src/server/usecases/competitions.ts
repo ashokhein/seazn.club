@@ -171,7 +171,7 @@ export async function createCompetition(
       event: EVENTS.COMPETITION_MADE_PUBLIC,
       distinctId: auth.userId ?? `org:${auth.orgId}`,
       orgId: auth.orgId,
-      properties: { competitionId: row.id },
+      properties: { competition_id: row.id },
     });
   }
   return row;
@@ -324,7 +324,7 @@ export async function patchCompetition(
       event: EVENTS.COMPETITION_MADE_PUBLIC,
       distinctId: auth.userId ?? `org:${auth.orgId}`,
       orgId: auth.orgId,
-      properties: { competitionId: id },
+      properties: { competition_id: id },
     });
   }
   return row;

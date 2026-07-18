@@ -85,7 +85,14 @@ export default async function DiscoverPage({
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
             </span>
-            {plural(d, "discover.liveCount", entries.length, lang)}
+            {plural(
+              d,
+              "discover.liveCount",
+              new Set(
+                entries.filter((e) => e.in_play_count > 0).map((e) => e.org_slug),
+              ).size,
+              lang,
+            )}
           </p>
         )}
 

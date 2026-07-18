@@ -64,9 +64,32 @@ describe("/discover — PLG organiser funnel", () => {
   });
 
   it("non-empty state (fr): uses the localized plural count string", async () => {
-    vi.mocked(getDiscoveryDirectory).mockResolvedValue([ENTRY, { ...ENTRY, id: "comp-2" }]);
+    vi.mocked(getDiscoveryDirectory).mockResolvedValue([
+      ENTRY,
+      { ...ENTRY, id: "comp-2", org_slug: "northside", org_name: "Northside" },
+    ]);
     const html = await renderDiscover("fr");
     expect(html).toContain("/fr/start?utm_source=discover&amp;utm_medium=directory&amp;utm_campaign=plg");
     expect(html).toContain("2 clubs en direct actuellement");
+  });
+
+  it("counts DISTINCT clubs, not competitions: two live competitions from the same org show '1 club'", async () => {
+    vi.mocked(getDiscoveryDirectory).mockResolvedValue([
+      ENTRY,
+      { ...ENTRY, id: "comp-2", slug: "riverside-cup-2", name: "Riverside Cup 2" },
+    ]);
+    const html = await renderDiscover("en");
+    expect(html).toContain("1 club live right now");
+    expect(html).not.toContain("2 clubs live right now");
+  });
+
+  it("only counts clubs with an in-play competition as 'live now', not merely-listed upcoming ones", async () => {
+    vi.mocked(getDiscoveryDirectory).mockResolvedValue([
+      ENTRY,
+      { ...ENTRY, id: "comp-2", org_slug: "northside", org_name: "Northside", in_play_count: 0, status: "upcoming" },
+    ]);
+    const html = await renderDiscover("en");
+    expect(html).toContain("1 club live right now");
+    expect(html).not.toContain("2 clubs live right now");
   });
 });
