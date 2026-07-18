@@ -17,6 +17,9 @@ interface Props {
   kind: "knockout" | "double_elim" | "stepladder";
   fixtures: PublicFixture[];
   entrantNames: Record<string, string>;
+  /** Resolved badge/crest URLs (entrant badge → team logo) — same map the
+   *  standings table takes; nodes render a crest chip before the name. */
+  entrantLogos?: Record<string, string | null>;
   fixtureHref: (fixtureId: string) => string;
 }
 
@@ -27,26 +30,37 @@ function sideLabel(entrantId: string | null, names: Record<string, string>): str
 function FixtureCard({
   fixture,
   entrantNames,
+  entrantLogos,
   href,
 }: {
   fixture: PublicFixture;
   entrantNames: Record<string, string>;
+  entrantLogos?: Record<string, string | null>;
   href: string;
 }) {
   const winner = fixture.outcome?.winner;
-  const side = (id: string | null) => (
-    <span
-      className={
-        id && id === winner
-          ? "truncate font-semibold text-ink"
-          : winner
-            ? "truncate text-ink-muted"
-            : "truncate text-ink"
-      }
-    >
-      {sideLabel(id, entrantNames)}
-    </span>
-  );
+  const side = (id: string | null) => {
+    const badge = id ? entrantLogos?.[id] : null;
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        {badge ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={badge} alt="" className="h-3.5 w-3.5 shrink-0 rounded-[3px] object-cover" />
+        ) : null}
+        <span
+          className={
+            id && id === winner
+              ? "truncate font-semibold text-ink"
+              : winner
+                ? "truncate text-ink-muted"
+                : "truncate text-ink"
+          }
+        >
+          {sideLabel(id, entrantNames)}
+        </span>
+      </span>
+    );
+  };
   const live = fixture.status === "in_play";
   return (
     <Link
@@ -95,11 +109,13 @@ function TwoSided({
   layout,
   fixtures,
   entrantNames,
+  entrantLogos,
   fixtureHref,
 }: {
   layout: BracketLayout;
   fixtures: PublicFixture[];
   entrantNames: Record<string, string>;
+  entrantLogos?: Record<string, string | null>;
   fixtureHref: (fixtureId: string) => string;
 }) {
   const byId = new Map(fixtures.map((f) => [f.id, f]));
@@ -170,7 +186,7 @@ function TwoSided({
               className="absolute"
               style={{ left: colX(node), top: nodeTop(node), width: NODE_W }}
             >
-              <FixtureCard fixture={f} entrantNames={entrantNames} href={fixtureHref(f.id)} />
+              <FixtureCard fixture={f} entrantNames={entrantNames} entrantLogos={entrantLogos} href={fixtureHref(f.id)} />
             </div>
           );
         })}
@@ -179,7 +195,7 @@ function TwoSided({
   );
 }
 
-export function Bracket({ kind, fixtures, entrantNames, fixtureHref }: Props) {
+export function Bracket({ kind, fixtures, entrantNames, entrantLogos, fixtureHref }: Props) {
   // PROMPT-62: the connected two-sided tree, when the shape allows it.
   if (kind === "knockout") {
     const result = twoSidedBracket(fixtures);
@@ -189,6 +205,7 @@ export function Bracket({ kind, fixtures, entrantNames, fixtureHref }: Props) {
           layout={result.layout}
           fixtures={fixtures}
           entrantNames={entrantNames}
+          entrantLogos={entrantLogos}
           fixtureHref={fixtureHref}
         />
       );
@@ -231,6 +248,7 @@ export function Bracket({ kind, fixtures, entrantNames, fixtureHref }: Props) {
                     key={f.id}
                     fixture={f}
                     entrantNames={entrantNames}
+                    entrantLogos={entrantLogos}
                     href={fixtureHref(f.id)}
                   />
                 ))}

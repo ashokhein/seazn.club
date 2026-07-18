@@ -4,6 +4,6 @@ description: Give every entrant a crest — upload one or paste a URL — and en
 order: 4
 ---
 
-**Badges.** Every entrant can carry a badge — a club crest, a national flag, a pair's emblem — shown on standings, the bracket, public pages and (with branded exports) your PDFs. Upload an image on the entrant, or paste an image URL when creating it. No club setup required, on every plan; entrants without a badge keep their initials monogram, and a team entrant falls back to its club's logo automatically.
+**Badges.** Every entrant can carry a badge — a club crest, a national flag, a pair's emblem — shown on standings, the bracket, public pages and (with branded exports) your PDFs. In the division's **Entrants** tab, expand an entrant's row to upload, replace or remove its badge; the API also accepts an image URL when creating the entrant. No club setup required, on every plan; entrants without a badge keep their initials monogram, and a team entrant falls back to its club's logo automatically.
 
 **Bulk enrolment.** Enrolling a full squad no longer means creating each player first. When you add an entrant, roster members can be **new people inline** — just a name — created together with the entrant in one step, mixed freely with existing people picked by ID. A 26-player national squad is one request, not 27.

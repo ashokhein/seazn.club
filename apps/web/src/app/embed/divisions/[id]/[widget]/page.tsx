@@ -71,6 +71,7 @@ export default async function EmbedWidgetPage({ params }: Props) {
         kind={stage.kind as "knockout" | "double_elim" | "stepladder"}
         fixtures={fixtures.filter((f) => f.stage_id === stage.id)}
         entrantNames={entrantNames}
+        entrantLogos={entrantLogos}
         fixtureHref={(fixtureId) => `${publicPath}/fixtures/${fixtureId}`}
       />
     ) : (
