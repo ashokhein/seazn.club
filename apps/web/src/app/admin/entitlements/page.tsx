@@ -55,6 +55,8 @@ export default async function AdminEntitlementsPage() {
                           planKey={p}
                           featureKey={f.feature_key}
                           type={f.type}
+                          hasInt={f.hasInt}
+                          present={f.raw[p].present}
                           boolValue={f.raw[p].bool_value}
                           intValue={f.raw[p].int_value}
                         />

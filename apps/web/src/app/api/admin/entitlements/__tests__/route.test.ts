@@ -75,6 +75,20 @@ describe("PATCH /api/admin/entitlements", () => {
     expect(cacheDelPatternMock).toHaveBeenCalledWith("ent:*");
   });
 
+  it("nulls a co-stored int_value when the body omits it (upsert sets BOTH columns)", async () => {
+    // W1 Task 6 fix 3 — the latent data-loss path. The upsert interpolates
+    // `${body.bool_value ?? null}, ${body.int_value ?? null}`, so a PATCH that
+    // omits int_value writes NULL over an existing cap. The tagged-template mock
+    // receives the interpolated values as args after the strings array:
+    // [strings, plan_key, feature_key, bool_value, int_value].
+    await patch({ plan_key: "pro", feature_key: "import.bulk", bool_value: true });
+    const [, planKey, featureKey, boolVal, intVal] = sqlMock.mock.calls[0];
+    expect(planKey).toBe("pro");
+    expect(featureKey).toBe("import.bulk");
+    expect(boolVal).toBe(true);
+    expect(intVal).toBeNull(); // omitted int_value coerced to null -> co-stored cap wiped
+  });
+
   it("rejects non-staff callers before touching the DB or cache", async () => {
     requireSuperadminMock.mockRejectedValueOnce(new AuthError("Superadmin access required"));
     const res = await patch({ plan_key: "community", feature_key: "clubs.max", int_value: 5 });

@@ -10,10 +10,16 @@ export interface AdminEntRow {
 export interface AdminEntFeature {
   feature_key: string;
   type: "bool" | "int";
+  // True when ANY plan cell carries a non-null int_value — i.e. this is a
+  // dual-value (bool + cap) feature like import.bulk. The cell editor renders
+  // the int input next to the bool toggle for every plan of such a feature.
+  hasInt: boolean;
   cells: Record<string, string>; // plan_key -> rendered value
   // plan_key -> raw stored values, so the admin cell editor can seed its input
   // from truth (∞ = int_value null) rather than parse the rendered string.
-  raw: Record<string, { bool_value: boolean | null; int_value: number | null }>;
+  // `present` distinguishes a real row from an absent one: an absent cell
+  // resolves as DENY (getLimit → 0), NOT unlimited, so it must render "—" not ∞.
+  raw: Record<string, { present: boolean; bool_value: boolean | null; int_value: number | null }>;
 }
 
 export interface AdminEntSection { slug: string; features: AdminEntFeature[] }
@@ -45,11 +51,19 @@ export function groupForAdmin(rows: AdminEntRow[]): AdminEntSection[] {
     return {
       feature_key: k,
       type: sample && sample.bool_value !== null ? "bool" : "int",
+      hasInt: [...plans.values()].some((c) => c.int_value !== null),
       cells: Object.fromEntries(PLANS.map((p) => [p, render(plans.get(p))])),
       raw: Object.fromEntries(
         PLANS.map((p) => {
           const cell = plans.get(p);
-          return [p, { bool_value: cell?.bool_value ?? null, int_value: cell?.int_value ?? null }];
+          return [
+            p,
+            {
+              present: cell !== undefined,
+              bool_value: cell?.bool_value ?? null,
+              int_value: cell?.int_value ?? null,
+            },
+          ];
         }),
       ),
     };
