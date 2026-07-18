@@ -1085,6 +1085,8 @@
   "divset.entrants.resetDone": "Teruggezet naar de sportstandaard.",
   "divset.entrants.note": "Een soort kan niet worden verwijderd zolang er nog actieve deelnemers van dat soort zijn — trek ze eerst terug.",
   "entrants.add.kind": "Soort",
+  "entrants.add.player": "Speler",
+  "entrants.add.pairPlayers": "Spelers — kies er 2",
   "divset.sharing": "Delen & insluiten",
   "divset.sharingSummary": "Widgets voor je website",
   "divset.danger": "Gevarenzone",

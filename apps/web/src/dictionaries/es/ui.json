@@ -1085,6 +1085,8 @@
   "divset.entrants.resetDone": "Restablecido al valor predeterminado del deporte.",
   "divset.entrants.note": "Un tipo no se puede quitar mientras haya participantes de ese tipo activos: retíralos primero.",
   "entrants.add.kind": "Tipo",
+  "entrants.add.player": "Jugador",
+  "entrants.add.pairPlayers": "Jugadores — elige 2",
   "divset.sharing": "Compartir e insertar",
   "divset.sharingSummary": "Widgets para tu sitio web",
   "divset.danger": "Zona de peligro",

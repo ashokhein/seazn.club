@@ -808,6 +808,8 @@ export type DictionaryKey =
   | "embed.title"
   | "empty"
   | "entrants.add.kind"
+  | "entrants.add.pairPlayers"
+  | "entrants.add.player"
   | "extra.bye"
   | "extra.legbye"
   | "extra.noball"

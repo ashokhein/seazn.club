@@ -771,7 +771,13 @@ export function NewEntrantFields({
       </div>
 
       <div className="min-w-0">
-        <span className="label">Members (persons directory)</span>
+        <span className="label">
+          {kind === "individual"
+            ? msg("entrants.add.player")
+            : kind === "pair"
+              ? msg("entrants.add.pairPlayers")
+              : "Members (persons directory)"}
+        </span>
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}

@@ -625,7 +625,7 @@ export function DivisionSettings({
             disabled={!canEdit}
             value={entrantDefault}
             onChange={(e) => setEntrantDefault(e.target.value)}
-            className="input mt-1 w-full sm:w-auto"
+            className="input mt-1 block w-full sm:w-auto"
           >
             {entrantKinds.map((kind) => (
               <option key={kind} value={kind}>
