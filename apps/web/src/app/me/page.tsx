@@ -7,7 +7,13 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
-import { listMyFixtures, listMyPersons, type MyFixture, type MyResult } from "@/server/usecases/me";
+import {
+  listMyFixtures,
+  listMyPersons,
+  listMyPlayerStats,
+  type MyFixture,
+  type MyResult,
+} from "@/server/usecases/me";
 import { getMyOfficiating, listPendingOfficiatingClaims } from "@/server/usecases/me-officiating";
 import { RsvpControl } from "@/components/me/rsvp-control";
 import { OfficiatingLane } from "@/components/me/officiating-lane";
@@ -31,7 +37,7 @@ export default async function MePage({
     getDictionary(locale, "console"),
     getDictionary(locale, "ui"),
   ]);
-  const [{ upcoming, results, teams }, officiating, pendingOfficiatingClaims, persons, orgs, activeOrgId] =
+  const [{ upcoming, results, teams }, officiating, pendingOfficiatingClaims, persons, stats, orgs, activeOrgId] =
     await Promise.all([
       listMyFixtures(user.id),
       getMyOfficiating(user.id),
@@ -40,6 +46,7 @@ export default async function MePage({
       // accept) their very first invite.
       listPendingOfficiatingClaims(user.email),
       listMyPersons(user.id),
+      listMyPlayerStats(user.id),
       // Dual-role seam: organisers who are also players get a door back.
       // Read-only resolve — resolveActiveOrg repairs the cookie, which a
       // Server Component render is not allowed to do.
@@ -252,6 +259,54 @@ export default async function MePage({
                   · {t.division_name} · {t.org_name}
                 </li>
               ))}
+            </ul>
+          </section>
+        )}
+
+        {/* G6 — my stat blocks (PROMPT-65 self-view): every snapshot for my
+            claimed persons, private competitions included; the public-profile
+            link shows only where the public card would actually render
+            (public competition + name consent). */}
+        {stats.length > 0 && (
+          <section className="mb-8" data-testid="me-stats">
+            <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+              {t(ui, "me.stats.title")}
+            </h2>
+            <ul className="space-y-3">
+              {stats.map((s) => {
+                const consented =
+                  persons.find((p) => p.id === s.person_id)?.consent.public_name === true;
+                return (
+                  <li key={`${s.person_id}:${s.division_slug}`} className="card space-y-2 p-4">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-800">
+                        {s.division_name} · {s.competition_name}
+                        <span className="ml-1.5 text-xs text-slate-400">{s.org_name}</span>
+                      </p>
+                      {s.competition_public && consented && (
+                        <Link
+                          href={`/shared/${s.org_slug}/${s.competition_slug}/players/${s.person_id}`}
+                          className="text-xs font-medium text-purple-700 hover:underline"
+                        >
+                          {t(ui, "me.stats.publicProfile")}
+                        </Link>
+                      )}
+                    </div>
+                    <dl className="flex flex-wrap gap-x-6 gap-y-2">
+                      {s.metrics.map((m) => (
+                        <div key={m.key} className="min-w-16">
+                          <dt className="text-[11px] uppercase tracking-wide text-slate-400">
+                            {m.label}
+                          </dt>
+                          <dd className="font-display text-2xl font-bold tabular-nums text-slate-900">
+                            {m.value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </li>
+                );
+              })}
             </ul>
           </section>
         )}

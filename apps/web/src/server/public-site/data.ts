@@ -11,6 +11,7 @@ import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import { isoDateTime } from "@/lib/public-site";
 import { resolveModule } from "@/server/engine-db";
+import { labelPlayerStats } from "@/server/player-stats";
 
 /** timestamptz → ISO string before rows cross into client components. */
 const normalizeFixture = <T extends { scheduled_at: unknown }>(f: T): T => ({
@@ -440,19 +441,8 @@ export async function getPublicPlayer(
         order by d.name`;
       const stats: PublicPlayerStats[] = [];
       for (const snap of snapshots) {
-        let labelled: { key: string; label: string; value: number }[] = [];
-        try {
-          const model = resolveModule(snap.sport_key, snap.module_version).playerStats;
-          labelled = [
-            ...(model?.metrics ?? []).map((m) => ({ key: m.key, label: m.label })),
-            ...(model?.derived ?? []).map((d) => ({ key: d.key, label: d.label })),
-            ...(model?.awards ?? []).map((a) => ({ key: `${a.key}_awards`, label: a.label })),
-          ]
-            .map((m) => ({ ...m, value: snap.stats[m.key] ?? 0 }))
-            .filter((m) => m.value !== 0);
-        } catch {
-          // retired module build — skip the block rather than break the card
-        }
+        // Shared labelling (G6): same module-declared model as the /me view.
+        const labelled = labelPlayerStats(snap.sport_key, snap.module_version, snap.stats);
         if (labelled.length > 0) {
           stats.push({
             division_name: snap.division_name,
