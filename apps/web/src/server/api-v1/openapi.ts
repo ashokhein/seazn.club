@@ -236,6 +236,12 @@ export const ROUTES: RouteSpec[] = [
   { path: "/stages/{id}/challenges", method: "post", summary: "Ladder challenge: creates the fixture on demand; result reorders the ladder (Pro `formats.advanced`)", tag: "stages", request: S.LadderChallenge, status: 201, errors: [402, 422] },
   { path: "/stages/{id}/fixtures", method: "post", summary: "Ad-hoc single fixture (replay / friendly / tie-breaker) on a league, group or swiss stage; the match folds into the standings. Bracket kinds 422.", tag: "stages", request: S.AddFixture, status: 201, errors: [422] },
   { path: "/stages/{id}/americano", method: "get", summary: "Americano rotation grid + personal-points leaderboard (Jul3/08 §3)", tag: "stages", errors: [422] },
+  // Discipline & suspensions (SPEC-1, PROMPT-78)
+  { path: "/divisions/{id}/discipline-rules", method: "get", summary: "Discipline rules + enabled flag (null when the sport has no card model); Pro `discipline.enforced`", tag: "discipline", response: S.DisciplineRulesResponse, errors: [402] },
+  { path: "/divisions/{id}/discipline-rules", method: "put", summary: "Upsert discipline rules; colours validated against the sport module", tag: "discipline", request: S.PutDisciplineRules, response: S.DisciplineRulesResponse, errors: [402, 422] },
+  { path: "/divisions/{id}/suspensions", method: "get", summary: "List suspensions in the division, optional ?status= filter", tag: "discipline", response: z.array(S.Suspension), errors: [402], query: { status: { schema: { type: "string", enum: ["pending", "active", "served", "waived"] } } } },
+  { path: "/divisions/{id}/suspensions", method: "post", summary: "Record a manual suspension (pending until confirmed)", tag: "discipline", request: S.CreateSuspension, response: S.Suspension, status: 201, errors: [402] },
+  { path: "/suspensions/{id}", method: "patch", summary: "Confirm (→ active), waive or adjust a suspension", tag: "discipline", request: S.DecideSuspension, response: S.Suspension, errors: [402] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -436,7 +442,7 @@ export function buildOpenApiDocument(
     { name: "scoring" }, { name: "scheduling" }, { name: "scorers" },
     { name: "device-links" }, { name: "api-keys" }, { name: "registration" },
     { name: "clubs" }, { name: "officials" }, { name: "sponsors" }, { name: "history" },
-    { name: "exports" }, { name: "stats" }, { name: "public" },
+    { name: "exports" }, { name: "stats" }, { name: "discipline" }, { name: "public" },
   ].filter((t) => usedTags.has(t.name));
   return {
     openapi: "3.1.0",

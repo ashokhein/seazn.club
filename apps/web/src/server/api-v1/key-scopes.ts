@@ -258,6 +258,15 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "POST /clubs/:id/contacts",
   "PATCH /clubs/:id/contacts/:contactId",
   "DELETE /clubs/:id/contacts/:contactId",
+  // Discipline (SPEC-1 / PROMPT-78): the rules editor + suspensions queue are a
+  // console workflow (PROMPT-79 UI); public bans surface via /public/** instead.
+  // Session-only, like the other organiser CRM surfaces.
+  "GET /divisions/:id/discipline-rules",
+  "PUT /divisions/:id/discipline-rules",
+  "GET /divisions/:id/suspensions",
+  "POST /divisions/:id/suspensions",
+  "PATCH /suspensions/:id",
+>>>>>>> 5272656 (feat(discipline): model, card fold, detection, API (V292))
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.

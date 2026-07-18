@@ -1511,3 +1511,72 @@ export const LadderChallenge = z.object({
   challenger_id: Uuid,
   opponent_id: Uuid,
 });
+
+// Discipline & suspensions (SPEC-1 / PROMPT-78) -------------------------------
+// Colours are validated against the sport module's declared keys at the
+// usecase (SPEC-1), not here — zod only enforces shape.
+
+export const SuspensionStatus = z.enum(["pending", "active", "served", "waived"]);
+
+const AccumulationRule = z.object({
+  key: z.string().min(1),
+  color: z.string().min(1),
+  count: z.number().int().positive(),
+  ban_matches: z.number().int().positive(),
+});
+const DismissalRule = z.object({
+  key: z.string().min(1),
+  color: z.string().min(1),
+  ban_matches: z.number().int().positive(),
+});
+export const DisciplineRulesDoc = z.object({
+  accumulation: z.array(AccumulationRule),
+  dismissal: z.array(DismissalRule),
+});
+
+export const PutDisciplineRules = z.object({
+  enabled: z.boolean(),
+  rules: DisciplineRulesDoc,
+});
+
+export const DisciplineRulesResponse = z
+  .object({
+    enabled: z.boolean(),
+    rules: DisciplineRulesDoc,
+    sportColors: z.array(z.object({ key: z.string(), label: z.string() })),
+  })
+  .nullable();
+
+export const CreateSuspension = z.object({
+  person_id: Uuid,
+  matches_total: z.number().int().min(1),
+  reason: z.string().min(1).max(300),
+});
+
+export const DecideSuspension = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("confirm") }),
+  z.object({ kind: z.literal("waive") }),
+  z.object({
+    kind: z.literal("adjust"),
+    matches_total: z.number().int().min(1).optional(),
+    reason: z.string().min(1).max(300).optional(),
+  }),
+]);
+
+export const Suspension = z.object({
+  id: Uuid,
+  divisionId: Uuid,
+  personId: Uuid,
+  personName: z.string(),
+  entrantId: Uuid.nullable(),
+  entrantName: z.string().nullable(),
+  status: SuspensionStatus,
+  source: z.enum(["auto_accumulation", "auto_dismissal", "manual", "report"]),
+  reason: z.string(),
+  matchesTotal: z.number().int(),
+  matchesServed: z.number().int(),
+  fixtureId: Uuid.nullable(),
+  createdAt: z.string(),
+  decidedAt: z.string().nullable(),
+  triggerVoided: z.boolean(),
+});

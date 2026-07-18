@@ -5,6 +5,7 @@ import { z } from "zod";
 import type { CoreEv, EventEnvelope, FoldableModule } from "../core/events.ts";
 import type { Rng } from "../core/rng.ts";
 import type {
+  DisciplineModel,
   LineupPair,
   MatchOutcome,
   MetricSpec,
@@ -99,6 +100,12 @@ export interface SportModule<Cfg, Ev, State> extends FoldableModule<Cfg, State> 
   // Entrant shapes (2026-07-18 spec): allowed kinds + team affordances.
   // Absent = legacy behaviour (all kinds, team affordances on team rosters).
   entrantModel?: EntrantModel;
+
+  // SPEC-1 — optional discipline descriptor: the colours the rules editor
+  // offers + a read-only card projection (usecases/discipline.ts folds it into
+  // suspensions). Only card-emitting sports declare it (football + hockey +
+  // ice hockey today); a division whose module omits it hides the tab.
+  discipline?: DisciplineModel;
 
   init(cfg: Cfg, lineups: LineupPair): State;
   apply(state: State, ev: EventEnvelope<Ev | CoreEv>): State; // pure; throws EngineError

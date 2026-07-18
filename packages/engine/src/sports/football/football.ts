@@ -3,10 +3,11 @@
 // two official tiebreaker presets (fifa2026 H2H-first / classic GD-first).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
+  type DisciplineCard,
   type LineupPair,
   type MatchOutcome,
   type ScoreSummary,
@@ -732,6 +733,33 @@ export const football: SportModule<FootballCfg, FootballEv, FootballState> = {
       { key: "points", label: "Points", derive: (s) => (s.goals ?? 0) + (s.assists ?? 0) },
     ],
     awards: [{ key: "motm", label: "Man of the Match" }],
+  },
+
+  // SPEC-1 — read-only card projection over the ledger (voids un-count, spec
+  // 03 §2). Colours are the FA card grades; the discipline usecase folds these
+  // into per-division suspensions. Zero effect on the reducer or golden files.
+  discipline: {
+    colors: [
+      { key: "yellow", label: "Yellow card" },
+      { key: "second_yellow", label: "Second yellow" },
+      { key: "red", label: "Red card" },
+    ],
+    extractCards(ledger): DisciplineCard[] {
+      const cards: DisciplineCard[] = [];
+      for (const ev of resolveVoids(ledger)) {
+        if (ev.type !== "football.card") continue;
+        const parsed = FootballCard.safeParse(ev.payload);
+        if (!parsed.success) continue;
+        const card = parsed.data;
+        cards.push({
+          ...(card.person === undefined ? {} : { personId: card.person }),
+          entrantSide: card.by,
+          color: card.color,
+          eventId: ev.id,
+        });
+      }
+      return cards;
+    },
   },
 
   // spec 03 §6 — deterministic valid-event generator.
