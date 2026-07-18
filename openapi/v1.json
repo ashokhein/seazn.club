@@ -1885,7 +1885,7 @@
         "tags": [
           "competitions"
         ],
-        "x-required-scope": "manage",
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",
