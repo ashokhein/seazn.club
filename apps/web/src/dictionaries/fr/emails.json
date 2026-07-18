@@ -270,5 +270,21 @@
   "officialChanged.was": "Avant : {detail}",
   "officialChanged.button": "Ouvrir mes désignations",
   "officialChanged.footer": "Vous recevez cet e-mail car vous êtes officiel chez {orgName} sur Seazn Club.",
-  "officialChanged.text": "{orgName} a déplacé un match que vous arbitrez. Détails : {meUrl}"
+  "officialChanged.text": "{orgName} a déplacé un match que vous arbitrez. Détails : {meUrl}",
+  "suspension.match": "{n} match",
+  "suspension.matches": "{n} matchs",
+  "suspensionConfirmed.subject": "Suspension confirmée — {division}",
+  "suspensionConfirmed.preheader": "Vous manquerez les {matches} à venir.",
+  "suspensionConfirmed.title": "Vous êtes suspendu",
+  "suspensionConfirmed.body": "<strong>{org}</strong> a confirmé une suspension dans <strong>{division}</strong> : {reason}. Vous manquerez les {matches} à venir.",
+  "suspensionConfirmed.button": "Voir mes suspensions",
+  "suspensionConfirmed.footer": "Vous recevez ceci car vous jouez dans {division} sur Seazn Club.",
+  "suspensionConfirmed.text": "{org} a confirmé une suspension dans {division} : {reason}. Vous manquerez {matches}. Voir : {meUrl}",
+  "suspensionServed.subject": "Suspension purgée — {division}",
+  "suspensionServed.preheader": "Vous pouvez rejouer.",
+  "suspensionServed.title": "Suspension purgée",
+  "suspensionServed.body": "Votre suspension dans <strong>{division}</strong> ({reason}) est entièrement purgée — vous pouvez rejouer.",
+  "suspensionServed.button": "Voir mes suspensions",
+  "suspensionServed.footer": "Vous recevez ceci car vous jouez dans {division} sur Seazn Club.",
+  "suspensionServed.text": "Votre suspension dans {division} ({reason}) est purgée — vous pouvez rejouer. {meUrl}"
 }

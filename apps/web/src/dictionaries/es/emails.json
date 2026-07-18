@@ -270,5 +270,21 @@
   "officialChanged.was": "Antes: {detail}",
   "officialChanged.button": "Abrir mis designaciones",
   "officialChanged.footer": "Recibes este correo porque eres árbitro en {orgName} en Seazn Club.",
-  "officialChanged.text": "{orgName} movió un partido que arbitras. Detalles: {meUrl}"
+  "officialChanged.text": "{orgName} movió un partido que arbitras. Detalles: {meUrl}",
+  "suspension.match": "{n} partido",
+  "suspension.matches": "{n} partidos",
+  "suspensionConfirmed.subject": "Sanción confirmada — {division}",
+  "suspensionConfirmed.preheader": "Te perderás los próximos {matches}.",
+  "suspensionConfirmed.title": "Has sido sancionado",
+  "suspensionConfirmed.body": "<strong>{org}</strong> confirmó una sanción en <strong>{division}</strong>: {reason}. Te perderás los próximos {matches}.",
+  "suspensionConfirmed.button": "Ver mis sanciones",
+  "suspensionConfirmed.footer": "Recibes esto porque juegas en {division} en Seazn Club.",
+  "suspensionConfirmed.text": "{org} confirmó una sanción en {division}: {reason}. Te perderás {matches}. Ver: {meUrl}",
+  "suspensionServed.subject": "Sanción cumplida — {division}",
+  "suspensionServed.preheader": "Ya puedes volver a jugar.",
+  "suspensionServed.title": "Sanción cumplida",
+  "suspensionServed.body": "Tu sanción en <strong>{division}</strong> ({reason}) está totalmente cumplida — ya puedes volver a jugar.",
+  "suspensionServed.button": "Ver mis sanciones",
+  "suspensionServed.footer": "Recibes esto porque juegas en {division} en Seazn Club.",
+  "suspensionServed.text": "Tu sanción en {division} ({reason}) está cumplida — ya puedes volver a jugar. {meUrl}"
 }
