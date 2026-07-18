@@ -6,6 +6,8 @@ order: 6
 
 Officials are your umpire/scoring path: invite one, they claim their profile, accept the assignment on their `/me` home, and score the match on the same full fixture console you use — no separate scorer role, no device link to mint. Officials are an org-wide pool, managed from **Directory → Officials** — the same roster is shared across every competition and division, so you add and invite an official once and pick them on any schedule. A division's **schedule → Officials tab** stays where you assign them to fixtures: auto-assign, manual pick, phased sourcing from results, and blackout warnings. Inviting an official, their home view, accepting and declining, blackout dates, and scoring are **available on all plans**.
 
+**One official per fixture is free on every plan.** Assigning a *second* official to the same fixture — a referee and a line judge, say — needs **Pro Plus**; Community and Pro stay at one. **Multiple roles on one official** (see below) is a separate, Pro-and-up rule about how many hats one person wears, not how many people cover a match.
+
 ## Add and invite an official
 
 In **Directory → Officials**, **Add official** creates a roster entry; pick their role(s) as chips (referee, umpire, judge, scorer and more — or add a custom one). **Multiple roles on one official are a Pro feature**; on the free plan, picking a second chip swaps the selection instead of stacking it. Next to any official, choose **Invite** and enter their email. They get a claim link — the same claim system players use, so the rules match: **only an account signed in with the invited address can accept**, invites last 14 days, and re-inviting quietly withdraws the previous link. Once accepted the official shows a **Linked** chip; an outstanding invite shows **Invited**. **Invite all with email** re-invites everyone who has an address but no link yet.
@@ -16,7 +18,7 @@ On any roster row, **Edit roles** opens the same chip picker to change an existi
 
 ## Assigning on a division's schedule
 
-The schedule's **Officials tab** shows a compact roster strip (with a link back to the directory to manage it) plus the assignment tools: propose/apply an auto-assignment, phase officials in from results, or pick manually per fixture. Every official in the org-wide pool is available to every division — there's no separate roster per division.
+The schedule's **Officials tab** shows a compact roster strip (with a link back to the directory to manage it) plus the assignment tools: propose/apply an auto-assignment, phase officials in from results, or pick manually per fixture. Every official in the org-wide pool is available to every division — there's no separate roster per division. **Automatic officials assignment (propose/apply) is a Pro Plus feature** — picking officials manually, one per fixture, works on Community and Pro too.
 
 ## What the official sees
 
