@@ -1045,6 +1045,52 @@ needed; keyless-degrade aware).
 
 ---
 
+### Task 17: Wave e2e suite — every change browser/API-proven (owner ask 2026-07-18)
+
+Owner requirement: e2e coverage for ALL wave changes. One Playwright spec
+file exercising each task's outcome through the running app (browser where a
+surface exists, signed webhook POST + UI assertion where the trigger is a
+Stripe event). Runs LAST (after T16), before the final whole-branch review.
+
+**Files:**
+- Create: `e2e/payments-hardening.spec.ts` (root e2e project, existing conventions: magic-link `login_url` trick, SQL pro-flip helper, dev server boot per e2e README/config)
+- Modify (if needed): e2e server-boot env to include a known `STRIPE_WEBHOOK_SECRET=whsec_e2e_payments` so tests can sign synthetic events
+
+**Interfaces:**
+- Consumes: `stripe.webhooks.generateTestHeaderString({ payload, secret })` (stripe lib, already a repo dep) to POST signed events to the real webhook route; T1 409 strings; T2 NEVER_KEY_ROUTES; T3/T4 pass lifecycle; T6/T7 dispute handlers; T9 grace copy; T10 intake close; T12 banner; T15 402.
+- Produces: `npx playwright test payments-hardening` green = wave's user-visible contract pinned.
+
+- [ ] **Step 1: Harness.** Follow existing e2e boot (dev server + DB env). Add `STRIPE_WEBHOOK_SECRET` to the e2e server env if absent. Helper `postSignedEvent(evt)` → POST `/api/stripe/webhook` (locate exact route via `git grep -rn "constructEvent" apps/web/src/app/api`) with `stripe-signature: generateTestHeaderString`. Assert 200.
+- [ ] **Step 2: T1/T2 guards.** Owner session (magic-link login): seed comp+pass via SQL, browser/API DELETE attempt → all THREE 409 strings asserted (satisfies the T13-REQUIREMENT from T1 review). API-key DELETE `/api/v1/competitions/:id` → barred (403/absent).
+- [ ] **Step 3: T3/T4 pass lifecycle.** Seed passed comp (SQL insert mirroring smoke idiom) → post signed `charge.refunded` (full) → billing/org UI no longer shows the pass; gated feature 402s again. Duplicate-intent case: post second `checkout.session.completed`/`charge.succeeded` shape per T4 dispatch path → auto-refund recorded (assert via billing_events/DB + no second pass row).
+- [ ] **Step 4: T6 sponsor dispute.** Seed paid sponsor order + active placement (SQL, smoke idiom) → signed `charge.dispute.created` → public page no longer renders the placement; `closed` lost → sponsor_orders reflects lost + placement stays pulled; `closed` won (fresh order) → placement restored.
+- [ ] **Step 5: T7 platform disputes.** Pro org (SQL pro-flip): signed `charge.dispute.created` (sub customer) → org billing UI still Pro + flag set; `closed lost` (matching dispute_id) → billing UI shows Community. Pass org: dispute lost → pass revoked in UI.
+- [ ] **Step 6: T8-T12/T15 surfaces** (extend as those tasks land; keep one `test.describe` per task): T9 past_due grace banner copy; T10 downgraded org's stripe-method division no longer renders card intake (registration page shows offline/closed state); T12 Connect health banner on org settings when payouts disabled (SQL-flip org columns); T15 Pro org 6th AI run → 402 surface in console (or API 402 if console flow too deep — assert response + UI error copy).
+- [ ] **Step 7: Run.** Full new spec green locally + existing e2e suite untouched-green. Commit `test(e2e): payments-hardening wave outcomes end-to-end`.
+
+---
+
+### Task 18: Pro Plus e2e retrofit (owner ask 2026-07-18 — previous session's surfaces)
+
+e2e coverage for the pro-plus tier wave (#125, merged without full browser
+e2e). Same conventions as Task 17; separate spec file; runs after Task 17.
+
+**Files:**
+- Create: `e2e/pro-plus-tier.spec.ts`
+
+**Interfaces:**
+- Consumes: V290 matrix (pro_plus grants incl. api.write/officials.auto/scheduling.ai unlimited, fee 1%, unlimited scale); V291 amendment (pro scheduling.ai capped 5); quota keys `officials.per_fixture.max` (community 1/pro ∞), `schedule.checkpoints.max` (1/5/∞); PlusReveal disclosure component; `/admin/entitlements` staff surface; plan-change/billing UI.
+- Produces: pro_plus tier contract pinned in browser.
+
+- [ ] **Step 1: Personas via SQL plan-flip** (e2e helper exists): community, pro, pro_plus orgs + owner sessions.
+- [ ] **Step 2: Billing surface.** pro_plus org billing page shows Pro Plus plan name + price; plan-change UI offers expected moves (no dead 'business' remnants).
+- [ ] **Step 3: Quota gates in browser.** community org: adding 2nd official to a fixture blocked (1/fixture); pro org: officials unlimited; community 2nd schedule save point blocked vs pro 5 vs pro_plus unlimited (assert gate copy/402 surfaces, not just API).
+- [ ] **Step 4: Moved-up features.** pro org: officials.auto + api.write surfaces show upgrade gate (moved to pro_plus); pro_plus org: same surfaces work. Pro org scheduling.ai ALLOWED (V291 amendment) — cap surface covered in Task 17 Step 6.
+- [ ] **Step 5: PlusReveal + /admin/entitlements.** PlusReveal disclosure renders where pro_plus features are gated; superadmin session loads /admin/entitlements and shows the pro_plus column incl. V291 cap row.
+- [ ] **Step 6: Run.** Spec green + existing e2e untouched-green. Commit `test(e2e): pro-plus tier surfaces (retrofit)`.
+
+---
+
 ## Self-review notes
 
 - Spec coverage: P0-1→T1/T2, P0-2→T5/T6, P0-3→T3/T4, P1-4→T7, P1-5→T8, P1-6→T9, P1-7→T11, P1-8→T12, P2-10→T10, P2-11 dead row→T0. Deferred BY DESIGN to later plans: P2-9 partial sponsor refunds, P2-12 tax ToS clause, P2-13 order hygiene, P2-14 pass admin verbs, PROMPT-76 console, PROMPT-77 growth items.
