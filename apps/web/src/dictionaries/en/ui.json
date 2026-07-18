@@ -1131,8 +1131,6 @@
   "disc.pad.banner": "{name} is suspended ({served} of {total} served) — recording anyway.",
   "disc.pad.dismiss": "Dismiss",
   "disc.me.title": "Suspensions",
-  "disc.me.served": "{served} of {total} served",
-  "disc.me.reason": "{reason}",
   "divset.failed": "Failed",
   "divset.notice.nameSaved": "Name saved.",
   "divset.notice.logoUploaded": "Logo uploaded — the card tile uses it now.",

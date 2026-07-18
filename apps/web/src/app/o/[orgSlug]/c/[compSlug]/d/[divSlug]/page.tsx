@@ -132,10 +132,13 @@ export default async function DivisionPage({
   // SPEC-1: the Discipline tab's queue + squad, and the entrant-row chips.
   const disciplineData =
     tab === "discipline" && disciplineEntitled
-      ? {
-          suspensions: await listSuspensions(auth, id),
-          squad: await divisionSquad(auth, id),
-        }
+      ? await (async () => {
+          const [suspensions, squad] = await Promise.all([
+            listSuspensions(auth, id),
+            divisionSquad(auth, id),
+          ]);
+          return { suspensions, squad };
+        })()
       : null;
   const entrantSuspensions =
     tab === "entrants" && disciplineEntitled

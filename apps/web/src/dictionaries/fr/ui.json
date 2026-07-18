@@ -1131,8 +1131,6 @@
   "disc.pad.banner": "{name} est suspendu ({served} sur {total} purgés) — enregistrement quand même.",
   "disc.pad.dismiss": "Ignorer",
   "disc.me.title": "Suspensions",
-  "disc.me.served": "{served} sur {total} purgés",
-  "disc.me.reason": "{reason}",
   "divset.failed": "Échec",
   "divset.notice.nameSaved": "Nom enregistré.",
   "divset.notice.logoUploaded": "Logo téléversé — la vignette de la carte l'utilise désormais.",

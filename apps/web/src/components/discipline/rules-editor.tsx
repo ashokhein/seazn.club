@@ -141,13 +141,13 @@ export function RulesEditor({
         {acc.map((row, i) => (
           <div key={i} className="flex flex-wrap items-end gap-2" data-testid="acc-row">
             <CardGlyph tone={toneForColor(row.color)} className="mb-2" />
-            <label className="block text-[11px] text-slate-500">
-              {msg("disc.rules.color")}
+            <label className="block">
+              <span className="label">{msg("disc.rules.color")}</span>
               <select
                 disabled={!canEdit}
                 value={row.color}
                 onChange={(e) => setAcc(patch(acc, i, { color: e.target.value }))}
-                className="input mt-1 w-32"
+                className="input w-32"
                 aria-label={msg("disc.rules.color")}
               >
                 {sportColors.map((c) => (
@@ -157,8 +157,8 @@ export function RulesEditor({
                 ))}
               </select>
             </label>
-            <label className="block text-[11px] text-slate-500">
-              {msg("disc.rules.count")}
+            <label className="block">
+              <span className="label">{msg("disc.rules.count")}</span>
               <input
                 type="number"
                 min={1}
@@ -166,12 +166,12 @@ export function RulesEditor({
                 disabled={!canEdit}
                 value={row.count}
                 onChange={(e) => setAcc(patch(acc, i, { count: Number(e.target.value) }))}
-                className="input mt-1 w-20"
+                className="input w-20"
                 aria-label={msg("disc.rules.count")}
               />
             </label>
-            <label className="block text-[11px] text-slate-500">
-              {msg("disc.rules.ban")}
+            <label className="block">
+              <span className="label">{msg("disc.rules.ban")}</span>
               <input
                 type="number"
                 min={1}
@@ -179,7 +179,7 @@ export function RulesEditor({
                 disabled={!canEdit}
                 value={row.ban_matches}
                 onChange={(e) => setAcc(patch(acc, i, { ban_matches: Number(e.target.value) }))}
-                className="input mt-1 w-20"
+                className="input w-20"
                 aria-label={msg("disc.rules.ban")}
               />
             </label>
@@ -187,7 +187,7 @@ export function RulesEditor({
               <button
                 type="button"
                 onClick={() => setAcc(acc.filter((_, j) => j !== i))}
-                className="mb-1 text-xs text-red-500 hover:underline"
+                className="inline-flex min-h-[44px] items-center text-xs text-red-500 hover:underline"
               >
                 {msg("disc.rules.remove")}
               </button>
@@ -198,7 +198,7 @@ export function RulesEditor({
           <button
             type="button"
             onClick={() => setAcc([...acc, { color: defaultColor, count: 5, ban_matches: 1 }])}
-            className="btn btn-ghost text-xs"
+            className="btn btn-ghost min-h-[44px] text-xs"
           >
             + {msg("disc.rules.addAccumulation")}
           </button>
@@ -215,13 +215,13 @@ export function RulesEditor({
         {dis.map((row, i) => (
           <div key={i} className="flex flex-wrap items-end gap-2" data-testid="dis-row">
             <CardGlyph tone={toneForColor(row.color)} className="mb-2" />
-            <label className="block text-[11px] text-slate-500">
-              {msg("disc.rules.color")}
+            <label className="block">
+              <span className="label">{msg("disc.rules.color")}</span>
               <select
                 disabled={!canEdit}
                 value={row.color}
                 onChange={(e) => setDis(patch(dis, i, { color: e.target.value }))}
-                className="input mt-1 w-40"
+                className="input w-40"
                 aria-label={msg("disc.rules.color")}
               >
                 {sportColors.map((c) => (
@@ -231,8 +231,8 @@ export function RulesEditor({
                 ))}
               </select>
             </label>
-            <label className="block text-[11px] text-slate-500">
-              {msg("disc.rules.ban")}
+            <label className="block">
+              <span className="label">{msg("disc.rules.ban")}</span>
               <input
                 type="number"
                 min={1}
@@ -240,7 +240,7 @@ export function RulesEditor({
                 disabled={!canEdit}
                 value={row.ban_matches}
                 onChange={(e) => setDis(patch(dis, i, { ban_matches: Number(e.target.value) }))}
-                className="input mt-1 w-20"
+                className="input w-20"
                 aria-label={msg("disc.rules.ban")}
               />
             </label>
@@ -248,7 +248,7 @@ export function RulesEditor({
               <button
                 type="button"
                 onClick={() => setDis(dis.filter((_, j) => j !== i))}
-                className="mb-1 text-xs text-red-500 hover:underline"
+                className="inline-flex min-h-[44px] items-center text-xs text-red-500 hover:underline"
               >
                 {msg("disc.rules.remove")}
               </button>
@@ -259,7 +259,7 @@ export function RulesEditor({
           <button
             type="button"
             onClick={() => setDis([...dis, { color: dismissalColor, ban_matches: 1 }])}
-            className="btn btn-ghost text-xs"
+            className="btn btn-ghost min-h-[44px] text-xs"
           >
             + {msg("disc.rules.addDismissal")}
           </button>
@@ -268,7 +268,7 @@ export function RulesEditor({
 
       {canEdit && (
         <div className="flex items-center gap-3 border-t border-slate-100 pt-4">
-          <button type="button" disabled={busy} onClick={save} className="btn btn-primary text-sm">
+          <button type="button" disabled={busy} onClick={save} className="btn btn-primary min-h-[44px] text-sm">
             {msg("disc.rules.save")}
           </button>
           {notice && <span className="text-xs text-emerald-600">{notice}</span>}

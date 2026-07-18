@@ -634,8 +634,6 @@ export type DictionaryKey =
   | "directory.title"
   | "disc.chip.aria"
   | "disc.chip.title"
-  | "disc.me.reason"
-  | "disc.me.served"
   | "disc.me.title"
   | "disc.pad.banner"
   | "disc.pad.dismiss"

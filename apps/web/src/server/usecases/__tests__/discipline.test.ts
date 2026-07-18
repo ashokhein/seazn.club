@@ -3,9 +3,23 @@
 // attributed card events into the ledger, and asserts the recompute-on-read
 // fold: accumulation buckets, dismissal, idempotency, void un-count, anonymous
 // exclusion, and the derived serving counter.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { builtinModules } from "@seazn/engine/sports";
+
+// Observe the two SPEC-1 player notices without touching the rest of the email
+// module (send() is a no-op without RESEND_API_KEY either way). Hoisted so the
+// spies are live before ../discipline binds the senders at import.
+const emailMock = vi.hoisted(() => ({
+  confirmed: vi.fn().mockResolvedValue(true),
+  served: vi.fn().mockResolvedValue(true),
+}));
+vi.mock("@/lib/email", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/email")>()),
+  sendSuspensionConfirmedEmail: emailMock.confirmed,
+  sendSuspensionServedEmail: emailMock.served,
+}));
+
 import { sql, withTenant } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { PaymentRequiredError } from "@/lib/errors";
@@ -94,6 +108,15 @@ async function seedFootballDivision(plan: "pro" | "community" = "pro"): Promise<
   };
 }
 
+/** Link a person to a claimed user account so the confirmed/served notices
+ *  have an inbox to resolve (the senders join persons→users→email). */
+async function claimPerson(personId: string, email: string): Promise<void> {
+  const [{ id: uid }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name, email_verified)
+    values (${email}, 'Claimed', true) returning id`;
+  await sql`update persons set user_id = ${uid} where id = ${personId}`;
+}
+
 async function makeFixture(
   ctx: Ctx,
   seqInRound: number,
@@ -158,6 +181,11 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
+  beforeEach(() => {
+    emailMock.confirmed.mockClear();
+    emailMock.served.mockClear();
+  });
+
   it("(a) 5 yellows raise one pending yellow_5 row; detection is idempotent", async () => {
     const ctx = await seedFootballDivision();
     await setRules(ctx);
@@ -398,5 +426,51 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
         personId: ctx.personX, matchesTotal: 1, reason: "x",
       }),
     ).rejects.toBeInstanceOf(PaymentRequiredError);
+  });
+
+  it("confirming a suspension fires the confirmed email to the claimed player", async () => {
+    const ctx = await seedFootballDivision();
+    const email = `claim-${randomUUID().slice(0, 8)}@test.local`;
+    await claimPerson(ctx.personX, email);
+    const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
+      personId: ctx.personX, matchesTotal: 2, reason: "violent conduct",
+    });
+
+    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    expect(active.status).toBe("active");
+    // The confirmed sender fired exactly once, to this player's inbox. Remove the
+    // `await emailConfirmed(...)` wiring in decideSuspension and this goes to 0.
+    expect(emailMock.confirmed).toHaveBeenCalledTimes(1);
+    expect(emailMock.confirmed.mock.calls[0]![0]).toBe(email);
+    expect(emailMock.served).not.toHaveBeenCalled();
+  });
+
+  it("the active→served flip fires the served email once", async () => {
+    const ctx = await seedFootballDivision();
+    const email = `claim-${randomUUID().slice(0, 8)}@test.local`;
+    await claimPerson(ctx.personX, email);
+    const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
+      personId: ctx.personX, matchesTotal: 1, reason: "violent conduct",
+    });
+    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    expect(active.entrantId).toBe(ctx.entrantA);
+
+    // A decided fixture for the banned entrant, stamped after the ban's decided_at,
+    // serves the one-match ban. The recompute-on-read flips active→served.
+    const fx = await makeFixture(ctx, 2, ctx.entrantA, ctx.entrantB, "decided");
+    await sql`
+      insert into score_events (fixture_id, org_id, seq, type, payload, recorded_at)
+      values (${fx}, ${ctx.orgId}, ${nextSeq(fx)}, 'core.note', ${sql.json({ text: "d" })},
+              now() + interval '1 hour')`;
+
+    emailMock.served.mockClear();
+    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.id === manual.id)!;
+    expect(served.status).toBe("served");
+    // The served sender fired exactly once on the flip. Remove `await emailServed(...)`
+    // and this goes to 0; a second read must not re-fire it.
+    expect(emailMock.served).toHaveBeenCalledTimes(1);
+    expect(emailMock.served.mock.calls[0]![0]).toBe(email);
+    await listSuspensions(ctx.auth, ctx.divisionId);
+    expect(emailMock.served).toHaveBeenCalledTimes(1);
   });
 });

@@ -2039,7 +2039,5 @@
   "disc.chip.title": "Geschorste spelers",
   "disc.pad.banner": "{name} is geschorst ({served} van {total} uitgezeten) — toch vastgelegd.",
   "disc.pad.dismiss": "Sluiten",
-  "disc.me.title": "Schorsingen",
-  "disc.me.served": "{served} van {total} uitgezeten",
-  "disc.me.reason": "{reason}"
+  "disc.me.title": "Schorsingen"
 }

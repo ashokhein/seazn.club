@@ -114,7 +114,7 @@ export function DisciplinePanel({
                       type="button"
                       disabled={busyId === s.id}
                       onClick={() => decide(s.id, "confirm")}
-                      className="btn btn-primary py-1.5 text-sm"
+                      className="btn btn-primary min-h-[44px] text-sm"
                     >
                       {msg("disc.panel.confirm")}
                     </button>
@@ -122,7 +122,7 @@ export function DisciplinePanel({
                       type="button"
                       disabled={busyId === s.id}
                       onClick={() => decide(s.id, "waive")}
-                      className="btn btn-ghost py-1.5 text-sm"
+                      className="btn btn-ghost min-h-[44px] text-sm"
                     >
                       {msg("disc.panel.waive")}
                     </button>
@@ -164,7 +164,7 @@ export function DisciplinePanel({
                       type="button"
                       disabled={busyId === s.id}
                       onClick={() => decide(s.id, "waive")}
-                      className="text-xs text-slate-400 hover:text-red-500 hover:underline"
+                      className="inline-flex min-h-[44px] items-center text-xs text-slate-400 hover:text-red-500 hover:underline"
                     >
                       {msg("disc.panel.waive")}
                     </button>
@@ -238,12 +238,12 @@ function RecordForm({
       <p className="text-sm font-semibold text-slate-700">{msg("disc.panel.record")}</p>
       <p className="text-xs text-slate-400">{msg("disc.panel.recordHint")}</p>
       <div className="grid gap-2 sm:grid-cols-2">
-        <label className="block text-[11px] text-slate-500">
-          {msg("disc.panel.person")}
+        <label className="block">
+          <span className="label">{msg("disc.panel.person")}</span>
           <select
             value={personId}
             onChange={(e) => setPersonId(e.target.value)}
-            className="input mt-1 w-full"
+            className="input w-full"
             aria-label={msg("disc.panel.person")}
           >
             <option value="">{msg("disc.panel.selectPerson")}</option>
@@ -254,26 +254,26 @@ function RecordForm({
             ))}
           </select>
         </label>
-        <label className="block text-[11px] text-slate-500">
-          {msg("disc.panel.matches")}
+        <label className="block">
+          <span className="label">{msg("disc.panel.matches")}</span>
           <input
             type="number"
             min={1}
             max={20}
             value={matches}
             onChange={(e) => setMatches(Number(e.target.value))}
-            className="input mt-1 w-full"
+            className="input w-full"
             aria-label={msg("disc.panel.matches")}
           />
         </label>
       </div>
-      <label className="block text-[11px] text-slate-500">
-        {msg("disc.panel.reason")}
+      <label className="block">
+        <span className="label">{msg("disc.panel.reason")}</span>
         <input
           value={reason}
           onChange={(e) => setReason(e.target.value)}
           placeholder={msg("disc.panel.reasonPlaceholder")}
-          className="input mt-1 w-full"
+          className="input w-full"
           aria-label={msg("disc.panel.reason")}
         />
       </label>
@@ -281,7 +281,7 @@ function RecordForm({
         type="button"
         disabled={busy || !personId || !reason.trim()}
         onClick={submit}
-        className="btn btn-primary py-1.5 text-sm"
+        className="btn btn-primary min-h-[44px] text-sm"
       >
         {msg("disc.panel.recordCta")}
       </button>

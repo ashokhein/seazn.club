@@ -2039,7 +2039,5 @@
   "disc.chip.title": "Jugadores sancionados",
   "disc.pad.banner": "{name} está sancionado ({served} de {total} cumplidos) — registrando igualmente.",
   "disc.pad.dismiss": "Descartar",
-  "disc.me.title": "Sanciones",
-  "disc.me.served": "{served} de {total} cumplidos",
-  "disc.me.reason": "{reason}"
+  "disc.me.title": "Sanciones"
 }
