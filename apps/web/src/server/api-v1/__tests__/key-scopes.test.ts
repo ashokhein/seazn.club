@@ -42,6 +42,10 @@ describe("matchKeyRoute", () => {
     expect(matchKeyRoute("POST", "/api/v1/fixtures/f1/device-links")).toBeNull();
     expect(matchKeyRoute("GET", "/api/v1/me/assigned-fixtures")).toBeNull();
     expect(matchKeyRoute("POST", "/api/v1/orgs/o1/connect")).toBeNull();
+    // Competition delete cascades registrations/passes (money records) —
+    // barred from keys (payments-hardening P0-1); console has no button either.
+    expect(matchKeyRoute("DELETE", "/api/v1/competitions/c1")).toBeNull();
+    expect(NEVER_KEY_ROUTES).toContain("DELETE /competitions/:id");
   });
 
   it("maps the scoring doors to the score scope with a pin", () => {
