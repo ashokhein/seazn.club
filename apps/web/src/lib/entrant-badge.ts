@@ -1,4 +1,4 @@
-import { publicStorageUrl } from "@/lib/supabase-storage";
+import { publicStorageUrl } from "@/lib/storage-url";
 
 // PROMPT-60 — ONE badge resolver reused by every surface (console standings,
 // public pages, embeds, bracket nodes, PDF builders): the entrant's own
