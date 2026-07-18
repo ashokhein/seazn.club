@@ -39,6 +39,8 @@ export const EVENTS = {
   PLAYER_STARTED_OWN_ORG: "player_started_own_org",
   COMPETITION_MADE_PUBLIC: "competition_made_public",
   EMBED_RENDERED: "embed_rendered",
+  /** Pricing page: visitor opened the hidden Pro Plus offer. */
+  PRICING_PLUS_REVEALED: "pricing_plus_revealed",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];
