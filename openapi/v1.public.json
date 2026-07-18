@@ -2200,7 +2200,28 @@
                               {
                                 "type": "array",
                                 "items": {
-                                  "type": "string"
+                                  "type": "string",
+                                  "enum": [
+                                    "points",
+                                    "wins",
+                                    "h2h_points",
+                                    "h2h_diff",
+                                    "h2h_for",
+                                    "diff",
+                                    "for",
+                                    "nrr",
+                                    "set_ratio",
+                                    "game_ratio",
+                                    "board_ratio",
+                                    "point_ratio",
+                                    "buchholz",
+                                    "buchholz_cut1",
+                                    "sberger",
+                                    "direct",
+                                    "fair_play",
+                                    "seed",
+                                    "lots"
+                                  ]
                                 }
                               },
                               {
@@ -2289,7 +2310,7 @@
                         null
                       ],
                       "tiebreakers": [
-                        "example"
+                        "points"
                       ],
                       "status": "setup",
                       "officials_hide_names": true,
@@ -2513,7 +2534,28 @@
                       {
                         "type": "array",
                         "items": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "points",
+                            "wins",
+                            "h2h_points",
+                            "h2h_diff",
+                            "h2h_for",
+                            "diff",
+                            "for",
+                            "nrr",
+                            "set_ratio",
+                            "game_ratio",
+                            "board_ratio",
+                            "point_ratio",
+                            "buchholz",
+                            "buchholz_cut1",
+                            "sberger",
+                            "direct",
+                            "fair_play",
+                            "seed",
+                            "lots"
+                          ]
                         }
                       },
                       {
@@ -2608,7 +2650,28 @@
                             {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": [
+                                  "points",
+                                  "wins",
+                                  "h2h_points",
+                                  "h2h_diff",
+                                  "h2h_for",
+                                  "diff",
+                                  "for",
+                                  "nrr",
+                                  "set_ratio",
+                                  "game_ratio",
+                                  "board_ratio",
+                                  "point_ratio",
+                                  "buchholz",
+                                  "buchholz_cut1",
+                                  "sberger",
+                                  "direct",
+                                  "fair_play",
+                                  "seed",
+                                  "lots"
+                                ]
                               }
                             },
                             {
@@ -2695,7 +2758,7 @@
                       null
                     ],
                     "tiebreakers": [
-                      "example"
+                      "points"
                     ],
                     "status": "setup",
                     "officials_hide_names": true,
@@ -3022,7 +3085,28 @@
                             {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": [
+                                  "points",
+                                  "wins",
+                                  "h2h_points",
+                                  "h2h_diff",
+                                  "h2h_for",
+                                  "diff",
+                                  "for",
+                                  "nrr",
+                                  "set_ratio",
+                                  "game_ratio",
+                                  "board_ratio",
+                                  "point_ratio",
+                                  "buchholz",
+                                  "buchholz_cut1",
+                                  "sberger",
+                                  "direct",
+                                  "fair_play",
+                                  "seed",
+                                  "lots"
+                                ]
                               }
                             },
                             {
@@ -3109,7 +3193,7 @@
                       null
                     ],
                     "tiebreakers": [
-                      "example"
+                      "points"
                     ],
                     "status": "setup",
                     "officials_hide_names": true,
@@ -3320,7 +3404,28 @@
                       {
                         "type": "array",
                         "items": {
-                          "type": "string"
+                          "type": "string",
+                          "enum": [
+                            "points",
+                            "wins",
+                            "h2h_points",
+                            "h2h_diff",
+                            "h2h_for",
+                            "diff",
+                            "for",
+                            "nrr",
+                            "set_ratio",
+                            "game_ratio",
+                            "board_ratio",
+                            "point_ratio",
+                            "buchholz",
+                            "buchholz_cut1",
+                            "sberger",
+                            "direct",
+                            "fair_play",
+                            "seed",
+                            "lots"
+                          ]
                         }
                       },
                       {
@@ -3400,7 +3505,7 @@
                   {}
                 ],
                 "tiebreakers": [
-                  "example"
+                  "points"
                 ]
               }
             }
@@ -3470,7 +3575,28 @@
                             {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": [
+                                  "points",
+                                  "wins",
+                                  "h2h_points",
+                                  "h2h_diff",
+                                  "h2h_for",
+                                  "diff",
+                                  "for",
+                                  "nrr",
+                                  "set_ratio",
+                                  "game_ratio",
+                                  "board_ratio",
+                                  "point_ratio",
+                                  "buchholz",
+                                  "buchholz_cut1",
+                                  "sberger",
+                                  "direct",
+                                  "fair_play",
+                                  "seed",
+                                  "lots"
+                                ]
                               }
                             },
                             {
@@ -3557,7 +3683,7 @@
                       null
                     ],
                     "tiebreakers": [
-                      "example"
+                      "points"
                     ],
                     "status": "setup",
                     "officials_hide_names": true,
@@ -4118,7 +4244,28 @@
                             {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": [
+                                  "points",
+                                  "wins",
+                                  "h2h_points",
+                                  "h2h_diff",
+                                  "h2h_for",
+                                  "diff",
+                                  "for",
+                                  "nrr",
+                                  "set_ratio",
+                                  "game_ratio",
+                                  "board_ratio",
+                                  "point_ratio",
+                                  "buchholz",
+                                  "buchholz_cut1",
+                                  "sberger",
+                                  "direct",
+                                  "fair_play",
+                                  "seed",
+                                  "lots"
+                                ]
                               }
                             },
                             {
@@ -4205,7 +4352,7 @@
                       null
                     ],
                     "tiebreakers": [
-                      "example"
+                      "points"
                     ],
                     "status": "setup",
                     "officials_hide_names": true,
@@ -4486,7 +4633,28 @@
                             {
                               "type": "array",
                               "items": {
-                                "type": "string"
+                                "type": "string",
+                                "enum": [
+                                  "points",
+                                  "wins",
+                                  "h2h_points",
+                                  "h2h_diff",
+                                  "h2h_for",
+                                  "diff",
+                                  "for",
+                                  "nrr",
+                                  "set_ratio",
+                                  "game_ratio",
+                                  "board_ratio",
+                                  "point_ratio",
+                                  "buchholz",
+                                  "buchholz_cut1",
+                                  "sberger",
+                                  "direct",
+                                  "fair_play",
+                                  "seed",
+                                  "lots"
+                                ]
                               }
                             },
                             {
@@ -4573,7 +4741,7 @@
                       null
                     ],
                     "tiebreakers": [
-                      "example"
+                      "points"
                     ],
                     "status": "setup",
                     "officials_hide_names": true,
