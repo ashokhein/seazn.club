@@ -158,4 +158,40 @@ describe.skipIf(!HAS_DB)("knockout draw guard (PROMPT-61)", () => {
     ).rejects.toMatchObject({ code: "DRAW_NOT_ALLOWED" });
     expect(await eventCount(s.fixtureId)).toBe(4);
   });
+
+  it("a knockout STAGE config shootout:true routes a level FT into the shootout, not a draw", async () => {
+    const s = await seedFixture({
+      sport: "football",
+      stageKind: "knockout",
+      stageConfig: { shootout: true }, // division config keeps shootout:false
+    });
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "football.period",
+      payload: { phase: "HT" },
+    });
+    const ft = await appendEvent(s.orgId, s.fixtureId, 2, {
+      type: "football.period",
+      payload: { phase: "FT" },
+    });
+    // 0-0 at FT with the stage-scoped shootout enabled: the match is pending
+    // its decider — neither rejected nor a draw.
+    expect(ft.outcome).toBeNull();
+    expect(ft.status).not.toBe("decided");
+  });
+
+  it("the sibling group stage of the same division still records the draw", async () => {
+    const s = await seedFixture({ sport: "football", stageKind: "group" });
+    await appendEvent(s.orgId, s.fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(s.orgId, s.fixtureId, 1, {
+      type: "football.period",
+      payload: { phase: "HT" },
+    });
+    const ft = await appendEvent(s.orgId, s.fixtureId, 2, {
+      type: "football.period",
+      payload: { phase: "FT" },
+    });
+    expect(ft.outcome).toMatchObject({ kind: "draw" });
+    expect(ft.status).toBe("decided");
+  });
 });

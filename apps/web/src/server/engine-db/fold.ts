@@ -8,6 +8,7 @@ import {
 } from "@seazn/engine/core";
 import { resolveModule } from "./registry";
 import { loadLineupPair } from "./lineups";
+import { stageScopedCfg } from "./stage-cfg";
 
 type Tx = postgres.TransactionSql;
 
@@ -21,6 +22,7 @@ export interface FoldedFixture {
 
 interface FixtureRow {
   division_id: string;
+  stage_id: string;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
 }
@@ -45,7 +47,7 @@ interface EventRow {
 // (nothing to derive). Shared by rebuildState + verifyStateConsistency.
 export async function foldFixture(tx: Tx, fixtureId: string): Promise<FoldedFixture | null> {
   const [fixture] = await tx<FixtureRow[]>`
-    select division_id, home_entrant_id, away_entrant_id from fixtures where id = ${fixtureId}
+    select division_id, stage_id, home_entrant_id, away_entrant_id from fixtures where id = ${fixtureId}
   `;
   if (!fixture) return null;
 
@@ -83,7 +85,13 @@ export async function foldFixture(tx: Tx, fixtureId: string): Promise<FoldedFixt
     ...(r.voids_event_id ? { voids: r.voids_event_id } : {}),
   }));
 
-  const state = foldMatch(sportModule, division.config, lineups, envelopes);
+  // Same stage-scoped decider overlay the write path applies (PROMPT-61 §2) —
+  // read and write folds must stay byte-consistent or verifyStateConsistency
+  // would flag phantom drift.
+  const [stage] = await tx<{ config: Record<string, unknown> | null }[]>`
+    select config from stages where id = ${fixture.stage_id}
+  `;
+  const state = foldMatch(sportModule, stageScopedCfg(division.config, stage?.config), lineups, envelopes);
   return {
     fixtureId,
     lastSeq: events[events.length - 1].seq,

@@ -12,6 +12,7 @@ import {
 } from "@seazn/engine/core";
 import { resolveModule } from "./registry";
 import { loadLineupPair } from "./lineups";
+import { stageScopedCfg } from "./stage-cfg";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 
@@ -202,7 +203,8 @@ export async function appendEvent(
     // (invalid event, already-decided, …) aborts the tx before any insert, so
     // the ledger only ever holds valid events (spec 03 §2 guarantee 2).
     const stream = [...prior, candidate];
-    const state = foldMatch(sportModule, division.config, lineups, stream);
+    const cfg = stageScopedCfg(division.config, stage?.config);
+    const state = foldMatch(sportModule, cfg, lineups, stream);
     const summary = sportModule.summary(state);
     const outcome = sportModule.outcome(state);
     const active = resolveVoids(stream);
@@ -214,7 +216,7 @@ export async function appendEvent(
       outcome !== null &&
       (outcome as { kind?: string }).kind === "draw" &&
       stage !== undefined &&
-      !sportModule.supportsDraws(division.config as never, stage.kind as StageKind)
+      !sportModule.supportsDraws(cfg as never, stage.kind as StageKind)
     ) {
       throw new EngineError(
         "DRAW_NOT_ALLOWED",
