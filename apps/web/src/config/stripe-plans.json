@@ -22,6 +22,27 @@
           "currency_options": { "eur": 19000, "gbp": 16000, "inr": 1499000, "aud": 29000 }
         }
       }
+    },
+    {
+      "key": "pro_plus",
+      "product": {
+        "name": "Seazn Club Pro Plus",
+        "description": "Everything in Pro, plus unlimited seats and scale, a 1% platform fee on entry fees, AI-assisted scheduling, auto officials assignment, write API access and priority support."
+      },
+      "prices": {
+        "monthly": {
+          "lookup_key": "seazn_pro_plus_monthly",
+          "unit_amount": 3900,
+          "interval": "month",
+          "currency_options": { "eur": 3700, "gbp": 3300, "inr": 299900, "aud": 5900 }
+        },
+        "annual": {
+          "lookup_key": "seazn_pro_plus_annual",
+          "unit_amount": 39000,
+          "interval": "year",
+          "currency_options": { "eur": 37000, "gbp": 33000, "inr": 2999000, "aud": 59000 }
+        }
+      }
     }
   ],
   "passes": [

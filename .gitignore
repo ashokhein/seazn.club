@@ -50,3 +50,6 @@ packages/engine/sim-report.json
 .playwright-mcp/
 # Superpowers visual-companion brainstorm sessions
 .superpowers/
+
+# Session screenshots keep landing in the repo root — never track them.
+/*.png

@@ -89,7 +89,7 @@ const NAV_ITEMS: { tab: Tab; labelKey: string; icon: LucideIcon; href?: string }
 ];
 
 const BILLING_NAV = { labelKey: "payments.planBilling", icon: CreditCard } as const;
-const PAYMENTS_NAV = { labelKey: "payments.title", icon: Banknote } as const;
+const CONNECT_NAV = { labelKey: "payments.title", icon: Banknote } as const;
 
 export default async function SettingsPage({
   params,
@@ -204,14 +204,14 @@ export default async function SettingsPage({
                   </Link>
                 );
               })}
-              {/* Payments + Plan & billing are their own routes (each owns a
+              {/* Connect + Plan & billing are their own routes (each owns a
                   Stripe reconcile-on-return round trip). */}
               <Link
-                href={routes.payments(orgSlug)}
+                href={routes.connect(orgSlug)}
                 className="flex shrink-0 items-center gap-2.5 rounded-lg px-3 py-2 text-sm text-slate-600 transition hover:bg-purple-50 hover:text-purple-700"
               >
-                <PAYMENTS_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
-                {t(dict, PAYMENTS_NAV.labelKey)}
+                <CONNECT_NAV.icon className="h-4 w-4 shrink-0 text-slate-500" strokeWidth={1.75} />
+                {t(dict, CONNECT_NAV.labelKey)}
               </Link>
               <Link
                 href={routes.billing(orgSlug)}

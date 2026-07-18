@@ -163,13 +163,16 @@ export const deleteAccountSchema = z.object({
 // ---- billing request schemas -------------------------------------------------
 
 export const checkoutSchema = z.object({
-  plan_key: z.enum(["pro"]),
+  plan_key: z.enum(["pro", "pro_plus"]),
   interval: z.enum(["monthly", "annual"]),
 }).strict();
 
 // ---- billing types -----------------------------------------------------------
 
-export const PLAN_KEYS = ["community", "pro"] as const;
+// V290 added pro_plus above pro (Task 1) — Subscription.plan_key can hold it,
+// but this list was never updated (Task 6 only touched checkoutSchema), which
+// left every `sub.plan_key === "pro_plus"` comparison a TS2367 no-overlap error.
+export const PLAN_KEYS = ["community", "pro", "pro_plus"] as const;
 export const SUBSCRIPTION_STATUSES = [
   "trialing",
   "active",

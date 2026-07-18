@@ -17,11 +17,14 @@ export function UpgradeButton({
   interval,
   label,
   ghost = false,
+  plan = "pro",
 }: {
   interval: "monthly" | "annual";
   label: string;
   /** Secondary styling when the button is the non-default interval. */
   ghost?: boolean;
+  /** Which paid plan to check out into — defaults to Pro. */
+  plan?: "pro" | "pro_plus";
 }) {
   const [clientSecret, setClientSecret] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,8 +33,8 @@ export function UpgradeButton({
   async function start() {
     setError(null);
     setLoading(true);
-    track(EVENTS.CHECKOUT_STARTED, { plan_key: "pro", interval });
-    const result = await fetchCheckoutClientSecret(interval);
+    track(EVENTS.CHECKOUT_STARTED, { plan_key: plan, interval });
+    const result = await fetchCheckoutClientSecret(plan, interval);
     setLoading(false);
     if (result.ok) {
       setClientSecret(result.clientSecret);

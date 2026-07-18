@@ -90,7 +90,7 @@ export function OrgPaymentInstructions({
     try {
       const { url } = await apiV1<{ url: string }>(`/api/v1/orgs/${orgId}/connect`, {
         method: "POST",
-        json: { return_path: "/settings/payments", tos_agreed: tosAgreed },
+        json: { return_path: "/settings/connect", tos_agreed: tosAgreed },
       });
       window.location.assign(url);
     } catch (err) {

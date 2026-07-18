@@ -11,6 +11,7 @@ import {
 } from "@stripe/react-stripe-js";
 import { stripeAppearance, stripePromise } from "@/lib/stripe-browser";
 import { useConfirm } from "@/components/ui/confirm-provider";
+import { useMsg } from "@/components/i18n/dict-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
 import {
   TAX_ID_TYPES,
@@ -341,6 +342,135 @@ export function PlanIntervalSwitcher({ current }: { current: "monthly" | "annual
           disabled={phase === "confirming"}
         >
           Keep current billing
+        </button>
+      </div>
+      {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Plan switch (Pro ↔ Pro Plus) with proration preview — same pattern as
+// PlanIntervalSwitcher above, targeting /api/billing/plan(/preview) instead.
+// ---------------------------------------------------------------------------
+
+export function PlanKeySwitcher({
+  currentPlanKey,
+  interval,
+}: {
+  currentPlanKey: "pro" | "pro_plus";
+  interval: "monthly" | "annual";
+}) {
+  const msg = useMsg();
+  const router = useRouter();
+  const target = currentPlanKey === "pro" ? "pro_plus" : "pro";
+  const [preview, setPreview] = useState<IntervalPreview | null>(null);
+  const [phase, setPhase] = useState<"idle" | "previewing" | "confirming">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  const switchLabel = target === "pro_plus" ? msg("billing.planChange.toPlus") : msg("billing.planChange.toPro");
+
+  async function loadPreview() {
+    setPhase("previewing");
+    setError(null);
+    const res = await fetch(`/api/billing/plan/preview?plan_key=${target}&interval=${interval}`);
+    const data = await res.json();
+    if (data.ok) setPreview(data.data);
+    else setError(data.error ?? "Could not preview the change");
+    setPhase("idle");
+  }
+
+  async function confirm() {
+    if (!preview) return;
+    setPhase("confirming");
+    setError(null);
+    const data = await post("/api/billing/plan", {
+      plan_key: target,
+      interval,
+      proration_date: preview.prorationDate,
+    });
+    if (!data.ok) {
+      setError(data.error ?? "Could not change the plan");
+      setPhase("idle");
+      setPreview(null);
+      return;
+    }
+    if (data.data?.requires_action && data.data.client_secret) {
+      const stripe = await stripePromise;
+      const sca = await stripe?.confirmCardPayment(data.data.client_secret);
+      if (sca?.error) {
+        setError(sca.error.message ?? "Your bank declined the confirmation");
+        setPhase("idle");
+        return;
+      }
+    }
+    setPreview(null);
+    setPhase("idle");
+    router.refresh();
+  }
+
+  if (!preview) {
+    return (
+      <div>
+        <button className="btn btn-ghost" onClick={loadPreview} disabled={phase !== "idle"}>
+          {phase === "previewing" ? "Checking the numbers…" : switchLabel}
+        </button>
+        {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
+      </div>
+    );
+  }
+
+  const renewal =
+    preview.renewalAmountMinor !== null
+      ? `${formatMinor(preview.renewalAmountMinor, asCurrency(preview.currency))}/${preview.interval === "annual" ? "yr" : "mo"}`
+      : null;
+
+  return (
+    <div className="mt-2 rounded-xl border border-purple-200 bg-purple-50/40 p-4 text-sm">
+      <p className="font-semibold text-slate-800">{switchLabel}</p>
+      <ul className="mt-2 space-y-1 text-slate-700">
+        {preview.trialing ? (
+          <li>
+            No charge today — you’re on the free trial. First charge{renewal ? ` of ${renewal}` : ""}
+            {preview.newPeriodEnd ? ` on ${fmtDate(preview.newPeriodEnd)}` : " at trial end"}.
+          </li>
+        ) : preview.dueTodayMinor > 0 ? (
+          <li>
+            <span className="font-semibold">
+              {formatMinor(preview.dueTodayMinor, asCurrency(preview.currency))}
+            </span>{" "}
+            charged today — the new period minus credit for unused time.
+          </li>
+        ) : (
+          <li>
+            No charge today.{" "}
+            {preview.creditMinor > 0 && (
+              <>
+                <span className="font-semibold">
+                  {formatMinor(preview.creditMinor, asCurrency(preview.currency))}
+                </span>{" "}
+                of unused time becomes account credit and pays future invoices.
+              </>
+            )}
+          </li>
+        )}
+        {!preview.trialing && renewal && (
+          <li>
+            Then renews at {renewal}
+            {preview.newPeriodEnd ? ` from ${fmtDate(preview.newPeriodEnd)}` : ""}.
+          </li>
+        )}
+      </ul>
+      <div className="mt-3 flex items-center gap-3">
+        <button className="btn btn-primary" onClick={confirm} disabled={phase === "confirming"}>
+          {phase === "confirming" ? "Applying…" : msg("billing.planChange.confirm")}
+        </button>
+        <button
+          className="btn btn-ghost"
+          onClick={() => setPreview(null)}
+          disabled={phase === "confirming"}
+        >
+          Keep current plan
         </button>
       </div>
       {error && <p className="mt-2 text-xs text-red-500">{error}</p>}

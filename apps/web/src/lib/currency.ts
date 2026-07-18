@@ -37,6 +37,13 @@ export function proPrice(interval: "monthly" | "annual", currency: Currency): nu
   return amountFor(pro.prices[interval], currency);
 }
 
+/** Pro Plus price in minor units for a currency, from stripe-plans.json. */
+export function proPlusPrice(interval: "monthly" | "annual", currency: Currency): number {
+  const plus = stripePlans.plans.find((p) => p.key === "pro_plus");
+  if (!plus) throw new Error("stripe-plans.json is missing the pro_plus plan");
+  return amountFor(plus.prices[interval], currency);
+}
+
 /** Event Pass one-time price in minor units for a currency. */
 export function passPrice(currency: Currency): number {
   const pass = stripePlans.passes?.find((p) => p.key === "event_pass");

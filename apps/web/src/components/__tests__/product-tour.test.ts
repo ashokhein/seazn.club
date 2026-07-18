@@ -31,7 +31,7 @@ describe("product tour flow", () => {
   it("the Connect step lives on the payments page and highlights the Stripe card", () => {
     const connect = STEPS.find((s) => s.id === "connect")!;
     expect(connect.target).toBe("connect-stripe");
-    expect(connect.path("acme")).toBe(routes.payments("acme"));
+    expect(connect.path("acme")).toBe(routes.connect("acme"));
   });
 
   it("the Billing step lives on the billing page and highlights the plan card", () => {

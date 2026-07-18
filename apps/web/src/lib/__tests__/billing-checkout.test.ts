@@ -13,8 +13,12 @@ import {
   currencyFromAcceptLanguage,
   formatMinor,
   passPrice,
+  proPlusPrice,
   proPrice,
+  type Currency,
+  SUPPORTED_CURRENCIES,
 } from "@/lib/currency";
+import { checkoutSchema } from "@/lib/types";
 
 const base = {
   priceId: "price_123",
@@ -154,5 +158,33 @@ describe("currency price points (v3/07 §4)", () => {
     expect(currencyFromAcceptLanguage("en-AU")).toBe("aud");
     expect(currencyFromAcceptLanguage("en-US")).toBe("usd");
     expect(currencyFromAcceptLanguage(null)).toBe("usd");
+  });
+});
+
+describe("Pro Plus price points", () => {
+  it("reads SET price points from stripe-plans.json", () => {
+    expect(proPlusPrice("monthly", "usd")).toBe(3900);
+    expect(proPlusPrice("monthly", "eur")).toBe(3700);
+    expect(proPlusPrice("monthly", "gbp")).toBe(3300);
+    expect(proPlusPrice("monthly", "inr")).toBe(299900);
+    expect(proPlusPrice("monthly", "aud")).toBe(5900);
+    expect(proPlusPrice("annual", "usd")).toBe(39000);
+  });
+
+  it("prices annual at exactly 10x monthly for every supported currency", () => {
+    for (const currency of SUPPORTED_CURRENCIES as readonly Currency[]) {
+      expect(proPlusPrice("annual", currency)).toBe(proPlusPrice("monthly", currency) * 10);
+    }
+  });
+});
+
+describe("checkoutSchema plan_key", () => {
+  it("accepts pro and pro_plus", () => {
+    expect(checkoutSchema.safeParse({ plan_key: "pro", interval: "monthly" }).success).toBe(true);
+    expect(checkoutSchema.safeParse({ plan_key: "pro_plus", interval: "annual" }).success).toBe(true);
+  });
+
+  it("rejects an unknown plan_key like business", () => {
+    expect(checkoutSchema.safeParse({ plan_key: "business", interval: "monthly" }).success).toBe(false);
   });
 });

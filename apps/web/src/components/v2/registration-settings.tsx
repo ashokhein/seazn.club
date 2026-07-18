@@ -4,7 +4,7 @@
 // regrouped into four staged-disclosure groups ordered by "what matters
 // when" — Open & close → Capacity → Money → Sign-up form. Presentation only;
 // every field writes the same PUT payload as before. Connect state stays a
-// LINK to Settings → Payments (never duplicated here).
+// LINK to Settings → Connect (never duplicated here).
 import { useState } from "react";
 import { PlanBadge } from "@/components/plan-badge";
 import type { Pulse } from "@/lib/registration-derive";
@@ -298,7 +298,7 @@ export function RegistrationSettings({
                 </span>
                 <span className="mt-0.5 block text-slate-500">{msg("reg.settings.cardPaymentDesc")}</span>
                 {!settings.charges_enabled && (
-                  <a href="/settings/payments" className="mt-1 block font-medium text-purple-700 underline">
+                  <a href="/settings/connect" className="mt-1 block font-medium text-purple-700 underline">
                     {msg("reg.settings.connectStripeFirst")}
                   </a>
                 )}

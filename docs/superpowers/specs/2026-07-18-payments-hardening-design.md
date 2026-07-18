@@ -326,13 +326,42 @@ help pages updated in the same PR (house rules).
   tax decision implementation; pass→Pro credit + refund-policy disclosure
   (quick growth wins from §4).
 
-## 6. Open questions (owner)
+## 6. Decisions (owner, 2026-07-18)
 
-1. P2-10: keep or close post-downgrade card intake? (Recommend close.)
-2. Sub-dispute policy: lost dispute → auto-downgrade OK? Created → alert-only?
-3. Tax stance for connected charges: "clubs own their VAT" ToS line vs.
-   Stripe Tax on destination charges (bigger build)?
-4. Cancel-now prorated refund: staff-only goodwill tool (recommended) or
-   self-serve for annual?
-5. /admin/payments: fold existing pages in now (redirects) or keep both
-   during transition?
+1. P2-10 post-downgrade card intake: **CLOSE** — stripe-method divisions show
+   `payments_unavailable` once the org loses `registration.paid`.
+2. Sub-dispute policy: created → staff alert only; **lost → auto-downgrade**
+   to community + staff notified.
+3. Tax on connected charges: **ToS clause — clubs own their VAT** + VAT-number
+   field on sponsor invoices. No Stripe Tax build on destination charges now.
+4. Cancel-now prorated refund: **staff-only** /admin goodwill tool. No
+   self-serve.
+5. /admin/payments fold-in: existing pages move under the new layout with
+   redirects from old paths (same pattern as the Payments→Connect rename).
+
+## 7. Pricing decisions (owner, 2026-07-18 addendum)
+
+Executed as Task 14 of the hardening plan — strictly AFTER Task 8's
+unknown-price guard (a repriced sub must never silently downgrade) and after
+the Pro Plus branch lands (supersedes its D2 annual ×10).
+
+| | Monthly | Annual (≈30% off, never <30%) |
+|---|---|---|
+| Pro | **$19** / €18 / £15 / A$28 / ₹1,399 | **$159** / €149 / £125 / A$235 / ₹11,499 |
+| Pro Plus | $39 / €37 / £33 / A$59 / ₹2,999 (unchanged) | **$327** / €309 / £277 / A$495 / ₹24,999 |
+
+- Event Pass CUT (owner 2026-07-18): **$29** / €29 / £25 / A$45 / ₹1,999.
+- Pro AI amendment (amends pro-plus D4): Pro KEEPS `scheduling.ai`, capped
+  5 generations/division (new key `scheduling.ai.runs_per_division.max`);
+  Pro Plus unlimited; `officials.auto` still moves to Pro Plus per D4.
+  Implemented in V287 (this wave merges after pro-plus). Plan Task 15.
+- Wave execution: subagent-driven, **opus + xhigh effort** subagents
+  (owner override of the sonnet default), auto-start when V286 lands.
+- Existing subscribers keep their current price (no forced migration);
+  `plans` keeps ONE price id per interval, so old ids resolve through the
+  Task 8 plan-preserving guard.
+- Sized-based/per-unit pricing REJECTED for now (tiers already size-gate);
+  future direction if wanted: add-on packs as subscription line items writing
+  `org_entitlement_overrides`.
+- Marketing copy flips "2 months free" → "Save 30%" wherever the annual
+  toggle renders (4 locales).

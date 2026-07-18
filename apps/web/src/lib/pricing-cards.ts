@@ -29,6 +29,17 @@ export const PRO_FEATURES = [
   "Remove the “Powered by Seazn” badge",
 ];
 
+// Pro Plus is progressively disclosed on /pricing (spec §4) — same five
+// selling points as billing.plus.f1-f5 (Task 8's in-app upgrade prompt), kept
+// in marketing tone. Mirrored as dict keys pricing.plus.f1-f5 for i18n.
+export const PLUS_CARD_FEATURES = [
+  "Unlimited members, scorers & clubs",
+  "1% platform fee on entry fees",
+  "AI-assisted scheduling",
+  "Auto officials assignment",
+  "Write API access & priority support",
+];
+
 export interface TicketTier {
   tier: string;
   price: string;
@@ -38,7 +49,9 @@ export interface TicketTier {
 }
 
 /** The three home-page ticket stubs (design/v3/12 §4.8): headline bullets
- *  only — the full matrix lives on /pricing. */
+ *  only — the full matrix lives on /pricing. Home STAYS 3 stubs (Community /
+ *  Event Pass / Pro) even after Pro Plus ships — /pricing carries the full
+ *  4-offer ladder via PlusReveal's progressive disclosure. */
 export function ticketTiers(currency: Currency): TicketTier[] {
   return [
     { tier: "Community", price: "Free", bullets: FREE_FEATURES.slice(0, 4) },

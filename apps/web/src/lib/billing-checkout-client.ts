@@ -36,10 +36,11 @@ async function fetchClientSecret(
 /** POST /api/billing/checkout and return the client_secret, or a display error.
  *  Never throws — a rejected fetch or a non-ok body maps to `{ ok: false }`. */
 export async function fetchCheckoutClientSecret(
+  plan: "pro" | "pro_plus",
   interval: "monthly" | "annual",
   fetchFn: typeof fetch = fetch,
 ): Promise<CheckoutSecretResult> {
-  return fetchClientSecret("/api/billing/checkout", { plan_key: "pro", interval }, fetchFn);
+  return fetchClientSecret("/api/billing/checkout", { plan_key: plan, interval }, fetchFn);
 }
 
 /** POST /api/billing/pass-checkout for a one-time Event Pass (v3/07 §3). */
