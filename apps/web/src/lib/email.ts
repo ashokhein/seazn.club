@@ -48,6 +48,8 @@ import {
   officialAssignmentChangedTemplate,
   type OfficialAssignmentChangedArgs,
 } from "@/lib/email-templates";
+import { paragraph, panel, renderEmail } from "@/lib/email-templates/compose";
+import { escapeHtml } from "@/lib/email-templates/shared";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
@@ -459,6 +461,40 @@ export async function sendStaffDisputeAlertEmail(
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, transactional: true, ...staffDisputeAlertTemplate(args, dict) });
+}
+
+export interface StuckEventsAlertEmail {
+  to: string;
+  /** The Stripe event id (e.g. evt_…) that could not be auto-replayed. */
+  eventId: string;
+  eventType: string;
+  /** How many auto-replay attempts were made before parking it. */
+  attempts: number;
+}
+
+/** Internal staff alert (payments-hardening Task 11, P1-7): a webhook event
+ *  failed auto-replay `attempts` times and is now PARKED — the sweep caps
+ *  attempts and never re-selects it, so a human must inspect and replay it from
+ *  /admin/billing-events. Fires exactly once per event. Platform-locale (en)
+ *  and built inline — this is an ops-only alert with no user-facing i18n.
+ *  Transactional so it bypasses the suppression list. */
+export async function sendStuckEventsAlertEmail(opts: StuckEventsAlertEmail): Promise<boolean> {
+  const subject = `Stuck webhook event needs review: ${opts.eventId}`;
+  const bodyText =
+    `Stripe event ${opts.eventId} (${opts.eventType}) failed auto-replay ${opts.attempts} times ` +
+    `and is now parked. Inspect and replay it manually from /admin/billing-events.`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.eventType} parked after ${opts.attempts} attempts`,
+    eyebrow: "Billing · Webhooks",
+    title: "Stuck webhook event",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel("Event", `${opts.eventId}\n${opts.eventType}\nattempts: ${opts.attempts}`),
+    footerNote: "Automated staff alert — webhook auto-replay cron (P1-7).",
+  });
+  const text = `${bodyText}\n\nEvent: ${opts.eventId} (${opts.eventType}) · attempts ${opts.attempts}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
 /** True when Resend is configured. */

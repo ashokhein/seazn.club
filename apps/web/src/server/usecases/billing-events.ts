@@ -15,7 +15,11 @@ import {
 } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { getStripe } from "@/lib/stripe";
-import { sendPassRevokedEmail, sendStaffDisputeAlertEmail } from "@/lib/email";
+import {
+  sendPassRevokedEmail,
+  sendStaffDisputeAlertEmail,
+  sendStuckEventsAlertEmail,
+} from "@/lib/email";
 import {
   handleRegistrationCheckoutCompleted,
   handleRegistrationDispute,
@@ -464,6 +468,65 @@ export async function ledgerByIds(ids: string[]): Promise<Map<string, LedgerRow>
     left join organizations o on o.id = b.org_id
     where b.id in ${sql(ids)}`;
   return new Map(rows.map((r) => [r.id, r]));
+}
+
+/**
+ * Auto-heal stuck events (spec P1-7): rows that landed in the ledger but never
+ * reached processed_at (deploy crash / transient DB error mid-handler) sit
+ * `received` forever, and /admin/billing-events (#87) only exposes MANUAL
+ * replay. This cron sweep re-pulls each stuck row FRESH from Stripe (the trust
+ * anchor — never the stored payload) and replays it; handlers are
+ * replay-idempotent by contract, so replaying a `received` row is always safe.
+ *
+ * A row is retried up to 3 times; on the 3rd-attempt row it is PARKED
+ * (replay_attempts bumped to 4, which the `< 4` filter excludes from every
+ * future sweep) and staff are alerted ONCE, so the sweep stays quiet instead of
+ * hammering a permanently-broken event. Stripe calls stay OUTSIDE any sql.begin.
+ */
+export async function sweepStuckEvents(limit = 25): Promise<{
+  replayed: number;
+  failed: number;
+  alerted: number;
+}> {
+  if (!process.env.STRIPE_SECRET_KEY) return { replayed: 0, failed: 0, alerted: 0 };
+  const rows = await sql<{ id: string; type: string; replay_attempts: number }[]>`
+    select id, type, replay_attempts from billing_events
+    where processed_at is null
+      and received_at < now() - interval '10 minutes'
+      and replay_attempts < 4
+    order by received_at
+    limit ${limit}`;
+  let replayed = 0,
+    failed = 0,
+    alerted = 0;
+  const alertTo = process.env.STAFF_ALERT_EMAIL;
+  for (const row of rows) {
+    // Cap reached: park it (bump to 4 → never selected again) and alert once.
+    if (row.replay_attempts >= 3) {
+      await sql`update billing_events set replay_attempts = replay_attempts + 1 where id = ${row.id}`;
+      alerted++;
+      if (alertTo) {
+        void sendStuckEventsAlertEmail({
+          to: alertTo,
+          eventId: row.id,
+          eventType: row.type,
+          attempts: row.replay_attempts + 1,
+        }).catch(() => {});
+      }
+      continue;
+    }
+    try {
+      const event = await getStripe().events.retrieve(row.id);
+      await replayEvent(event);
+      replayed++;
+    } catch {
+      // A retrieve/handler failure leaves the row `received`; bump the counter
+      // so the next pass advances it toward the cap rather than looping forever.
+      await sql`update billing_events set replay_attempts = replay_attempts + 1 where id = ${row.id}`;
+      failed++;
+    }
+  }
+  return { replayed, failed, alerted };
 }
 
 /** Stuck rows outside the live window: received, never processed. */
