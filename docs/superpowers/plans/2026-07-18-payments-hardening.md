@@ -11,7 +11,16 @@
 ## Global Constraints (house rules — every task inherits these)
 
 - Branch in a worktree: `git worktree add .claude/worktrees/payments-hardening -b feat/payments-hardening origin/main` — never checkout in the main repo dir. Copy `.env.local` from the main checkout (worktrees don't inherit it).
-- `git pull origin main` first; verify `ls db/migration/deltas | tail -1` shows `V285__community_exports.sql` (v12 merged). This wave's migration is **V286**; if main has moved past V286, renumber before starting.
+- **Migration number = V287, and this wave MERGES AFTER the Pro Plus tier
+  branch** (`worktree-pro-plus-tier` owns `V286__pro_plus_plan.sql`, plan
+  `docs/superpowers/plans/2026-07-18-pro-plus-tier-plan.md`). Same V-number
+  contention pattern as PR #84/#85 — state the ordering in the PR body. At
+  build time verify `ls db/migration/deltas | tail -1`: if V286 is not yet on
+  main, coordinate before applying V287 locally (Flyway rejects out-of-order).
+- Pro Plus coordination: that branch adds a `pro_plus` plan row + matrix.
+  Task 8's unknown-price guard PROTECTS its rollout (unsynced price no longer
+  downgrades orgs); Task 9/10 must treat any non-community plan generically —
+  never hardcode `'pro'`.
 - Every code change ships a regression test that fails without it.
 - Stripe calls NEVER inside a `sql.begin` transaction.
 - `v1()` and `handler()` wrap responses in `{ok,data}` — client fetches must unwrap.
@@ -24,7 +33,7 @@
 
 ## File Structure (wave map)
 
-- Create: `db/migration/deltas/V286__payments_hardening.sql` (all wave DDL)
+- Create: `db/migration/deltas/V287__payments_hardening.sql` (all wave DDL)
 - Create: `apps/web/src/app/api/cron/billing-events/route.ts` (stuck-event sweep)
 - Create: `apps/web/src/lib/email-templates/sponsor-dispute-alert.ts`, `sponsor-dispute-lost.ts`, `pass-revoked.ts`
 - Modify: `apps/web/src/server/usecases/competitions.ts` (delete guards)
@@ -41,10 +50,10 @@
 
 ---
 
-### Task 0: Worktree + migration V286
+### Task 0: Worktree + migration V287
 
 **Files:**
-- Create: `db/migration/deltas/V286__payments_hardening.sql`
+- Create: `db/migration/deltas/V287__payments_hardening.sql`
 
 **Interfaces:**
 - Produces: columns used by every later task — `sponsor_orders.disputed_at timestamptz`, `sponsor_orders.dispute_id text`, `subscriptions.disputed_at timestamptz`, `subscriptions.dispute_id text`, `organizations.stripe_payouts_enabled boolean`, `organizations.stripe_disabled_reason text`, `organizations.stripe_requirements_due int`, `billing_events.replay_attempts int`.
@@ -58,12 +67,12 @@ cp /Users/ashokhein/github/seazn.club/apps/web/.env.local .claude/worktrees/paym
 cp /Users/ashokhein/github/seazn.club/.env.local .claude/worktrees/payments-hardening/.env.local 2>/dev/null || true
 ls .claude/worktrees/payments-hardening/db/migration/deltas | tail -1
 ```
-Expected: `V285__community_exports.sql` (name may differ slightly; the point is V285 exists and V286 is free).
+Expected: `V286__pro_plus_plan.sql` (Pro Plus merged first — required). If the tail is still V285, STOP: merge order violated, coordinate before proceeding.
 
 - [ ] **Step 2: Write the migration**
 
 ```sql
--- V286 (payments hardening wave, spec 2026-07-18): dispute flags for sponsor
+-- V287 (payments hardening wave, spec 2026-07-18): dispute flags for sponsor
 -- orders + platform subscriptions, Connect health mirror, webhook retry
 -- counter, and the dead Event Pass members.max row (org-wide key can never
 -- resolve through the comp-scoped pass branch — pricing page over-promised).
@@ -98,8 +107,8 @@ Expected: migrate OK, count `0`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add db/migration/deltas/V286__payments_hardening.sql
-git commit -m "feat(db): V286 payments hardening columns + drop dead pass members.max row"
+git add db/migration/deltas/V287__payments_hardening.sql
+git commit -m "feat(db): V287 payments hardening columns + drop dead pass members.max row"
 ```
 
 ---
@@ -452,7 +461,7 @@ Webhook caller (`handleCheckoutCompleted` pass branch) and `reconcilePassCheckou
 - Test: `apps/web/src/server/usecases/__tests__/sponsor-dispute.test.ts`
 
 **Interfaces:**
-- Consumes: V286 `sponsor_orders.disputed_at/dispute_id`; Task 5 `recoverDisputedTransfer`.
+- Consumes: V287 `sponsor_orders.disputed_at/dispute_id`; Task 5 `recoverDisputedTransfer`.
 - Produces: `handleSponsorDispute(dispute: Stripe.Dispute, phase: "created" | "closed"): Promise<void>` exported from sponsors.ts; dispatch calls it after `handleRegistrationDispute` for both dispute event types (each no-ops on the other's intents — same pattern as `charge.refunded`).
 
 - [ ] **Step 1: Failing tests**
@@ -585,7 +594,7 @@ Dispatch wiring in billing-events.ts:
 - Test: `apps/web/src/server/usecases/__tests__/platform-dispute.test.ts`
 
 **Interfaces:**
-- Consumes: V286 `subscriptions.disputed_at/dispute_id`; Task 3 `revokePassForRefundedCharge` pattern (pass lookup by intent).
+- Consumes: V287 `subscriptions.disputed_at/dispute_id`; Task 3 `revokePassForRefundedCharge` pattern (pass lookup by intent).
 - Produces: `handlePlatformDispute(dispute, phase)` called LAST in both dispute cases (after registration + sponsor handlers, which return without writes on platform charges).
 
 - [ ] **Step 1: Failing tests** — four cases, fully written in the suite:
@@ -789,7 +798,7 @@ and extend `paymentsBroken`:
 - Test: `apps/web/src/server/usecases/__tests__/billing-events-sweep.test.ts`
 
 **Interfaces:**
-- Consumes: V286 `billing_events.replay_attempts`; existing `replayEvent` (trust anchor = `stripe.events.retrieve`).
+- Consumes: V287 `billing_events.replay_attempts`; existing `replayEvent` (trust anchor = `stripe.events.retrieve`).
 - Produces: `sweepStuckEvents(limit?: number): Promise<{ replayed: number; failed: number; alerted: number }>`; route guarded by `x-cron-secret` (copy the header check verbatim from `app/api/cron/registrations/route.ts`).
 
 - [ ] **Step 1: Failing tests**: seed `billing_events` rows (received 20 min ago, no processed_at, attempts 0) with a stubbed `stripe.events.retrieve` (vi.mock `@/lib/stripe`) whose handler is a no-op type → after sweep: `processed_at` set. Second row where retrieve throws → `replay_attempts` incremented, `processed_at` null. Third row at `replay_attempts=3` → skipped (alert path counted).
@@ -847,7 +856,7 @@ Route: POST, `x-cron-secret` check, calls `sweepStuckEvents()`, returns counts. 
 - Test: `apps/web/src/server/usecases/__tests__/stripe-connect.test.ts` (extend)
 
 **Interfaces:**
-- Consumes: V286 org columns.
+- Consumes: V287 org columns.
 - Produces: `ConnectStatusRow` gains `payouts_enabled: boolean; disabled_reason: string | null; requirements_due: number` — consumed by the Connect settings page banner.
 
 - [ ] **Step 1: Failing test** — extend the existing suite: `syncConnectAccount` with an account literal `{ id, charges_enabled: true, payouts_enabled: false, requirements: { currently_due: ["individual.id_number"], disabled_reason: "requirements.pending_verification" } }` → org row mirrors all three; `connectStatus` returns them.
@@ -897,7 +906,7 @@ export async function syncConnectAccount(account: Stripe.Account): Promise<void>
 
 ```bash
 git add -A && git commit -m "feat(payments): hardening wave — smoke p72 + help"
-gh pr create --title "feat(payments): hardening wave (PROMPT-72..75)" --body "Spec: docs/superpowers/specs/2026-07-18-payments-hardening-design.md ... deploy notes: V286, schedule /api/cron/billing-events hourly, STAFF_ALERT_EMAIL env.
+gh pr create --title "feat(payments): hardening wave (PROMPT-72..75)" --body "Spec: docs/superpowers/specs/2026-07-18-payments-hardening-design.md ... deploy notes: V287 (merges AFTER pro-plus V286), schedule /api/cron/billing-events hourly, STAFF_ALERT_EMAIL env.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
