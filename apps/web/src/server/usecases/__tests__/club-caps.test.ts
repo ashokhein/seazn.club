@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createClub } from "../clubs";
-import { createTeam } from "../teams";
+import { createTeam, setTeamSquad } from "../teams";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -45,6 +45,20 @@ describe.skipIf(!HAS_DB)("club/team caps", () => {
     await createTeam(auth2, { name: "T2" }); // standalone counts too
     await expect(createTeam(auth2, { name: "T3" })).rejects.toMatchObject({
       featureKey: "teams.max",
+    });
+  });
+
+  it("blocks a 21-person squad on community with teams.squad_max", async () => {
+    const auth3 = await seedOrg(); // fresh community org fixture (cap = 20)
+    const team = await createTeam(auth3, { name: "Squad Cap" }); // standalone is fine
+    const members = [];
+    for (let i = 0; i < 21; i++) {
+      const [{ id }] = await sql<{ id: string }[]>`
+        insert into persons (org_id, full_name) values (${auth3.orgId}, ${"P" + i}) returning id`;
+      members.push({ person_id: id, squad_number: null, default_position_key: null, is_captain: false, roles: [] });
+    }
+    await expect(setTeamSquad(auth3, team.id, members)).rejects.toMatchObject({
+      featureKey: "teams.squad_max",
     });
   });
 });
