@@ -1399,3 +1399,85 @@ export async function issueChallenge(
     return { fixture_id: fixture!.id, ladder_order: order };
   });
 }
+
+// ---------------------------------------------------------------------------
+// Ad-hoc single fixture (PROMPT-66): a replay, a friendly, a manual
+// tie-breaker or a missing match, added to an already-running stage. League /
+// group / swiss standings fold every fixture, so the added match is a real
+// result; bracket kinds have no slot for a loose fixture and reject it.
+// ---------------------------------------------------------------------------
+
+const ADHOC_STAGE_KINDS = new Set(["league", "group", "swiss"]);
+
+export async function addFixture(
+  auth: AuthCtx,
+  stageId: string,
+  input: {
+    home_entrant_id: string;
+    away_entrant_id: string;
+    round_no?: number;
+    scheduled_at?: string | null;
+    venue?: string | null;
+  },
+): Promise<{ fixture_id: string }> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [stage] = await tx<{ division_id: string; kind: string; status: string }[]>`
+      select division_id, kind, status from stages where id = ${stageId}`;
+    if (!stage) throw new HttpError(404, "stage not found");
+    if (stage.kind === "ladder") {
+      throw new HttpError(422, "ladder matches are created with challenges, not ad-hoc fixtures");
+    }
+    if (stage.kind === "americano") {
+      throw new HttpError(422, "americano matches are generated round by round — generate another round instead");
+    }
+    if (!ADHOC_STAGE_KINDS.has(stage.kind)) {
+      throw new HttpError(422, "can't add a loose fixture to a bracket — it has no slot in the tree");
+    }
+    if (stage.status === "complete") {
+      throw new HttpError(422, "this stage is complete — a completed table doesn't take new matches");
+    }
+    if (input.home_entrant_id === input.away_entrant_id) {
+      throw new HttpError(422, "an entrant cannot play itself");
+    }
+    await tx`select pg_advisory_xact_lock(hashtext(${"division:" + stage.division_id}))`;
+    const entrants = await tx<{ id: string }[]>`
+      select id from entrants
+      where division_id = ${stage.division_id}
+        and id in (${input.home_entrant_id}, ${input.away_entrant_id})`;
+    if (entrants.length !== 2) {
+      throw new HttpError(422, "both entrants must belong to this stage's division");
+    }
+    // Group stages: the match must land in the entrants' pool so the right
+    // table folds it. Inferred from the stage's existing fixtures — no
+    // separate pool-membership lookup exists or is needed.
+    let poolId: string | null = null;
+    if (stage.kind === "group") {
+      const pools = await tx<{ pool_id: string | null }[]>`
+        select distinct pool_id from fixtures
+        where stage_id = ${stageId}
+          and (home_entrant_id in (${input.home_entrant_id}, ${input.away_entrant_id})
+            or away_entrant_id in (${input.home_entrant_id}, ${input.away_entrant_id}))`;
+      const ids = [...new Set(pools.map((p) => p.pool_id))];
+      if (ids.length !== 1 || ids[0] == null) {
+        throw new HttpError(422, "both entrants must be in the same pool of this stage");
+      }
+      poolId = ids[0];
+    }
+    const [{ maxRound }] = await tx<{ maxRound: number }[]>`
+      select coalesce(max(round_no), 0)::int as "maxRound" from fixtures where stage_id = ${stageId}`;
+    const round = input.round_no ?? maxRound + 1;
+    const [{ nextSeq }] = await tx<{ nextSeq: number }[]>`
+      select coalesce(max(seq_in_round), 0)::int + 1 as "nextSeq"
+      from fixtures where stage_id = ${stageId} and round_no = ${round}`;
+    const [{ n }] = await tx<{ n: number }[]>`
+      select count(*)::int as n from fixtures where stage_id = ${stageId}`;
+    const [fixture] = await tx<{ id: string }[]>`
+      insert into fixtures (stage_id, division_id, pool_id, round_no, seq_in_round,
+                            home_entrant_id, away_entrant_id, ext_key, status, scheduled_at, venue)
+      values (${stageId}, ${stage.division_id}, ${poolId}, ${round}, ${nextSeq},
+              ${input.home_entrant_id}, ${input.away_entrant_id}, ${"adhoc-" + String(n + 1)},
+              'scheduled', ${input.scheduled_at ?? null}, ${input.venue ?? null})
+      returning id`;
+    return { fixture_id: fixture!.id };
+  });
+}

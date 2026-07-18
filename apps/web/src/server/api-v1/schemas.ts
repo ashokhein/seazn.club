@@ -448,6 +448,16 @@ export const CreateStage = z.object({
 
 /** POST /divisions/{id}/stages — the stage graph, one or many (doc 08 §3). */
 export const CreateStages = z.union([CreateStage, z.array(CreateStage).min(1).max(20)]);
+
+/** POST /stages/{id}/fixtures — ad-hoc single fixture (PROMPT-66). */
+export const AddFixture = z.object({
+  home_entrant_id: Uuid,
+  away_entrant_id: Uuid,
+  round_no: z.number().int().min(1).optional(),
+  scheduled_at: z.string().datetime({ offset: true }).nullish(),
+  venue: z.string().max(200).nullish(),
+});
+export type AddFixture = z.infer<typeof AddFixture>;
 export type CreateStages = z.infer<typeof CreateStages>;
 
 export const Stage = z.object({

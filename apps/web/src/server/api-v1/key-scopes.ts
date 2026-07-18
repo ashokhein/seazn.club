@@ -161,6 +161,7 @@ const RULES: RouteRule[] = [
   { method: "GET", path: "/stages/:id/americano", scope: "read", pin: "stage" },
   { method: "POST", path: "/stages/:id/challenges", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/complete", scope: "manage", pin: "stage" },
+  { method: "POST", path: "/stages/:id/fixtures", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/generate", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/officials/source", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/schedule/apply", scope: "manage", pin: "stage" },
