@@ -12,8 +12,9 @@ export const routes = {
   orgSettings: (org: Slug, tab?: string) =>
     tab ? `/o/${org}/settings?tab=${tab}` : `/o/${org}/settings`,
   billing: (org: Slug) => `/o/${org}/settings/billing`,
-  /** Entry-fee collection: Stripe Connect + offline instructions (spec 2026-07-12). */
-  payments: (org: Slug) => `/o/${org}/settings/payments`,
+  /** Entry-fee collection: Stripe Connect + offline instructions (spec 2026-07-12).
+   *  Renamed from /settings/payments (2026-07-18); the old path redirects. */
+  connect: (org: Slug) => `/o/${org}/settings/connect`,
   competitionNew: (org: Slug) => `/o/${org}/c/new`,
   competition: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}`,
   competitionSettings: (org: Slug, comp: Slug) => `/o/${org}/c/${comp}/settings`,

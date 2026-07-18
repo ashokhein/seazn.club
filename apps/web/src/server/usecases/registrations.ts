@@ -530,7 +530,7 @@ export async function putRegistrationSettings(
     if (!org.charges_enabled) {
       throw new HttpError(
         422,
-        "Connect Stripe under Settings → Payments before choosing card payments",
+        "Connect Stripe under Settings → Connect before choosing card payments",
       );
     }
     await requireFeature(auth.orgId, "registration.paid", regDiv?.competition_id);

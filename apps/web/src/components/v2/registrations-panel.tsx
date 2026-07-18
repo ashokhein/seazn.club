@@ -289,7 +289,7 @@ export function RegistrationsPanel({
         {settings.payment_method === "stripe" && !settings.charges_enabled && (
           <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
             {msg("reg.stripeOffline.pre")}
-            <a href="/settings/payments" className="underline">{msg("reg.stripeOffline.link")}</a>
+            <a href="/settings/connect" className="underline">{msg("reg.stripeOffline.link")}</a>
             {msg("reg.stripeOffline.post")}
           </div>
         )}

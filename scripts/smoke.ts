@@ -379,7 +379,7 @@ async function disputeSurfacesSuite() {
   const who = await signIn(owner, `tos_${tag}@example.com`);
   await setPlan(who.org_id, "pro");
   const refused = await v1(owner, `/api/v1/orgs/${who.org_id}/connect`, "POST", {
-    return_path: "/settings/payments",
+    return_path: "/settings/connect",
   });
   check("p55: connect refuses without ToS agreement (422)", refused.status === 422);
 }
@@ -1689,10 +1689,17 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
     "product tour: billing step anchor present (pro)",
     proBilling.body.includes('data-tour="billing-plan"'),
   );
-  const proPayments = await html(admin, `/o/${proOrgSlug}/settings/payments`);
+  const proPayments = await html(admin, `/o/${proOrgSlug}/settings/connect`);
   check(
-    "product tour: Connect step anchor present on payments (owner)",
+    "product tour: Connect step anchor present on Connect settings (owner)",
     proPayments.status === 200 && proPayments.body.includes('data-tour="connect-stripe"'),
+  );
+  // Rename regression (2026-07-18): the old Payments URL must forward to
+  // Connect — fetch follows the redirect, so the anchor proves the landing.
+  const legacyPayments = await html(admin, `/o/${proOrgSlug}/settings/payments?connect=return`);
+  check(
+    "legacy /settings/payments redirects to Connect (query preserved)",
+    legacyPayments.status === 200 && legacyPayments.body.includes('data-tour="connect-stripe"'),
   );
   const freeCancel = await raw(free, "/api/billing/cancel", "POST", {});
   check("v3/11 cancel wants a Stripe customer first (free)", freeCancel.status === 400);

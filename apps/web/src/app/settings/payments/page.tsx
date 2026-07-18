@@ -1,19 +1,15 @@
-export const dynamic = "force-dynamic";
-// Org-less payments path — forwards to the active org's payments settings,
-// carrying the Stripe Connect return params (?connect=return|refresh) so the
-// onboarding round-trip reconciles on the org-scoped URL (billing's pattern).
+// Renamed to /settings/connect (2026-07-18); old org-less links forward with
+// their query intact (Stripe return params included).
 import { redirect } from "next/navigation";
-import { requirePageAuth } from "@/server/page-auth";
-import { routes } from "@/lib/routes";
 
-export default async function LegacyPayments({
+export default async function LegacyBarePayments({
   searchParams,
 }: {
-  searchParams: Promise<{ connect?: string }>;
+  searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  const [{ org }, sp] = await Promise.all([requirePageAuth(), searchParams]);
+  const sp = await searchParams;
   const qs = new URLSearchParams(
     Object.entries(sp).filter(([, v]) => v !== undefined) as [string, string][],
   ).toString();
-  redirect(routes.payments(org.slug) + (qs ? `?${qs}` : ""));
+  redirect(`/settings/connect${qs ? `?${qs}` : ""}`);
 }
