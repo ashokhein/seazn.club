@@ -229,6 +229,8 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "PUT /me/fixtures/:id/availability",
   "GET /me/persons",
   "PATCH /me/persons/:id/consent",
+  "POST /me/persons/:id/photo",
+  "DELETE /me/persons/:id/photo",
   "POST /fixtures/:id/checkin-link",
   // Official onboarding (PROMPT-57): the invite mints a login capability and
   // the officiating /me surface is session-personal — same rules as players.

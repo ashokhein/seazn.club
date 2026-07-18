@@ -82,6 +82,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/me/fixtures/{id}/availability", method: "put", summary: "RSVP in/out/maybe + note for the caller's person on this fixture (session only)", tag: "player-accounts", request: S.PutAvailability, response: S.Availability, errors: [403, 422] },
   { path: "/me/persons", method: "get", summary: "The caller's claimed player profiles with consent state (session only)", tag: "player-accounts", response: z.array(S.MyPerson) },
   { path: "/me/persons/{id}/consent", method: "patch", summary: "Player-owned consent flags; under-16 → 403 CONSENT_LOCKED (guardian gate)", tag: "player-accounts", request: S.PatchMyConsent, response: S.MyPerson, errors: [403] },
+  { path: "/me/persons/{id}/photo", method: "post", summary: "Player-owned photo upload (multipart `file`); guardian gate as consent; public display still needs public_photo consent (session only)", tag: "player-accounts", response: S.MyPerson, errors: [400, 403, 404, 415, 502] },
+  { path: "/me/persons/{id}/photo", method: "delete", summary: "Remove my photo — the public card falls back to initials (session only)", tag: "player-accounts", response: S.MyPerson, errors: [403, 404] },
   { path: "/fixtures/{id}/checkin-link", method: "post", summary: "Mint the fixture's self-check-in QR link (session editors only; signed token, dies at local midnight)", tag: "player-accounts", response: S.CheckinLink, status: 201, errors: [422] },
   // Stages
   { path: "/divisions/{id}/stages", method: "get", summary: "List stages", tag: "stages", response: z.array(S.Stage) },
