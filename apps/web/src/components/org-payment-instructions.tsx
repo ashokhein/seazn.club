@@ -14,6 +14,9 @@ interface ConnectStatus {
   connected: boolean;
   charges_enabled: boolean;
   details_submitted: boolean | null;
+  payouts_enabled: boolean;
+  disabled_reason: string | null;
+  requirements_due: number;
 }
 
 export function OrgPaymentInstructions({
@@ -129,6 +132,21 @@ export function OrgPaymentInstructions({
               </span>
             )}
           </div>
+          {/* Health mirror (P1-8): a connected account can silently lose
+              payouts (verification lapse) while charges keep landing. Surface
+              it so the owner resumes onboarding before Stripe support has to. */}
+          {connect?.connected &&
+            (!connect.payouts_enabled || connect.requirements_due > 0) && (
+              <div
+                data-testid="connect-attention"
+                className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-4"
+              >
+                <p className="text-sm font-semibold text-amber-800">
+                  {msg("connect.attention.title")}
+                </p>
+                <p className="mt-1 text-xs text-amber-700">{msg("connect.attention.body")}</p>
+              </div>
+            )}
           {/* What connecting involves — the three stops on the way to taking
               card entry fees, with the current one highlighted. */}
           <ol className="mt-3 space-y-2">

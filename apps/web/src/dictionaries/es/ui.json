@@ -1781,6 +1781,8 @@
   "pay.save": "Guardar",
   "pay.saved": "Guardado.",
   "pay.saveFailed": "Error al guardar",
+  "connect.attention.title": "Stripe necesita más información",
+  "connect.attention.body": "Los pagos están en pausa hasta completar la incorporación — reanúdala abajo.",
   "me.off.title": "Arbitraje",
   "me.off.pendingInvites": "Invitaciones pendientes",
   "me.off.pendingInvite": "{org} ha creado un perfil de árbitro para {name}.",

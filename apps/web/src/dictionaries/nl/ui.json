@@ -1781,6 +1781,8 @@
   "pay.save": "Opslaan",
   "pay.saved": "Opgeslagen.",
   "pay.saveFailed": "Opslaan mislukt",
+  "connect.attention.title": "Stripe heeft meer informatie nodig",
+  "connect.attention.body": "Uitbetalingen zijn gepauzeerd tot de onboarding is voltooid — hervat deze hieronder.",
   "me.off.title": "Officials",
   "me.off.pendingInvites": "Openstaande uitnodigingen",
   "me.off.pendingInvite": "{org} heeft een official-profiel voor {name} aangemaakt.",

@@ -540,6 +540,8 @@ export type DictionaryKey =
   | "confirm.withdrawRegistration.body"
   | "confirm.withdrawRegistration.label"
   | "confirm.withdrawRegistration.title"
+  | "connect.attention.body"
+  | "connect.attention.title"
   | "cookie.accept"
   | "cookie.message"
   | "cookie.policyLink"
