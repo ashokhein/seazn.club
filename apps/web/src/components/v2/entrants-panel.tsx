@@ -1025,6 +1025,7 @@ function EntrantTableRow({
               <p className="text-xs text-slate-400">Loading roster…</p>
             ) : (
               <RosterEditor
+                kind={entrant.kind}
                 members={members}
                 persons={persons}
                 positionGroups={positionGroups}

@@ -379,6 +379,27 @@ export async function restoreDivision(auth: AuthCtx, id: string): Promise<Divisi
   });
 }
 
+// Structural comparison for the format-lock exemption below. Sorts object keys
+// so two configs compare equal regardless of insertion order (pragmatic
+// deep-equal — no shared helper exists). Arrays keep their order.
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, val) =>
+    val && typeof val === "object" && !Array.isArray(val)
+      ? Object.fromEntries(
+          Object.keys(val as Record<string, unknown>)
+            .sort()
+            .map((k) => [k, (val as Record<string, unknown>)[k]]),
+        )
+      : val,
+  );
+}
+
+function withoutEntrants(config: Record<string, unknown>): Record<string, unknown> {
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config)) if (k !== "entrants") rest[k] = v;
+  return rest;
+}
+
 export async function patchDivision(
   auth: AuthCtx,
   id: string,
@@ -399,18 +420,14 @@ export async function patchDivision(
     // then re-validated exactly like create — variant preset merged with the
     // override and parsed by the PINNED module's schema.
     if (patch.variant_key !== undefined || patch.config !== undefined) {
-      const [{ locked }] = await tx<{ locked: boolean }[]>`
-        select exists(
-          select 1 from fixtures f
-          join stages s on s.id = f.stage_id
-          where s.division_id = ${id}
-        ) as locked`;
-      if (locked) {
-        throw new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
-      }
       const [current] = await tx<
-        { sport_key: string; module_version: string; variant_key: string }[]
-      >`select sport_key, module_version, variant_key from divisions where id = ${id}`;
+        {
+          sport_key: string;
+          module_version: string;
+          variant_key: string;
+          config: Record<string, unknown> | null;
+        }[]
+      >`select sport_key, module_version, variant_key, config from divisions where id = ${id}`;
       if (!current) throw new HttpError(404, "division not found");
       const variantKey = patch.variant_key ?? current.variant_key;
       const [variant] = await tx<{ config: Record<string, unknown> }[]>`
@@ -436,6 +453,29 @@ export async function patchDivision(
       const incomingEntrants = (patch.config as { entrants?: unknown } | undefined)?.entrants;
       if (incomingEntrants != null && typeof incomingEntrants === "object") {
         finalConfig.entrants = incomingEntrants;
+      }
+      // Format lock (v8 spec §2): once a stage owns fixtures the format is
+      // immutable — EXCEPT an entrants-only change. Entrant shapes are not
+      // format; organisers may legitimately widen kinds or flip captain/№
+      // mid-season, and the ENTRANT_KIND_IN_USE guard below already blocks a
+      // narrowing that would orphan an entrant. So when locked, allow the patch
+      // only if the variant is unchanged and the merged config differs from the
+      // stored one solely in `entrants`; anything else → 409 FORMAT_LOCKED.
+      const [{ locked }] = await tx<{ locked: boolean }[]>`
+        select exists(
+          select 1 from fixtures f
+          join stages s on s.id = f.stage_id
+          where s.division_id = ${id}
+        ) as locked`;
+      if (locked) {
+        const variantChanged =
+          patch.variant_key !== undefined && patch.variant_key !== current.variant_key;
+        const nonEntrantsChanged =
+          canonicalJson(withoutEntrants(finalConfig)) !==
+          canonicalJson(withoutEntrants((current.config ?? {}) as Record<string, unknown>));
+        if (variantChanged || nonEntrantsChanged) {
+          throw new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
+        }
       }
       // Narrowing the allowed kinds must not orphan entrants that already exist:
       // an active entrant of a kind the new model no longer accepts would become
