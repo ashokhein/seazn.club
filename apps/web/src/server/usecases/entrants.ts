@@ -304,6 +304,13 @@ export async function createEntrants(
         }
       }
 
+      // Backstop: the FINAL resolved roster must fit the structural cap. The
+      // early check only saw explicit `input.members`; a copied prior roster or
+      // a squad-seeded team can carry a squad-sized roster onto an individual
+      // (cap 1) or pair (cap 2). Reuse the already-loaded `eff` (loaded once for
+      // the batch) — same 422 ENTRANT_ROSTER_TOO_BIG as the early check.
+      assertRosterFits(eff, input.kind ?? eff.defaultKind, members.length);
+
       let row: EntrantRow;
       try {
         [row] = await tx<EntrantRow[]>`

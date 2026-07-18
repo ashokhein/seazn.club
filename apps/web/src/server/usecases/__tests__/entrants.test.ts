@@ -101,6 +101,31 @@ describe.skipIf(!HAS_DB)("entrant shapes: write-path validation (G-entrant-shape
     expect(ok[0]!.kind).toBe("team");
   });
 
+  it("caps a squad-seeded roster resolved from team_id (resolved-roster backstop)", async () => {
+    const { auth } = await seedOrg();
+    const division = await seedBoardgameDivision(auth);
+
+    // A team with a 2-person persistent squad (inserted raw — team_members'
+    // trg_set_org trigger fills org_id from the parent team).
+    const p1 = await seedPerson(auth, "Squad One");
+    const p2 = await seedPerson(auth, "Squad Two");
+    const [{ id: teamId }] = await sql<{ id: string }[]>`
+      insert into teams (org_id, name)
+      values (${auth.orgId}, ${"Pair Squad " + randomUUID().slice(0, 6)})
+      returning id`;
+    await sql`
+      insert into team_members (team_id, person_id, is_captain, roles)
+      values (${teamId}, ${p1.id}, false, ${sql.json([])}),
+             (${teamId}, ${p2.id}, false, ${sql.json([])})`;
+
+    // Enrolling this team as an INDIVIDUAL (cap 1) with no explicit members
+    // squad-seeds 2 people. The early explicit-members check saw 0; the
+    // resolved-roster backstop must reject it.
+    await expect(
+      createEntrants(auth, division.id, [{ kind: "individual", team_id: teamId, members: [] }]),
+    ).rejects.toMatchObject({ status: 422, code: "ENTRANT_ROSTER_TOO_BIG" });
+  });
+
   it("PATCH members replacement rechecks the roster cap against the entrant's kind", async () => {
     const { auth } = await seedOrg();
     const division = await seedBoardgameDivision(auth);
