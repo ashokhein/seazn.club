@@ -166,15 +166,50 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
     expect(under.rowCount).toBe(20);
   });
 
-  it("Community commit with club columns 402s on clubs.hierarchy", async () => {
+  it("Community commit with club columns succeeds under the clubs cap (hierarchy opened, V291)", async () => {
     const { auth } = await seedOrg("community");
     await seedDivision(auth);
     const preview = await createImport(
       auth,
       csvUpload("Club,Team,Division\nAcme SC,Acme U12,u12"),
     );
+    // clubs.hierarchy is granted to community/event_pass (V291); the cap is the
+    // brake now, and 1 club/1 team is under the community 2/2 limits.
+    const result = await commitImport(auth, preview.importId, null);
+    expect(result.stats.clubs).toBe(1);
+    const clubs = await listClubs(auth);
+    expect(clubs.map((c) => c.name)).toEqual(["Acme SC"]);
+  });
+
+  it("Community import over clubs.max is rejected with featureKey clubs.max at commit", async () => {
+    const { auth } = await seedOrg("community");
+    await seedDivision(auth);
+    // seed the org at the community clubs cap (2 clubs)
+    await sql`insert into clubs (org_id, name) values
+      (${auth.orgId}, 'Existing One'), (${auth.orgId}, 'Existing Two')`;
+    const preview = await createImport(auth, csvUpload("Club\nDelta SC"));
+    expect(preview.plan.issues).toEqual([]);
+    expect(preview.plan.stats.clubs).toBe(1);
     await expect(commitImport(auth, preview.importId, null)).rejects.toMatchObject({
-      featureKey: "clubs.hierarchy",
+      featureKey: "clubs.max",
+    });
+    // rejected before any write — still exactly 2 clubs
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from clubs where org_id = ${auth.orgId}`;
+    expect(n).toBe(2);
+  });
+
+  it("Community import over teams.max is rejected with featureKey teams.max at commit", async () => {
+    const { auth } = await seedOrg("community");
+    await seedDivision(auth);
+    // seed the org at the community teams cap (2 teams)
+    await sql`insert into teams (org_id, name) values
+      (${auth.orgId}, 'Team One'), (${auth.orgId}, 'Team Two')`;
+    const preview = await createImport(auth, csvUpload("Team\nDelta United"));
+    expect(preview.plan.issues).toEqual([]);
+    expect(preview.plan.stats.teams).toBe(1);
+    await expect(commitImport(auth, preview.importId, null)).rejects.toMatchObject({
+      featureKey: "teams.max",
     });
   });
 
