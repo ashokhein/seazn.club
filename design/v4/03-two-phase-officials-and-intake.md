@@ -38,7 +38,10 @@ legality. Phase B referee = pure engine check over proposed `FixtureOfficial[]` 
 existing conflict taxonomy (`official_overlap`/`team_ref_self`/`role_unfilled` block;
 `pool_leak`/`fairness`/`travel` warn) plus official blackouts and busy-elsewhere windows.
 Zero engine change: `assignOfficials` takes injected epoch-ms fixture times, so dry-run
-times slot straight in.
+times slot straight in. Official blackouts and busy-elsewhere windows are not engine
+inputs — the LLM gets them in the pack as hard rules and the server supplement (decision
+8) enforces them on the proposal; the solver draft may violate them, which is exactly
+what the LLM+referee pass is for.
 
 Phase B is independently useful: called without a dry-run schedule it runs against current
 DB times — instruction-driven officials assignment ("senior refs on finals") as a
@@ -212,8 +215,13 @@ PostHog: `ai_plan_run` gains `phase: "schedule"|"officials"`; `ai_plan_accepted`
 7. **Two phases, two endpoints, stateless** — schedule and officials are separate
    propose-only calls; the client carries both proposals; accept chains the two existing
    apply rails. No joint time+official optimization (coverage-aware Phase A mitigates).
-8. **Phase B referees with the existing taxonomy** — no new conflict kinds; locked rows
-   are inviolable.
+8. **Phase B referees with the existing taxonomy** — no new *engine* conflict kinds;
+   locked rows are inviolable. The engine validates a locked set only for
+   overlap/self-ref/pool-leak, so the server referee adds a thin web-side supplement:
+   kind `ineligible` (block) for wrong-role / maxPerDay / official-blackout /
+   busy-elsewhere breaches, checked in the use-case, engine untouched. Slots the LLM
+   declares `unfilled` that the solver *can* fill come back as a warn with the solver's
+   candidate ("lazy unfilled").
 9. **Officials availability is soft context in Phase A** — never a hard rule; the engine
    referee stays the only authority on legality.
 10. **Pre-flight warns, never blocks** — data gaps are links, not gates.
