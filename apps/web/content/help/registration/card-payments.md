@@ -44,6 +44,8 @@ A card sponsorship payment runs on the same Connect rail, so a disputed sponsors
 
 An **Event Pass** is paid to Seazn Club, not into your Connect account — there is no transfer to reverse. A refunded or lost-dispute pass instead **revokes the pass**, and the competition drops back to your plan's normal limits (nothing you've built is deleted). See [the Event Pass](/help/billing/event-pass).
 
+The same holds for a chargeback on a **Pro or Pro Plus subscription** payment: it's a platform charge, so there's nothing to reclaim from your Connect account. The subscription is flagged, and if the dispute is lost your org drops to **Community** limits — nothing is deleted, exactly like a [downgrade](/help/billing/downgrade). Subscribing again clears the flag and restores Pro.
+
 ## Common questions
 
 **Where do I change my bank account or see payouts?** In your Stripe dashboard — Seazn Club shows the entry-fee side; Stripe owns the banking side.
