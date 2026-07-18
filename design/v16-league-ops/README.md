@@ -21,7 +21,7 @@ wave. Site-builder-lite and SMS result entry are explicitly deferred/rejected.
 | 1 | [SPEC-1 Discipline & suspensions](SPEC-1-discipline-suspensions.md) | Card events fold into a disciplinary ledger; configurable per-division thresholds auto-raise pending suspensions; organiser confirms; banned players flagged everywhere | V291 |
 | 2 | [SPEC-2 Org news & share cards](SPEC-2-news-social.md) | Org news feed with composer + public tab + OG share cards; system auto-drafts result/round posts the organiser publishes with one tap | V292 |
 | 3 | [SPEC-3 Official marks & match reports](SPEC-3-official-marks-reports.md) | Organiser rates each assignment (org-private); officials file match reports whose incidents feed SPEC-1 | V293 |
-| 4 | [SPEC-4 Team-scale pricing dimension](SPEC-4-team-scale-pricing.md) | Org-wide active-team quota: community 32 / Pro 100 / Pro Plus unlimited — scale becomes the Pro→Plus differentiator, zero Stripe changes | V294 |
+| 4 | [SPEC-4 Team-scale pricing dimension](SPEC-4-team-scale-pricing.md) — **DEFERRED 2026-07-18** | Org-wide active-team quota: community 32 / Pro 100 / Pro Plus unlimited. Spec approved-in-principle but pulled from this build wave by user decision; revisit after 1–3 ship | (V294 draft, unused) |
 
 ## Design decisions (locked in brainstorming, 2026-07-18)
 
@@ -32,7 +32,7 @@ wave. Site-builder-lite and SMS result entry are explicitly deferred/rejected.
 | D3 | **News = posts + auto-drafts + share images. No social-platform APIs.** Facebook/X auto-posting (app review, per-org OAuth, token refresh) is rejected; a share-ready OG/PNG card + the existing share-bar covers the job. |
 | D4 | **Marks are organiser-entered and org-private.** Aggregates visible in that org's console; the official sees only their own running average (never per-assignment marks or authors). NOT surfaced on the public/cross-org directory in v16. |
 | D5 | **Match reports are official-entered and free** (V284 principle: the officiating portal never requires Pro). Marks entry is Pro (`officials.marks`). |
-| D6 | **Team scale = the Pro→Plus differentiator.** New quota key `teams.active.max`: community 32, event_pass 32, pro 100, pro_plus unlimited. No size bands, no metered billing, no new Stripe prices. Existing orgs over a cap get grandfathered via `org_entitlement_overrides` (V270 precedent). |
+| D6 | **Team scale = the Pro→Plus differentiator.** New quota key `teams.active.max`: community 32, event_pass 32, pro 100, pro_plus unlimited. No size bands, no metered billing, no new Stripe prices. Existing orgs over a cap get grandfathered via `org_entitlement_overrides` (V270 precedent). **DEFERRED 2026-07-18: spec kept, build pulled from this wave by user decision.** |
 | D7 | **Discipline module is Pro** (`discipline.enforced`, pro + pro_plus). Cards themselves are already Pro (v6 "cards-are-Pro"), so a free tier could never feed the rules anyway; one gate, no half-free manual ledger. |
 | D8 | **Enforcement is soft everywhere.** Suspensions flag and warn (badges, pad warnings, public list) — they never hard-block scoring, because there is no per-fixture lineup entity to block against. Revisit after the clubs & teams redesign lands squad selection. |
 | D9 | Migration numbers V291–V294 are **drafts**: renumber to the next free V at build time (V286→V290 renumber lesson — a lower-numbered file that seeds the same key must run first). Each spec's DDL ships in its own migration so specs can ship as independent PRs in any order — except SPEC-3's report→suspension bridge, which soft-depends on SPEC-1's table. |
@@ -74,16 +74,16 @@ wave — mind its e2e concurrency gotcha).
 ## Cross-spec dependencies
 
 ```
-SPEC-4  ─ independent (pure entitlement matrix + checks)
 SPEC-1  ─ independent
 SPEC-2  ─ independent
 SPEC-3  ─ standalone EXCEPT the incident→suspension bridge, which activates
           only if discipline tables exist (guard: feature check + table probe
           at usecase level; ships dark if SPEC-1 not merged yet)
+SPEC-4  ─ DEFERRED (independent when revived; pure entitlement matrix + checks)
 ```
 
-Suggested build order: **4 → 1 → 3 → 2** (smallest/highest-leverage first;
-3 lands after 1 so the bridge ships live, 2 is the biggest UI surface).
+Build order: **1 → 3 → 2** (3 lands after 1 so the report→suspension bridge
+ships live; 2 is the biggest UI surface and closes the wave).
 
 ## Global constraints (apply to every spec — same rails as v15)
 
@@ -116,8 +116,8 @@ Suggested build order: **4 → 1 → 3 → 2** (smallest/highest-leverage first;
 
 ## Deploy notes
 
-- Four migrations (renumbered at build) → stg then prod, direct-connection
-  Flyway per the standing stg constraint.
-- SPEC-4 flips pricing-page copy ("Up to 100 active teams" on Pro) — marketing
-  dictionaries in the same PR, 4 locales.
+- Three migrations this wave — SPEC-1/2/3 only, renumbered at build → stg
+  then prod, direct-connection Flyway per the standing stg constraint.
+  (SPEC-4's V294 ships only if/when that spec is revived.)
+- No pricing-page changes this wave (that was SPEC-4, deferred).
 - No webhook, Connect, or env changes anywhere in the wave.
