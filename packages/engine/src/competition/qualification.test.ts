@@ -131,3 +131,74 @@ describe("qualification invariants (spec 05 §6)", () => {
     expect(resolveQualification(spec, tables)).toEqual(resolveQualification(spec, tables));
   });
 });
+
+describe("CombinedQualification (PROMPT-59 §1)", () => {
+  // 12 pools, 4 ranked rows each — the canonical winners+runners+best-thirds
+  // shape (nothing football-specific: same shape serves any pool→bracket sport).
+  const POOLS = "ABCDEFGHIJKL".split("");
+  const tables = {
+    pools: POOLS.map((p, i) => ({
+      pool: p,
+      // points descend by rank; third-place points vary by pool index so the
+      // best-thirds ordering is deterministic and observable.
+      rows: [
+        row(`${p}1`, 1, 9, { gf: 9, ga: 1, gd: 8 }),
+        row(`${p}2`, 2, 6, { gf: 6, ga: 4, gd: 2 }),
+        row(`${p}3`, 3, 3 + (i % 4), { gf: 3 + (i % 4), ga: 5, gd: (i % 4) - 2 }),
+        row(`${p}4`, 4, 0, { gf: 1, ga: 9, gd: -8 }),
+      ],
+    })),
+  };
+  const spec = {
+    combine: [
+      { take: POOLS.map((p) => ({ pool: p, rank: 1 })) },
+      { take: POOLS.map((p) => ({ pool: p, rank: 2 })) },
+      { bestOfRank: { rank: 3, count: 8 } },
+    ],
+  };
+
+  it("sizes to the sum of its children", () => {
+    expect(qualificationSize(spec)).toBe(32);
+  });
+
+  it("resolves winners, then runners-up, then the best thirds — child logic reused", () => {
+    const seeds = resolveQualification(spec, tables);
+    expect(seeds).toHaveLength(32);
+    expect(seeds.slice(0, 12)).toEqual(POOLS.map((p) => `${p}1`));
+    expect(seeds.slice(12, 24)).toEqual(POOLS.map((p) => `${p}2`));
+    // The tail equals what the bestOfRank child resolves on its own.
+    expect(seeds.slice(24)).toEqual(
+      resolveQualification({ bestOfRank: { rank: 3, count: 8 } }, tables),
+    );
+  });
+
+  it("rejects an entrant qualifying through two tiers", () => {
+    const dupe = {
+      combine: [{ take: [{ pool: "A", rank: 1 }] }, { take: [{ pool: "A", rank: 1 }] }],
+    };
+    expect(() => resolveQualification(dupe, tables)).toThrow(/more than one/);
+  });
+
+  it("is deterministic — identical tables yield an identical combined list", () => {
+    expect(resolveQualification(spec, tables)).toEqual(resolveQualification(spec, tables));
+  });
+
+  it("works for a non-football-shaped field (8 pools of 3, crossover take)", () => {
+    const eight = {
+      pools: "12345678".split("").map((k) => ({
+        pool: `P${k}`,
+        rows: [row(`P${k}a`, 1, 6), row(`P${k}b`, 2, 3), row(`P${k}c`, 3, 1)],
+      })),
+    };
+    const crossover = {
+      combine: [
+        { take: eight.pools.map((p) => ({ pool: p.pool, rank: 1 })) },
+        { bestOfRank: { rank: 2, count: 4 } },
+      ],
+    };
+    expect(qualificationSize(crossover)).toBe(12);
+    const seeds = resolveQualification(crossover, eight);
+    expect(seeds).toHaveLength(12);
+    expect(new Set(seeds).size).toBe(12);
+  });
+});

@@ -36,7 +36,15 @@ export interface BestOfRank {
     normaliseUnequalPools?: boolean;
   };
 }
-export type QualificationSpec = TakePicks | TopN | BestOfRank;
+// PROMPT-59 §1 — several tiers concatenated into one ordered seed list
+// ("all winners + all runners-up + the best N thirds"). Each child resolves
+// against the same StageTables with its own logic (BestOfRank keeps
+// normaliseUnequalPools), results concatenated in declaration order.
+export interface CombinedQualification {
+  from?: string;
+  combine: QualificationSpec[];
+}
+export type QualificationSpec = TakePicks | TopN | BestOfRank | CombinedQualification;
 
 // A completed stage's ranked tables. `results` (pool fixtures) is needed only
 // for best-of-rank normalisation.
@@ -56,10 +64,14 @@ function isTake(spec: QualificationSpec): spec is TakePicks {
 function isTopN(spec: QualificationSpec): spec is TopN {
   return "topN" in spec;
 }
+function isCombine(spec: QualificationSpec): spec is CombinedQualification {
+  return "combine" in spec;
+}
 
 // The seed count a spec must produce — the next stage's generator input size
 // (spec 05 §6 invariant: qualification output size matches next stage input).
 export function qualificationSize(spec: QualificationSpec): number {
+  if (isCombine(spec)) return spec.combine.reduce((n, child) => n + qualificationSize(child), 0);
   if (isTake(spec)) return spec.take.length;
   if (isTopN(spec)) return spec.topN;
   return spec.bestOfRank.count;
@@ -128,6 +140,22 @@ function orderCandidates(rows: StandingsRow[]): StandingsRow[] {
 // Resolve a qualification spec against a completed stage's tables → ordered
 // seed list (spec 05 §3).
 export function resolveQualification(spec: QualificationSpec, tables: StageTables): EntrantId[] {
+  if (isCombine(spec)) {
+    const seeds = spec.combine.flatMap((child) => resolveQualification(child, tables));
+    const seen = new Set<EntrantId>();
+    for (const id of seeds) {
+      if (seen.has(id)) {
+        throw new EngineError(
+          "QUALIFICATION_INVALID",
+          `entrant ${id} qualifies through more than one combined tier`,
+          { entrantId: id },
+        );
+      }
+      seen.add(id);
+    }
+    return seeds;
+  }
+
   if (isTake(spec)) {
     return spec.take.map((pick) => rowAtRank(poolByName(tables, pick.pool), pick.rank).entrantId);
   }
