@@ -23,6 +23,7 @@ import {
 import { syncConnectAccount } from "@/server/usecases/stripe-connect";
 import {
   handleSponsorChargeRefunded,
+  handleSponsorDispute,
   handleSponsorPaymentFailed,
   handleSponsorPaymentSucceeded,
 } from "@/server/usecases/sponsors";
@@ -223,11 +224,15 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       await syncConnectAccount(event.data.object as Stripe.Account);
       break;
     case "charge.dispute.created":
-      // Entry-fee chargeback (spec issue #5): flag + alert the organiser.
+      // Entry-fee AND sponsor-order chargebacks (spec issue #5, P0-2): flag +
+      // alert the organiser. Each handler no-ops on the other's intents, same
+      // pattern as charge.refunded.
       await handleRegistrationDispute(event.data.object as Stripe.Dispute, "created");
+      await handleSponsorDispute(event.data.object as Stripe.Dispute, "created");
       break;
     case "charge.dispute.closed":
       await handleRegistrationDispute(event.data.object as Stripe.Dispute, "closed");
+      await handleSponsorDispute(event.data.object as Stripe.Dispute, "closed");
       break;
     case "charge.refunded":
       // Refunds made in the Stripe dashboard still show on the console.

@@ -21,6 +21,14 @@ export { claimInviteTemplate, type ClaimInviteArgs } from "./claim-invite";
 export { sponsorInvoiceTemplate, type SponsorInvoiceArgs } from "./sponsor-invoice";
 export { sponsorReceiptTemplate, type SponsorReceiptArgs } from "./sponsor-receipt";
 export { sponsorRefundTemplate, type SponsorRefundArgs } from "./sponsor-refund";
+export {
+  sponsorDisputeAlertTemplate,
+  type SponsorDisputeAlertArgs,
+} from "./sponsor-dispute-alert";
+export {
+  sponsorDisputeLostTemplate,
+  type SponsorDisputeLostArgs,
+} from "./sponsor-dispute-lost";
 export { passRevokedTemplate, type PassRevokedArgs } from "./pass-revoked";
 export { officialInviteTemplate, type OfficialInviteArgs } from "./official-invite";
 export { officialAssignedTemplate, type OfficialAssignedArgs } from "./official-assigned";

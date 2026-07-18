@@ -23,6 +23,8 @@ import {
   sponsorInvoiceTemplate,
   sponsorReceiptTemplate,
   sponsorRefundTemplate,
+  sponsorDisputeAlertTemplate,
+  sponsorDisputeLostTemplate,
   verificationTemplate,
 } from "../email-templates";
 import { standingsTable } from "../email-templates/compose";
@@ -168,6 +170,35 @@ function makeBuilders(
         dict,
       ),
       "sponsorRefund.subject",
+    ],
+    [
+      "sponsor-dispute-alert",
+      sponsorDisputeAlertTemplate(
+        {
+          orgName: "Riverside Racquets",
+          packageName: "Gold — Spring Open",
+          sponsorName: "Court & Co <Ltd>",
+          amountCents: 25_000,
+          currency: "gbp",
+        },
+        dict,
+      ),
+      "sponsorDisputeAlert.subject",
+    ],
+    [
+      "sponsor-dispute-lost",
+      sponsorDisputeLostTemplate(
+        {
+          orgName: "Riverside Racquets",
+          packageName: "Gold — Spring Open",
+          sponsorName: "Court & Co <Ltd>",
+          amountCents: 25_000,
+          currency: "gbp",
+          recoveredCents: 23_750,
+        },
+        dict,
+      ),
+      "sponsorDisputeLost.subject",
     ],
     [
       "pass-revoked",

@@ -33,6 +33,10 @@ import {
   type SponsorReceiptArgs,
   sponsorRefundTemplate,
   type SponsorRefundArgs,
+  sponsorDisputeAlertTemplate,
+  type SponsorDisputeAlertArgs,
+  sponsorDisputeLostTemplate,
+  type SponsorDisputeLostArgs,
   passRevokedTemplate,
   type PassRevokedArgs,
   officialInviteTemplate,
@@ -394,6 +398,35 @@ export async function sendSponsorRefundEmail(opts: SponsorRefundEmail): Promise<
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...sponsorRefundTemplate(args, dict) });
+}
+
+export interface SponsorDisputeAlertEmail extends SponsorDisputeAlertArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Organiser alert: a sponsorship package payment was disputed (P0-2). */
+export async function sendSponsorDisputeAlertEmail(
+  opts: SponsorDisputeAlertEmail,
+): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorDisputeAlertTemplate(args, dict) });
+}
+
+export interface SponsorDisputeLostEmail extends SponsorDisputeLostArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Organiser outcome mail: a sponsorship chargeback closed lost — states the
+ *  write-off and the balance recovery (P0-2). */
+export async function sendSponsorDisputeLostEmail(
+  opts: SponsorDisputeLostEmail,
+): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorDisputeLostTemplate(args, dict) });
 }
 
 export interface PassRevokedEmail extends PassRevokedArgs {
