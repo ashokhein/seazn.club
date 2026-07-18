@@ -66,7 +66,7 @@ test.describe.serial("pro lifecycle", () => {
     // the fields) — pin it to the ad-hoc "New entrant" mode first.
     const modeToggle = page.getByRole("button", { name: "New entrant", exact: true });
     await modeToggle.click({ timeout: 3_000 }).catch(() => undefined);
-    await page.getByPlaceholder("Riverside CC").fill(PLAYERS[0]!);
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill(PLAYERS[0]!);
     await page.getByRole("button", { name: "Add entrant", exact: true }).click();
     await expect(page.getByRole("cell", { name: PLAYERS[0]! })).toBeVisible({ timeout: 20_000 });
 

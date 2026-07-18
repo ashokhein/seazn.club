@@ -36,12 +36,12 @@ test.describe.serial("org management", () => {
     secondOrgName = `Second Org ${TAG}`;
 
     await page.goto("/settings");
-    await page.getByRole("button", { name: "Switch organization" }).click();
-    await page.getByRole("button", { name: "+ New organization" }).click();
+    await page.getByRole("button", { name: /switch organi[sz]ation/i }).click();
+    await page.getByRole("button", { name: /new organi[sz]ation/i }).click();
     await page.waitForURL(/\/orgs\/new/, { timeout: 20_000 });
 
     await page.getByPlaceholder("My Sports Club").fill(secondOrgName);
-    await page.getByRole("button", { name: "Create organization" }).click();
+    await page.getByRole("button", { name: /create organi[sz]ation/i }).click();
 
     // Creation activates the new org (POST /api/orgs calls setActiveOrgId).
     await expect
@@ -55,7 +55,7 @@ test.describe.serial("org management", () => {
 
     // Over to the second org…
     await page.goto("/settings");
-    await page.getByRole("button", { name: "Switch organization" }).click();
+    await page.getByRole("button", { name: /switch organi[sz]ation/i }).click();
     await page.getByRole("button", { name: new RegExp(secondOrgName) }).click();
     await expect
       .poll(async () => (await activeOrg(page)).name, { timeout: 20_000 })
@@ -68,7 +68,7 @@ test.describe.serial("org management", () => {
     });
 
     // …and back to the original.
-    await page.getByRole("button", { name: "Switch organization" }).click();
+    await page.getByRole("button", { name: /switch organi[sz]ation/i }).click();
     await page.getByRole("button", { name: new RegExp(original.name) }).click();
     await expect
       .poll(async () => (await activeOrg(page)).id, { timeout: 20_000 })

@@ -17,7 +17,7 @@ test.describe("navigation shell", () => {
     // Nav collapses People + Clubs into a single Directory item.
     await expect(page.getByRole("link", { name: "Directory" })).toBeVisible();
     // Clubs tab still exposes the Add club affordance.
-    await page.getByRole("link", { name: "clubs", exact: true }).click();
+    await page.getByRole("link", { name: "Clubs", exact: true }).click();
     await expect(page.getByRole("button", { name: "Add club" })).toBeVisible();
   });
 

@@ -166,7 +166,7 @@ test.describe.serial("community lifecycle", () => {
 
     // …and the same attempt through the panel renders the UpgradeGate.
     await page.goto(`/divisions/${crowdedDivisionId}?tab=entrants`);
-    await page.getByPlaceholder("Riverside CC").fill("Gate Trigger");
+    await page.getByRole("textbox", { name: "Name", exact: true }).fill("Gate Trigger");
     await page.getByRole("button", { name: "Add entrant", exact: true }).click();
     await expect(page.locator('[data-feature="entrants.per_division.max"]')).toBeVisible({
       timeout: 20_000,
