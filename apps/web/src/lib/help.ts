@@ -48,6 +48,7 @@ export const HELP_ARTICLE_SLUGS = [
   "divisions/groups-to-knockout",
   "divisions/bracket-view",
   "divisions/add-a-match",
+  "divisions/discipline",
   "sharing/visibility",
   "sharing/dashboard",
   "sharing/slideshow",
