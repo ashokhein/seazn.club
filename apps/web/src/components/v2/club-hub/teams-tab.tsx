@@ -329,6 +329,29 @@ export function pinFilesToClub(fileNames: string[], clubId: string): Record<stri
   return out;
 }
 
+/**
+ * Coerce a per-file mapping into its final posted form.
+ *
+ * When `pinClubId` is set the hub has exactly one club, so every file MUST
+ * resolve to it. A `""` value (or a missing entry) would be treated as falsy by
+ * the server (`const manual = mapping[filename]`) and fall back to stem-matching
+ * across ALL org clubs — silently cresting or overwriting a fold-matching
+ * sibling. This backstops the UI: no dropped file can post an empty mapping.
+ * With no `pinClubId` the org-wide mapping is returned untouched.
+ */
+export function finalizeMapping(
+  mapping: Record<string, string>,
+  fileNames: string[],
+  pinClubId?: string,
+): Record<string, string> {
+  if (!pinClubId) return mapping;
+  const out: Record<string, string> = { ...mapping };
+  for (const name of fileNames) {
+    if (!out[name]) out[name] = pinClubId;
+  }
+  return out;
+}
+
 // Bulk logo grid (Jul3/01 §5): drop N files, match by filename stem, re-map
 // per file, optionally assign the rest to unlogo'd clubs in order. In the club
 // hub (single known club) `pinClubId` pre-maps every file to that club and hides
@@ -386,7 +409,12 @@ function LogoGrid({
     try {
       const form = new FormData();
       for (const f of files) form.append("files", f);
-      form.append("mapping", JSON.stringify(mapping));
+      const finalMapping = finalizeMapping(
+        mapping,
+        files.map((f) => f.name),
+        pinClubId,
+      );
+      form.append("mapping", JSON.stringify(finalMapping));
       form.append("assign_remaining", String(assignRemaining));
       const res = await fetch("/api/v1/clubs/logos", { method: "POST", body: form });
       const payload = (await res.json()) as {
@@ -449,19 +477,28 @@ function LogoGrid({
                   className="flex items-center justify-between gap-2 rounded-md border border-slate-200 px-2 py-1.5 text-sm"
                 >
                   <span className="truncate font-mono text-xs text-slate-500">{f.name}</span>
-                  <select
-                    className="input w-36"
-                    aria-label={msg("clubs.logo.forAria", { name: f.name })}
-                    value={mapping[f.name] ?? matched?.id ?? ""}
-                    onChange={(e) => setMapping((m) => ({ ...m, [f.name]: e.target.value }))}
-                  >
-                    <option value="">{msg("clubs.logo.unmatched")}</option>
-                    {clubs.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
+                  {pinClubId ? (
+                    // Single-club hub: nothing to choose — every file pins to the
+                    // hub club. Show its name statically so no UI path can select
+                    // "Unmatched" and let the server stem-match onto a sibling.
+                    <span className="w-36 truncate text-right text-xs font-medium text-slate-700">
+                      {clubs.find((c) => c.id === pinClubId)?.name ?? ""}
+                    </span>
+                  ) : (
+                    <select
+                      className="input w-36"
+                      aria-label={msg("clubs.logo.forAria", { name: f.name })}
+                      value={mapping[f.name] ?? matched?.id ?? ""}
+                      onChange={(e) => setMapping((m) => ({ ...m, [f.name]: e.target.value }))}
+                    >
+                      <option value="">{msg("clubs.logo.unmatched")}</option>
+                      {clubs.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </li>
               );
             })}
