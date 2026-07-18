@@ -4,14 +4,14 @@ description: Read, score or manage — scoped keys for integrations, with an opt
 order: 1
 ---
 
-API keys let your own software talk to seazn.club — pull standings into your website, push live scores from a scoreboard system, automate entries. **Read and score keys need Pro; a manage (write) key needs Pro Plus.**
+API keys let your own software talk to seazn.club — pull standings into your website, push live scores from a scoreboard system, automate entries. **A read-only key needs Pro; any key that can write — score or manage — needs Pro Plus.**
 
 ## Scopes
 
 Every key has one scope; pick the smallest that does the job:
 
 - **Read** — fetch competitions, fixtures, standings, registrations. Can't change anything. **Pro.**
-- **Score** — read, plus push live scores and start divisions. For scoreboard integrations. **Pro.**
+- **Score** — read, plus push live scores and start divisions. For scoreboard integrations. **Pro Plus.**
 - **Manage** — the full write surface: create, edit and delete competitions, divisions, entrants and more. Treat it like a password. **Pro Plus.**
 
 You can also **limit a key to one competition** — hand it to a vendor and it physically can't touch anything else.

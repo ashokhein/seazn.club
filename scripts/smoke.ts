@@ -1246,9 +1246,10 @@ async function grantPass(orgId: string, competitionId: string): Promise<void> {
 }
 
 /** pro-plus-tier (Task 11, spec §1): community's per-fixture-official cap
- *  (1) and save-point cap (1) 402, api.write (manage-scope keys) is re-armed
- *  above Pro — Pro's read/score keys stay free but a manage-scope key still
- *  needs Pro Plus — and Pro Plus lifts both quotas plus the key scope. Runs
+ *  (1) and save-point cap (1) 402, api.write (any write-capable key scope —
+ *  score or manage) is re-armed above Pro — Pro's read-only keys stay free
+ *  but a score- or manage-scope key still needs Pro Plus — and Pro Plus
+ *  lifts both quotas plus both key scopes. Runs
  *  on its own fresh community owner (never touches org/org2 from main()),
  *  but still restores the org's own plan at the end (shared-DB poison trap:
  *  leave a flipped org as found in case a later suite lands above this one). */
@@ -1322,9 +1323,18 @@ async function proPlusSuite(): Promise<void> {
       (cp2.json.error as { feature_key?: string } | undefined)?.feature_key === "schedule.checkpoints.max",
   );
 
-  // (b) Pro: read/score keys stay free (api.access), but a manage-scope key
-  // still needs Pro Plus — V286 re-arms the above-Pro rung (api.write).
+  // (b) Pro: read-only keys stay free (api.access), but a score- or
+  // manage-scope key still needs Pro Plus — V286 re-arms the above-Pro rung
+  // (api.write).
   await setPlan(orgId, "pro");
+  const proScoreKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
+    name: "plus score", scopes: ["score"],
+  });
+  check(
+    "pp: pro 402s a score-scope key (api.write is Pro Plus only)",
+    proScoreKey.status === 402 &&
+      (proScoreKey.json.error as { feature_key?: string } | undefined)?.feature_key === "api.write",
+  );
   const proManageKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
     name: "plus manage", scopes: ["manage"],
   });
@@ -1334,7 +1344,7 @@ async function proPlusSuite(): Promise<void> {
       (proManageKey.json.error as { feature_key?: string } | undefined)?.feature_key === "api.write",
   );
 
-  // (c) Pro Plus: both quota gates lift and the manage-scope key mints.
+  // (c) Pro Plus: both quota gates lift and both write-capable key scopes mint.
   await setPlan(orgId, "pro_plus");
   const officialsOk = await setTwoOfficials();
   check("pp: pro_plus lifts officials.per_fixture.max", officialsOk.status === 200);
