@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
+import { requireFeature, withinLimit, PaymentRequiredError } from "@/lib/entitlements";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { publicStorageUrl } from "@/lib/supabase-storage";
 import { resolveEntrantBadge } from "@/lib/entrant-badge";
@@ -65,19 +65,23 @@ export interface SquadMember {
   roles: string[];
 }
 
-/** Create a team under a club. Pro (clubs.hierarchy), mirroring club create. */
+/** Create a team, optionally under a club (spec §5, ladder step 2/3). */
 export async function createTeam(
   auth: AuthCtx,
-  clubId: string,
-  input: { name: string; short_name?: string | null },
+  input: { name: string; short_name?: string | null; club_id?: string | null },
 ): Promise<TeamRow> {
   await requireFeature(auth.orgId, "clubs.hierarchy");
   return withTenant(auth.orgId, async (tx) => {
-    const [club] = await tx`select 1 from clubs where id = ${clubId}`;
-    if (!club) throw new HttpError(404, "club not found");
+    if (input.club_id) {
+      const [club] = await tx`select 1 from clubs where id = ${input.club_id}`;
+      if (!club) throw new HttpError(404, "club not found");
+    }
+    const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from teams`;
+    const cap = await withinLimit(auth.orgId, "teams.max", n + 1);
+    if (!cap.ok) throw new PaymentRequiredError("teams.max");
     const [team] = await tx<TeamRow[]>`
       insert into teams (org_id, name, short_name, club_id)
-      values (${auth.orgId}, ${input.name}, ${input.short_name ?? null}, ${clubId})
+      values (${auth.orgId}, ${input.name}, ${input.short_name ?? null}, ${input.club_id ?? null})
       returning id, name, short_name, club_id`;
     return team!;
   });
@@ -187,6 +191,8 @@ export async function setTeamSquad(
   await withTenant(auth.orgId, async (tx) => {
     const [team] = await tx`select 1 from teams where id = ${teamId}`;
     if (!team) throw new HttpError(404, "team not found");
+    const cap = await withinLimit(auth.orgId, "teams.squad_max", members.length);
+    if (!cap.ok) throw new PaymentRequiredError("teams.squad_max");
     const ids = [...new Set(members.map((m) => m.person_id))];
     if (ids.length > 0) {
       const visible = await tx<{ id: string }[]>`select id from persons where id in ${tx(ids)}`;

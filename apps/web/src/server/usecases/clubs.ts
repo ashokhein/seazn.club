@@ -6,7 +6,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
+import { requireFeature, withinLimit, PaymentRequiredError } from "@/lib/entitlements";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { fold } from "@seazn/engine/import";
@@ -37,6 +37,10 @@ export interface CreateClubInput {
 
 export async function createClub(auth: AuthCtx, input: CreateClubInput): Promise<ClubRow> {
   await requireFeature(auth.orgId, "clubs.hierarchy");
+  const [{ n }] = await withTenant(auth.orgId, (tx) =>
+    tx<{ n: number }[]>`select count(*)::int as n from clubs`);
+  const cap = await withinLimit(auth.orgId, "clubs.max", n + 1);
+  if (!cap.ok) throw new PaymentRequiredError("clubs.max");
   return withTenant(auth.orgId, async (tx) => {
     try {
       const [row] = await tx<ClubRow[]>`

@@ -11,6 +11,6 @@ export async function POST(req: Request, { params }: Ctx) {
     const { id } = await params;
     const body = await parseBody(req, CreateTeam);
     const auth = await requireResourceAuth(req, "club", id, "write");
-    return reply(201, await createTeam(auth, id, body));
+    return reply(201, await createTeam(auth, { ...body, club_id: id }));
   });
 }
