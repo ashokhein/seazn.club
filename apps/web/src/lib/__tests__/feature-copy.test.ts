@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { featurePlan, featureReason } from "@/lib/feature-copy";
 
-describe("feature-copy V286", () => {
+describe("feature-copy V290", () => {
   it("maps Plus features to pro_plus", () => {
     for (const k of ["api.write", "scorers.max", "scheduling.ai", "officials.auto", "domains.custom", "support.priority"]) {
       expect(featurePlan(k)).toBe("pro_plus");

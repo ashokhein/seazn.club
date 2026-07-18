@@ -69,7 +69,7 @@ export function featureReason(featureKey: string): string {
 }
 
 // Cheapest plan that unlocks each feature (mirrors plan_entitlements,
-// V112 + V240 + V286). Everything not listed unlocks on Pro — only the
+// V112 + V240 + V290). Everything not listed unlocks on Pro — only the
 // above-Pro (Pro Plus) exceptions need rows.
 const PLUS_FEATURES = new Set([
   "api.write",

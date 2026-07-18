@@ -25,7 +25,7 @@ async function seedOrg(): Promise<Seed> {
   // Community org with api.access + api.write overrides — exercises the
   // override path and puts the key on the 60 rpm (free) budget. This suite
   // is about scope authorization at the auth door, not entitlement gating
-  // (that's covered by the api.write matrix row, V286), so manage/write
+  // (that's covered by the api.write matrix row, V290), so manage/write
   // scopes are unblocked here via override.
   await sql`
     insert into subscriptions (org_id, plan_key, status)

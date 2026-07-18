@@ -1329,7 +1329,7 @@ async function proPlusSuite(): Promise<void> {
   );
 
   // (b) Pro: read-only keys stay free (api.access), but a score- or
-  // manage-scope key still needs Pro Plus — V286 re-arms the above-Pro rung
+  // manage-scope key still needs Pro Plus — V290 re-arms the above-Pro rung
   // (api.write).
   await setPlan(orgId, "pro");
   const proScoreKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {

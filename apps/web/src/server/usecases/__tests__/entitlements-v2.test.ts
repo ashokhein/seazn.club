@@ -126,7 +126,7 @@ const MATRIX: { feature: string; plan: Plan; allowed: boolean }[] = [
   { feature: "cricket.dls",                   plan: "pro",       allowed: true },
   { feature: "api.access",                    plan: "community", allowed: false },
   { feature: "api.access",                    plan: "pro",       allowed: true },
-  // V286 re-arms api.write above Pro: score/manage keys need Pro Plus (a
+  // V290 re-arms api.write above Pro: score/manage keys need Pro Plus (a
   // community org's write-key attempt still 402s on api.access first, above).
   { feature: "api.write",                     plan: "pro",       allowed: false },
   { feature: "api.write",                     plan: "pro_plus",  allowed: true },

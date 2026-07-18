@@ -1,5 +1,5 @@
 // Domain grouping for entitlement keys — shared by /pricing and
-// /admin/entitlements so the two surfaces tell the same story (V286).
+// /admin/entitlements so the two surfaces tell the same story (V290).
 // Keys NOT listed here are deliberately unadvertised (vestigial D9 keys +
 // domains.custom until Spec 2 ships) — /admin still shows them under "other".
 export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [

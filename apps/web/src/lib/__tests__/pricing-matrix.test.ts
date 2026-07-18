@@ -11,7 +11,7 @@ const cell = (int: number | null = null, bool: boolean | null = null) => ({
   bool_value: bool,
 });
 
-// Mirrors the real V286 local-DB values for the rows under test.
+// Mirrors the real V290 local-DB values for the rows under test.
 const DATA: MatrixData = {
   "competitions.max_active": {
     community: cell(1),
@@ -32,7 +32,7 @@ const DATA: MatrixData = {
   },
   "schedule.checkpoints.max": {
     // No event_pass row — pass falls through to community, exactly like the
-    // resolver does (db/migration/deltas/V286 comment).
+    // resolver does (db/migration/deltas/V290 comment).
     community: cell(1),
     pro: cell(5),
     pro_plus: cell(null),

@@ -1,9 +1,13 @@
 -- ============================================================
--- V286 — Pro Plus plan (spec 2026-07-18-pro-plus-tier §1, D1–D6).
+-- V290 — Pro Plus plan (spec 2026-07-18-pro-plus-tier §1, D1–D6).
 -- New self-serve tier above Pro. Retires the dark v2 'business' plan.
 -- Adds quota keys for officials-per-fixture and schedule save points.
 -- scheduling.ai + officials.auto + api.write move up to Pro Plus
 -- (approved hard move, no grandfather — pre-launch). Idempotent.
+-- ORDERING: numbered AFTER V288 (v13 fidelity) on purpose — V288 still
+-- seeds a 'business' row for scoring.audit_export, so the retirement
+-- below must run last; this file also grants that v13 key to pro_plus.
+-- (Was drafted as V286; renumbered when v13 landed first.)
 -- ============================================================
 
 insert into plans (key, name, is_public) values ('pro_plus', 'Pro Plus', true)
@@ -21,7 +25,8 @@ select 'pro_plus', f, true, null from unnest(array[
   'officials.auto','officials.roles_multi','public_pages','realtime',
   'registration.enabled','registration.paid','schedule.versioning',
   'scheduling.ai','scheduling.board','scheduling.constraints',
-  'scheduling.multi_division','scoring.ball_by_ball','scoring.device_links',
+  'scheduling.multi_division','scoring.audit_export','scoring.ball_by_ball',
+  'scoring.device_links',
   'scoring.match_timeline','scoring.rally_by_rally','sponsors.monetize',
   'sponsors.tiers','standings.carry_over','standings.custom_points',
   'stats.club_championship','stats.player','support.priority',

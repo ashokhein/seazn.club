@@ -42,7 +42,7 @@ export async function createApiKey(
   await requireFeature(auth.orgId, "api.access"); // 402 for non-Pro orgs
   // v3/08 §2: scopes are read | score | manage (legacy "write" ⇒ manage).
   const scopes = [...new Set(input.scopes.map((s) => (s === "write" ? "manage" : s)))];
-  // V286 re-arms the above-Pro rung: score/manage scopes need api.write
+  // V290 re-arms the above-Pro rung: score/manage scopes need api.write
   // (Pro Plus). Read-only keys stay at api.access (Pro).
   if (scopes.some((s) => s !== "read")) await requireFeature(auth.orgId, "api.write");
   const pin = input.competition_id ?? null;

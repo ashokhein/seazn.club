@@ -19,7 +19,7 @@ test("tabs mount: board exports + each panel", async ({ page, request }) => {
 });
 
 test("officials (PROMPT-22): propose → apply an auto-assignment", async ({ page, request }) => {
-  // V286: officials.auto is Pro Plus. Run this flow in a FRESH org flipped to
+  // V290: officials.auto is Pro Plus. Run this flow in a FRESH org flipped to
   // pro_plus by id — a fresh org has no cached entitlements, and flipping the
   // shared setup org would race the 5-min ent cache primed by sibling tests.
   const org = await apiJson<{ id: string }>(request, "/api/orgs", "POST", {

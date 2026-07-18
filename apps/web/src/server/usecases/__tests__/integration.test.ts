@@ -341,7 +341,7 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
       PaymentRequiredError,
     );
     // Pro-style override flips the read-key gate; Pro Plus-style override
-    // (V286) flips the write-key gate for the manage scope below.
+    // (V290) flips the write-key gate for the manage scope below.
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
       values (${auth.orgId}, 'api.access', true)

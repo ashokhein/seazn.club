@@ -103,7 +103,7 @@ afterAll(async () => {
 
 describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
   it("auto-proposes, applies, caches, and ledgers the assignment", async () => {
-    // officials.auto is a Pro Plus feature since V286 (hard move, no grandfather)
+    // officials.auto is a Pro Plus feature since V290 (hard move, no grandfather)
     const { auth } = await seedOrg("pro_plus");
     const { division, fixtures } = await seedScheduledDivision(auth);
     await createOfficial(auth, { display_name: "Ref One", role_keys: ["referee"] });

@@ -301,7 +301,7 @@ export async function createCheckpoint(
 ): Promise<CheckpointRow> {
   return withTenant(auth.orgId, async (tx) => {
     const meta = await divisionMeta(tx, divisionId);
-    // Jul3/03 §7 → V286: save points are a per-plan quota (community 1,
+    // Jul3/03 §7 → V290: save points are a per-plan quota (community 1,
     // pro 5, pro_plus unlimited). schedule.versioning still gates scope locks.
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from division_checkpoints where division_id = ${divisionId}`;

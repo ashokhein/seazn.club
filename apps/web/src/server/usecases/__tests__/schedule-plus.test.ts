@@ -116,7 +116,7 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
   });
 
   it("AI constraints resolve names to ids; unparseable output is refused; Community 402", async () => {
-    // V286: scheduling.ai moved Pro → Pro Plus (spec D4).
+    // V290: scheduling.ai moved Pro → Pro Plus (spec D4).
     const { auth } = await seedOrg("pro_plus");
     const { division } = await seedDivision(auth);
     const out = await aiConstraintsForDivision(

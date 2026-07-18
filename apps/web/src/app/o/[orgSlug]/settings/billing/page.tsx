@@ -81,7 +81,7 @@ export default async function BillingPage({
   const planKey = sub?.plan_key ?? "community";
   const status = sub?.status ?? "active";
   const isPro = planKey === "pro";
-  // V286 added pro_plus above pro — isPaid recognises either paid plan (the
+  // V290 added pro_plus above pro — isPaid recognises either paid plan (the
   // upgrade section only shows on Community); isPro/isPlus stay exact-plan.
   const isPaid = planKey === "pro" || planKey === "pro_plus";
   const isPlus = planKey === "pro_plus";

@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { sql } from "@/lib/db";
 
-// V286 (spec §1): the pro_plus column must be COMPLETE — a key present for
+// V290 (spec §1): the pro_plus column must be COMPLETE — a key present for
 // any plan but missing for pro_plus would silently DENY on Pro Plus.
-describe.skipIf(!process.env.DATABASE_URL)("V286 pro_plus matrix", () => {
+describe.skipIf(!process.env.DATABASE_URL)("V290 pro_plus matrix", () => {
   it("has a pro_plus row for every feature key any plan defines", async () => {
     const rows = await sql<{ feature_key: string; plan_key: string }[]>`
       select distinct feature_key, plan_key from plan_entitlements`;

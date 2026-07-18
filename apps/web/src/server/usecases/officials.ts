@@ -455,7 +455,7 @@ export type PatchFixtureOfficialsInput = z.infer<typeof PatchFixtureOfficialsInp
  *  Replaces the fixture's assignments. Manual single-role stays free
  *  **for one official per fixture** on every plan (Jul3/02 §5); a multi-role
  *  set needs officials.roles_multi, and more than one official per fixture
- *  needs officials.per_fixture.max (V286). */
+ *  needs officials.per_fixture.max (V290). */
 export async function patchFixtureOfficials(
   auth: AuthCtx,
   fixtureId: string,
@@ -463,7 +463,7 @@ export async function patchFixtureOfficials(
 ): Promise<{ officials: unknown }> {
   const roleCount = new Set(input.set.map((s) => s.role_key)).size;
   if (roleCount > 1) await requireFeature(auth.orgId, "officials.roles_multi");
-  // V286 (D5): Community includes ONE official per fixture; the quota is the
+  // V290 (D5): Community includes ONE official per fixture; the quota is the
   // requested set (replace semantics), so over-limit sets 402 up front.
   // Existing over-limit assignments are never deleted — freeze principle.
   const officialCount = new Set(input.set.map((s) => s.official_id)).size;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { groupForAdmin, type AdminEntRow } from "../entitlement-admin";
 
-// V286: /admin/entitlements pivots plan_entitlements rows into the same
+// V290: /admin/entitlements pivots plan_entitlements rows into the same
 // domain grouping as /pricing (ENTITLEMENT_DOMAINS), plus a trailing "other"
 // section for keys not in that list (vestigial + spec-2 domains.custom).
 describe("groupForAdmin", () => {
