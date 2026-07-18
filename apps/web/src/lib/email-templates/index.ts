@@ -30,6 +30,10 @@ export {
   type SponsorDisputeLostArgs,
 } from "./sponsor-dispute-lost";
 export { passRevokedTemplate, type PassRevokedArgs } from "./pass-revoked";
+export {
+  staffDisputeAlertTemplate,
+  type StaffDisputeAlertArgs,
+} from "./staff-dispute-alert";
 export { officialInviteTemplate, type OfficialInviteArgs } from "./official-invite";
 export { officialAssignedTemplate, type OfficialAssignedArgs } from "./official-assigned";
 export {

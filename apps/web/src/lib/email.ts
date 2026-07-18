@@ -39,6 +39,8 @@ import {
   type SponsorDisputeLostArgs,
   passRevokedTemplate,
   type PassRevokedArgs,
+  staffDisputeAlertTemplate,
+  type StaffDisputeAlertArgs,
   officialInviteTemplate,
   type OfficialInviteArgs,
   officialAssignedTemplate,
@@ -440,6 +442,23 @@ export async function sendPassRevokedEmail(opts: PassRevokedEmail): Promise<bool
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...passRevokedTemplate(args, dict) });
+}
+
+export interface StaffDisputeAlertEmail extends StaffDisputeAlertArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Internal staff alert (payments-hardening Task 7): a PLATFORM charge — a
+ *  subscription invoice or an Event Pass — was disputed. Transactional: staff
+ *  must always receive it (bypasses the suppression list); the platform locale
+ *  is en. */
+export async function sendStaffDisputeAlertEmail(
+  opts: StaffDisputeAlertEmail,
+): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, transactional: true, ...staffDisputeAlertTemplate(args, dict) });
 }
 
 /** True when Resend is configured. */

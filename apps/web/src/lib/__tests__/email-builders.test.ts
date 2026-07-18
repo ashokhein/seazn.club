@@ -15,6 +15,7 @@ import {
   officialAssignmentChangedTemplate,
   officialInviteTemplate,
   passRevokedTemplate,
+  staffDisputeAlertTemplate,
   passwordResetTemplate,
   paymentReminderTemplate,
   refundIssuedTemplate,
@@ -207,6 +208,22 @@ function makeBuilders(
         dict,
       ),
       "passRevoked.subject",
+    ],
+    [
+      "staff-dispute-alert",
+      staffDisputeAlertTemplate(
+        {
+          kind: "subscription",
+          orgName: "Riverside Racquets",
+          phase: "closed",
+          status: "lost",
+          amountCents: 1900,
+          currency: "gbp",
+          disputeId: "dp_test123",
+        },
+        dict,
+      ),
+      "staffDisputeAlert.subject",
     ],
     [
       "official-invite",

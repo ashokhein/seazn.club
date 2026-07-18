@@ -14,7 +14,8 @@ import {
   syncSubscription,
 } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
-import { sendPassRevokedEmail } from "@/lib/email";
+import { getStripe } from "@/lib/stripe";
+import { sendPassRevokedEmail, sendStaffDisputeAlertEmail } from "@/lib/email";
 import {
   handleRegistrationCheckoutCompleted,
   handleRegistrationDispute,
@@ -187,6 +188,139 @@ async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Prom
   );
 }
 
+// ---------------------------------------------------------------------------
+// Platform-charge disputes (Task 7, P1-4, decisions §6.2)
+// ---------------------------------------------------------------------------
+
+/** The Stripe customer behind a dispute's charge. A charge.dispute.* event
+ *  carries `charge` as an id STRING, so reading the customer needs a charge
+ *  retrieve — done OUTSIDE any tx and guarded on STRIPE_SECRET_KEY (mirroring
+ *  platform-revenue); keyless envs skip it and the subscription branch no-ops.
+ *  An already-expanded charge object (tests) is read inline, no Stripe call. */
+async function disputeCustomerId(dispute: Stripe.Dispute): Promise<string | null> {
+  const charge = dispute.charge;
+  if (typeof charge === "object" && charge) {
+    return typeof charge.customer === "string" ? charge.customer : (charge.customer?.id ?? null);
+  }
+  if (typeof charge === "string" && process.env.STRIPE_SECRET_KEY) {
+    try {
+      const full = await getStripe().charges.retrieve(charge);
+      return typeof full.customer === "string" ? full.customer : (full.customer?.id ?? null);
+    } catch {
+      return null; // a retrieve failure must never block the webhook ACK
+    }
+  }
+  return null;
+}
+
+/** Staff notification for a PLATFORM-charge dispute: an email to
+ *  STAFF_ALERT_EMAIL (skipped when unset) plus a best-effort staff_audit_log
+ *  breadcrumb. staff_audit_log.actor_id is NOT NULL (FK users) and a webhook
+ *  dispute has no staff actor, so the row is attributed to the accountable
+ *  superadmin and skipped when none exists (e.g. tests) — the same actorless
+ *  limitation sponsors.ts documents. Never throws: the flag / downgrade /
+ *  revoke is the source of truth and must not be undone by an alerting hiccup,
+ *  and the email is fire-and-forget. */
+async function notifyStaffDispute(
+  kind: "subscription" | "event_pass",
+  orgId: string,
+  dispute: Stripe.Dispute,
+  phase: "created" | "closed",
+): Promise<void> {
+  const [org] = await sql<{ name: string }[]>`
+    select name from organizations where id = ${orgId}`;
+  const orgName = org?.name ?? "the organisation";
+
+  try {
+    const [actor] = await sql<{ id: string }[]>`
+      select id from users where is_staff = true and staff_role = 'superadmin'
+      order by created_at limit 1`;
+    if (actor) {
+      await sql`
+        insert into staff_audit_log (actor_id, action, target_type, target_id, detail)
+        values (${actor.id}, 'platform_dispute', 'org', ${orgId},
+                ${sql.json({
+                  kind,
+                  phase,
+                  dispute_id: dispute.id,
+                  status: dispute.status,
+                  amount_cents: dispute.amount,
+                } as never)})`;
+    }
+  } catch {
+    /* breadcrumb is best-effort — never block the ACK */
+  }
+
+  const to = process.env.STAFF_ALERT_EMAIL;
+  if (!to) return;
+  void sendStaffDisputeAlertEmail({
+    to,
+    kind,
+    orgName,
+    phase,
+    status: dispute.status,
+    amountCents: dispute.amount,
+    currency: dispute.currency,
+    disputeId: dispute.id,
+  }).catch(() => {});
+}
+
+/**
+ * Disputes on PLATFORM charges (decisions 2026-07-18 §6.2): `created` = flag +
+ * staff alert; `closed lost` on a subscription charge = auto-downgrade the org;
+ * `closed lost` on a pass charge = revoke the pass; `closed won` clears the
+ * flag. Unlike a destination-charge dispute there is NO transfer to reverse —
+ * a platform charge's money left the platform account directly, so recovery is
+ * entitlement truth-up, never recoverDisputedTransfer. Registration + sponsor
+ * handlers already no-op'd (no matching rows) before this runs; it is dispatched
+ * LAST in both dispute cases.
+ *
+ * Replay-safe: the flag / clear / downgrade / revoke writes all converge, and
+ * the staff breadcrumb + email never throw. Stripe calls (charge retrieve) stay
+ * OUTSIDE any sql tx.
+ */
+async function handlePlatformDispute(
+  dispute: Stripe.Dispute,
+  phase: "created" | "closed",
+): Promise<void> {
+  const intent =
+    typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
+
+  // Pass charge? Matched by payment intent — works keyless.
+  if (intent) {
+    const [pass] = await sql<{ org_id: string }[]>`
+      select org_id from competition_passes where stripe_payment_intent = ${intent}`;
+    if (pass) {
+      if (phase === "closed" && dispute.status === "lost") {
+        await sql`delete from competition_passes where stripe_payment_intent = ${intent}`;
+        await invalidateOrgEntitlements(pass.org_id);
+      }
+      await notifyStaffDispute("event_pass", pass.org_id, dispute, phase);
+      return;
+    }
+  }
+
+  // Subscription charge? Matched by the Stripe customer on the charge.
+  const customer = await disputeCustomerId(dispute);
+  if (!customer) return;
+  const [sub] = await sql<{ org_id: string }[]>`
+    select org_id from subscriptions where stripe_customer_id = ${customer}`;
+  if (!sub) return; // not a platform subscription charge
+
+  if (phase === "created") {
+    await sql`update subscriptions set disputed_at = now(), dispute_id = ${dispute.id},
+              updated_at = now() where org_id = ${sub.org_id}`;
+  } else if (dispute.status === "won") {
+    await sql`update subscriptions set disputed_at = null, updated_at = now()
+              where org_id = ${sub.org_id}`;
+  } else if (dispute.status === "lost") {
+    await sql`update subscriptions set plan_key = 'community', status = 'canceled',
+              updated_at = now() where org_id = ${sub.org_id}`;
+    await invalidateOrgEntitlements(sub.org_id);
+  }
+  await notifyStaffDispute("subscription", sub.org_id, dispute, phase);
+}
+
 /** The dispatch table (formerly inline in the webhook route). Unhandled
  *  types are a silent no-op — the caller still stamps processed_at. */
 export async function processStripeEvent(event: Stripe.Event): Promise<void> {
@@ -224,15 +358,19 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       await syncConnectAccount(event.data.object as Stripe.Account);
       break;
     case "charge.dispute.created":
-      // Entry-fee AND sponsor-order chargebacks (spec issue #5, P0-2): flag +
-      // alert the organiser. Each handler no-ops on the other's intents, same
-      // pattern as charge.refunded.
+      // Entry-fee, sponsor-order AND platform (subscription / Event Pass)
+      // chargebacks (spec issue #5, P0-2, Task 7 P1-4): flag + alert. Each
+      // handler no-ops on the others' charges, same pattern as charge.refunded;
+      // the platform handler runs LAST (the destination-charge handlers write
+      // nothing on a platform charge).
       await handleRegistrationDispute(event.data.object as Stripe.Dispute, "created");
       await handleSponsorDispute(event.data.object as Stripe.Dispute, "created");
+      await handlePlatformDispute(event.data.object as Stripe.Dispute, "created");
       break;
     case "charge.dispute.closed":
       await handleRegistrationDispute(event.data.object as Stripe.Dispute, "closed");
       await handleSponsorDispute(event.data.object as Stripe.Dispute, "closed");
+      await handlePlatformDispute(event.data.object as Stripe.Dispute, "closed");
       break;
     case "charge.refunded":
       // Refunds made in the Stripe dashboard still show on the console.
