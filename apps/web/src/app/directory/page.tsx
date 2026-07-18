@@ -8,11 +8,12 @@ import { BackLink } from "@/components/back-link";
 import { Nav } from "@/components/nav";
 import { requirePageAuth } from "@/server/page-auth";
 import { listPersons } from "@/server/usecases/persons";
-import { listClubs } from "@/server/usecases/clubs";
+import { listClubsWithMeta } from "@/server/usecases/clubs";
+import { listTeams } from "@/server/usecases/teams";
 import { listOfficialsForConsole } from "@/server/usecases/officials";
 import { hasFeature } from "@/lib/entitlements";
 import { PersonsPanel } from "@/components/v2/persons-panel";
-import { ClubsPanel } from "@/components/v2/clubs-panel";
+import { ClubsTeamsList } from "@/components/v2/clubs-teams-list";
 import { OfficialsDirectoryPanel } from "@/components/v2/officials-directory-panel";
 import { Tip } from "@/components/ui/tip";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -101,27 +102,26 @@ async function PlayersTab({ ui }: { ui: Dict }) {
 
 async function ClubsTab({ ui }: { ui: Dict }) {
   const { auth, canEdit } = await requirePageAuth();
-  const clubs = await listClubs(auth);
+  const [clubs, teams] = await Promise.all([listClubsWithMeta(auth), listTeams(auth)]);
   const storageBase = `${process.env.NEXT_PUBLIC_SUPABASE_URL ?? ""}/storage/v1/object/public/assets`;
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <p className="max-w-xl text-sm text-slate-500">
-          {t(ui, "directory.clubs.desc")}
-        </p>
-        {canEdit && (
-          <Link href="/import" className="btn btn-ghost text-sm">
-            {t(ui, "directory.clubs.import")}
-          </Link>
-        )}
-      </div>
-      <ClubsPanel
+      <p className="max-w-xl text-sm text-slate-500">{t(ui, "directory.clubs.desc")}</p>
+      <ClubsTeamsList
         clubs={clubs.map((c) => ({
           id: c.id,
           name: c.name,
           short_name: c.short_name,
           logo_path: c.logo_path,
-          external_ref: c.external_ref,
+          slug: c.slug,
+          team_count: c.team_count,
+          primary_contact: c.primary_contact,
+        }))}
+        teams={teams.map((t) => ({
+          id: t.id,
+          name: t.name,
+          club_id: t.club_id,
+          logo_path: t.logo_path,
         }))}
         storageBase={storageBase}
         canEdit={canEdit}

@@ -18,7 +18,10 @@ test("directory reads 'Players' and exposes inline image pickers", async ({ page
   await page.goto("/players");
   await expect(page).toHaveURL(/\/directory\?tab=players/);
 
-  // Clubs tab: the add-club form carries an inline badge picker.
+  // Clubs tab: the thin "Clubs & Teams" register exposes a search box and an
+  // inline create control (badge/contact editing now lives on the club hub).
   await page.goto("/directory?tab=clubs");
-  await expect(page.getByLabel("Club badge")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Clubs & Teams" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New club" })).toBeVisible();
+  await expect(page.getByPlaceholder("Search clubs and teams…")).toBeVisible();
 });

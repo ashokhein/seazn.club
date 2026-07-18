@@ -37,6 +37,27 @@ export async function listClubs(auth: AuthCtx): Promise<ClubRow[]> {
     select ${tx(COLS)} from clubs order by name, id`);
 }
 
+export interface ClubWithMeta extends ClubRow {
+  /** Teams that belong to this club (org-scoped via RLS on `teams`). */
+  team_count: number;
+  /** Full name of the club's primary contact, if one is set. */
+  primary_contact: string | null;
+}
+
+/** listClubs plus the two columns the thin Clubs & Teams directory row needs
+ *  (Task 7): a live team count and the primary contact's name. Columns are
+ *  qualified explicitly — postgres.js `tx(array)` escapes each element as one
+ *  identifier, so a `c.id` string would be quoted whole and break the query. */
+export async function listClubsWithMeta(auth: AuthCtx): Promise<ClubWithMeta[]> {
+  return withTenant(auth.orgId, (tx) => tx<ClubWithMeta[]>`
+    select c.id, c.name, c.short_name, c.logo_path, c.colors, c.external_ref,
+           c.slug, c.home_ground, c.website, c.notes, c.created_at,
+           (select count(*)::int from teams t where t.club_id = c.id) as team_count,
+           (select cc.full_name from club_contacts cc
+             where cc.club_id = c.id and cc.is_primary limit 1) as primary_contact
+    from clubs c order by c.name, c.id`);
+}
+
 export interface CreateClubInput {
   name: string;
   short_name?: string;
