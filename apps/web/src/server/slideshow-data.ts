@@ -216,3 +216,103 @@ export async function buildDivisionSlides(
 
   return slides;
 }
+
+// ---------------------------------------------------------------------------
+// v13 (PROMPT-64): PUBLIC presentation mode. The no-login /present routes
+// reuse the SAME <Slideshow> with slides built from the public read models
+// (consent/visibility enforced by the public_* views) — pure over
+// getPublicDivision output, so it unit-tests without a DB.
+// ---------------------------------------------------------------------------
+
+export interface PublicSlideInput {
+  division: { id: string; name: string };
+  stages: { id: string; kind: string; name: string }[];
+  pools: { id: string; stage_id: string; name: string }[];
+  fixtures: {
+    id: string;
+    stage_id: string;
+    round_no: number;
+    seq_in_round: number;
+    home_entrant_id: string | null;
+    away_entrant_id: string | null;
+    status: string;
+    summary: { headline?: string } | null;
+  }[];
+  standings: { stage_id: string; pool_id: string | null; rows: StandingsSlideSnapshotRow[] }[];
+  entrants: { id: string; display_name: string; badge_url?: string | null }[];
+}
+
+interface StandingsSlideSnapshotRow {
+  entrantId: string;
+  played: number;
+  won: number;
+  drawn: number;
+  lost: number;
+  points: number;
+  rank?: number;
+}
+
+export function buildPublicDivisionSlides(data: PublicSlideInput): Slide[] {
+  const names = Object.fromEntries(data.entrants.map((e) => [e.id, e.display_name]));
+  const stageById = new Map(data.stages.map((s) => [s.id, s]));
+  const poolById = new Map(data.pools.map((p) => [p.id, p]));
+  const slides: Slide[] = [];
+
+  for (const snap of data.standings) {
+    const stage = stageById.get(snap.stage_id);
+    if (!stage || snap.rows.length === 0) continue;
+    const pool = snap.pool_id !== null ? poolById.get(snap.pool_id) : undefined;
+    slides.push({
+      kind: "standings",
+      division: data.division.name,
+      caption: pool !== undefined ? `${stage.name} — ${pool.name}` : stage.name,
+      rows: snap.rows.map((r, i) => ({
+        rank: r.rank ?? i + 1,
+        name: names[r.entrantId] ?? "—",
+        played: r.played, won: r.won, drawn: r.drawn, lost: r.lost, points: r.points,
+      })),
+    });
+  }
+
+  const item = (f: PublicSlideInput["fixtures"][number]): FixtureSlideItem => ({
+    home: names[f.home_entrant_id ?? ""] ?? "TBD",
+    away: names[f.away_entrant_id ?? ""] ?? "TBD",
+    homeLogo: null,
+    awayLogo: null,
+    line: f.summary?.headline ?? null,
+    status: f.status,
+    round: f.round_no,
+  });
+  const live = data.fixtures.filter((f) => f.status === "in_play").map(item);
+  const results = data.fixtures
+    .filter((f) => ["decided", "finalized", "forfeited"].includes(f.status))
+    .slice(-8).map(item);
+  const upcoming = data.fixtures.filter((f) => f.status === "scheduled").slice(0, 8).map(item);
+  if (live.length > 0)
+    slides.push({ kind: "fixtures", division: data.division.name, title: "In play", items: live, pinned: true });
+  if (results.length > 0)
+    slides.push({ kind: "fixtures", division: data.division.name, title: "Latest results", items: results });
+  if (upcoming.length > 0)
+    slides.push({ kind: "fixtures", division: data.division.name, title: "Coming up", items: upcoming });
+
+  for (const stage of data.stages.filter((s) => s.kind === "knockout")) {
+    const stageFixtures = data.fixtures.filter((f) => f.stage_id === stage.id);
+    const refs = stageFixtures.map((f) => ({ id: f.id, round_no: f.round_no, seq_in_round: f.seq_in_round }));
+    if (stageFixtures.length > 0 && twoSidedBracket(refs).ok) {
+      slides.push({
+        kind: "bracket",
+        division: data.division.name,
+        title: stage.name,
+        fixtures: stageFixtures.map((f) => ({
+          id: f.id, round_no: f.round_no, seq_in_round: f.seq_in_round,
+          home: f.home_entrant_id ? (names[f.home_entrant_id] ?? null) : null,
+          away: f.away_entrant_id ? (names[f.away_entrant_id] ?? null) : null,
+          line: f.summary?.headline ?? null,
+          status: f.status,
+        })),
+      });
+    }
+  }
+
+  return slides;
+}

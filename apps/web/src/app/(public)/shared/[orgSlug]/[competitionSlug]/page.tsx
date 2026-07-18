@@ -132,11 +132,18 @@ export default async function CompetitionHomePage({ params }: Props) {
                 {competition.name}
               </h1>
               {dateLine ? <p className="mt-2 text-sm text-court-muted">{dateLine}</p> : null}
-              <div className="mt-4">
+              <div className="mt-4 flex flex-wrap items-center gap-3">
                 <ShareBar
                   path={`/shared/${org.slug}/${competition.slug}`}
                   title={competition.name}
                 />
+                {/* v13 (PROMPT-64): kiosk mode — cast this URL to any screen. */}
+                <Link
+                  href={`/shared/${org.slug}/${competition.slug}/present`}
+                  className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-court-muted ring-1 ring-inset ring-white/15 transition hover:bg-white/20 hover:text-court-ink"
+                >
+                  Present ▸
+                </Link>
               </div>
             </div>
             {registrationOpen ? (

@@ -259,12 +259,21 @@ export default async function DivisionHomePage({ params }: Props) {
         <h1 className="font-display text-4xl font-bold uppercase leading-none tracking-tight text-ink sm:text-5xl">
           {division.name}
         </h1>
-        {/* Standings share (v3/10 #2) — the link unfurls into the OG card. */}
-        <ShareButton
-          title={`${division.name} — ${competition.name}`}
-          text={`${division.name} standings & fixtures — ${competition.name}:`}
-          url={`/shared/${org.slug}/${competition.slug}/${division.slug}`}
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          {/* v13 (PROMPT-64): kiosk mode — cast this URL to any screen. */}
+          <Link
+            href={`/shared/${org.slug}/${competition.slug}/${division.slug}/present`}
+            className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink-muted ring-1 ring-inset ring-zinc-200 transition hover:bg-zinc-200 hover:text-ink"
+          >
+            Present ▸
+          </Link>
+          {/* Standings share (v3/10 #2) — the link unfurls into the OG card. */}
+          <ShareButton
+            title={`${division.name} — ${competition.name}`}
+            text={`${division.name} standings & fixtures — ${competition.name}:`}
+            url={`/shared/${org.slug}/${competition.slug}/${division.slug}`}
+          />
+        </div>
       </div>
       <p className="mb-6 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <span className="font-medium text-zinc-600">
