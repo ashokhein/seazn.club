@@ -18,6 +18,7 @@ import { Tabs } from "@/components/public-site/tabs";
 import { Schedule } from "@/components/public-site/schedule";
 import { StandingsTable } from "@/components/public-site/standings-table";
 import { Bracket } from "@/components/public-site/bracket";
+import { ResultsMatrix } from "@/components/public-site/results-matrix";
 import type { MetricSpecLike } from "@/lib/public-site";
 
 export const revalidate = 30;
@@ -165,22 +166,47 @@ export default async function DivisionHomePage({ params }: Props) {
         if (snapshots.length === 0) return null;
         return (
           <section key={stage.id}>
-            {snapshots.map((snap) => (
-              <div key={snap.pool_id ?? "overall"} className="mb-6">
-                <StandingsTable
-                  rows={snap.rows as StandingsRow[]}
-                  metricSpecs={metricSpecs}
-                  cascade={cascade}
-                  entrantNames={entrantNames}
-                  entrantLogos={entrantLogos}
-                  caption={
-                    snap.pool_id
-                      ? `${stage.name} — ${poolName.get(snap.pool_id) ?? "Pool"}`
-                      : stage.name
-                  }
-                />
-              </div>
-            ))}
+            {snapshots.map((snap) => {
+              // G2 — crosstable under each round-robin table, in rank order.
+              const ranked = [...(snap.rows as StandingsRow[])].sort(
+                (a, b) => (a.rank ?? 99) - (b.rank ?? 99),
+              );
+              const poolFixtures = fixtures.filter(
+                (f) => f.stage_id === stage.id && (f.pool_id ?? null) === (snap.pool_id ?? null),
+              );
+              return (
+                <div key={snap.pool_id ?? "overall"} className="mb-6 space-y-3">
+                  <StandingsTable
+                    rows={snap.rows as StandingsRow[]}
+                    metricSpecs={metricSpecs}
+                    cascade={cascade}
+                    entrantNames={entrantNames}
+                    entrantLogos={entrantLogos}
+                    caption={
+                      snap.pool_id
+                        ? `${stage.name} — ${poolName.get(snap.pool_id) ?? "Pool"}`
+                        : stage.name
+                    }
+                  />
+                  {poolFixtures.length > 0 && (
+                    <details>
+                      <summary className="cursor-pointer text-xs font-medium text-ink-muted hover:text-ink">
+                        Results grid
+                      </summary>
+                      <div className="mt-2">
+                        <ResultsMatrix
+                          entrantIds={ranked.map((r) => r.entrantId)}
+                          entrantNames={entrantNames}
+                          entrantLogos={entrantLogos}
+                          fixtures={poolFixtures}
+                          fixtureHref={(id) => `${basePath}/fixtures/${id}`}
+                        />
+                      </div>
+                    </details>
+                  )}
+                </div>
+              );
+            })}
           </section>
         );
       })}

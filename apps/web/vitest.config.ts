@@ -11,8 +11,11 @@ export default defineConfig({
     // (CONNECTION_ENDED). Isolate per file so each owns — and ends — its own
     // connection; the teardown races vanish.
     isolate: true,
-    // Playwright specs (e2e/) run under `playwright test`, not vitest.
-    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**"],
+    // Playwright specs (e2e/) run under `playwright test`, not vitest. The
+    // .next exclude matters: `next build` copies the whole tree (e2e specs
+    // included) into .next/standalone, and vitest globbing those copies after
+    // a local build segfaulted the run.
+    exclude: ["**/node_modules/**", "**/dist/**", "e2e/**", "**/.next/**"],
     // @seazn/engine ships TS source (workspace symlink) — inline it so vitest
     // transforms it instead of treating it as an opaque external dep.
     server: { deps: { inline: [/@seazn\/engine/] } },

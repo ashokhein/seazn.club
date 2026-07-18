@@ -111,3 +111,77 @@ describe("twoSidedBracket", () => {
     expect(layoutOf(refsFor(16))).toEqual(layoutOf(refsFor(16)));
   });
 });
+
+// doubleElimBracket (G1) — two-lane geometry recovered from the persisted
+// round_no blocks (WB 1..k, LB 2k+1..4k−2, GF 5k−1, reset 5k).
+import { generateDoubleElim } from "./bracket.ts";
+import { doubleElimBracket, lbRowUnit } from "./bracket-layout.ts";
+
+/** Replicates usecases/stages.ts bracketToGen round numbering. */
+function deRefs(n: number, bracketReset = false): BracketFixtureRef[] {
+  const entrants = Array.from({ length: n }, (_, i) => `e${i + 1}`);
+  const gen = generateDoubleElim({ entrants, bracketReset });
+  const k = gen.rounds;
+  const counters = new Map<string, number>();
+  return gen.fixtures.map((f) => {
+    const lane = f.bracket ?? "WB";
+    const offset = lane === "LB" ? k : lane === "GF" ? 2 * k : 0;
+    const roundNo = offset + f.round + 1;
+    const seq = (counters.get(`${lane}:${roundNo}`) ?? 0) + 1;
+    counters.set(`${lane}:${roundNo}`, seq);
+    return { id: f.id, round_no: roundNo, seq_in_round: seq };
+  });
+}
+
+describe("doubleElimBracket", () => {
+  it("lays out an 8-entrant double elim: WB 3 cols, LB 4 cols, one GF", () => {
+    const res = doubleElimBracket(deRefs(8));
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const { layout } = res;
+    expect(layout.k).toBe(3);
+    expect(layout.wbRows).toBe(4);
+    expect(layout.lbRows).toBe(2);
+    expect(layout.lbCols).toBe(4);
+    expect(layout.resetId).toBeUndefined();
+    const lanes = (lane: string) => layout.nodes.filter((nd) => nd.lane === lane);
+    expect(lanes("WB")).toHaveLength(7);
+    expect(lanes("LB")).toHaveLength(6);
+    expect(lanes("GF")).toHaveLength(1);
+    // LB column counts follow the halving pairs 2,2,1,1.
+    const lbCount = (col: number) => lanes("LB").filter((nd) => nd.col === col).length;
+    expect([lbCount(0), lbCount(1), lbCount(2), lbCount(3)]).toEqual([2, 2, 1, 1]);
+    // Major columns get straight in-lane feeds, minor columns get pairs.
+    const major = layout.connectors.filter((c) => c.lane === "LB" && c.col === 1);
+    expect(major).toEqual([
+      { lane: "LB", col: 1, fromRow: 0, toRow: 0 },
+      { lane: "LB", col: 1, fromRow: 1, toRow: 1 },
+    ]);
+  });
+
+  it("keeps the bracket-reset fixture as GF col 1", () => {
+    const res = doubleElimBracket(deRefs(4, true));
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.layout.resetId).toBeDefined();
+    expect(res.layout.nodes.filter((nd) => nd.lane === "GF")).toHaveLength(2);
+  });
+
+  it("rejects single-elim shapes and tampered counts", () => {
+    const se = generateSingleElim({ entrants: ["a", "b", "c", "d"] });
+    const counters = new Map<string, number>();
+    const refs = se.fixtures.map((f) => {
+      const seq = (counters.get(`${f.round}`) ?? 0) + 1;
+      counters.set(`${f.round}`, seq);
+      return { id: f.id, round_no: f.round + 1, seq_in_round: seq };
+    });
+    expect(doubleElimBracket(refs).ok).toBe(false);
+    const de = deRefs(8);
+    expect(doubleElimBracket(de.slice(1)).ok).toBe(false);
+    expect(doubleElimBracket([]).ok).toBe(false);
+  });
+
+  it("lbRowUnit doubles spacing every two columns", () => {
+    expect([0, 1, 2, 3].map(lbRowUnit)).toEqual([0, 0, 1, 1]);
+  });
+});
