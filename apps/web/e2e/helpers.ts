@@ -140,7 +140,7 @@ async function withDb<T>(
  */
 export async function setOrgPlanBySql(
   target: { orgId?: string; email?: string },
-  plan: "pro" | "community",
+  plan: "pro" | "community" | "pro_plus",
 ): Promise<void> {
   await withDb(async (sql) => {
     if (target.orgId) {
