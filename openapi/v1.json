@@ -42296,7 +42296,7 @@
         "tags": [
           "clubs"
         ],
-        "x-required-scope": "none",
+        "x-required-scope": "manage",
         "parameters": [],
         "requestBody": {
           "required": true,
@@ -42313,7 +42313,7 @@
                   "short_name": {
                     "type": "string",
                     "minLength": 1,
-                    "maxLength": 40
+                    "maxLength": 60
                   },
                   "club_id": {
                     "type": "string",
@@ -42558,7 +42558,7 @@
         "tags": [
           "clubs"
         ],
-        "x-required-scope": "none",
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",

@@ -1136,7 +1136,7 @@ export type PatchClubContact = z.infer<typeof PatchClubContact>;
 // Standalone team create + move/detach (W1 §5.2).
 export const CreateTeamStandalone = z.object({
   name: z.string().min(1).max(200),
-  short_name: z.string().min(1).max(40).optional(),
+  short_name: z.string().min(1).max(60).optional(),
   club_id: z.string().uuid().optional(),
 });
 export type CreateTeamStandalone = z.infer<typeof CreateTeamStandalone>;
