@@ -362,6 +362,12 @@ await i18nSuite();
   // stuck-webhook sweep cron. Own fresh orgs; keyless-safe.
   await p72Suite();
 
+  // --- payments-hardening (Task 16): the 4-plan user matrix — one fresh owner
+  // per plan (community/pro/pro_plus/event_pass) asserting the entitlements that
+  // distinguish its tier at the resolution + HTTP-status level. Own fresh orgs;
+  // keyless-safe. The HTTP-level plan-truth net for the two e2e tasks that follow.
+  await smokePlanMatrix();
+
   await gapSuite(admin, org.id, org2.id);
 
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
@@ -579,6 +585,234 @@ async function p72Suite(): Promise<void> {
   } else {
     check("p72: cron right-secret shape skipped (no CRON_SECRET in smoke env)", true);
   }
+}
+
+/** payments-hardening Task 16 — the 4-plan user matrix. Four fresh owners, one
+ *  per plan, created through the same HTTP surface the rest of smoke uses; each
+ *  asserts the entitlements that distinguish its tier at the resolution + HTTP-
+ *  status level. Keyless-safe: every check resolves entitlements or 402s BEFORE
+ *  any Stripe/LLM call, and each check runs AFTER its data is seeded. Own fresh
+ *  orgs (never touches org/org2 from main()); the pass persona stays community.
+ *
+ *  V291 truths this pins: Pro AI cap 5/division, Pro Plus unlimited (null); a
+ *  pass overlays comp-scoped Pro features INSIDE the passed comp only; the dead
+ *  Event-Pass members.max row is gone → org-wide keys resolve community for a
+ *  passed org. */
+async function smokePlanMatrix(): Promise<void> {
+  const genericDiv = {
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  };
+  // Resolved entitlements + plan for an org (any member may read) — the same
+  // endpoint /admin/entitlements and the settings billing tab consume. Reads
+  // plan_entitlements live (no cache-aside), so it reflects a setPlan flip at
+  // once and never masks it.
+  const readEnt = async (s: Session, orgId: string) =>
+    (await call(s, `/api/orgs/${orgId}/entitlements`)) as {
+      plan_key: string;
+      entitlements: Record<string, { enabled?: boolean; limit?: number | null }>;
+    };
+  const featureKey = (r: V1Res) =>
+    (r.json.error as { feature_key?: string; reason?: string } | undefined) ?? {};
+
+  // === PERSONA 1 — community (default plan, no flip) =====================
+  const comm = newSession();
+  const commOrg = (await signIn(comm, `smoke-community-${tag}@example.com`)).org_id;
+  const commEnt = await readEnt(comm, commOrg);
+  check("matrix/community: org resolves the community plan", commEnt.plan_key === "community");
+  check(
+    "matrix/community: exports.branded denies",
+    commEnt.entitlements["exports.branded"]?.enabled === false,
+  );
+  check(
+    "matrix/community: scheduling.ai denies",
+    commEnt.entitlements["scheduling.ai"]?.enabled === false,
+  );
+
+  // A scored-through division so a real export renders.
+  const cComp = v1data<{ id: string; slug: string }>(
+    await v1(comm, "/api/v1/competitions", "POST", { name: `Matrix Community ${tag}`, visibility: "unlisted" }),
+  );
+  const cDiv = v1data<{ id: string }>(
+    await v1(comm, `/api/v1/competitions/${cComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await v1(comm, `/api/v1/divisions/${cDiv.id}/entrants`, "POST", [
+    { kind: "individual", display_name: "A", seed: 1 },
+    { kind: "individual", display_name: "B", seed: 2 },
+  ]);
+  const cStage = v1data<{ id: string }>(
+    await v1(comm, `/api/v1/divisions/${cDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  );
+  await v1(comm, `/api/v1/stages/${cStage.id}/generate`, "POST");
+  await v1(comm, `/api/v1/divisions/${cDiv.id}/start`, "POST");
+
+  // Plain export path is OPEN on community (V285) — branding is silently dropped,
+  // not the whole export blocked. Proves the free export path still works.
+  const plainExport = await fetch(
+    `${BASE}/api/v1/divisions/${cDiv.id}/exports/timetable?format=pdf`,
+    { headers: { cookie: cookieHeader(comm) } },
+  );
+  const plainBytes = Buffer.from(await plainExport.arrayBuffer());
+  check(
+    "matrix/community: the plain export path renders a PDF (branding dropped, not blocked)",
+    plainExport.status === 200 && plainBytes.subarray(0, 5).toString() === "%PDF-",
+  );
+
+  // A Pro-gated surface 402s — and the 402 carries the contextual upgrade prompt
+  // (the paywall reason the UpgradeGate renders). Keyless: requireFeature fires
+  // before any LLM call.
+  const commAi = await v1(comm, `/api/v1/divisions/${cDiv.id}/schedule/ai-constraints`, "POST", {
+    prose: "two courts, weekday evenings only",
+  });
+  const commAiErr = featureKey(commAi);
+  check(
+    "matrix/community: AI schedule is Pro-gated (402 scheduling.ai)",
+    commAi.status === 402 && commAiErr.feature_key === "scheduling.ai",
+  );
+  check(
+    "matrix/community: the 402 carries the upgrade prompt (reason)",
+    typeof commAiErr.reason === "string" && commAiErr.reason.length > 0,
+  );
+
+  // === PERSONA 2 — pro ==================================================
+  const pro = newSession();
+  const proOrg = (await signIn(pro, `smoke-pro-${tag}@example.com`)).org_id;
+  await setPlan(proOrg, "pro");
+  const proEnt = await readEnt(pro, proOrg);
+  check("matrix/pro: org resolves the pro plan", proEnt.plan_key === "pro");
+  check(
+    "matrix/pro: exports.branded allowed",
+    proEnt.entitlements["exports.branded"]?.enabled === true,
+  );
+  check(
+    "matrix/pro: scheduling.ai allowed",
+    proEnt.entitlements["scheduling.ai"]?.enabled === true,
+  );
+  check(
+    "matrix/pro: scheduling.ai.runs_per_division.max resolves 5",
+    proEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 5,
+  );
+  check(
+    "matrix/pro: officials.per_fixture.max is unlimited (null)",
+    proEnt.entitlements["officials.per_fixture.max"]?.limit === null,
+  );
+
+  // Behavioural proof of the cap: seed 5 prior AI runs on a division, the 6th
+  // 402s at the cap (fires before the LLM → keyless-safe).
+  const proComp = v1data<{ id: string }>(
+    await v1(pro, "/api/v1/competitions", "POST", { name: `Matrix Pro ${tag}` }),
+  );
+  const proDiv = v1data<{ id: string }>(
+    await v1(pro, `/api/v1/competitions/${proComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await seedAiRuns(proOrg, proComp.id, proDiv.id, 5);
+  const proCapped = await v1(pro, `/api/v1/divisions/${proDiv.id}/schedule/ai-constraints`, "POST", {
+    prose: "spread evenly across both courts",
+  });
+  check(
+    "matrix/pro: the 6th AI run/division 402s at the cap (scheduling.ai.runs_per_division.max)",
+    proCapped.status === 402 && featureKey(proCapped).feature_key === "scheduling.ai.runs_per_division.max",
+  );
+
+  // === PERSONA 3 — pro_plus ============================================
+  const plus = newSession();
+  const plusOrg = (await signIn(plus, `smoke-proplus-${tag}@example.com`)).org_id;
+  await setPlan(plusOrg, "pro_plus");
+  const plusEnt = await readEnt(plus, plusOrg);
+  check("matrix/pro_plus: org resolves the pro_plus plan", plusEnt.plan_key === "pro_plus");
+  check(
+    "matrix/pro_plus: scheduling.ai.runs_per_division.max is unlimited (null)",
+    plusEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === null,
+  );
+  check(
+    "matrix/pro_plus: registration.fee_percent resolves 1",
+    plusEnt.entitlements["registration.fee_percent"]?.limit === 1,
+  );
+
+  // api.write grants: a write-capable (manage) key mints on Pro Plus — the same
+  // key 402s on a plain Pro org (proPlusSuite covers the negative).
+  const plusKey = await v1(plus, `/api/v1/orgs/${plusOrg}/api-keys`, "POST", {
+    name: `matrix plus ${tag}`, scopes: ["manage"],
+  });
+  check("matrix/pro_plus: api.write grants a manage-scope key (201)", plusKey.status === 201);
+
+  // officials.auto grant (Task 16 amendment): the auto-propose path a plain Pro
+  // org now 402s on (see jul3Suite) succeeds on Pro Plus — coverage of the
+  // feature moves to the right tier instead of vanishing.
+  const plusComp = v1data<{ id: string }>(
+    await v1(plus, "/api/v1/competitions", "POST", { name: `Matrix Plus ${tag}` }),
+  );
+  const plusDiv = v1data<{ id: string }>(
+    await v1(plus, `/api/v1/competitions/${plusComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await v1(plus, `/api/v1/divisions/${plusDiv.id}/entrants`, "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })));
+  const plusStage = v1data<{ id: string }>(
+    await v1(plus, `/api/v1/divisions/${plusDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  );
+  await v1(plus, `/api/v1/stages/${plusStage.id}/generate`, "POST");
+  await v1(plus, `/api/v1/divisions/${plusDiv.id}/start`, "POST");
+  await v1(plus, "/api/v1/officials", "POST", { display_name: `Matrix Ref ${tag}`, role_keys: ["referee"] });
+  const plusAuto = await v1(plus, `/api/v1/divisions/${plusDiv.id}/officials/auto`, "POST", {
+    policy: { roles: ["referee"] },
+  });
+  check(
+    "matrix/pro_plus: officials.auto is allowed (200, assignments proposed)",
+    plusAuto.status === 200 && Array.isArray(v1data<{ assignments: unknown[] }>(plusAuto).assignments),
+  );
+
+  // === PERSONA 4 — event_pass (community org + a single-comp pass) ======
+  const passer = newSession();
+  const passOrg = (await signIn(passer, `smoke-pass-${tag}@example.com`)).org_id;
+
+  // Passed comp: create, then grant its pass. Unlisted sidesteps the public
+  // dashboard cap; the pass frees the active-comp slot for the sibling below.
+  const passedComp = v1data<{ id: string; slug: string }>(
+    await v1(passer, "/api/v1/competitions", "POST", { name: `Matrix Passed ${tag}`, visibility: "unlisted" }),
+  );
+  const passedDiv = v1data<{ id: string }>(
+    await v1(passer, `/api/v1/competitions/${passedComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await grantPass(passOrg, passedComp.id);
+
+  // A comp-scoped Pro feature (formats.advanced) resolves TRUE inside the passed
+  // comp — an advanced (americano) stage is accepted.
+  const passedAdv = await v1(passer, `/api/v1/divisions/${passedDiv.id}/stages`, "POST", {
+    seq: 1, kind: "americano", name: "Padel", config: { mode: "americano", courtCount: 2, rounds: 3 },
+  });
+  check(
+    "matrix/event_pass: formats.advanced is granted INSIDE the passed comp (201)",
+    passedAdv.status === 201,
+  );
+
+  // A second, unpassed comp in the SAME org denies the same feature (the pass is
+  // strictly comp-scoped).
+  const siblingComp = v1data<{ id: string }>(
+    await v1(passer, "/api/v1/competitions", "POST", { name: `Matrix Sibling ${tag}`, visibility: "unlisted" }),
+  );
+  const siblingDiv = v1data<{ id: string }>(
+    await v1(passer, `/api/v1/competitions/${siblingComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  const siblingAdv = await v1(passer, `/api/v1/divisions/${siblingDiv.id}/stages`, "POST", {
+    seq: 1, kind: "americano", name: "Padel", config: { mode: "americano", courtCount: 2, rounds: 3 },
+  });
+  check(
+    "matrix/event_pass: the sibling (unpassed) comp denies formats.advanced (402)",
+    siblingAdv.status === 402 && featureKey(siblingAdv).feature_key === "formats.advanced",
+  );
+
+  // Org-wide key still resolves community (V291 dead-row fix): the pass overlays
+  // only comp-scoped features — the org's plan and members.max stay community.
+  const passEnt = await readEnt(passer, passOrg);
+  check(
+    "matrix/event_pass: the org still resolves the community plan (pass is comp-scoped)",
+    passEnt.plan_key === "community",
+  );
+  check(
+    "matrix/event_pass: org-wide members.max resolves the community value (3)",
+    passEnt.entitlements["members.max"]?.limit === 3,
+  );
 }
 
 /** PROMPT-53 player accounts over real HTTP: invite → claim → RSVP →
@@ -1521,6 +1755,38 @@ async function seedStripeFeeDivision(divisionId: string): Promise<void> {
         enabled = true, fee_cents = 2000, currency = 'gbp',
         payment_method = 'stripe', opens_at = null, closes_at = null,
         capacity = null, updated_at = now()`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** payments-hardening Task 15 (Pro AI cap): seed N prior `schedule.ai_generated`
+ *  competition_events for a division — the per-division AI cap counts exactly
+ *  these. Mirrors schedule-plus.test.ts's seed; the LLM can't run headless, so
+ *  we seed the ledger the cap reads and let the (cap+1)th request 402 BEFORE the
+ *  model call (keyless-safe). */
+async function seedAiRuns(
+  orgId: string,
+  competitionId: string,
+  divisionId: string,
+  n: number,
+): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to seed AI runs in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    for (let i = 0; i < n; i++) {
+      await sql`
+        insert into competition_events (competition_id, org_id, type, payload)
+        values (${competitionId}, ${orgId}, 'schedule.ai_generated',
+                ${sql.json({ division_id: divisionId })})`;
+    }
   } finally {
     await sql.end();
   }
@@ -2778,17 +3044,18 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
   await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
 
   const officialId = v1data<{ id: string }[]>(officials)[0]!.id;
-  // Pro Plus (V290): officials.auto moved above Pro — assert the gate both ways.
-  const autoGated = await v1(admin, `/api/v1/divisions/${divId}/officials/auto`, "POST", {
-    policy: { roles: ["referee"] },
-  });
-  check("jul3 officials auto is Pro Plus-gated (402 on pro)", autoGated.status === 402);
-  await setPlan(orgId, "pro_plus");
+  // V290 moved officials.auto up to Pro Plus (approved hard move, no grandfather).
+  // This suite runs on a plain Pro org, so the auto-propose path now 402s here —
+  // the ALLOWED path moved to smokePlanMatrix's pro_plus persona, so coverage of
+  // the feature lands on the right tier instead of vanishing.
   const auto = await v1(admin, `/api/v1/divisions/${divId}/officials/auto`, "POST", {
     policy: { roles: ["referee"] },
   });
-  check("jul3 officials auto proposes", auto.status === 200 && Array.isArray(v1data<{ assignments: unknown[] }>(auto).assignments));
-  await setPlan(orgId, "pro");
+  check(
+    "jul3 officials auto is Pro Plus only (402 officials.auto on Pro)",
+    auto.status === 402 &&
+      (auto.json.error as { feature_key?: string } | undefined)?.feature_key === "officials.auto",
+  );
   const patchOff = await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}/officials`, "PATCH", {
     set: [{ official_id: officialId, role_key: "referee", locked: false }],
   });
@@ -3536,6 +3803,10 @@ async function cleanup(tag: string): Promise<void> {
     `ref_${tag}@example.com`,
     `p72_${tag}@example.com`,
     `p72comm_${tag}@example.com`,
+    `smoke-community-${tag}@example.com`,
+    `smoke-pro-${tag}@example.com`,
+    `smoke-proplus-${tag}@example.com`,
+    `smoke-pass-${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
