@@ -21,6 +21,7 @@ export { claimInviteTemplate, type ClaimInviteArgs } from "./claim-invite";
 export { sponsorInvoiceTemplate, type SponsorInvoiceArgs } from "./sponsor-invoice";
 export { sponsorReceiptTemplate, type SponsorReceiptArgs } from "./sponsor-receipt";
 export { sponsorRefundTemplate, type SponsorRefundArgs } from "./sponsor-refund";
+export { passRevokedTemplate, type PassRevokedArgs } from "./pass-revoked";
 export { officialInviteTemplate, type OfficialInviteArgs } from "./official-invite";
 export { officialAssignedTemplate, type OfficialAssignedArgs } from "./official-assigned";
 export {

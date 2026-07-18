@@ -14,6 +14,7 @@ import {
   officialAssignedTemplate,
   officialAssignmentChangedTemplate,
   officialInviteTemplate,
+  passRevokedTemplate,
   passwordResetTemplate,
   paymentReminderTemplate,
   refundIssuedTemplate,
@@ -167,6 +168,14 @@ function makeBuilders(
         dict,
       ),
       "sponsorRefund.subject",
+    ],
+    [
+      "pass-revoked",
+      passRevokedTemplate(
+        { orgName: "Riverside Racquets", competitionName: "Spring Open 2026" },
+        dict,
+      ),
+      "passRevoked.subject",
     ],
     [
       "official-invite",

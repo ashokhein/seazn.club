@@ -33,6 +33,8 @@ import {
   type SponsorReceiptArgs,
   sponsorRefundTemplate,
   type SponsorRefundArgs,
+  passRevokedTemplate,
+  type PassRevokedArgs,
   officialInviteTemplate,
   type OfficialInviteArgs,
   officialAssignedTemplate,
@@ -392,6 +394,19 @@ export async function sendSponsorRefundEmail(opts: SponsorRefundEmail): Promise<
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...sponsorRefundTemplate(args, dict) });
+}
+
+export interface PassRevokedEmail extends PassRevokedArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Owner notice when an Event Pass is refunded (P0-3a): the pass is revoked and
+ *  the competition returns to the plan's active-competition allowance. */
+export async function sendPassRevokedEmail(opts: PassRevokedEmail): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...passRevokedTemplate(args, dict) });
 }
 
 /** True when Resend is configured. */

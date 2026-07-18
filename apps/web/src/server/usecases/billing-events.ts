@@ -7,8 +7,9 @@ import "server-only";
 // is an event we never received (the deleted-endpoint incident class).
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
-import { recordPassPurchase, syncSubscription } from "@/lib/billing";
+import { recordPassPurchase, revokePassForRefundedCharge, syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { sendPassRevokedEmail } from "@/lib/email";
 import {
   handleRegistrationCheckoutCompleted,
   handleRegistrationDispute,
@@ -142,6 +143,40 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     where stripe_subscription_id = ${subId} and status != 'trialing'`;
 }
 
+/** Current owner's email via org_members — NOT organizations.created_by, which
+ *  an ownership transfer leaves on the original creator. */
+async function orgOwnerEmail(orgId: string): Promise<string | null> {
+  const [owner] = await sql<{ email: string }[]>`
+    select u.email from org_members m join users u on u.id = m.user_id
+    where m.org_id = ${orgId} and m.role = 'owner' limit 1`;
+  return owner?.email ?? null;
+}
+
+/** Event Pass refund (P0-3a): a fully-refunded pass charge — dashboard refunds
+ *  included — revokes the pass and emails the org owner. The org + competition
+ *  are read BEFORE the revoke deletes the row; the email is fire-and-forget so
+ *  a Resend hiccup never blocks the webhook ACK. */
+async function revokePassForRefundedChargeAndNotify(charge: Stripe.Charge): Promise<void> {
+  const intent =
+    typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  const [ctx] =
+    intent && charge.refunded
+      ? await sql<{ org_id: string; org_name: string; comp_name: string }[]>`
+          select p.org_id, o.name as org_name, c.name as comp_name
+          from competition_passes p
+          join organizations o on o.id = p.org_id
+          join competitions   c on c.id = p.competition_id
+          where p.stripe_payment_intent = ${intent}`
+      : [];
+  const revoked = await revokePassForRefundedCharge(charge);
+  if (!revoked || !ctx) return;
+  const to = await orgOwnerEmail(ctx.org_id);
+  if (!to) return;
+  void sendPassRevokedEmail({ to, orgName: ctx.org_name, competitionName: ctx.comp_name }).catch(
+    () => {},
+  );
+}
+
 /** The dispatch table (formerly inline in the webhook route). Unhandled
  *  types are a silent no-op — the caller still stamps processed_at. */
 export async function processStripeEvent(event: Stripe.Event): Promise<void> {
@@ -187,10 +222,11 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       break;
     case "charge.refunded":
       // Refunds made in the Stripe dashboard still show on the console.
-      // Registration and sponsor charges share the event type; each handler
-      // no-ops on the other's charges.
+      // Registration, sponsor and Event Pass charges share the event type; each
+      // handler no-ops on the others' charges.
       await syncRegistrationRefund(event.data.object as Stripe.Charge);
       await handleSponsorChargeRefunded(event.data.object as Stripe.Charge);
+      await revokePassForRefundedChargeAndNotify(event.data.object as Stripe.Charge);
       break;
     case "payment_intent.succeeded":
       // Sponsor order paid (v10) — activates the sponsor row, replay-safe.

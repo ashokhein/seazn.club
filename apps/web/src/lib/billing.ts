@@ -216,6 +216,24 @@ export async function recordPassPurchase(args: {
 }
 
 /**
+ * charge.refunded for an Event Pass (dashboard refunds included): a FULLY
+ * refunded pass charge revokes the pass — money back means the comp rejoins
+ * the quota (the freeze machinery handles any overage lazily). Partial
+ * refunds leave the pass; owner outreach is a support flow, not code.
+ */
+export async function revokePassForRefundedCharge(charge: Stripe.Charge): Promise<boolean> {
+  const intent =
+    typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  if (!intent || !charge.refunded) return false;
+  const [revoked] = await sql<{ org_id: string; competition_id: string }[]>`
+    delete from competition_passes where stripe_payment_intent = ${intent}
+    returning org_id, competition_id`;
+  if (!revoked) return false;
+  await invalidateOrgEntitlements(revoked.org_id);
+  return true;
+}
+
+/**
  * Reconcile a completed Event Pass checkout directly from Stripe (same
  * webhook-optional contract as reconcileCheckout). Returns true once the pass
  * is recorded. Best-effort and idempotent; never throws.
