@@ -148,11 +148,21 @@ Int (null=∞) for: `competitions.max_active` ∞, `dashboard.public.max` ∞,
 - **Priority support**: when `support.priority`, the billing page shows a
   "Priority support" row with `plus@seazn.club`. Copy-level only.
 
-## §4 Pricing page — 4 offers + full matrix
+## §4 Pricing page — 3 offers + Pro Plus reveal + full matrix
 
-- **Cards**: Community / Event Pass / Pro / Pro Plus. Pro Plus card framed
-  "Everything in Pro, plus…" and visually elevated alongside Pro. New
-  dictionary keys `pricing.plus.*` ×4 locales (en/fr/es/nl parity gate).
+- **Cards**: Community / Event Pass / Pro stay the 3-up hero grid. Pro Plus is
+  **progressively disclosed** (user decision 2026-07-18): below the grid a
+  teaser card — "Need more scale? Unlimited seats, 1% platform fee,
+  AI-assisted scheduling." with a **"Show Pro Plus"** button — and clicking it
+  swaps in the full Pro Plus card ("Everything in Pro, plus…"). Client island
+  `components/marketing/plus-reveal.tsx` (server-rendered card passed as
+  children; `useState` starts hidden on both server and client — no hydration
+  hazard). Reveal click fires new analytics event `pricing_plus_revealed`
+  (canonical entry in `lib/analytics-events.ts`). New dictionary keys
+  `pricing.plus.*` incl. teaser/reveal ×4 locales (en/fr/es/nl parity gate).
+- The comparison **table always shows all four plan columns** — the reveal
+  gates only the hero cards, never the data. Billing page (§3) keeps both
+  paid plans visible (in-app buyers are qualified).
 - **Comparison table = ALL feature keys**, grouped with sub-header rows:
   Scale · Formats & standings · Scheduling · Scoring & stats · Officials ·
   Public & brand · Registration & money · Data & platform. Columns:

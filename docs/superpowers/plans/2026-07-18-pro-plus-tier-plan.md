@@ -541,10 +541,57 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
   - Fee row stays folded (`registration.paid` + `registration.fee_percent`) with a `plus` cell; label key `pricing.matrix.fees`; format `"✓ N%"` as today.
   - `plus` column formats from `data[feature]?.pro_plus`.
   Export `buildPricingSections(data)`; DELETE `buildPricingRows` and update all imports.
-- [ ] **Step 3: pricing page.** `loadMatrix` where-clause adds `'pro_plus'`. Cards grid `md:grid-cols-4` with a Pro Plus card AFTER Pro (indigo accent, `formatMinor(proPlusPrice(...))`, "Everything in Pro, plus…" framing via dict `pricing.plus.*`: name/note/cta + bullets `pricing.plus.f1`–`f5` matching Task 8's list; card CTA → `/login?tab=signup` like the others). Table: 5 columns (add `pricing.table.proPlus` header); render sections — for each, a full-width `<tr>` subheader (`<td colSpan={5}>` — styled like a group label) then its rows; keep `data-pricing-matrix`. FAQ: add `"proPlus"` to `FAQ_KEYS` + dict Q/A (en: Q "What's in Pro Plus?" A: "Everything in Pro, plus unlimited seats and scale, a 1% platform fee, AI-assisted scheduling, auto officials assignment, write API access and priority support. Pro stays $20/mo; Pro Plus is $39/mo or $390/yr.").
+- [ ] **Step 3a: PlusReveal client island** — create `apps/web/src/components/marketing/plus-reveal.tsx` (user decision 2026-07-18: Pro Plus is progressively disclosed on /pricing):
+
+```tsx
+"use client";
+
+import { useState, type ReactNode } from "react";
+import { track } from "@/lib/analytics";
+import { EVENTS } from "@/lib/analytics-events";
+
+/**
+ * Progressive disclosure for the Pro Plus offer (spec §4): the hero grid
+ * stays 3-up; this teaser sits below it and swaps itself for the
+ * server-rendered Pro Plus card (passed as children) on click. State starts
+ * hidden on server AND client — no hydration mismatch.
+ */
+export function PlusReveal({
+  teaser,
+  cta,
+  children,
+}: {
+  teaser: string;
+  cta: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  if (open) return <div data-plus-revealed>{children}</div>;
+  return (
+    <div className="card mx-auto flex max-w-2xl flex-col items-center gap-3 p-6 text-center sm:flex-row sm:justify-between sm:text-left">
+      <p className="text-sm text-slate-600">{teaser}</p>
+      <button
+        type="button"
+        data-plus-reveal-cta
+        className="btn btn-ghost shrink-0 border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+        onClick={() => {
+          track(EVENTS.PRICING_PLUS_REVEALED, {});
+          setOpen(true);
+        }}
+      >
+        {cta}
+      </button>
+    </div>
+  );
+}
+```
+
+Add the canonical event to `apps/web/src/lib/analytics-events.ts` beside its siblings: `PRICING_PLUS_REVEALED: "pricing_plus_revealed",` (comment: `/** Pricing page: visitor opened the hidden Pro Plus offer. */`).
+
+- [ ] **Step 3b: pricing page.** `loadMatrix` where-clause adds `'pro_plus'`. Cards grid STAYS `md:grid-cols-3`. Below the grid: `<PlusReveal teaser={t(d,"pricing.plus.teaser")} cta={t(d,"pricing.plus.reveal")}>` wrapping the Pro Plus card (indigo accent, `formatMinor(proPlusPrice(...))`, "Everything in Pro, plus…" framing via dict `pricing.plus.*`: name/note/per/cta + bullets `pricing.plus.f1`–`f5` matching Task 8's list; card CTA → `/login?tab=signup`; render the revealed card centered `max-w-md mx-auto`). en teaser: "Need more scale? Unlimited seats, a 1% platform fee, AI-assisted scheduling and auto officials." en reveal button: "Show Pro Plus". Table: ALWAYS 5 columns regardless of reveal (add `pricing.table.proPlus` header); render sections — for each, a full-width `<tr>` subheader (`<td colSpan={5}>` — styled like a group label) then its rows; keep `data-pricing-matrix`. FAQ: add `"proPlus"` to `FAQ_KEYS` + dict Q/A (en: Q "What's in Pro Plus?" A: "Everything in Pro, plus unlimited seats and scale, a 1% platform fee, AI-assisted scheduling, auto officials assignment, write API access and priority support. Pro stays $20/mo; Pro Plus is $39/mo or $390/yr.").
 - [ ] **Step 4: pricing-cards.ts** — add `PLUS_CARD_FEATURES` (5 en bullets, same content as Task 8) exported for the pricing page; `ticketTiers` (home page) STAYS 3 tiers — add a code comment that home shows 3 stubs and /pricing carries the full ladder.
-- [ ] **Step 5: dictionaries** — en first, then fr/es/nl translations for: `pricing.table.proPlus`, `pricing.plus.name/note/cta/per`, `pricing.plus.f1..f5`, `pricing.faq.proPlus.q/a`, `pricing.matrix.section.{scale,money,formats,scheduling,scoring,officials,brand,platform}`, `pricing.matrix.<each feature key listed in Step 1>` (~42), `pricing.matrix.fees`, `pricing.matrix.passedEvent`. English row labels reuse today's wording where a row existed (e.g. `divisions.per_competition.max` → "Divisions per competition"); new ones follow feature-copy's vocabulary (e.g. `schedule.checkpoints.max` → "Schedule save points", `officials.per_fixture.max` → "Officials per fixture", `api.write` → "Write API access", `support.priority` → "Priority support").
-- [ ] **Step 6: tests** — failing-first: `buildPricingSections` returns 8 sections in domain order; every row has non-empty `free/pass/pro/plus`; `schedule.checkpoints.max` row = `1 / — / 5 / ∞` (pass falls through to community "1"); fee row plus cell = `"✓ 1%"`; `officials.per_fixture.max` = `1 / — / ∞ / ∞`; no section contains `domains.custom` or any D9 vestigial key. Update/replace the old `buildPricingRows` tests. Run the full i18n parity test.
+- [ ] **Step 5: dictionaries** — en first, then fr/es/nl translations for: `pricing.table.proPlus`, `pricing.plus.name/note/cta/per`, `pricing.plus.teaser`, `pricing.plus.reveal`, `pricing.plus.f1..f5`, `pricing.faq.proPlus.q/a`, `pricing.matrix.section.{scale,money,formats,scheduling,scoring,officials,brand,platform}`, `pricing.matrix.<each feature key listed in Step 1>` (~42), `pricing.matrix.fees`, `pricing.matrix.passedEvent`. English row labels reuse today's wording where a row existed (e.g. `divisions.per_competition.max` → "Divisions per competition"); new ones follow feature-copy's vocabulary (e.g. `schedule.checkpoints.max` → "Schedule save points", `officials.per_fixture.max` → "Officials per fixture", `api.write` → "Write API access", `support.priority` → "Priority support").
+- [ ] **Step 6: tests** — failing-first: `PlusReveal` SSR test (`renderToStaticMarkup`, mock `@/lib/analytics` via vi.hoisted): initial HTML contains the teaser + CTA and does NOT contain the children/`data-plus-revealed` — proving Pro Plus starts hidden; `buildPricingSections` returns 8 sections in domain order; every row has non-empty `free/pass/pro/plus`; `schedule.checkpoints.max` row = `1 / — / 5 / ∞` (pass falls through to community "1"); fee row plus cell = `"✓ 1%"`; `officials.per_fixture.max` = `1 / — / ∞ / ∞`; no section contains `domains.custom` or any D9 vestigial key. Update/replace the old `buildPricingRows` tests. Run the full i18n parity test.
 - [ ] **Step 7:** typecheck + suites green. **Step 8: Commit** — `feat(pricing): 4-plan cards + full localized entitlement matrix`
 
 ---
