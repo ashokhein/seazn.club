@@ -7,7 +7,6 @@
 // upload/remove next to the public_photo consent it feeds.
 import { useRef, useState } from "react";
 import { apiV1 } from "@/lib/client-v1";
-import { useRouter } from "next/navigation";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { type MessageKey } from "@/lib/messages";
 
@@ -31,12 +30,16 @@ const FLAGS: { key: "public_name" | "public_photo"; labelKey: MessageKey }[] = [
 
 export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
   const msg = useMsg();
-  const router = useRouter();
   const [state, setState] = useState(() =>
     Object.fromEntries(persons.map((p) => [p.id, p.consent])),
   );
   const [error, setError] = useState<string | null>(null);
   const [busyPhoto, setBusyPhoto] = useState<string | null>(null);
+  // Photo URLs live in state so the preview flips from the API response —
+  // no router dependency (keeps the card renderable in markup tests).
+  const [photos, setPhotos] = useState<Record<string, string | null>>(() =>
+    Object.fromEntries(persons.map((p) => [p.id, p.photo ?? null])),
+  );
   // Ref'd hidden input + button — never label-wrap a file input (repo gotcha).
   const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
 
@@ -50,11 +53,11 @@ export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
         method: "POST",
         body: form,
       });
-      if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        throw new Error(body?.error?.message ?? `upload failed (${res.status})`);
-      }
-      router.refresh();
+      const body = (await res.json().catch(() => null)) as
+        | { ok?: boolean; data?: { photo?: string | null }; error?: { message?: string } }
+        | null;
+      if (!res.ok) throw new Error(body?.error?.message ?? `upload failed (${res.status})`);
+      setPhotos((s) => ({ ...s, [person.id]: body?.data?.photo ?? null }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -67,7 +70,7 @@ export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
     setError(null);
     try {
       await apiV1(`/api/v1/me/persons/${person.id}/photo`, { method: "DELETE" });
-      router.refresh();
+      setPhotos((s) => ({ ...s, [person.id]: null }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed");
     } finally {
@@ -105,9 +108,9 @@ export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
                 profiles keep the organiser-managed photo untouched. */}
             {p.hasPhotoFeature && (
               <div className="mb-2 flex items-center gap-3" data-testid="me-photo">
-                {p.photo ? (
+                {photos[p.id] ? (
                   // eslint-disable-next-line @next/next/no-img-element -- storage URL
-                  <img src={p.photo} alt="" className="h-12 w-12 rounded-lg object-cover" />
+                  <img src={photos[p.id]!} alt="" className="h-12 w-12 rounded-lg object-cover" />
                 ) : (
                   <span
                     aria-hidden
@@ -139,11 +142,11 @@ export function ConsentCard({ persons }: { persons: ConsentPerson[] }) {
                     >
                       {busyPhoto === p.id
                         ? msg("me.photo.working")
-                        : p.photo
+                        : photos[p.id]
                           ? msg("me.photo.change")
                           : msg("me.photo.upload")}
                     </button>
-                    {p.photo && (
+                    {photos[p.id] && (
                       <button
                         type="button"
                         disabled={busyPhoto === p.id}
