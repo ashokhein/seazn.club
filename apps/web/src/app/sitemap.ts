@@ -2,8 +2,9 @@ import type { MetadataRoute } from "next";
 import { listPublicSitemapEntries } from "@/server/public-site/data";
 import { listDiscoverySports } from "@/server/public-site/discovery";
 import { liveGames } from "@/games/registry";
+import { siteOrigin } from "@/lib/site-origin";
 
-const BASE = "https://seazn.club";
+const BASE = siteOrigin();
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { barlowCondensed } from "@/lib/fonts";
+import { siteOrigin } from "@/lib/site-origin";
 import { AnalyticsBootstrap } from "@/components/analytics-bootstrap";
 import { CookieConsent } from "@/components/cookie-consent";
 import { ConfirmProvider } from "@/components/ui/confirm-provider";
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
   },
   description:
     "Run fair, fun, multi-sport tournaments for your club. Chess, carrom, cricket and more.",
-  metadataBase: new URL("https://seazn.club"),
+  metadataBase: new URL(siteOrigin()),
   icons: {
     icon: [
       { url: "/icons/icon-16.png", sizes: "16x16", type: "image/png" },
