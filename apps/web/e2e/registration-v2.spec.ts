@@ -185,7 +185,8 @@ test("full division flips to the waitlist state (an invitation, not a dead end)"
   await page.getByRole("checkbox", { name: /I agree that/ }).check();
   await page.getByRole("button", { name: "Join the waitlist" }).click();
   await page.waitForURL(/register\/status\?rid=/, { timeout: 20_000 });
-  await expect(page.getByText("You're on the waitlist")).toBeVisible();
+  // i18n copy uses a typographic apostrophe (U+2019); match apostrophe-agnostic.
+  await expect(page.getByText(/You.re on the waitlist/)).toBeVisible();
 });
 
 test("organiser panel: ref column renders and search-by-ref finds the row", async ({

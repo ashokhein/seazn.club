@@ -19,6 +19,7 @@ import {
   type StandingsDelta,
 } from "../../core/types.ts";
 import type { PositionCatalog } from "../../sport/catalog.ts";
+import type { EntrantModel } from "../../sport/entrant-model.ts";
 import type {
   FidelityTier,
   ModuleEvent,
@@ -389,6 +390,7 @@ export interface SetBasedPreset {
   officialLabel: { scorer: string };
   coarseEventType: "set.summary" | "game.summary";
   rallyEntitlement: string; // doc 10 FeatureKey for Tier-2/3 rally scoring
+  entrantModel?: EntrantModel;
 }
 
 function makeMetrics(unit: { one: string; many: string }): MetricSpec[] {
@@ -449,6 +451,7 @@ export function makeSetBasedModule(
     eventSchema: SetBasedEv,
     positions: preset.positions,
     variants: preset.variants,
+    ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
 
     init(cfg, lineups: LineupPair): SetBasedState {
       return {

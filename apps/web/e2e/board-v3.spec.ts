@@ -149,13 +149,17 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
     // the document (the dev-mode HTML around them carries HMR/dev overhead
     // that never ships). Parse the response body: hydration may have drained
     // the runtime __next_f array by the time we could evaluate.
+    // Budget raised 250K→420K in the v5 i18n merge (c7a0527): every /o console
+    // page now serialises the full ui dictionary (~110KB) into its flight via
+    // DictProvider — a fixed overhead on top of the 5×66 fixture blocks. The
+    // guard still catches genuine per-fixture bloat regressions.
     const html = (await resp!.body()).toString("utf8");
     const flightBytes = [...html.matchAll(/__next_f\.push\((\[[\s\S]*?\])\)<\/script>/g)].reduce(
       (n, m) => n + m[1]!.length,
       0,
     );
     expect(flightBytes).toBeGreaterThan(0);
-    expect(flightBytes).toBeLessThan(250_000);
+    expect(flightBytes).toBeLessThan(420_000);
   });
 
   test("legend filters to two divisions in two taps; the URL is shareable", async ({ page }) => {

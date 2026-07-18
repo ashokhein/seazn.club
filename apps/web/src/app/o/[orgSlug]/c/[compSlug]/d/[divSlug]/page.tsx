@@ -18,6 +18,7 @@ import { getScheduleSettings } from "@/server/usecases/schedule";
 import { hasFeature } from "@/lib/entitlements";
 import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { resolveModule } from "@/server/engine-db";
+import { effectiveEntrantModel } from "@seazn/engine/sport";
 import { withTenant } from "@/lib/db";
 import { DivisionDangerZone } from "@/components/v2/division-danger-zone";
 import { EmbedSnippet } from "@/components/v2/embed-snippet";
@@ -75,6 +76,9 @@ export default async function DivisionPage({
     hasFeature(auth.orgId, "exports"),
   ]);
   const sportModule = resolveModule(division.sport_key, division.module_version);
+  // Effective entrant model (sport default ← config.entrants override) — shared
+  // by the entrants panel (add form + roster editor) and the Settings tab.
+  const entrantModel = effectiveEntrantModel(sportModule.entrantModel ?? null, division.config);
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
   const hasKnockout = stages.some((s) => s.kind === "knockout");
   // Badge chips on standings rows (v3/03 §5) — resolved once per render.
@@ -199,6 +203,7 @@ export default async function DivisionPage({
             positionGroups={sportModule.positions.groups}
             roles={sportModule.positions.roles ?? []}
             eligibility={division.eligibility as Record<string, unknown>[]}
+            entrantModel={entrantModel}
           />
         )}
 
@@ -331,6 +336,13 @@ export default async function DivisionPage({
               qualification: (st.qualification ?? null) as Record<string, unknown> | null,
             }))}
             canEdit={editable}
+            entrantModel={entrantModel}
+            entrantModelSource={
+              (() => {
+                const e = (division.config as { entrants?: unknown } | null)?.entrants;
+                return e && typeof e === "object" ? "override" : "sport";
+              })()
+            }
             divisionPathPrefix={`/o/${orgSlug}/c/${compSlug}/d/`}
             fixturesHref={routes.division(orgSlug, compSlug, divSlug, "fixtures")}
             embed={

@@ -160,7 +160,7 @@ test("icehockey: penalties drive the strength chip (5v4 → 5v3 → release), OT
 
   // Quick goal + period advances into sudden-death OT; the OT goal ends it.
   const bearsPad = page.locator("div.rounded-xl", { hasText: "Bears" }).first();
-  await bearsPad.getByRole("button", { name: "+ Goal" }).click();
+  await bearsPad.getByRole("button", { name: "Goal", exact: true }).click();
   await sendEvent(request, fixtureId, "icehockey.goal", { by: kings });
   await sendEvent(request, fixtureId, "icehockey.period.advance", { to: "P2" });
   await sendEvent(request, fixtureId, "icehockey.period.advance", { to: "P3" });
@@ -201,13 +201,13 @@ test("icehockey: GWS recorder alternates attempts and decides", async ({ page, r
     await sendEvent(request, fixtureId, "icehockey.period.advance", { to });
   }
   await page.goto(`/fixtures/${fixtureId}`);
-  await expect(page.getByText(/Shoot-out — record each attempt/)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/Shootout — record each attempt/)).toBeVisible({ timeout: 20_000 });
 
   // First attempt by Aces; the recorder then expects Blades (Aces disabled).
   const scored = (team: string) =>
     page
       .locator("span", { hasText: `${team}:` })
-      .getByRole("button", { name: /scored/ });
+      .getByRole("button", { name: /scored/i });
   await scored("Aces").click();
   await expect(scored("Aces")).toBeDisabled({ timeout: 20_000 });
   // Drive the rest through the ledger: Blades miss ×3, Aces score ×2 more.
@@ -282,7 +282,7 @@ test("hockey (FIH): quarters, team-short chip, escalation hint, draw stands in s
   const heronsPad = page.locator("div.rounded-xl", { hasText: "Herons" }).last();
   await heronsPad.getByRole("button", { name: /Penalty \/ card/ }).click();
   await heronsPad.getByLabel(/Player/).selectOption(p1.data!.id);
-  await expect(page.getByText(/Prior green card this match/)).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText(/this may escalate/)).toBeVisible({ timeout: 20_000 });
 
   // Quarters advance Q1→Q4; a level game at FT is a draw worth 1/1.
   await sendEvent(request, fixtureId, "hockey.suspension.end", { by: herons, class: "green" });

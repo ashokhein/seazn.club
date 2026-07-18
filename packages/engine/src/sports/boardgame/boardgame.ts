@@ -219,6 +219,7 @@ export const boardgame: SportModule<BoardgameCfg, BoardgameEv, BoardgameState> =
   configSchema: BoardgameCfg,
   eventSchema: BoardgameEv,
   positions,
+  entrantModel: { kinds: ["individual"], defaultKind: "individual" },
   variants: {
     // Clock family only — the scoring is identical (chess.md §2).
     classical: { variant: "classical" },

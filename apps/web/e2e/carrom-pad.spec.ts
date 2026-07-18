@@ -47,13 +47,13 @@ test("carrom fixture scores board-by-board through its own pad", async ({ page, 
 
   // Record one board: Meena wins, 4 coins left, queen covered by Meena.
   await page.getByRole("button", { name: "Board won by Meena" }).click();
-  await page.getByLabel(/Opponent's coins left/).fill("4");
+  await page.getByLabel(/Opponent coins left/).fill("4");
   await page.getByLabel(/Queen covered by/).selectOption({ label: "Meena" });
   await page.getByRole("button", { name: "Record board" }).click();
 
   // The board banks points (4 coins + queen 3 = 7): the per-game scoreboard
   // shows the live game column — and no unknown-event error surfaces.
-  const scoreboard = page.getByRole("table", { name: "Carrom games" });
+  const scoreboard = page.getByRole("table", { name: "Games", exact: true });
   await expect(scoreboard).toBeVisible({ timeout: 20_000 });
   await expect(scoreboard.getByText("7•")).toBeVisible();
   await expect(page.getByText(/unknown event/i)).toHaveCount(0);

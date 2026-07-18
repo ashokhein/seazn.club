@@ -46,8 +46,14 @@ test("timezone preference persists and the API rejects a bogus zone", async ({ p
   const select = page.getByRole("combobox", { name: "Your timezone" });
   await expect(select).toBeVisible();
 
-  // Preferences form has its own Save; scope to the timezone control's form.
-  const tzForm = page.locator("div").filter({ has: select }).last();
+  // Preferences form has its own Save; scope to the innermost div holding BOTH
+  // the timezone select and its Save button (the select now sits in its own
+  // min-w-0 wrapper, so filtering on the select alone lands too narrow).
+  const tzForm = page
+    .locator("div")
+    .filter({ has: select })
+    .filter({ has: page.getByRole("button", { name: /^Sav/ }) })
+    .last();
   await select.selectOption("Asia/Kolkata");
   await Promise.all([
     page.waitForResponse(

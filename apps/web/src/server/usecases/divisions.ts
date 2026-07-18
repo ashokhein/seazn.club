@@ -7,6 +7,7 @@ import { sql, withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { withinLimit, requireFeature } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
+import { effectiveEntrantModel, type EntrantKind } from "@seazn/engine/sport";
 import { resolveModule } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateDivision, PatchDivision } from "@/server/api-v1/schemas";
@@ -378,6 +379,27 @@ export async function restoreDivision(auth: AuthCtx, id: string): Promise<Divisi
   });
 }
 
+// Structural comparison for the format-lock exemption below. Sorts object keys
+// so two configs compare equal regardless of insertion order (pragmatic
+// deep-equal — no shared helper exists). Arrays keep their order.
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, val) =>
+    val && typeof val === "object" && !Array.isArray(val)
+      ? Object.fromEntries(
+          Object.keys(val as Record<string, unknown>)
+            .sort()
+            .map((k) => [k, (val as Record<string, unknown>)[k]]),
+        )
+      : val,
+  );
+}
+
+function withoutEntrants(config: Record<string, unknown>): Record<string, unknown> {
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(config)) if (k !== "entrants") rest[k] = v;
+  return rest;
+}
+
 export async function patchDivision(
   auth: AuthCtx,
   id: string,
@@ -398,18 +420,14 @@ export async function patchDivision(
     // then re-validated exactly like create — variant preset merged with the
     // override and parsed by the PINNED module's schema.
     if (patch.variant_key !== undefined || patch.config !== undefined) {
-      const [{ locked }] = await tx<{ locked: boolean }[]>`
-        select exists(
-          select 1 from fixtures f
-          join stages s on s.id = f.stage_id
-          where s.division_id = ${id}
-        ) as locked`;
-      if (locked) {
-        throw new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
-      }
       const [current] = await tx<
-        { sport_key: string; module_version: string; variant_key: string }[]
-      >`select sport_key, module_version, variant_key from divisions where id = ${id}`;
+        {
+          sport_key: string;
+          module_version: string;
+          variant_key: string;
+          config: Record<string, unknown> | null;
+        }[]
+      >`select sport_key, module_version, variant_key, config from divisions where id = ${id}`;
       if (!current) throw new HttpError(404, "division not found");
       const variantKey = patch.variant_key ?? current.variant_key;
       const [variant] = await tx<{ config: Record<string, unknown> }[]>`
@@ -419,16 +437,68 @@ export async function patchDivision(
       if (!variant) {
         throw new HttpError(422, `unknown variant '${variantKey}' for ${current.sport_key}`);
       }
+      // Format lock (v8 spec §2): once a stage owns fixtures the format is
+      // immutable — the ONE exception is an entrants-only settings save
+      // (entrant shapes are not format; the ENTRANT_KIND_IN_USE guard below
+      // covers the dangerous narrowing). The lock keeps its original
+      // precedence: any variant_key touch, any config that doesn't parse, or
+      // any non-entrants config change 409s BEFORE other validation — the v8
+      // contract tests assert 409, never 422, while locked.
+      const [{ locked }] = await tx<{ locked: boolean }[]>`
+        select exists(
+          select 1 from fixtures f
+          join stages s on s.id = f.stage_id
+          where s.division_id = ${id}
+        ) as locked`;
+      const formatLocked = () =>
+        new HttpError(409, "Format is locked — fixtures exist", "FORMAT_LOCKED");
+      // ANY variant_key in the patch is format intent — even re-sending the
+      // current one resets config to the preset, and a "no-op" that only holds
+      // because schema defaults reconstruct the stored config must not soften
+      // the contract. The entrants-only door is config-shaped saves alone.
+      if (locked && patch.variant_key !== undefined) throw formatLocked();
       const sportModule = resolveModule(current.sport_key, current.module_version);
       const merged = { ...variant.config, ...(patch.config ?? {}) };
       const parsed = sportModule.configSchema.safeParse(merged);
       if (!parsed.success) {
+        if (locked) throw formatLocked();
         throw new EngineError("CONFIG_INVALID", `invalid ${current.sport_key} config`, {
           issues: parsed.error.issues,
         });
       }
+      // The entrant-shape override (spec 2026-07-18) rides in `config.entrants`
+      // but is NOT part of the sport's configSchema, which strips unknown keys —
+      // so carry it through the parse explicitly. Absent from the incoming
+      // config → the override is cleared back to the module default.
+      const finalConfig = parsed.data as Record<string, unknown>;
+      const incomingEntrants = (patch.config as { entrants?: unknown } | undefined)?.entrants;
+      if (incomingEntrants != null && typeof incomingEntrants === "object") {
+        finalConfig.entrants = incomingEntrants;
+      }
+      if (locked) {
+        const nonEntrantsChanged =
+          canonicalJson(withoutEntrants(finalConfig)) !==
+          canonicalJson(withoutEntrants((current.config ?? {}) as Record<string, unknown>));
+        if (nonEntrantsChanged) throw formatLocked();
+      }
+      // Narrowing the allowed kinds must not orphan entrants that already exist:
+      // an active entrant of a kind the new model no longer accepts would become
+      // unschedulable. Reject with 422 ENTRANT_KIND_IN_USE — withdraw first.
+      const nextModel = effectiveEntrantModel(sportModule.entrantModel ?? null, finalConfig);
+      const inUse = await tx<{ kind: string }[]>`
+        select distinct kind from entrants
+        where division_id = ${id} and status not in ('withdrawn', 'disqualified')`;
+      for (const { kind } of inUse) {
+        if (!nextModel.kinds.includes(kind as EntrantKind)) {
+          throw new HttpError(
+            422,
+            `entrants of kind '${kind}' already exist — withdraw them first`,
+            "ENTRANT_KIND_IN_USE",
+          );
+        }
+      }
       effective.variant_key = variantKey;
-      effective.config = tx.json(parsed.data as never);
+      effective.config = tx.json(finalConfig as never);
     }
     // Eligibility edits re-derive the youth flag unless the same patch sets
     // it explicitly (v3/11 gap 8 — auto with organiser override).

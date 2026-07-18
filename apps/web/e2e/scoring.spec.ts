@@ -86,7 +86,7 @@ test("badminton pad shows the current game number, not always game 1", async ({
 
   await page.goto(`/fixtures/${fixtureId}`);
   await expect(page.getByText("Game 2", { exact: false })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByText(/games won 1/)).toBeVisible();
+  await expect(page.getByText(/1 game won/)).toBeVisible();
 });
 
 test("badminton: an entered game score lands in the header summary live (v3/09 §1a)", async ({

@@ -43,6 +43,7 @@ export const tennis = makeNestedModule({
     },
   },
   positions,
+  entrantModel: { kinds: ["individual", "pair"], defaultKind: "individual" },
   // v6/00 §4 — points → set ratio → game ratio → h2h → seed.
   defaultTiebreakers: ["points", "set_ratio", "game_ratio", "h2h_points", "seed"],
   officialLabel: { scorer: "Chair Umpire" }, // ITF App VII

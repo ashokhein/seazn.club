@@ -153,6 +153,89 @@ describe.skipIf(!HAS_DB)("replaceStages — format structure swap (v8)", () => {
   });
 });
 
+describe.skipIf(!HAS_DB)("entrant-kind guard (spec 2026-07-18)", () => {
+  it("blocks narrowing kinds that would orphan an active entrant, allows it once withdrawn", async () => {
+    const owner = await seedOwner();
+    const { division } = await rig(owner);
+
+    // Generic sport declares no entrant model → every kind is accepted, so a
+    // team entrant lands. Narrowing to individual-only would strand it.
+    const [team] = await createEntrants(owner, division.id, [
+      { kind: "team", display_name: "Team A", seed: 1, members: [] },
+    ]);
+
+    // The settings UI sends the FULL stored config plus the override (the
+    // sport schema alone may not parse a bare preset) — mirror that here.
+    const storedConfig = (await getDivision(owner, division.id)).config as Record<string, unknown>;
+    const narrowed = {
+      ...storedConfig,
+      entrants: { kinds: ["individual"], defaultKind: "individual" },
+    };
+
+    await expect(
+      patchDivision(owner, division.id, { config: narrowed }),
+    ).rejects.toMatchObject({ status: 422, code: "ENTRANT_KIND_IN_USE" });
+
+    // Withdraw the team → the same narrowing now lands, and the override sticks.
+    await sql`update entrants set status = 'withdrawn' where id = ${team!.id}`;
+    const patched = await patchDivision(owner, division.id, { config: narrowed });
+    expect((patched.config as { entrants?: { kinds: string[] } }).entrants?.kinds).toEqual([
+      "individual",
+    ]);
+  });
+});
+
+describe.skipIf(!HAS_DB)("entrants-only config PATCH bypasses the format lock (spec 2026-07-18)", () => {
+  it("allows an entrants-only change while locked, but 409s if a real config field also changes", async () => {
+    const owner = await seedOwner();
+    const { division } = await rig(owner);
+
+    // Lock the format the same way the format-lock suite does: entrants + a
+    // league stage + generated fixtures.
+    await createEntrants(owner, division.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+    ]);
+    const [stage] = await createStages(owner, division.id, {
+      seq: 1, kind: "league", name: "L", config: {},
+    });
+    await generateStageFixtures(owner, stage!.id);
+
+    // The settings UI sends the FULL stored config plus the override, so mirror
+    // that: base off the stored snapshot and set only `entrants`.
+    const storedConfig = (await getDivision(owner, division.id)).config as Record<string, unknown>;
+
+    // (a) Entrants-only change lands even though the format is locked.
+    const patched = await patchDivision(owner, division.id, {
+      config: {
+        ...storedConfig,
+        entrants: {
+          kinds: ["individual", "team"],
+          defaultKind: "individual",
+          squadNumbers: true,
+          captain: true,
+        },
+      },
+    });
+    const savedEntrants = (patched.config as {
+      entrants?: { kinds: string[]; captain?: boolean };
+    }).entrants;
+    expect(savedEntrants?.kinds).toEqual(["individual", "team"]);
+    expect(savedEntrants?.captain).toBe(true);
+
+    // (b) Entrants change PLUS a real config field (points) → still locked.
+    await expect(
+      patchDivision(owner, division.id, {
+        config: {
+          ...storedConfig,
+          points: { w: 5, d: 5, l: 5 },
+          entrants: { kinds: ["individual", "team"], defaultKind: "individual" },
+        },
+      }),
+    ).rejects.toMatchObject({ status: 409, code: "FORMAT_LOCKED" });
+  });
+});
+
 afterAll(async () => {
   if (!HAS_DB) return;
   await sql.end();

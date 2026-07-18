@@ -178,7 +178,14 @@ export function proxy(request: NextRequest) {
   // prefix match (the exact-match Set can't cover dynamic child routes).
   const MARKETING_PREFIXED = ["/use-cases/", "/discover/"];
   const mp = request.nextUrl.pathname;
-  if (MARKETING_UNPREFIXED.has(mp) || MARKETING_PREFIXED.some((pre) => mp.startsWith(pre))) {
+  // The games.* subdomain owns "/" (and single-segment slugs) for its own tree
+  // via gamesHostRewrite below — the marketing [lang] rewrite must NOT claim
+  // "/" first on that host, or games.seazn.club/ lands on the marketing home.
+  const isGamesHost = requestHostname(request).startsWith("games.");
+  if (
+    !isGamesHost &&
+    (MARKETING_UNPREFIXED.has(mp) || MARKETING_PREFIXED.some((pre) => mp.startsWith(pre)))
+  ) {
     const url = request.nextUrl.clone();
     url.pathname = mp === "/" ? `/${locale}` : `/${locale}${mp}`;
     return NextResponse.rewrite(url, { request: { headers: requestHeaders } });

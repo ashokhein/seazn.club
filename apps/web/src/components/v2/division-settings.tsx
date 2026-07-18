@@ -12,6 +12,17 @@ import { divisionAccent, monogram } from "@/lib/division-hue";
 import { MatchRuleFields, buildRuleOverride } from "./match-rules";
 import { STAGE_TEMPLATES, buildTemplateStages, detectTemplate } from "./format-templates";
 import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
+import type { EffectiveEntrantModel } from "@seazn/engine/sport";
+
+// The three entrant shapes, in a stable display order. The effective model
+// (module default ← division override) decides which are ticked.
+const ENTRANT_KINDS = ["individual", "pair", "team"] as const;
+const KIND_LABEL_KEY: Record<(typeof ENTRANT_KINDS)[number], MessageKey> = {
+  individual: "divset.entrants.kind.individual",
+  pair: "divset.entrants.kind.pair",
+  team: "divset.entrants.kind.team",
+};
 
 export interface DivisionSettingsInfo {
   id: string;
@@ -95,6 +106,8 @@ export function DivisionSettings({
   fixturesHref,
   embed,
   danger,
+  entrantModel,
+  entrantModelSource,
 }: {
   division: DivisionSettingsInfo;
   variants: { key: string; name: string }[];
@@ -112,6 +125,12 @@ export function DivisionSettings({
   embed: ReactNode;
   /** DivisionDangerZone, unchanged. */
   danger: ReactNode;
+  /** Resolved effective entrant model (module default merged with any
+   *  `config.entrants` override) — seeds the Entrants block's controls. */
+  entrantModel: EffectiveEntrantModel;
+  /** Whether the effective model comes from the sport default or a saved
+   *  `config.entrants` override — drives the caption + Reset affordance. */
+  entrantModelSource: "sport" | "override";
 }) {
   const msg = useMsg();
   const router = useRouter();
@@ -143,6 +162,12 @@ export function DivisionSettings({
   const [pointsL, setPointsL] = useState(cfg.points ? String(cfg.points.l ?? "") : "");
   const [ruleValues, setRuleValues] = useState<Record<string, string>>({});
   const [advancedText, setAdvancedText] = useState("");
+  // Entrants block (spec 2026-07-18): the ticked kinds, the default, and the
+  // team extras seed from the resolved effective model.
+  const [entrantKinds, setEntrantKinds] = useState<string[]>(entrantModel.kinds);
+  const [entrantDefault, setEntrantDefault] = useState<string>(entrantModel.defaultKind);
+  const [squadNumbers, setSquadNumbers] = useState<boolean>(entrantModel.squadNumbers);
+  const [captain, setCaptain] = useState<boolean>(entrantModel.captain);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -249,6 +274,45 @@ export function DivisionSettings({
         json: { variant_key: variantKey, config: override },
       });
     }, msg("divset.notice.rulesSaved"));
+
+  // Tick/untick a kind, keeping canonical order and never emptying the list;
+  // if the current default falls out, re-point it at the first remaining kind.
+  const toggleKind = (kind: string) => {
+    const next: string[] = ENTRANT_KINDS.filter((k) =>
+      k === kind ? !entrantKinds.includes(k) : entrantKinds.includes(k),
+    );
+    if (next.length === 0) return;
+    setEntrantKinds(next);
+    if (!next.includes(entrantDefault)) setEntrantDefault(next[0]!);
+  };
+
+  const saveEntrants = () =>
+    run(async () => {
+      // Same wholesale-config contract as applyFormat: the server merges the
+      // variant preset with the sent config and re-validates, so base the
+      // override on the current snapshot and set `entrants` on it.
+      const entrants: Record<string, unknown> = { kinds: entrantKinds, defaultKind: entrantDefault };
+      if (entrantKinds.includes("team")) {
+        entrants.squadNumbers = squadNumbers;
+        entrants.captain = captain;
+      }
+      const override = { ...((division.config as Record<string, unknown>) ?? {}), entrants };
+      await apiV1(`/api/v1/divisions/${division.id}`, {
+        method: "PATCH",
+        json: { config: override },
+      });
+    }, msg("divset.entrants.saved"));
+
+  const resetEntrants = () =>
+    run(async () => {
+      // Drop the override key → the server re-derives from the module default.
+      const override = { ...((division.config as Record<string, unknown>) ?? {}) };
+      delete override.entrants;
+      await apiV1(`/api/v1/divisions/${division.id}`, {
+        method: "PATCH",
+        json: { config: override },
+      });
+    }, msg("divset.entrants.resetDone"));
 
   return (
     <div className="max-w-2xl space-y-3" data-testid="division-settings">
@@ -494,6 +558,124 @@ export function DivisionSettings({
             <p className="text-[11px] text-slate-400">{msg("divset.rulesNote")}</p>
           </>
         )}
+      </Group>
+
+      <Group
+        title={msg("divset.entrants.title")}
+        summary={entrantKinds.map((k) => msg(KIND_LABEL_KEY[k as (typeof ENTRANT_KINDS)[number]])).join(", ")}
+        defaultOpen
+      >
+        <p className="text-xs text-slate-500">{msg("divset.entrants.desc")}</p>
+
+        {/* Source line: a muted "Sport default" note, or, once overridden, the
+            same note swapped for a quiet Reset affordance beside it. */}
+        <div className="flex flex-wrap items-center gap-2 text-[11px]">
+          {entrantModelSource === "sport" ? (
+            <span className="text-slate-400" data-testid="entrants-sport-default">
+              {msg("divset.entrants.sportDefault")}
+            </span>
+          ) : (
+            <>
+              <span className="text-slate-400">{msg("divset.entrants.overridden")}</span>
+              {canEdit && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={resetEntrants}
+                  className="rounded text-slate-500 underline transition hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-300"
+                >
+                  {msg("divset.entrants.reset")}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+
+        {/* Kinds — multi-select chips, mirroring RoleChipPicker's toggle style.
+            min-inline-size:0 keeps the fieldset from bursting narrow cards. */}
+        <fieldset className="min-w-0 space-y-1.5 [min-inline-size:0]" disabled={!canEdit}>
+          <legend className="label">{msg("divset.entrants.kinds")}</legend>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label={msg("divset.entrants.kinds")}>
+            {ENTRANT_KINDS.map((kind) => {
+              const active = entrantKinds.includes(kind);
+              return (
+                <button
+                  key={kind}
+                  type="button"
+                  data-kind={kind}
+                  aria-pressed={active}
+                  onClick={() => toggleKind(kind)}
+                  disabled={!canEdit}
+                  className={`rounded-full border px-3 py-1 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-300 disabled:cursor-not-allowed disabled:opacity-60 ${
+                    active
+                      ? "border-purple-600 bg-purple-600 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-purple-300"
+                  }`}
+                >
+                  {msg(KIND_LABEL_KEY[kind])}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+
+        <label className="block text-xs text-slate-500">
+          {msg("divset.entrants.defaultKind")}
+          <select
+            disabled={!canEdit}
+            value={entrantDefault}
+            onChange={(e) => setEntrantDefault(e.target.value)}
+            className="input mt-1 block w-full sm:w-auto"
+          >
+            {entrantKinds.map((kind) => (
+              <option key={kind} value={kind}>
+                {msg(KIND_LABEL_KEY[kind as (typeof ENTRANT_KINDS)[number]])}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        {/* Team affordances — indented + grouped, shown only while a team kind
+            is ticked (there is nothing to number or captain otherwise). */}
+        {entrantKinds.includes("team") && (
+          <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+              {msg("divset.entrants.teamOptions")}
+            </p>
+            <label className="flex items-start gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={squadNumbers}
+                onChange={(e) => setSquadNumbers(e.target.checked)}
+                disabled={!canEdit}
+                className="mt-0.5"
+              />
+              {msg("divset.entrants.squadNumbers")}
+            </label>
+            <label className="flex items-start gap-2 text-xs text-slate-600">
+              <input
+                type="checkbox"
+                checked={captain}
+                onChange={(e) => setCaptain(e.target.checked)}
+                disabled={!canEdit}
+                className="mt-0.5"
+              />
+              {msg("divset.entrants.captain")}
+            </label>
+          </div>
+        )}
+
+        {canEdit && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={saveEntrants}
+            className="btn btn-primary w-full text-xs sm:w-auto"
+          >
+            {msg("divset.entrants.save")}
+          </button>
+        )}
+        <p className="text-[11px] text-slate-400">{msg("divset.entrants.note")}</p>
       </Group>
 
       <Group title={msg("divset.sharing")} summary={msg("divset.sharingSummary")}>

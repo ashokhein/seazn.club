@@ -4,11 +4,22 @@
 // position/role assignment from the module catalog, withdraw/seed.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { entrantKindCap } from "@seazn/engine/sport";
+import type { EffectiveEntrantModel, EntrantKind } from "@seazn/engine/sport";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
+
+// Shared entrant-kind labels — reuse the same catalog keys the Settings tab
+// uses so "Individual / Pair / Team" read identically across the console.
+const ENTRANT_KIND_LABEL: Record<EntrantKind, MessageKey> = {
+  individual: "divset.entrants.kind.individual",
+  pair: "divset.entrants.kind.pair",
+  team: "divset.entrants.kind.team",
+};
 
 interface PositionGroup {
   key: string;
@@ -63,6 +74,10 @@ interface Props {
   positionGroups: PositionGroup[];
   roles: RoleSpec[];
   eligibility: Record<string, unknown>[];
+  /** Effective entrant model (sport default merged with any config.entrants
+   *  override) — decides which kinds the add form offers and whether the
+   *  roster editor shows squad numbers / captain. */
+  entrantModel: EffectiveEntrantModel;
 }
 
 // Load the whole org persons directory once (cursor-paged) — org rosters are
@@ -89,6 +104,7 @@ export function EntrantsPanel({
   positionGroups,
   roles,
   eligibility,
+  entrantModel,
 }: Props) {
   const msg = useMsg();
   const router = useRouter();
@@ -203,6 +219,7 @@ export function EntrantsPanel({
           persons={persons}
           teams={teams}
           enteredTeamIds={enteredTeamIds}
+          entrantModel={entrantModel}
           busy={busy}
           onSubmit={(payload) =>
             run(() =>
@@ -342,6 +359,7 @@ export function EntrantsPanel({
                 persons={persons}
                 positionGroups={positionGroups}
                 roles={roles}
+                entrantModel={entrantModel}
                 otherTeamsFor={otherTeamsFor}
                 onPatch={(patch) =>
                   run(() =>
@@ -398,6 +416,7 @@ function AddEntrantForm({
   persons,
   teams,
   enteredTeamIds,
+  entrantModel,
   busy,
   onSubmit,
   importControls,
@@ -405,6 +424,7 @@ function AddEntrantForm({
   persons: Person[];
   teams: TeamOption[];
   enteredTeamIds: Set<string>;
+  entrantModel: EffectiveEntrantModel;
   busy: boolean;
   onSubmit: (
     payload: Record<string, unknown>,
@@ -412,33 +432,35 @@ function AddEntrantForm({
   /** Inline CSV-import controls rendered in the footer row. */
   importControls?: React.ReactNode;
 }) {
-  // "Existing team" mode is only meaningful once the org has teams (they are
-  // created by import). Mirror the club-filter visibility rule: no teams → the
-  // form is exactly the old "new entrant" flow, so free orgs see no change.
-  const hasTeams = teams.length > 0;
+  // "Existing team" mode enrolls a whole team, so it only makes sense when this
+  // division actually accepts a team kind AND the org has teams (created by
+  // import). Otherwise the form is exactly the old "new entrant" flow.
+  const teamKindAllowed = entrantModel.kinds.includes("team");
+  const canExisting = teamKindAllowed && teams.length > 0;
   const [mode, setMode] = useState<"existing" | "new">("new");
   const [touched, setTouched] = useState(false);
-  // Teams load after first paint; default to "existing" once they arrive, but
+  // Teams load after first paint; default to "existing" once available, but
   // never override a mode the organiser explicitly picked.
   useEffect(() => {
-    if (!touched) setMode(hasTeams ? "existing" : "new");
-  }, [hasTeams, touched]);
+    if (!touched) setMode(canExisting ? "existing" : "new");
+  }, [canExisting, touched]);
 
   return (
     <form className="card space-y-3 p-4">
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-slate-700">Add entrant</h3>
-        {hasTeams && (
+        {canExisting && (
           <div className="inline-flex rounded-lg border border-slate-200 p-0.5 text-xs">
             {(["existing", "new"] as const).map((m) => (
               <button
                 key={m}
                 type="button"
+                aria-pressed={mode === m}
                 onClick={() => {
                   setTouched(true);
                   setMode(m);
                 }}
-                className={`rounded-md px-2.5 py-1 font-medium transition ${
+                className={`rounded-md px-2.5 py-1 font-medium transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-300 ${
                   mode === m ? "bg-purple-600 text-white" : "text-slate-500 hover:text-slate-800"
                 }`}
               >
@@ -449,7 +471,7 @@ function AddEntrantForm({
         )}
       </div>
 
-      {mode === "existing" ? (
+      {mode === "existing" && canExisting ? (
         <ExistingTeamFields
           teams={teams}
           enteredTeamIds={enteredTeamIds}
@@ -457,7 +479,12 @@ function AddEntrantForm({
           onSubmit={onSubmit}
         />
       ) : (
-        <NewEntrantFields persons={persons} busy={busy} onSubmit={onSubmit} />
+        <NewEntrantFields
+          persons={persons}
+          entrantModel={entrantModel}
+          busy={busy}
+          onSubmit={onSubmit}
+        />
       )}
 
       <div className="flex flex-wrap items-center justify-end gap-3">{importControls}</div>
@@ -597,21 +624,34 @@ function ExistingTeamFields({
 }
 
 /** Mode B: the original ad-hoc entrant (scratch pairs, one-offs) — never
- *  creates a team, kept deliberately as an explicit choice. */
-function NewEntrantFields({
+ *  creates a team, kept deliberately as an explicit choice. The add form now
+ *  follows the division's effective entrant model: it offers only the allowed
+ *  kinds, and individual/pair entrants derive their display name from the
+ *  picked people instead of a free-text box. Exported for the markup test. */
+export function NewEntrantFields({
   persons,
+  entrantModel,
   busy,
   onSubmit,
 }: {
   persons: Person[];
+  entrantModel: EffectiveEntrantModel;
   busy: boolean;
   onSubmit: (payload: Record<string, unknown>) => Promise<unknown>;
 }) {
+  const msg = useMsg();
+  const [kind, setKind] = useState<string>(entrantModel.defaultKind);
   const [name, setName] = useState("");
-  const [kind, setKind] = useState("individual");
+  const [nameTouched, setNameTouched] = useState(false);
   const [seed, setSeed] = useState("");
   const [memberIds, setMemberIds] = useState<string[]>([]);
   const [filter, setFilter] = useState("");
+
+  const isIndividual = kind === "individual";
+  const isTeam = kind === "team";
+  const cap = entrantKindCap(kind, entrantModel);
+  const atCap = memberIds.length >= cap;
+  const singleKind = entrantModel.kinds.length === 1;
 
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -619,76 +659,150 @@ function NewEntrantFields({
     return persons.filter((p) => p.full_name.toLowerCase().includes(q)).slice(0, 8);
   }, [persons, filter]);
 
+  // Derived name from the picked people: individual → that person, pair →
+  // "A & B". Teams always name themselves manually.
+  const derivedName = useMemo(() => {
+    const picked = memberIds
+      .map((id) => persons.find((p) => p.id === id)?.full_name)
+      .filter((n): n is string => Boolean(n));
+    if (isIndividual) return picked[0] ?? "";
+    if (kind === "pair") return picked.join(" & ");
+    return "";
+  }, [isIndividual, kind, memberIds, persons]);
+
+  // The name shown in / submitted from the editable field. Teams and a
+  // hand-edited individual/pair keep the typed value; untouched ones
+  // auto-fill from the picked people. The field stays for individuals too:
+  // organisers legitimately register name-only entrants with no person
+  // record (board-game one-nighters) — the person pick is optional sugar.
+  const nameValue = isTeam || nameTouched ? name : derivedName;
+  const submitName = nameValue;
+
+  function pickKind(next: string) {
+    setKind(next);
+    // Trim any picks beyond the new kind's cap (team→pair keeps the first two).
+    setMemberIds((prev) => prev.slice(0, entrantKindCap(next, entrantModel)));
+  }
+
+  function togglePick(id: string) {
+    setMemberIds((prev) => {
+      if (prev.includes(id)) return prev.filter((x) => x !== id);
+      if (isIndividual) return [id]; // single seat — a new pick replaces
+      if (prev.length >= cap) return prev; // pair/team cap reached — ignore
+      return [...prev, id];
+    });
+  }
+
   async function submit() {
     await onSubmit({
       kind,
-      display_name: name,
+      display_name: submitName,
       seed: seed ? Number(seed) : null,
       members: memberIds.map((id) => ({ person_id: id, is_captain: false, roles: [] })),
     });
     setName("");
+    setNameTouched(false);
     setSeed("");
     setMemberIds([]);
   }
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
-        <label className="block">
+      {/* Kind — chips when the division offers a choice (mirrors the Settings
+          tab), a static caption when only one shape is allowed. */}
+      {singleKind ? (
+        <span className="inline-flex w-fit rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs text-slate-600">
+          {msg(ENTRANT_KIND_LABEL[kind as EntrantKind])}
+        </span>
+      ) : (
+        <fieldset className="min-w-0 space-y-1.5 [min-inline-size:0]">
+          <legend className="label">{msg("entrants.add.kind")}</legend>
+          <div
+            className="flex flex-wrap gap-1.5"
+            role="group"
+            aria-label={msg("entrants.add.kind")}
+          >
+            {entrantModel.kinds.map((k) => {
+              const active = k === kind;
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  data-kind={k}
+                  aria-pressed={active}
+                  onClick={() => pickKind(k)}
+                  className={`rounded-full border px-3 py-1 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-300 ${
+                    active
+                      ? "border-purple-600 bg-purple-600 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-purple-300"
+                  }`}
+                >
+                  {msg(ENTRANT_KIND_LABEL[k])}
+                </button>
+              );
+            })}
+          </div>
+        </fieldset>
+      )}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="block min-w-0">
           <span className="label">Name</span>
           <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="input"
-            placeholder="Riverside CC"
+            value={nameValue}
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameTouched(true);
+            }}
+            className="input w-full"
+            placeholder={isTeam ? "Riverside CC" : isIndividual ? "Alex Doe" : "Alice & Bob"}
           />
         </label>
-        <div className="grid grid-cols-2 gap-2">
-          <label className="block">
-            <span className="label">Kind</span>
-            <select value={kind} onChange={(e) => setKind(e.target.value)} className="select">
-              <option value="individual">individual</option>
-              <option value="team">team</option>
-              <option value="pair">pair</option>
-            </select>
-          </label>
-          <label className="block">
-            <span className="label">Seed</span>
-            <input
-              type="number"
-              min={1}
-              value={seed}
-              onChange={(e) => setSeed(e.target.value)}
-              className="input"
-            />
-          </label>
-        </div>
+        <label className="block min-w-0">
+          <span className="label">Seed</span>
+          <input
+            type="number"
+            min={1}
+            value={seed}
+            onChange={(e) => setSeed(e.target.value)}
+            className="input w-full"
+          />
+        </label>
       </div>
 
-      <div>
-        <span className="label">Members (persons directory)</span>
+      <div className="min-w-0">
+        <span className="label">
+          {kind === "individual"
+            ? msg("entrants.add.player")
+            : kind === "pair"
+              ? msg("entrants.add.pairPlayers")
+              : "Members (persons directory)"}
+        </span>
         <input
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
-          className="input"
+          className="input w-full"
           placeholder="Search players…"
         />
         <div className="mt-2 flex flex-wrap gap-1.5">
           {filtered.map((p) => {
             const selected = memberIds.includes(p.id);
+            // Pair/team seats are finite: once full, unpicked people are
+            // disabled. Individual always allows a replacing pick.
+            const blocked = !selected && atCap && !isIndividual;
             return (
               <button
                 key={p.id}
                 type="button"
-                onClick={() =>
-                  setMemberIds(
-                    selected ? memberIds.filter((id) => id !== p.id) : [...memberIds, p.id],
-                  )
-                }
-                className={`rounded-full border px-2.5 py-0.5 text-xs transition ${
+                disabled={blocked}
+                aria-pressed={selected}
+                onClick={() => togglePick(p.id)}
+                className={`max-w-full truncate rounded-full border px-2.5 py-0.5 text-xs transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-purple-300 ${
                   selected
                     ? "border-purple-500 bg-purple-50 text-purple-700"
-                    : "border-slate-200 text-slate-500 hover:border-purple-200"
+                    : blocked
+                      ? "cursor-not-allowed border-slate-200 text-slate-300"
+                      : "border-slate-200 text-slate-500 hover:border-purple-200"
                 }`}
               >
                 {p.full_name}
@@ -709,8 +823,8 @@ function NewEntrantFields({
       <button
         type="button"
         onClick={submit}
-        disabled={busy || !name.trim()}
-        className="btn btn-primary"
+        disabled={busy || !submitName.trim()}
+        className="btn btn-primary w-full sm:w-auto"
       >
         {busy ? "Saving…" : "Add entrant"}
       </button>
@@ -910,6 +1024,7 @@ function EntrantTableRow({
   persons,
   positionGroups,
   roles,
+  entrantModel,
   otherTeamsFor,
   onPatch,
   onWithdraw,
@@ -921,6 +1036,7 @@ function EntrantTableRow({
   persons: Person[];
   positionGroups: PositionGroup[];
   roles: RoleSpec[];
+  entrantModel: EffectiveEntrantModel;
   otherTeamsFor: (personId: string, exceptEntrantId: string) => DivisionRosterRow[];
   onPatch: (patch: Record<string, unknown>) => void;
   /** Withdraw with fixture surgery (spec 05 §5) — confirm handled upstream. */
@@ -1025,12 +1141,16 @@ function EntrantTableRow({
               <p className="text-xs text-slate-400">Loading roster…</p>
             ) : (
               <RosterEditor
+                kind={entrant.kind}
                 members={members}
                 persons={persons}
                 positionGroups={positionGroups}
                 roles={roles}
                 canEdit={canEdit}
                 busy={busy}
+                allowCaptain={entrantModel.captain}
+                allowSquadNumbers={entrantModel.squadNumbers}
+                entrantModel={entrantModel}
                 conflictsFor={(personId) => otherTeamsFor(personId, entrant.id)}
                 onSave={(next) =>
                   onPatch({
@@ -1059,13 +1179,17 @@ function entrantStatusStyle(status: string): string {
   return "bg-sky-100 text-sky-700";
 }
 
-function RosterEditor({
+export function RosterEditor({
   members: initial,
   persons,
   positionGroups,
   roles,
   canEdit,
   busy,
+  kind,
+  allowCaptain,
+  allowSquadNumbers,
+  entrantModel,
   conflictsFor,
   onSave,
 }: {
@@ -1075,6 +1199,14 @@ function RosterEditor({
   roles: RoleSpec[];
   canEdit: boolean;
   busy: boolean;
+  /** Entrant kind — only a team roster shows captain + squad number. */
+  kind: string;
+  /** Whether the division's effective model allows a captain marker. */
+  allowCaptain: boolean;
+  /** Whether the division's effective model allows squad numbers. */
+  allowSquadNumbers: boolean;
+  /** Effective model — supplies the team member cap for the picker gate. */
+  entrantModel: EffectiveEntrantModel;
   /** Other team entrants IN THIS DIVISION a person is already on. */
   conflictsFor: (personId: string) => DivisionRosterRow[];
   onSave: (members: Member[]) => void;
@@ -1082,6 +1214,10 @@ function RosterEditor({
   const [members, setMembers] = useState(initial);
   const [filter, setFilter] = useState("");
   const [dirty, setDirty] = useState(false);
+  // Captain + squad numbers are team concepts, and each is independently
+  // switchable in the division's entrant settings.
+  const teamish = kind === "team";
+  const atCap = members.length >= entrantKindCap(kind, entrantModel);
 
   function update(i: number, patch: Partial<Member>) {
     setMembers((prev) => prev.map((m, j) => (j === i ? { ...m, ...patch } : m)));
@@ -1129,18 +1265,20 @@ function RosterEditor({
               </span>
             )}
           </span>
-          <input
-            type="number"
-            min={0}
-            placeholder="No."
-            disabled={!canEdit}
-            value={m.squad_number ?? ""}
-            onChange={(e) =>
-              update(i, { squad_number: e.target.value ? Number(e.target.value) : null })
-            }
-            className="input w-16 px-2 py-1 text-xs"
-            aria-label={`Squad number for ${m.full_name}`}
-          />
+          {teamish && allowSquadNumbers && (
+            <input
+              type="number"
+              min={0}
+              placeholder="No."
+              disabled={!canEdit}
+              value={m.squad_number ?? ""}
+              onChange={(e) =>
+                update(i, { squad_number: e.target.value ? Number(e.target.value) : null })
+              }
+              className="input w-16 px-2 py-1 text-xs"
+              aria-label={`Squad number for ${m.full_name}`}
+            />
+          )}
           {positionGroups.length > 0 && (
             <select
               disabled={!canEdit}
@@ -1157,24 +1295,26 @@ function RosterEditor({
               ))}
             </select>
           )}
-          <label className="flex items-center gap-1 text-slate-500">
-            <input
-              type="checkbox"
-              disabled={!canEdit}
-              checked={m.is_captain}
-              onChange={(e) => {
-                // Captain is unique — setting it clears the others.
-                setMembers((prev) =>
-                  prev.map((mm, j) => ({
-                    ...mm,
-                    is_captain: j === i ? e.target.checked : false,
-                  })),
-                );
-                setDirty(true);
-              }}
-            />
-            captain
-          </label>
+          {teamish && allowCaptain && (
+            <label className="flex items-center gap-1 text-slate-500">
+              <input
+                type="checkbox"
+                disabled={!canEdit}
+                checked={m.is_captain}
+                onChange={(e) => {
+                  // Captain is unique — setting it clears the others.
+                  setMembers((prev) =>
+                    prev.map((mm, j) => ({
+                      ...mm,
+                      is_captain: j === i ? e.target.checked : false,
+                    })),
+                  );
+                  setDirty(true);
+                }}
+              />
+              captain
+            </label>
+          )}
           {/* `captain` has its own dedicated checkbox above; don't render it
               again as a generic role (some sport specs list it in roles). */}
           {roles.filter((r) => r.key !== "captain").map((r) => (
@@ -1209,7 +1349,7 @@ function RosterEditor({
         </div>
       ))}
 
-      {canEdit && (
+      {canEdit && !atCap && (
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2">
           <input
             value={filter}

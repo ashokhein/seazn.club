@@ -282,8 +282,11 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
       // (b) offB is a genuinely claimed official (its person is linked to this
       // account) but its fixtureB assignment is still "pending" — response
       // must be "accepted", not just a claimed link, to record a score. Hit
-      // the score endpoint directly: a pending official is rejected with 403
-      // (requireScorable/requireFixtureActor), not a page-level 404.
+      // the score endpoint directly: a pending official has no *accepted*
+      // assignment, so requireFixtureActor treats it as a plain non-member and
+      // rejects with 401 (AuthError "not a member" — same non-member convention
+      // as requireOrgAuth; members with an insufficient role are the 403 path),
+      // never a page-level 404. Either way the scoring door stays shut.
       const stateB = await apiJson<{ last_seq: number }>(page.request, `/api/v1/fixtures/${fixtureB}/state`);
       const pendingRes = await page.request.post(`/api/v1/fixtures/${fixtureB}/events`, {
         headers: { "Content-Type": "application/json" },
@@ -293,7 +296,7 @@ test.describe.serial("officiating: accept, score, and access boundaries", () => 
           payload: { p1Score: 2, p2Score: 1 },
         },
       });
-      expect(pendingRes.status()).toBe(403);
+      expect(pendingRes.status()).toBe(401);
 
       // (c) This account holds an accepted assignment on fixtureA, but is a
       // non-member of the org — every non-fixture, organiser-only page still

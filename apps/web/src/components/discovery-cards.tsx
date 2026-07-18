@@ -135,7 +135,7 @@ export function DiscoveryCard({
       <h3 className="truncate font-semibold text-slate-800">{entry.name}</h3>
       {/* tagline/hero only arrive from the view with `discovery.branding`. */}
       {entry.tagline && <p className="mt-0.5 truncate text-xs text-slate-500">{entry.tagline}</p>}
-      <p className="mt-1 truncate text-xs text-slate-400">{t(dict, "discovery.by", { org: entry.org_name })}</p>
+      <p className="mt-1 truncate text-xs text-slate-500">{t(dict, "discovery.by", { org: entry.org_name })}</p>
       <p className="mt-2 flex flex-wrap gap-x-3 text-xs text-slate-500">
         {dates && <span>📅 {dates}</span>}
         {location && <span>📍 {location}</span>}

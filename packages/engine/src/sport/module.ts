@@ -16,6 +16,7 @@ import type {
 import type { PositionCatalog } from "./catalog.ts";
 import type { DocSection } from "../exports/types.ts";
 import type { PlayerStatsModel } from "../stats/stats.ts";
+import type { EntrantModel } from "./entrant-model.ts";
 
 // Jul3/06 §3 — what a print fragment gets to work with (display labels only;
 // TBD feeds arrive pre-rendered as "Winner of QF1").
@@ -94,6 +95,10 @@ export interface SportModule<Cfg, Ev, State> extends FoldableModule<Cfg, State> 
   // folds; scoring math stays here. Sports without person-attributed events
   // simply omit it (leaderboards then say "requires detailed scoring").
   playerStats?: PlayerStatsModel;
+
+  // Entrant shapes (2026-07-18 spec): allowed kinds + team affordances.
+  // Absent = legacy behaviour (all kinds, team affordances on team rosters).
+  entrantModel?: EntrantModel;
 
   init(cfg: Cfg, lineups: LineupPair): State;
   apply(state: State, ev: EventEnvelope<Ev | CoreEv>): State; // pure; throws EngineError

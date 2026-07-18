@@ -30,6 +30,7 @@ import type {
   SportModule,
   TiebreakerKey,
 } from "../../sport/module.ts";
+import type { EntrantModel } from "../../sport/entrant-model.ts";
 
 // ---------------------------------------------------------------------------
 // Cfg — v6/00 §2
@@ -577,6 +578,7 @@ export interface NestedPreset {
   defaultTiebreakers: TiebreakerKey[];
   officialLabel: { scorer: string };
   rallyEntitlement: string; // FeatureKey for tier-2/3 point-by-point scoring
+  entrantModel?: EntrantModel;
 }
 
 const METRICS: MetricSpec[] = [
@@ -751,6 +753,7 @@ export function makeNestedModule(
 
     fidelityTiers,
     officialLabel: preset.officialLabel,
+    ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
 
     // spec 03 §6 — deterministic generator. Summary-dominant so matches decide
     // within the conformance event budget; point bursts exercise the rally

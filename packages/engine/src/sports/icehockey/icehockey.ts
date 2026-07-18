@@ -101,6 +101,7 @@ export const icehockey = makePeriodModule({
     },
   },
   positions,
+  entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
   metrics: [
     { key: "gf", label: "GF", direction: "desc" },
     { key: "ga", label: "GA", direction: "asc" },
