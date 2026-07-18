@@ -469,7 +469,8 @@ test.describe("T4 · duplicate Event Pass payment auto-refunds", () => {
     const res = await postSignedEvent(request, event);
     expect(res.status()).toBe(200);
 
-    // The refund path fired (swallowed keyless): exactly ONE pass, intent unchanged.
+    // Outcome: exactly ONE pass, intent unchanged — the second payment did NOT
+    // create a row and did NOT overwrite the first intent.
     const passes = await withDb((sql) =>
       sql<{ stripe_payment_intent: string | null }[]>`
         select stripe_payment_intent from competition_passes where competition_id = ${compId}`,
@@ -484,6 +485,16 @@ test.describe("T4 · duplicate Event Pass payment auto-refunds", () => {
     );
     expect(ledger.length).toBe(1);
     expect(ledger[0]!.processed_at).not.toBeNull();
+
+    // LIMITATION (reviewer IMPORTANT-2): competition_passes(competition_id) is
+    // UNIQUE, so "one row + firstIntent" holds even if the dedup/auto-refund
+    // branch were deleted. The dedup branch's ONLY side effect is
+    // refundDuplicatePassPayment → getStripe().refunds.create, which is a
+    // swallowed no-op under the dummy e2e key with NO DB row or analytics event
+    // — so it is genuinely unobservable in a keyless/dummy-key e2e. The real
+    // auto-refund contract is pinned by the unit test
+    // apps/web/src/lib/__tests__/billing-pass-duplicate.test.ts (stubs the
+    // Stripe seam and asserts refunds.create is called with the dup intent).
   });
 });
 
@@ -701,6 +712,62 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
 });
 
 // ===========================================================================
+// Replay idempotency — re-POST the SAME event id (global wave contract)
+// ===========================================================================
+
+test.describe("Replay · re-posting a processed event is a clean no-op", () => {
+  test("a replayed charge.dispute.created ACKs 200 with no double effect", async ({ request }) => {
+    const intent = uid("pi");
+    const org = await seedOrg({ plan: "pro" });
+    const { compId } = await seedComp(org.orgId);
+    const { orderId } = await seedSponsorRig(org.orgId, compId, intent);
+
+    // ONE event object with ONE id, reused verbatim on the replay — this is the
+    // wave's idempotency contract (Stripe re-delivers the SAME event id).
+    const event = stripeEvent("charge.dispute.created", {
+      id: uid("dp"),
+      status: "needs_response",
+      amount: 25000,
+      currency: "gbp",
+      payment_intent: intent,
+      charge: uid("ch"),
+    });
+
+    const first = await postSignedEvent(request, event);
+    expect(first.status()).toBe(200);
+    const [afterFirst] = await withDb((sql) =>
+      sql<{ disputed_at: string | null; status: string }[]>`
+        select o.disputed_at::text as disputed_at, s.status
+        from sponsor_orders o join sponsors s on s.id = o.sponsor_id
+        where o.id = ${orderId}`,
+    );
+    expect(afterFirst.disputed_at).not.toBeNull(); // flagged
+    expect(afterFirst.status).toBe("pending"); // placement parked
+
+    // Replay the IDENTICAL event id.
+    const replay = await postSignedEvent(request, event);
+    expect(replay.status()).toBe(200);
+    expect(((await replay.json()) as { received?: boolean }).received).toBe(true);
+
+    // Idempotency ledger holds exactly ONE row, and because the route's
+    // already-processed fast path skips re-dispatch, the flag time is NOT
+    // re-stamped and the placement is NOT re-mutated.
+    const ledger = await withDb((sql) =>
+      sql<{ id: string }[]>`select id from billing_events where id = ${(event as { id: string }).id}`,
+    );
+    expect(ledger.length).toBe(1);
+    const [afterReplay] = await withDb((sql) =>
+      sql<{ disputed_at: string | null; status: string }[]>`
+        select o.disputed_at::text as disputed_at, s.status
+        from sponsor_orders o join sponsors s on s.id = o.sponsor_id
+        where o.id = ${orderId}`,
+    );
+    expect(afterReplay.disputed_at).toBe(afterFirst.disputed_at); // not re-stamped
+    expect(afterReplay.status).toBe("pending"); // not re-mutated
+  });
+});
+
+// ===========================================================================
 // T8 — subscription-sync correctness (P1-5): stale delete guard
 // ===========================================================================
 
@@ -749,6 +816,27 @@ test.describe("T9 · past-due grace degrades to community after 14 days", () => 
     // action (mint an API key needs api.access) 402s.
     const keyAttempt = await apiJson(page.request, `/api/v1/orgs/${org.orgId}/api-keys`, "POST", {
       name: `t9 ${TAG}`,
+      scopes: ["read"],
+    });
+    expect(keyAttempt.status).toBe(402);
+  });
+
+  // Plan-generic (reviewer ITEM-3): the grace degrade applies to pro_plus too,
+  // exercised end-to-end so the constraint is proven on the top paid tier.
+  test("banner shows and gated writes 402 for a >14d past_due PRO PLUS org", async ({ page }) => {
+    const stale = new Date(Date.now() - 15 * 24 * 60 * 60_000).toISOString();
+    const org = await seedOrg({ plan: "pro_plus", subStatus: "past_due", subUpdatedAt: stale });
+
+    await loginAsOwner(page, org.ownerEmail);
+
+    await page.goto("/dashboard");
+    await expect(
+      page.getByText(/payment failed — your subscription is past due/i),
+    ).toBeVisible({ timeout: 20_000 });
+
+    // pro_plus degrades to community at read time → the api.access-gated write 402s.
+    const keyAttempt = await apiJson(page.request, `/api/v1/orgs/${org.orgId}/api-keys`, "POST", {
+      name: `t9plus ${TAG}`,
       scopes: ["read"],
     });
     expect(keyAttempt.status).toBe(402);
