@@ -102,3 +102,28 @@ describe("email html templates", () => {
     expect(preview).toContain(">Bank transfer to Riverside Racquets CC");
   });
 });
+
+// Direction B (2026-07-18): bulletproof system stack, no web fonts. Gmail and
+// Outlook never load webfont <link>s, so the old Barlow Condensed declaration
+// degraded to Arial Narrow there — every mail now uses the one system stack
+// below and renders the same in every client.
+const SYSTEM_STACK = "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+
+const ALL_HTML = [
+  ...Object.keys(CONTRACT),
+  "previews/registration-standings.html",
+];
+
+describe("email font system (direction B — bulletproof)", () => {
+  for (const file of ALL_HTML) {
+    it(`${file} declares only the system stack`, () => {
+      const s = read(file);
+      expect(s).not.toMatch(/fonts\.googleapis\.com|fonts\.gstatic\.com/);
+      expect(s).not.toMatch(/Barlow|Arial Narrow|Helvetica Neue/);
+      const families = s.match(/font-family:[^;"]*/g) ?? [];
+      for (const f of families) {
+        expect(f).toBe(`font-family:${SYSTEM_STACK}`);
+      }
+    });
+  }
+});

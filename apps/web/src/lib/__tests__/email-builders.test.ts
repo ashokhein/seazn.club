@@ -229,7 +229,12 @@ describe("email builders compose from the html templates", () => {
       expect(out.html).toContain('bgcolor="#150b36"');
       expect(out.html).toContain('bgcolor="#a3e635"');
       expect(out.html).toContain("&#9679;");
-      expect(out.html).toContain("Barlow Condensed");
+      // Direction B: one bulletproof system stack, no web fonts (see
+      // email-html-templates.test.ts for the full font pin).
+      expect(out.html).toContain(
+        "-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif",
+      );
+      expect(out.html).not.toContain("fonts.googleapis.com");
       // Preheader div present and filled.
       expect(out.html).toContain("mso-hide:all");
       // No template token survives substitution.

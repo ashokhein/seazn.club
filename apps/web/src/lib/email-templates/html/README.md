@@ -7,9 +7,10 @@ in with plain string replacement — no JSX/MJML build step, works as-is with
 the Resend send path in `lib/email.ts`.
 
 The design carries the public "courtside" identity into the inbox: the
-`#231738` court slab masthead with the 3px `#7c3aed` court line, Barlow
-Condensed display type (falls back to Arial Narrow where web fonts don't
-load), and the scorebug standings table as the signature block.
+`#231738` court slab masthead with the 3px `#7c3aed` court line, a heavy
+system-grotesque display treatment (uppercase, weight 800 — no web fonts,
+so every client renders it identically), and the scorebug standings table
+as the signature block.
 
 ## Files
 
@@ -91,8 +92,11 @@ plain-text inputs). `email-builders.test.ts` pins each recipe.
 ## Client-compat notes
 
 - Layout is nested tables + inline styles; no flexbox/grid/margin-on-div.
-- Barlow Condensed loads via Google Fonts `<link>` (Apple Mail, some others);
-  everyone else gets Arial Narrow → the layout is metric-tolerant to both.
+- No web fonts. One system stack everywhere
+  (`-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif`): SF Pro on
+  Apple, Segoe UI on Windows, Roboto on Android — identical render in every
+  client, Gmail and Outlook included. Display role = weight 800 uppercase
+  with tight tracking; `email-html-templates.test.ts` pins the stack.
 - CTA uses the td-bgcolor button pattern — clickable/painted in Outlook.
 - `color-scheme: light` is declared so dark-mode clients keep the courtside
   contrast instead of auto-inverting the slab.
