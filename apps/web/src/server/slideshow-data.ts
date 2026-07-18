@@ -9,6 +9,7 @@ import { listEntrants } from "@/server/usecases/entrants";
 import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { hasFeature } from "@/lib/entitlements";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
+import { twoSidedBracket } from "@seazn/engine/scheduling";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import type { AuthCtx } from "@/server/api-v1/auth";
 
@@ -37,9 +38,30 @@ export interface FixtureSlideItem {
   round: number;
 }
 
+/** v13 (PROMPT-64): bracket-slide node — the geometry is computed client-side
+ *  by the shared engine twoSidedBracket, so this carries structure + labels. */
+export interface BracketSlideFixture {
+  id: string;
+  round_no: number;
+  seq_in_round: number;
+  home: string | null;
+  away: string | null;
+  line: string | null;
+  status: string;
+}
+
 export type Slide =
   | { kind: "standings"; division: string; caption: string; rows: StandingsSlideRow[] }
-  | { kind: "fixtures"; division: string; title: string; items: FixtureSlideItem[] };
+  | {
+      kind: "fixtures";
+      division: string;
+      title: string;
+      items: FixtureSlideItem[];
+      /** v13: the live slide pins — the rotation returns to it every other
+       *  step while matches are in play (slideshow-rotation.ts). */
+      pinned?: boolean;
+    }
+  | { kind: "bracket"; division: string; title: string; fixtures: BracketSlideFixture[] };
 
 /**
  * Org chrome for the noticeboard masthead — brand color blob and logo URL,
@@ -160,11 +182,37 @@ export async function buildDivisionSlides(
   const upcoming = fixtures.filter((f) => f.status === "scheduled").slice(0, 8).map(item);
 
   if (live.length > 0)
-    slides.push({ kind: "fixtures", division: divisionName, title: "In play", items: live });
+    slides.push({
+      kind: "fixtures", division: divisionName, title: "In play", items: live, pinned: true,
+    });
   if (results.length > 0)
     slides.push({ kind: "fixtures", division: divisionName, title: "Latest results", items: results });
   if (upcoming.length > 0)
     slides.push({ kind: "fixtures", division: divisionName, title: "Coming up", items: upcoming });
+
+  // ── Bracket — the knockout tree (v13/PROMPT-62 geometry), when it lays out ──
+  for (const stage of stages.filter((s) => s.kind === "knockout")) {
+    const stageFixtures = fixtures.filter((f) => f.stage_id === stage.id);
+    const refs = stageFixtures.map((f) => ({
+      id: f.id, round_no: f.round_no, seq_in_round: f.seq_in_round,
+    }));
+    if (stageFixtures.length > 0 && twoSidedBracket(refs).ok) {
+      slides.push({
+        kind: "bracket",
+        division: divisionName,
+        title: stage.name,
+        fixtures: stageFixtures.map((f) => ({
+          id: f.id,
+          round_no: f.round_no,
+          seq_in_round: f.seq_in_round,
+          home: f.home_entrant_id ? (names[f.home_entrant_id] ?? null) : null,
+          away: f.away_entrant_id ? (names[f.away_entrant_id] ?? null) : null,
+          line: lineOf.get(f.id) ?? null,
+          status: f.status,
+        })),
+      });
+    }
+  }
 
   return slides;
 }
