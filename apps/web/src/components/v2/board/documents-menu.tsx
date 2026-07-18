@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 // Documents menu (v12 task 15): one control on the schedule board that
 // surfaces every matchday document instead of the single "Print schedule"
 // timetable link it replaces. A native <details>/<summary> disclosure —
@@ -26,6 +27,43 @@ export function DocumentsMenu({
   competitionId: string;
 }) {
   const msg = useMsg();
+  // F3: downloads go through fetch so an error becomes an inline message —
+  // never a raw JSON envelope in the browser tab.
+  const [busy, setBusy] = useState<string | null>(null);
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  async function download(row: DocRow, format: "pdf" | "xlsx") {
+    const url = `${row.base}?format=${format}`;
+    setBusy(url);
+    setErrors((e) => ({ ...e, [row.base]: undefined as never }));
+    try {
+      const res = await fetch(url);
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as
+          | { error?: { message?: string } }
+          | null;
+        setErrors((e) => ({
+          ...e,
+          [row.base]: body?.error?.message ?? msg("documents.error"),
+        }));
+        return;
+      }
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = `${row.base.split("/").pop()}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+    } catch {
+      setErrors((e) => ({ ...e, [row.base]: msg("documents.error") }));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   const rows: DocRow[] = [
     {
       label: msg("documents.orderOfPlay"),
@@ -69,29 +107,37 @@ export function DocumentsMenu({
         className="absolute right-0 top-9 z-20 w-64 rounded-xl border border-purple-100 bg-white py-1 shadow-lg"
       >
         {rows.map((row) => (
-          <div
-            key={row.label}
-            className="flex items-center justify-between gap-2 px-3 py-2 text-sm text-slate-700"
-          >
-            <span className="min-w-0 truncate">{row.label}</span>
-            <span className="flex shrink-0 items-center gap-2 text-xs font-medium">
-              <a
-                role="menuitem"
-                href={`${row.base}?format=pdf`}
-                className="text-purple-700 hover:underline focus-visible:underline"
-              >
-                {msg("documents.pdf")}
-              </a>
-              {row.xlsx && (
-                <a
+          <div key={row.label} className="px-3 py-2 text-sm text-slate-700">
+            <div className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate">{row.label}</span>
+              <span className="flex shrink-0 items-center gap-2 text-xs font-medium">
+                <button
+                  type="button"
                   role="menuitem"
-                  href={`${row.base}?format=xlsx`}
-                  className="text-purple-700 hover:underline focus-visible:underline"
+                  disabled={busy === `${row.base}?format=pdf`}
+                  onClick={() => void download(row, "pdf")}
+                  className="text-purple-700 hover:underline focus-visible:underline disabled:text-slate-300"
                 >
-                  {msg("documents.xlsx")}
-                </a>
-              )}
-            </span>
+                  {msg("documents.pdf")}
+                </button>
+                {row.xlsx && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={busy === `${row.base}?format=xlsx`}
+                    onClick={() => void download(row, "xlsx")}
+                    className="text-purple-700 hover:underline focus-visible:underline disabled:text-slate-300"
+                  >
+                    {msg("documents.xlsx")}
+                  </button>
+                )}
+              </span>
+            </div>
+            {errors[row.base] !== undefined && (
+              <p role="alert" className="mt-1 text-xs text-amber-700">
+                {errors[row.base]}
+              </p>
+            )}
           </div>
         ))}
       </div>

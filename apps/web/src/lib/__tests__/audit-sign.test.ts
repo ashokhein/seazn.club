@@ -59,3 +59,31 @@ describe("audit signing", () => {
     expect(keys[1]!.public_key_pem).toContain("BEGIN PUBLIC KEY");
   });
 });
+
+describe("multi-key rotation (F1)", () => {
+  beforeEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("publishes every retired key from AUDIT_SIGNING_PREV_PUBKEYS plus the current", () => {
+    vi.stubEnv("AUDIT_SIGNING_KEY", PRIV_B64);
+    vi.stubEnv("AUDIT_SIGNING_KEY_ID", "k3");
+    const pemOf = createPublicKey(privateKey).export({ format: "pem", type: "spki" }).toString();
+    vi.stubEnv(
+      "AUDIT_SIGNING_PREV_PUBKEYS",
+      JSON.stringify([
+        { key_id: "k2", public_key_pem: pemOf },
+        { key_id: "k1", public_key_pem: Buffer.from(pemOf).toString("base64") },
+      ]),
+    );
+    const keys = auditPublicKeys();
+    expect(keys.map((k) => k.key_id)).toEqual(["k3", "k2", "k1"]);
+    expect(keys.every((k) => k.public_key_pem.includes("BEGIN PUBLIC KEY"))).toBe(true);
+  });
+
+  it("malformed JSON never breaks the endpoint", () => {
+    vi.stubEnv("AUDIT_SIGNING_KEY", PRIV_B64);
+    vi.stubEnv("AUDIT_SIGNING_PREV_PUBKEYS", "{nope");
+    expect(auditPublicKeys().map((k) => k.key_id)).toEqual(["k1"]);
+  });
+});

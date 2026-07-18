@@ -738,6 +738,7 @@ export type DictionaryKey =
   | "dlink.shownOnce"
   | "dlink.title"
   | "documents.bracket"
+  | "documents.error"
   | "documents.matchSheets"
   | "documents.orderOfPlay"
   | "documents.pdf"

@@ -758,6 +758,7 @@
   "documents.rota": "Officials rota",
   "documents.tickets": "Admit tickets",
   "documents.bracket": "Bracket poster",
+  "documents.error": "Couldn't prepare that document.",
   "documents.pdf": "PDF",
   "documents.xlsx": "XLSX",
   "schedule.working": "Working…",

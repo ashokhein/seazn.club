@@ -758,6 +758,7 @@
   "documents.rota": "Planning des officiels",
   "documents.tickets": "Billets d'entrée",
   "documents.bracket": "Affiche du tableau",
+  "documents.error": "Impossible de préparer ce document.",
   "documents.pdf": "PDF",
   "documents.xlsx": "XLSX",
   "schedule.working": "Traitement en cours…",

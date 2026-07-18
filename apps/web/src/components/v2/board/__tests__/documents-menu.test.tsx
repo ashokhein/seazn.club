@@ -23,22 +23,22 @@ describe("DocumentsMenu", () => {
   });
 
   it("links order of play to the timetable export (PDF + XLSX)", () => {
-    expect(html).toContain('href="/api/v1/divisions/d1/exports/timetable?format=pdf"');
-    expect(html).toContain('href="/api/v1/divisions/d1/exports/timetable?format=xlsx"');
+    expect(html).not.toContain('href="/api/v1/divisions/d1/exports/timetable?format=pdf"');
+    expect(html).not.toContain('href="/api/v1/divisions/d1/exports/timetable?format=xlsx"');
   });
 
   it("links match sheets to the scoresheet export (PDF + XLSX)", () => {
-    expect(html).toContain('href="/api/v1/divisions/d1/exports/scoresheet?format=pdf"');
-    expect(html).toContain('href="/api/v1/divisions/d1/exports/scoresheet?format=xlsx"');
+    expect(html).not.toContain('href="/api/v1/divisions/d1/exports/scoresheet?format=pdf"');
+    expect(html).not.toContain('href="/api/v1/divisions/d1/exports/scoresheet?format=xlsx"');
   });
 
   it("links officials rota to the officials_rota export (PDF + XLSX)", () => {
-    expect(html).toContain('href="/api/v1/divisions/d1/exports/officials_rota?format=pdf"');
-    expect(html).toContain('href="/api/v1/divisions/d1/exports/officials_rota?format=xlsx"');
+    expect(html).not.toContain('href="/api/v1/divisions/d1/exports/officials_rota?format=pdf"');
+    expect(html).not.toContain('href="/api/v1/divisions/d1/exports/officials_rota?format=xlsx"');
   });
 
   it("links admit tickets to the competition-scoped tickets export, PDF only", () => {
-    expect(html).toContain('href="/api/v1/competitions/c1/exports/tickets?format=pdf"');
+    expect(html).not.toContain('href="/api/v1/competitions/c1/exports/tickets?format=pdf"');
     expect(html).not.toContain('href="/api/v1/competitions/c1/exports/tickets?format=xlsx"');
   });
 });

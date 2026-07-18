@@ -96,7 +96,7 @@ function ScorebugRow({
           </span>
         ) : (
           <span className="font-display text-sm font-semibold text-ink">
-            {decided ? "Final" : f.scheduled_at ? timeOf(f.scheduled_at, tz) : "TBD"}
+            {decided ? "Ended" : f.scheduled_at ? timeOf(f.scheduled_at, tz) : "TBD"}
           </span>
         )}
         <span className="mt-0.5 max-w-[3.25rem] truncate text-[10px] uppercase tracking-wide text-ink-muted">

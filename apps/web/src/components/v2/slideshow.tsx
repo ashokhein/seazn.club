@@ -27,8 +27,9 @@ const SUBSCRIBED_POLL_MS = 5 * 60_000; // safety net once push is live
 const STATUS_LABEL: Record<string, string> = {
   scheduled: "Scheduled",
   in_play: "In play",
-  decided: "Final",
-  finalized: "Final",
+  // "Ended", not "Final" — the latter collides with the Final ROUND (F2).
+  decided: "Ended",
+  finalized: "Ended",
   forfeited: "Forfeit",
   abandoned: "Abandoned",
   cancelled: "Cancelled",
