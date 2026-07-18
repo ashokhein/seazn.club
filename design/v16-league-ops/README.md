@@ -85,6 +85,17 @@ SPEC-4  ─ DEFERRED (independent when revived; pure entitlement matrix + checks
 Build order: **1 → 3 → 2** (3 lands after 1 so the report→suspension bridge
 ships live; 2 is the biggest UI surface and closes the wave).
 
+## Build order & prompts
+
+Strictly sequential within a spec (server → UI); specs in 1 → 3 → 2 order.
+
+- [PROMPT-78 — Discipline: model, card fold, detection, API](prompts/PROMPT-78-discipline-model-and-api.md) — V291 + engine `discipline` descriptor + `discipline.ts` + routes. Server only.
+- [PROMPT-79 — Discipline: console, pad, public & /me surfaces](prompts/PROMPT-79-discipline-console-and-public-ui.md) — rules editor, panel, chips, pad banner, public strip, /me, emails + i18n/help/smoke closing.
+- [PROMPT-80 — Marks & reports: model, usecases, API](prompts/PROMPT-80-marks-reports-model-and-api.md) — V293 + marks (Pro) + reports (free, cross-org rail) + report→suspension bridge.
+- [PROMPT-81 — Marks & reports: console + portal UI](prompts/PROMPT-81-marks-reports-ui.md) — scoreboard-digit tiles, summary block, report form/drawer, /me CTA, email + closing passes.
+- [PROMPT-82 — News: model, auto-drafts, API](prompts/PROMPT-82-news-model-and-autodrafts.md) — V292 + `org_posts` + draft templates + decided-seam triggers.
+- [PROMPT-83 — News: console tab, public pages, OG & story cards](prompts/PROMPT-83-news-console-public-and-cards.md) — composer, public feed/post, scorebug OG + 1080×1350 story PNG, analytics + closing passes.
+
 ## Global constraints (apply to every spec — same rails as v15)
 
 - **This is NOT the Next.js you know** — read `node_modules/next/dist/docs/`
