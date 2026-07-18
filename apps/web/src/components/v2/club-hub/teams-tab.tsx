@@ -56,7 +56,6 @@ export function TeamsTab({
   const router = useRouter();
   const [error, setError] = useState<string | null>(null);
   const [paywall, setPaywall] = useState<string | null>(null);
-  const [busy] = useState(false);
 
   // The bulk grid matches files to clubs by name; in the hub that scope is this
   // one club, so the grid becomes "drop a crest for this club".
@@ -89,7 +88,7 @@ export function TeamsTab({
       {canEdit && (
         <LogoGrid
           clubs={[clubRow]}
-          busy={busy}
+          pinClubId={club.id}
           onDone={() => router.refresh()}
           onError={setError}
           onPaywall={setPaywall}
@@ -314,17 +313,35 @@ function TeamDetailRow({
   );
 }
 
+/**
+ * Pin every dropped crest file to the hub's own club id.
+ *
+ * The bulk-logo server usecase (`bulkAssignLogos`) IGNORES the client `clubs[]`
+ * prop: it re-derives matches from filename stems across ALL org clubs and, with
+ * `assign_remaining`, fills any unlogo'd org club in name order — so in the
+ * single-club hub an unmapped drop could silently crest a DIFFERENT club. The
+ * `mapping` (filename → clubId) is the one input the server honours over its own
+ * stem-matching, so we pre-fill it to the hub club for every file.
+ */
+export function pinFilesToClub(fileNames: string[], clubId: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of fileNames) out[name] = clubId;
+  return out;
+}
+
 // Bulk logo grid (Jul3/01 §5): drop N files, match by filename stem, re-map
-// per file, optionally assign the rest to unlogo'd clubs in order.
+// per file, optionally assign the rest to unlogo'd clubs in order. In the club
+// hub (single known club) `pinClubId` pre-maps every file to that club and hides
+// the org-wide "assign remaining" mode.
 function LogoGrid({
   clubs,
-  busy,
+  pinClubId,
   onDone,
   onError,
   onPaywall,
 }: {
   clubs: ClubListRow[];
-  busy: boolean;
+  pinClubId?: string;
   onDone: () => void;
   onError: (msg: string) => void;
   onPaywall: (feature: string) => void;
@@ -335,6 +352,19 @@ function LogoGrid({
   const [assignRemaining, setAssignRemaining] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+
+  // Add files and, in the hub, pin each to the hub club so the server never
+  // stem-matches them onto a sibling org club.
+  function addFiles(incoming: File[]) {
+    setFiles((prev) => [...prev, ...incoming]);
+    if (pinClubId) {
+      const pins = pinFilesToClub(
+        incoming.map((f) => f.name),
+        pinClubId,
+      );
+      setMapping((m) => ({ ...m, ...pins }));
+    }
+  }
 
   const stemMatch = useMemo(() => {
     const byFold = new Map<string, ClubListRow>();
@@ -392,7 +422,7 @@ function LogoGrid({
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
-        setFiles((prev) => [...prev, ...Array.from(e.dataTransfer.files)]);
+        addFiles(Array.from(e.dataTransfer.files));
       }}
     >
       <h2 className="text-sm font-semibold text-slate-900">{msg("clubs.logo.title")}</h2>
@@ -406,7 +436,7 @@ function LogoGrid({
         multiple
         aria-label={msg("clubs.logo.chooseAria")}
         className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-md file:border-0 file:bg-slate-900 file:px-3 file:py-1.5 file:text-sm file:font-medium file:text-white hover:file:bg-slate-700"
-        onChange={(e) => setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])])}
+        onChange={(e) => addFiles(Array.from(e.target.files ?? []))}
       />
       {files.length > 0 && (
         <>
@@ -437,11 +467,13 @@ function LogoGrid({
             })}
           </ul>
           <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-slate-600">
-              <input type="checkbox" checked={assignRemaining} onChange={(e) => setAssignRemaining(e.target.checked)} />
-              {msg("clubs.logo.assignRemaining")}
-            </label>
-            <button type="button" className="btn btn-primary" disabled={busy || uploading} onClick={assign}>
+            {!pinClubId && (
+              <label className="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked={assignRemaining} onChange={(e) => setAssignRemaining(e.target.checked)} />
+                {msg("clubs.logo.assignRemaining")}
+              </label>
+            )}
+            <button type="button" className="btn btn-primary" disabled={uploading} onClick={assign}>
               {msg(files.length === 1 ? "clubs.logo.assign.one" : "clubs.logo.assign.other", { count: files.length })}
             </button>
             <button type="button" className="btn" onClick={() => setFiles([])} disabled={uploading}>
