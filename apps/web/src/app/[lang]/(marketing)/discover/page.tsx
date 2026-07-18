@@ -12,6 +12,7 @@ import {
 } from "@/server/public-site/discovery";
 import { DiscoveryCard, sportEmoji } from "@/components/discovery-cards";
 import { getDictionary, t } from "@/lib/i18n";
+import { plural } from "@/lib/i18n-runtime";
 import { hasLocale } from "@/lib/i18n-constants";
 import { sportLabel } from "@/lib/scoring-vocab";
 import { msgFor } from "@/lib/messages-i18n";
@@ -78,6 +79,15 @@ export default async function DiscoverPage({
         <p className="mt-2 max-w-xl text-slate-600">
           {t(d, "discover.subhead")}
         </p>
+        {entries.length > 0 && (
+          <p className="mt-2 flex items-center gap-2 text-sm font-semibold text-purple-700">
+            <span className="relative flex h-2 w-2">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-400 opacity-75" />
+              <span className="relative inline-flex h-2 w-2 rounded-full bg-red-500" />
+            </span>
+            {plural(d, "discover.liveCount", entries.length, lang)}
+          </p>
+        )}
 
         {/* Sport chips + status filter (plain links — cacheable). */}
         <div className="mt-6 flex flex-wrap items-center gap-2">
@@ -121,7 +131,10 @@ export default async function DiscoverPage({
         {entries.length === 0 ? (
           <div className="mt-16 text-center">
             <p className="text-slate-500">{t(d, "discover.empty")}</p>
-            <Link href="/login?tab=signup" className="btn btn-primary mt-4 inline-flex">
+            <Link
+              href={`/${lang}/start?utm_source=discover&utm_medium=directory&utm_campaign=plg`}
+              className="btn btn-primary mt-4 inline-flex"
+            >
               {t(d, "discover.runYourOwn")} →
             </Link>
           </div>
@@ -140,7 +153,7 @@ export default async function DiscoverPage({
             {t(d, "discover.cta.body")}
           </p>
           <Link
-            href="/login?tab=signup"
+            href={`/${lang}/start?utm_source=discover&utm_medium=directory&utm_campaign=plg`}
             className="btn mt-4 inline-flex bg-white px-6 font-semibold text-purple-900 hover:bg-purple-50"
           >
             {t(d, "discover.cta.button")} →

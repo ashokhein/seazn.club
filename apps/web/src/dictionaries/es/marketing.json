@@ -238,6 +238,8 @@
   "discover.searchButton": "Buscar",
   "discover.empty": "No hay torneos que coincidan ahora mismo.",
   "discover.runYourOwn": "Organiza el tuyo",
+  "discover.liveCount.one": "{count} club en directo ahora mismo",
+  "discover.liveCount.other": "{count} clubes en directo ahora mismo",
   "discover.cta.title": "Organiza tu propio torneo",
   "discover.cta.body": "Cualquier deporte, cualquier formato: gratis para clubes comunitarios.",
   "discover.cta.button": "Empieza gratis",

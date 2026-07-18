@@ -238,6 +238,8 @@
   "discover.searchButton": "Rechercher",
   "discover.empty": "Aucun tournoi ne correspond pour le moment.",
   "discover.runYourOwn": "Organisez le vôtre",
+  "discover.liveCount.one": "{count} club en direct actuellement",
+  "discover.liveCount.other": "{count} clubs en direct actuellement",
   "discover.cta.title": "Organisez votre propre tournoi",
   "discover.cta.body": "Tout sport, tout format — gratuit pour les clubs communautaires.",
   "discover.cta.button": "Commencer gratuitement",

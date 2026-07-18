@@ -567,6 +567,8 @@ export type DictionaryKey =
   | "discover.filter.live"
   | "discover.filter.upcoming"
   | "discover.h1"
+  | "discover.liveCount.one"
+  | "discover.liveCount.other"
   | "discover.meta.description"
   | "discover.meta.title"
   | "discover.runYourOwn"

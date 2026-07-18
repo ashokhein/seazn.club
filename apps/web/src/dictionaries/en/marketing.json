@@ -239,6 +239,8 @@
   "discover.searchButton": "Search",
   "discover.empty": "No tournaments match right now.",
   "discover.runYourOwn": "Run your own",
+  "discover.liveCount.one": "{count} club live right now",
+  "discover.liveCount.other": "{count} clubs live right now",
   "discover.cta.title": "Run your own tournament",
   "discover.cta.body": "Any sport, any format — free for community clubs.",
   "discover.cta.button": "Start free",
