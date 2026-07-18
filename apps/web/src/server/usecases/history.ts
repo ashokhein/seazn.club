@@ -21,7 +21,7 @@ import {
 import { EngineError } from "@seazn/engine/core";
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
-import { requireFeature, hasFeature } from "@/lib/entitlements";
+import { requireFeature, withinLimit } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { generateStageFixtures } from "./stages";
 
@@ -301,12 +301,12 @@ export async function createCheckpoint(
 ): Promise<CheckpointRow> {
   return withTenant(auth.orgId, async (tx) => {
     const meta = await divisionMeta(tx, divisionId);
-    // Jul3/03 §7: one restore point free; more history depth is Pro.
+    // Jul3/03 §7 → V286: save points are a per-plan quota (community 1,
+    // pro 5, pro_plus unlimited). schedule.versioning still gates scope locks.
     const [{ n }] = await tx<{ n: number }[]>`
       select count(*)::int as n from division_checkpoints where division_id = ${divisionId}`;
-    if (n >= 1 && !(await hasFeature(auth.orgId, "schedule.versioning"))) {
-      throw new PaymentRequiredError("schedule.versioning");
-    }
+    const quota = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
+    if (!quota.ok) throw new PaymentRequiredError("schedule.checkpoints.max");
     const ledger = await loadLedger(tx, divisionId);
     const wm = meta.edit_watermark ?? (ledger[ledger.length - 1]?.seq ?? 0);
     const [row] = await tx<CheckpointRow[]>`
