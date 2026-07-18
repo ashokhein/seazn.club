@@ -4,6 +4,11 @@
 > Branch (planned): `feat/v4-ai-schedule`. Migrations: V-next (schedule_source `ai`).
 > **2026-07-14:** interactive board-UX prototype built (mocked LLM) → design + findings in
 > `02-board-ux.md`; PROMPT-43 gains a pixel/motion reference before coding.
+> **2026-07-18:** approved revision `03-two-phase-officials-and-intake.md` — two-phase
+> architect (Phase B officials via LLM + engine referee), guided intake (pre-flight +
+> wish chips), repair nudges, ledger audit trail, Pro Plus gate fix. Competition-level
+> multi-division **deferred**. Build as PROMPT-85..87 (85 core+A, 86 officials B,
+> 87 board UX) — 41..43 stay as base reference, superseded where 03 amends.
 
 ## Theme
 
@@ -27,6 +32,7 @@ undo, checkpoints, seq-concurrency and the ledger all work unchanged.
 | 00 | `00-ai-schedule-architect.md` | Normative spec: removal of old feature, modes, pipeline, API, data, gating, failure modes, decisions | 41, 42, 43 |
 | 01 | `01-llm-contract.md` | The LLM contract: model/params, context-pack format, output schema, verbatim system prompt, repair/refine protocol, eval fixtures | 41, 42 |
 | 02 | `02-board-ux.md` | Board UX design + prototype finding: surface the referee/repair loop, 3-colour state contract, block/summary/instruction decisions, states. Prototype artifact linked. | 43 |
+| 03 | `03-two-phase-officials-and-intake.md` | 2026-07-18 approved revision: Phase B officials (draft→LLM→referee), pre-flight + wish chips, repair nudges, ledger audit, Pro Plus gates + admin override, drift fixes, deferrals | 85, 86, 87 |
 
 ## Prompt index (prompts/)
 
