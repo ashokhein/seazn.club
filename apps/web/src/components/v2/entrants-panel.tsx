@@ -1059,13 +1059,22 @@ function entrantStatusStyle(status: string): string {
   return "bg-sky-100 text-sky-700";
 }
 
-function RosterEditor({
+/** G7 — how many people an entrant of this kind holds. Team concepts
+ *  (captain, squad numbers, open roster) only make sense above the cap. */
+export function entrantKindCap(kind: string): number {
+  if (kind === "individual") return 1;
+  if (kind === "pair") return 2;
+  return Number.POSITIVE_INFINITY;
+}
+
+export function RosterEditor({
   members: initial,
   persons,
   positionGroups,
   roles,
   canEdit,
   busy,
+  kind,
   conflictsFor,
   onSave,
 }: {
@@ -1075,6 +1084,8 @@ function RosterEditor({
   roles: RoleSpec[];
   canEdit: boolean;
   busy: boolean;
+  /** Entrant kind — individual/pair rosters hide captain + squad number. */
+  kind: string;
   /** Other team entrants IN THIS DIVISION a person is already on. */
   conflictsFor: (personId: string) => DivisionRosterRow[];
   onSave: (members: Member[]) => void;
@@ -1082,6 +1093,8 @@ function RosterEditor({
   const [members, setMembers] = useState(initial);
   const [filter, setFilter] = useState("");
   const [dirty, setDirty] = useState(false);
+  const teamish = entrantKindCap(kind) === Number.POSITIVE_INFINITY;
+  const atCap = members.length >= entrantKindCap(kind);
 
   function update(i: number, patch: Partial<Member>) {
     setMembers((prev) => prev.map((m, j) => (j === i ? { ...m, ...patch } : m)));
@@ -1129,18 +1142,20 @@ function RosterEditor({
               </span>
             )}
           </span>
-          <input
-            type="number"
-            min={0}
-            placeholder="No."
-            disabled={!canEdit}
-            value={m.squad_number ?? ""}
-            onChange={(e) =>
-              update(i, { squad_number: e.target.value ? Number(e.target.value) : null })
-            }
-            className="input w-16 px-2 py-1 text-xs"
-            aria-label={`Squad number for ${m.full_name}`}
-          />
+          {teamish && (
+            <input
+              type="number"
+              min={0}
+              placeholder="No."
+              disabled={!canEdit}
+              value={m.squad_number ?? ""}
+              onChange={(e) =>
+                update(i, { squad_number: e.target.value ? Number(e.target.value) : null })
+              }
+              className="input w-16 px-2 py-1 text-xs"
+              aria-label={`Squad number for ${m.full_name}`}
+            />
+          )}
           {positionGroups.length > 0 && (
             <select
               disabled={!canEdit}
@@ -1157,24 +1172,26 @@ function RosterEditor({
               ))}
             </select>
           )}
-          <label className="flex items-center gap-1 text-slate-500">
-            <input
-              type="checkbox"
-              disabled={!canEdit}
-              checked={m.is_captain}
-              onChange={(e) => {
-                // Captain is unique — setting it clears the others.
-                setMembers((prev) =>
-                  prev.map((mm, j) => ({
-                    ...mm,
-                    is_captain: j === i ? e.target.checked : false,
-                  })),
-                );
-                setDirty(true);
-              }}
-            />
-            captain
-          </label>
+          {teamish && (
+            <label className="flex items-center gap-1 text-slate-500">
+              <input
+                type="checkbox"
+                disabled={!canEdit}
+                checked={m.is_captain}
+                onChange={(e) => {
+                  // Captain is unique — setting it clears the others.
+                  setMembers((prev) =>
+                    prev.map((mm, j) => ({
+                      ...mm,
+                      is_captain: j === i ? e.target.checked : false,
+                    })),
+                  );
+                  setDirty(true);
+                }}
+              />
+              captain
+            </label>
+          )}
           {/* `captain` has its own dedicated checkbox above; don't render it
               again as a generic role (some sport specs list it in roles). */}
           {roles.filter((r) => r.key !== "captain").map((r) => (
@@ -1209,7 +1226,7 @@ function RosterEditor({
         </div>
       ))}
 
-      {canEdit && (
+      {canEdit && !atCap && (
         <div className="flex flex-wrap items-center gap-2 border-t border-slate-200 pt-2">
           <input
             value={filter}
