@@ -27516,6 +27516,85 @@
                             ],
                             "additionalProperties": false
                           }
+                        },
+                        "contacts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "club_id": {
+                                "type": "string"
+                              },
+                              "role_key": {
+                                "type": "string"
+                              },
+                              "full_name": {
+                                "type": "string"
+                              },
+                              "email": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "phone": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "is_primary": {
+                                "type": "boolean"
+                              },
+                              "user_id": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "claimed_at": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "created_at": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "club_id",
+                              "role_key",
+                              "full_name",
+                              "email",
+                              "phone",
+                              "is_primary",
+                              "user_id",
+                              "claimed_at",
+                              "created_at"
+                            ],
+                            "additionalProperties": false
+                          }
                         }
                       },
                       "required": [
@@ -27530,7 +27609,8 @@
                         "website",
                         "notes",
                         "created_at",
-                        "teams"
+                        "teams",
+                        "contacts"
                       ],
                       "additionalProperties": false
                     },
@@ -27568,6 +27648,20 @@
                             "competition_id": "example"
                           }
                         ]
+                      }
+                    ],
+                    "contacts": [
+                      {
+                        "id": "example",
+                        "club_id": "example",
+                        "role_key": "example",
+                        "full_name": "example",
+                        "email": "example",
+                        "phone": "example",
+                        "is_primary": true,
+                        "user_id": "example",
+                        "claimed_at": "example",
+                        "created_at": "example"
                       }
                     ]
                   },

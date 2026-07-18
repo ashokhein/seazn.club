@@ -4,6 +4,7 @@ import "server-only";
 // Pro `clubs.hierarchy` layer; a club's logo/colours cascade to child teams
 // via team_display_v — never copied.
 import { createHash } from "node:crypto";
+import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { requireFeature, withinLimit, PaymentRequiredError } from "@/lib/entitlements";
@@ -82,7 +83,7 @@ export async function createClub(auth: AuthCtx, input: CreateClubInput): Promise
 export async function getClub(
   auth: AuthCtx,
   id: string,
-): Promise<ClubRow & { teams: unknown[] }> {
+): Promise<ClubRow & { teams: unknown[]; contacts: ClubContactRow[] }> {
   return withTenant(auth.orgId, async (tx) => {
     const [club] = await tx<ClubRow[]>`select ${tx(COLS)} from clubs where id = ${id}`;
     if (!club) throw new HttpError(404, "club not found");
@@ -97,7 +98,10 @@ export async function getClub(
                        where e.team_id = t.id), '[]'::jsonb) as entries
       from teams t where t.club_id = ${id}
       order by t.name, t.id`;
-    return { ...club, teams };
+    const contacts = await tx<ClubContactRow[]>`
+      select ${tx(CONTACT_COLS)} from club_contacts where club_id = ${id}
+      order by is_primary desc, role_key, full_name`;
+    return { ...club, teams, contacts };
   });
 }
 
@@ -143,6 +147,88 @@ export async function deleteClub(auth: AuthCtx, id: string): Promise<void> {
     // teams.club_id is ON DELETE SET NULL — teams survive, badge falls back
     const [row] = await tx<{ id: string }[]>`delete from clubs where id = ${id} returning id`;
     if (!row) throw new HttpError(404, "club not found");
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Club contacts (W1 §4.2/§5.2): FA officer model. is_primary is unique per
+// club — setting it clears the previous primary in the same transaction.
+// user_id/claimed_at are W3 claim-rail hooks (read-only here).
+// ---------------------------------------------------------------------------
+
+export interface ClubContactRow {
+  id: string; club_id: string; role_key: string; full_name: string;
+  email: string | null; phone: string | null; is_primary: boolean;
+  user_id: string | null; claimed_at: string | null; created_at: string;
+}
+const CONTACT_COLS = ["id", "club_id", "role_key", "full_name", "email", "phone",
+  "is_primary", "user_id", "claimed_at", "created_at"] as const;
+
+async function assertClub(tx: postgres.TransactionSql, clubId: string) {
+  const [c] = await tx`select 1 from clubs where id = ${clubId}`;
+  if (!c) throw new HttpError(404, "club not found");
+}
+
+export async function listClubContacts(auth: AuthCtx, clubId: string): Promise<ClubContactRow[]> {
+  return withTenant(auth.orgId, async (tx) => {
+    await assertClub(tx, clubId);
+    return tx<ClubContactRow[]>`
+      select ${tx(CONTACT_COLS)} from club_contacts
+      where club_id = ${clubId}
+      order by is_primary desc, role_key, full_name`;
+  });
+}
+
+export interface ContactInput {
+  role_key: string; full_name: string;
+  email?: string | null; phone?: string | null; is_primary?: boolean;
+}
+
+export async function createClubContact(
+  auth: AuthCtx, clubId: string, input: ContactInput,
+): Promise<ClubContactRow> {
+  return withTenant(auth.orgId, async (tx) => {
+    await assertClub(tx, clubId);
+    if (input.is_primary)
+      await tx`update club_contacts set is_primary = false where club_id = ${clubId}`;
+    const [row] = await tx<ClubContactRow[]>`
+      insert into club_contacts (org_id, club_id, role_key, full_name, email, phone, is_primary)
+      values (${auth.orgId}, ${clubId}, ${input.role_key}, ${input.full_name},
+              ${input.email ?? null}, ${input.phone ?? null}, ${input.is_primary ?? false})
+      returning ${tx(CONTACT_COLS)}`;
+    return row!;
+  });
+}
+
+export async function patchClubContact(
+  auth: AuthCtx, clubId: string, contactId: string, patch: Partial<ContactInput>,
+): Promise<ClubContactRow> {
+  return withTenant(auth.orgId, async (tx) => {
+    await assertClub(tx, clubId);
+    if (patch.is_primary)
+      await tx`update club_contacts set is_primary = false
+               where club_id = ${clubId} and id <> ${contactId}`;
+    const cols = Object.keys(patch);
+    const [row] = cols.length === 0
+      ? await tx<ClubContactRow[]>`
+          select ${tx(CONTACT_COLS)} from club_contacts
+          where id = ${contactId} and club_id = ${clubId}`
+      : await tx<ClubContactRow[]>`
+          update club_contacts set ${tx(patch as never, ...(cols as never[]))}
+          where id = ${contactId} and club_id = ${clubId}
+          returning ${tx(CONTACT_COLS)}`;
+    if (!row) throw new HttpError(404, "contact not found");
+    return row;
+  });
+}
+
+export async function deleteClubContact(
+  auth: AuthCtx, clubId: string, contactId: string,
+): Promise<void> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<{ id: string }[]>`
+      delete from club_contacts where id = ${contactId} and club_id = ${clubId} returning id`;
+    if (!row) throw new HttpError(404, "contact not found");
   });
 }
 

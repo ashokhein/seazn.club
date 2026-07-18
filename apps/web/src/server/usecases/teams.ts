@@ -87,6 +87,24 @@ export async function createTeam(
   });
 }
 
+/** Attach/detach a team to a club (spec §5.2 Teams tab move action). */
+export async function setTeamClub(
+  auth: AuthCtx, teamId: string, clubId: string | null,
+): Promise<TeamRow> {
+  await requireFeature(auth.orgId, "clubs.hierarchy");
+  return withTenant(auth.orgId, async (tx) => {
+    if (clubId) {
+      const [club] = await tx`select 1 from clubs where id = ${clubId}`;
+      if (!club) throw new HttpError(404, "club not found");
+    }
+    const [team] = await tx<TeamRow[]>`
+      update teams set club_id = ${clubId} where id = ${teamId}
+      returning id, name, short_name, club_id`;
+    if (!team) throw new HttpError(404, "team not found");
+    return team;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Team logo (v3/03 §5): same pipeline as club badges — content-hash path in
 // the public assets bucket, one object per unique bytes. Single-file, so it
