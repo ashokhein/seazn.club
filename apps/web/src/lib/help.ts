@@ -45,6 +45,7 @@ export const HELP_ARTICLE_SLUGS = [
   "sharing/embeds",
   "sharing/languages",
   "sharing/sponsors",
+  "sharing/grow-your-club",
   "billing/plans",
   "billing/downgrade",
   "billing/event-pass",
