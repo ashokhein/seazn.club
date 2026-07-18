@@ -215,3 +215,84 @@ describe("generateStepladder — rank ladder (spec 05 §2.5)", () => {
     );
   });
 });
+
+describe("slotOrder — explicit round-0 slot map (PROMPT-59 §2)", () => {
+  const r0 = (fx: readonly BracketFixtureGen[]) =>
+    fx
+      .filter((f) => f.round === 0)
+      .map((f) => [f.home ?? null, f.away ?? null, f.award ?? null]);
+
+  it("places round-0 pairings exactly as mapped (8 entrants)", () => {
+    const { fixtures } = generateSingleElim({
+      entrants: field(8),
+      slotOrder: [1, 8, 4, 5, 2, 7, 3, 6],
+    });
+    expect(r0(fixtures)).toEqual([
+      ["s1", "s8", null],
+      ["s4", "s5", null],
+      ["s2", "s7", null],
+      ["s3", "s6", null],
+    ]);
+  });
+
+  it("null slots are bye lines (6 entrants into a bracket of 8)", () => {
+    const { fixtures } = generateSingleElim({
+      entrants: field(6),
+      slotOrder: [1, null, 4, 5, 2, null, 3, 6],
+    });
+    expect(r0(fixtures)).toEqual([
+      ["s1", null, "s1"], // bye line — s1 awarded through
+      ["s4", "s5", null],
+      ["s2", null, "s2"],
+      ["s3", "s6", null],
+    ]);
+  });
+
+  it("keeps the standard fold byte-stable when slotOrder is absent (16-golden)", () => {
+    const { fixtures } = generateSingleElim({ entrants: field(16) });
+    expect(r0(fixtures)).toEqual([
+      ["s1", "s16", null],
+      ["s9", "s8", null],
+      ["s5", "s12", null],
+      ["s13", "s4", null],
+      ["s3", "s14", null],
+      ["s11", "s6", null],
+      ["s7", "s10", null],
+      ["s15", "s2", null],
+    ]);
+  });
+
+  it("honours a full 32-slot explicit map", () => {
+    const order = seedPositions(32).slice().reverse();
+    const { fixtures } = generateSingleElim({ entrants: field(32), slotOrder: order });
+    const first = fixtures.find((f) => f.id === "se-r0-i0");
+    expect(first?.home).toBe(`s${order[0]}`);
+    expect(first?.away).toBe(`s${order[1]}`);
+    expect(fixtures.filter((f) => f.round === 0)).toHaveLength(16);
+  });
+
+  it("rejects malformed maps with CONFIG_INVALID", () => {
+    const bad = (opts: Parameters<typeof generateSingleElim>[0]) =>
+      expect(() => generateSingleElim(opts)).toThrow(/slotOrder|byes|pairing|seed/);
+    bad({ entrants: field(8), slotOrder: [1, 2, 3, 4] }); // wrong length
+    bad({ entrants: field(8), slotOrder: [1, 2, 3, 4, 5, 6, 7, 9] }); // out of range
+    bad({ entrants: field(8), slotOrder: [1, 1, 3, 4, 5, 6, 7, 8] }); // duplicate
+    bad({ entrants: field(6), slotOrder: [1, 4, null, null, 2, 5] as never }); // wrong length AND double bye
+    bad({ entrants: field(6), slotOrder: [1, 4, null, null, 2, 5, 3, 6] }); // double-bye pairing
+    bad({
+      entrants: field(6),
+      byeEntrants: ["s5", "s6"],
+      slotOrder: [1, null, 4, 5, 2, null, 3, 6],
+    }); // byeEntrants + slotOrder together
+  });
+
+  it("winner feeds are unchanged — the mapped bracket still resolves to one champion", () => {
+    const { fixtures } = generateSingleElim({
+      entrants: field(8),
+      slotOrder: [8, 1, 5, 4, 7, 2, 6, 3],
+    });
+    const final = fixtures.find((f) => f.isFinal === true);
+    expect(final).toBeDefined();
+    expect(fixtures).toHaveLength(7);
+  });
+});

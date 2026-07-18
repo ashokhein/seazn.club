@@ -3,18 +3,55 @@ import "server-only";
 // member management. Cross-org person references die at the RLS boundary — a
 // person the tenant can't see doesn't exist.
 import type postgres from "postgres";
+import { createHash } from "node:crypto";
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { supabaseAdmin } from "@/lib/supabase-admin";
 import { withinLimit } from "@/lib/entitlements";
 import { resolveModule } from "@/server/engine-db/registry";
 import { loadTeamSquad } from "./teams";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { z } from "zod";
-import type { CreateEntrant, PatchEntrant, EntrantMemberInput } from "@/server/api-v1/schemas";
+import type {
+  CreateEntrant,
+  CreateEntrantMemberInput,
+  PatchEntrant,
+  EntrantMemberInput,
+} from "@/server/api-v1/schemas";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 
 type Tx = postgres.TransactionSql;
 type MemberInput = z.infer<typeof EntrantMemberInput>;
+type CreateMemberInput = z.infer<typeof CreateEntrantMemberInput>;
+
+/** PROMPT-60 §2 — resolve inline `new_person` members into persons rows
+ *  (created in THIS transaction) so the linker only ever sees person_id
+ *  members. Inline persons are never merged with existing org persons. */
+async function resolveInlineMembers(
+  tx: Tx,
+  orgId: string,
+  members: readonly CreateMemberInput[],
+): Promise<MemberInput[]> {
+  const out: MemberInput[] = [];
+  for (const m of members) {
+    if ("new_person" in m) {
+      const [person] = await tx<{ id: string }[]>`
+        insert into persons (org_id, full_name, consent)
+        values (${orgId}, ${m.new_person.full_name}, ${tx.json({} as never)})
+        returning id`;
+      out.push({
+        person_id: person!.id,
+        squad_number: m.squad_number ?? null,
+        default_position_key: m.default_position_key ?? null,
+        is_captain: m.is_captain,
+        roles: m.roles,
+      });
+    } else {
+      out.push(m);
+    }
+  }
+  return out;
+}
 
 /** Drop position/role keys the target division's sport doesn't define, keeping
  *  the member. Returns the cleaned roster plus a count of dropped keys so the
@@ -59,6 +96,8 @@ export interface EntrantRow {
   seed: number | null;
   status: string;
   created_at: string;
+  /** PROMPT-60: crest/badge/flag — external URL or assets-bucket path. */
+  badge_url: string | null;
 }
 
 export interface EntrantWithMembers extends EntrantRow {
@@ -73,6 +112,7 @@ export interface CreatedEntrant extends EntrantRow {
 
 const COLS = [
   "id", "division_id", "kind", "team_id", "display_name", "seed", "status", "created_at",
+  "badge_url",
 ] as const;
 
 async function insertMembers(tx: Tx, entrantId: string, members: MemberInput[]): Promise<void> {
@@ -186,8 +226,9 @@ export async function createEntrants(
 
       // Resolve the roster to store, in precedence order: members supplied on
       // the request → a copied prior entrant → the team's persistent squad.
-      // Copied/seeded rosters are filtered to the target sport.
-      let members = input.members;
+      // Copied/seeded rosters are filtered to the target sport. Inline
+      // new_person members become persons rows first (same tx, PROMPT-60 §2).
+      let members = await resolveInlineMembers(tx, auth.orgId, input.members);
       let dropped = 0;
       if (input.copy_roster_from_entrant_id) {
         const [source] = await tx<{ team_id: string | null }[]>`
@@ -213,9 +254,9 @@ export async function createEntrants(
       let row: EntrantRow;
       try {
         [row] = await tx<EntrantRow[]>`
-          insert into entrants (division_id, kind, team_id, display_name, seed)
+          insert into entrants (division_id, kind, team_id, display_name, seed, badge_url)
           values (${divisionId}, ${input.kind}, ${input.team_id ?? null},
-                  ${displayName}, ${input.seed ?? null})
+                  ${displayName}, ${input.seed ?? null}, ${input.badge_url ?? null})
           returning ${tx(COLS)}`;
       } catch (err) {
         if ((err as { code?: string }).code === "23505") {
@@ -282,5 +323,50 @@ export async function patchEntrant(
       await insertMembers(tx, id, members);
     }
     return withMembers(tx, row);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Entrant badge upload (PROMPT-60): multipart bytes → assets bucket →
+// entrants.badge_url stores the storage path (content-hash name, mirroring
+// setPersonPhoto). null clears the badge. External URLs skip this entirely —
+// the PATCH route accepts badge_url directly.
+// ---------------------------------------------------------------------------
+
+const BADGE_BUCKET = "assets";
+const BADGE_MIME = new Map<string, string>([
+  ["image/png", "png"],
+  ["image/jpeg", "jpg"],
+  ["image/webp", "webp"],
+  ["image/svg+xml", "svg"],
+]);
+
+export async function setEntrantBadge(
+  auth: AuthCtx,
+  id: string,
+  file: { contentType: string; bytes: Buffer } | null,
+): Promise<EntrantRow> {
+  if (file === null) {
+    return withTenant(auth.orgId, async (tx) => {
+      const [row] = await tx<EntrantRow[]>`
+        update entrants set badge_url = null where id = ${id} returning ${tx(COLS)}`;
+      if (!row) throw new HttpError(404, "entrant not found");
+      return row;
+    });
+  }
+  const ext = BADGE_MIME.get(file.contentType);
+  if (!ext) throw new HttpError(415, `unsupported image type '${file.contentType}'`);
+  return withTenant(auth.orgId, async (tx) => {
+    const [entrant] = await tx<{ id: string }[]>`select id from entrants where id = ${id}`;
+    if (!entrant) throw new HttpError(404, "entrant not found");
+    const hash = createHash("sha256").update(file.bytes).digest("hex").slice(0, 32);
+    const path = `orgs/${auth.orgId}/entrant-badges/${hash}.${ext}`;
+    const { error } = await supabaseAdmin()
+      .storage.from(BADGE_BUCKET)
+      .upload(path, file.bytes, { contentType: file.contentType, upsert: true });
+    if (error) throw new HttpError(502, `badge upload failed: ${error.message}`);
+    const [row] = await tx<EntrantRow[]>`
+      update entrants set badge_url = ${path} where id = ${id} returning ${tx(COLS)}`;
+    return row!;
   });
 }

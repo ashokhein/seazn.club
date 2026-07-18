@@ -16,7 +16,9 @@ import type { CSSProperties } from "react";
 import Link from "@/components/ui/console-link";
 import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
-import type { Slide } from "@/server/slideshow-data";
+import type { BracketSlideFixture, Slide } from "@/server/slideshow-data";
+import { slideAt, stepFor } from "@/components/v2/slideshow-rotation";
+import { rowCenter, twoSidedBracket } from "@seazn/engine/scheduling";
 
 const SLIDE_MS = 9000;
 const POLL_MS = 45_000;
@@ -58,13 +60,22 @@ export function Slideshow({
   sponsors?: { name: string; logo?: string | null }[];
 }) {
   const router = useRouter();
-  const [index, setIndex] = useState(0);
+  // v13 (PROMPT-64): rotation is step-based so the in-play slide can pin —
+  // slideAt interleaves it every other step while matches are live.
+  const [step, setStep] = useState(0);
+  const index = slideAt(step, slides);
+  const setIndex = (target: number | ((i: number) => number)) =>
+    setStep((s) => {
+      const current = slideAt(s, slides);
+      const next = typeof target === "function" ? target(current) : target;
+      return stepFor(((next % Math.max(slides.length, 1)) + Math.max(slides.length, 1)) % Math.max(slides.length, 1), slides);
+    });
   const [clock, setClock] = useState<string | null>(null);
   const [subscribed, setSubscribed] = useState(false);
 
   useEffect(() => {
     if (slides.length < 2) return;
-    const t = setInterval(() => setIndex((i) => (i + 1) % slides.length), SLIDE_MS);
+    const t = setInterval(() => setStep((s) => s + 1), SLIDE_MS);
     return () => clearInterval(t);
   }, [slides.length]);
 
@@ -220,7 +231,9 @@ export function Slideshow({
               <div aria-hidden className="mt-4 h-1 w-20 bg-accent" />
             </div>
 
-            {slide.kind === "standings" ? (
+            {slide.kind === "bracket" ? (
+              <BracketSlide fixtures={slide.fixtures} />
+            ) : slide.kind === "standings" ? (
               <div>
                 <div className="grid grid-cols-[4rem_minmax(0,1fr)_repeat(4,4rem)_7rem] gap-x-5 px-6 pb-2 font-display text-base font-semibold uppercase tracking-[0.2em] text-court-muted">
                   <span>#</span>
@@ -390,6 +403,80 @@ export function Slideshow({
           </div>
         </footer>
       )}
+    </div>
+  );
+}
+
+// v13 (PROMPT-64): the knockout tree on the big screen — same shared engine
+// geometry as the console panel / public bracket / PDF poster.
+function BracketSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
+  const result = twoSidedBracket(fixtures);
+  if (!result.ok) return null;
+  const layout = result.layout;
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const rowsPerSide = Math.max(1, layout.nodes.filter((n) => n.col === 0 && n.side === "L").length);
+  const COL_W = 232;
+  const SLOT_H = 96;
+  const NODE_W = COL_W - 22;
+  const NODE_H = 66;
+  const totalW = (2 * layout.colsPerSide + 1) * COL_W;
+  const totalH = Math.max(rowsPerSide * SLOT_H, SLOT_H * 2) + (layout.thirdPlaceId ? NODE_H + 18 : 0);
+  const colX = (side: "L" | "R" | "center", col: number): number => {
+    if (side === "L") return col * COL_W;
+    if (side === "R") return (2 * layout.colsPerSide - col) * COL_W + (COL_W - NODE_W);
+    return layout.colsPerSide * COL_W + (COL_W - NODE_W) / 2;
+  };
+  const nodeTop = (side: "L" | "R" | "center", col: number, row: number): number => {
+    if (side === "center") {
+      const centre = (rowsPerSide * SLOT_H) / 2 - NODE_H / 2;
+      return row === 0 ? centre : centre + NODE_H + 18;
+    }
+    return rowCenter(col, row) * SLOT_H - NODE_H / 2;
+  };
+  return (
+    <div className="overflow-x-auto">
+      <div className="relative mx-auto" style={{ width: totalW, height: totalH }}>
+        <svg aria-hidden className="absolute inset-0" width={totalW} height={totalH} viewBox={`0 0 ${totalW} ${totalH}`}>
+          {layout.connectors.map((c, i) => {
+            const isFinal = c.col === layout.colsPerSide;
+            const fromCol = c.col - 1;
+            const fx = c.side === "L" ? fromCol * COL_W + NODE_W : (2 * layout.colsPerSide - fromCol) * COL_W + (COL_W - NODE_W);
+            const fy = rowCenter(fromCol, c.fromRow) * SLOT_H;
+            const tx = isFinal
+              ? colX("center", layout.colsPerSide) + (c.side === "L" ? 0 : NODE_W)
+              : c.side === "L" ? c.col * COL_W : (2 * layout.colsPerSide - c.col) * COL_W + COL_W;
+            const ty = isFinal ? (rowsPerSide * SLOT_H) / 2 : rowCenter(c.col, c.toRow) * SLOT_H;
+            const midX = (fx + tx) / 2;
+            return <path key={i} d={`M ${fx} ${fy} H ${midX} V ${ty} H ${tx}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" />;
+          })}
+        </svg>
+        {layout.nodes.map((node) => {
+          const f = byId.get(node.fixtureId);
+          if (!f) return null;
+          const live = f.status === "in_play";
+          return (
+            <div
+              key={node.fixtureId}
+              data-side={node.side}
+              className={`absolute rounded-lg px-4 py-2 ring-1 ring-inset ring-white/10 ${live ? "bg-white/[0.12]" : "bg-white/[0.05]"}`}
+              style={{ left: colX(node.side, node.col), top: nodeTop(node.side, node.col, node.row), width: NODE_W, height: NODE_H }}
+            >
+              <div className="flex h-full flex-col justify-center gap-0.5 font-display text-xl font-semibold leading-tight">
+                <span className="flex items-center justify-between gap-2">
+                  <span className="min-w-0 truncate">{f.home ?? "TBD"}</span>
+                  {live && <span className="animate-live-pulse h-2 w-2 shrink-0 rounded-full bg-emerald-400" />}
+                </span>
+                <span className="flex items-center justify-between gap-2 text-white/80">
+                  <span className="min-w-0 truncate">{f.away ?? "TBD"}</span>
+                  {f.line !== null && (
+                    <span className="shrink-0 font-bold tabular-nums text-accent-line">{f.line}</span>
+                  )}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

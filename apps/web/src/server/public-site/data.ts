@@ -10,6 +10,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
 import { isoDateTime } from "@/lib/public-site";
+import { resolveModule } from "@/server/engine-db";
 
 /** timestamptz → ISO string before rows cross into client components. */
 const normalizeFixture = <T extends { scheduled_at: unknown }>(f: T): T => ({
@@ -150,6 +151,8 @@ export interface PublicEntrant {
     logo_path: string | null;
     colors: unknown;
   } | null;
+  /** PROMPT-60: the entrant's own crest — wins over team_display.logo_path. */
+  badge_url?: string | null;
 }
 
 export interface PublicPlayer {
@@ -301,7 +304,7 @@ export async function getPublicDivision(
         from public_standings_v where division_id = ${division.id}`;
       const entrants = await sql<PublicEntrant[]>`
         select id, division_id, kind, display_name, seed, status, members,
-               team_display
+               team_display, badge_url
         from public_entrants_v where division_id = ${division.id}
         order by seed nulls last, display_name`;
       const [ss] = await sql<{ tz: string }[]>`
@@ -372,6 +375,16 @@ export async function getPublicFixture(
   return { org: shell.org, competition: shell.competition, division, ...detail };
 }
 
+/** PROMPT-65: per-division stat block on the player card. Free at every tier
+ *  (locked decision 2026-07-18): visibility is the same consent gate as the
+ *  card itself; the leaderboard TABLE stays the Pro surface (stats.player). */
+export interface PublicPlayerStats {
+  division_name: string;
+  division_slug: string;
+  sport_key: string;
+  metrics: { key: string; label: string; value: number }[];
+}
+
 /** Player card (consent-gated: the view only contains consented persons). */
 export async function getPublicPlayer(
   orgSlug: string,
@@ -382,6 +395,7 @@ export async function getPublicPlayer(
   competition: PublicCompetition;
   player: PublicPlayer;
   memberships: { division_name: string; division_slug: string; entrant_name: string; squad_number: number | null; position: string | null }[];
+  stats: PublicPlayerStats[];
 } | null> {
   if (!/^[0-9a-f-]{36}$/i.test(personId)) return null;
   const shell = await getPublicCompetition(orgSlug, compSlug);
@@ -407,9 +421,50 @@ export async function getPublicPlayer(
         cross join lateral jsonb_array_elements(e.members) m
         where d.competition_id = ${shell.competition.id}
           and m->>'person_id' = ${personId}`;
-      return { player, memberships };
+
+      // PROMPT-65: per-division totals from player_stat_snapshots, labelled
+      // by the sport module's declared playerStats model (never hardcoded).
+      // Same consent gate as the card — reaching here means the player is
+      // publicly visible; the stats are theirs. Free at every tier.
+      const snapshots = await sql<
+        {
+          division_id: string; division_name: string; division_slug: string;
+          sport_key: string; module_version: string; stats: Record<string, number>;
+        }[]
+      >`
+        select ps.division_id, d.name as division_name, d.slug as division_slug,
+               ps.sport_key, d.module_version, ps.stats
+        from player_stat_snapshots ps
+        join public_divisions_v d on d.id = ps.division_id
+        where ps.person_id = ${personId} and d.competition_id = ${shell.competition.id}
+        order by d.name`;
+      const stats: PublicPlayerStats[] = [];
+      for (const snap of snapshots) {
+        let labelled: { key: string; label: string; value: number }[] = [];
+        try {
+          const model = resolveModule(snap.sport_key, snap.module_version).playerStats;
+          labelled = [
+            ...(model?.metrics ?? []).map((m) => ({ key: m.key, label: m.label })),
+            ...(model?.derived ?? []).map((d) => ({ key: d.key, label: d.label })),
+            ...(model?.awards ?? []).map((a) => ({ key: `${a.key}_awards`, label: a.label })),
+          ]
+            .map((m) => ({ ...m, value: snap.stats[m.key] ?? 0 }))
+            .filter((m) => m.value !== 0);
+        } catch {
+          // retired module build — skip the block rather than break the card
+        }
+        if (labelled.length > 0) {
+          stats.push({
+            division_name: snap.division_name,
+            division_slug: snap.division_slug,
+            sport_key: snap.sport_key,
+            metrics: labelled,
+          });
+        }
+      }
+      return { player, memberships, stats };
     },
-    ["pub-player", shell.competition.id, personId],
+    ["pub-player-v13", shell.competition.id, personId],
     { tags: [competitionTag(shell.competition.id)], revalidate: REVALIDATE_SLOW },
   )();
   if (!detail) return null;

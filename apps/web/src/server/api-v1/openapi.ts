@@ -69,6 +69,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/persons/{id}", method: "patch", summary: "Update a person", tag: "persons", request: S.PatchPerson, response: S.Person },
   { path: "/persons/{id}/merge", method: "post", summary: "Merge a duplicate person into this one", tag: "persons", request: S.MergePersons, response: S.Person, errors: [422] },
   { path: "/persons/{id}/photo", method: "post", summary: "Upload a player photo (multipart `file`); public display gated by public_photo consent", tag: "persons", response: S.Person, errors: [400, 404, 415, 502] },
+  { path: "/entrants/{id}/badge", method: "post", summary: "Upload an entrant crest/badge (multipart `file`) — stored in assets, badge_url set to the path; external URLs via PATCH /entrants/{id}", tag: "entrants", response: S.Entrant, errors: [400, 404, 415, 502] },
+  { path: "/entrants/{id}/badge", method: "delete", summary: "Clear the entrant badge (display falls back to team logo, then monogram)", tag: "entrants", response: S.Entrant, errors: [404] },
   { path: "/persons/{id}/profiles/{sport}", method: "get", summary: "Get a per-sport profile", tag: "persons" },
   { path: "/persons/{id}/profiles/{sport}", method: "put", summary: "Upsert a per-sport profile", tag: "persons", request: S.PutProfile, errors: [422] },
   // Player accounts (PROMPT-53) — session-only, never key-accessible
@@ -80,6 +82,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/me/fixtures/{id}/availability", method: "put", summary: "RSVP in/out/maybe + note for the caller's person on this fixture (session only)", tag: "player-accounts", request: S.PutAvailability, response: S.Availability, errors: [403, 422] },
   { path: "/me/persons", method: "get", summary: "The caller's claimed player profiles with consent state (session only)", tag: "player-accounts", response: z.array(S.MyPerson) },
   { path: "/me/persons/{id}/consent", method: "patch", summary: "Player-owned consent flags; under-16 → 403 CONSENT_LOCKED (guardian gate)", tag: "player-accounts", request: S.PatchMyConsent, response: S.MyPerson, errors: [403] },
+  { path: "/me/persons/{id}/photo", method: "post", summary: "Player-owned photo upload (multipart `file`); guardian gate as consent; public display still needs public_photo consent (session only)", tag: "player-accounts", response: S.MyPerson, errors: [400, 403, 404, 415, 502] },
+  { path: "/me/persons/{id}/photo", method: "delete", summary: "Remove my photo — the public card falls back to initials (session only)", tag: "player-accounts", response: S.MyPerson, errors: [403, 404] },
   { path: "/fixtures/{id}/checkin-link", method: "post", summary: "Mint the fixture's self-check-in QR link (session editors only; signed token, dies at local midnight)", tag: "player-accounts", response: S.CheckinLink, status: 201, errors: [422] },
   // Stages
   { path: "/divisions/{id}/stages", method: "get", summary: "List stages", tag: "stages", response: z.array(S.Stage) },
@@ -105,6 +109,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/fixtures/{id}/lineups/{entrantId}", method: "put", summary: "Replace a side's lineup", tag: "fixtures", request: S.PutLineup, errors: [422] },
   { path: "/fixtures/{id}/events", method: "post", summary: "Append a score event (THE scoring endpoint)", tag: "scoring", request: S.AppendEventRequest, response: S.AppendEventResponse, status: 201, errors: [409, 422, 429] },
   { path: "/fixtures/{id}/events", method: "get", summary: "Read the ledger after ?since_seq=", tag: "scoring", response: z.array(S.ScoreEvent), query: { since_seq: { schema: { type: "integer", minimum: 0, default: 0 } } } },
+  { path: "/fixtures/{id}/audit", method: "get", summary: "Signed per-match audit trail: the full hash-chained event stream, chain-verification verdict and an Ed25519 signature over the head hash (Pro `scoring.audit_export`; verify keys at /.well-known/seazn-audit-keys)", tag: "scoring", errors: [402, 404], query: { format: { schema: { type: "string", enum: ["json", "pdf"], default: "json" } } } },
   { path: "/fixtures/{id}/state", method: "get", summary: "Live state (ETag = ledger seq)", tag: "scoring", response: S.FixtureState },
   { path: "/fixtures/{id}/finalize", method: "post", summary: "Lock the ledger (core.finalize)", tag: "scoring", request: z.object({ expected_seq: z.number().int().min(0) }), response: S.AppendEventResponse, errors: [409, 422] },
   // Device links (doc 13 §7, PROMPT-21)
@@ -222,6 +227,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/public/orgs/{orgSlug}/competitions/{slug}/divisions/{divisionSlug}/stats", method: "get", summary: "Consent-filtered public leaderboard (minors' names gated)", tag: "public", public: true },
   // Format engine extensions (Jul3/08, PROMPT-28)
   { path: "/stages/{id}/challenges", method: "post", summary: "Ladder challenge: creates the fixture on demand; result reorders the ladder (Pro `formats.advanced`)", tag: "stages", request: S.LadderChallenge, status: 201, errors: [402, 422] },
+  { path: "/stages/{id}/fixtures", method: "post", summary: "Ad-hoc single fixture (replay / friendly / tie-breaker) on a league, group or swiss stage; the match folds into the standings. Bracket kinds 422.", tag: "stages", request: S.AddFixture, status: 201, errors: [422] },
   { path: "/stages/{id}/americano", method: "get", summary: "Americano rotation grid + personal-points leaderboard (Jul3/08 §3)", tag: "stages", errors: [422] },
 ];
 

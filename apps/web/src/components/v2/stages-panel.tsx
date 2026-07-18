@@ -62,6 +62,11 @@ interface Props {
   canExport: boolean;
 }
 
+// PROMPT-66: stage kinds that accept an ad-hoc match (standings fold every
+// fixture there). Bracket kinds have no slot for a loose fixture; ladder /
+// americano have their own on-demand mechanisms.
+const ADHOC_STAGE_KINDS = new Set(["league", "group", "swiss"]);
+
 const FIXTURE_STATUS_STYLE: Record<string, string> = {
   scheduled: "bg-slate-100 text-slate-600",
   in_play: "bg-amber-100 text-amber-700",
@@ -88,6 +93,8 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
   // Set after an inline reschedule lands: the notice grows an Undo button
   // that steps the division history back one event (Jul3/03).
   const [undoable, setUndoable] = useState(false);
+  // PROMPT-66: stage id whose inline "Add match" form is open.
+  const [addingTo, setAddingTo] = useState<string | null>(null);
 
   async function undoLast() {
     setError(null);
@@ -336,6 +343,16 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
                         ? msg("schedule.pairNext")
                         : msg("schedule.generate")}
                   </button>
+                  {ADHOC_STAGE_KINDS.has(stage.kind) && stageFixtures.length > 0 && (
+                    <button
+                      type="button"
+                      disabled={busy !== null}
+                      onClick={() => setAddingTo(addingTo === stage.id ? null : stage.id)}
+                      className="btn btn-ghost px-3 py-1.5 text-xs"
+                    >
+                      {msg("stage.addMatch.button")}
+                    </button>
+                  )}
                   {stageFixtures.length > 0 && (
                     <button
                       type="button"
@@ -367,6 +384,20 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
                 </button>
               )}
             </header>
+
+            {/* PROMPT-66: inline ad-hoc match form (replay / friendly / tie-breaker). */}
+            {addingTo === stage.id && (
+              <AddMatchForm
+                msg={msg}
+                stageId={stage.id}
+                entrantNames={entrantNames}
+                onDone={() => {
+                  setAddingTo(null);
+                  router.refresh();
+                }}
+                onCancel={() => setAddingTo(null)}
+              />
+            )}
 
             {/* Pinned unscheduled section (item 3) — count + auto CTA. */}
             {unscheduled.length > 0 && (
@@ -901,4 +932,99 @@ function toLocalInput(iso: string): string {
   const d = new Date(iso);
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// PROMPT-66 — inline ad-hoc match form. Two entrant selects + an optional
+// datetime; POSTs /stages/{id}/fixtures and refreshes. The server enforces the
+// stage-kind policy; this form only shows on league/group/swiss stages.
+function AddMatchForm({
+  msg,
+  stageId,
+  entrantNames,
+  onDone,
+  onCancel,
+}: {
+  msg: Msg;
+  stageId: string;
+  entrantNames: Record<string, string>;
+  onDone: () => void;
+  onCancel: () => void;
+}) {
+  const options = Object.entries(entrantNames).sort((a, b) => a[1].localeCompare(b[1]));
+  const [home, setHome] = useState("");
+  const [away, setAway] = useState("");
+  const [when, setWhen] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    setSaving(true);
+    setError(null);
+    try {
+      await apiV1(`/api/v1/stages/${stageId}/fixtures`, {
+        method: "POST",
+        json: {
+          home_entrant_id: home,
+          away_entrant_id: away,
+          ...(when !== "" ? { scheduled_at: new Date(when).toISOString() } : {}),
+        },
+      });
+      onDone();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : msg("schedule.error.failed"));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="border-b border-dashed border-slate-200 bg-slate-50/60 px-4 py-3">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="label flex flex-col gap-1 text-xs">
+          {msg("stage.addMatch.home")}
+          <select className="input py-1.5 text-sm" value={home} onChange={(e) => setHome(e.target.value)}>
+            <option value="" />
+            {options.map(([id, name]) => (
+              <option key={id} value={id} disabled={id === away}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="label flex flex-col gap-1 text-xs">
+          {msg("stage.addMatch.away")}
+          <select className="input py-1.5 text-sm" value={away} onChange={(e) => setAway(e.target.value)}>
+            <option value="" />
+            {options.map(([id, name]) => (
+              <option key={id} value={id} disabled={id === home}>
+                {name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="label flex flex-col gap-1 text-xs">
+          {msg("stage.addMatch.when")}
+          <input
+            type="datetime-local"
+            className="input py-1.5 text-sm"
+            value={when}
+            onChange={(e) => setWhen(e.target.value)}
+          />
+        </label>
+        <button
+          type="button"
+          className="btn btn-primary px-3 py-1.5 text-xs"
+          disabled={saving || home === "" || away === "" || home === away}
+          onClick={() => void submit()}
+        >
+          {saving ? msg("schedule.working") : msg("stage.addMatch.button")}
+        </button>
+        <button type="button" className="btn btn-ghost px-3 py-1.5 text-xs" onClick={onCancel}>
+          {msg("schedule.cancel")}
+        </button>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">{msg("stage.addMatch.hint")}</p>
+      {error !== null && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  );
 }

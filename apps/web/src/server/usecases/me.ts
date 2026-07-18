@@ -9,6 +9,8 @@ import { HttpError } from "@/lib/errors";
 import { consentLocked } from "@/lib/guardian";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
+import { publicStorageUrl } from "@/lib/supabase-storage";
+import { uploadPersonPhotoBytes } from "./persons";
 
 export type AvailabilityStatus = "in" | "out" | "maybe";
 
@@ -272,26 +274,30 @@ export interface MyPerson {
    *  photo publicly" toggle is meaningless (and misleading) for a person
    *  who is only ever linked as an official, never rostered as an entrant. */
   hasPhotoFeature: boolean;
+  /** PROMPT-65: resolved photo URL for the /me preview (null = none). */
+  photo: string | null;
 }
 
 /** My claimed persons across all orgs, with consent state. dob stays server-side. */
 export async function listMyPersons(userId: string): Promise<MyPerson[]> {
   const rows = await sql<
-    (Omit<MyPerson, "consent_locked" | "hasPhotoFeature"> & {
+    (Omit<MyPerson, "consent_locked" | "hasPhotoFeature" | "photo"> & {
       dob: string | null;
       is_rostered: boolean;
+      photo_path: string | null;
     })[]
   >`
-    select p.id, p.full_name, o.name as org_name, p.consent, p.dob,
+    select p.id, p.full_name, o.name as org_name, p.consent, p.dob, p.photo_path,
            exists(select 1 from entrant_members em where em.person_id = p.id) as is_rostered
     from persons p join organizations o on o.id = p.org_id
     where p.user_id = ${userId}
     order by o.name, p.full_name`;
-  return rows.map(({ dob, is_rostered, ...p }) => ({
+  return rows.map(({ dob, is_rostered, photo_path, ...p }) => ({
     ...p,
     consent: (p.consent ?? {}) as MyPerson["consent"],
     consent_locked: consentLocked(dob),
     hasPhotoFeature: is_rostered,
+    photo: photo_path !== null ? publicStorageUrl(photo_path) : null,
   }));
 }
 
@@ -318,6 +324,43 @@ export async function setMyConsent(
   await sql`
     update persons set consent = coalesce(consent, '{}'::jsonb) || ${sql.json(clean)}
     where id = ${personId}`;
+
+  const memberships = await sql<{ division_id: string; competition_id: string }[]>`
+    select distinct e.division_id, d.competition_id
+    from entrant_members em
+    join entrants e on e.id = em.entrant_id
+    join divisions d on d.id = e.division_id
+    where em.person_id = ${personId}`;
+  for (const m of memberships) fireDivisionRevalidate(m.division_id, m.competition_id);
+
+  const [me] = await listMyPersons(userId).then((all) => all.filter((p) => p.id === personId));
+  return me;
+}
+
+/**
+ * Player-owned photo (PROMPT-65 §2): same ownership rule as setMyConsent
+ * (persons.user_id = me), same guardian gate (under-16 → organiser-managed),
+ * same storage pipeline as the organiser's PersonsPanel upload (shared
+ * uploadPersonPhotoBytes — never a second copy of the storage logic).
+ * null clears the photo. Public cards revalidate immediately.
+ */
+export async function setMyPersonPhoto(
+  userId: string,
+  personId: string,
+  file: { contentType: string; bytes: Buffer } | null,
+): Promise<MyPerson> {
+  const [person] = await sql<{ id: string; org_id: string; dob: string | null }[]>`
+    select id, org_id, dob from persons where id = ${personId} and user_id = ${userId}`;
+  if (!person) throw new HttpError(404, "player profile not found");
+  if (consentLocked(person.dob)) {
+    throw new HttpError(403, "An organiser manages the profile for under-16 players", "CONSENT_LOCKED");
+  }
+  if (file === null) {
+    await sql`update persons set photo_path = null where id = ${personId}`;
+  } else {
+    const path = await uploadPersonPhotoBytes(person.org_id, file);
+    await sql`update persons set photo_path = ${path} where id = ${personId}`;
+  }
 
   const memberships = await sql<{ division_id: string; competition_id: string }[]>`
     select distinct e.division_id, d.competition_id

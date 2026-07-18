@@ -25,6 +25,9 @@ import { DeviceLinkPanel } from "@/components/v2/device-link-panel";
 import { listFixtureAvailability } from "@/server/usecases/me";
 import { CheckinQr } from "@/components/v2/checkin-qr";
 import { FixtureOfficialsStrip } from "@/components/v2/fixture-officials-strip";
+import { AuditStrip } from "@/components/v2/audit-strip";
+import { hasFeature } from "@/lib/entitlements";
+import { sql } from "@/lib/db";
 
 export default async function FixturePage({
   params,
@@ -51,6 +54,22 @@ export default async function FixturePage({
   ]);
   const competition = await getCompetition(auth, division.competition_id);
   const sportModule = resolveModule(division.sport_key, division.module_version);
+
+  // PROMPT-63 §4: ledger-integrity strip (organiser surface, once events
+  // exist). The verifier is the V226 DB function; download is Pro-gated.
+  let audit: { verified: boolean; tamperedSeq: number | null; entitled: boolean } | null = null;
+  if (canEdit && events.length > 0) {
+    const [[{ bad }], entitled] = await Promise.all([
+      sql<{ bad: string | null }[]>`select verify_score_events_chain(${id})::text as bad`,
+      hasFeature(auth.orgId, "scoring.audit_export", division.competition_id),
+    ]);
+    let tamperedSeq: number | null = null;
+    if (bad !== null) {
+      const [row] = await sql<{ seq: number }[]>`select seq from score_events where id = ${bad}`;
+      tamperedSeq = row?.seq ?? null;
+    }
+    audit = { verified: bad === null, tamperedSeq, entitled };
+  }
 
   async function side(entrantId: string | null): Promise<SideInfo | null> {
     if (!entrantId) return null;
@@ -151,6 +170,15 @@ export default async function FixturePage({
               : null
           }
         />
+
+        {audit !== null && (
+          <AuditStrip
+            fixtureId={fixture.id}
+            verified={audit.verified}
+            tamperedSeq={audit.tamperedSeq}
+            entitled={audit.entitled}
+          />
+        )}
 
         {/* Day-of device link (doc 13 §7): editors only — scorers never mint. */}
         {canEdit &&

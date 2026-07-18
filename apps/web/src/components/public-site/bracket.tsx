@@ -1,8 +1,17 @@
 // Server component: bracket view for knockout/double-elim stages and ladder
 // view for stepladder (doc 09 §2). Pure layout from round numbers — no
 // per-sport code; scorelines come from ScoreSummary.headline.
+// PROMPT-62: single-elim knockouts render as the classic two-sided tree
+// (shared engine geometry, same as the console panel and the PDF poster);
+// double-elim / stepladder / irregular shapes keep the column fallback.
 import Link from "next/link";
 import type { PublicFixture } from "@/server/public-site/data";
+import {
+  rowCenter,
+  twoSidedBracket,
+  type BracketLayout,
+  type BracketNode,
+} from "@seazn/engine/scheduling";
 
 interface Props {
   kind: "knockout" | "double_elim" | "stepladder";
@@ -77,7 +86,114 @@ function FixtureCard({
   );
 }
 
+const COL_W = 208;
+const NODE_W = COL_W - 20;
+const SLOT_H = 104;
+const NODE_H = 92;
+
+function TwoSided({
+  layout,
+  fixtures,
+  entrantNames,
+  fixtureHref,
+}: {
+  layout: BracketLayout;
+  fixtures: PublicFixture[];
+  entrantNames: Record<string, string>;
+  fixtureHref: (fixtureId: string) => string;
+}) {
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const rowsPerSide = Math.max(
+    1,
+    layout.nodes.filter((n) => n.col === 0 && n.side === "L").length,
+  );
+  const totalW = (2 * layout.colsPerSide + 1) * COL_W;
+  const totalH =
+    Math.max(rowsPerSide * SLOT_H, SLOT_H * 2) +
+    (layout.thirdPlaceId !== undefined ? NODE_H + 20 : 0);
+  const colX = (node: Pick<BracketNode, "side" | "col">): number => {
+    if (node.side === "L") return node.col * COL_W;
+    if (node.side === "R") return (2 * layout.colsPerSide - node.col) * COL_W + (COL_W - NODE_W);
+    return layout.colsPerSide * COL_W + (COL_W - NODE_W) / 2;
+  };
+  const nodeTop = (node: BracketNode): number => {
+    if (node.side === "center") {
+      const centre = (rowsPerSide * SLOT_H) / 2 - NODE_H / 2;
+      return node.row === 0 ? centre : centre + NODE_H + 20;
+    }
+    return rowCenter(node.col, node.row) * SLOT_H - NODE_H / 2;
+  };
+
+  return (
+    <div className="overflow-x-auto" data-bracket="two-sided">
+      <div className="relative" style={{ width: totalW, height: totalH }}>
+        <svg
+          aria-hidden
+          className="absolute inset-0"
+          width={totalW}
+          height={totalH}
+          viewBox={`0 0 ${totalW} ${totalH}`}
+        >
+          {layout.connectors.map((c, i) => {
+            const isFinal = c.col === layout.colsPerSide;
+            const fromCol = c.col - 1;
+            const fx =
+              c.side === "L"
+                ? fromCol * COL_W + NODE_W
+                : (2 * layout.colsPerSide - fromCol) * COL_W + (COL_W - NODE_W);
+            const fy = rowCenter(fromCol, c.fromRow) * SLOT_H;
+            const tx = isFinal
+              ? layout.colsPerSide * COL_W + (c.side === "L" ? (COL_W - NODE_W) / 2 : COL_W - (COL_W - NODE_W) / 2)
+              : c.side === "L"
+                ? c.col * COL_W
+                : (2 * layout.colsPerSide - c.col) * COL_W + COL_W;
+            const ty = isFinal ? (rowsPerSide * SLOT_H) / 2 : rowCenter(c.col, c.toRow) * SLOT_H;
+            const midX = (fx + tx) / 2;
+            return (
+              <path
+                key={i}
+                d={`M ${fx} ${fy} H ${midX} V ${ty} H ${tx}`}
+                fill="none"
+                className="stroke-zinc-300"
+                strokeWidth="1.5"
+              />
+            );
+          })}
+        </svg>
+        {layout.nodes.map((node) => {
+          const f = byId.get(node.fixtureId);
+          if (!f) return null;
+          return (
+            <div
+              key={node.fixtureId}
+              data-side={node.side}
+              className="absolute"
+              style={{ left: colX(node), top: nodeTop(node), width: NODE_W }}
+            >
+              <FixtureCard fixture={f} entrantNames={entrantNames} href={fixtureHref(f.id)} />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function Bracket({ kind, fixtures, entrantNames, fixtureHref }: Props) {
+  // PROMPT-62: the connected two-sided tree, when the shape allows it.
+  if (kind === "knockout") {
+    const result = twoSidedBracket(fixtures);
+    if (result.ok) {
+      return (
+        <TwoSided
+          layout={result.layout}
+          fixtures={fixtures}
+          entrantNames={entrantNames}
+          fixtureHref={fixtureHref}
+        />
+      );
+    }
+  }
   const rounds = new Map<number, PublicFixture[]>();
   for (const f of fixtures) {
     const list = rounds.get(f.round_no) ?? [];

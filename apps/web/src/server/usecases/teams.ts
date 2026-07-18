@@ -11,6 +11,7 @@ import { HttpError } from "@/lib/errors";
 import { requireFeature } from "@/lib/entitlements";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { publicStorageUrl } from "@/lib/supabase-storage";
+import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import type { z } from "zod";
 import type { EntrantMemberInput } from "@/server/api-v1/schemas";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -135,14 +136,18 @@ export async function listEntrantLogoUrls(
   divisionId: string,
 ): Promise<Record<string, string | null>> {
   const rows = await withTenant(auth.orgId, (tx) =>
-    tx<{ entrant_id: string; logo_path: string | null }[]>`
-      select e.id as entrant_id, td.logo_path
+    tx<{ entrant_id: string; badge_url: string | null; logo_path: string | null }[]>`
+      select e.id as entrant_id, e.badge_url, td.logo_path
       from entrants e
       left join team_display_v td on td.team_id = e.team_id and td.org_id = ${auth.orgId}
       where e.division_id = ${divisionId}`,
   );
+  // PROMPT-60 precedence: the entrant's own badge beats the team logo.
   return Object.fromEntries(
-    rows.map((r) => [r.entrant_id, r.logo_path ? publicStorageUrl(r.logo_path) : null]),
+    rows.map((r) => [
+      r.entrant_id,
+      resolveEntrantBadge({ badge_url: r.badge_url, team_logo_path: r.logo_path }),
+    ]),
   );
 }
 

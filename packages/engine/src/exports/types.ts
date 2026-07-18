@@ -11,6 +11,9 @@ export const DocTable = z.object({
   rows: z.array(z.array(DocCell)),
   /** Landscape hint for very wide tables (29 May: never clip names). */
   landscape: z.boolean().optional(),
+  /** PROMPT-60: per-row badge URL aligned to `rows` (null = no badge). The
+   *  renderer draws a small crest before the name cell; absent = no badges. */
+  rowBadges: z.array(z.string().nullable()).optional(),
 });
 export type DocTable = z.infer<typeof DocTable>;
 
@@ -60,8 +63,43 @@ export const DocKind = z.enum([
   "participants",
   "officials_rota",
   "admit_ticket",
+  "bracket",
+  "audit",
 ]);
 export type DocKind = z.infer<typeof DocKind>;
+
+// PROMPT-62 §4 — the results-poster payload: the twoSidedBracket layout with
+// names/headlines resolved. Landscape; renderer scales to one sheet.
+export const DocBracketNode = z.object({
+  fixtureId: z.string(),
+  side: z.enum(["L", "R", "center"]),
+  col: z.number().int(),
+  row: z.number().int(),
+  home: z.string(),
+  away: z.string(),
+  headline: z.string().nullable(),
+  decided: z.boolean(),
+});
+export type DocBracketNode = z.infer<typeof DocBracketNode>;
+
+export const DocBracket = z.object({
+  nodes: z.array(DocBracketNode),
+  connectors: z.array(
+    z.object({
+      side: z.enum(["L", "R"]),
+      col: z.number().int(),
+      fromRow: z.number().int(),
+      toRow: z.number().int(),
+    }),
+  ),
+  rounds: z.number().int(),
+  colsPerSide: z.number().int(),
+  rowsPerSide: z.number().int(),
+  /** Column captions, outermost → Final (length = rounds). */
+  roundLabels: z.array(z.string()),
+  thirdPlaceId: z.string().optional(),
+});
+export type DocBracket = z.infer<typeof DocBracket>;
 
 export const PageBreaks = z.enum(["auto", "per_pitch", "per_team", "per_division"]);
 export type PageBreaks = z.infer<typeof PageBreaks>;
@@ -78,6 +116,8 @@ export const DocModel = z.object({
   branding: DocBranding.optional(), // Pro `exports.branded` — nulled server-side otherwise
   sections: z.array(DocSection),
   pageBreaks: PageBreaks.default("auto"),
+  /** PROMPT-62 §4 — set only for kind:"bracket" (sections stay empty). */
+  bracket: DocBracket.optional(),
 });
 export type DocModel = z.infer<typeof DocModel>;
 
@@ -105,6 +145,8 @@ export interface ExportStandingsRow {
   lost: number;
   points: number;
   metrics: Record<string, number>;
+  /** PROMPT-60: entrant crest URL (already resolved) — reaches the PDF. */
+  badgeUrl?: string | null;
 }
 
 export interface ExportRosterTeam {

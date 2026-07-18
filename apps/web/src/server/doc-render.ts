@@ -6,6 +6,7 @@ import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import type { DocModel, DocSection, DocTable } from "@seazn/engine/exports";
 import { PALETTE, FONT, registerFonts, eyebrowFor, qrBuffer } from "./doc-theme";
+import { bracketPageGeometry } from "./doc-bracket-geometry";
 
 const MARGIN = 40;
 
@@ -86,7 +87,51 @@ function sponsorLine(sponsors: { name: string; tier: string }[]): string {
 }
 
 function isLandscape(model: DocModel): boolean {
-  return model.sections.some((s) => s.table?.landscape === true);
+  // The bracket poster is landscape by nature (PROMPT-62 §4).
+  return model.kind === "bracket" || model.sections.some((s) => s.table?.landscape === true);
+}
+
+/** Bracket poster (PROMPT-62 §4): one landscape sheet, scale-to-fit — the
+ *  geometry (and its in-box guarantee) lives in doc-bracket-geometry.ts. */
+function drawBracket(doc: PDFKit.PDFDocument, model: DocModel): void {
+  const b = model.bracket;
+  if (!b) return;
+  const box = {
+    x: MARGIN,
+    y: doc.y + 6,
+    w: doc.page.width - MARGIN * 2,
+    h: doc.page.height - MARGIN - 24 - (doc.y + 6),
+  };
+  const g = bracketPageGeometry(b, box);
+  for (const label of g.labels) {
+    doc.font(FONT.display).fontSize(8).fillColor(PALETTE.mute)
+      .text(label.text.toUpperCase(), label.x, label.y, {
+        width: label.w, align: "center", lineBreak: false, ellipsis: true,
+      });
+  }
+  for (const line of g.lines) {
+    const [first, ...rest] = line.points;
+    doc.moveTo(first![0], first![1]);
+    for (const [x, y] of rest) doc.lineTo(x, y);
+    doc.strokeColor(PALETTE.hairline).lineWidth(1).stroke();
+  }
+  for (const r of g.rects) {
+    doc.roundedRect(r.x, r.y, r.w, r.h, 4).fillColor("#ffffff").fill();
+    doc.roundedRect(r.x, r.y, r.w, r.h, 4).strokeColor(PALETTE.hairline).lineWidth(0.8).stroke();
+    if (r.decided) {
+      doc.rect(r.x, r.y, 2, r.h).fill(PALETTE.night);
+    }
+    const textW = r.w - 10 - (r.headline !== null ? 34 : 0);
+    doc.font(r.isCenter ? FONT.bodyMed : FONT.body).fontSize(8).fillColor(PALETTE.ink)
+      .text(r.home, r.x + 6, r.y + r.h / 2 - 10, { width: textW, lineBreak: false, ellipsis: true });
+    doc.font(FONT.body).fontSize(8).fillColor(PALETTE.ink)
+      .text(r.away, r.x + 6, r.y + r.h / 2 + 2, { width: textW, lineBreak: false, ellipsis: true });
+    if (r.headline !== null) {
+      doc.font(FONT.bodyMed).fontSize(8).fillColor(PALETTE.ink)
+        .text(r.headline, r.x + r.w - 36, r.y + r.h / 2 - 4, { width: 32, align: "right", lineBreak: false });
+    }
+  }
+  doc.fillColor(PALETTE.ink);
 }
 
 function isNumericColumn(table: DocTable, i: number): boolean {
@@ -95,7 +140,11 @@ function isNumericColumn(table: DocTable, i: number): boolean {
       /^[\d.,:%+\-–—\s]*$/.test(String(r[i] ?? "")));
 }
 
-function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
+function drawTable(
+  doc: PDFKit.PDFDocument,
+  table: DocTable,
+  badges?: Map<string, Buffer | null>,
+): void {
   const width = doc.page.width - MARGIN * 2;
   // proportional widths: text-heavy columns get more room
   const weights = table.columns.map((_, i) => {
@@ -109,8 +158,17 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
   const colW = weights.map((w) => (w / total) * width);
   const numeric = table.columns.map((_, i) => isNumericColumn(table, i));
   const rowHeight = 18;
+  // PROMPT-60: tables carrying rowBadges indent the name column (index 1) so
+  // crested and crestless rows align; the crest draws in the indent.
+  const badged = table.rowBadges !== undefined;
+  const BADGE_W = 13;
 
-  const drawRow = (cells: readonly (string | number)[], header: boolean, zebra: boolean) => {
+  const drawRow = (
+    cells: readonly (string | number)[],
+    header: boolean,
+    zebra: boolean,
+    badge?: Buffer | null,
+  ) => {
     if (doc.y + rowHeight > doc.page.height - MARGIN) doc.addPage();
     const y = doc.y;
     if (header) doc.rect(MARGIN, y, width, rowHeight).fill(PALETTE.night);
@@ -119,12 +177,20 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
     doc.font(header ? FONT.bodyMed : FONT.body).fontSize(header ? 8.5 : 9)
       .fillColor(header ? PALETTE.cream : PALETTE.ink);
     cells.forEach((cell, i) => {
-      doc.text(String(cell ?? ""), x + 4, y + 5, {
-        width: colW[i]! - 8, height: rowHeight, ellipsis: true, lineBreak: false,
+      const indent = badged && !header && i === 1 ? BADGE_W : 0;
+      doc.text(String(cell ?? ""), x + 4 + indent, y + 5, {
+        width: colW[i]! - 8 - indent, height: rowHeight, ellipsis: true, lineBreak: false,
         align: numeric[i] ? "right" : "left",
       });
       x += colW[i]!;
     });
+    if (badge) {
+      try {
+        doc.image(badge, MARGIN + colW[0]! + 3, y + 3.5, { fit: [11, 11] });
+      } catch {
+        // Unsupported image bytes — skip the crest, never break the export.
+      }
+    }
     if (!header) {
       doc.moveTo(MARGIN, y + rowHeight).lineTo(MARGIN + width, y + rowHeight)
         .strokeColor(PALETTE.hairline).lineWidth(0.5).stroke();
@@ -134,7 +200,14 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
   };
 
   drawRow(table.columns, true, false);
-  table.rows.forEach((row, i) => drawRow(row, false, i % 2 === 1));
+  table.rows.forEach((row, i) =>
+    drawRow(
+      row,
+      false,
+      i % 2 === 1,
+      badged ? badges?.get(table.rowBadges?.[i] ?? "") ?? null : null,
+    ),
+  );
   doc.moveDown(0.5);
 }
 
@@ -215,7 +288,11 @@ function drawCropTicks(doc: PDFKit.PDFDocument, y: number): void {
   doc.moveTo(doc.page.width - tickLen, y).lineTo(doc.page.width, y).strokeColor("#999999").lineWidth(1).stroke();
 }
 
-function drawSection(doc: PDFKit.PDFDocument, section: DocSection): void {
+function drawSection(
+  doc: PDFKit.PDFDocument,
+  section: DocSection,
+  badges?: Map<string, Buffer | null>,
+): void {
   if (section.pageBreakBefore === true) doc.addPage();
   if (section.heading !== undefined) {
     doc.font("Helvetica-Bold").fontSize(13).fillColor("#111111").text(section.heading, MARGIN);
@@ -236,7 +313,7 @@ function drawSection(doc: PDFKit.PDFDocument, section: DocSection): void {
     doc.y = y + 16;
   }
   doc.fillColor("#111111");
-  if (section.table !== undefined) drawTable(doc, section.table);
+  if (section.table !== undefined) drawTable(doc, section.table, badges);
   for (const line of section.formLines ?? []) {
     doc.font("Helvetica").fontSize(10).text(line, MARGIN);
     doc.moveDown(0.4);
@@ -289,6 +366,19 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
     if (s.ticket) qrByRef.set(s.ticket.ref, await qrBuffer(s.ticket.qrUrl));
   }
 
+  // PROMPT-60: crest pre-pass — like the QR pre-pass, pdfkit draws
+  // synchronously, so every table row badge resolves to bytes up front.
+  // resolveLogo never throws (null on failure ⇒ row renders without a crest).
+  const badgeBuffers = new Map<string, Buffer | null>();
+  for (const s of model.sections) {
+    for (const url of s.table?.rowBadges ?? []) {
+      if (url && !badgeBuffers.has(url)) badgeBuffers.set(url, await resolveLogo(url));
+    }
+  }
+
+  // PROMPT-62 §4: the bracket poster draws its own body (sections are empty).
+  if (model.bracket !== undefined) drawBracket(doc, model);
+
   // columnsHint 2 (12 Jun "two per A4"): pair sections onto one page by
   // separating with a rule instead of a page break.
   let sinceBreak = 0;
@@ -300,7 +390,7 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
     }
     if (section.ticket) {
       drawTicket(doc, section.ticket, qrByRef.get(section.ticket.ref) ?? null, model.branding?.orgName);
-    } else drawSection(doc, section);
+    } else drawSection(doc, section, badgeBuffers);
     if (pair) {
       sinceBreak += 1;
       if (section.ticket) {
