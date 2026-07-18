@@ -338,3 +338,24 @@ help pages updated in the same PR (house rules).
    self-serve.
 5. /admin/payments fold-in: existing pages move under the new layout with
    redirects from old paths (same pattern as the Payments→Connect rename).
+
+## 7. Pricing decisions (owner, 2026-07-18 addendum)
+
+Executed as Task 14 of the hardening plan — strictly AFTER Task 8's
+unknown-price guard (a repriced sub must never silently downgrade) and after
+the Pro Plus branch lands (supersedes its D2 annual ×10).
+
+| | Monthly | Annual (≈30% off, never <30%) |
+|---|---|---|
+| Pro | **$19** / €18 / £15 / A$28 / ₹1,399 | **$159** / €149 / £125 / A$235 / ₹11,499 |
+| Pro Plus | $39 / €37 / £33 / A$59 / ₹2,999 (unchanged) | **$327** / €309 / £277 / A$495 / ₹24,999 |
+
+- Event Pass unchanged ($39 set); a $29 cut stays an open option.
+- Existing subscribers keep their current price (no forced migration);
+  `plans` keeps ONE price id per interval, so old ids resolve through the
+  Task 8 plan-preserving guard.
+- Sized-based/per-unit pricing REJECTED for now (tiers already size-gate);
+  future direction if wanted: add-on packs as subscription line items writing
+  `org_entitlement_overrides`.
+- Marketing copy flips "2 months free" → "Save 30%" wherever the annual
+  toggle renders (4 locales).

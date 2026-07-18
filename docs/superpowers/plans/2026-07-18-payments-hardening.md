@@ -913,6 +913,50 @@ gh pr create --title "feat(payments): hardening wave (PROMPT-72..75)" --body "Sp
 
 ---
 
+### Task 14: Reprice — Pro $19 + 30% annual on Pro & Pro Plus (spec §7)
+
+**ORDERING:** runs only after Task 8 is merged-in on this branch AND the Pro
+Plus branch is on main (its `proPlusPrice` table + stripe-plans.json entries
+must exist to be edited). Supersedes pro-plus D2 annual amounts.
+
+**Files:**
+- Modify: `apps/web/src/config/stripe-plans.json` (amounts below)
+- Modify: `apps/web/src/lib/currency.ts` (`proPrice`, `proPlusPrice` set points)
+- Modify: `scripts/stripe-sync.ts` (verify amount-drift behavior — see Step 2)
+- Modify: pricing/marketing copy keys ("2 months free" → "Save 30%") ×4 locales
+- Test: existing currency/pricing unit tests pin amounts — update expectations.
+
+**Amounts (minor units):**
+
+| lookup_key | usd | eur | gbp | aud | inr |
+|---|---|---|---|---|---|
+| seazn_pro_monthly | 1900 | 1800 | 1500 | 2800 | 139900 |
+| seazn_pro_annual | 15900 | 14900 | 12500 | 23500 | 1149900 |
+| seazn_pro_plus_monthly | 3900 | 3700 | 3300 | 5900 | 299900 |
+| seazn_pro_plus_annual | 32700 | 30900 | 27700 | 49500 | 2499900 |
+
+- [ ] **Step 1: Update `stripe-plans.json` + `lib/currency.ts`** to the table.
+- [ ] **Step 2: Verify `stripe:sync` handles amount changes.** Stripe price
+  amounts are immutable — the script must CREATE a new price for a changed
+  amount, transfer the `lookup_key` (`transfer_lookup_key: true`), and write
+  the new id into `plans.stripe_price_id_*`. If it only updates
+  `currency_options`, extend it: compare `unit_amount` + each currency option;
+  on drift, create replacement price with `transfer_lookup_key: true`, then
+  archive (`active: false`) the old price. Old ids stay resolvable-safe via
+  Task 8 (existing subs keep their price; plan_key preserved).
+- [ ] **Step 3: Test** — update pinned amounts in the pricing/currency unit
+  tests; add one test: `proPrice("annual","usd")*1 <= 19*12*0.7*100` style
+  ≥30%-discount assertions for all four annual cells ×5 currencies.
+- [ ] **Step 4: Copy** — annual-toggle badge/copy keys to "Save 30%" (en/fr/es/nl);
+  help `billing/plans.md` amounts refreshed.
+- [ ] **Step 5: Run** `npx tsc --noEmit && npx vitest run` + smoke pricing page
+  check; commit `feat(pricing): Pro $19 + 30% annual (pro, pro_plus)`.
+- [ ] **Step 6: Deploy note in PR body** — run `npm run stripe:sync` per env
+  (test + prod keys) AFTER db:apply; existing subscribers keep old prices (no
+  migration); verify checkout shows new amounts per currency.
+
+---
+
 ## Self-review notes
 
 - Spec coverage: P0-1→T1/T2, P0-2→T5/T6, P0-3→T3/T4, P1-4→T7, P1-5→T8, P1-6→T9, P1-7→T11, P1-8→T12, P2-10→T10, P2-11 dead row→T0. Deferred BY DESIGN to later plans: P2-9 partial sponsor refunds, P2-12 tax ToS clause, P2-13 order hygiene, P2-14 pass admin verbs, PROMPT-76 console, PROMPT-77 growth items.
