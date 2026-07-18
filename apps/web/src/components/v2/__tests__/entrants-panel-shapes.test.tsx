@@ -118,10 +118,14 @@ describe("RosterEditor — kind/model-aware roster", () => {
 });
 
 describe("NewEntrantFields — kind/model-aware add form", () => {
-  it("single allowed kind hides the select; individual hides the name field", () => {
+  it("single allowed kind hides the select; individual keeps a name field (name-only entrants stay possible)", () => {
     const html = renderAddForm({ kinds: ["individual"], defaultKind: "individual" });
     expect(html).not.toContain(">Kind<");
-    expect(html).not.toContain(">Name<");
+    // The journeys regression (e2e serial): organisers register name-only
+    // entrants without person records — the field must stay, auto-filled
+    // when a person IS picked.
+    expect(html).toContain(">Name<");
+    expect(html).toContain('placeholder="Alex Doe"');
     expect(html).toContain("Search players…");
   });
 

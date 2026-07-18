@@ -671,9 +671,12 @@ export function NewEntrantFields({
   }, [isIndividual, kind, memberIds, persons]);
 
   // The name shown in / submitted from the editable field. Teams and a
-  // hand-edited pair keep the typed value; an untouched pair auto-fills.
+  // hand-edited individual/pair keep the typed value; untouched ones
+  // auto-fill from the picked people. The field stays for individuals too:
+  // organisers legitimately register name-only entrants with no person
+  // record (board-game one-nighters) — the person pick is optional sugar.
   const nameValue = isTeam || nameTouched ? name : derivedName;
-  const submitName = isIndividual ? derivedName : nameValue;
+  const submitName = nameValue;
 
   function pickKind(next: string) {
     setKind(next);
@@ -743,21 +746,18 @@ export function NewEntrantFields({
       )}
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {/* Name — hidden for individual entrants (the player IS the name). */}
-        {!isIndividual && (
-          <label className="block min-w-0">
-            <span className="label">Name</span>
-            <input
-              value={nameValue}
-              onChange={(e) => {
-                setName(e.target.value);
-                setNameTouched(true);
-              }}
-              className="input w-full"
-              placeholder={isTeam ? "Riverside CC" : "Alice & Bob"}
-            />
-          </label>
-        )}
+        <label className="block min-w-0">
+          <span className="label">Name</span>
+          <input
+            value={nameValue}
+            onChange={(e) => {
+              setName(e.target.value);
+              setNameTouched(true);
+            }}
+            className="input w-full"
+            placeholder={isTeam ? "Riverside CC" : isIndividual ? "Alex Doe" : "Alice & Bob"}
+          />
+        </label>
         <label className="block min-w-0">
           <span className="label">Seed</span>
           <input
