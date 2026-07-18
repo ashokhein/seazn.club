@@ -11,6 +11,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publicStorageUrl } from "@/lib/supabase-storage";
 import { uploadPersonPhotoBytes } from "./persons";
+import { labelPlayerStats, type LabelledPlayerStat } from "@/server/player-stats";
 
 export type AvailabilityStatus = "in" | "out" | "maybe";
 
@@ -250,6 +251,51 @@ export async function hasClaimedProfile(userId: string): Promise<boolean> {
   const [row] = await sql<{ has: boolean }[]>`
     select exists(select 1 from persons where user_id = ${userId}) as has`;
   return row?.has === true;
+}
+
+export interface MyStatBlock {
+  person_id: string;
+  person_name: string;
+  org_name: string;
+  org_slug: string;
+  competition_name: string;
+  competition_slug: string;
+  /** Only public competitions get a "public profile" link from /me. */
+  competition_public: boolean;
+  division_name: string;
+  division_slug: string;
+  sport_key: string;
+  metrics: LabelledPlayerStat[];
+}
+
+/** G6 — the PROMPT-65 stat blocks, self-view: every snapshot belonging to a
+ *  person the user has claimed, across ALL orgs/competitions (private ones
+ *  included — these are the player's own numbers; consent gates only the
+ *  PUBLIC card). Labels via the shared module-declared model. */
+export async function listMyPlayerStats(userId: string): Promise<MyStatBlock[]> {
+  const rows = await sql<
+    (Omit<MyStatBlock, "metrics" | "competition_public"> & {
+      module_version: string;
+      visibility: string;
+      stats: Record<string, number>;
+    })[]
+  >`
+    select ps.person_id, p.full_name as person_name,
+           o.name as org_name, o.slug as org_slug,
+           c.name as competition_name, c.slug as competition_slug, c.visibility,
+           d.name as division_name, d.slug as division_slug,
+           ps.sport_key, d.module_version, ps.stats
+    from player_stat_snapshots ps
+    join persons p on p.id = ps.person_id and p.user_id = ${userId}
+    join divisions d on d.id = ps.division_id and d.archived_at is null
+    join competitions c on c.id = d.competition_id
+    join organizations o on o.id = c.org_id
+    order by o.name, c.name, d.name`;
+  return rows.flatMap(({ module_version, visibility, stats, ...row }) => {
+    const metrics = labelPlayerStats(row.sport_key, module_version, stats);
+    if (metrics.length === 0) return [];
+    return [{ ...row, competition_public: visibility === "public", metrics }];
+  });
 }
 
 /** True when the user's ONLY relationship to the platform is a claimed

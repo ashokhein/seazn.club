@@ -1155,6 +1155,8 @@ export type DictionaryKey =
   | "me.rsvp.saved"
   | "me.runYourOwn.cta"
   | "me.runYourOwn.title"
+  | "me.stats.publicProfile"
+  | "me.stats.title"
   | "me.tbd"
   | "me.teams.title"
   | "me.title"

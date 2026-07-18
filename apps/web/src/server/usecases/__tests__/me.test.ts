@@ -16,6 +16,7 @@ import {
   setMyAvailability,
   checkInToFixture,
   listMyPersons,
+  listMyPlayerStats,
   setMyConsent,
 } from "../me";
 
@@ -217,6 +218,30 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
     // No claimed person on the fixture → null (claim-first interstitial).
     const stranger = await makeUser("stranger");
     expect(await checkInToFixture(stranger, f1.id)).toBeNull();
+  });
+
+  it("listMyPlayerStats: my snapshots labelled via the module model, isolated per user (G6)", async () => {
+    const a = await seedOrg("stats");
+    const rigA = await rig(a.owner);
+    const player = await makeUser("statsplayer");
+    const stranger = await makeUser("statsstranger");
+    await sql`update persons set user_id = ${player} where id = ${rigA.persons[0].id}`;
+    // Snapshot written by the stats folder in production — sport_key rides the
+    // snapshot row; the module version comes from the division.
+    await sql`
+      insert into player_stat_snapshots (division_id, person_id, sport_key, stats, computed_through_seq)
+      values (${rigA.division.id}, ${rigA.persons[0].id}, 'football', ${sql.json({ goals: 2, assists: 0 })}, 1)`;
+
+    const mine = await listMyPlayerStats(player);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]!.competition_public).toBe(true);
+    expect(mine[0]!.division_slug).toBeTruthy();
+    expect(mine[0]!.org_slug).toBeTruthy();
+    const goals = mine[0]!.metrics.find((m) => m.key === "goals");
+    expect(goals?.value).toBe(2);
+    expect(mine[0]!.metrics.find((m) => m.key === "assists")).toBeUndefined();
+
+    expect(await listMyPlayerStats(stranger)).toHaveLength(0);
   });
 
   it("isPlayerOnly: claimed person + no org = true; members and strangers = false", async () => {
