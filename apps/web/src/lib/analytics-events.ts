@@ -30,6 +30,7 @@ export const EVENTS = {
   // In-app billing management (v3/11) — the portal-replacement surface.
   BILLING_CARD_ADDED: "billing_card_added",
   BILLING_INTERVAL_CHANGED: "billing_interval_changed",
+  BILLING_PLAN_CHANGED: "billing_plan_changed",
   SUBSCRIPTION_CANCEL_SCHEDULED: "subscription_cancel_scheduled",
   SUBSCRIPTION_RESUMED: "subscription_resumed",
   // PLG growth loops (2026-07-17 plan) — distribution + referral.
