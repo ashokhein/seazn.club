@@ -18,7 +18,7 @@ import type Stripe from "stripe";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { LEGAL_VERSION } from "@/lib/legal";
-import { getLimit, requireFeature } from "@/lib/entitlements";
+import { getLimit, hasFeature, requireFeature } from "@/lib/entitlements";
 import { platformFeeDefault } from "@/lib/platform-settings";
 import { getStripe } from "@/lib/stripe";
 import { captureServer } from "@/lib/posthog-server";
@@ -674,14 +674,23 @@ export async function publicRegistrationInfo(
     where d.competition_id = ${comp.id} and rs.enabled
     order by d.name`;
 
+  // Card intake also depends on the paid entitlement (P2-10): an org that
+  // dropped to community (lost dispute, canceled sub, past_due grace expiry —
+  // Task 9 resolves the last as community at read time) can still have OPEN
+  // Stripe-fee divisions with Connect live. Scope by competition so an Event
+  // Pass keeps THAT comp's paid intake open.
+  const paidEntitled = await hasFeature(comp.org_id, "registration.paid", comp.id);
+
   const now = new Date();
   const divisions: PublicDivisionInfo[] = rows.map((r) => {
     const remaining =
       r.capacity === null ? null : Math.max(0, r.capacity - r.active);
-    // A card division with Connect broken can't take submissions — closing it
-    // with an honest reason beats accepting money we can't collect (spec #9).
+    // A card division can't take submissions when Connect is broken OR the
+    // paid entitlement is gone — closing it with an honest reason beats
+    // accepting money we can't keep (spec #9, P2-10).
     const paymentsBroken =
-      r.payment_method === "stripe" && r.fee_cents > 0 && !comp.charges_enabled;
+      r.payment_method === "stripe" && r.fee_cents > 0 &&
+      (!comp.charges_enabled || !paidEntitled);
     const open = windowOpen(r, now) && !paymentsBroken;
     let reason: string | null = open ? null : paymentsBroken ? "payments_unavailable" : "window";
     if (open && remaining === 0) reason = "full"; // still open — joins the waitlist
@@ -796,6 +805,15 @@ export async function submitRegistration(
       503,
       "Card payments are temporarily unavailable for this event — try again shortly or contact the organiser",
     );
+  }
+  // Card intake needs the paid entitlement, not just live Connect (P2-10): an
+  // org downgraded to community must stop collecting cards even though its
+  // Connect account still works. Competition-scoped so an Event Pass keeps the
+  // comp's paid intake open. In-flight rows are untouched — resumeRegistration-
+  // Checkout + the reminder sweep keep honouring snapshots (mid-flight money
+  // completes). requireFeature throws PaymentRequiredError → 402.
+  if (useStripe) {
+    await requireFeature(ctx.org_id, "registration.paid", ctx.competition_id);
   }
 
   // postgres types begin() as UnwrapPromiseArray (db.ts note) — safe cast.
