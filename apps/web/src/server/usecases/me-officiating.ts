@@ -50,9 +50,15 @@ export interface MyBlackout {
 export interface MyOfficiating {
   /** The signed-in person is linked to at least one officials row. */
   is_official: boolean;
+  /** Outstanding duties: still scheduled or in_play (any date). */
   assignments: MyOfficiatingAssignment[];
+  /** Finished matches (decided/finalized/abandoned/forfeited/cancelled), most
+   *  recent first — surfaced behind a "completed" disclosure in the lane. */
+  completed: MyOfficiatingAssignment[];
   blackouts: MyBlackout[];
 }
+
+const FINISHED_STATUSES = ["decided", "finalized", "abandoned", "forfeited", "cancelled"] as const;
 
 /** Everything the /me officiating lane renders. Lane shows only when the
  *  person is linked to an officials row — a pure player gets is_official
@@ -62,7 +68,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     select exists(
       select 1 from officials o join persons p on p.id = o.person_id
       where p.user_id = ${userId}) as has`;
-  if (!linked?.has) return { is_official: false, assignments: [], blackouts: [] };
+  if (!linked?.has) return { is_official: false, assignments: [], completed: [], blackouts: [] };
 
   const assignments = await sql<MyOfficiatingAssignment[]>`
     select fo.fixture_id, f.fixture_no, o.id as official_id,
@@ -85,10 +91,40 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     where p.user_id = ${userId}
+      -- Outstanding duties only. The status gate already drops finished
+      -- matches (decided/finalized/abandoned/forfeited/cancelled), so NO date
+      -- floor: a match still 'scheduled' or 'in_play' is a pending duty even if
+      -- its scheduled time has already passed (an in_play match must always
+      -- show). A previous scheduled_at-in-the-future filter wrongly hid these.
       and f.status in ('scheduled', 'in_play')
-      and (f.scheduled_at is null or f.scheduled_at >= date_trunc('day', now()))
     order by f.scheduled_at nulls last, f.id, fo.role_key
     limit 100`;
+
+  // Finished matches — most recent first — for the collapsed "completed" panel.
+  const completed = await sql<MyOfficiatingAssignment[]>`
+    select fo.fixture_id, f.fixture_no, o.id as official_id,
+           org.name as org_name, org.slug as org_slug,
+           c.name as competition_name, c.slug as competition_slug,
+           c.visibility as competition_visibility,
+           d.name as division_name, d.slug as division_slug, d.sport_key,
+           h.display_name as home_name, a.display_name as away_name,
+           f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label,
+           f.status as fixture_status,
+           fo.role_key, fo.response, fo.decline_reason, fo.responded_at
+    from persons p
+    join officials o on o.person_id = p.id
+    join fixture_officials fo on fo.official_id = o.id
+    join fixtures f on f.id = fo.fixture_id
+    join divisions d on d.id = f.division_id
+    join competitions c on c.id = d.competition_id
+    join organizations org on org.id = f.org_id
+    left join schedule_settings ss on ss.division_id = d.id
+    left join entrants h on h.id = f.home_entrant_id
+    left join entrants a on a.id = f.away_entrant_id
+    where p.user_id = ${userId}
+      and f.status = any(${[...FINISHED_STATUSES]})
+    order by f.scheduled_at desc nulls last, f.id, fo.role_key
+    limit 50`;
 
   const blackouts = await sql<MyBlackout[]>`
     select oa.date::text as date, min(oa.note) as note
@@ -99,7 +135,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     group by oa.date
     order by oa.date`;
 
-  return { is_official: true, assignments, blackouts };
+  return { is_official: true, assignments, completed, blackouts };
 }
 
 export interface PendingOfficiatingClaim {

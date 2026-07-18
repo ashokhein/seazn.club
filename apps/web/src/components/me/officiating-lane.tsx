@@ -34,11 +34,13 @@ const RAIL: Record<OfficiatingResponse, string> = {
 export function OfficiatingLane({
   isOfficial,
   assignments,
+  completed,
   blackouts,
   pendingClaims,
 }: {
   isOfficial: boolean;
   assignments: MyOfficiatingAssignment[];
+  completed: MyOfficiatingAssignment[];
   blackouts: MyBlackout[];
   pendingClaims: PendingOfficiatingClaim[];
 }) {
@@ -72,9 +74,51 @@ export function OfficiatingLane({
               {msg("me.off.rota")}
             </a>
           </p>
+
+          {completed.length > 0 && (
+            <details className="mt-4">
+              <summary className="cursor-pointer list-none text-xs font-medium uppercase tracking-wide text-slate-400 hover:text-slate-600">
+                {msg("me.off.completed", { count: completed.length })}
+              </summary>
+              <ul className="mt-2 space-y-2">
+                {completed.map((a) => (
+                  <CompletedCard key={`${a.fixture_id}:${a.official_id}:${a.role_key}`} a={a} />
+                ))}
+              </ul>
+            </details>
+          )}
         </>
       )}
     </section>
+  );
+}
+
+/** Read-only row for a finished match (no accept/decline/score) — shown inside
+ *  the collapsed "completed" disclosure. */
+function CompletedCard({ a }: { a: MyOfficiatingAssignment }) {
+  const msg = useMsg();
+  return (
+    <li className="card space-y-1 border-l-4 border-l-slate-200 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="min-w-0 truncate text-sm text-slate-700">
+          {a.home_name ?? msg("me.tbd")} <span className="text-slate-400">vs</span>{" "}
+          {a.away_name ?? msg("me.tbd")}{" "}
+          <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] capitalize text-slate-500">
+            {msg("me.off.role", { role: a.role_key })}
+          </span>
+        </p>
+        <span className="badge bg-slate-100 capitalize text-slate-600">{a.fixture_status}</span>
+      </div>
+      <p className="text-xs text-slate-400">
+        {a.competition_name} · {a.division_name} · {a.org_name}
+        {a.court_label ? ` · ${a.court_label}` : ""}
+      </p>
+      {a.scheduled_at && (
+        <p className="text-xs text-slate-400">
+          <Zoned value={a.scheduled_at} tz={a.venue_tz ?? "UTC"} mode="datetime" showZone you="subtitle" />
+        </p>
+      )}
+    </li>
   );
 }
 

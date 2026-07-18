@@ -145,6 +145,37 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     });
   });
 
+  it("shows outstanding duties even when the scheduled time has passed; finished matches drop off", async () => {
+    const { auth } = await seedOrg();
+    const ref = await makeUser("ref");
+    const { fixtures } = await seedFutureDivision(auth);
+    const official = await createOfficial(auth, { display_name: "Ref R", role_keys: ["referee"] });
+    const invited = await inviteOfficial(auth, official.id, ref.email);
+    await claimPerson(invited.secret, ref.id, ref.email);
+
+    const pastScheduled = fixtures[0]!.id;
+    const pastInPlay = fixtures[1]!.id;
+    const done = fixtures[2]!.id;
+    for (const id of [pastScheduled, pastInPlay, done]) {
+      await patchFixtureOfficials(auth, id, {
+        set: [{ official_id: official.id, role_key: "referee", locked: false }],
+      });
+    }
+    // scheduled time already passed but still not played (outstanding duty);
+    // an in-play match (must always show); a finished/decided match.
+    await sql`update fixtures set scheduled_at = ${new Date(Date.now() - 2 * 86_400_000).toISOString()}, status = 'scheduled' where id = ${pastScheduled}`;
+    await sql`update fixtures set scheduled_at = ${new Date(Date.now() - 3 * 3_600_000).toISOString()}, status = 'in_play' where id = ${pastInPlay}`;
+    await sql`update fixtures set scheduled_at = ${new Date(Date.now() - 5 * 86_400_000).toISOString()}, status = 'decided' where id = ${done}`;
+
+    const mine = await getMyOfficiating(ref.id);
+    const ids = mine.assignments.map((a) => a.fixture_id);
+    const completedIds = mine.completed.map((a) => a.fixture_id);
+    expect(ids).toContain(pastScheduled); // outstanding, past-dated → shows
+    expect(ids).toContain(pastInPlay); // in_play → always shows
+    expect(ids).not.toContain(done); // finished → out of outstanding
+    expect(completedIds).toContain(done); // finished → in the completed panel
+  });
+
   it("guards response transitions and scopes writes to the assigned official", async () => {
     const { auth } = await seedOrg();
     const ref = await makeUser("ref");

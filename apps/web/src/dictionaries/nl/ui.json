@@ -1744,6 +1744,7 @@
   "me.off.blackoutEmpty": "Nog geen geblokkeerde data.",
   "me.off.remove": "Verwijderen",
   "me.off.rota": "Mijn rooster downloaden",
+  "me.off.completed": "Voltooide wedstrijden ({count})",
   "me.off.comingSoon": "Binnenkort beschikbaar",
   "me.off.failed": "Er ging iets mis — probeer opnieuw",
   "me.off.role": "als {role}",
