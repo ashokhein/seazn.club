@@ -47,6 +47,10 @@ import {
   type OfficialAssignedArgs,
   officialAssignmentChangedTemplate,
   type OfficialAssignmentChangedArgs,
+  suspensionConfirmedTemplate,
+  type SuspensionConfirmedArgs,
+  suspensionServedTemplate,
+  type SuspensionServedArgs,
 } from "@/lib/email-templates";
 import { paragraph, panel, renderEmail } from "@/lib/email-templates/compose";
 import { escapeHtml } from "@/lib/email-templates/shared";
@@ -238,6 +242,35 @@ export async function sendOfficialAssignmentChangedEmail(
     to,
     transactional: true,
     ...officialAssignmentChangedTemplate({ ...args, meUrl: `${appOrigin()}/me` }, dict),
+  });
+}
+
+/** A confirmed suspension (SPEC-1) — CTA to the /me suspensions card. Claimed
+ *  players default to their stored locale; unclaimed persons never reach here. */
+export async function sendSuspensionConfirmedEmail(
+  to: string,
+  args: Omit<SuspensionConfirmedArgs, "meUrl">,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({
+    to,
+    transactional: true,
+    ...suspensionConfirmedTemplate({ ...args, meUrl: `${appOrigin()}/me` }, dict),
+  });
+}
+
+/** A suspension flipped to served — the player is eligible again (SPEC-1). */
+export async function sendSuspensionServedEmail(
+  to: string,
+  args: Omit<SuspensionServedArgs, "meUrl">,
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  return send({
+    to,
+    transactional: true,
+    ...suspensionServedTemplate({ ...args, meUrl: `${appOrigin()}/me` }, dict),
   });
 }
 

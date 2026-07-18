@@ -12,7 +12,9 @@ import type postgres from "postgres";
 import type { DisciplineModel, EventEnvelope } from "@seazn/engine/core";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
+import { hasFeature, requireFeature } from "@/lib/entitlements";
+import type { Locale } from "@/lib/i18n-constants";
+import { sendSuspensionConfirmedEmail, sendSuspensionServedEmail } from "@/lib/email";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { resolveModule } from "@/server/engine-db";
 
@@ -307,6 +309,7 @@ async function updateServing(tx: Tx, divisionId: string, events: EventRow[]): Pr
     }
   }
 
+  const flipped: string[] = [];
   for (const s of active) {
     if (!s.entrant_id || !s.decided_at) continue;
     let served = 0;
@@ -322,6 +325,34 @@ async function updateServing(tx: Tx, divisionId: string, events: EventRow[]): Pr
     await tx`
       update suspensions set matches_served = ${capped}, status = ${status}, updated_at = now()
       where id = ${s.id}`;
+    if (status === "served") flipped.push(s.id);
+  }
+  // The active→served flip happens exactly once per row (served rows leave the
+  // `active` set), so a served notice fires once. Claimed players only.
+  if (flipped.length > 0) await emailServed(flipped);
+}
+
+/** Notify claimed players whose suspensions just finished serving. Superuser
+ *  read (users is a global table); unclaimed persons (no users row) drop out of
+ *  the join and get no mail. Fire-and-forget, never blocks the recompute. */
+async function emailServed(suspensionIds: string[]): Promise<void> {
+  const rows = await sql<
+    { email: string | null; locale: string | null; org_name: string; division_name: string; reason: string }[]
+  >`
+    select u.email, u.locale, o.name as org_name, d.name as division_name, s.reason
+    from suspensions s
+    join persons p on p.id = s.person_id
+    join users u on u.id = p.user_id
+    join divisions d on d.id = s.division_id
+    join organizations o on o.id = s.org_id
+    where s.id = any(${suspensionIds})`;
+  for (const r of rows) {
+    if (!r.email) continue;
+    void sendSuspensionServedEmail(
+      r.email,
+      { orgName: r.org_name, divisionName: r.division_name, reason: r.reason },
+      (r.locale as Locale) ?? "en",
+    ).catch(() => {});
   }
 }
 
@@ -496,7 +527,7 @@ export async function decideSuspension(
     | { kind: "adjust"; matchesTotal?: number; reason?: string },
 ): Promise<Suspension> {
   await requireFeature(auth.orgId, FEATURE);
-  return withTenant(auth.orgId, async (tx) => {
+  const result = await withTenant(auth.orgId, async (tx) => {
     const [s] = await tx<
       { division_id: string; person_id: string; entrant_id: string | null; status: SuspensionStatus }[]
     >`
@@ -532,6 +563,30 @@ export async function decideSuspension(
     await detectSuspensions(tx, s.division_id);
     return loadSuspension(tx, s.division_id, id);
   });
+  // Confirm-only: notify the claimed player once the ban is live (SPEC-1).
+  if (action.kind === "confirm") await emailConfirmed(id, result);
+  return result;
+}
+
+/** Notify the claimed player that an organiser confirmed their suspension.
+ *  Superuser resolve; unclaimed persons drop out of the join. Fire-and-forget. */
+async function emailConfirmed(id: string, sus: Suspension): Promise<void> {
+  const [r] = await sql<
+    { email: string | null; locale: string | null; org_name: string; division_name: string }[]
+  >`
+    select u.email, u.locale, o.name as org_name, d.name as division_name
+    from suspensions s
+    join persons p on p.id = s.person_id
+    join users u on u.id = p.user_id
+    join divisions d on d.id = s.division_id
+    join organizations o on o.id = s.org_id
+    where s.id = ${id}`;
+  if (!r?.email) return;
+  void sendSuspensionConfirmedEmail(
+    r.email,
+    { orgName: r.org_name, divisionName: r.division_name, reason: sus.reason, matchesTotal: sus.matchesTotal },
+    (r.locale as Locale) ?? "en",
+  ).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +612,54 @@ export async function activeSuspensionsByEntrant(
     (map.get(r.entrant_id) ?? map.set(r.entrant_id, []).get(r.entrant_id)!).push(entry);
   }
   return map;
+}
+
+/** Distinct division squad (rostered persons) for the manual-ban person picker.
+ *  Ungated read — the panel only renders when the org is entitled. */
+export async function divisionSquad(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<{ person_id: string; full_name: string }[]> {
+  return withTenant(auth.orgId, (tx) =>
+    tx<{ person_id: string; full_name: string }[]>`
+      select distinct p.id as person_id, p.full_name
+      from entrant_members em
+      join entrants e on e.id = em.entrant_id
+      join persons p on p.id = em.person_id
+      where e.division_id = ${divisionId}
+      order by p.full_name`,
+  );
+}
+
+/** Active suspensions among a fixture's entrants, keyed for the pad banner
+ *  bootstrap (served/total, not remaining). Returns [] when the org isn't
+ *  entitled to discipline — the fixture page renders for every tier, so this
+ *  never throws a 402 that would break the pad. */
+export async function suspensionsForFixture(
+  auth: AuthCtx,
+  divisionId: string,
+  entrantIds: (string | null)[],
+): Promise<{ personId: string; personName: string; served: number; total: number }[]> {
+  const ids = entrantIds.filter((x): x is string => !!x);
+  if (ids.length === 0) return [];
+  if (!(await hasFeature(auth.orgId, FEATURE))) return [];
+  return withTenant(auth.orgId, async (tx) => {
+    await detectSuspensions(tx, divisionId);
+    const rows = await tx<
+      { person_id: string; person_name: string; served: number; total: number }[]
+    >`
+      select s.person_id, p.full_name as person_name,
+             s.matches_served as served, s.matches_total as total
+      from suspensions s join persons p on p.id = s.person_id
+      where s.division_id = ${divisionId} and s.status = 'active'
+        and s.entrant_id = any(${ids})`;
+    return rows.map((r) => ({
+      personId: r.person_id,
+      personName: r.person_name,
+      served: r.served,
+      total: r.total,
+    }));
+  });
 }
 
 /** Public "Suspensions" strip: active bans, names via public_person_name

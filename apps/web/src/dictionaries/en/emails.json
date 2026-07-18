@@ -270,5 +270,21 @@
   "officialChanged.was": "Was: {detail}",
   "officialChanged.button": "Open my assignments",
   "officialChanged.footer": "You received this because you're an official at {orgName} on Seazn Club.",
-  "officialChanged.text": "{orgName} moved a match you're officiating. Details: {meUrl}"
+  "officialChanged.text": "{orgName} moved a match you're officiating. Details: {meUrl}",
+  "suspension.match": "{n} match",
+  "suspension.matches": "{n} matches",
+  "suspensionConfirmed.subject": "Suspension confirmed — {division}",
+  "suspensionConfirmed.preheader": "You'll miss the next {matches}.",
+  "suspensionConfirmed.title": "You've been suspended",
+  "suspensionConfirmed.body": "<strong>{org}</strong> confirmed a suspension in <strong>{division}</strong>: {reason}. You'll miss the next {matches}.",
+  "suspensionConfirmed.button": "View my suspensions",
+  "suspensionConfirmed.footer": "You received this because you play in {division} on Seazn Club.",
+  "suspensionConfirmed.text": "{org} confirmed a suspension in {division}: {reason}. You'll miss {matches}. View: {meUrl}",
+  "suspensionServed.subject": "Suspension served — {division}",
+  "suspensionServed.preheader": "You're clear to play again.",
+  "suspensionServed.title": "Suspension served",
+  "suspensionServed.body": "Your suspension in <strong>{division}</strong> ({reason}) is fully served — you're eligible to play again.",
+  "suspensionServed.button": "View my suspensions",
+  "suspensionServed.footer": "You received this because you play in {division} on Seazn Club.",
+  "suspensionServed.text": "Your suspension in {division} ({reason}) is served — you're eligible again. {meUrl}"
 }

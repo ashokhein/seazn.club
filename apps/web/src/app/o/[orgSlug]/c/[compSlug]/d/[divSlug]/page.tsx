@@ -33,13 +33,24 @@ import { ResultsMatrix } from "@/components/public-site/results-matrix";
 import { StatsPanel } from "@/components/v2/stats-panel";
 import { LadderPanel } from "@/components/v2/ladder-panel";
 import { AmericanoPanel } from "@/components/v2/americano-panel";
+import { UpgradeGate } from "@/components/upgrade-gate";
+import { RulesEditor } from "@/components/discipline/rules-editor";
+import { DisciplinePanel } from "@/components/discipline/discipline-panel";
+import {
+  activeSuspensionsByEntrant,
+  divisionSquad,
+  getDisciplineRules,
+  listSuspensions,
+} from "@/server/usecases/discipline";
+import { PaymentRequiredError } from "@/lib/errors";
 import type { StandingsRow } from "@seazn/engine/competition";
 import type { MetricSpecLike } from "@/lib/public-site";
 import { localizedTieBreakLabel } from "@/lib/tiebreak-label";
 
 const TABS = ["entrants", "fixtures", "standings", "stats"] as const;
 // v8: editors get a Settings tab (general/format/sharing/danger).
-const EDIT_TABS = [...TABS, "settings"] as const;
+// SPEC-1: card-sport divisions also get a Discipline tab (rules + queue).
+const EDIT_TABS = [...TABS, "discipline", "settings"] as const;
 type Tab = (typeof EDIT_TABS)[number];
 const TABLE_KINDS = new Set(["league", "group", "swiss"]);
 
@@ -67,7 +78,29 @@ export default async function DivisionPage({
   const requested: Tab | null = (EDIT_TABS as readonly string[]).includes(rawTab ?? "")
     ? (rawTab as Tab)
     : null;
-  const tab: Tab = requested === "settings" && !canEdit ? defaultTab : (requested ?? defaultTab);
+  // SPEC-1: is discipline offered here? getDisciplineRules returns null when the
+  // sport has no card model (tab hidden), throws 402 when the sport HAS a model
+  // but the org isn't entitled (tab shown with the PlusReveal), or a doc when
+  // entitled. Editors only — the config surface lives with the organiser.
+  let disciplineRules: Awaited<ReturnType<typeof getDisciplineRules>> = null;
+  let disciplineAvailable = false;
+  let disciplineGated = false;
+  if (canEdit) {
+    try {
+      disciplineRules = await getDisciplineRules(auth, id);
+      disciplineAvailable = disciplineRules !== null;
+    } catch (err) {
+      if (err instanceof PaymentRequiredError) {
+        disciplineAvailable = true;
+        disciplineGated = true;
+      } else throw err;
+    }
+  }
+  const disciplineEntitled = disciplineAvailable && !disciplineGated;
+  const tab: Tab =
+    (requested === "settings" && !canEdit) || (requested === "discipline" && !disciplineAvailable)
+      ? defaultTab
+      : (requested ?? defaultTab);
   const [competition, stages, fixtures, entrants, scheduleSettings, canExport] = await Promise.all([
     getCompetition(auth, division.competition_id),
     listStages(auth, id),
@@ -95,6 +128,26 @@ export default async function DivisionPage({
       ? await listFixtureHeadlines(auth, id)
       : undefined;
   const cascade = division.tiebreakers ?? sportModule.defaultTiebreakers;
+
+  // SPEC-1: the Discipline tab's queue + squad, and the entrant-row chips.
+  const disciplineData =
+    tab === "discipline" && disciplineEntitled
+      ? {
+          suspensions: await listSuspensions(auth, id),
+          squad: await divisionSquad(auth, id),
+        }
+      : null;
+  const entrantSuspensions =
+    tab === "entrants" && disciplineEntitled
+      ? Object.fromEntries(
+          [...(await withTenant(auth.orgId, (tx) => activeSuspensionsByEntrant(tx, id)))].map(
+            ([eid, list]) => [
+              eid,
+              list.map((x) => ({ personName: x.personName, remaining: x.remaining })),
+            ],
+          ),
+        )
+      : undefined;
 
   // Standings per table stage (+ per pool), with pool labels.
   const tableStages = stages.filter((s) => TABLE_KINDS.has(s.kind));
@@ -197,19 +250,21 @@ export default async function DivisionPage({
 
         {/* v3/02 §3.3: tabs scroll horizontally with an edge fade — never wrap. */}
         <nav className="scroll-x scroll-x-fade mb-6 flex gap-1 whitespace-nowrap border-b border-slate-200">
-          {(canEdit ? EDIT_TABS : TABS).map((tabKey) => (
-            <Link
-              key={tabKey}
-              href={routes.division(orgSlug, compSlug, divSlug, tabKey)}
-              className={`border-b-2 px-4 py-2 text-sm font-medium transition ${
-                tab === tabKey
-                  ? "border-purple-600 text-purple-700"
-                  : "border-transparent text-slate-500 hover:text-slate-800"
-              }`}
-            >
-              {t(dict, `div.detail.tab.${tabKey}`)}
-            </Link>
-          ))}
+          {(canEdit ? EDIT_TABS.filter((tk) => tk !== "discipline" || disciplineAvailable) : TABS).map(
+            (tabKey) => (
+              <Link
+                key={tabKey}
+                href={routes.division(orgSlug, compSlug, divSlug, tabKey)}
+                className={`border-b-2 px-4 py-2 text-sm font-medium transition ${
+                  tab === tabKey
+                    ? "border-purple-600 text-purple-700"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                {tabKey === "discipline" ? t(dict, "disc.tab") : t(dict, `div.detail.tab.${tabKey}`)}
+              </Link>
+            ),
+          )}
         </nav>
 
         {tab === "entrants" && (
@@ -221,6 +276,7 @@ export default async function DivisionPage({
             roles={sportModule.positions.roles ?? []}
             eligibility={division.eligibility as Record<string, unknown>[]}
             entrantModel={entrantModel}
+            suspensions={entrantSuspensions}
           />
         )}
 
@@ -366,6 +422,34 @@ export default async function DivisionPage({
                 : null
             }
           />
+        )}
+
+        {/* SPEC-1: Discipline tab — rules editor + pending/active/history queue.
+            Gated orgs (sport has cards but plan doesn't) see the PlusReveal. */}
+        {tab === "discipline" && canEdit && (
+          <div className="max-w-3xl space-y-6">
+            {disciplineGated ? (
+              <UpgradeGate feature="discipline.enforced" />
+            ) : disciplineRules ? (
+              <>
+                <RulesEditor
+                  divisionId={id}
+                  enabled={disciplineRules.enabled}
+                  rules={disciplineRules.rules}
+                  sportColors={disciplineRules.sportColors}
+                  canEdit={editable}
+                />
+                {disciplineData && (
+                  <DisciplinePanel
+                    divisionId={id}
+                    initial={disciplineData.suspensions}
+                    squad={disciplineData.squad}
+                    canEdit={editable}
+                  />
+                )}
+              </>
+            ) : null}
+          </div>
         )}
 
         {/* v8 spec §2: settings tab collects general/format/sharing/danger —

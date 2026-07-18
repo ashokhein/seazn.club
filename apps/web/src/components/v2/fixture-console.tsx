@@ -21,6 +21,7 @@ import { TennisPad } from "@/components/v2/pads/tennis-pad";
 import { PeriodPad } from "@/components/v2/pads/period-pad";
 import { FootballPad } from "@/components/v2/pads/football-pad";
 import { CricketPad } from "@/components/v2/pads/cricket-pad";
+import { PadSuspensionBanner } from "@/components/discipline/pad-suspension-banner";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 
@@ -181,6 +182,27 @@ interface Props {
   publicPath?: string | null;
   /** Player RSVP/check-in per person (PROMPT-53) — chips in the lineup picker. */
   availability?: Record<string, PersonAvailability>;
+  /** Active suspensions among this fixture's entrants (SPEC-1), joined server
+   *  side into the bootstrap payload. Drives the soft pad warning banner. */
+  activeSuspensions?: { personId: string; personName: string; served: number; total: number }[];
+}
+
+/** Payload keys that carry a person id across the sport modules (card, goal,
+ *  sub, award). The pad warning fires when a recorded event names a suspended
+ *  person via any of them. */
+const ATTRIBUTION_KEYS = ["person", "scorer", "assist", "off", "on"] as const;
+
+function personIdsInEvents(events: EventIn[]): Set<string> {
+  const ids = new Set<string>();
+  for (const e of events) {
+    const p = e.payload as Record<string, unknown> | null;
+    if (!p) continue;
+    for (const k of ATTRIBUTION_KEYS) {
+      const v = p[k];
+      if (typeof v === "string") ids.add(v);
+    }
+  }
+  return ids;
 }
 
 export interface PersonAvailability {
@@ -219,6 +241,7 @@ export function FixtureConsole({
   recorderNames = {},
   publicPath = null,
   availability = {},
+  activeSuspensions = [],
 }: Props) {
   const msg = useMsg();
   const router = useRouter();
@@ -287,6 +310,11 @@ export function FixtureConsole({
     .reverse()
     .find((e) => e.type !== "core.void" && !events.some((v) => v.voids_event_id === e.id));
 
+  // Soft discipline warning (SPEC-1 / D8): a suspended player has been recorded
+  // in this fixture's ledger. Never blocks — it just flags.
+  const referencedPersons = personIdsInEvents(events);
+  const flaggedSuspensions = activeSuspensions.filter((s) => referencedPersons.has(s.personId));
+
   return (
     <div className="space-y-6">
       {/* Scoreline header */}
@@ -322,6 +350,21 @@ export function FixtureConsole({
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {error && (
         <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
+      )}
+
+      {/* Soft suspension warnings (SPEC-1) — one dismissible banner per flagged
+          player recorded in this ledger. Never blocks scoring (D8). */}
+      {flaggedSuspensions.length > 0 && (
+        <div className="space-y-2">
+          {flaggedSuspensions.map((s) => (
+            <PadSuspensionBanner
+              key={s.personId}
+              name={s.personName}
+              served={s.served}
+              total={s.total}
+            />
+          ))}
+        </div>
       )}
 
       {/* Match controls */}

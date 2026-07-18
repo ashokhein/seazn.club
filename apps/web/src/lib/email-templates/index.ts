@@ -40,3 +40,5 @@ export {
   officialAssignmentChangedTemplate,
   type OfficialAssignmentChangedArgs,
 } from "./official-assignment-changed";
+export { suspensionConfirmedTemplate, type SuspensionConfirmedArgs } from "./suspension-confirmed";
+export { suspensionServedTemplate, type SuspensionServedArgs } from "./suspension-served";

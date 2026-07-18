@@ -21,6 +21,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "cricket.dls": "DLS revised targets are a Pro feature — a manual umpire target still works.",
   "stats.player": "Player stats and scorecard entry are a Pro feature.",
   "scoring.audit_export": "The signed match audit trail download is a Pro feature.",
+  "discipline.enforced": "Player suspensions — card thresholds, a review queue and banned-player flags — are a Pro feature.",
   "stats.club_championship": "Club championship tables are a Pro feature.",
   "tiebreakers.custom": "Custom tiebreaker order is a Pro feature.",
   "standings.custom_points": "Bonus-point rules and forfeit points are a Pro feature — plain win/draw/loss points work on every plan.",
