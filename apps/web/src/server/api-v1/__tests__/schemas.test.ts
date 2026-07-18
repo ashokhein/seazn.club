@@ -1,7 +1,7 @@
 // Schema-level regression tests (no DB) for the entrant/team contract added
 // with the unified Add-Entrant + team-squad work.
 import { describe, expect, it } from "vitest";
-import { CreateEntrant, CreateStage, CreateTeam, SetTeamSquad } from "../schemas";
+import { CreateEntrant, CreateStage, CreateTeam, PatchEntrant, SetTeamSquad } from "../schemas";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 
@@ -85,5 +85,43 @@ describe("CreateStage.qualification (PROMPT-59 §4 — typed spec at the edge)",
     expect(CreateStage.safeParse(stage({ take: [{ pool: "A" }] })).success).toBe(false); // missing rank
     expect(CreateStage.safeParse(stage({ topN: 0 })).success).toBe(false);
     expect(CreateStage.safeParse(stage({ combine: [{ topN: 2 }] })).success).toBe(false); // min 2 children
+  });
+});
+
+describe("CreateEntrant.members — inline new persons (PROMPT-60 §2)", () => {
+  it("accepts a mix of person_id and new_person members", () => {
+    const r = CreateEntrant.safeParse({
+      kind: "team",
+      display_name: "Mexico",
+      members: [
+        { person_id: UUID, squad_number: 1 },
+        { new_person: { full_name: "Striker Nine" }, squad_number: 9 },
+      ],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("rejects a member with neither person_id nor new_person, and >40 members", () => {
+    expect(
+      CreateEntrant.safeParse({
+        kind: "team", display_name: "X", members: [{ squad_number: 1 }],
+      }).success,
+    ).toBe(false);
+    expect(
+      CreateEntrant.safeParse({
+        kind: "team", display_name: "X",
+        members: Array.from({ length: 41 }, (_, i) => ({ new_person: { full_name: `P${i}` } })),
+      }).success,
+    ).toBe(false);
+  });
+
+  it("accepts badge_url on create and PATCH (nullable to clear)", () => {
+    expect(
+      CreateEntrant.safeParse({
+        kind: "individual", display_name: "Solo", badge_url: "https://flags.example/x.png",
+      }).success,
+    ).toBe(true);
+    expect(PatchEntrant.safeParse({ badge_url: null }).success).toBe(true);
+    expect(PatchEntrant.safeParse({ badge_url: "entrant-badges/a.png" }).success).toBe(true);
   });
 });

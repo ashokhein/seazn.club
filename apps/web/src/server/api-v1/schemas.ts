@@ -172,6 +172,20 @@ export const EntrantMemberInput = z.object({
   roles: z.array(z.string()).default([]),
 });
 
+/** PROMPT-60 §2 — a member created inline with the entrant (same transaction),
+ *  so a whole team + roster is one request. Explicit person_id remains the way
+ *  to reuse an existing person; inline members are never merged/deduped
+ *  against existing org persons. Create-time only. */
+export const NewPersonMemberInput = z.object({
+  new_person: z.object({ full_name: z.string().min(1).max(200) }),
+  squad_number: z.number().int().min(0).nullish(),
+  default_position_key: z.string().nullish(),
+  is_captain: z.boolean().default(false),
+  roles: z.array(z.string()).default([]),
+});
+export const CreateEntrantMemberInput = z.union([EntrantMemberInput, NewPersonMemberInput]);
+export type CreateEntrantMemberInput = z.infer<typeof CreateEntrantMemberInput>;
+
 export const CreateEntrant = z
   .object({
     kind: EntrantKind,
@@ -180,7 +194,8 @@ export const CreateEntrant = z
     display_name: z.string().min(1).max(200).optional(),
     team_id: Uuid.nullish(),
     seed: z.number().int().min(1).nullish(),
-    members: z.array(EntrantMemberInput).default([]),
+    // National-squad sizes (~26) must pass; 40 caps abuse (PROMPT-60 §2).
+    members: z.array(CreateEntrantMemberInput).max(40).default([]),
     // Copy the roster from an earlier entrant of the SAME team (season rollover,
     // league + cup). Resolved server-side in the creation transaction.
     copy_roster_from_entrant_id: Uuid.nullish(),

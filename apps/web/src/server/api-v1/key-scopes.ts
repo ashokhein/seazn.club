@@ -150,6 +150,8 @@ const RULES: RouteRule[] = [
   { method: "PATCH", path: "/persons/:id", scope: "manage" },
   { method: "POST", path: "/persons/:id/merge", scope: "manage" },
   { method: "POST", path: "/persons/:id/photo", scope: "manage" },
+  { method: "POST", path: "/entrants/:id/badge", scope: "manage" },
+  { method: "DELETE", path: "/entrants/:id/badge", scope: "manage" },
   { method: "GET", path: "/persons/:id/profiles/:sport", scope: "read" },
   { method: "PUT", path: "/persons/:id/profiles/:sport", scope: "manage" },
   { method: "GET", path: "/persons/:id/stats", scope: "read" },

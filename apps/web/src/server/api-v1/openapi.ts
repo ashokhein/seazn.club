@@ -69,6 +69,8 @@ export const ROUTES: RouteSpec[] = [
   { path: "/persons/{id}", method: "patch", summary: "Update a person", tag: "persons", request: S.PatchPerson, response: S.Person },
   { path: "/persons/{id}/merge", method: "post", summary: "Merge a duplicate person into this one", tag: "persons", request: S.MergePersons, response: S.Person, errors: [422] },
   { path: "/persons/{id}/photo", method: "post", summary: "Upload a player photo (multipart `file`); public display gated by public_photo consent", tag: "persons", response: S.Person, errors: [400, 404, 415, 502] },
+  { path: "/entrants/{id}/badge", method: "post", summary: "Upload an entrant crest/badge (multipart `file`) — stored in assets, badge_url set to the path; external URLs via PATCH /entrants/{id}", tag: "entrants", response: S.Entrant, errors: [400, 404, 415, 502] },
+  { path: "/entrants/{id}/badge", method: "delete", summary: "Clear the entrant badge (display falls back to team logo, then monogram)", tag: "entrants", response: S.Entrant, errors: [404] },
   { path: "/persons/{id}/profiles/{sport}", method: "get", summary: "Get a per-sport profile", tag: "persons" },
   { path: "/persons/{id}/profiles/{sport}", method: "put", summary: "Upsert a per-sport profile", tag: "persons", request: S.PutProfile, errors: [422] },
   // Player accounts (PROMPT-53) — session-only, never key-accessible
