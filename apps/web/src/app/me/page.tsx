@@ -13,6 +13,7 @@ import { RsvpControl } from "@/components/me/rsvp-control";
 import { OfficiatingLane } from "@/components/me/officiating-lane";
 import { ConsentCard } from "@/components/me/consent-card";
 import { LogoutButton } from "@/components/logout-button";
+import { RunYourOwnCta } from "@/components/run-your-own-cta";
 import { Zoned, ViewerTzProvider } from "@/components/client-time";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t } from "@/lib/i18n";
@@ -79,6 +80,8 @@ export default async function MePage({
           </p>
         )}
         <h1 className="page-title mb-6">{t(ui, "me.title")}</h1>
+
+        <RunYourOwnCta label={t(ui, "me.runYourOwn.title")} cta={t(ui, "me.runYourOwn.cta")} />
 
         {!officiating.is_official &&
           pendingOfficiatingClaims.length === 0 &&

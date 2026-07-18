@@ -165,6 +165,15 @@ export async function createCompetition(
     orgId: auth.orgId,
     properties: { visibility: input.visibility },
   });
+  // Activation funnel completion — created directly public (no prior state).
+  if (shouldFireMadePublic(undefined, input.visibility)) {
+    await captureServer({
+      event: EVENTS.COMPETITION_MADE_PUBLIC,
+      distinctId: auth.userId ?? `org:${auth.orgId}`,
+      orgId: auth.orgId,
+      properties: { competition_id: row.id },
+    });
+  }
   return row;
 }
 
@@ -176,6 +185,17 @@ export async function getCompetition(auth: AuthCtx, id: string): Promise<Competi
     const frozen = await frozenCompetitionIds(auth.orgId, tx);
     return { ...row, frozen: frozen.has(row.id) };
   });
+}
+
+// Activation funnel (feature 1): `competition_made_public` fires exactly once
+// per transition INTO "public" — never on create-already-public double count
+// with itself, and never re-fired by an unrelated patch to an already-public
+// competition. Pure so create + patch can share one rule.
+export function shouldFireMadePublic(
+  oldVisibility: string | null | undefined,
+  newVisibility: string | null | undefined,
+): boolean {
+  return newVisibility === "public" && oldVisibility !== "public";
 }
 
 // A frozen competition is read-only — but retiring it (status → completed/
@@ -205,6 +225,7 @@ export async function patchCompetition(
   }
   let statusChangedTo: string | null = null;
   let previousSlug: string | null = null;
+  let oldVisibility: string | null = null;
   const { row, discoveryTouched } = await withTenant(auth.orgId, async (tx) => {
     if (patch.slug) {
       if (RESERVED_ENTITY_SLUGS.has(patch.slug)) {
@@ -220,6 +241,7 @@ export async function patchCompetition(
       select visibility, discoverable, status, name, slug from competitions where id = ${id}`;
     if (!before) throw new HttpError(404, "competition not found");
     if (patch.status && patch.status !== before.status) statusChangedTo = patch.status;
+    oldVisibility = before.visibility;
 
     const effective = { ...patch };
     // Rename regenerates the slug (v3/01 §2); the old slug keeps redirecting
@@ -290,6 +312,16 @@ export async function patchCompetition(
   if (statusChangedTo === "active" || statusChangedTo === "complete") {
     await captureServer({
       event: statusChangedTo === "active" ? EVENTS.COMPETITION_STARTED : EVENTS.COMPETITION_COMPLETED,
+      distinctId: auth.userId ?? `org:${auth.orgId}`,
+      orgId: auth.orgId,
+      properties: { competition_id: id },
+    });
+  }
+  // Activation funnel completion (feature 1) — fires once, on the
+  // transition INTO "public" only (see shouldFireMadePublic).
+  if (shouldFireMadePublic(oldVisibility, patch.visibility)) {
+    await captureServer({
+      event: EVENTS.COMPETITION_MADE_PUBLIC,
       distinctId: auth.userId ?? `org:${auth.orgId}`,
       orgId: auth.orgId,
       properties: { competition_id: id },

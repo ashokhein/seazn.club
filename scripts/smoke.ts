@@ -339,6 +339,10 @@ await i18nSuite();
   await playerAccountsSuite(admin, org2.id);
   await officialOnboardingSuite(admin, org2.id, renamed.slug);
 
+  // --- PLG growth loops (design/plg): attribution CTA + fan ShareBar on
+  // free AND pro public pages, /me player→organiser nudge, /discover /start.
+  await plgGrowthSuite(admin, org2.id, renamed.slug);
+
   // --- design/v9 PROMPT-55: dispute-loss recovery surfaces.
   await disputeSurfacesSuite();
 
@@ -727,6 +731,78 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   check(
     "off booked-elsewhere never leaks the other org's competition/division",
     !sched.body.includes(`Busy Cup ${tag}`) && !sched.body.includes(`Busy A ${tag}`),
+  );
+}
+
+/** PLG growth loops (design/plg): the free-tier "Powered by Seazn Club"
+ *  footer is an acquisition CTA (attribution-link.tsx) and every public
+ *  competition page carries a fan-facing share bar (share-bar.tsx) — pro
+ *  orgs keep the share bar but drop the attribution footer (unchanged
+ *  org.branded gate). /me carries the player→organiser nudge
+ *  (run-your-own-cta.tsx) and /discover always offers the /start CTA. */
+async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  admin.cookies["seazn_org"] = proOrgId;
+
+  // --- Pro path: share bar present, "Powered by" attribution footer gone.
+  const proComp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `PLG Pro Cup ${tag}`,
+      visibility: "public",
+    }),
+  );
+  const proShared = await html(newSession(), `/shared/${proOrgSlug}/${proComp.slug}`);
+  check(
+    "plg pro page keeps the fan ShareBar",
+    proShared.status === 200 &&
+      proShared.body.includes("Share on WhatsApp") &&
+      proShared.body.includes("Copy link"),
+  );
+  check(
+    "plg pro page has no 'Powered by' attribution footer",
+    !proShared.body.includes("Powered by"),
+  );
+
+  // --- Free path: a fresh community owner's public page carries both the
+  // attribution CTA and the fan ShareBar.
+  const free = newSession();
+  const freeVer = await signIn(free, `plg_free_${tag}@example.com`);
+  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
+  const freeComp = v1data<{ id: string; slug: string }>(
+    await v1(free, "/api/v1/competitions", "POST", {
+      name: `PLG Free Cup ${tag}`,
+      visibility: "public",
+    }),
+  );
+  const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
+  check(
+    "plg free page carries the 'Powered by' attribution CTA",
+    freeShared.status === 200 &&
+      freeShared.body.includes("Powered by") &&
+      freeShared.body.includes("Run your own free"),
+  );
+  check(
+    "plg free page also renders the fan ShareBar",
+    freeShared.body.includes("Share on WhatsApp") && freeShared.body.includes("Copy link"),
+  );
+
+  // --- /me: the player→organiser "run your own" CTA.
+  const meRun = await html(free, "/me");
+  check(
+    "plg /me renders the run-your-own-tournament CTA",
+    meRun.status === 200 &&
+      meRun.body.includes("Run your own tournament") &&
+      meRun.body.includes("utm_source=me"),
+  );
+
+  // --- /discover: the acquisition CTA back to /start (unconditional —
+  // renders whether or not any club happens to be live right now).
+  const discover = await html(newSession(), "/en/discover");
+  check(
+    "plg /discover offers the /start acquisition CTA",
+    discover.status === 200 &&
+      discover.body.includes("utm_source=discover") &&
+      discover.body.includes("Start free"),
   );
 }
 

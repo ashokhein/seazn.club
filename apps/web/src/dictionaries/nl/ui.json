@@ -212,6 +212,8 @@
   "confirm.unlinkPlayer.body": "{name} verliest toegang tot dit profiel op hun spelershome. Wedstrijden en resultaten blijven behouden. Je kunt ze later opnieuw uitnodigen om te claimen.",
   "confirm.unlinkPlayer.label": "Ontkoppelen",
   "me.title": "Mijn wedstrijden & teams",
+  "me.runYourOwn.title": "Organiseer je eigen toernooi — gratis.",
+  "me.runYourOwn.cta": "Gratis starten →",
   "me.eyebrow": "Spelershome",
   "me.claimed": "Profiel geclaimd — dit is nu jouw spelershome.",
   "me.empty": "Hier is nog niets. Wanneer een organisator je aan een team of schema toevoegt, verschijnen je wedstrijden op deze pagina.",

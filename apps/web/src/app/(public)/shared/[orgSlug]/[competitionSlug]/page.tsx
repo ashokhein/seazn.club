@@ -14,6 +14,7 @@ import { hasFeature } from "@/lib/entitlements";
 import { resolveSponsors, type SponsorTier } from "@/server/usecases/sponsors";
 import { renderProse } from "@/lib/prose";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
+import { ShareBar } from "@/components/share-bar";
 
 export const revalidate = 30;
 
@@ -131,6 +132,12 @@ export default async function CompetitionHomePage({ params }: Props) {
                 {competition.name}
               </h1>
               {dateLine ? <p className="mt-2 text-sm text-court-muted">{dateLine}</p> : null}
+              <div className="mt-4">
+                <ShareBar
+                  path={`/shared/${org.slug}/${competition.slug}`}
+                  title={competition.name}
+                />
+              </div>
             </div>
             {registrationOpen ? (
               <Link

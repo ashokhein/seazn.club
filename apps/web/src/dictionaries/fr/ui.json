@@ -212,6 +212,8 @@
   "confirm.unlinkPlayer.body": "{name} perd l'accès à ce profil sur son espace joueur. Les matchs et résultats restent. Vous pourrez l'inviter à revendiquer à nouveau plus tard.",
   "confirm.unlinkPlayer.label": "Dissocier",
   "me.title": "Mes matchs et équipes",
+  "me.runYourOwn.title": "Organisez votre propre tournoi — gratuit.",
+  "me.runYourOwn.cta": "Démarrer gratuitement →",
   "me.eyebrow": "Espace joueur",
   "me.claimed": "Profil revendiqué — c'est désormais votre espace joueur.",
   "me.empty": "Rien ici pour l'instant. Lorsqu'un organisateur vous intègre à une équipe ou à un tableau, vos matchs apparaissent sur cette page.",

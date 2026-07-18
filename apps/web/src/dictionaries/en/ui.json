@@ -212,6 +212,8 @@
   "confirm.unlinkPlayer.body": "{name} loses access to this profile on their player home. Matches and results stay. You can invite them to claim again later.",
   "confirm.unlinkPlayer.label": "Unlink",
   "me.title": "My matches & teams",
+  "me.runYourOwn.title": "Run your own tournament — free.",
+  "me.runYourOwn.cta": "Start free →",
   "me.eyebrow": "Player home",
   "me.claimed": "Profile claimed — this is your player home now.",
   "me.empty": "Nothing here yet. When an organiser rosters you into a team or draw, your matches land on this page.",

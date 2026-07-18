@@ -238,6 +238,8 @@
   "discover.searchButton": "Zoeken",
   "discover.empty": "Geen toernooien komen op dit moment overeen.",
   "discover.runYourOwn": "Organiseer je eigen",
+  "discover.liveCount.one": "{count} club nu live",
+  "discover.liveCount.other": "{count} clubs nu live",
   "discover.cta.title": "Organiseer je eigen toernooi",
   "discover.cta.body": "Elke sport, elk format — gratis voor community-clubs.",
   "discover.cta.button": "Gratis beginnen",
