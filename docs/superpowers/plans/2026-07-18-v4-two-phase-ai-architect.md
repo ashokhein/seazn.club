@@ -25,24 +25,24 @@
 
 ---
 
-### Task 1: Migration V291 — `schedule_source` gains `ai`
+### Task 1: Migration V292 — `schedule_source` gains `ai`
 
 **Files:**
-- Create: `db/migration/deltas/V291__ai_schedule_source.sql`
+- Create: `db/migration/deltas/V292__ai_schedule_source.sql`
 - Modify: `apps/web/src/server/api-v1/schemas.ts` (ApplyScheduleRequest source enum)
 
 **Interfaces:**
 - Produces: `fixtures.schedule_source` accepts `'ai'`; `ApplyScheduleRequest.source` zod enum includes `"ai"`.
 
-- [ ] **Step 1: Verify V291 is free**
+- [ ] **Step 1: Verify V292 is free**
 
 Run: `ls db/migration/deltas | sort -V | tail -3`
-Expected: `V290__pro_plus_plan.sql` is last. If a V291 exists (parallel branch landed), bump this file to the next free number everywhere it appears in this plan.
+Expected: `V290__pro_plus_plan.sql` is last. If a V292 exists (parallel branch landed; clubs-w1 branch already owns V291), bump this file to the next free number everywhere it appears in this plan.
 
 - [ ] **Step 2: Write the migration**
 
 ```sql
--- V291: AI Schedule Architect (v4/03 §4) — fixtures placed by the AI accept
+-- V292: AI Schedule Architect (v4/03 §4) — fixtures placed by the AI accept
 -- flow carry schedule_source='ai' so the ledger and analytics can tell AI
 -- applies from auto/manual ones.
 alter table fixtures drop constraint if exists fixtures_schedule_source_check;
@@ -74,7 +74,7 @@ it("accepts source 'ai' and stamps schedule_source", async () => {
 ```
 
 - [ ] **Step 5: Run test — expect FAIL** (zod rejects `"ai"`), then apply migration to the local test DB per `project_local_test_db` recipe (`DATABASE_URL=postgresql://postgres@127.0.0.1:54329/... npm run db:apply` from repo root) and make the schema edit. Re-run: PASS.
-- [ ] **Step 6: `cd apps/web && npx tsc --noEmit` green. Commit** `feat(v4): V291 schedule_source 'ai' + apply enum`
+- [ ] **Step 6: `cd apps/web && npx tsc --noEmit` green. Commit** `feat(v4): V292 schedule_source 'ai' + apply enum`
 
 ---
 
