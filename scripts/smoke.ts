@@ -3417,4 +3417,91 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
     "v13 presentation mode renders without login",
     present.status === 200 && present.body.includes(`V13 Cup ${tag}`),
   );
+
+  // --- entrant shapes (spec 2026-07-18): the sport presets the entrant shape,
+  // Settings → Entrants overrides it per division, and the in-use guard blocks
+  // narrowing kinds while a live entrant of that kind still exists.
+  const esDbUrl = process.env.DATABASE_URL;
+  if (esDbUrl) {
+    // Local-run fallback (CI runs sync:sports): seed the board-game catalog so
+    // the division create below resolves its sport + variant.
+    const esDb = postgres(esDbUrl, {
+      connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+      ssl: process.env.DATABASE_SSL === "disable" ? false : /@(localhost|127\.0\.0\.1)[:/]/.test(esDbUrl) ? false : "require",
+      prepare: !esDbUrl.includes(":6543"),
+      max: 1,
+    });
+    await esDb`insert into sports (key, name, module_version, position_catalog)
+               values ('boardgame', 'Board game', '1.0.0', ${esDb.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
+               on conflict (key) do nothing`;
+    await esDb`insert into sport_variants (sport_key, key, name, config, is_system)
+               values ('boardgame', 'classical', 'Classical', ${esDb.json({})}, true)
+               on conflict do nothing`;
+    await esDb.end();
+  }
+
+  // Board game presets individual-only (entrantModel kinds: ['individual']).
+  const bgConfig = { colors: true };
+  const bgDiv = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Chess", sport_key: "boardgame", variant_key: "classical", config: bgConfig,
+    }),
+  );
+  // A 2-person roster overflows the structural individual cap of 1.
+  const esTooBig = await v1(admin, `/api/v1/divisions/${bgDiv.id}/entrants`, "POST", {
+    kind: "individual",
+    display_name: `Overflow ${tag}`,
+    members: [
+      { new_person: { full_name: `P1 ${tag}` } },
+      { new_person: { full_name: `P2 ${tag}` } },
+    ],
+  });
+  check(
+    "entrant-shapes: 2-person individual rejected (422 ENTRANT_ROSTER_TOO_BIG)",
+    esTooBig.status === 422 && esTooBig.json.error?.code === "ENTRANT_ROSTER_TOO_BIG",
+  );
+  // A single-person individual is exactly one seat — accepted, name echoed.
+  const esSolo = await v1(admin, `/api/v1/divisions/${bgDiv.id}/entrants`, "POST", {
+    kind: "individual",
+    display_name: `Magnus ${tag}`,
+    members: [{ new_person: { full_name: `Magnus ${tag}` } }],
+  });
+  check("entrant-shapes: single-person individual accepted (201)", esSolo.status === 201);
+  const esSoloRow = v1data<{ display_name: string }[] | { display_name: string }>(esSolo);
+  const esSoloOne = Array.isArray(esSoloRow) ? esSoloRow[0]! : esSoloRow;
+  check(
+    "entrant-shapes: display_name echoed on the created individual",
+    esSoloOne.display_name === `Magnus ${tag}`,
+  );
+
+  // A team entrant is refused until Settings widens the division's kinds.
+  const esTeamBlocked = await v1(admin, `/api/v1/divisions/${bgDiv.id}/entrants`, "POST", {
+    kind: "team",
+    display_name: `Squad ${tag}`,
+  });
+  check(
+    "entrant-shapes: team refused before widening (422 ENTRANT_KIND_NOT_ALLOWED)",
+    esTeamBlocked.status === 422 && esTeamBlocked.json.error?.code === "ENTRANT_KIND_NOT_ALLOWED",
+  );
+  // Settings → Entrants override: widen kinds to allow teams. The config is
+  // written wholesale, so re-send the full config with the entrants block.
+  const esWiden = await v1(admin, `/api/v1/divisions/${bgDiv.id}`, "PATCH", {
+    config: { ...bgConfig, entrants: { kinds: ["individual", "team"], defaultKind: "individual" } },
+  });
+  check("entrant-shapes: widening kinds via config PATCH (200)", esWiden.status === 200);
+  const esTeamOk = await v1(admin, `/api/v1/divisions/${bgDiv.id}/entrants`, "POST", {
+    kind: "team",
+    display_name: `Squad ${tag}`,
+  });
+  check("entrant-shapes: team accepted after widening (201)", esTeamOk.status === 201);
+
+  // Guard: narrowing kinds back to individual-only while that team entrant is
+  // live is refused — organisers must withdraw it first.
+  const esNarrow = await v1(admin, `/api/v1/divisions/${bgDiv.id}`, "PATCH", {
+    config: { ...bgConfig, entrants: { kinds: ["individual"], defaultKind: "individual" } },
+  });
+  check(
+    "entrant-shapes: narrowing under a live team refused (422 ENTRANT_KIND_IN_USE)",
+    esNarrow.status === 422 && esNarrow.json.error?.code === "ENTRANT_KIND_IN_USE",
+  );
 }
