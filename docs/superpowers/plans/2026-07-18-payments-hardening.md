@@ -69,6 +69,26 @@ ls .claude/worktrees/payments-hardening/db/migration/deltas | tail -1
 ```
 Expected: `V286__pro_plus_plan.sql` (Pro Plus merged first — required). If the tail is still V285, STOP: merge order violated, coordinate before proceeding.
 
+- [ ] **Step 1b: Carry the uncommitted Payments→Connect rename into this branch**
+  (owner decision 2026-07-18: bundle into the wave PR). The main checkout holds
+  it uncommitted; the new `connect/` page dirs are untracked:
+
+```bash
+cd /Users/ashokhein/github/seazn.club
+git add -N 'apps/web/src/app/o/[orgSlug]/settings/connect' apps/web/src/app/settings/connect
+git diff HEAD > /tmp/rename-connect.patch
+cd .claude/worktrees/payments-hardening
+git apply /tmp/rename-connect.patch
+git add -A
+git commit -m "feat(settings): rename Payments page to Connect (redirects kept)"
+```
+
+Then verify: `npx tsc --noEmit` from `apps/web` in the worktree (was green in
+the main checkout: tsc 0, product-tour 8/8, smoke gained a legacy-redirect
+check). After the wave PR MERGES, discard the now-duplicate working-tree copy
+in the main checkout (`git checkout -- .` + delete the untracked connect dirs)
+— not before.
+
 - [ ] **Step 2: Write the migration**
 
 ```sql
@@ -934,6 +954,7 @@ must exist to be edited). Supersedes pro-plus D2 annual amounts.
 | seazn_pro_annual | 15900 | 14900 | 12500 | 23500 | 1149900 |
 | seazn_pro_plus_monthly | 3900 | 3700 | 3300 | 5900 | 299900 |
 | seazn_pro_plus_annual | 32700 | 30900 | 27700 | 49500 | 2499900 |
+| seazn_event_pass (one-time) | 2900 | 2900 | 2500 | 4500 | 199900 |
 
 - [ ] **Step 1: Update `stripe-plans.json` + `lib/currency.ts`** to the table.
 - [ ] **Step 2: Verify `stripe:sync` handles amount changes.** Stripe price
@@ -954,6 +975,48 @@ must exist to be edited). Supersedes pro-plus D2 annual amounts.
 - [ ] **Step 6: Deploy note in PR body** — run `npm run stripe:sync` per env
   (test + prod keys) AFTER db:apply; existing subscribers keep old prices (no
   migration); verify checkout shows new amounts per currency.
+
+---
+
+### Task 15: Pro keeps AI scheduling, capped 5 runs/division (amends pro-plus D4)
+
+Owner decision 2026-07-18: instead of removing `scheduling.ai` from Pro
+entirely (pro-plus D4), Pro keeps it capped at **5 AI schedule generations per
+division**; Pro Plus unlimited. Community stays without. This wave merges
+AFTER pro-plus, so V287 carries the amendment.
+
+**Files:**
+- Modify: `db/migration/deltas/V287__payments_hardening.sql` (append)
+- Modify: the AI-schedule generation usecase (locate: `grep -rn "scheduling.ai" apps/web/src/server` — the `requireFeature(orgId, "scheduling.ai", …)` call site in the schedule-generation path)
+- Test: colocated `__tests__` beside that usecase.
+
+- [ ] **Step 1: Migration append** (same V287 file, before first apply):
+
+```sql
+-- Pro AI cap (owner 2026-07-18, amends pro-plus D4): Pro keeps AI scheduling,
+-- 5 generations per division; Pro Plus unlimited; community none.
+insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
+  ('pro',      'scheduling.ai',                       true, null),
+  ('pro',      'scheduling.ai.runs_per_division.max', null, 5),
+  ('pro_plus', 'scheduling.ai.runs_per_division.max', null, null)
+on conflict (plan_key, feature_key) do update
+  set bool_value = excluded.bool_value, int_value = excluded.int_value;
+```
+
+- [ ] **Step 2: Failing test** — Pro org, division with 5 recorded AI runs →
+  6th generation rejects 402 with key `scheduling.ai.runs_per_division.max`;
+  Pro Plus org unlimited. Run-counting source: the schedule-generation
+  audit event the usecase already writes (find the `competition_events`
+  type it inserts; if it writes none, add one in the same commit —
+  `schedule.ai_generated` with `division_id` payload — and count those).
+- [ ] **Step 3: Implement** — beside the existing `requireFeature(...,"scheduling.ai")`
+  call: count prior runs for the division, then
+  `withinLimit(orgId, "scheduling.ai.runs_per_division.max", n + 1, competitionId)`
+  → `PaymentRequiredError` on breach.
+- [ ] **Step 4: Tests green; commit** `feat(scheduling): Pro AI capped at 5 runs/division (pro_plus unlimited)`.
+- [ ] **Step 5: Pricing-page row** — matrix renders from `plan_entitlements`;
+  verify the new int key surfaces sensibly (label copy ×4 locales if the
+  pricing table names it).
 
 ---
 

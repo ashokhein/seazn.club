@@ -350,7 +350,13 @@ the Pro Plus branch lands (supersedes its D2 annual ×10).
 | Pro | **$19** / €18 / £15 / A$28 / ₹1,399 | **$159** / €149 / £125 / A$235 / ₹11,499 |
 | Pro Plus | $39 / €37 / £33 / A$59 / ₹2,999 (unchanged) | **$327** / €309 / £277 / A$495 / ₹24,999 |
 
-- Event Pass unchanged ($39 set); a $29 cut stays an open option.
+- Event Pass CUT (owner 2026-07-18): **$29** / €29 / £25 / A$45 / ₹1,999.
+- Pro AI amendment (amends pro-plus D4): Pro KEEPS `scheduling.ai`, capped
+  5 generations/division (new key `scheduling.ai.runs_per_division.max`);
+  Pro Plus unlimited; `officials.auto` still moves to Pro Plus per D4.
+  Implemented in V287 (this wave merges after pro-plus). Plan Task 15.
+- Wave execution: subagent-driven, **opus + xhigh effort** subagents
+  (owner override of the sonnet default), auto-start when V286 lands.
 - Existing subscribers keep their current price (no forced migration);
   `plans` keeps ONE price id per interval, so old ids resolve through the
   Task 8 plan-preserving guard.
