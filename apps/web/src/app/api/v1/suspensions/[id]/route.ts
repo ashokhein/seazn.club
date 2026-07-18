@@ -9,8 +9,8 @@ type Ctx = { params: Promise<{ id: string }> };
 export async function PATCH(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
-    const body = await parseBody(req, DecideSuspension);
     const auth = await requireResourceAuth(req, "suspension", id, "write");
+    const body = await parseBody(req, DecideSuspension);
     const action =
       body.kind === "adjust"
         ? {

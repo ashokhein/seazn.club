@@ -339,6 +339,47 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     expect(active.entrantId).toBe(ctx.entrantA);
   });
 
+  it("RLS tenant isolation: org B reads neither org A's rules nor suspensions", async () => {
+    const a = await seedFootballDivision();
+    const b = await seedFootballDivision();
+    await setRules(a); // discipline_rules row scoped to org A
+    await sql`
+      insert into suspensions
+        (org_id, division_id, person_id, status, source, reason, matches_total, created_by)
+      values (${a.orgId}, ${a.divisionId}, ${a.personX}, 'pending', 'manual', 'x', 1, ${a.userId})`;
+
+    // Sanity: the raw superuser connection DOES see org A's rows, so the tenant
+    // assertion below is meaningful (not vacuously zero). Point the reads at
+    // `sql` instead of `tx` and this test would fail — the harness is honest.
+    const [{ count: rawRules }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from discipline_rules where division_id = ${a.divisionId}`;
+    const [{ count: rawSusp }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from suspensions where division_id = ${a.divisionId}`;
+    expect({ rawRules, rawSusp }).toEqual({ rawRules: 1, rawSusp: 1 });
+
+    // Through org B's tenant rail, RLS hides both of org A's rows.
+    const seen = await withTenant(b.orgId, async (tx) => {
+      const [{ rules }] = await tx<{ rules: number }[]>`
+        select count(*)::int as rules from discipline_rules where division_id = ${a.divisionId}`;
+      const [{ susp }] = await tx<{ susp: number }[]>`
+        select count(*)::int as susp from suspensions where division_id = ${a.divisionId}`;
+      return { rules, susp };
+    });
+    expect(seen).toEqual({ rules: 0, susp: 0 });
+  });
+
+  it("createManualSuspension rejects a division from another org (404)", async () => {
+    const a = await seedFootballDivision();
+    const b = await seedFootballDivision();
+    // Org A's auth, org B's division id: the division-org guard rejects before
+    // any insert, even though personX is a valid org-A person.
+    await expect(
+      createManualSuspension(a.auth, b.divisionId, {
+        personId: a.personX, matchesTotal: 1, reason: "x",
+      }),
+    ).rejects.toMatchObject({ status: 404 });
+  });
+
   it("community orgs are gated on every authed entry point (PlusReveal 402)", async () => {
     const ctx = await seedFootballDivision("community");
     // GET rules signals the paywall (the sport HAS a card model, so it is not

@@ -469,6 +469,11 @@ export async function createManualSuspension(
 ): Promise<Suspension> {
   await requireFeature(auth.orgId, FEATURE);
   return withTenant(auth.orgId, async (tx) => {
+    // Defense-in-depth: the division must belong to the auth org (the tenant
+    // rail scopes it; the route also wraps this in requireResourceAuth).
+    const [division] = await tx`
+      select 1 from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
     const [person] = await tx`
       select 1 from persons where id = ${input.personId} and org_id = ${auth.orgId}`;
     if (!person) throw new HttpError(404, "person not found");
