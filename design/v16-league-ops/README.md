@@ -95,6 +95,7 @@ Strictly sequential within a spec (server → UI); specs in 1 → 3 → 2 order.
 - [PROMPT-81 — Marks & reports: console + portal UI](prompts/PROMPT-81-marks-reports-ui.md) — scoreboard-digit tiles, summary block, report form/drawer, /me CTA, email + closing passes.
 - [PROMPT-82 — News: model, auto-drafts, API](prompts/PROMPT-82-news-model-and-autodrafts.md) — V292 + `org_posts` + draft templates + decided-seam triggers.
 - [PROMPT-83 — News: console tab, public pages, OG & story cards](prompts/PROMPT-83-news-console-public-and-cards.md) — composer, public feed/post, scorebug OG + 1080×1350 story PNG, analytics + closing passes.
+- [PROMPT-84 — Wave closing: entitlement copy, pricing page, help index](prompts/PROMPT-84-entitlement-copy-and-pricing.md) — feature-copy.ts entries for the 3 new keys, pricing-page Pro rows (4-locale), plans help article, help-slug cross-check.
 
 ## Global constraints (apply to every spec — same rails as v15)
 
