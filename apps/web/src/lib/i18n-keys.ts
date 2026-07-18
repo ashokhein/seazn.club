@@ -807,6 +807,7 @@ export type DictionaryKey =
   | "embed.line"
   | "embed.title"
   | "empty"
+  | "entrants.add.kind"
   | "extra.bye"
   | "extra.legbye"
   | "extra.noball"

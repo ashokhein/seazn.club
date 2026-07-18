@@ -1084,6 +1084,7 @@
   "divset.entrants.saved": "Deelnemersinstellingen opgeslagen.",
   "divset.entrants.resetDone": "Teruggezet naar de sportstandaard.",
   "divset.entrants.note": "Een soort kan niet worden verwijderd zolang er nog actieve deelnemers van dat soort zijn — trek ze eerst terug.",
+  "entrants.add.kind": "Soort",
   "divset.sharing": "Delen & insluiten",
   "divset.sharingSummary": "Widgets voor je website",
   "divset.danger": "Gevarenzone",

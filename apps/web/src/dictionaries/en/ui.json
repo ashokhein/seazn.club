@@ -1084,6 +1084,7 @@
   "divset.entrants.saved": "Entrant settings saved.",
   "divset.entrants.resetDone": "Reset to the sport default.",
   "divset.entrants.note": "A kind can't be removed while entrants of that kind are still active — withdraw them first.",
+  "entrants.add.kind": "Kind",
   "divset.sharing": "Sharing & embed",
   "divset.sharingSummary": "Widgets for your website",
   "divset.danger": "Danger zone",

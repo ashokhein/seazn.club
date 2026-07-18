@@ -1084,6 +1084,7 @@
   "divset.entrants.saved": "Paramètres des participants enregistrés.",
   "divset.entrants.resetDone": "Rétabli à la valeur par défaut du sport.",
   "divset.entrants.note": "Un type ne peut pas être supprimé tant que des participants de ce type sont actifs — retirez-les d'abord.",
+  "entrants.add.kind": "Type",
   "divset.sharing": "Partage et intégration",
   "divset.sharingSummary": "Widgets pour votre site web",
   "divset.danger": "Zone sensible",
