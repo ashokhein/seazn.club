@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { effectiveEntrantModel, entrantKindCap } from "./entrant-model.ts";
 import { football } from "../sports/football/index.ts";
 import { boardgame } from "../sports/boardgame/index.ts";
+import { tennis } from "../sports/tennis/index.ts";
+import { hockey } from "../sports/hockey/index.ts";
+import { cricket } from "../sports/cricket/index.ts";
+import { carrom } from "../sports/carrom/index.ts";
 
 describe("effectiveEntrantModel", () => {
   it("legacy fallback without a model: all kinds, individual default, team affordances on", () => {
@@ -33,6 +37,13 @@ describe("effectiveEntrantModel", () => {
     const eff = effectiveEntrantModel(football.entrantModel, { entrants: { kinds: "nope", defaultKind: 7 } });
     expect(eff.kinds).toEqual(["team"]);
     expect(eff.defaultKind).toBe("team");
+  });
+  it("factory-threaded + literal modules declare their entrant shapes", () => {
+    expect(tennis.entrantModel?.kinds).toEqual(["individual", "pair"]);
+    expect(hockey.entrantModel?.kinds).toEqual(["team"]);
+    expect(hockey.entrantModel?.team?.captain).toBe(true);
+    expect(cricket.entrantModel?.kinds).toEqual(["team"]);
+    expect(carrom.entrantModel?.kinds).toEqual(["individual", "pair"]);
   });
   it("caps are structural", () => {
     expect(entrantKindCap("individual")).toBe(1);

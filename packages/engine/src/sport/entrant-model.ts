@@ -31,6 +31,9 @@ export function effectiveEntrantModel(
     captain: model?.team ? model.team.captain : true,
     maxTeamMembers: model?.team?.maxMembers ?? null,
   };
+  // Invariant holds for the base too: a module declaring a defaultKind outside
+  // its own kinds must be repaired even when there's no division override.
+  if (!base.kinds.includes(base.defaultKind)) base.defaultKind = base.kinds[0]!;
   const raw = (divisionConfig as { entrants?: Record<string, unknown> } | null | undefined)?.entrants;
   if (!raw || typeof raw !== "object") return base;
   const kinds = Array.isArray(raw.kinds) ? raw.kinds.filter(isKind) : [];
