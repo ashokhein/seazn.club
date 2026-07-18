@@ -41,4 +41,5 @@ export const tabletennis = makeSetBasedModule({
   officialLabel: { scorer: "Umpire" }, // doc 13 §1
   coarseEventType: "game.summary",
   rallyEntitlement: "scoring.rally_by_rally", // doc 10 / table-tennis.md §3
+  entrantModel: { kinds: ["individual", "pair"], defaultKind: "individual" },
 });

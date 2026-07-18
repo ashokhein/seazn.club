@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { effectiveEntrantModel, entrantKindCap } from "./entrant-model.ts";
 import { football } from "../sports/football/index.ts";
 import { boardgame } from "../sports/boardgame/index.ts";
+import { badminton } from "../sports/setbased/badminton.ts";
+import { volleyball } from "../sports/setbased/volleyball.ts";
+import { tabletennis } from "../sports/setbased/tabletennis.ts";
 import { tennis } from "../sports/tennis/index.ts";
 import { hockey } from "../sports/hockey/index.ts";
 import { cricket } from "../sports/cricket/index.ts";
@@ -50,5 +53,12 @@ describe("effectiveEntrantModel", () => {
     expect(entrantKindCap("pair")).toBe(2);
     expect(entrantKindCap("team")).toBe(Number.POSITIVE_INFINITY);
     expect(entrantKindCap("team", { maxTeamMembers: 26 })).toBe(26);
+  });
+
+  it("setbased kernel threads entrantModel (badminton pair, volleyball team)", () => {
+    expect(badminton.entrantModel?.kinds).toEqual(["individual", "pair"]);
+    expect(volleyball.entrantModel?.kinds).toEqual(["team"]);
+    expect(volleyball.entrantModel?.team?.captain).toBe(true);
+    expect(tabletennis.entrantModel?.kinds).toEqual(["individual", "pair"]);
   });
 });
