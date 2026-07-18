@@ -21,7 +21,11 @@ export function shareLinks(
 export function ShareBar({ path, title }: { path: string; title: string }) {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
-  useEffect(() => setOrigin(window.location.origin), []);
+  const [canShare, setCanShare] = useState(false);
+  useEffect(() => {
+    setOrigin(window.location.origin);
+    setCanShare(typeof navigator !== "undefined" && "share" in navigator);
+  }, []);
   const { url, wa } = shareLinks(origin, path, title);
 
   async function native() {
@@ -45,8 +49,13 @@ export function ShareBar({ path, title }: { path: string; title: string }) {
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
-      {typeof navigator !== "undefined" && "share" in navigator && (
-        <button type="button" onClick={native} className="btn btn-ghost">
+      {canShare && (
+        <button
+          type="button"
+          onClick={native}
+          className="btn btn-ghost"
+          data-testid="native-share"
+        >
           Share
         </button>
       )}
