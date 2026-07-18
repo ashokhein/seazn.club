@@ -26,7 +26,9 @@ const GENERIC_CONFIG = {
   resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
 };
 
-async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthCtx }> {
+async function seedOrg(
+  plan: "community" | "pro" | "pro_plus" = "pro",
+): Promise<{ auth: AuthCtx }> {
   const suffix = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"C2 " + suffix}, ${"c2-" + suffix})
@@ -114,7 +116,8 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
   });
 
   it("AI constraints resolve names to ids; unparseable output is refused; Community 402", async () => {
-    const { auth } = await seedOrg();
+    // V286: scheduling.ai moved Pro → Pro Plus (spec D4).
+    const { auth } = await seedOrg("pro_plus");
     const { division } = await seedDivision(auth);
     const out = await aiConstraintsForDivision(
       auth, division.id,
