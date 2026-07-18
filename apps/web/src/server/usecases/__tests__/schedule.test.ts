@@ -461,6 +461,42 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
     // Writes without the token stay accepted (older clients keep working).
     await patchFixture(auth, fa!.id, { scheduled_at: at(120) });
   });
+
+  it("accepts source 'ai' and stamps schedule_source (v4/03 §4)", async () => {
+    const { auth } = await seedOrg("pro");
+    const competition = await createCompetition(auth, { name: "AI Cup", visibility: "private", branding: {} });
+    const division = await createDivision(auth, competition.id, {
+      name: "Open", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    });
+    await createEntrants(auth, division.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+      { kind: "individual", display_name: "C", seed: 3, members: [] },
+      { kind: "individual", display_name: "D", seed: 4, members: [] },
+    ]);
+    const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+    await putScheduleSettings(auth, division.id, {
+      config: {
+        startAt: T0, matchMinutes: 30, gapMinutes: 0,
+        courts: ["C1", "C2"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      },
+      tz: "UTC",
+    });
+    const { fixtures } = await generateStageFixtures(auth, stage!.id);
+    const target = fixtures[0]!;
+
+    // The AI accept flow applies with source:"ai"; the placed fixture carries it
+    // so the ledger/analytics can tell AI applies from auto/manual ones.
+    const out = await applySchedule(auth, stage!.id, {
+      source: "ai",
+      assignments: [{ fixture_id: target.id, scheduled_at: at(0), court_label: "C1" }],
+    });
+    expect(out.applied).toBeGreaterThan(0);
+    const [row] = await sql<{ schedule_source: string }[]>`
+      select schedule_source from fixtures where id = ${target.id}`;
+    expect(row!.schedule_source).toBe("ai");
+  });
 });
 
 describe.skipIf(!HAS_DB)("official conflicts on the board", () => {

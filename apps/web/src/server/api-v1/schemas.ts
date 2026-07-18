@@ -787,7 +787,7 @@ export const ApplyScheduleRequest = z.object({
     )
     .min(1)
     .max(500),
-  source: z.enum(["auto", "manual"]).default("auto"),
+  source: z.enum(["auto", "manual", "ai"]).default("auto"),
   /** Optimistic token (v3/11 gap 10) — see PatchFixture.expected_seq. */
   expected_seq: z.number().int().nonnegative().optional(),
 });
