@@ -116,7 +116,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(roster.sections.map((s) => s.heading)).toContain("Empty Spot 3");
   });
 
-  it("branding is Pro (`exports.branded`): non-Pro model has no branding block; exports gate 402s Community", async () => {
+  it("branding is Pro (`exports.branded`): Pro branded; community exports render plain (V285)", async () => {
     const { auth } = await seedOrg("pro");
     const { division, comp } = await seedDivision(auth);
     await sql`update competitions set branding = ${sql.json({ primary_color: "#123456", logo_path: "orgs/x/logo.png" } as never)}
@@ -133,11 +133,11 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     const unbranded = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
     expect(unbranded.branding).toBeUndefined();
 
+    // Community can export now (V285) but plain — exports.branded stays Pro.
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth);
-    await expect(
-      buildDivisionDocModel(freeAuth, freeDiv.id, "timetable", { printedAt: PRINTED }),
-    ).rejects.toMatchObject({ featureKey: "exports" });
+    const freeModel = await buildDivisionDocModel(freeAuth, freeDiv.id, "timetable", { printedAt: PRINTED });
+    expect(freeModel.branding).toBeUndefined();
   });
 
   it("brandingFor: Pro model carries orgName + tiered sponsors from the sponsors table", async () => {
@@ -246,15 +246,13 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(model.branding).toBeUndefined();
   });
 
-  it("Task 14: officials rota + admit tickets gate on the `exports` feature — Community 402s, Pro passes", async () => {
+  it("Task 14: officials rota + admit tickets export plain for Community (V285), branded for Pro", async () => {
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv, comp: freeComp } = await seedDivision(freeAuth);
-    await expect(
-      buildOfficialsRotaDoc(freeAuth, freeDiv.id, { printedAt: PRINTED }),
-    ).rejects.toMatchObject({ featureKey: "exports" });
-    await expect(
-      buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED }, "https://example.seazn.club"),
-    ).rejects.toMatchObject({ featureKey: "exports" });
+    const freeRota = await buildOfficialsRotaDoc(freeAuth, freeDiv.id, { printedAt: PRINTED });
+    expect(freeRota.branding).toBeUndefined();
+    const freeTickets = await buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED }, "https://example.seazn.club");
+    expect(freeTickets.branding).toBeUndefined();
 
     const { auth: proAuth } = await seedOrg("pro");
     const { division: proDiv, comp: proComp } = await seedDivision(proAuth);
