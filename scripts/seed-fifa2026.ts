@@ -93,6 +93,22 @@ export function knockoutPicks(data: Data): { pool: string; rank: number }[] {
   ];
 }
 
+/** Flag badge URL from the team's ISO-3166 alpha-2 code (v13 entrant badge). */
+export function flagUrl(iso2: string): string {
+  return `https://flagcdn.com/w80/${iso2.toLowerCase()}.png`;
+}
+
+/** v13 DEMONSTRATION slot map (NOT FIFA's official template — that table was
+ *  never captured in the data corpus). Seeds: 1-12 group winners A..L,
+ *  13-24 runners-up A..L, 25-32 the engine-ranked best thirds. Structure:
+ *  adjacent-group winners split into opposite halves; the top eight winners
+ *  meet best-thirds; the other four meet runners-up; remaining runners-up
+ *  cross-pair. Valid permutation of 1..32 (engine-validated). */
+export const DEMO_SLOT_ORDER: number[] = [
+  1, 28, 8, 25, 5, 32, 4, 29, 9, 17, 12, 24, 13, 21, 16, 20,
+  2, 27, 7, 26, 6, 31, 3, 30, 10, 18, 11, 23, 14, 22, 15, 19,
+];
+
 /** Football event stream for a final scoreline (goals attributed by entrant id). */
 export function goalEvents(homeId: string, awayId: string, hs: number, as: number) {
   const ev: { type: string; payload: unknown }[] = [{ type: "core.start", payload: {} }];
@@ -147,6 +163,7 @@ async function call<T = any>(path: string, method = "GET", body?: unknown): Prom
 // above (for tests) stays side-effect free.
 let sql!: ReturnType<typeof postgres>;
 let data: Data;
+let entrantToCodeGlobal = new Map<string, string>();
 
 async function ensureOwnerAndLogin() {
   // Create the account if missing, force-verify via DB (no email dependency),
@@ -249,7 +266,7 @@ async function main() {
       const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
       for (let slot = 0; slot < codes.length; slot++) {
         const code = codes[slot];
-        const squad = data.squads[code] ?? [];
+        const squad = process.env.SEED_SKIP_SQUADS ? [] : (data.squads[code] ?? []);
         const members = [];
         for (const p of squad) {
           const person = await call<{ id: string }>("/api/v1/persons", "POST", { full_name: p.name, consent: {} });
@@ -257,6 +274,7 @@ async function main() {
         }
         const entrant = await call<{ id: string }>(`/api/v1/divisions/${divId}/entrants`, "POST", {
           kind: "team", display_name: nameFor(code), seed: seedForGroup(GROUPS.indexOf(g), slot), members,
+          badge_url: flagUrl(data.teams[code]!.iso2), // v13: national flag as the entrant badge
         });
         codeToEntrant.set(code, entrant.id);
         console.log(`  enrolled ${code} (${members.length} squad) seed=${seedForGroup(GROUPS.indexOf(g), slot)}`);
@@ -271,7 +289,16 @@ async function main() {
   if (!groupStage || !koStage) {
     const created = await call<any>(`/api/v1/divisions/${divId}/stages`, "POST", [
       { seq: 1, kind: "group", name: "Group stage", config: { legs: 1, pools: { count: 12 } }, qualification: null },
-      { seq: 2, kind: "knockout", name: "Knockout", config: { shootout: true }, qualification: { take: knockoutPicks(data) } },
+      // v13: the canonical cup shape as ONE spec — the engine computes the best
+      // thirds itself (normaliseUnequalPools) instead of hand-flattened picks —
+      // plus an explicit round-one slot map (see DEMO_SLOT_ORDER's caveat).
+      { seq: 2, kind: "knockout", name: "Knockout",
+        config: { shootout: true, slotOrder: DEMO_SLOT_ORDER },
+        qualification: { combine: [
+          { take: GROUPS.map((g) => ({ pool: g, rank: 1 })) },
+          { take: GROUPS.map((g) => ({ pool: g, rank: 2 })) },
+          { bestOfRank: { rank: 3, count: 8, normaliseUnequalPools: true } },
+        ] } },
     ]);
     const arr: { id: string; kind: string; seq: number }[] = Array.isArray(created) ? created : [created];
     groupStage = arr.find((s) => s.kind === "group")!;
@@ -285,6 +312,7 @@ async function main() {
   // 4) Apply real group scores + dates. Map each real match to its fixture by
   //    unordered entrant pair; goals attributed by entrant id (orientation-free).
   const entrantToCode = new Map([...codeToEntrant.entries()].map(([c, id]) => [id, c]));
+  entrantToCodeGlobal = entrantToCode;
   const fxByPair = new Map<string, any>();
   for (const f of gen.fixtures) {
     if (!f.home_entrant_id || !f.away_entrant_id) continue;
@@ -322,6 +350,41 @@ async function main() {
   }
   const kgen = await call<{ fixtures: any[] }>(`/api/v1/stages/${koStage!.id}/generate`, "POST");
   let koFixtures: any[] = kgen.fixtures;
+
+  // v13 verification: the engine-combined qualification + DEMO_SLOT_ORDER must
+  // reproduce the intended round-one map. Seeds 1-12/13-24 assert exactly
+  // (winners/runners of A..L from the local standings replica); thirds slots
+  // (25-32) assert membership — the engine's own ranking orders them.
+  {
+    const winners: string[] = [], runners: string[] = [];
+    for (const g of GROUPS) {
+      const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
+      const rows = groupStandings(codes, data.groupMatches.filter((m) => m.group === g));
+      winners.push(rows[0].code); runners.push(rows[1].code);
+    }
+    const thirdSet = new Set(bestThirdGroups(data).map((g) => {
+      const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
+      return groupStandings(codes, data.groupMatches.filter((m) => m.group === g))[2].code;
+    }));
+    const codeOf = (id: string | null) => entrantToCodeGlobal.get(id ?? "") ?? "?";
+    const r0 = koFixtures
+      .filter((f) => f.round_no === Math.min(...koFixtures.map((x) => x.round_no)))
+      .sort((a, b) => a.seq_in_round - b.seq_in_round);
+    if (r0.length !== 16) throw new Error(`R32 verify: expected 16 fixtures, got ${r0.length}`);
+    let ok = 0;
+    r0.forEach((f, i) => {
+      for (const [side, id] of [["home", f.home_entrant_id], ["away", f.away_entrant_id]] as const) {
+        const seed = DEMO_SLOT_ORDER[2 * i + (side === "home" ? 0 : 1)];
+        const code = codeOf(id);
+        const expected =
+          seed <= 12 ? winners[seed - 1] : seed <= 24 ? runners[seed - 13] : null;
+        const pass = expected !== null ? code === expected : thirdSet.has(code);
+        if (!pass) throw new Error(`R32 verify: slot ${2 * i + (side === "home" ? 1 : 2)} seed ${seed} → ${code}, expected ${expected ?? "a best-third"}`);
+        ok++;
+      }
+    });
+    console.log(`R32 slot map verified: ${ok}/32 slots match the engine-combined qualification.`);
+  }
   const rounds = [...new Set(koFixtures.map((f) => f.round_no ?? 0))].sort((a, b) => a - b);
   let koPlayed = 0;
   for (const round of rounds) {

@@ -2502,10 +2502,17 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
   await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
 
   const officialId = v1data<{ id: string }[]>(officials)[0]!.id;
+  // Pro Plus (V290): officials.auto moved above Pro — assert the gate both ways.
+  const autoGated = await v1(admin, `/api/v1/divisions/${divId}/officials/auto`, "POST", {
+    policy: { roles: ["referee"] },
+  });
+  check("jul3 officials auto is Pro Plus-gated (402 on pro)", autoGated.status === 402);
+  await setPlan(orgId, "pro_plus");
   const auto = await v1(admin, `/api/v1/divisions/${divId}/officials/auto`, "POST", {
     policy: { roles: ["referee"] },
   });
   check("jul3 officials auto proposes", auto.status === 200 && Array.isArray(v1data<{ assignments: unknown[] }>(auto).assignments));
+  await setPlan(orgId, "pro");
   const patchOff = await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}/officials`, "PATCH", {
     set: [{ official_id: officialId, role_key: "referee", locked: false }],
   });

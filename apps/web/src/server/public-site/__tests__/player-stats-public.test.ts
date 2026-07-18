@@ -13,6 +13,7 @@ vi.mock("next/cache", () => ({
 }));
 
 import { sql } from "@/lib/db";
+import { football } from "@seazn/engine/sports/football";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "@/server/usecases/competitions";
@@ -41,7 +42,7 @@ async function seed() {
   await sql`
     insert into sports (key, name, module_version, position_catalog)
     values ('football', 'Football', '1.0.0',
-            ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
+            ${sql.json(football.positions as never)})
     on conflict (key) do nothing`;
   await sql`
     insert into sport_variants (sport_key, key, name, config, is_system)

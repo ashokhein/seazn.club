@@ -5,6 +5,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
+import { football } from "@seazn/engine/sports/football";
 import { appendEvent } from "../index";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -54,7 +55,7 @@ async function seedFixture(opts: {
   await sql`
     insert into sports (key, name, module_version, position_catalog)
     values (${opts.sport}, ${opts.sport}, '1.0.0',
-            ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
+            ${sql.json((opts.sport === "football" ? football.positions : { groups: [], lineup: { size: 1, benchMax: 0 } }) as never)})
     on conflict (key) do nothing
   `;
   const [{ id: competitionId }] = await sql<{ id: string }[]>`
