@@ -798,6 +798,8 @@
   "schedule.addStage": "+ Fase toevoegen",
   "schedule.addStageBtn": "Fase toevoegen",
   "schedule.cancel": "Annuleren",
+  "bracket.title": "Schema",
+  "bracket.tbd": "N.t.b.",
   "stage.addMatch.button": "Wedstrijd toevoegen",
   "stage.addMatch.home": "Thuis",
   "stage.addMatch.away": "Uit",

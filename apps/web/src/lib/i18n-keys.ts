@@ -289,6 +289,8 @@ export type DictionaryKey =
   | "boardset.title"
   | "boardset.venuesDesc"
   | "boardset.venuesLabel"
+  | "bracket.tbd"
+  | "bracket.title"
   | "breadcrumb.billing"
   | "breadcrumb.match"
   | "breadcrumb.newCompetition"

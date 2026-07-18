@@ -11,7 +11,8 @@ import { requireDivisionPage } from "@/server/page-auth";
 import { getDivision, listVariantOptions } from "@/server/usecases/divisions";
 import { getCompetition } from "@/server/usecases/competitions";
 import { listStages, getStandings } from "@/server/usecases/stages";
-import { listDivisionFixtures } from "@/server/usecases/fixtures";
+import { listDivisionFixtures, listFixtureHeadlines } from "@/server/usecases/fixtures";
+import { BracketPanel } from "@/components/v2/bracket-panel";
 import { listEntrants } from "@/server/usecases/entrants";
 import { getScheduleSettings } from "@/server/usecases/schedule";
 import { hasFeature } from "@/lib/entitlements";
@@ -75,9 +76,16 @@ export default async function DivisionPage({
   ]);
   const sportModule = resolveModule(division.sport_key, division.module_version);
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
+  const hasKnockout = stages.some((s) => s.kind === "knockout");
   // Badge chips on standings rows (v3/03 §5) — resolved once per render.
+  // PROMPT-62: the bracket panel on the fixtures tab shows them too.
   const entrantLogos =
-    tab === "standings" ? await listEntrantLogoUrls(auth, id) : undefined;
+    tab === "standings" || (tab === "fixtures" && hasKnockout)
+      ? await listEntrantLogoUrls(auth, id)
+      : undefined;
+  // PROMPT-62: score headlines for bracket nodes (match_states join).
+  const headlines =
+    tab === "fixtures" && hasKnockout ? await listFixtureHeadlines(auth, id) : undefined;
   const cascade = division.tiebreakers ?? sportModule.defaultTiebreakers;
 
   // Standings per table stage (+ per pool), with pool labels.
@@ -196,6 +204,24 @@ export default async function DivisionPage({
 
         {tab === "fixtures" && (
           <>
+            {/* PROMPT-62: two-sided tree for each knockout stage, above the
+                flat list (which keeps scheduling + Documents). Renders nothing
+                until the bracket is generated or for non-single-elim shapes. */}
+            {stages
+              .filter((st) => st.kind === "knockout")
+              .map((st) => (
+                <div key={st.id} className="mb-6">
+                  <BracketPanel
+                    fixtures={fixtures.filter((f) => f.stage_id === st.id)}
+                    entrantNames={entrantNames}
+                    entrantBadges={entrantLogos}
+                    headlines={headlines}
+                    orgSlug={orgSlug}
+                    compSlug={compSlug}
+                    divSlug={divSlug}
+                  />
+                </div>
+              ))}
             {stages
               .filter((st) => st.kind === "americano")
               .map((st) => (

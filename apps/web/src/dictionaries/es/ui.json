@@ -798,6 +798,8 @@
   "schedule.addStage": "+ Añadir fase",
   "schedule.addStageBtn": "Añadir fase",
   "schedule.cancel": "Cancelar",
+  "bracket.title": "Cuadro",
+  "bracket.tbd": "Por definir",
   "stage.addMatch.button": "Añadir partido",
   "stage.addMatch.home": "Local",
   "stage.addMatch.away": "Visitante",

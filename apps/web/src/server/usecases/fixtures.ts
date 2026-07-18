@@ -224,3 +224,21 @@ export async function getFixtureState(auth: AuthCtx, fixtureId: string): Promise
     };
   });
 }
+
+/** PROMPT-62 — ScoreSummary.headline per fixture (from match_states) for the
+ *  bracket panel's node scores. One query per division render. */
+export async function listFixtureHeadlines(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<Record<string, string>> {
+  const rows = await withTenant(auth.orgId, (tx) =>
+    tx<{ fixture_id: string; headline: string | null }[]>`
+      select ms.fixture_id, ms.summary->>'headline' as headline
+      from match_states ms
+      join fixtures f on f.id = ms.fixture_id
+      where f.division_id = ${divisionId}`,
+  );
+  return Object.fromEntries(
+    rows.filter((r) => r.headline !== null).map((r) => [r.fixture_id, r.headline as string]),
+  );
+}

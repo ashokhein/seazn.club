@@ -798,6 +798,8 @@
   "schedule.addStage": "+ Add stage",
   "schedule.addStageBtn": "Add stage",
   "schedule.cancel": "Cancel",
+  "bracket.title": "Bracket",
+  "bracket.tbd": "TBD",
   "stage.addMatch.button": "Add match",
   "stage.addMatch.home": "Home",
   "stage.addMatch.away": "Away",
