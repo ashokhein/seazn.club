@@ -106,7 +106,7 @@ test.describe.serial("event pass gate (community org)", () => {
     await page.getByRole("button", { name: "Create division" }).click();
     const gate = page.locator("[data-pass-gate]").first();
     await expect(gate).toBeVisible({ timeout: 20_000 });
-    await expect(gate.locator("[data-pass-cta]")).toContainText("$39");
+    await expect(gate.locator("[data-pass-cta]")).toContainText("$29");
     const passHref = await gate.locator("[data-pass-cta]").getAttribute("href");
     expect(passHref).toMatch(new RegExp(`/c/${comp.data!.slug}/upgrade$`));
 
