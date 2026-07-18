@@ -99,7 +99,7 @@ an ordered `PROMPT-*` batch (see status table below for per-wave status).
 ## Implementation status
 
 Design corpus lives in [`design/`](design/) as ordered `PROMPT-*` waves. Waves v2, v3, v5,
-v6, v7, v8, v9 are complete and merged to `main`. v4 and v10–v13 are not yet started.
+v6–v13 are complete and merged to `main`. v4, v14 and v15 are designed, not yet built.
 
 | Wave | Prompts | Focus | Status |
 |------|---------|-------|--------|
@@ -111,10 +111,12 @@ v6, v7, v8, v9 are complete and merged to `main`. v4 and v10–v13 are not yet s
 | v7 | 51–52 | Platform revenue report, registration settings redesign | ✅ Complete |
 | v8 | 53–54 | Player accounts, DB connection budget | ✅ Complete |
 | v9 | 55 | Dispute / loss recovery | ✅ Complete |
-| v10 | 56 | Sponsor CRM + monetization | ⬜ Pending |
-| v11 | 57 | Official onboarding | ⬜ Pending |
-| v12 | 58 | Scheduling docs + doc branding | ⬜ Pending |
-| v13 | 59–66 | Competition fidelity, bulk enrol, brackets, audit export, ad-hoc fixtures | ⬜ Pending |
+| v10 | 56 | Sponsor CRM + monetization | ✅ Complete |
+| v11 | 57 | Official onboarding | ✅ Complete |
+| v12 | 58 | Scheduling docs + doc branding | ✅ Complete |
+| v13 | 59–66 | Competition fidelity, bulk enrol, brackets, audit export, ad-hoc fixtures | ✅ Complete |
+| v14 | 67 | Visual flow help pages | ⬜ Pending |
+| v15 | 68–71 | Venue library + multi-venue scheduling | ⬜ Pending |
 
 ---
 
