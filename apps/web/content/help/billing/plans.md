@@ -14,7 +14,7 @@ One-time upgrade for a single competition — every division inside it gets Pro 
 
 ## Pro — $20/month
 
-Everything unlimited, plus the organiser toolkit: your branding on public pages and share images, entry fees via Stripe, spreadsheet imports and exports, clubs, player stats, advanced formats, read/score API keys and embeds. Starts with a 14-day trial, no card required — one trial per organisation; if you come back to Pro later, billing starts from day one.
+Everything unlimited, plus the organiser toolkit: your branding on public pages and share images, entry fees via Stripe, spreadsheet imports and exports, clubs, player stats, advanced formats, read-only API keys and embeds (score & manage keys need Pro Plus). Starts with a 14-day trial, no card required — one trial per organisation; if you come back to Pro later, billing starts from day one.
 
 ## Pro Plus — $39/month
 
