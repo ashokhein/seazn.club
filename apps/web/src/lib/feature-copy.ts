@@ -32,7 +32,7 @@ const FEATURE_REASONS: Record<string, string> = {
   realtime: "Live push updates are a Pro feature.",
   // Platform
   "api.access": "API keys are a Pro feature.",
-  "api.write": "Write access via the API needs an upgraded plan — contact us to enable it.",
+  "api.write": "Write access via the API is a Pro Plus feature — read keys work on Pro.",
   exports: "CSV/PDF exports are a Pro feature.",
   "exports.branded": "Branded print templates (club colours, sponsor logos) are a Pro feature.",
   // Clubs & bulk import (Jul3/01 §7)
@@ -42,11 +42,14 @@ const FEATURE_REASONS: Record<string, string> = {
   "scheduling.constraints": "The scheduling constraints solver is a Pro feature.",
   "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
   "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",
-  "officials.assignment": "Officials assignment is a Pro feature.",
-  "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro feature — manual assignment still works.",
+  "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro Plus feature — manual assignment still works.",
   "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
-  "scheduling.ai": "AI-assisted planning (describe constraints in plain language) is a Pro feature.",
-  "schedule.versioning": "Extra save points and multi-site scope locks are a Pro feature — undo/redo always works.",
+  "officials.per_fixture.max": "Community includes one official per fixture — more need Pro.",
+  "scheduling.ai": "AI-assisted planning (describe constraints in plain language) is a Pro Plus feature.",
+  "schedule.versioning": "Multi-site scope locks are a Pro feature — undo/redo always works.",
+  "schedule.checkpoints.max": "You've reached your plan's save points — Pro includes five, Pro Plus unlimited. Undo/redo always works.",
+  "domains.custom": "Serving your public pages on your own domain is a Pro Plus feature.",
+  "support.priority": "Priority support is included with Pro Plus.",
   "scoring.device_links":
     "Hand-this-device-over scoring links are a Pro feature — your scorer seat still works.",
   // Registration & entry fees (doc 16 §1.1)
@@ -64,15 +67,21 @@ export function featureReason(featureKey: string): string {
   return FEATURE_REASONS[featureKey] ?? "This feature needs a plan upgrade.";
 }
 
-// Cheapest plan that unlocks each feature (mirrors the plan_entitlements
-// seeds, V112 + V240). Everything not listed here unlocks on Pro — only the
-// above-Pro exceptions need rows. (`business` is a hidden DB plan key —
-// v3/03 §6 — the UI renders these as a generic "Upgrade".)
-const BUSINESS_FEATURES = new Set(["api.write", "scorers.max"]);
+// Cheapest plan that unlocks each feature (mirrors plan_entitlements,
+// V112 + V240 + V286). Everything not listed unlocks on Pro — only the
+// above-Pro (Pro Plus) exceptions need rows.
+const PLUS_FEATURES = new Set([
+  "api.write",
+  "scorers.max",
+  "scheduling.ai",
+  "officials.auto",
+  "domains.custom",
+  "support.priority",
+]);
 
-export type PaidPlan = "pro" | "business";
+export type PaidPlan = "pro" | "pro_plus";
 
 /** Cheapest plan that unlocks a feature key. Never throws. */
 export function featurePlan(featureKey: string): PaidPlan {
-  return BUSINESS_FEATURES.has(featureKey) ? "business" : "pro";
+  return PLUS_FEATURES.has(featureKey) ? "pro_plus" : "pro";
 }

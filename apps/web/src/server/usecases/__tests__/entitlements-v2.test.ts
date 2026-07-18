@@ -24,7 +24,7 @@ import { platformFeeDefault } from "@/lib/platform-settings";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
-type Plan = "community" | "pro" | "business";
+type Plan = "community" | "pro" | "pro_plus";
 
 const GENERIC_CONFIG = {
   resultMode: "score",
