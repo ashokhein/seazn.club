@@ -61,6 +61,16 @@ describe("games subdomain host rewrite", () => {
     ).toContain("default-src 'self'");
   });
 
+  it("proxy() sends games-host / to /games, not the marketing [lang] home", () => {
+    // Regression: the v5 i18n marketing rewrite claims "/" for every host and
+    // returns early; on a games.* host that stole "/" before gamesHostRewrite,
+    // landing games.seazn.club/ on the marketing home (/en) instead of /games.
+    const res = proxy(req("/", GAMES_HOST));
+    const rewrite = res.headers.get("x-middleware-rewrite");
+    expect(rewrite).toContain("/games");
+    expect(rewrite).not.toMatch(/\/en\/?$/);
+  });
+
   it("proxy() leaves normal hosts alone", () => {
     // /dashboard is neither a games host nor a marketing-rewritten path.
     const res = proxy(req("/dashboard", { host: "seazn.club" }));
