@@ -7,7 +7,8 @@ import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { resolveModule } from "@/server/engine-db";
 import type { StandingsRow } from "@seazn/engine/competition";
-import { getPublicDivision, resolveLogoUrl } from "@/server/public-site/data";
+import { getPublicDivision } from "@/server/public-site/data";
+import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { renderProse } from "@/lib/prose";
@@ -68,9 +69,16 @@ export default async function DivisionHomePage({ params }: Props) {
   }
 
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
-  // Badge chips (v3/03 §5): team → club resolved by the view; URL resolved here.
+  // Badge chips (v3/03 §5 + PROMPT-60): the entrant's own badge_url wins,
+  // then team → club logo resolved by the view.
   const entrantLogos = Object.fromEntries(
-    entrants.map((e) => [e.id, resolveLogoUrl(e.team_display?.logo_path ?? null, null)]),
+    entrants.map((e) => [
+      e.id,
+      resolveEntrantBadge({
+        badge_url: e.badge_url,
+        team_logo_path: e.team_display?.logo_path ?? null,
+      }),
+    ]),
   );
   const basePath = `/shared/${org.slug}/${competition.slug}/${division.slug}`;
   const poolName = new Map(pools.map((p) => [p.id, p.name]));

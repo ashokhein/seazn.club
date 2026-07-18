@@ -59,6 +59,8 @@ export interface EntrantRow {
   seed: number | null;
   status: string;
   created_at: string;
+  /** PROMPT-60: crest/badge/flag — external URL or assets-bucket path. */
+  badge_url: string | null;
 }
 
 export interface EntrantWithMembers extends EntrantRow {
@@ -73,6 +75,7 @@ export interface CreatedEntrant extends EntrantRow {
 
 const COLS = [
   "id", "division_id", "kind", "team_id", "display_name", "seed", "status", "created_at",
+  "badge_url",
 ] as const;
 
 async function insertMembers(tx: Tx, entrantId: string, members: MemberInput[]): Promise<void> {
@@ -213,9 +216,9 @@ export async function createEntrants(
       let row: EntrantRow;
       try {
         [row] = await tx<EntrantRow[]>`
-          insert into entrants (division_id, kind, team_id, display_name, seed)
+          insert into entrants (division_id, kind, team_id, display_name, seed, badge_url)
           values (${divisionId}, ${input.kind}, ${input.team_id ?? null},
-                  ${displayName}, ${input.seed ?? null})
+                  ${displayName}, ${input.seed ?? null}, ${input.badge_url ?? null})
           returning ${tx(COLS)}`;
       } catch (err) {
         if ((err as { code?: string }).code === "23505") {

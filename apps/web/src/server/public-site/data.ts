@@ -150,6 +150,8 @@ export interface PublicEntrant {
     logo_path: string | null;
     colors: unknown;
   } | null;
+  /** PROMPT-60: the entrant's own crest — wins over team_display.logo_path. */
+  badge_url?: string | null;
 }
 
 export interface PublicPlayer {
@@ -301,7 +303,7 @@ export async function getPublicDivision(
         from public_standings_v where division_id = ${division.id}`;
       const entrants = await sql<PublicEntrant[]>`
         select id, division_id, kind, display_name, seed, status, members,
-               team_display
+               team_display, badge_url
         from public_entrants_v where division_id = ${division.id}
         order by seed nulls last, display_name`;
       const [ss] = await sql<{ tz: string }[]>`

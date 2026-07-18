@@ -25,6 +25,7 @@ import { HttpError } from "@/lib/errors";
 import { hasFeature, requireFeature } from "@/lib/entitlements";
 import { fixtureWhen } from "@/lib/email-templates/official-assigned";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
+import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { resolveModule } from "@/server/engine-db";
 import { participantRows } from "./clubs";
@@ -220,9 +221,17 @@ export async function buildDivisionDocModel(
           where s.division_id = ${divisionId}
           order by s.seq desc, ss.updated_at desc limit 1`;
         if (!snapshot) throw new HttpError(404, "no standings yet");
-        const names = await tx<{ id: string; display_name: string }[]>`
-          select id, display_name from entrants where division_id = ${divisionId}`;
+        const names = await tx<{ id: string; display_name: string; badge_url: string | null }[]>`
+          select id, display_name, badge_url from entrants where division_id = ${divisionId}`;
         const nameById = new Map(names.map((n) => [n.id, n.display_name]));
+        // PROMPT-60: crests reach the PDF too (entrant badge only here — the
+        // team-logo fallback stays a web concern; keep the export cheap).
+        const badgeById = new Map(
+          names.map((n) => [
+            n.id,
+            n.badge_url ? resolveEntrantBadge({ badge_url: n.badge_url }) : null,
+          ]),
+        );
         const sportModule = resolveModule(meta.sport_key, meta.module_version);
         const metricColumns = sportModule.metrics.slice(0, 4).map((m) => m.key);
         const rows = [...snapshot.rows]
@@ -235,6 +244,7 @@ export async function buildDivisionDocModel(
             lost: r.lost,
             points: r.points,
             metrics: r.metrics,
+            ...(badgeById.get(r.entrantId) ? { badgeUrl: badgeById.get(r.entrantId) } : {}),
           }));
         return buildStandings(title, rows, {
           ...common,

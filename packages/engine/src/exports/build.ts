@@ -98,6 +98,7 @@ export function buildStandings(
 ): DocModel {
   const metricColumns = opts.metricColumns ?? [];
   const columns = ["#", "Team", "P", "W", "D", "L", ...metricColumns, "Pts"];
+  const hasBadges = rows.some((r) => r.badgeUrl != null);
   const table = {
     columns,
     rows: rows.map((r, i) => [
@@ -111,6 +112,9 @@ export function buildStandings(
       r.points,
     ]),
     ...(opts.landscape === true ? { landscape: true } : {}),
+    // PROMPT-60: aligned per-row crest URLs; omitted when nobody has one so
+    // the plain (badge-free) output is byte-identical to before.
+    ...(hasBadges ? { rowBadges: rows.map((r) => r.badgeUrl ?? null) } : {}),
   };
   return base("standings", title, [{ table }], opts);
 }

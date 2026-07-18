@@ -5,7 +5,7 @@
 import { notFound } from "next/navigation";
 import { resolveModule } from "@/server/engine-db";
 import { embedDivisionData } from "@/server/embed-data";
-import { resolveLogoUrl } from "@/server/public-site/data";
+import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import { publicThemeStyle } from "@/lib/public-theme";
 import type { MetricSpecLike } from "@/lib/public-site";
 import { StandingsTable } from "@/components/public-site/standings-table";
@@ -46,8 +46,15 @@ export default async function EmbedWidgetPage({ params }: Props) {
     // retired module build — structural columns only
   }
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
+  // PROMPT-60: the entrant's own badge_url wins over the team logo.
   const entrantLogos = Object.fromEntries(
-    entrants.map((e) => [e.id, resolveLogoUrl(e.team_display?.logo_path ?? null, null)]),
+    entrants.map((e) => [
+      e.id,
+      resolveEntrantBadge({
+        badge_url: e.badge_url,
+        team_logo_path: e.team_display?.logo_path ?? null,
+      }),
+    ]),
   );
   const poolName = new Map(pools.map((p) => [p.id, p.name]));
   const publicPath = `/shared/${org.slug}/${competition.slug}/${division.slug}`;

@@ -146,3 +146,28 @@ describe("buildDocModel goldens (Jul3/06 §2)", () => {
     expect(JSON.stringify(m)).not.toMatch(/data:image/); // no pixels in the model
   });
 });
+
+describe("buildStandings — row badges (PROMPT-60)", () => {
+  it("threads badge URLs into the table when any row carries one", () => {
+    const model = buildStandings(
+      "Open — Standings",
+      [
+        { name: "Mexico", played: 3, won: 3, drawn: 0, lost: 0, points: 9, metrics: {},
+          badgeUrl: "https://flags.example/mex.png" },
+        { name: "Canada", played: 3, won: 0, drawn: 0, lost: 3, points: 0, metrics: {} },
+      ],
+      { printedAt: "2026-07-18T00:00:00Z" },
+    );
+    const table = model.sections[0]!.table!;
+    expect(table.rowBadges).toEqual(["https://flags.example/mex.png", null]);
+  });
+
+  it("omits rowBadges entirely when no row has a badge (plain output unchanged)", () => {
+    const model = buildStandings(
+      "Open — Standings",
+      [{ name: "A", played: 0, won: 0, drawn: 0, lost: 0, points: 0, metrics: {} }],
+      { printedAt: "2026-07-18T00:00:00Z" },
+    );
+    expect(model.sections[0]!.table!.rowBadges).toBeUndefined();
+  });
+});

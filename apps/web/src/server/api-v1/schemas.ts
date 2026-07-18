@@ -184,6 +184,9 @@ export const CreateEntrant = z
     // Copy the roster from an earlier entrant of the SAME team (season rollover,
     // league + cup). Resolved server-side in the creation transaction.
     copy_roster_from_entrant_id: Uuid.nullish(),
+    // PROMPT-60: lightweight crest/badge/flag — an external URL or an
+    // assets-bucket storage path. Club-independent, so free orgs get it.
+    badge_url: z.string().min(1).max(1000).nullish(),
   })
   .refine((e) => e.display_name != null || e.team_id != null, {
     message: "display_name is required unless team_id is provided",
@@ -213,6 +216,7 @@ export const PatchEntrant = z
     seed: z.number().int().min(1).nullable(),
     status: EntrantStatus, // withdraw = status: 'withdrawn'
     members: z.array(EntrantMemberInput), // full replacement
+    badge_url: z.string().min(1).max(1000).nullable(), // PROMPT-60
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");

@@ -11,6 +11,9 @@ export const DocTable = z.object({
   rows: z.array(z.array(DocCell)),
   /** Landscape hint for very wide tables (29 May: never clip names). */
   landscape: z.boolean().optional(),
+  /** PROMPT-60: per-row badge URL aligned to `rows` (null = no badge). The
+   *  renderer draws a small crest before the name cell; absent = no badges. */
+  rowBadges: z.array(z.string().nullable()).optional(),
 });
 export type DocTable = z.infer<typeof DocTable>;
 
@@ -105,6 +108,8 @@ export interface ExportStandingsRow {
   lost: number;
   points: number;
   metrics: Record<string, number>;
+  /** PROMPT-60: entrant crest URL (already resolved) — reaches the PDF. */
+  badgeUrl?: string | null;
 }
 
 export interface ExportRosterTeam {
