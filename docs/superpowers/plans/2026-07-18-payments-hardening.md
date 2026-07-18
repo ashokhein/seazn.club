@@ -1020,6 +1020,31 @@ on conflict (plan_key, feature_key) do update
 
 ---
 
+### Task 16: Smoke — 4-plan user matrix (owner ask 2026-07-18)
+
+Four fresh users, one per plan, created through the same HTTP surface smoke
+already uses; each asserts the features that distinguish its tier. Runs AFTER
+Task 15 (AI cap live) and Task 14 (pricing untouched by this task — no Stripe
+needed; keyless-degrade aware).
+
+**Files:**
+- Modify: `scripts/smoke.ts` (new section `smokePlanMatrix()` wired into main after existing sections)
+
+**Interfaces:**
+- Consumes: existing smoke helpers (HTTP register/login, org+comp+division creation idioms, SQL plan-flip pattern already used for the pro path); `plan_entitlements` matrix incl. V291 rows (`scheduling.ai.runs_per_division.max` pro=5, pro_plus=unlimited); `competition_passes` (PK=competition_id) for the pass persona.
+- Produces: smoke stays green in CI (keyless) and locally with keys; per-plan assertion block other waves can extend.
+
+- [ ] **Step 1: Personas.** Register 4 users with the run-unique suffix idiom smoke already uses: `smoke-community-<ts>@`, `smoke-pro-<ts>@`, `smoke-proplus-<ts>@`, `smoke-pass-<ts>@`. Each creates one org (+ one competition with one division where assertions need one).
+- [ ] **Step 2: Plans.** community = default (no-op). pro / pro_plus = the existing SQL subscription-flip idiom smoke uses for its pro path, with `plan_key='pro'` / `'pro_plus'`. pass = community org + SQL insert into `competition_passes (competition_id, org_id, stripe_payment_intent)` values `(comp, org, 'pi_smoke_pass_<ts>')` (mirrors recordPassPurchase).
+- [ ] **Step 3: Assertions per persona** (entitlement-resolution + HTTP status level, following existing smoke assertion idioms; every check runs AFTER its data is seeded — no false-greens):
+  - community: `exports.branded` denies (plain export path OK), a Pro-gated surface 402/403s (e.g. branded export or AI schedule), upgrade path visible where smoke already checks CTAs.
+  - pro: branded export allowed; `scheduling.ai` allowed and `scheduling.ai.runs_per_division.max` resolves 5; `officials.per_fixture.max` unlimited (null).
+  - pro_plus: `api.write` grants (key with write scope creatable where smoke exercises keys, else entitlement resolve check); `scheduling.ai.runs_per_division.max` unlimited; `registration.fee_percent` resolves 1.
+  - event_pass: passed competition resolves a comp-scoped pro feature (e.g. `formats.advanced`) true INSIDE that comp; a second unpassed comp in the same org denies it; an org-wide key (`members.max`) still resolves community values (the dead-row fix from V291).
+- [ ] **Step 4: Wire + run.** Call `smokePlanMatrix()` from main; run full smoke locally against dev server; ALL existing sections must stay green. Commit `feat(smoke): 4-plan user matrix (community/pro/pro_plus/event_pass)`.
+
+---
+
 ## Self-review notes
 
 - Spec coverage: P0-1→T1/T2, P0-2→T5/T6, P0-3→T3/T4, P1-4→T7, P1-5→T8, P1-6→T9, P1-7→T11, P1-8→T12, P2-10→T10, P2-11 dead row→T0. Deferred BY DESIGN to later plans: P2-9 partial sponsor refunds, P2-12 tax ToS clause, P2-13 order hygiene, P2-14 pass admin verbs, PROMPT-76 console, PROMPT-77 growth items.
