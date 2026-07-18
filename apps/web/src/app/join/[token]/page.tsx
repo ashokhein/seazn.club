@@ -35,7 +35,9 @@ export async function generateMetadata({
     description: invite
       ? `You've been invited as ${invite.role}. Accept your invite and get involved.`
       : "Accept your invite and get involved.",
-    openGraph: { title },
+    // Explicit image: a page-level openGraph object replaces the inherited
+    // one wholesale in this Next build, dropping file-convention images.
+    openGraph: { title, images: [{ url: "/join/opengraph-image", width: 1200, height: 630 }] },
     // Personal links in chat apps: no reason for this to be indexable.
     robots: { index: false },
   };

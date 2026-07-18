@@ -41,6 +41,10 @@ export async function generateMetadata({
       url: "/",
       siteName: "Seazn Club",
       type: "website",
+      // Explicit: in this Next build a page-level openGraph object replaces
+      // the inherited one wholesale, dropping the root file-convention
+      // opengraph-image (home shipped with no og:image at all).
+      images: [{ url: "/opengraph-image", width: 1200, height: 630 }],
     },
   };
 }
