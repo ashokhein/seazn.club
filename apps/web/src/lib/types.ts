@@ -163,7 +163,7 @@ export const deleteAccountSchema = z.object({
 // ---- billing request schemas -------------------------------------------------
 
 export const checkoutSchema = z.object({
-  plan_key: z.enum(["pro"]),
+  plan_key: z.enum(["pro", "pro_plus"]),
   interval: z.enum(["monthly", "annual"]),
 }).strict();
 
