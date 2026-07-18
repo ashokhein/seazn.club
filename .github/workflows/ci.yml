@@ -247,7 +247,9 @@ jobs:
       && !contains(needs.*.result, 'failure') && !contains(needs.*.result, 'cancelled')
     concurrency:
       group: deploy-staging
-      cancel-in-progress: false
+      # Staging is latest-wins: stacked merges to main supersede the deploy in
+      # flight instead of queuing three identical ones (2026-07-18 merge train).
+      cancel-in-progress: true
     env:
       # Job-level mapping so the sync step's `if:` can see whether the secret
       # exists (the secrets context isn't readable from step conditionals).
