@@ -17,4 +17,8 @@ The **schedule board** is where fixtures meet the clock: courts across the top, 
 
 If a colleague moves a match while you're looking at the board, your next change is rejected rather than silently overwriting theirs — the board refreshes and tells you.
 
+## Printing a timetable
+
+Every division can export its schedule as a PDF or spreadsheet for pinning up courtside or sharing with officials. On a Pro organisation, the export carries your masthead, logo and sponsor line; on a community plan you get the same clean, print-ready tables without that branding — the schedule data itself is identical either way.
+
 Related: [pinned slots and freezing](/help/scheduling/locks), [undo and save points](/help/scheduling/undo), [constraints](/help/scheduling/constraints).

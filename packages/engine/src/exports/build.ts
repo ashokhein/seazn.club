@@ -7,9 +7,11 @@ import type {
   DocModel,
   DocSection,
   ExportFixture,
+  ExportOfficialSchedule,
   ExportParticipantRow,
   ExportRosterTeam,
   ExportStandingsRow,
+  ExportTicket,
 } from "./types.ts";
 
 function base(
@@ -21,9 +23,11 @@ function base(
   return {
     kind,
     title,
+    ...(opts.description !== undefined ? { description: opts.description } : {}),
     meta: {
       printedAt: opts.printedAt,
       ...(opts.footerNote !== undefined ? { footerNote: opts.footerNote } : {}),
+      ...(opts.liveUrl !== undefined ? { liveUrl: opts.liveUrl } : {}),
     },
     ...(opts.branding !== undefined ? { branding: opts.branding } : {}),
     sections,
@@ -158,4 +162,50 @@ export function buildParticipants(
     ],
     opts,
   );
+}
+
+const ROTA_COLUMNS = ["When", "Court", "Competition · Division", "Role", "Match", "Response"];
+
+/** Officials rota (v12/PROMPT-58): one section per official, duties table +
+ *  sign-on/off block; zero-duty officials still get a page (13 May pattern). */
+export function buildOfficialsRota(
+  title: string,
+  officials: readonly ExportOfficialSchedule[],
+  opts: BuildOpts,
+): DocModel {
+  const perOfficial = (opts.pageBreaks ?? "auto") === "per_team";
+  const sections: DocSection[] = officials.map((o, i) => ({
+    heading: o.officialName,
+    ...(o.duties.length === 0 ? { subheading: "No duties assigned" } : {}),
+    ...(o.duties.length > 0
+      ? {
+          table: {
+            columns: ROTA_COLUMNS,
+            rows: o.duties.map((d) => [
+              d.at,
+              d.court ?? "—",
+              d.compDivision,
+              d.role,
+              d.opponents,
+              d.response === "accepted" ? "Accepted" : d.response === "declined" ? "Declined" : "Pending",
+            ]),
+            landscape: true,
+          },
+        }
+      : {}),
+    signatures: ["Official signature", "Time on", "Time off"],
+    ...(perOfficial && i > 0 ? { pageBreakBefore: true } : {}),
+  }));
+  return base("officials_rota", title, sections, opts);
+}
+
+/** Admit tickets (v12/Task 11): one 2-up section per ticket; the QR is carried
+ *  as a URL on the model — pixels are never generated here (Task 12 draws it). */
+export function buildAdmitTickets(
+  title: string,
+  tickets: readonly ExportTicket[],
+  opts: BuildOpts,
+): DocModel {
+  const sections: DocSection[] = tickets.map((t) => ({ columnsHint: 2, ticket: t }));
+  return base("admit_ticket", title, sections, opts);
 }

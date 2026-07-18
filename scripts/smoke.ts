@@ -1690,6 +1690,51 @@ async function schedRegV3Suite(
     board.status === 200 && board.body.includes("Board density"),
   );
 
+  // Matchday documents (v12 PR1, Task 9): timetable PDF export renders a
+  // real PDF for this division's fixtures. It renders REAL PDFs, so assert
+  // validity via magic bytes + content-type, not literal text (font
+  // subsetting encodes glyph IDs, not characters) — the branded-vs-plain
+  // visual proof is the Task 18 gallery, not a byte assertion.
+  const docPdf = await fetch(`${BASE}/api/v1/divisions/${div.id}/exports/timetable?format=pdf`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
+  const docPdfBytes = Buffer.from(await docPdf.arrayBuffer());
+  check(
+    "exports timetable PDF renders a valid branded PDF (pro)",
+    docPdf.status === 200 &&
+      (docPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      docPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      docPdfBytes.byteLength > 1024,
+  );
+
+  // Matchday documents (v12, Task 17): the officials rota only emits duty
+  // rows for fixtures carrying a live assignment (buildOfficialsRotaDoc
+  // reads fixture_officials joined to still-scheduled fixtures) — assign one
+  // before hitting the export so it renders the real content path, not just
+  // the empty masthead. Same official/assign shape as the officials-unify
+  // suite: POST /officials → PATCH the fixture's officials.
+  const docOfficial = v1data<{ id: string }>(
+    await v1(admin, "/api/v1/officials", "POST", {
+      display_name: `Doc Umpire ${tag}`, role_keys: ["referee"],
+    }),
+  );
+  const assignDocOfficial = await v1(admin, `/api/v1/fixtures/${fixture}/officials`, "PATCH", {
+    set: [{ official_id: docOfficial.id, role_key: "referee", locked: false }],
+  });
+  check("doc-export official assigned to a fixture", assignDocOfficial.status === 200);
+  const rotaPdf = await fetch(
+    `${BASE}/api/v1/divisions/${div.id}/exports/officials_rota?format=pdf`,
+    { headers: { cookie: cookieHeader(admin) } },
+  );
+  const rotaPdfBytes = Buffer.from(await rotaPdf.arrayBuffer());
+  check(
+    "exports officials rota PDF renders a valid PDF with a real duty row (pro)",
+    rotaPdf.status === 200 &&
+      (rotaPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      rotaPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      rotaPdfBytes.byteLength > 1024,
+  );
+
   // Reschedule with the current division seq — lands; replaying the same
   // (now stale) token 409s with SEQ_CONFLICT (v3/11 gap 10).
   const seq0 = v1data<{ seq: number }>(await v1(admin, `/api/v1/divisions/${div.id}`)).seq;
@@ -1719,7 +1764,7 @@ async function schedRegV3Suite(
     contact_email: `refprobe_${tag}@example.com`,
     privacy_consent: true,
   });
-  const regData = v1data<{ ref_code: string }>(reg);
+  const regData = v1data<{ registration_id: string; status: string; ref_code: string }>(reg);
   check(
     "reg issues an SZ ref (pro)",
     reg.status === 201 && /^SZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(regData.ref_code ?? ""),
@@ -1734,6 +1779,29 @@ async function schedRegV3Suite(
   check(
     "reg ticket.png renders (pro)",
     png.status === 200 && (png.headers.get("content-type") ?? "").startsWith("image/png"),
+  );
+
+  // Matchday documents (v12, Task 17): admit tickets only render a section
+  // per CONFIRMED registration with a ref_code (buildAdmitTicketsDoc filters
+  // status = 'confirmed') — the fresh submission above is still 'pending',
+  // so confirm it first, then hit the export to exercise the real
+  // ticket/QR/masked-name render path, not just the empty masthead.
+  const confirmRegForTicket = await v1(admin, `/api/v1/registrations/${regData.registration_id}/confirm`, "POST", {});
+  check(
+    "reg confirmed ahead of the tickets export (pro)",
+    confirmRegForTicket.status === 200 || confirmRegForTicket.status === 201,
+  );
+  const ticketsPdf = await fetch(
+    `${BASE}/api/v1/competitions/${comp.id}/exports/tickets?format=pdf`,
+    { headers: { cookie: cookieHeader(admin) } },
+  );
+  const ticketsPdfBytes = Buffer.from(await ticketsPdf.arrayBuffer());
+  check(
+    "exports admit tickets PDF renders a valid PDF with a real ticket (pro)",
+    ticketsPdf.status === 200 &&
+      (ticketsPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      ticketsPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      ticketsPdfBytes.byteLength > 1024,
   );
 
   // Honeypot: a filled `website` field is rejected before any work.
@@ -2657,6 +2725,22 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     form_fields: [],
   });
   check("gap offline entry fee allowed on community", fFee.status === 200);
+
+  // Matchday documents (v12 PR1, Task 9): same export renders a valid PDF on
+  // a community org — tables upgrade for every plan, only the masthead/
+  // sponsor chrome differs (a visual difference the Task 18 gallery proves,
+  // not a byte-level one).
+  const freeDocPdf = await fetch(`${BASE}/api/v1/divisions/${fDivId}/exports/timetable?format=pdf`, {
+    headers: { cookie: cookieHeader(free) },
+  });
+  const freeDocPdfBytes = Buffer.from(await freeDocPdf.arrayBuffer());
+  check(
+    "exports timetable PDF renders a valid plain PDF (free)",
+    freeDocPdf.status === 200 &&
+      (freeDocPdf.headers.get("content-type") ?? "").includes("application/pdf") &&
+      freeDocPdfBytes.subarray(0, 5).toString() === "%PDF-" &&
+      freeDocPdfBytes.byteLength > 1024,
+  );
 
   // --- Ownership transfer on org1 (owner + the invited members): away & back ---
   const members = (await call(admin, `/api/orgs/${org1Id}/members`)) as {

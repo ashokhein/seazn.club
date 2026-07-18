@@ -5,11 +5,94 @@ import "server-only";
 import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import type { DocModel, DocSection, DocTable } from "@seazn/engine/exports";
+import { PALETTE, FONT, registerFonts, eyebrowFor, qrBuffer } from "./doc-theme";
 
 const MARGIN = 40;
 
+const MAST_H = 64; // masthead band height, page 1
+
+import { publicStorageUrl } from "@/lib/supabase-storage";
+
+/** Resolve a logo storage path (or an already-absolute URL) to bytes. Logos
+ *  live in the PUBLIC Supabase bucket — there is no server-side byte reader,
+ *  so fetch the public URL. Missing/broken → null, never throws (a broken
+ *  export is worse than an unbranded one). */
+async function resolveLogo(logoPath: string | undefined): Promise<Buffer | null> {
+  if (!logoPath) return null;
+  try {
+    const url = /^https?:\/\//.test(logoPath) ? logoPath : publicStorageUrl(logoPath);
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    return Buffer.from(await res.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+function drawMasthead(
+  doc: PDFKit.PDFDocument,
+  model: DocModel,
+  logo: Buffer | null,
+): void {
+  const b = model.branding!;
+  const bar = b.colors?.primary ?? PALETTE.night;
+  const w = doc.page.width;
+  doc.rect(0, 0, w, MAST_H).fill(bar);
+  // wordmark
+  doc.font(FONT.displayBold).fontSize(18).fillColor(PALETTE.cream)
+    .text("SEAZN", MARGIN, 16, { continued: true })
+    .fillColor(PALETTE.lime).text(" CLUB", { continued: false });
+  // org name, right
+  if (b.orgName) {
+    doc.font(FONT.bodyMed).fontSize(10);
+    doc.fillColor(PALETTE.cream).text(b.orgName.toUpperCase(), MARGIN, 22, {
+      width: w - MARGIN * 2, align: "right", characterSpacing: 2,
+    });
+  }
+  // logo, aspect-locked, right of wordmark
+  if (logo) {
+    try { doc.image(logo, w - MARGIN - 40, 12, { height: 40 }); } catch { /* skip */ }
+  }
+  // red ball riding the lime line, right-aligned — mirrors ticket.png's mark
+  // (wordmark + ball + pitch line is the full SEAZN brand, not just the line)
+  doc.circle(w - MARGIN - 4, MAST_H - 10, 4).fill(PALETTE.ball);
+  // lime pitch-line rule — the signature
+  doc.rect(0, MAST_H, w, 4).fill(PALETTE.lime);
+  doc.fillColor(PALETTE.ink);
+  doc.y = MAST_H + 18;
+}
+
+function drawTitleBlock(doc: PDFKit.PDFDocument, model: DocModel): void {
+  doc.font(FONT.bodyMed).fontSize(8).fillColor(PALETTE.mute)
+    .text(eyebrowFor(model.kind), MARGIN, doc.y, { characterSpacing: 2 });
+  doc.moveDown(0.1);
+  doc.font(FONT.displayBold).fontSize(26).fillColor(PALETTE.night)
+    .text(model.title.toUpperCase(), MARGIN, doc.y, { characterSpacing: 0.5 });
+  if (model.description) {
+    doc.moveDown(0.15);
+    doc.font(FONT.body).fontSize(9).fillColor(PALETTE.slate).text(model.description, MARGIN);
+  }
+  doc.moveDown(0.6);
+  doc.fillColor(PALETTE.ink);
+}
+
+const TIER_RANK: Record<string, number> = { title: 0, gold: 1, silver: 2, partner: 3 };
+
+function sponsorLine(sponsors: { name: string; tier: string }[]): string {
+  return [...sponsors]
+    .sort((a, b) => (TIER_RANK[a.tier] ?? 9) - (TIER_RANK[b.tier] ?? 9))
+    .map((s) => s.name)
+    .join("  ·  ");
+}
+
 function isLandscape(model: DocModel): boolean {
   return model.sections.some((s) => s.table?.landscape === true);
+}
+
+function isNumericColumn(table: DocTable, i: number): boolean {
+  return table.rows.length > 0 &&
+    table.rows.every((r) => r[i] === "" || typeof r[i] === "number" ||
+      /^[\d.,:%+\-–—\s]*$/.test(String(r[i] ?? "")));
 }
 
 function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
@@ -24,33 +107,112 @@ function drawTable(doc: PDFKit.PDFDocument, table: DocTable): void {
   });
   const total = weights.reduce((a, b) => a + b, 0);
   const colW = weights.map((w) => (w / total) * width);
+  const numeric = table.columns.map((_, i) => isNumericColumn(table, i));
+  const rowHeight = 18;
 
-  const rowHeight = 16;
-  const drawRow = (cells: readonly (string | number)[], bold: boolean) => {
+  const drawRow = (cells: readonly (string | number)[], header: boolean, zebra: boolean) => {
     if (doc.y + rowHeight > doc.page.height - MARGIN) doc.addPage();
     const y = doc.y;
+    if (header) doc.rect(MARGIN, y, width, rowHeight).fill(PALETTE.night);
+    else if (zebra) doc.rect(MARGIN, y, width, rowHeight).fill(PALETTE.cream);
     let x = MARGIN;
-    doc.font(bold ? "Helvetica-Bold" : "Helvetica").fontSize(8);
+    doc.font(header ? FONT.bodyMed : FONT.body).fontSize(header ? 8.5 : 9)
+      .fillColor(header ? PALETTE.cream : PALETTE.ink);
     cells.forEach((cell, i) => {
-      doc.text(String(cell ?? ""), x + 2, y + 3, {
-        width: colW[i]! - 4,
-        height: rowHeight,
-        ellipsis: true,
-        lineBreak: false,
+      doc.text(String(cell ?? ""), x + 4, y + 5, {
+        width: colW[i]! - 8, height: rowHeight, ellipsis: true, lineBreak: false,
+        align: numeric[i] ? "right" : "left",
       });
       x += colW[i]!;
     });
-    doc
-      .moveTo(MARGIN, y + rowHeight)
-      .lineTo(MARGIN + width, y + rowHeight)
-      .strokeColor("#dddddd")
-      .lineWidth(0.5)
-      .stroke();
+    if (!header) {
+      doc.moveTo(MARGIN, y + rowHeight).lineTo(MARGIN + width, y + rowHeight)
+        .strokeColor(PALETTE.hairline).lineWidth(0.5).stroke();
+    }
     doc.y = y + rowHeight;
+    doc.fillColor(PALETTE.ink);
   };
-  drawRow(table.columns, true);
-  for (const row of table.rows) drawRow(row, false);
+
+  drawRow(table.columns, true, false);
+  table.rows.forEach((row, i) => drawRow(row, false, i % 2 === 1));
   doc.moveDown(0.5);
+}
+
+// Status-stamp colours — mirrors r/[ref]/ticket.png's STAMP map so a printed
+// ticket and its digital twin read the same at a glance.
+const STAMP_COLORS: Record<string, string> = {
+  paid: "#047857",
+  confirmed: "#047857",
+  waitlisted: "#0369a1",
+  pending: "#b45309",
+  withdrawn: "#71717a",
+};
+
+function stampColorFor(status: string): string {
+  // unrecognized status falls back to pending amber, mirroring ticket.png's
+  // `STAMP[status] ?? STAMP.pending` — not the ball-red default.
+  return STAMP_COLORS[status.toLowerCase()] ?? STAMP_COLORS.pending!;
+}
+
+/** The courtside pass — mirrors r/[ref]/ticket.png as a printable card.
+ *  Night masthead card, mono ref + rotated status stamp, dashed
+ *  perforation, QR on the stub, "ADMIT ONE". Two per A4 via columnsHint. */
+function drawTicket(
+  doc: PDFKit.PDFDocument,
+  t: NonNullable<DocSection["ticket"]>,
+  qr: Buffer | null,
+  orgName: string | undefined,
+): void {
+  const w = doc.page.width - MARGIN * 2;
+  const top = doc.y;
+  const cardH = 200;
+  // card
+  doc.roundedRect(MARGIN, top, w, cardH, 10).fill("#ffffff");
+  doc.roundedRect(MARGIN, top, w, 44, 10).fill(PALETTE.night);
+  doc.font(FONT.displayBold).fontSize(16).fillColor(PALETTE.cream)
+    .text("SEAZN", MARGIN + 16, top + 14, { continued: true })
+    .fillColor(PALETTE.lime).text(" CLUB");
+  // org identity, top-right of the card header — cut-out tickets lose the
+  // page masthead, so each card carries its own org name (mirrors ticket.png).
+  if (orgName) {
+    doc.font(FONT.bodyMed).fontSize(9).fillColor(PALETTE.cream)
+      .text(orgName.toUpperCase(), MARGIN + 16, top + 16, {
+        width: w - 32, align: "right", characterSpacing: 2, lineBreak: false,
+      });
+  }
+  // red ball riding the lime line, right-aligned — mirrors ticket.png's mark
+  // so cut-out tickets (which lose the page masthead) carry the full mark.
+  doc.circle(MARGIN + w - 12, top + 36, 3.5).fill(PALETTE.ball);
+  doc.rect(MARGIN, top + 44, w, 4).fill(PALETTE.lime);
+  doc.font(FONT.displayBold).fontSize(22).fillColor(PALETTE.ink)
+    .text(t.competition.toUpperCase(), MARGIN + 16, top + 60);
+  doc.font(FONT.body).fontSize(9).fillColor(PALETTE.mute).text("ENTRANT", MARGIN + 16, top + 100, { characterSpacing: 2 });
+  doc.font(FONT.displayBold).fontSize(16).fillColor(PALETTE.ink).text(t.maskedName, MARGIN + 16, top + 112);
+  doc.font(FONT.body).fontSize(9).fillColor(PALETTE.mute).text("YOUR REFERENCE", MARGIN + 16, top + 140, { characterSpacing: 2 });
+  doc.font("Courier-Bold").fontSize(20).fillColor(PALETTE.ink).text(t.ref, MARGIN + 16, top + 152);
+  // status stamp beside the reference block — a colour-coded underline plus
+  // matching text, mirroring ticket.png's bordered STAMP chip.
+  const stampColor = stampColorFor(t.status);
+  doc.rect(MARGIN + 150, top + 163, 60, 2).fill(stampColor);
+  doc.font(FONT.displayBold).fontSize(11).fillColor(stampColor)
+    .text(t.status.toUpperCase(), MARGIN + 150, top + 148, { characterSpacing: 2, lineBreak: false });
+  // stub
+  const stubX = MARGIN + w - 150;
+  doc.moveTo(stubX, top).lineTo(stubX, top + cardH).dash(3, { space: 3 }).strokeColor(PALETTE.hairline).stroke().undash();
+  if (qr) { try { doc.image(qr, stubX + 35, top + 40, { width: 80 }); } catch { /* skip */ } }
+  doc.font(FONT.body).fontSize(8).fillColor(PALETTE.mute).text("SCAN AT THE DESK", stubX + 20, top + 128, { characterSpacing: 1 });
+  doc.font(FONT.displayBold).fontSize(14).fillColor(PALETTE.night).text("ADMIT ONE", stubX + 30, top + 145, { characterSpacing: 4 });
+  doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(`No. ${t.seq}`, stubX + 20, top + 175);
+  doc.y = top + cardH + 16;
+  doc.fillColor(PALETTE.ink);
+}
+
+/** Crop ticks at the page edges, at the mid-cut line between two stacked
+ *  tickets (columnsHint 2) — a cuttable sheet instead of a full-width rule. */
+function drawCropTicks(doc: PDFKit.PDFDocument, y: number): void {
+  const tickLen = 10;
+  doc.moveTo(0, y).lineTo(tickLen, y).strokeColor("#999999").lineWidth(1).stroke();
+  doc.moveTo(doc.page.width - tickLen, y).lineTo(doc.page.width, y).strokeColor("#999999").lineWidth(1).stroke();
 }
 
 function drawSection(doc: PDFKit.PDFDocument, section: DocSection): void {
@@ -114,8 +276,18 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
     doc.on("end", () => resolve(Buffer.concat(chunks)));
   });
 
-  doc.font("Helvetica-Bold").fontSize(16).text(model.title, MARGIN);
-  doc.moveDown(0.6);
+  registerFonts(doc);
+  const logo = model.branding ? await resolveLogo(model.branding.logos?.[0]) : null;
+  if (model.branding) drawMasthead(doc, model, logo); // Pro-only night chrome + logo
+  else doc.y = MARGIN;
+  drawTitleBlock(doc, model); // eyebrow + title + description for ALL
+
+  // QR pre-pass (Task 12): pdfkit draws synchronously, so every ticket's QR
+  // must be resolved to bytes BEFORE the section loop — no awaiting mid-draw.
+  const qrByRef = new Map<string, Buffer | null>();
+  for (const s of model.sections) {
+    if (s.ticket) qrByRef.set(s.ticket.ref, await qrBuffer(s.ticket.qrUrl));
+  }
 
   // columnsHint 2 (12 Jun "two per A4"): pair sections onto one page by
   // separating with a rule instead of a page break.
@@ -126,33 +298,54 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
       doc.addPage();
       sinceBreak = 0;
     }
-    drawSection(doc, section);
+    if (section.ticket) {
+      drawTicket(doc, section.ticket, qrByRef.get(section.ticket.ref) ?? null, model.branding?.orgName);
+    } else drawSection(doc, section);
     if (pair) {
       sinceBreak += 1;
-      doc
-        .moveTo(MARGIN, doc.y)
-        .lineTo(doc.page.width - MARGIN, doc.y)
-        .strokeColor("#999999")
-        .lineWidth(1)
-        .stroke();
+      if (section.ticket) {
+        // cuttable sheet: short crop ticks at the page edges, not a full rule
+        drawCropTicks(doc, doc.y + 4);
+      } else {
+        doc
+          .moveTo(MARGIN, doc.y)
+          .lineTo(doc.page.width - MARGIN, doc.y)
+          .strokeColor("#999999")
+          .lineWidth(1)
+          .stroke();
+      }
       doc.moveDown(0.8);
     }
   }
 
-  // footer: printed date on every page (1 Sep ask)
+  // footer: tier-grouped sponsor line + live-page QR slot + page N of M
   const range = doc.bufferedPageRange();
-  for (let i = range.start; i < range.start + range.count; i++) {
+  const qrPng = model.meta.liveUrl ? await qrBuffer(model.meta.liveUrl) : null; // see Task 12 helper
+  const total = range.count;
+  for (let i = range.start; i < range.start + total; i++) {
     doc.switchToPage(i);
-    doc
-      .font("Helvetica")
-      .fontSize(7)
-      .fillColor("#888888")
-      .text(
-        `${model.meta.footerNote ?? model.title} — printed ${model.meta.printedAt}`,
-        MARGIN,
-        doc.page.height - MARGIN + 10,
-        { lineBreak: false },
-      );
+    // Keep the whole footer stack inside the content box — text placed at/below
+    // the bottom-margin edge (page.height - MARGIN) is suppressed by pdfkit.
+    const fy = doc.page.height - MARGIN - 10;
+    const sponsors = model.branding?.sponsors ?? [];
+    if (sponsors.length > 0) {
+      doc.font(FONT.bodyMed).fontSize(7).fillColor(PALETTE.slate)
+        .text(`SPONSORS   ${sponsorLine(sponsors)}`, MARGIN, fy - 12,
+          { width: doc.page.width - MARGIN * 2 - 40, characterSpacing: 1, lineBreak: false });
+    }
+    if (qrPng) {
+      try { doc.image(qrPng, doc.page.width - MARGIN - 28, fy - 22, { width: 28 }); } catch { /* skip */ }
+    }
+    doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
+      `${model.meta.footerNote ?? model.title} — printed ${model.meta.printedAt} · page ${i - range.start + 1} of ${total}`,
+      MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 90, lineBreak: false },
+    );
+    // platform attribution — every tier, every page (free tier otherwise
+    // carries no SEAZN identity at all since the masthead wordmark is Pro-only)
+    doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
+      "Powered by seazn.club",
+      MARGIN, fy, { width: doc.page.width - MARGIN * 2, align: "right", lineBreak: false },
+    );
   }
   doc.end();
   return done;
@@ -163,6 +356,9 @@ export async function docModelToXlsx(model: DocModel): Promise<Buffer> {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(model.kind);
   sheet.addRow([model.title]).font = { bold: true, size: 14 };
+  if (model.branding?.orgName) sheet.addRow([model.branding.orgName]).font = { size: 11, color: { argb: "FF52525B" } };
+  const sp = model.branding?.sponsors ?? [];
+  if (sp.length > 0) sheet.addRow([`Sponsors: ${sp.map((s) => s.name).join(", ")}`]).font = { italic: true, size: 9 };
   sheet.addRow([]);
   for (const section of model.sections) {
     if (section.heading !== undefined) {

@@ -64,11 +64,13 @@ export function OfficiatingLane({
             </ul>
           )}
           <BlackoutEditor blackouts={blackouts} />
-          <p className="mt-3 text-xs text-slate-400">
-            <span className="cursor-not-allowed opacity-70" aria-disabled title={msg("me.off.comingSoon")}>
+          {/* v12 task 15: the rota PDF export lives at /api/v1/me/rota.pdf —
+              only meaningful once this lane is showing (i.e. the signed-in
+              person is a linked official). */}
+          <p className="mt-3 text-xs">
+            <a href="/api/v1/me/rota.pdf" className="font-medium text-purple-600 hover:underline">
               {msg("me.off.rota")}
-            </span>{" "}
-            · {msg("me.off.comingSoon")}
+            </a>
           </p>
         </>
       )}

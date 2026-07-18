@@ -10,7 +10,13 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { patchFixture } from "../fixtures";
-import { buildDivisionDocModel, buildCompetitionTimetable } from "../exports";
+import {
+  buildDivisionDocModel,
+  buildCompetitionTimetable,
+  buildOfficialsRotaDoc,
+  buildAdmitTicketsDoc,
+  buildMyRotaDoc,
+} from "../exports";
 import { docModelToPdf, docModelToXlsx } from "@/server/doc-render";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -110,13 +116,14 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(roster.sections.map((s) => s.heading)).toContain("Empty Spot 3");
   });
 
-  it("branding is Pro (`exports.branded`): non-Pro model has no branding block; exports gate 402s Community", async () => {
+  it("branding is Pro (`exports.branded`): Pro branded; community exports render plain (V285)", async () => {
     const { auth } = await seedOrg("pro");
     const { division, comp } = await seedDivision(auth);
     await sql`update competitions set branding = ${sql.json({ primary_color: "#123456", logo_path: "orgs/x/logo.png" } as never)}
               where id = ${comp.id}`;
     const branded = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
-    expect(branded.branding).toEqual({ colors: { primary: "#123456" }, logos: ["orgs/x/logo.png"] });
+    expect(branded.branding).toMatchObject({ colors: { primary: "#123456" }, logos: ["orgs/x/logo.png"] });
+    expect(branded.branding?.orgName).toBeTruthy();
 
     // drop to a plan without exports.branded via override
     await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
@@ -126,11 +133,21 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     const unbranded = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
     expect(unbranded.branding).toBeUndefined();
 
+    // Community can export now (V285) but plain — exports.branded stays Pro.
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth);
-    await expect(
-      buildDivisionDocModel(freeAuth, freeDiv.id, "timetable", { printedAt: PRINTED }),
-    ).rejects.toMatchObject({ featureKey: "exports" });
+    const freeModel = await buildDivisionDocModel(freeAuth, freeDiv.id, "timetable", { printedAt: PRINTED });
+    expect(freeModel.branding).toBeUndefined();
+  });
+
+  it("brandingFor: Pro model carries orgName + tiered sponsors from the sponsors table", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, comp } = await seedDivision(auth);
+    await sql`insert into sponsors (org_id, competition_id, name, tier, status, display_order)
+              values (${auth.orgId}, ${comp.id}, 'Acme', 'title', 'active', 0)`;
+    const model = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
+    expect(model.branding?.orgName).toBeTruthy();
+    expect(model.branding?.sponsors).toContainEqual({ name: "Acme", tier: "title" });
   });
 
   it("competition-wide timetable groups per division", async () => {
@@ -140,5 +157,148 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(model.title).toBe("Print Cup");
     expect(model.pageBreaks).toBe("per_division");
     expect(model.sections.some((s) => s.heading === "Open")).toBe(true);
+  });
+
+  it("buildCompetitionTimetable carries branding for a Pro org", async () => {
+    const { auth } = await seedOrg("pro");
+    const { comp } = await seedDivision(auth);
+    const model = await buildCompetitionTimetable(auth, comp.id, { printedAt: PRINTED });
+    expect(model.branding?.orgName).toBeTruthy();
+  });
+
+  it("division timetable sets a description", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division } = await seedDivision(auth);
+    const model = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
+    expect(model.description).toMatch(/fixtures/i);
+  });
+
+  it("live-page QR (Task 16): public competition's timetable carries meta.liveUrl to /shared/...; private carries none", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, comp } = await seedDivision(auth);
+    const [{ slug: orgSlug }] = await sql<{ slug: string }[]>`
+      select slug from organizations where id = ${auth.orgId}`;
+
+    // seedDivision creates the competition as visibility: "private" — its
+    // /shared/... page 404s, so no QR should be set even with an origin.
+    const privateModel = await buildDivisionDocModel(auth, division.id, "timetable", {
+      printedAt: PRINTED, origin: "https://seazn.club",
+    });
+    expect(privateModel.meta.liveUrl).toBeUndefined();
+
+    // no origin at all (e.g. a test/caller that never threads one): still no QR.
+    await sql`update competitions set visibility = 'public' where id = ${comp.id}`;
+    const noOrigin = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
+    expect(noOrigin.meta.liveUrl).toBeUndefined();
+
+    const model = await buildDivisionDocModel(auth, division.id, "timetable", {
+      printedAt: PRINTED, origin: "https://seazn.club",
+    });
+    expect(model.meta.liveUrl).toBe(
+      `https://seazn.club/shared/${orgSlug}/${comp.slug}/${division.slug}`,
+    );
+  });
+
+  it("officials rota (v12/Task 13): lists an official's duties with response", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, fixtures } = await seedDivision(auth);
+    const [{ id: officialId }] = await sql<{ id: string }[]>`
+      insert into officials (org_id, display_name) values (${auth.orgId}, 'Sam Ref')
+      returning id`;
+    await sql`
+      insert into fixture_officials (fixture_id, official_id, role_key, response)
+      values (${fixtures[0]!.id}, ${officialId}, 'referee', 'accepted')`;
+
+    const model = await buildOfficialsRotaDoc(auth, division.id, { printedAt: PRINTED });
+    expect(model.kind).toBe("officials_rota");
+    const section = model.sections.find((s) => s.heading === "Sam Ref");
+    expect(section).toBeTruthy();
+    const rows = section!.table!.rows;
+    expect(rows.some((r) => r.includes("referee") && r.includes("Accepted"))).toBe(true);
+  });
+
+  it("admit tickets (v12/Task 13): masked names + /r/[ref] QR URLs", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division, comp } = await seedDivision(auth);
+    await sql`update divisions set player_name_display = 'first_initial' where id = ${division.id}`;
+    const suffix = randomUUID().slice(0, 8);
+    const [{ ref_code }] = await sql<{ ref_code: string }[]>`
+      insert into registrations
+        (division_id, org_id, status, display_name, contact_email, access_token_hash, ref_code)
+      values
+        (${division.id}, ${auth.orgId}, 'confirmed', 'Jamie Doe', ${"jamie+" + suffix + "@example.com"},
+         ${randomUUID()}, ${"TIX-" + suffix})
+      returning ref_code`;
+
+    const model = await buildAdmitTicketsDoc(
+      auth, comp.id, { printedAt: PRINTED }, "https://example.seazn.club",
+    );
+    expect(model.kind).toBe("admit_ticket");
+    const ticket = model.sections[0]!.ticket!;
+    expect(ticket.maskedName).toBeTruthy();
+    expect(ticket.maskedName).not.toBe("Jamie Doe"); // youth-default division masks
+    expect(ticket.qrUrl).toContain(`/r/${ref_code}`);
+  });
+
+  it("buildMyRotaDoc: SEAZN-neutral — no org branding", async () => {
+    const model = await buildMyRotaDoc(randomUUID(), { printedAt: PRINTED }, "https://example.seazn.club");
+    expect(model.kind).toBe("officials_rota");
+    expect(model.branding).toBeUndefined();
+  });
+
+  it("Task 14: officials rota + admit tickets export plain for Community (V285), branded for Pro", async () => {
+    const { auth: freeAuth } = await seedOrg("community");
+    const { division: freeDiv, comp: freeComp } = await seedDivision(freeAuth);
+    const freeRota = await buildOfficialsRotaDoc(freeAuth, freeDiv.id, { printedAt: PRINTED });
+    expect(freeRota.branding).toBeUndefined();
+    const freeTickets = await buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED }, "https://example.seazn.club");
+    expect(freeTickets.branding).toBeUndefined();
+
+    const { auth: proAuth } = await seedOrg("pro");
+    const { division: proDiv, comp: proComp } = await seedDivision(proAuth);
+    await expect(
+      buildOfficialsRotaDoc(proAuth, proDiv.id, { printedAt: PRINTED }),
+    ).resolves.toBeTruthy();
+    await expect(
+      buildAdmitTicketsDoc(proAuth, proComp.id, { printedAt: PRINTED }, "https://example.seazn.club"),
+    ).resolves.toBeTruthy();
+  });
+
+  it("Task 14: buildMyRotaDoc is scoped to the caller — never leaks another official's assignments", async () => {
+    const { auth } = await seedOrg("pro");
+    const { fixtures } = await seedDivision(auth);
+    await patchFixture(auth, fixtures[0]!.id, {
+      scheduled_at: new Date(Date.now() + 7 * 86_400_000).toISOString(), court_label: "Court 1",
+    });
+    await patchFixture(auth, fixtures[1]!.id, {
+      scheduled_at: new Date(Date.now() + 8 * 86_400_000).toISOString(), court_label: "Court 2",
+    });
+
+    async function makeLinkedOfficial(name: string, fixtureId: string) {
+      const suffix = randomUUID().slice(0, 8);
+      const [{ id: userId }] = await sql<{ id: string }[]>`
+        insert into users (email, display_name, email_verified)
+        values (${`${name}-${suffix}@test.local`}, ${name}, true)
+        returning id`;
+      const [{ id: personId }] = await sql<{ id: string }[]>`
+        insert into persons (org_id, full_name, user_id)
+        values (${auth.orgId}, ${name}, ${userId}) returning id`;
+      const [{ id: officialId }] = await sql<{ id: string }[]>`
+        insert into officials (org_id, person_id, display_name)
+        values (${auth.orgId}, ${personId}, ${name}) returning id`;
+      await sql`
+        insert into fixture_officials (org_id, fixture_id, official_id, role_key, response)
+        values (${auth.orgId}, ${fixtureId}, ${officialId}, 'referee', 'accepted')`;
+      return { userId, officialId };
+    }
+
+    const a = await makeLinkedOfficial("Rota User A", fixtures[0]!.id); // Court 1
+    await makeLinkedOfficial("Rota User B", fixtures[1]!.id); // Court 2
+
+    const model = await buildMyRotaDoc(a.userId, { printedAt: PRINTED }, "https://example.seazn.club");
+    const flat = JSON.stringify(model.sections);
+    // A's own duty (Court 1) shows; B's fixture (Court 2) never leaks in.
+    expect(flat).toContain("Court 1");
+    expect(flat).not.toContain("Court 2");
   });
 });

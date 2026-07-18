@@ -28,13 +28,26 @@ export const DocSection = z.object({
   columnsHint: z.number().int().min(1).max(2).optional(),
   /** Start this section on a fresh page (per-pitch / per-team scoping). */
   pageBreakBefore: z.boolean().optional(),
+  /** Admit-ticket payload (v12/Task 11) — QR carried as a URL, never pixels. */
+  ticket: z
+    .object({
+      maskedName: z.string(),
+      competition: z.string(),
+      dates: z.string(),
+      ref: z.string(),
+      status: z.string(),
+      qrUrl: z.string(),
+      seq: z.number(),
+    })
+    .optional(),
 });
 export type DocSection = z.infer<typeof DocSection>;
 
 export const DocBranding = z.object({
+  orgName: z.string().optional(),
   colors: z.record(z.string(), z.string()).optional(),
   logos: z.array(z.string()).optional(), // storage paths
-  sponsors: z.array(z.string()).optional(),
+  sponsors: z.array(z.object({ name: z.string(), tier: z.string() })).optional(),
 });
 export type DocBranding = z.infer<typeof DocBranding>;
 
@@ -45,6 +58,8 @@ export const DocKind = z.enum([
   "standings",
   "match_report",
   "participants",
+  "officials_rota",
+  "admit_ticket",
 ]);
 export type DocKind = z.infer<typeof DocKind>;
 
@@ -54,9 +69,11 @@ export type PageBreaks = z.infer<typeof PageBreaks>;
 export const DocModel = z.object({
   kind: DocKind,
   title: z.string(), // tournament + division name (1 Sep)
+  description: z.string().optional(), // one-line "what this sheet is"
   meta: z.object({
     printedAt: z.string(), // supplied by the caller — never Date.now()
     footerNote: z.string().optional(),
+    liveUrl: z.string().optional(), // live-page QR payload (Task 12 draws it)
   }),
   branding: DocBranding.optional(), // Pro `exports.branded` — nulled server-side otherwise
   sections: z.array(DocSection),
@@ -106,11 +123,37 @@ export interface ExportParticipantRow {
   position: string;
 }
 
+export interface ExportOfficialDuty {
+  at: string; // pre-formatted venue-local time string (built server-side)
+  court: string | null;
+  compDivision: string;
+  role: string;
+  opponents: string; // "Falcons vs Hawks"
+  response: "pending" | "accepted" | "declined";
+}
+
+export interface ExportOfficialSchedule {
+  officialName: string;
+  duties: ExportOfficialDuty[];
+}
+
+export interface ExportTicket {
+  maskedName: string;
+  competition: string;
+  dates: string;
+  ref: string;
+  status: string; // "CONFIRMED" | "PAID" | ...
+  qrUrl: string; // `${origin}/r/${ref}` — URL only, never pixels
+  seq: number; // 1-based sequence for cutting
+}
+
 export interface BuildOpts {
   printedAt: string;
   pageBreaks?: PageBreaks;
   branding?: DocBranding;
   footerNote?: string;
+  liveUrl?: string;
+  description?: string;
   landscape?: boolean;
   metricColumns?: string[]; // standings extra columns, in order
 }

@@ -1,7 +1,14 @@
 // DocModel goldens (Jul3/06, PROMPT-26 acceptance): stable JSON, not pixels.
 import { describe, expect, it } from "vitest";
-import { buildParticipants, buildRoster, buildStandings, buildTimetable } from "./build.ts";
-import { DocModel, type ExportFixture } from "./types.ts";
+import {
+  buildAdmitTickets,
+  buildOfficialsRota,
+  buildParticipants,
+  buildRoster,
+  buildStandings,
+  buildTimetable,
+} from "./build.ts";
+import { DocBranding, DocModel, type ExportFixture } from "./types.ts";
 import { volleyball } from "../sports/setbased/volleyball.ts";
 
 const OPTS = { printedAt: "2026-07-20T09:00:00.000Z" };
@@ -93,5 +100,49 @@ describe("buildDocModel goldens (Jul3/06 §2)", () => {
     expect(s.table!.rows[0]![2]).toContain("25");
     expect(s.table!.rows[8]![2]).not.toContain("16"); // final set to 15
     expect(s.swatches).toEqual([{ label: "A", color: "#ff0000" }]);
+  });
+
+  it("DocBranding carries tiered sponsors + orgName", () => {
+    const b = DocBranding.parse({
+      orgName: "Riverside SC",
+      colors: { primary: "#123456" },
+      sponsors: [{ name: "Acme", tier: "title" }],
+    });
+    expect(b.sponsors?.[0]).toEqual({ name: "Acme", tier: "title" });
+    expect(b.orgName).toBe("Riverside SC");
+  });
+
+  it("DocModel carries an optional description", () => {
+    const m = DocModel.parse({
+      kind: "timetable", title: "T", meta: { printedAt: "2026-07-19" },
+      description: "All fixtures, in play order.", sections: [],
+    });
+    expect(m.description).toBe("All fixtures, in play order.");
+  });
+
+  it("buildOfficialsRota: one section per official with a duties table", () => {
+    const m = buildOfficialsRota("Summer League — Officials", [
+      { officialName: "Sam Ref", duties: [
+        { at: "Sat 19 Jul 09:00", court: "1", compDivision: "Summer · Div 1",
+          role: "Referee", opponents: "Falcons vs Hawks", response: "accepted" },
+      ] },
+    ], { printedAt: "2026-07-19", pageBreaks: "per_team" });
+    expect(m.kind).toBe("officials_rota");
+    expect(m.sections).toHaveLength(1);
+    expect(m.sections[0]!.heading).toBe("Sam Ref");
+    expect(m.sections[0]!.table?.rows[0]).toContain("Referee");
+    expect(m.sections[0]!.signatures).toBeTruthy();
+    expect(m.sections[0]!.table?.landscape).toBe(true); // 6 wide columns clip on portrait A4
+  });
+
+  it("buildAdmitTickets: one 2-up section per ticket, QR is a URL not pixels", () => {
+    const m = buildAdmitTickets("Summer League — Tickets", [
+      { maskedName: "S. Ref", competition: "Summer League", dates: "19 Jul",
+        ref: "AB12CD", status: "CONFIRMED", qrUrl: "https://x/r/AB12CD", seq: 1 },
+    ], { printedAt: "2026-07-19" });
+    expect(m.kind).toBe("admit_ticket");
+    expect(m.sections[0]!.columnsHint).toBe(2);
+    expect(m.sections[0]!.ticket?.qrUrl).toBe("https://x/r/AB12CD");
+    expect(JSON.stringify(m)).not.toMatch(/data:image/); // no pixels in the model
   });
 });
