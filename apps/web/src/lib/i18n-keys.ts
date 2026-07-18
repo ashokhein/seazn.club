@@ -722,6 +722,7 @@ export type DictionaryKey =
   | "dlink.revokeNow"
   | "dlink.shownOnce"
   | "dlink.title"
+  | "documents.bracket"
   | "documents.matchSheets"
   | "documents.orderOfPlay"
   | "documents.pdf"

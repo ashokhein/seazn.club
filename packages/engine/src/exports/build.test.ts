@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAdmitTickets,
+  buildBracket,
   buildOfficialsRota,
   buildParticipants,
   buildRoster,
@@ -169,5 +170,51 @@ describe("buildStandings — row badges (PROMPT-60)", () => {
       { printedAt: "2026-07-18T00:00:00Z" },
     );
     expect(model.sections[0]!.table!.rowBadges).toBeUndefined();
+  });
+});
+
+describe("buildBracket (PROMPT-62 §4)", () => {
+  const fx = (
+    id: string, round: number, seq: number,
+    home: string | null, away: string | null, headline: string | null, decided: boolean,
+  ) => ({ id, round_no: round, seq_in_round: seq, home, away, headline, decided });
+
+  const eight = [
+    fx("q1", 0, 1, "Mexico", "Chile", "2–0", true),
+    fx("q2", 0, 2, "Japan", "Ghana", "1–0", true),
+    fx("q3", 0, 3, "France", "Peru", null, false),
+    fx("q4", 0, 4, "Canada", "Italy", null, false),
+    fx("s1", 1, 1, "Mexico", "Japan", null, false),
+    fx("s2", 1, 2, null, null, null, false),
+    fx("f", 2, 1, null, null, null, false),
+  ];
+
+  it("produces a landscape-natured model with the laid-out payload + labels", () => {
+    const model = buildBracket("Cup — Open", eight, { printedAt: "2026-07-18T00:00:00Z" });
+    expect(model.kind).toBe("bracket");
+    expect(model.sections).toEqual([]);
+    expect(model.bracket!.roundLabels).toEqual(["Quarter-finals", "Semi-finals", "Final"]);
+    expect(model.bracket!.rowsPerSide).toBe(2);
+    const final = model.bracket!.nodes.find((n) => n.side === "center");
+    expect(final).toMatchObject({ home: "TBD", away: "TBD", decided: false });
+    const q1 = model.bracket!.nodes.find((n) => n.fixtureId === "q1");
+    expect(q1).toMatchObject({ home: "Mexico", headline: "2–0", decided: true });
+    // deterministic golden: printedAt is an input
+    expect(model.meta.printedAt).toBe("2026-07-18T00:00:00Z");
+  });
+
+  it("labels deep fields with Round of N", () => {
+    // 16-slot field: rounds = 4 → outermost label Round of 16
+    const refs = Array.from({ length: 8 }, (_, i) => fx(`r0-${i}`, 0, i + 1, `A${i}`, `B${i}`, null, false))
+      .concat(Array.from({ length: 4 }, (_, i) => fx(`r1-${i}`, 1, i + 1, null, null, null, false)))
+      .concat(Array.from({ length: 2 }, (_, i) => fx(`r2-${i}`, 2, i + 1, null, null, null, false)))
+      .concat([fx("fin", 3, 1, null, null, null, false)]);
+    const model = buildBracket("Cup", refs, { printedAt: "2026-07-18T00:00:00Z" });
+    expect(model.bracket!.roundLabels).toEqual(["Round of 16", "Quarter-finals", "Semi-finals", "Final"]);
+  });
+
+  it("throws CONFIG_INVALID for shapes the two-sided layout can't take", () => {
+    const ladder = [fx("a", 0, 1, "A", "B", null, false), fx("b", 1, 1, null, null, null, false), fx("c", 2, 1, null, null, null, false)];
+    expect(() => buildBracket("Cup", ladder, { printedAt: "x" })).toThrow(/bracket poster/);
   });
 });

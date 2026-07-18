@@ -13,6 +13,8 @@ import type {
   ExportStandingsRow,
   ExportTicket,
 } from "./types.ts";
+import { EngineError } from "../core/errors.ts";
+import { twoSidedBracket } from "../scheduling/bracket-layout.ts";
 
 function base(
   kind: DocModel["kind"],
@@ -212,4 +214,71 @@ export function buildAdmitTickets(
 ): DocModel {
   const sections: DocSection[] = tickets.map((t) => ({ columnsHint: 2, ticket: t }));
   return base("admit_ticket", title, sections, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Bracket results-poster (PROMPT-62 §4) — the twoSidedBracket layout with
+// names/headlines resolved into a DocBracket payload. Landscape by nature;
+// the renderer scales it onto ONE sheet. Throws CONFIG_INVALID for shapes the
+// two-sided geometry can't lay out (double-elim, stepladder, partial data).
+// ---------------------------------------------------------------------------
+
+export interface ExportBracketFixture {
+  id: string;
+  round_no: number;
+  seq_in_round: number;
+  home: string | null; // resolved display name; null = unresolved feed
+  away: string | null;
+  headline: string | null;
+  decided: boolean;
+}
+
+function bracketRoundLabel(fromEnd: number): string {
+  if (fromEnd === 0) return "Final";
+  if (fromEnd === 1) return "Semi-finals";
+  if (fromEnd === 2) return "Quarter-finals";
+  return `Round of ${2 ** (fromEnd + 1)}`;
+}
+
+export function buildBracket(
+  title: string,
+  fixtures: readonly ExportBracketFixture[],
+  opts: BuildOpts,
+): DocModel {
+  const result = twoSidedBracket(fixtures);
+  if (!result.ok) {
+    throw new EngineError("CONFIG_INVALID", `bracket poster: ${result.reason}`, {});
+  }
+  const layout = result.layout;
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const rowsPerSide = Math.max(
+    1,
+    layout.nodes.filter((n) => n.col === 0 && n.side === "L").length,
+  );
+  return {
+    ...base("bracket", title, [], opts),
+    bracket: {
+      nodes: layout.nodes.map((n) => {
+        const f = byId.get(n.fixtureId)!;
+        return {
+          fixtureId: n.fixtureId,
+          side: n.side,
+          col: n.col,
+          row: n.row,
+          home: f.home ?? "TBD",
+          away: f.away ?? "TBD",
+          headline: f.headline,
+          decided: f.decided,
+        };
+      }),
+      connectors: layout.connectors,
+      rounds: layout.rounds,
+      colsPerSide: layout.colsPerSide,
+      rowsPerSide,
+      roundLabels: Array.from({ length: layout.rounds }, (_, i) =>
+        bracketRoundLabel(layout.rounds - 1 - i),
+      ),
+      ...(layout.thirdPlaceId !== undefined ? { thirdPlaceId: layout.thirdPlaceId } : {}),
+    },
+  };
 }

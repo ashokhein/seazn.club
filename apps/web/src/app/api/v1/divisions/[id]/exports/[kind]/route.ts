@@ -10,6 +10,7 @@ type Ctx = { params: Promise<{ id: string; kind: string }> };
 
 const Kind = z.enum([
   "timetable", "standings", "roster", "participants", "scoresheet", "officials_rota",
+  "bracket", // PROMPT-62 §4 — landscape results poster, pdf-only
 ]);
 const Breaks = z.enum(["auto", "per_pitch", "per_team", "per_division"]);
 
@@ -24,6 +25,9 @@ export async function GET(req: Request, { params }: Ctx) {
     const url = new URL(req.url);
     const format = url.searchParams.get("format") ?? "pdf";
     if (format !== "pdf" && format !== "xlsx") throw new HttpError(400, "format must be pdf or xlsx");
+    if (parsedKind === "bracket" && format !== "pdf") {
+      throw new HttpError(422, "the bracket poster is a PDF-only export");
+    }
     const opts = {
       printedAt: new Date().toISOString(),
       origin: url.origin,

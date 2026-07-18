@@ -9,6 +9,7 @@ import {
   buildOfficialsRota,
   buildParticipants,
   buildRoster,
+  buildBracket,
   buildStandings,
   buildTimetable,
   DocModel,
@@ -178,6 +179,7 @@ const DESCRIPTIONS: Record<string, string> = {
   roster: "Squads by team — sign each player in before play.",
   participants: "All registered players by club and division.",
   scoresheet: "One sheet per match — record the score and sign off.",
+  bracket: "The knockout tree — filled from live results.",
 };
 
 /** The pure model for a division export — separated for golden-style tests;
@@ -185,7 +187,7 @@ const DESCRIPTIONS: Record<string, string> = {
 export async function buildDivisionDocModel(
   auth: AuthCtx,
   divisionId: string,
-  kind: "timetable" | "standings" | "roster" | "participants" | "scoresheet",
+  kind: "timetable" | "standings" | "roster" | "participants" | "scoresheet" | "bracket",
   opts: ExportOpts,
 ): Promise<DocModel> {
   // Exports unlock via plan or an Event Pass on this competition (v3/07 §3).
@@ -341,6 +343,45 @@ export async function buildDivisionDocModel(
           sections,
           pageBreaks: opts.pageBreaks ?? "auto",
         });
+      }
+      case "bracket": {
+        // PROMPT-62 §4: the first knockout stage's tree as a landscape poster.
+        const [stage] = await tx<{ id: string }[]>`
+          select id from stages where division_id = ${divisionId} and kind = 'knockout'
+          order by seq limit 1`;
+        if (!stage) throw new HttpError(422, "this division has no knockout stage to poster");
+        const fixtures = await tx<
+          {
+            id: string; round_no: number; seq_in_round: number;
+            home_entrant_id: string | null; away_entrant_id: string | null;
+            outcome: unknown; headline: string | null;
+          }[]
+        >`
+          select f.id, f.round_no, f.seq_in_round, f.home_entrant_id, f.away_entrant_id,
+                 f.outcome, ms.summary->>'headline' as headline
+          from fixtures f
+          left join match_states ms on ms.fixture_id = f.id
+          where f.stage_id = ${stage.id}
+          order by f.round_no, f.seq_in_round`;
+        if (fixtures.length === 0) {
+          throw new HttpError(422, "the knockout bracket hasn't been generated yet");
+        }
+        const names = await tx<{ id: string; display_name: string }[]>`
+          select id, display_name from entrants where division_id = ${divisionId}`;
+        const nameById = new Map(names.map((n) => [n.id, n.display_name]));
+        return buildBracket(
+          title,
+          fixtures.map((f) => ({
+            id: f.id,
+            round_no: f.round_no,
+            seq_in_round: f.seq_in_round,
+            home: f.home_entrant_id ? (nameById.get(f.home_entrant_id) ?? null) : null,
+            away: f.away_entrant_id ? (nameById.get(f.away_entrant_id) ?? null) : null,
+            headline: f.headline,
+            decided: f.outcome !== null,
+          })),
+          { ...common, ...(liveUrl !== undefined ? { liveUrl } : {}) },
+        );
       }
     }
   });

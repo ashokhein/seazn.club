@@ -6,6 +6,7 @@ import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import type { DocModel, DocSection, DocTable } from "@seazn/engine/exports";
 import { PALETTE, FONT, registerFonts, eyebrowFor, qrBuffer } from "./doc-theme";
+import { bracketPageGeometry } from "./doc-bracket-geometry";
 
 const MARGIN = 40;
 
@@ -86,7 +87,51 @@ function sponsorLine(sponsors: { name: string; tier: string }[]): string {
 }
 
 function isLandscape(model: DocModel): boolean {
-  return model.sections.some((s) => s.table?.landscape === true);
+  // The bracket poster is landscape by nature (PROMPT-62 §4).
+  return model.kind === "bracket" || model.sections.some((s) => s.table?.landscape === true);
+}
+
+/** Bracket poster (PROMPT-62 §4): one landscape sheet, scale-to-fit — the
+ *  geometry (and its in-box guarantee) lives in doc-bracket-geometry.ts. */
+function drawBracket(doc: PDFKit.PDFDocument, model: DocModel): void {
+  const b = model.bracket;
+  if (!b) return;
+  const box = {
+    x: MARGIN,
+    y: doc.y + 6,
+    w: doc.page.width - MARGIN * 2,
+    h: doc.page.height - MARGIN - 24 - (doc.y + 6),
+  };
+  const g = bracketPageGeometry(b, box);
+  for (const label of g.labels) {
+    doc.font(FONT.display).fontSize(8).fillColor(PALETTE.mute)
+      .text(label.text.toUpperCase(), label.x, label.y, {
+        width: label.w, align: "center", lineBreak: false, ellipsis: true,
+      });
+  }
+  for (const line of g.lines) {
+    const [first, ...rest] = line.points;
+    doc.moveTo(first![0], first![1]);
+    for (const [x, y] of rest) doc.lineTo(x, y);
+    doc.strokeColor(PALETTE.hairline).lineWidth(1).stroke();
+  }
+  for (const r of g.rects) {
+    doc.roundedRect(r.x, r.y, r.w, r.h, 4).fillColor("#ffffff").fill();
+    doc.roundedRect(r.x, r.y, r.w, r.h, 4).strokeColor(PALETTE.hairline).lineWidth(0.8).stroke();
+    if (r.decided) {
+      doc.rect(r.x, r.y, 2, r.h).fill(PALETTE.night);
+    }
+    const textW = r.w - 10 - (r.headline !== null ? 34 : 0);
+    doc.font(r.isCenter ? FONT.bodyMed : FONT.body).fontSize(8).fillColor(PALETTE.ink)
+      .text(r.home, r.x + 6, r.y + r.h / 2 - 10, { width: textW, lineBreak: false, ellipsis: true });
+    doc.font(FONT.body).fontSize(8).fillColor(PALETTE.ink)
+      .text(r.away, r.x + 6, r.y + r.h / 2 + 2, { width: textW, lineBreak: false, ellipsis: true });
+    if (r.headline !== null) {
+      doc.font(FONT.bodyMed).fontSize(8).fillColor(PALETTE.ink)
+        .text(r.headline, r.x + r.w - 36, r.y + r.h / 2 - 4, { width: 32, align: "right", lineBreak: false });
+    }
+  }
+  doc.fillColor(PALETTE.ink);
 }
 
 function isNumericColumn(table: DocTable, i: number): boolean {
@@ -330,6 +375,9 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
       if (url && !badgeBuffers.has(url)) badgeBuffers.set(url, await resolveLogo(url));
     }
   }
+
+  // PROMPT-62 §4: the bracket poster draws its own body (sections are empty).
+  if (model.bracket !== undefined) drawBracket(doc, model);
 
   // columnsHint 2 (12 Jun "two per A4"): pair sections onto one page by
   // separating with a rule instead of a page break.

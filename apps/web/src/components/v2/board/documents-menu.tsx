@@ -47,6 +47,12 @@ export function DocumentsMenu({
       base: `/api/v1/competitions/${competitionId}/exports/tickets`,
       xlsx: false,
     },
+    {
+      // PROMPT-62 §4 — landscape results poster (422s until a knockout exists).
+      label: msg("documents.bracket"),
+      base: `/api/v1/divisions/${divisionId}/exports/bracket`,
+      xlsx: false,
+    },
   ];
 
   return (
