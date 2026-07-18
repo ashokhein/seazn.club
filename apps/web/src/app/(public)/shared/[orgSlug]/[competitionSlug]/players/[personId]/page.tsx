@@ -5,6 +5,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { getPublicPlayer } from "@/server/public-site/data";
+import { playerMetaDescription } from "@/lib/public-meta";
 
 export const revalidate = 300; // doc 09 §3: entrant/player pages revalidate 300
 
@@ -25,6 +26,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!data) return {};
   return {
     title: `${data.player.name} — ${data.competition.name}`,
+    description: playerMetaDescription(data.player.name, data.competition.name),
     ...(data.competition.visibility === "unlisted"
       ? { robots: { index: false, follow: false } }
       : {}),
