@@ -46,7 +46,7 @@ describe("OfficiatingLane — pending invites (v11.1)", () => {
 
   it("renders the pending-invites card in pending-only mode (isOfficial=false)", () => {
     const html = renderToStaticMarkup(
-      <OfficiatingLane isOfficial={false} assignments={[]} blackouts={[]} pendingClaims={[claim]} />,
+      <OfficiatingLane isOfficial={false} assignments={[]} completed={[]} blackouts={[]} pendingClaims={[claim]} />,
     );
     expect(html).toContain("Riverside Cup");
     expect(html).toContain("Priya Ref");
@@ -58,7 +58,7 @@ describe("OfficiatingLane — pending invites (v11.1)", () => {
 
   it("renders nothing when there is neither a link nor a pending invite (caller wouldn't mount it)", () => {
     const html = renderToStaticMarkup(
-      <OfficiatingLane isOfficial={false} assignments={[]} blackouts={[]} pendingClaims={[]} />,
+      <OfficiatingLane isOfficial={false} assignments={[]} completed={[]} blackouts={[]} pendingClaims={[]} />,
     );
     // still a valid empty section — the /me page itself decides whether to
     // mount OfficiatingLane at all (is_official || pendingClaims.length>0).
@@ -68,7 +68,7 @@ describe("OfficiatingLane — pending invites (v11.1)", () => {
 
   it("shows both the pending card AND the assignments/blackouts sections once linked", () => {
     const html = renderToStaticMarkup(
-      <OfficiatingLane isOfficial assignments={[]} blackouts={[]} pendingClaims={[claim]} />,
+      <OfficiatingLane isOfficial assignments={[]} completed={[]} blackouts={[]} pendingClaims={[claim]} />,
     );
     expect(html).toContain("Riverside Cup");
     expect(html).toContain("No matches assigned to you yet.");
@@ -90,7 +90,7 @@ describe("OfficiatingLane — score action repoints at the full board", () => {
       fixture_no: 7,
     });
     const html = renderToStaticMarkup(
-      <OfficiatingLane isOfficial assignments={[a]} blackouts={[]} pendingClaims={[]} />,
+      <OfficiatingLane isOfficial assignments={[a]} completed={[]} blackouts={[]} pendingClaims={[]} />,
     );
     const expectedHref = routes.fixture("riverside", "summer", "u11", 7);
     expect(expectedHref).toBe("/o/riverside/c/summer/d/u11/f/7");
@@ -102,8 +102,30 @@ describe("OfficiatingLane — score action repoints at the full board", () => {
   it("does not render a score control for a declined assignment", () => {
     const a = makeAssignment({ response: "declined", fixture_status: "scheduled" });
     const html = renderToStaticMarkup(
-      <OfficiatingLane isOfficial assignments={[a]} blackouts={[]} pendingClaims={[]} />,
+      <OfficiatingLane isOfficial assignments={[a]} completed={[]} blackouts={[]} pendingClaims={[]} />,
     );
     expect(html).not.toContain("Score this match");
+  });
+});
+
+// Finished matches are collapsed behind a "Completed matches" disclosure so the
+// lane leads with outstanding duties; the link expands the list.
+describe("OfficiatingLane — completed matches panel", () => {
+  it("collapses finished matches behind a 'Completed matches' disclosure", () => {
+    const done = makeAssignment({ fixture_status: "decided", home_name: "Falcons", away_name: "Hawks" });
+    const html = renderToStaticMarkup(
+      <OfficiatingLane isOfficial assignments={[]} completed={[done]} blackouts={[]} pendingClaims={[]} />,
+    );
+    expect(html).toContain("Completed matches (1)");
+    expect(html).toContain("<details");
+    expect(html).toContain("Falcons");
+    expect(html).toContain("Hawks");
+  });
+
+  it("renders no completed disclosure when there are none", () => {
+    const html = renderToStaticMarkup(
+      <OfficiatingLane isOfficial assignments={[]} completed={[]} blackouts={[]} pendingClaims={[]} />,
+    );
+    expect(html).not.toContain("Completed matches");
   });
 });

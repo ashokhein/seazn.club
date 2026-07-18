@@ -1744,6 +1744,7 @@
   "me.off.blackoutEmpty": "No blackout dates yet.",
   "me.off.remove": "Remove",
   "me.off.rota": "Download my rota",
+  "me.off.completed": "Completed matches ({count})",
   "me.off.comingSoon": "Coming soon",
   "me.off.failed": "Something went wrong — try again",
   "me.off.role": "as {role}",

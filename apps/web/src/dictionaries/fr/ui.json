@@ -1744,6 +1744,7 @@
   "me.off.blackoutEmpty": "Aucune date d'indisponibilité pour l'instant.",
   "me.off.remove": "Retirer",
   "me.off.rota": "Télécharger mon planning",
+  "me.off.completed": "Matchs terminés ({count})",
   "me.off.comingSoon": "Bientôt disponible",
   "me.off.failed": "Une erreur est survenue — réessayez",
   "me.off.role": "en tant que {role}",

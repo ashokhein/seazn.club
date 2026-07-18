@@ -202,6 +202,7 @@ export default async function MePage({
           <OfficiatingLane
             isOfficial={officiating.is_official}
             assignments={officiating.assignments}
+            completed={officiating.completed}
             blackouts={officiating.blackouts}
             pendingClaims={pendingOfficiatingClaims}
           />

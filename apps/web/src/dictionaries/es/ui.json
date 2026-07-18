@@ -1744,6 +1744,7 @@
   "me.off.blackoutEmpty": "Aún no hay fechas bloqueadas.",
   "me.off.remove": "Quitar",
   "me.off.rota": "Descargar mi calendario",
+  "me.off.completed": "Partidos finalizados ({count})",
   "me.off.comingSoon": "Próximamente",
   "me.off.failed": "Algo salió mal — inténtalo de nuevo",
   "me.off.role": "como {role}",

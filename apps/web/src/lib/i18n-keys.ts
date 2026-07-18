@@ -1107,6 +1107,7 @@ export type DictionaryKey =
   | "me.off.blackouts"
   | "me.off.cancel"
   | "me.off.comingSoon"
+  | "me.off.completed"
   | "me.off.confirmDecline"
   | "me.off.decline"
   | "me.off.declined"
