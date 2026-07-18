@@ -38,7 +38,7 @@ export async function generateMetadata({
     openGraph: {
       title: t(d, "home.og.title"),
       description: t(d, "home.og.description"),
-      url: "https://seazn.club",
+      url: "/",
       siteName: "Seazn Club",
       type: "website",
     },

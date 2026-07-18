@@ -13,6 +13,7 @@ import { publicThemeStyle } from "@/lib/public-theme";
 import { hasFeature } from "@/lib/entitlements";
 import { resolveSponsors, type SponsorTier } from "@/server/usecases/sponsors";
 import { renderProse } from "@/lib/prose";
+import { competitionMetaDescription } from "@/lib/public-meta";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
 import { ShareBar } from "@/components/share-bar";
 
@@ -39,7 +40,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!data) return {};
   return {
     title: `${data.competition.name} — ${data.org.name}`,
-    description: data.competition.description?.slice(0, 160) ?? undefined,
+    description: competitionMetaDescription(
+      data.competition.name,
+      data.org.name,
+      data.competition.description,
+    ),
     // Doc 09 §1: unlisted = link-only. Keep crawlers out but the page up.
     ...(data.competition.visibility === "unlisted"
       ? { robots: { index: false, follow: false } }

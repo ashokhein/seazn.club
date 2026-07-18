@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { siteOrigin } from "@/lib/site-origin";
 
 export default function robots(): MetadataRoute.Robots {
   return {
@@ -9,6 +10,6 @@ export default function robots(): MetadataRoute.Robots {
         disallow: ["/o/", "/dashboard", "/admin", "/api/", "/settings", "/competitions/", "/divisions/", "/fixtures/", "/directory", "/players", "/people", "/clubs", "/orgs/"],
       },
     ],
-    sitemap: "https://seazn.club/sitemap.xml",
+    sitemap: `${siteOrigin()}/sitemap.xml`,
   };
 }

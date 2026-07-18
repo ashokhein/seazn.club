@@ -9,7 +9,8 @@ export const metadata: Metadata = {
   title: "Games — free browser games | Seazn Club",
   description:
     "Play free browser games by Seazn Club. Learn-to-play quests and quick challenges — no install, no sign-up.",
-  alternates: { canonical: "https://seazn.club/games" },
+  // Relative — resolved against the root layout's metadataBase.
+  alternates: { canonical: "/games" },
 };
 
 export default function GamesPage() {
