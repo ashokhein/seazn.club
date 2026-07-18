@@ -22,8 +22,11 @@ async function seedOrg(): Promise<Seed> {
   const s = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Keys " + s}, ${"keys-" + s}) returning id`;
-  // Community org with an api.access override — exercises the override path
-  // and puts the key on the 60 rpm (free) budget.
+  // Community org with api.access + api.write overrides — exercises the
+  // override path and puts the key on the 60 rpm (free) budget. This suite
+  // is about scope authorization at the auth door, not entitlement gating
+  // (that's covered by the api.write matrix row, V286), so manage/write
+  // scopes are unblocked here via override.
   await sql`
     insert into subscriptions (org_id, plan_key, status)
     values (${orgId}, 'community', 'active')
@@ -31,6 +34,10 @@ async function seedOrg(): Promise<Seed> {
   await sql`
     insert into org_entitlement_overrides (org_id, feature_key, bool_value, reason)
     values (${orgId}, 'api.access', true, 'test')
+    on conflict (org_id, feature_key) do update set bool_value = true`;
+  await sql`
+    insert into org_entitlement_overrides (org_id, feature_key, bool_value, reason)
+    values (${orgId}, 'api.write', true, 'test')
     on conflict (org_id, feature_key) do update set bool_value = true`;
   const mk = async (name: string) => {
     const [{ id }] = await sql<{ id: string }[]>`

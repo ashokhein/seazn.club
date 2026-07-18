@@ -126,10 +126,10 @@ const MATRIX: { feature: string; plan: Plan; allowed: boolean }[] = [
   { feature: "cricket.dls",                   plan: "pro",       allowed: true },
   { feature: "api.access",                    plan: "community", allowed: false },
   { feature: "api.access",                    plan: "pro",       allowed: true },
-  // v3/08 §2 (V265): the Business api.write rung died with the v3 Business
-  // scrub — write/manage keys are plain Pro under api.access (a community
-  // org's write-key attempt now 402s on api.access, covered above).
-  { feature: "api.write",                     plan: "pro",       allowed: true },
+  // V286 re-arms api.write above Pro: score/manage keys need Pro Plus (a
+  // community org's write-key attempt still 402s on api.access first, above).
+  { feature: "api.write",                     plan: "pro",       allowed: false },
+  { feature: "api.write",                     plan: "pro_plus",  allowed: true },
 ];
 
 async function probe(feature: string, auth: AuthCtx): Promise<() => Promise<unknown>> {

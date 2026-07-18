@@ -340,13 +340,18 @@ describe.skipIf(!HAS_DB)("/api/v1 service layer", () => {
     await expect(createApiKey(auth, { name: "ci", scopes: ["read"] })).rejects.toBeInstanceOf(
       PaymentRequiredError,
     );
-    // Pro-style override flips the gate.
+    // Pro-style override flips the read-key gate; Pro Plus-style override
+    // (V286) flips the write-key gate for the manage scope below.
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
       values (${auth.orgId}, 'api.access', true)
       on conflict (org_id, feature_key) do update set bool_value = true`;
-    // v3/08 §2 (V265): scope choice is the org's own — legacy "write" input
-    // is accepted and stored as manage; no Business api.write rung anymore.
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+      values (${auth.orgId}, 'api.write', true)
+      on conflict (org_id, feature_key) do update set bool_value = true`;
+    // v3/08 §2: scope choice is the org's own — legacy "write" input is
+    // accepted and stored as manage.
     const key = await createApiKey(auth, { name: "ci", scopes: ["read", "write"] });
     expect(key.secret.startsWith("sc_")).toBe(true);
     expect(key.scopes).toContain("manage");
