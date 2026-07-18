@@ -176,6 +176,12 @@ test.describe.serial("pro lifecycle", () => {
   }) => {
     orgSlug = (await activeOrg(page)).slug;
 
+    // G9: the console division header deep-links to this public page.
+    await page.goto(`/divisions/${divisionId}`);
+    await expect(
+      page.locator(`a[href="/shared/${orgSlug}/${competitionSlug}/${divisionSlug}"]`),
+    ).toBeVisible({ timeout: 20_000 });
+
     // Public competition page lists the division.
     await page.goto(`/shared/${orgSlug}/${competitionSlug}`);
     await expect(page.getByText("Open").first()).toBeVisible({ timeout: 20_000 });
