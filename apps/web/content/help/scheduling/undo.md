@@ -10,7 +10,7 @@ Schedule edits are a **history**, like a document: undo steps back one change, r
 
 A **save point** bookmarks the timetable exactly as it is now — every kick-off time and court. Made a mess experimenting? **Restore** rewinds the schedule to the bookmark by undoing each change since, one by one.
 
-Match results are never touched by either: if rewinding would erase a played result, the restore stops right there and tells you. One save point is free; more need Pro.
+Match results are never touched by either: if rewinding would erase a played result, the restore stops right there and tells you. **Community keeps 1 save point per division, Pro keeps 5, and Pro Plus is unlimited.**
 
 ## Common questions
 

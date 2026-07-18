@@ -30,6 +30,7 @@ export const EVENTS = {
   // In-app billing management (v3/11) — the portal-replacement surface.
   BILLING_CARD_ADDED: "billing_card_added",
   BILLING_INTERVAL_CHANGED: "billing_interval_changed",
+  BILLING_PLAN_CHANGED: "billing_plan_changed",
   SUBSCRIPTION_CANCEL_SCHEDULED: "subscription_cancel_scheduled",
   SUBSCRIPTION_RESUMED: "subscription_resumed",
   // PLG growth loops (2026-07-17 plan) — distribution + referral.
@@ -38,6 +39,8 @@ export const EVENTS = {
   PLAYER_STARTED_OWN_ORG: "player_started_own_org",
   COMPETITION_MADE_PUBLIC: "competition_made_public",
   EMBED_RENDERED: "embed_rendered",
+  /** Pricing page: visitor opened the hidden Pro Plus offer. */
+  PRICING_PLUS_REVEALED: "pricing_plus_revealed",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];

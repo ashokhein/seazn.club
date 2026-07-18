@@ -215,11 +215,13 @@ test.describe.serial("community lifecycle", () => {
     });
   });
 
-  test("exports are Pro-only", async ({ request }) => {
+  test("plain exports are free since V285 (branded chrome stays Pro)", async ({ request }) => {
+    // V285 flipped community `exports` to true — clean tables + "Powered by
+    // seazn.club" footer; `exports.branded` (courtside chrome) stays Pro.
     const res = await request.get(
       `/api/v1/competitions/${competitionId}/exports/timetable`,
     );
-    expect(res.status()).toBe(402);
+    expect(res.status()).toBe(200);
   });
 
   test("advanced formats (ladder) are gated for community", async ({ request }) => {

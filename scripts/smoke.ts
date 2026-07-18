@@ -312,6 +312,11 @@ async function main() {
   // /help + /developers, scoped keys, OG/poster/embed/sponsors — pro + free.
   await v3ContentApiSuite(admin, org2.id, renamed.slug);
 
+  // --- pro-plus-tier (Task 11): community per-fixture-official + save-point
+  // caps, api.write re-armed above Pro, Pro Plus lifting both — own fresh
+  // org, restores its own plan before returning (shared-DB poison trap).
+  await proPlusSuite();
+
   // --- PROMPT-36 pricing v3: free caps, Event Pass lift + scope isolation,
   // pro interplay, pass survival after downgrade — and the /start funnel
   // end-to-end (draft → claim link → inside the created competition).
@@ -1243,6 +1248,133 @@ async function grantPass(orgId: string, competitionId: string): Promise<void> {
   } finally {
     await sql.end();
   }
+}
+
+/** pro-plus-tier (Task 11, spec §1): community's per-fixture-official cap
+ *  (1) and save-point cap (1) 402, api.write (any write-capable key scope —
+ *  score or manage) is re-armed above Pro — Pro's read-only keys stay free
+ *  but a score- or manage-scope key still needs Pro Plus — and Pro Plus
+ *  lifts both quotas plus both key scopes. Runs
+ *  on its own fresh community owner (never touches org/org2 from main()),
+ *  but still restores the org's own plan at the end (shared-DB poison trap:
+ *  leave a flipped org as found in case a later suite lands above this one). */
+async function proPlusSuite(): Promise<void> {
+  const owner = newSession();
+  const who = await signIn(owner, `proplus_${tag}@example.com`);
+  const orgId = who.org_id;
+
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(owner, "/api/v1/competitions", "POST", { name: `Plus Probe ${tag}` }),
+  );
+  const div = v1data<{ id: string; slug: string }>(
+    await v1(owner, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await v1(owner, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+    { kind: "individual", display_name: `Plus A ${tag}`, seed: 1 },
+    { kind: "individual", display_name: `Plus B ${tag}`, seed: 2 },
+  ]);
+  const stage = v1data<{ id: string }>(
+    await v1(owner, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1, kind: "league", name: "League",
+    }),
+  );
+  const gen = await v1(owner, `/api/v1/stages/${stage.id}/generate`, "POST");
+  const fixtureId = v1data<{ fixtures: { id: string }[] }>(gen).fixtures[0]!.id;
+  await v1(owner, `/api/v1/divisions/${div.id}/start`, "POST");
+
+  // (a) Community: a fixture already covers ONE official free on every plan
+  // (Jul3/02 §5) — a 2nd distinct official on the SAME fixture 402s.
+  const offA = v1data<{ id: string }>(
+    await v1(owner, "/api/v1/officials", "POST", {
+      display_name: `Plus Ref A ${tag}`, role_keys: ["referee"],
+    }),
+  );
+  const offB = v1data<{ id: string }>(
+    await v1(owner, "/api/v1/officials", "POST", {
+      display_name: `Plus Ref B ${tag}`, role_keys: ["referee"],
+    }),
+  );
+  const setTwoOfficials = () =>
+    v1(owner, `/api/v1/fixtures/${fixtureId}/officials`, "PATCH", {
+      set: [
+        { official_id: offA.id, role_key: "referee", locked: false },
+        { official_id: offB.id, role_key: "referee", locked: false },
+      ],
+    });
+  const officialsDenied = await setTwoOfficials();
+  check(
+    "pp: community 402s a 2nd official on one fixture (officials.per_fixture.max)",
+    officialsDenied.status === 402 &&
+      (officialsDenied.json.error as { feature_key?: string } | undefined)?.feature_key ===
+        "officials.per_fixture.max",
+  );
+
+  // (a) Community: the 1st save point is free, the 2nd 402s.
+  const cp1 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
+    label: `plus 1 ${tag}`,
+  });
+  check("pp: community's first save point is free", cp1.status === 201);
+  const cp2 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
+    label: `plus 2 ${tag}`,
+  });
+  check(
+    "pp: community 402s a 2nd save point (schedule.checkpoints.max)",
+    cp2.status === 402 &&
+      (cp2.json.error as { feature_key?: string } | undefined)?.feature_key === "schedule.checkpoints.max",
+  );
+
+  // (b) Pro: read-only keys stay free (api.access), but a score- or
+  // manage-scope key still needs Pro Plus — V290 re-arms the above-Pro rung
+  // (api.write).
+  await setPlan(orgId, "pro");
+  const proScoreKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
+    name: "plus score", scopes: ["score"],
+  });
+  check(
+    "pp: pro 402s a score-scope key (api.write is Pro Plus only)",
+    proScoreKey.status === 402 &&
+      (proScoreKey.json.error as { feature_key?: string } | undefined)?.feature_key === "api.write",
+  );
+  const proManageKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
+    name: "plus manage", scopes: ["manage"],
+  });
+  check(
+    "pp: pro 402s a manage-scope key (api.write is Pro Plus only)",
+    proManageKey.status === 402 &&
+      (proManageKey.json.error as { feature_key?: string } | undefined)?.feature_key === "api.write",
+  );
+
+  // (c) Pro Plus: both quota gates lift and both write-capable key scopes mint.
+  await setPlan(orgId, "pro_plus");
+  const officialsOk = await setTwoOfficials();
+  check("pp: pro_plus lifts officials.per_fixture.max", officialsOk.status === 200);
+  const cp3 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
+    label: `plus 3 ${tag}`,
+  });
+  check("pp: pro_plus lifts schedule.checkpoints.max", cp3.status === 201);
+  const plusManageKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
+    name: "plus manage", scopes: ["manage"],
+  });
+  check("pp: pro_plus mints a manage-scope key", plusManageKey.status === 201);
+
+  // (d) /pricing renders the matrix marker + the Pro Plus offer — marketing
+  // never drifts from what the resolver enforces (spec §5).
+  const pricing = await html(newSession(), "/en/pricing");
+  check(
+    "pp: /pricing carries the comparison table + Pro Plus offer",
+    pricing.status === 200 &&
+      pricing.body.includes("data-pricing-matrix") &&
+      pricing.body.includes("Pro Plus"),
+  );
+
+  // Restore: this org is never touched by another suite in main(), but leave
+  // it as found in case a later suite lands above this one (poison trap).
+  await setPlan(orgId, "community");
 }
 
 /** PROMPT-36 (v3/07 §2–3): the plan matrix v3 + Event Pass, free → pass →
@@ -3114,6 +3246,7 @@ async function cleanup(tag: string): Promise<void> {
     `walkin_${tag}@example.com`,
     `ui_free_${tag}@example.com`,
     `pass_${tag}@example.com`,
+    `proplus_${tag}@example.com`,
     `funnel_${tag}@example.com`,
     `tos_${tag}@example.com`,
     `player_${tag}@example.com`,

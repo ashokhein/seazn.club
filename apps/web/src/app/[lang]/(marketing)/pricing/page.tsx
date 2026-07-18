@@ -1,13 +1,20 @@
 import type { Metadata } from "next";
+import { Fragment } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { sql } from "@/lib/db";
 import { MarketingShell } from "@/components/marketing/marketing-shell";
+import { PlusReveal } from "@/components/marketing/plus-reveal";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { buildPricingRows, type MatrixData } from "@/lib/pricing-matrix";
-import { FREE_FEATURES, PASS_FEATURES, PRO_FEATURES } from "@/lib/pricing-cards";
-import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency";
+import { buildPricingSections, type MatrixData } from "@/lib/pricing-matrix";
+import {
+  FREE_FEATURES,
+  PASS_FEATURES,
+  PRO_FEATURES,
+  PLUS_CARD_FEATURES,
+} from "@/lib/pricing-cards";
+import { formatMinor, passPrice, proPrice, proPlusPrice, type Currency } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { CurrencySwitcher } from "@/components/currency-switcher";
 import { ProPriceCard } from "@/components/pro-price-card";
@@ -26,6 +33,7 @@ const FAQ_KEYS = [
   "currencies",
   "annual",
   "cancel",
+  "proPlus",
 ] as const;
 
 export async function generateMetadata({
@@ -55,7 +63,7 @@ async function loadMatrix(): Promise<MatrixData> {
   >`
     select plan_key, feature_key, bool_value, int_value
     from plan_entitlements
-    where plan_key in ('community', 'event_pass', 'pro')`;
+    where plan_key in ('community', 'event_pass', 'pro', 'pro_plus')`;
   const data: MatrixData = {};
   for (const r of rows) {
     (data[r.feature_key] ??= {})[r.plan_key] = {
@@ -77,12 +85,19 @@ export default async function PricingPage({
 
   const currency: Currency = await preferredCurrency(null);
   // The comparison table renders from plan_entitlements so marketing can
-  // never drift from what the resolver enforces (v3/07 §5). DB may be
-  // unreachable at build: fail soft to an empty table.
-  const rows = buildPricingRows(await loadMatrix().catch(() => ({})));
+  // never drift from what the resolver enforces (spec 2026-07-18
+  // pro-plus-tier §5). DB may be unreachable at build: fail soft to an empty
+  // table.
+  const sections = buildPricingSections(await loadMatrix().catch(() => ({})));
 
   const passLabel = formatMinor(passPrice(currency), currency);
   const proMonthly = formatMinor(proPrice("monthly", currency), currency);
+  const plusMonthly = formatMinor(proPlusPrice("monthly", currency), currency);
+
+  // Most matrix cells are locale-free literals (numbers, ∞, ✓, —); only the
+  // "passedEvent" prose cell is a real dict key (see lib/pricing-matrix).
+  const cellText = (value: string): string =>
+    value.startsWith("pricing.matrix.") ? t(d, value) : value;
 
   return (
     <>
@@ -162,8 +177,50 @@ export default async function PricingPage({
               />
             </div>
 
-            {/* Feature comparison table — rendered from plan_entitlements. */}
-            {rows.length > 0 && (
+            {/* Pro Plus — progressively disclosed (spec §4): the hero grid
+                stays 3-up; visitors who need more scale ask for the fourth
+                offer instead of it being shown by default. */}
+            <div className="mt-6">
+              <PlusReveal teaser={t(d, "pricing.plus.teaser")} cta={t(d, "pricing.plus.reveal")}>
+                <div className="mx-auto max-w-md">
+                  <div className="card flex flex-col border-indigo-300 bg-indigo-50 p-8">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-indigo-500">
+                      {t(d, "pricing.plus.name")}
+                    </p>
+                    <p className="mb-1 text-4xl font-bold text-indigo-900">
+                      {plusMonthly}
+                      <span className="text-lg font-normal text-slate-500">
+                        {t(d, "pricing.plus.per")}
+                      </span>
+                    </p>
+                    <p className="mb-6 text-sm text-slate-500">{t(d, "pricing.plus.note")}</p>
+                    <ul className="mb-8 flex-1 space-y-2.5 text-sm text-slate-600">
+                      {/* PLUS_CARD_FEATURES pins the count/order (matches
+                          Task 8's billing.plus.f1-f5); the text itself is
+                          fully localized, unlike the other three cards'
+                          hardcoded-English bullet arrays. */}
+                      {PLUS_CARD_FEATURES.map((_, i) => (
+                        <li key={i} className="flex items-start gap-2">
+                          <span className="mt-0.5 text-indigo-500">✓</span>
+                          {t(d, `pricing.plus.f${i + 1}`)}
+                        </li>
+                      ))}
+                    </ul>
+                    <Link
+                      href="/login?tab=signup"
+                      className="btn w-full justify-center bg-indigo-600 py-3 text-white hover:bg-indigo-700"
+                    >
+                      {t(d, "pricing.plus.cta")}
+                    </Link>
+                  </div>
+                </div>
+              </PlusReveal>
+            </div>
+
+            {/* Feature comparison table — rendered from plan_entitlements,
+                grouped into ENTITLEMENT_DOMAINS sections. Always 4 plan
+                columns regardless of the Pro Plus reveal above. */}
+            {sections.length > 0 && (
               <div className="scroll-x scroll-x-fade mt-12 rounded-2xl border border-purple-100 bg-white">
                 <table className="table w-full" data-pricing-matrix>
                   <thead>
@@ -172,16 +229,30 @@ export default async function PricingPage({
                       <th className="py-3 text-center">{t(d, "pricing.table.community")}</th>
                       <th className="py-3 text-center">{t(d, "pricing.table.pass")}</th>
                       <th className="py-3 text-center">{t(d, "pricing.table.pro")}</th>
+                      <th className="py-3 text-center">{t(d, "pricing.table.proPlus")}</th>
                     </tr>
                   </thead>
                   <tbody className="text-sm">
-                    {rows.map((r) => (
-                      <tr key={r.label}>
-                        <td className="font-medium text-slate-700">{r.label}</td>
-                        <td className="text-center text-slate-500">{r.free}</td>
-                        <td className="text-center text-[#4d7c0f]">{r.pass}</td>
-                        <td className="text-center font-medium text-purple-700">{r.pro}</td>
-                      </tr>
+                    {sections.map((section) => (
+                      <Fragment key={section.labelKey}>
+                        <tr>
+                          <td
+                            colSpan={5}
+                            className="bg-purple-50/60 pt-5 pb-1.5 text-xs font-semibold uppercase tracking-wider text-purple-500"
+                          >
+                            {t(d, section.labelKey)}
+                          </td>
+                        </tr>
+                        {section.rows.map((r) => (
+                          <tr key={r.labelKey}>
+                            <td className="font-medium text-slate-700">{t(d, r.labelKey)}</td>
+                            <td className="text-center text-slate-500">{cellText(r.free)}</td>
+                            <td className="text-center text-[#4d7c0f]">{cellText(r.pass)}</td>
+                            <td className="text-center font-medium text-purple-700">{cellText(r.pro)}</td>
+                            <td className="text-center font-medium text-indigo-700">{cellText(r.plus)}</td>
+                          </tr>
+                        ))}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { apiJson, seedScoredDivision, TAG } from "./helpers";
+import { apiJson, seedScoredDivision, setOrgPlanBySql, TAG } from "./helpers";
 
 // PROMPT-22/23/24/26 schedule console (now tabbed): each panel mounts on its
 // tab AND its core interaction works end-to-end (real POSTs, not just render).
@@ -19,6 +19,16 @@ test("tabs mount: board exports + each panel", async ({ page, request }) => {
 });
 
 test("officials (PROMPT-22): propose → apply an auto-assignment", async ({ page, request }) => {
+  // V290: officials.auto is Pro Plus. Run this flow in a FRESH org flipped to
+  // pro_plus by id — a fresh org has no cached entitlements, and flipping the
+  // shared setup org would race the 5-min ent cache primed by sibling tests.
+  const org = await apiJson<{ id: string }>(request, "/api/orgs", "POST", {
+    name: `Panels ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
+  });
+  await setOrgPlanBySql({ orgId: org.data!.id }, "pro_plus");
+  const activated = await apiJson(request, "/api/orgs/active", "POST", { org_id: org.data!.id });
+  expect(activated.status).toBeLessThan(300);
+
   // Officials attach to timed, UNDECIDED fixtures — keep results off so the
   // auto-assign engine has something to place.
   const { divisionId } = await seedScoredDivision(request, undefined, { decide: false });

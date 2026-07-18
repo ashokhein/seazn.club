@@ -34,7 +34,9 @@ const GENERIC_CONFIG = {
   progressScore: false,
 };
 
-async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthCtx }> {
+async function seedOrg(
+  plan: "community" | "pro" | "pro_plus" = "pro",
+): Promise<{ auth: AuthCtx }> {
   const suffix = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"His " + suffix}, ${"his-" + suffix})
@@ -215,13 +217,30 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
       select court_label from fixtures where id = ${fixtures[0]!.id}`;
     expect(row!.court_label).toBe("C1");
 
-    // Community: first checkpoint free, second 402
+    // Community: first checkpoint free, second 402 (quota, not versioning)
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth);
     await createCheckpoint(freeAuth, freeDiv.id, "one");
     await expect(createCheckpoint(freeAuth, freeDiv.id, "two")).rejects.toMatchObject({
-      featureKey: "schedule.versioning",
+      featureKey: "schedule.checkpoints.max",
     });
+  });
+
+  it("checkpoints quota ladder: pro allows 5 then 402; pro_plus unlimited", async () => {
+    const { auth: proAuth } = await seedOrg("pro");
+    const { division: proDiv } = await seedDivision(proAuth);
+    for (let i = 1; i <= 5; i++) {
+      await expect(createCheckpoint(proAuth, proDiv.id, `cp${i}`)).resolves.toBeTruthy();
+    }
+    await expect(createCheckpoint(proAuth, proDiv.id, "cp6")).rejects.toMatchObject({
+      featureKey: "schedule.checkpoints.max",
+    });
+
+    const { auth: plusAuth } = await seedOrg("pro_plus");
+    const { division: plusDiv } = await seedDivision(plusAuth);
+    for (let i = 1; i <= 6; i++) {
+      await expect(createCheckpoint(plusAuth, plusDiv.id, `cp${i}`)).resolves.toBeTruthy();
+    }
   });
 
   it("stale optimistic token → SEQ_CONFLICT 409 contract", async () => {

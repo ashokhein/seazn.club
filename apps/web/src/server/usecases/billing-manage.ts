@@ -29,7 +29,7 @@ import {
   type TaxIdType,
 } from "@/lib/billing-manage";
 export type { BillingInterval, IntervalPreview };
-import { proPrice, type Currency } from "@/lib/currency";
+import { proPrice, proPlusPrice, type Currency } from "@/lib/currency";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 
@@ -244,7 +244,7 @@ export async function removePaymentMethod(orgId: string, paymentMethodId: string
 }
 
 // ---------------------------------------------------------------------------
-// Interval switch (monthly ↔ annual)
+// Interval switch (monthly ↔ annual) + plan switch (Pro ↔ Pro Plus)
 // ---------------------------------------------------------------------------
 
 interface IntervalContext {
@@ -254,13 +254,31 @@ interface IntervalContext {
   priceId: string;
   trialing: boolean;
   currency: string;
+  /** The plan key being switched TO — same as the current plan for a plain
+   *  interval switch, the target plan for a Pro ↔ Pro Plus change. Drives the
+   *  renewalAmountMinor price-point lookup below. */
   planKey: string;
   trialEnd: string | null;
 }
 
-async function resolveIntervalChange(
+/**
+ * Shared resolver behind both the interval switch and the Pro ↔ Pro Plus plan
+ * switch: looks up the target plan+interval's Stripe price id, retrieves the
+ * live subscription's single item, and refuses when that item is already on
+ * the requested price. `resolveIntervalChange` below is a thin wrapper that
+ * keeps the same plan key (existing endpoints stay untouched).
+ */
+async function resolvePriceChange(
   orgId: string,
-  target: BillingInterval,
+  planKey: string,
+  interval: BillingInterval,
+  // Interval-only switches keep their existing "already billed X" wording;
+  // a genuine plan change (this planKey may differ from the caller's own
+  // current plan) says "Already on this plan" instead. Both routes can hit
+  // this same refusal (item.price.id === priceId) so the caller picks the
+  // message rather than us guessing from planKey === sub.plan_key (which is
+  // also true for a plain interval switch, by construction).
+  alreadyMessage = "Already on this plan",
 ): Promise<IntervalContext> {
   const { sub, customerId } = await requireCustomer(orgId);
   if (!sub.stripe_subscription_id)
@@ -272,17 +290,16 @@ async function resolveIntervalChange(
     { stripe_price_id_monthly: string | null; stripe_price_id_annual: string | null }[]
   >`
     select stripe_price_id_monthly, stripe_price_id_annual
-    from plans where key = ${sub.plan_key}`;
+    from plans where key = ${planKey}`;
   const priceId =
-    target === "annual" ? plan?.stripe_price_id_annual : plan?.stripe_price_id_monthly;
+    interval === "annual" ? plan?.stripe_price_id_annual : plan?.stripe_price_id_monthly;
   if (!priceId)
     throw new HttpError(503, "Billing is not yet configured. Please contact support.");
 
   const stripeSub = await getStripe().subscriptions.retrieve(sub.stripe_subscription_id);
   const item = stripeSub.items.data[0];
   if (!item) throw new HttpError(500, "Subscription has no items.");
-  if (item.price.id === priceId)
-    throw new HttpError(400, `You are already billed ${target === "annual" ? "yearly" : "monthly"}.`);
+  if (item.price.id === priceId) throw new HttpError(400, alreadyMessage);
 
   return {
     customerId,
@@ -291,9 +308,22 @@ async function resolveIntervalChange(
     priceId,
     trialing: stripeSub.status === "trialing",
     currency: sub.currency ?? stripeSub.currency ?? "usd",
-    planKey: sub.plan_key,
+    planKey,
     trialEnd: sub.trial_end,
   };
+}
+
+async function resolveIntervalChange(
+  orgId: string,
+  target: BillingInterval,
+): Promise<IntervalContext> {
+  const { sub } = await requireCustomer(orgId);
+  return resolvePriceChange(
+    orgId,
+    sub.plan_key,
+    target,
+    `You are already billed ${target === "annual" ? "yearly" : "monthly"}.`,
+  );
 }
 
 export async function previewIntervalChange(
@@ -370,6 +400,102 @@ export async function applyIntervalChange(
     distinctId: await ownerDistinctId(orgId),
     orgId,
     properties: { interval: target },
+  });
+
+  const invoice = updated.latest_invoice;
+  if (
+    invoice &&
+    typeof invoice !== "string" &&
+    invoice.status === "open" &&
+    invoice.confirmation_secret?.client_secret
+  ) {
+    return { requires_action: true, client_secret: invoice.confirmation_secret.client_secret };
+  }
+  return { requires_action: false };
+}
+
+// ---------------------------------------------------------------------------
+// Plan switch (Pro ↔ Pro Plus)
+// ---------------------------------------------------------------------------
+
+export type PlanKey = "pro" | "pro_plus";
+
+function renewalAmountFor(planKey: PlanKey, interval: BillingInterval, currency: Currency): number {
+  return planKey === "pro" ? proPrice(interval, currency) : proPlusPrice(interval, currency);
+}
+
+export async function previewPlanChange(
+  orgId: string,
+  planKey: PlanKey,
+  interval: BillingInterval,
+): Promise<IntervalPreview> {
+  const ctx = await resolvePriceChange(orgId, planKey, interval);
+  const prorationDate = Math.floor(Date.now() / 1000);
+  const renewalAmountMinor = renewalAmountFor(planKey, interval, ctx.currency as Currency);
+
+  // Trialing: nothing has been paid, nothing is due today — the first charge
+  // is the plain new price at trial end. No Stripe call needed.
+  if (ctx.trialing) {
+    return {
+      interval,
+      trialing: true,
+      dueTodayMinor: 0,
+      creditMinor: 0,
+      currency: ctx.currency,
+      newPeriodEnd: ctx.trialEnd,
+      renewalAmountMinor,
+      prorationDate,
+    };
+  }
+
+  const invoice = await getStripe().invoices.createPreview(
+    buildIntervalPreviewParams({ ...ctx, prorationDate }),
+  );
+  const s = summarizeIntervalPreview(invoice);
+  return {
+    interval,
+    trialing: false,
+    dueTodayMinor: s.dueTodayMinor,
+    creditMinor: s.creditMinor,
+    currency: s.currency,
+    newPeriodEnd: s.newPeriodEnd,
+    renewalAmountMinor,
+    prorationDate,
+  };
+}
+
+export async function applyPlanChange(
+  orgId: string,
+  planKey: PlanKey,
+  interval: BillingInterval,
+  prorationDate: number,
+): Promise<IntervalChangeResult> {
+  const ctx = await resolvePriceChange(orgId, planKey, interval);
+  const stripe = getStripe();
+
+  let updated: Stripe.Subscription;
+  try {
+    updated = await stripe.subscriptions.update(
+      ctx.subscriptionId,
+      buildIntervalChangeParams({ ...ctx, prorationDate }),
+    );
+  } catch (err) {
+    // A pinned proration_date outside the current period means a renewal (or
+    // another change) raced the preview — the numbers we showed are stale.
+    if ((err as Stripe.errors.StripeError)?.type === "StripeInvalidRequestError")
+      throw new HttpError(400, "The preview expired — please review the change again.");
+    throw err;
+  }
+
+  await syncSubscription(orgId, updated);
+  // Unlike a plain interval switch, plan_key itself changes here — cached
+  // entitlements (limits, feature gates) go stale and must be invalidated.
+  await invalidateOrgEntitlements(orgId);
+  await captureServer({
+    event: EVENTS.BILLING_PLAN_CHANGED,
+    distinctId: await ownerDistinctId(orgId),
+    orgId,
+    properties: { plan_key: planKey, interval },
   });
 
   const invoice = updated.latest_invoice;

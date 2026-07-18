@@ -93,7 +93,7 @@ export const TIPS = {
   },
   "schedule.save-points": {
     title: "Save points",
-    body: "A save point bookmarks the timetable exactly as it is now — every kick-off time and court. Restore rewinds the schedule to that bookmark by undoing each change since, one by one. Match results are never touched: if rewinding would erase a played result, the restore stops there. One save point is free; more need Pro.",
+    body: "A save point bookmarks the timetable exactly as it is now — every kick-off time and court. Restore rewinds the schedule to that bookmark by undoing each change since, one by one. Match results are never touched: if rewinding would erase a played result, the restore stops there. One save point is free, Pro includes five, Pro Plus is unlimited.",
     helpSlug: "scheduling/undo",
   },
 } as const satisfies Record<string, TipEntry>;
