@@ -17,7 +17,8 @@ import {
 import { z } from "zod";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
+import { requireFeature, withinLimit } from "@/lib/entitlements";
+import { PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { sendOfficialAssignedEmail } from "@/lib/email";
 import { createClaimInvite, type ClaimRow } from "./person-claims";
@@ -451,8 +452,10 @@ export const PatchFixtureOfficialsInput = z.object({
 export type PatchFixtureOfficialsInput = z.infer<typeof PatchFixtureOfficialsInput>;
 
 /** PATCH /fixtures/{id}/officials — manual set/move/lock (7 Jan drag-drop).
- *  Replaces the fixture's assignments. Manual single-role stays free on every
- *  plan (Jul3/02 §5); a multi-role set needs officials.roles_multi. */
+ *  Replaces the fixture's assignments. Manual single-role stays free
+ *  **for one official per fixture** on every plan (Jul3/02 §5); a multi-role
+ *  set needs officials.roles_multi, and more than one official per fixture
+ *  needs officials.per_fixture.max (V286). */
 export async function patchFixtureOfficials(
   auth: AuthCtx,
   fixtureId: string,
@@ -460,6 +463,12 @@ export async function patchFixtureOfficials(
 ): Promise<{ officials: unknown }> {
   const roleCount = new Set(input.set.map((s) => s.role_key)).size;
   if (roleCount > 1) await requireFeature(auth.orgId, "officials.roles_multi");
+  // V286 (D5): Community includes ONE official per fixture; the quota is the
+  // requested set (replace semantics), so over-limit sets 402 up front.
+  // Existing over-limit assignments are never deleted — freeze principle.
+  const officialCount = new Set(input.set.map((s) => s.official_id)).size;
+  const officialQuota = await withinLimit(auth.orgId, "officials.per_fixture.max", officialCount);
+  if (!officialQuota.ok) throw new PaymentRequiredError("officials.per_fixture.max");
   return withTenant(auth.orgId, async (tx) => {
     const [fixture] = await tx<{ id: string }[]>`select id from fixtures where id = ${fixtureId}`;
     if (!fixture) throw new HttpError(404, "fixture not found");
