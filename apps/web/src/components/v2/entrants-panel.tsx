@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
@@ -24,6 +25,7 @@ interface EntrantRow {
   display_name: string;
   seed: number | null;
   status: string;
+  badge_url: string | null;
 }
 interface TeamOption {
   id: string;
@@ -360,6 +362,7 @@ export function EntrantsPanel({
                     apiV1(`/api/v1/entrants/${e.id}/withdraw`, { method: "POST", json: {} }),
                   );
                 }}
+                onBadge={(file) => void run(() => badgeRequest(e.id, file))}
               />
             ))}
           </tbody>
@@ -820,6 +823,86 @@ function CsvImport({
 // Entrant row (+ expandable roster editor)
 // ---------------------------------------------------------------------------
 
+/** F4 — the badge route is multipart, so it can't ride apiV1 (which forces a
+ *  JSON content-type); same raw-fetch pattern as the /me photo upload. */
+async function badgeRequest(entrantId: string, file: File | null): Promise<void> {
+  let res: Response;
+  if (file) {
+    const form = new FormData();
+    form.append("file", file);
+    res = await fetch(`/api/v1/entrants/${entrantId}/badge`, { method: "POST", body: form });
+  } else {
+    res = await fetch(`/api/v1/entrants/${entrantId}/badge`, { method: "DELETE" });
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => null)) as
+      | { error?: { message?: string } }
+      | null;
+    throw new Error(body?.error?.message ?? `badge update failed (${res.status})`);
+  }
+}
+
+/** Exported for the markup test. Renders the crest preview plus, when
+ *  editable, upload/replace + remove controls. */
+export function EntrantBadgeControl({
+  entrant,
+  canEdit,
+  busy,
+  onBadge,
+}: {
+  entrant: Pick<EntrantRow, "id" | "display_name" | "badge_url">;
+  canEdit: boolean;
+  busy: boolean;
+  onBadge: (file: File | null) => void;
+}) {
+  const src = resolveEntrantBadge({ badge_url: entrant.badge_url });
+  return (
+    <div className="flex items-center gap-3">
+      {src ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt="" className="h-8 w-8 shrink-0 rounded-md border border-slate-200 object-cover" />
+      ) : (
+        <span
+          aria-hidden
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-slate-100 text-xs font-semibold text-slate-500"
+        >
+          {entrant.display_name.slice(0, 1).toUpperCase()}
+        </span>
+      )}
+      <span className="text-xs text-slate-500">Badge</span>
+      {canEdit && (
+        <>
+          <label className="btn btn-ghost cursor-pointer px-2 py-1 text-xs">
+            {entrant.badge_url ? "Replace" : "Upload"}
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/svg+xml"
+              className="hidden"
+              disabled={busy}
+              aria-label={`Badge for ${entrant.display_name}`}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                e.target.value = "";
+                if (file) onBadge(file);
+              }}
+            />
+          </label>
+          {entrant.badge_url && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onBadge(null)}
+              className="btn btn-ghost px-2 py-1 text-xs text-red-600"
+            >
+              Remove
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function EntrantTableRow({
   entrant,
   canEdit,
@@ -830,6 +913,7 @@ function EntrantTableRow({
   otherTeamsFor,
   onPatch,
   onWithdraw,
+  onBadge,
 }: {
   entrant: EntrantRow;
   canEdit: boolean;
@@ -841,6 +925,7 @@ function EntrantTableRow({
   onPatch: (patch: Record<string, unknown>) => void;
   /** Withdraw with fixture surgery (spec 05 §5) — confirm handled upstream. */
   onWithdraw: () => void;
+  onBadge: (file: File | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<Member[] | null>(null);
@@ -867,8 +952,15 @@ function EntrantTableRow({
           <button
             type="button"
             onClick={toggle}
-            className="text-left text-sm font-medium text-slate-800 hover:text-purple-700"
+            className="flex items-center gap-2 text-left text-sm font-medium text-slate-800 hover:text-purple-700"
           >
+            {(() => {
+              const src = resolveEntrantBadge({ badge_url: entrant.badge_url });
+              return src ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={src} alt="" className="h-5 w-5 shrink-0 rounded object-cover" />
+              ) : null;
+            })()}
             {entrant.display_name}
             <span className="ml-1.5 text-xs text-slate-400">{open ? "▾" : "▸"}</span>
           </button>
@@ -921,6 +1013,14 @@ function EntrantTableRow({
       {open && (
         <tr>
           <td colSpan={canEdit ? 5 : 4} className="bg-slate-50 px-4 py-3">
+            <div className="mb-3">
+              <EntrantBadgeControl
+                entrant={entrant}
+                canEdit={canEdit}
+                busy={busy}
+                onBadge={onBadge}
+              />
+            </div>
             {members === null ? (
               <p className="text-xs text-slate-400">Loading roster…</p>
             ) : (

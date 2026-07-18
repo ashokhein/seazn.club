@@ -57,4 +57,26 @@ describe("public Bracket", () => {
     );
     expect(html).not.toContain('data-bracket="two-sided"');
   });
+
+  it("renders badge chips in nodes when entrantLogos provides them (F4)", () => {
+    const fixtures = [
+      F("f1", 0, 1, "a", "d", null),
+      F("f2", 0, 2, "b", "c", null),
+      F("f3", 1, 1, null, null, null),
+    ];
+    const logos = { a: "https://flags.example/a.png", b: null };
+    const html = renderToStaticMarkup(
+      createElement(Bracket, {
+        kind: "knockout", fixtures: fixtures as never, entrantNames: names,
+        entrantLogos: logos, fixtureHref: href,
+      }),
+    );
+    expect(html).toContain('src="https://flags.example/a.png"');
+    // b has no badge and d has no entry — exactly one img chip.
+    expect(html.match(/<img/g)?.length).toBe(1);
+    const without = renderToStaticMarkup(
+      createElement(Bracket, { kind: "knockout", fixtures: fixtures as never, entrantNames: names, fixtureHref: href }),
+    );
+    expect(without).not.toContain("<img");
+  });
 });

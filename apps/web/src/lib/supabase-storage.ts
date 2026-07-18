@@ -1,7 +1,10 @@
 import "server-only";
 import { supabaseAdmin } from "@/lib/supabase-admin";
+import { ASSETS_BUCKET, publicStorageUrl } from "@/lib/storage-url";
 
-const ASSETS_BUCKET = "assets";
+// Re-export for the many server-side callers; the implementation lives in the
+// client-safe storage-url.ts (the badge resolver runs in client components).
+export { publicStorageUrl };
 
 /**
  * Generate a signed upload URL for direct browser → Supabase Storage upload.
@@ -23,12 +26,6 @@ export async function getSignedUploadUrl(
  * Public CDN URL for a stored asset.
  * Use this to render images — served from Supabase CDN, not Vercel.
  */
-export function publicStorageUrl(storagePath: string): string {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  if (!url) return "";
-  return `${url}/storage/v1/object/public/${ASSETS_BUCKET}/${storagePath}`;
-}
-
 /**
  * Delete an object from storage. Fire-and-forget — used when replacing or
  * removing an avatar/logo.

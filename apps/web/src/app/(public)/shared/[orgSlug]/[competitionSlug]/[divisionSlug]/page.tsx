@@ -153,6 +153,7 @@ export default async function DivisionHomePage({ params }: Props) {
                 kind={stage.kind as "knockout" | "double_elim" | "stepladder"}
                 fixtures={stageFixtures}
                 entrantNames={entrantNames}
+                entrantLogos={entrantLogos}
                 fixtureHref={(id) => `${basePath}/fixtures/${id}`}
               />
             </section>
