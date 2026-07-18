@@ -62,9 +62,10 @@ export function DivisionDangerZone({ divisionId, divisionName, orgSlug, compSlug
   }
 
   return (
-    <section className="card mt-8 border-red-100 p-5">
-      <h2 className="text-sm font-semibold text-red-700">{msg("danger.zone")}</h2>
-      <p className="mt-1 text-xs text-slate-500">{msg("danger.desc")}</p>
+    // No own card/heading: the settings "Danger zone" disclosure Group is the
+    // card AND the label — the inner h2 duplicated it ("Danger zone" twice).
+    <section>
+      <p className="text-xs text-slate-500">{msg("danger.desc")}</p>
       {error && (
         <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>
       )}
