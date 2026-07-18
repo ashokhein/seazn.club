@@ -199,20 +199,58 @@ export async function syncSubscription(
 }
 
 /**
- * Record an Event Pass purchase (v3/07 §3). Idempotent — shared by the
- * webhook and the reconcile-on-return path. Invalidates the org's cached
- * entitlements so the pass takes effect immediately.
+ * Record an Event Pass purchase (v3/07 §3). Idempotent — shared by the webhook
+ * and the reconcile-on-return path; invalidates the org's cached entitlements
+ * so the pass takes effect immediately.
+ *
+ * The pass is keyed by competition_id, so only the FIRST payment records. An
+ * insert that loses the conflict is either a REPLAY of the same payment
+ * (webhook + reconcile racing on one intent — NOT a duplicate) or a genuine
+ * SECOND charge (two owners / two tabs). `duplicateIntent` is the losing intent
+ * only in the second case, so callers can send it straight back (P0-3b).
  */
 export async function recordPassPurchase(args: {
   orgId: string;
   competitionId: string;
   paymentIntent?: string | null;
-}): Promise<void> {
-  await sql`
+}): Promise<{ recorded: boolean; duplicateIntent: string | null }> {
+  const [inserted] = await sql<{ competition_id: string }[]>`
     insert into competition_passes (competition_id, org_id, stripe_payment_intent)
     values (${args.competitionId}, ${args.orgId}, ${args.paymentIntent ?? null})
-    on conflict (competition_id) do nothing`;
-  await invalidateOrgEntitlements(args.orgId);
+    on conflict (competition_id) do nothing
+    returning competition_id`;
+  if (inserted) {
+    await invalidateOrgEntitlements(args.orgId);
+    return { recorded: true, duplicateIntent: null };
+  }
+  const [existing] = await sql<{ stripe_payment_intent: string | null }[]>`
+    select stripe_payment_intent from competition_passes
+    where competition_id = ${args.competitionId}`;
+  const dup =
+    args.paymentIntent && existing?.stripe_payment_intent !== args.paymentIntent
+      ? args.paymentIntent
+      : null;
+  return { recorded: false, duplicateIntent: dup };
+}
+
+/**
+ * Send a duplicate Event Pass payment straight back (registrations' duplicate
+ * contract): a second owner / second tab paid for a competition that already
+ * has a pass. The Stripe call is deliberately OUTSIDE any transaction and
+ * swallows its own failure — a refund hiccup surfaces in the Stripe dashboard
+ * but NEVER blocks the webhook / reconcile ACK. A pass charge is a plain
+ * platform charge, so no reverse_transfer/application_fee flags. The idempotency
+ * key makes a retried refund of the same intent a no-op. (P0-3b)
+ */
+export async function refundDuplicatePassPayment(intent: string): Promise<void> {
+  try {
+    await getStripe().refunds.create(
+      { payment_intent: intent },
+      { idempotencyKey: `pass-dup-refund-${intent}` },
+    );
+  } catch {
+    /* surfaces in Stripe dashboard; never blocks the ACK */
+  }
 }
 
 /**
@@ -249,11 +287,15 @@ export async function reconcilePassCheckout(
     if (session.metadata.org_id !== orgId) return false;
     const competitionId = session.metadata.competition_id;
     if (!competitionId || session.payment_status !== "paid") return false;
-    await recordPassPurchase({
+    const res = await recordPassPurchase({
       orgId,
       competitionId,
       paymentIntent: typeof session.payment_intent === "string" ? session.payment_intent : null,
     });
+    // Reconcile-on-return can land a second owner's payment; refund it (the
+    // pass is already active from the first). The helper swallows its own
+    // errors, so a refund hiccup never flips this reconcile to a failure.
+    if (res.duplicateIntent) await refundDuplicatePassPayment(res.duplicateIntent);
     return true;
   } catch {
     return false;

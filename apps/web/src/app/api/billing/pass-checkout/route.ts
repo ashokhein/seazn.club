@@ -61,6 +61,9 @@ export async function POST(req: Request) {
         customerId: sub?.stripe_customer_id ?? undefined,
         customerEmail: user.email,
       }),
+      // A double-click / retry of the SAME purchase reuses one session instead
+      // of minting a second (idempotency scopes to key+params, expires ~24h).
+      { idempotencyKey: `pass-checkout-${orgId}-${competition_id}` },
     );
 
     return { client_secret: session.client_secret };

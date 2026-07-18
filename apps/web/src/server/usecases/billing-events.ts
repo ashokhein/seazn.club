@@ -7,7 +7,12 @@ import "server-only";
 // is an event we never received (the deleted-endpoint incident class).
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
-import { recordPassPurchase, revokePassForRefundedCharge, syncSubscription } from "@/lib/billing";
+import {
+  recordPassPurchase,
+  refundDuplicatePassPayment,
+  revokePassForRefundedCharge,
+  syncSubscription,
+} from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { sendPassRevokedEmail } from "@/lib/email";
 import {
@@ -70,12 +75,16 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   if (session.metadata?.pass_key === "event_pass") {
     const competitionId = session.metadata.competition_id;
     if (competitionId && session.payment_status === "paid") {
-      await recordPassPurchase({
+      const res = await recordPassPurchase({
         orgId,
         competitionId,
         paymentIntent:
           typeof session.payment_intent === "string" ? session.payment_intent : null,
       });
+      // Second owner / second tab paid for an already-passed comp — send it
+      // straight back. The refund is outside any tx and swallows its own
+      // failure, so the webhook still ACKs (P0-3b).
+      if (res.duplicateIntent) await refundDuplicatePassPayment(res.duplicateIntent);
     }
     return;
   }
