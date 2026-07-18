@@ -19101,7 +19101,8 @@
                     "type": "string",
                     "enum": [
                       "auto",
-                      "manual"
+                      "manual",
+                      "ai"
                     ]
                   },
                   "expected_seq": {

@@ -27,6 +27,7 @@ import {
 import { patchFixture } from "../fixtures";
 import { scoreEvent } from "../scoring";
 import { publicSchedule } from "../public";
+import { ApplyScheduleRequest } from "@/server/api-v1/schemas";
 import { seedOrg as seedOfficialsOrg, seedFutureDivision } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -84,6 +85,36 @@ afterAll(async () => {
   const client = globalForDb._sql;
   globalForDb._sql = undefined;
   await client?.end();
+});
+
+// Pure schema contract (no DB): the apply request must accept source "ai"
+// (v4/03 §4). This guards the zod enum widening at schemas.ts ApplyScheduleRequest
+// — it goes red if the "ai" member is reverted, independent of the DB constraint.
+describe("ApplyScheduleRequest schema (v4/03 §4)", () => {
+  const validAssignment = {
+    fixture_id: randomUUID(),
+    scheduled_at: "2026-08-01T09:00:00.000Z",
+    court_label: "Court 1",
+  };
+
+  it("accepts source 'ai'", () => {
+    const parsed = ApplyScheduleRequest.parse({
+      assignments: [validAssignment],
+      source: "ai",
+      expected_seq: 0,
+    });
+    expect(parsed.source).toBe("ai");
+  });
+
+  it("still accepts 'auto' and 'manual' and defaults to 'auto'", () => {
+    expect(ApplyScheduleRequest.parse({ assignments: [validAssignment], source: "auto" }).source).toBe("auto");
+    expect(ApplyScheduleRequest.parse({ assignments: [validAssignment], source: "manual" }).source).toBe("manual");
+    expect(ApplyScheduleRequest.parse({ assignments: [validAssignment] }).source).toBe("auto");
+  });
+
+  it("rejects an unknown source", () => {
+    expect(() => ApplyScheduleRequest.parse({ assignments: [validAssignment], source: "robot" })).toThrow();
+  });
 });
 
 describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
