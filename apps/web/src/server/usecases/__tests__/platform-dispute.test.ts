@@ -6,12 +6,13 @@
 // lost` on a pass = revoke it; `closed won` clears the flag. Dispatched LAST,
 // after the registration + sponsor handlers (which no-op on platform charges).
 //
-// Real Postgres required; skipped without DATABASE_URL. Keyless test env: the
-// pass branch matches by payment_intent (no Stripe call); the subscription
-// branch reads the customer off the charge object the event carries inline (a
-// real webhook sends a charge id string, which the handler retrieves — guarded
-// on STRIPE_SECRET_KEY, absent here). Seeds are run-unique (randomUUID) so a
-// re-run never collides with a prior run's rows.
+// Real Postgres required; skipped without DATABASE_URL. Most tests run keyless:
+// the pass branch matches by payment_intent (no Stripe call) and the subscription
+// branch reads the customer off an inline (expanded) charge object. The real
+// webhook sends `charge` as an id STRING, which the handler retrieves — guarded
+// on STRIPE_SECRET_KEY; one test stubs that key + the retrieve seam to cover the
+// prod path. Seeds are run-unique (randomUUID) so a re-run never collides with
+// a prior run's rows.
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
@@ -23,6 +24,16 @@ vi.mock("@/lib/email", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email")>()),
   sendStaffDisputeAlertEmail: emailMock.staff,
 }));
+
+// A real webhook sends `charge` as an id STRING, so the subscription branch
+// reads the customer via getStripe().charges.retrieve (guarded on
+// STRIPE_SECRET_KEY). Stub that seam — @/lib/stripe exports only getStripe — so
+// the retrieve path, the ONLY path prod ever takes, gets real coverage.
+const stripeMock = vi.hoisted(() => {
+  const retrieve = vi.fn();
+  return { retrieve, stripe: { charges: { retrieve } } };
+});
+vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 
 import { sql } from "@/lib/db";
 import { hasFeature } from "@/lib/entitlements";
@@ -109,7 +120,10 @@ function passDisputeEvent(
   } as unknown as Stripe.Event;
 }
 
-beforeEach(() => emailMock.staff.mockClear());
+beforeEach(() => {
+  emailMock.staff.mockClear();
+  stripeMock.retrieve.mockReset();
+});
 afterEach(() => vi.unstubAllEnvs());
 
 afterAll(async () => {
@@ -158,15 +172,19 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     expect(s.plan_key).toBe("pro");
   });
 
-  it("created replay: dispute stays flagged, no plan change, no throw", async () => {
+  it("created replay: flag time preserved (coalesce), no plan change, no throw", async () => {
     const { orgId, customer } = await seedSubOrg("pro");
     const did = "dp_" + uniq();
     await processStripeEvent(subDisputeEvent("created", customer, did));
+    const [first] = await sql<{ disputed_at: Date }[]>`
+      select disputed_at from subscriptions where org_id = ${orgId}`;
+    expect(first.disputed_at).not.toBeNull();
     await processStripeEvent(subDisputeEvent("created", customer, did)); // replay
-    const [s] = await sql<{ dispute_id: string; disputed_at: Date | null; plan_key: string }[]>`
+    const [s] = await sql<{ dispute_id: string; disputed_at: Date; plan_key: string }[]>`
       select dispute_id, disputed_at, plan_key from subscriptions where org_id = ${orgId}`;
     expect(s.dispute_id).toBe(did);
-    expect(s.disputed_at).not.toBeNull();
+    // coalesce(disputed_at, now()) keeps the FIRST stamp — a re-stamp would move it.
+    expect(s.disputed_at).toEqual(first.disputed_at);
     expect(s.plan_key).toBe("pro");
   });
 
@@ -186,6 +204,9 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
   it("closed lost on an already-community org is a convergent no-harm downgrade", async () => {
     const { orgId, customer } = await seedSubOrg("community");
     const did = "dp_" + uniq();
+    // The loss guard keys on dispute_id, so the org must carry the matching flag
+    // for the downgrade to land — created stamps it, then the loss converges.
+    await processStripeEvent(subDisputeEvent("created", customer, did));
     await expect(
       processStripeEvent(subDisputeEvent("closed", customer, did, "lost")),
     ).resolves.toBeUndefined();
@@ -204,6 +225,76 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
       to: "ops@seazn.club",
       kind: "subscription",
     });
+  });
+
+  it("closed lost guards on dispute_id: a stale loss never clobbers a re-bought sub", async () => {
+    // Sub flagged by an OLD dispute, then re-bought (still pro). A loss resolving
+    // for a DIFFERENT dispute must leave it untouched; only the loss for the
+    // flagged dispute downgrades it.
+    const { orgId, customer } = await seedSubOrg("pro");
+    const flagged = "dp_old_" + uniq();
+    const other = "dp_new_" + uniq();
+    await sql`update subscriptions set dispute_id = ${flagged}, disputed_at = now()
+              where org_id = ${orgId}`;
+    await processStripeEvent(subDisputeEvent("closed", customer, other, "lost"));
+    const [mismatch] = await sql<{ plan_key: string; status: string }[]>`
+      select plan_key, status from subscriptions where org_id = ${orgId}`;
+    expect(mismatch.plan_key).toBe("pro"); // unrelated loss left the sub alone
+    expect(mismatch.status).toBe("active");
+    await processStripeEvent(subDisputeEvent("closed", customer, flagged, "lost"));
+    const [match] = await sql<{ plan_key: string; status: string }[]>`
+      select plan_key, status from subscriptions where org_id = ${orgId}`;
+    expect(match.plan_key).toBe("community");
+    expect(match.status).toBe("canceled");
+  });
+
+  it("closed won guards on dispute_id: clears the flag only for the matching dispute", async () => {
+    const { orgId, customer } = await seedSubOrg("pro");
+    const flagged = "dp_old_" + uniq();
+    const other = "dp_new_" + uniq();
+    await sql`update subscriptions set dispute_id = ${flagged}, disputed_at = now()
+              where org_id = ${orgId}`;
+    // A win for an UNRELATED dispute leaves the existing flag intact.
+    await processStripeEvent(subDisputeEvent("closed", customer, other, "won"));
+    const [kept] = await sql<{ disputed_at: Date | null; dispute_id: string | null }[]>`
+      select disputed_at, dispute_id from subscriptions where org_id = ${orgId}`;
+    expect(kept.disputed_at).not.toBeNull();
+    expect(kept.dispute_id).toBe(flagged);
+    // The win for the flagged dispute clears both disputed_at AND dispute_id.
+    await processStripeEvent(subDisputeEvent("closed", customer, flagged, "won"));
+    const [cleared] = await sql<{ disputed_at: Date | null; dispute_id: string | null }[]>`
+      select disputed_at, dispute_id from subscriptions where org_id = ${orgId}`;
+    expect(cleared.disputed_at).toBeNull();
+    expect(cleared.dispute_id).toBeNull();
+  });
+
+  it("real webhook charge id string resolves the customer via charges.retrieve", async () => {
+    // Prod ALWAYS sends `charge` as an id string; the customer comes from a charge
+    // retrieve, guarded on STRIPE_SECRET_KEY. Stub the key + the retrieve seam and
+    // prove the branch flags the sub — this FAILS if the retrieve path breaks.
+    vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_dummy");
+    const { orgId, customer } = await seedSubOrg("pro");
+    stripeMock.retrieve.mockResolvedValue({ customer } as unknown as Stripe.Charge);
+    const did = "dp_" + uniq();
+    const ev = {
+      type: "charge.dispute.created",
+      data: {
+        object: {
+          id: did,
+          status: "needs_response",
+          amount: 1900,
+          currency: "gbp",
+          payment_intent: `pi_sub_${uniq()}`,
+          charge: `ch_${uniq()}`, // string id — the real webhook shape, not expanded
+        },
+      },
+    } as unknown as Stripe.Event;
+    await processStripeEvent(ev);
+    expect(stripeMock.retrieve).toHaveBeenCalledTimes(1);
+    const [s] = await sql<{ disputed_at: Date | null; dispute_id: string }[]>`
+      select disputed_at, dispute_id from subscriptions where org_id = ${orgId}`;
+    expect(s.dispute_id).toBe(did); // customer resolved off the retrieved charge → flagged
+    expect(s.disputed_at).not.toBeNull();
   });
 });
 

@@ -308,14 +308,22 @@ async function handlePlatformDispute(
   if (!sub) return; // not a platform subscription charge
 
   if (phase === "created") {
-    await sql`update subscriptions set disputed_at = now(), dispute_id = ${dispute.id},
-              updated_at = now() where org_id = ${sub.org_id}`;
+    // coalesce keeps the FIRST flag time so a duplicate created (or a manual
+    // /admin/billing-events re-process) never re-stamps disputed_at — mirrors
+    // sponsors.ts's created path.
+    await sql`update subscriptions set disputed_at = coalesce(disputed_at, now()),
+              dispute_id = ${dispute.id}, updated_at = now() where org_id = ${sub.org_id}`;
   } else if (dispute.status === "won") {
-    await sql`update subscriptions set disputed_at = null, updated_at = now()
-              where org_id = ${sub.org_id}`;
+    // Guard on dispute_id: a win resolving long after the org re-bought clears
+    // ONLY the flag it set, never a newer dispute's — and clears dispute_id too
+    // so no sticky flag is left behind.
+    await sql`update subscriptions set disputed_at = null, dispute_id = null, updated_at = now()
+              where org_id = ${sub.org_id} and dispute_id = ${dispute.id}`;
   } else if (dispute.status === "lost") {
+    // Same guard: a stale loss (60+ days on) must not clobber a subscription the
+    // org has since renewed/re-bought under a different (or no) dispute.
     await sql`update subscriptions set plan_key = 'community', status = 'canceled',
-              updated_at = now() where org_id = ${sub.org_id}`;
+              updated_at = now() where org_id = ${sub.org_id} and dispute_id = ${dispute.id}`;
     await invalidateOrgEntitlements(sub.org_id);
   }
   await notifyStaffDispute("subscription", sub.org_id, dispute, phase);
