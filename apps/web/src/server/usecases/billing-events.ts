@@ -111,6 +111,12 @@ async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
 async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
   const orgId = stripeSub.metadata?.org_id;
   if (!orgId) return;
+  // Stale-event guard (P1-5): only the CURRENTLY stored subscription may
+  // downgrade the org — a late-delivered deleted for a replaced sub must not
+  // touch a resubscribed org.
+  const [current] = await sql<{ stripe_subscription_id: string | null }[]>`
+    select stripe_subscription_id from subscriptions where org_id = ${orgId}`;
+  if (current?.stripe_subscription_id && current.stripe_subscription_id !== stripeSub.id) return;
   await sql`
     update subscriptions
     set plan_key = 'community', status = 'canceled', updated_at = now()

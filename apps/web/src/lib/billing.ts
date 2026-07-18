@@ -167,7 +167,11 @@ export async function syncSubscription(
   stripeSub: Stripe.Subscription,
 ): Promise<void> {
   const priceId = stripeSub.items.data[0]?.price?.id ?? null;
-  const planKey = priceId ? await planKeyForPrice(priceId) : null;
+  const knownPlanKey = priceId ? await planKeyForPrice(priceId) : null;
+  // Unknown price (grandfathered/migrated in Stripe but not synced into `plans`):
+  // keep the org's current plan instead of silently downgrading every affected
+  // customer — the stripe:sync drift is a staff problem, not the customer's.
+  if (priceId && !knownPlanKey) console.error("syncSubscription: unknown price", priceId);
   const status = STATUS_MAP[stripeSub.status] ?? "past_due";
   // In Stripe v22, current_period_end lives on each subscription item.
   const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
@@ -177,7 +181,7 @@ export async function syncSubscription(
       (org_id, plan_key, status, stripe_subscription_id,
        current_period_end, trial_end, trial_used_at, cancel_at_period_end, currency, updated_at)
     values
-      (${orgId}, ${planKey ?? "community"}, ${status},
+      (${orgId}, ${knownPlanKey ?? "community"}, ${status},
        ${stripeSub.id},
        ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
        ${stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null},
@@ -186,7 +190,8 @@ export async function syncSubscription(
        ${stripeSub.currency ?? null},
        now())
     on conflict (org_id) do update set
-      plan_key               = excluded.plan_key,
+      -- Unknown price keeps the org's current plan (never mass-downgrade on drift).
+      plan_key               = coalesce(${knownPlanKey}, subscriptions.plan_key, 'community'),
       status                 = excluded.status,
       stripe_subscription_id = excluded.stripe_subscription_id,
       current_period_end     = excluded.current_period_end,
@@ -195,6 +200,15 @@ export async function syncSubscription(
       trial_used_at          = coalesce(subscriptions.trial_used_at, excluded.trial_used_at),
       cancel_at_period_end   = excluded.cancel_at_period_end,
       currency               = coalesce(excluded.currency, subscriptions.currency),
+      -- Task 7 fold-in: a re-buy (new sub id) clears any stale dispute flags so an
+      -- old dispute's late loss can't downgrade the fresh sub; a renewal (same id)
+      -- leaves an in-flight dispute's flags intact.
+      disputed_at            = case when subscriptions.stripe_subscription_id
+                                      is distinct from excluded.stripe_subscription_id
+                                    then null else subscriptions.disputed_at end,
+      dispute_id             = case when subscriptions.stripe_subscription_id
+                                      is distinct from excluded.stripe_subscription_id
+                                    then null else subscriptions.dispute_id end,
       updated_at             = now()`;
 }
 
