@@ -9,6 +9,12 @@ import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { supabaseAdmin } from "@/lib/supabase-admin";
 import { withinLimit } from "@/lib/entitlements";
 import { resolveModule } from "@/server/engine-db/registry";
+import {
+  effectiveEntrantModel,
+  entrantKindCap,
+  type EffectiveEntrantModel,
+  type EntrantKind,
+} from "@seazn/engine/sport";
 import { loadTeamSquad } from "./teams";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { z } from "zod";
@@ -77,6 +83,37 @@ function filterRosterForSport(
     return { ...m, default_position_key: position, roles: keptRoles };
   });
   return { members: cleaned, dropped };
+}
+
+/** Entrant-shape gate (spec 2026-07-18): resolve the division's EFFECTIVE
+ *  entrant model — the pinned module's declaration merged with the division's
+ *  `config.entrants` override. Sports with no model (generic legacy) fall back
+ *  to "all kinds, no cap" so existing divisions accept exactly what they do
+ *  today. Load ONCE per write call, not per row. */
+async function loadEntrantShape(tx: Tx, divisionId: string): Promise<EffectiveEntrantModel> {
+  const [d] = await tx<{ sport_key: string; module_version: string; config: unknown }[]>`
+    select sport_key, module_version, config from divisions where id = ${divisionId}`;
+  if (!d) throw new HttpError(404, "division not found");
+  let model = null;
+  try {
+    model = resolveModule(d.sport_key, d.module_version).entrantModel ?? null;
+  } catch {
+    // Retired module build — no declaration to resolve; treat as legacy shape.
+  }
+  return effectiveEntrantModel(model, d.config);
+}
+
+/** Roster cap is structural (individual = 1, pair = 2, team = the model's
+ *  maxMembers or unbounded). Throws 422 ENTRANT_ROSTER_TOO_BIG when exceeded. */
+function assertRosterFits(eff: EffectiveEntrantModel, kind: string, memberCount: number): void {
+  const cap = entrantKindCap(kind, eff);
+  if (memberCount > cap) {
+    throw new HttpError(
+      422,
+      `a ${kind} entrant holds at most ${cap} ${cap === 1 ? "person" : "people"}`,
+      "ENTRANT_ROSTER_TOO_BIG",
+    );
+  }
 }
 
 /** Load an entrant's roster in the CreateEntrant member shape, for copying. */
@@ -211,6 +248,22 @@ export async function createEntrants(
     );
     if (!quota.ok) throw new PaymentRequiredError("entrants.per_division.max");
 
+    // Entrant-shape gate (spec 2026-07-18): every input in the batch must match
+    // the division's effective model BEFORE any insert — the whole batch fails
+    // atomically (this runs inside withTenant's transaction).
+    const eff = await loadEntrantShape(tx, divisionId);
+    for (const input of inputs) {
+      const kind = input.kind ?? eff.defaultKind;
+      if (!eff.kinds.includes(kind as EntrantKind)) {
+        throw new HttpError(
+          422,
+          `this division doesn't take '${kind}' entrants`,
+          "ENTRANT_KIND_NOT_ALLOWED",
+        );
+      }
+      assertRosterFits(eff, kind, input.members?.length ?? 0);
+    }
+
     const rows: CreatedEntrant[] = [];
     for (const input of inputs) {
       // Snapshot the name from the team so a later rename never rewrites
@@ -318,7 +371,10 @@ export async function patchEntrant(
     }
     if (!row) throw new HttpError(404, "entrant not found");
     if (members) {
-      // Full roster replacement — simple and idempotent.
+      // Full roster replacement — recheck the count against THIS entrant's kind
+      // (kind itself isn't patchable, so only the roster is being written).
+      const eff = await loadEntrantShape(tx, row.division_id);
+      assertRosterFits(eff, row.kind, members.length);
       await tx`delete from entrant_members where entrant_id = ${id}`;
       await insertMembers(tx, id, members);
     }
