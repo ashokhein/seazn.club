@@ -41,7 +41,11 @@ revives if the org later downgrades.
 DELETE CASCADE` — deleting the competition **silently destroys the pass**. The
 org paid £33, keeps nothing, gets no refund, and the app retains zero record
 (only the Stripe payment survives). `deleteCompetition` guards ONLY on score
-events — a passed comp with no recorded play deletes freely. See P0-1.
+events — a passed comp with no recorded play deletes freely. Exposure note
+(owner review 2026-07-18): the console UI deliberately offers NO
+competition-delete button — the reachable surface is
+`DELETE /api/v1/competitions/[id]` (owner/admin session, or an API key with
+competition write scope; the route is not in NEVER_KEY_ROUTES). See P0-1.
 
 **Archive**: `status='archived'` leaves all rows intact. Archived comps don't
 count against quota anyway, so an archived passed comp = pass parked but
@@ -71,23 +75,32 @@ features, which is revenue, not abuse. Two genuine wrinkles:
 ### P0 — money records can be destroyed / money kept without service
 
 **P0-1 · Competition delete cascades paid money records.**
+*(Reclassified P1-severity at owner review 2026-07-18: no console UI offers
+competition delete — deliberate — so the surface is the API route only. Guard
+stays in the plan as cheap defense-in-depth.)*
 `deleteCompetition` checks only score events. Divisions cascade on comp delete,
 and `registrations` cascade on division delete — so the divisions.ts guard
 ("delete blocked while `payment_intent_id` unrefunded", divisions.ts:263) is
-**bypassed** when deleting the whole competition. Story: club collects 30 × £20
-entries, season postponed before any fixture is scored, organiser deletes the
-comp to "start clean" → every paid registration row (payment_intent ids,
-refunded_cents, dispute flags) is gone; refunds become Stripe-dashboard
-archaeology; a later `charge.dispute.created` webhook finds no row and
-silently no-ops — dispute unanswered, platform eats it. Same delete kills the
-Event Pass row (money paid, nothing left). Sponsor rows/packages scoped to the
-comp cascade too (paid `sponsor_orders` survive — org-scoped — but their
-placement dies).
+**bypassed** when deleting the whole competition. Live-proven on the dev DB
+(2026-07-18, rolled-back transaction): delete of a draft comp removed a `paid`
+registration carrying a payment_intent AND its competition_passes row in one
+statement. Reachable today via `DELETE /api/v1/competitions/[id]` — owner/admin
+session or a competition-write API key (route absent from NEVER_KEY_ROUTES), so
+a leaked/over-scoped key or an automation bug can erase money records. Story:
+integration script cleans up "test" comps by slug pattern, matches a real one
+holding 30 × £20 paid entries → payment_intent ids, refunded_cents, dispute
+flags all gone; refunds become Stripe-dashboard archaeology; a later
+`charge.dispute.created` webhook finds no row and silently no-ops — dispute
+unanswered, platform eats it. Same delete kills the Event Pass row. Sponsor
+placements scoped to the comp cascade too (paid `sponsor_orders` survive —
+org-scoped — but their placement dies).
 **Fix**: `deleteCompetition` must 409 when any of: a competition_passes row,
 registrations with `payment_intent_id` not fully refunded, or paid
 sponsor_orders scoped (via their package) to this comp. Copy mirrors the
-score-events message: "archive it instead". Fully-refunded rows may still
-cascade — once no live money remains, losing the audit ledger with the comp is
+score-events message: "archive it instead". Additionally add
+`DELETE /competitions/:id` to NEVER_KEY_ROUTES — destructive + money-adjacent
+is the existing bar for that list. Fully-refunded rows may still cascade —
+once no live money remains, losing the audit ledger with the comp is
 acceptable, same as today.
 
 **P0-2 · Sponsor chargebacks are invisible.**
