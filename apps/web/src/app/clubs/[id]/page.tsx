@@ -13,9 +13,10 @@ import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t } from "@/lib/i18n";
 import { DictProvider } from "@/components/i18n/dict-provider";
 import { OverviewTab } from "@/components/v2/club-hub/overview-tab";
+import { TeamsTab } from "@/components/v2/club-hub/teams-tab";
 import { kitStripeStyle } from "@/components/v2/club-hub/kit-style";
 
-const TABS = ["overview"] as const;
+const TABS = ["overview", "teams"] as const;
 type Tab = (typeof TABS)[number];
 
 export default async function ClubHubPage({
@@ -96,6 +97,26 @@ export default async function ClubHubPage({
               contacts: club.contacts,
             }}
             canEdit={canEdit}
+          />
+        )}
+
+        {tab === "teams" && (
+          <TeamsTab
+            club={{
+              id: club.id,
+              name: club.name,
+              short_name: club.short_name,
+              logo_path: club.logo_path,
+              teams: club.teams as {
+                id: string;
+                name: string;
+                short_name?: string | null;
+                logo_path: string | null;
+                entries: { division_id: string; division_name: string }[];
+              }[],
+            }}
+            canEdit={canEdit}
+            storageBase={storageBase}
           />
         )}
       </main>
