@@ -11,8 +11,8 @@ import {
   type Assignment,
 } from "@seazn/engine/scheduling";
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { requireFeature, withinLimit } from "@/lib/entitlements";
 import { isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { appendDivisionEvent } from "@/server/engine-db";
@@ -214,11 +214,36 @@ export async function aiConstraintsForDivision(
     throw new HttpError(503, "AI-assisted scheduling is temporarily unavailable.");
   }
   await requireFeature(auth.orgId, "scheduling.ai");
+
+  // Pro AI cap (owner 2026-07-18, amends pro-plus D4): Pro keeps AI scheduling
+  // but is limited to N generations per division; Pro Plus is unlimited (null
+  // int_value → withinLimit returns ok). Count prior runs from the audit ledger
+  // and refuse the (cap+1)th here, before the LLM call, so an over-quota org
+  // never burns a request.
+  const gate = await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    const [row] = await tx<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where competition_id = ${division.competition_id}
+        and type = 'schedule.ai_generated'
+        and payload->>'division_id' = ${divisionId}`;
+    return { competitionId: division.competition_id, priorRuns: row?.n ?? 0 };
+  });
+  const cap = await withinLimit(
+    auth.orgId,
+    "scheduling.ai.runs_per_division.max",
+    gate.priorRuns + 1,
+    gate.competitionId,
+  );
+  if (!cap.ok) throw new PaymentRequiredError("scheduling.ai.runs_per_division.max");
+
   const parsed = await parseAiConstraints(prose, generate);
 
   return withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ id: string; slug: string; name: string }[]>`
-      select id, slug, name from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ id: string; slug: string; name: string; competition_id: string }[]>`
+      select id, slug, name, competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     const entrants = await tx<{ id: string; display_name: string }[]>`
       select id, display_name from entrants where division_id = ${divisionId}`;
@@ -261,6 +286,12 @@ export async function aiConstraintsForDivision(
         ...(notAfter !== undefined ? { notAfter } : {}),
       });
     }
+    // Record this generation against the per-division cap counted above (owner
+    // 2026-07-18). Append-only audit; org_id is set by the trg_set_org trigger.
+    await tx`
+      insert into competition_events (competition_id, org_id, type, payload, actor_id)
+      values (${division.competition_id}, ${auth.orgId}, 'schedule.ai_generated',
+              ${tx.json({ division_id: divisionId } as never)}, ${auth.userId})`;
     return {
       constraints: {
         ...(parsed.restMin !== undefined ? { restMin: parsed.restMin } : {}),

@@ -148,6 +148,50 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
     ).rejects.toMatchObject({ featureKey: "scheduling.ai" });
   });
 
+  it("Pro AI scheduling is capped at 5 generations per division; the 6th is 402 (owner 2026-07-18)", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division } = await seedDivision(auth);
+    // Five generations succeed and each records a run against the per-division cap.
+    for (let i = 0; i < 5; i++) {
+      const out = await aiConstraintsForDivision(
+        auth, division.id, "matches start at 9am", async () => ({}),
+      );
+      expect(out.constraints).toBeTruthy();
+    }
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${division.id}`;
+    expect(n).toBe(5);
+    // The sixth breaches the cap — 402 with the runs-per-division key.
+    await expect(
+      aiConstraintsForDivision(auth, division.id, "anything", async () => ({})),
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scheduling.ai.runs_per_division.max",
+    });
+    // A blocked run is not recorded (still five).
+    const [{ n: after }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${division.id}`;
+    expect(after).toBe(5);
+  });
+
+  it("Pro Plus AI scheduling is unlimited (null limit) even past five prior runs", async () => {
+    const { auth } = await seedOrg("pro_plus");
+    const { division } = await seedDivision(auth);
+    // Seed six prior runs directly — more than the Pro cap.
+    for (let i = 0; i < 6; i++) {
+      await sql`
+        insert into competition_events (competition_id, org_id, type, payload)
+        values (${division.competition_id}, ${auth.orgId}, 'schedule.ai_generated',
+                ${sql.json({ division_id: division.id })})`;
+    }
+    const out = await aiConstraintsForDivision(
+      auth, division.id, "matches start at 9am", async () => ({}),
+    );
+    expect(out.constraints).toBeTruthy();
+  });
+
   it("constraint fields on schedule-settings are Pro; flexible mode blocks auto-scheduling", async () => {
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth);
