@@ -59,6 +59,18 @@ describe("groupForAdmin", () => {
     expect(membersMax.cells.event_pass).toBe("—");
   });
 
+  it("exposes raw stored values per plan for the cell editor", () => {
+    // W1 Task 6: the admin cell editor seeds its input from raw truth
+    // (∞ = int_value null; a missing cell = both null), not the rendered string.
+    const sections = groupForAdmin(rows);
+    const scale = sections.find((s) => s.slug === "scale")!;
+    const membersMax = scale.features.find((f) => f.feature_key === "members.max")!;
+    expect(membersMax.raw.community).toEqual({ bool_value: true, int_value: 20 });
+    expect(membersMax.raw.pro).toEqual({ bool_value: true, int_value: null });
+    // event_pass has no row -> both null (renders "—" but edits as a fresh cell)
+    expect(membersMax.raw.event_pass).toEqual({ bool_value: null, int_value: null });
+  });
+
   it("renders a pure-int feature's null int_value as ∞", () => {
     const rowsInt: AdminEntRow[] = [
       { feature_key: "competitions.max_active", plan_key: "pro", bool_value: null, int_value: null },

@@ -11,6 +11,9 @@ export interface AdminEntFeature {
   feature_key: string;
   type: "bool" | "int";
   cells: Record<string, string>; // plan_key -> rendered value
+  // plan_key -> raw stored values, so the admin cell editor can seed its input
+  // from truth (∞ = int_value null) rather than parse the rendered string.
+  raw: Record<string, { bool_value: boolean | null; int_value: number | null }>;
 }
 
 export interface AdminEntSection { slug: string; features: AdminEntFeature[] }
@@ -43,6 +46,12 @@ export function groupForAdmin(rows: AdminEntRow[]): AdminEntSection[] {
       feature_key: k,
       type: sample && sample.bool_value !== null ? "bool" : "int",
       cells: Object.fromEntries(PLANS.map((p) => [p, render(plans.get(p))])),
+      raw: Object.fromEntries(
+        PLANS.map((p) => {
+          const cell = plans.get(p);
+          return [p, { bool_value: cell?.bool_value ?? null, int_value: cell?.int_value ?? null }];
+        }),
+      ),
     };
   };
   const listed = new Set(ENTITLEMENT_DOMAINS.flatMap((d) => d.features));
