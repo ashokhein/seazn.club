@@ -107,6 +107,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/fixtures/{id}/lineups/{entrantId}", method: "put", summary: "Replace a side's lineup", tag: "fixtures", request: S.PutLineup, errors: [422] },
   { path: "/fixtures/{id}/events", method: "post", summary: "Append a score event (THE scoring endpoint)", tag: "scoring", request: S.AppendEventRequest, response: S.AppendEventResponse, status: 201, errors: [409, 422, 429] },
   { path: "/fixtures/{id}/events", method: "get", summary: "Read the ledger after ?since_seq=", tag: "scoring", response: z.array(S.ScoreEvent), query: { since_seq: { schema: { type: "integer", minimum: 0, default: 0 } } } },
+  { path: "/fixtures/{id}/audit", method: "get", summary: "Signed per-match audit trail: the full hash-chained event stream, chain-verification verdict and an Ed25519 signature over the head hash (Pro `scoring.audit_export`; verify keys at /.well-known/seazn-audit-keys)", tag: "scoring", errors: [402, 404], query: { format: { schema: { type: "string", enum: ["json", "pdf"], default: "json" } } } },
   { path: "/fixtures/{id}/state", method: "get", summary: "Live state (ETag = ledger seq)", tag: "scoring", response: S.FixtureState },
   { path: "/fixtures/{id}/finalize", method: "post", summary: "Lock the ledger (core.finalize)", tag: "scoring", request: z.object({ expected_seq: z.number().int().min(0) }), response: S.AppendEventResponse, errors: [409, 422] },
   // Device links (doc 13 §7, PROMPT-21)
