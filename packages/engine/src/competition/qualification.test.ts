@@ -202,3 +202,24 @@ describe("CombinedQualification (PROMPT-59 §1)", () => {
     expect(new Set(seeds).size).toBe(12);
   });
 });
+
+describe("pool key/name hardening (PROMPT-59 §3)", () => {
+  const tables = {
+    pools: [
+      { pool: "A", rows: [row("A1", 1, 9), row("A2", 2, 6)] },
+      { pool: "B", rows: [row("B1", 1, 7), row("B2", 2, 5)] },
+    ],
+  };
+
+  it('resolves "Pool A" and "pool a" to the pool keyed "A"', () => {
+    for (const name of ["Pool A", "pool a", "A", "a"]) {
+      expect(resolveQualification({ take: [{ pool: name, rank: 1 }] }, tables)).toEqual(["A1"]);
+    }
+  });
+
+  it("names the available pools when a pick resolves nothing", () => {
+    expect(() => resolveQualification({ take: [{ pool: "Z", rank: 1 }] }, tables)).toThrow(
+      /available pools: A, B/,
+    );
+  });
+});

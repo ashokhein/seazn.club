@@ -402,12 +402,48 @@ export const CheckinLink = z.object({ url: z.string(), expires_at: z.string() })
 // Stages
 // ---------------------------------------------------------------------------
 
+// PROMPT-59 §4 — typed qualification spec, so a bad shape 400s at the edge
+// instead of throwing deep inside the engine. Mirrors engine
+// `QualificationSpec` (TakePicks | TopN | BestOfRank | CombinedQualification).
+// `take[].pool` matches the pool KEY ("A"); the display name ("Pool A") is
+// also accepted — the engine normalises.
+const PoolRankPickS = z.object({ pool: z.string().min(1), rank: z.number().int().min(1) });
+const TakePicksS = z
+  .object({ from: z.string().optional(), take: z.array(PoolRankPickS).min(1) })
+  .strict();
+const TopNS = z.object({ from: z.string().optional(), topN: z.number().int().min(1) }).strict();
+const BestOfRankS = z
+  .object({
+    from: z.string().optional(),
+    bestOfRank: z.object({
+      rank: z.number().int().min(1),
+      count: z.number().int().min(1),
+      normaliseUnequalPools: z.boolean().optional(),
+    }),
+  })
+  .strict();
+export type QualificationSpecInput =
+  | z.infer<typeof TakePicksS>
+  | z.infer<typeof TopNS>
+  | z.infer<typeof BestOfRankS>
+  | { from?: string; combine: QualificationSpecInput[] };
+export const QualificationSpecSchema: z.ZodType<QualificationSpecInput> = z.lazy(() =>
+  z.union([
+    TakePicksS,
+    TopNS,
+    BestOfRankS,
+    z
+      .object({ from: z.string().optional(), combine: z.array(QualificationSpecSchema).min(2).max(8) })
+      .strict(),
+  ]),
+);
+
 export const CreateStage = z.object({
   seq: z.number().int().min(1),
   kind: StageKind,
   name: z.string().min(1).max(200),
   config: z.record(z.string(), z.unknown()).default({}),
-  qualification: z.record(z.string(), z.unknown()).nullish(),
+  qualification: QualificationSpecSchema.nullish(),
 });
 
 /** POST /divisions/{id}/stages — the stage graph, one or many (doc 08 §3). */

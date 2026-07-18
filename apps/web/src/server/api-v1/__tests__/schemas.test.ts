@@ -1,7 +1,7 @@
 // Schema-level regression tests (no DB) for the entrant/team contract added
 // with the unified Add-Entrant + team-squad work.
 import { describe, expect, it } from "vitest";
-import { CreateEntrant, CreateTeam, SetTeamSquad } from "../schemas";
+import { CreateEntrant, CreateStage, CreateTeam, SetTeamSquad } from "../schemas";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 
@@ -45,5 +45,45 @@ describe("SetTeamSquad", () => {
       members: [{ person_id: UUID, squad_number: 7, is_captain: true, roles: ["captain"] }],
     });
     expect(r.success).toBe(true);
+  });
+});
+
+describe("CreateStage.qualification (PROMPT-59 §4 — typed spec at the edge)", () => {
+  const stage = (qualification: unknown) => ({ seq: 2, kind: "knockout", name: "KO", qualification });
+
+  it("accepts each of the four qualification shapes", () => {
+    expect(CreateStage.safeParse(stage({ take: [{ pool: "A", rank: 1 }] })).success).toBe(true);
+    expect(CreateStage.safeParse(stage({ topN: 4 })).success).toBe(true);
+    expect(
+      CreateStage.safeParse(stage({ bestOfRank: { rank: 3, count: 8, normaliseUnequalPools: true } }))
+        .success,
+    ).toBe(true);
+    expect(
+      CreateStage.safeParse(
+        stage({
+          combine: [
+            { take: [{ pool: "A", rank: 1 }, { pool: "B", rank: 1 }] },
+            { bestOfRank: { rank: 3, count: 2 } },
+          ],
+        }),
+      ).success,
+    ).toBe(true);
+  });
+
+  it("accepts a nested combine and null/absent qualification", () => {
+    expect(
+      CreateStage.safeParse(
+        stage({ combine: [{ topN: 2 }, { combine: [{ topN: 1 }, { topN: 1 }] }] }),
+      ).success,
+    ).toBe(true);
+    expect(CreateStage.safeParse(stage(null)).success).toBe(true);
+    expect(CreateStage.safeParse({ seq: 1, kind: "league", name: "L" }).success).toBe(true);
+  });
+
+  it("rejects malformed specs at the edge (400, not deep engine throw)", () => {
+    expect(CreateStage.safeParse(stage({ bogus: 1 })).success).toBe(false);
+    expect(CreateStage.safeParse(stage({ take: [{ pool: "A" }] })).success).toBe(false); // missing rank
+    expect(CreateStage.safeParse(stage({ topN: 0 })).success).toBe(false);
+    expect(CreateStage.safeParse(stage({ combine: [{ topN: 2 }] })).success).toBe(false); // min 2 children
   });
 });

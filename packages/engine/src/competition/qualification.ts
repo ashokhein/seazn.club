@@ -89,12 +89,23 @@ function rowAtRank(table: PoolTable, rank: number): StandingsRow {
   return row;
 }
 
+// PROMPT-59 §3 — pools carry both a key ("A") and a display name ("Pool A");
+// qualification picks match the KEY, but accept the name form too (strip a
+// leading "Pool " prefix, case-insensitive) so neither silently resolves
+// nothing. A miss names the available pools instead of failing opaquely.
+const normPool = (s: string): string => s.trim().toLowerCase().replace(/^pool\s+/, "");
+
 function poolByName(tables: StageTables, name: string): PoolTable {
-  const table = tables.pools.find((pool) => pool.pool === name);
+  const want = normPool(name);
+  const table = tables.pools.find((pool) => normPool(pool.pool) === want);
   if (table === undefined) {
-    throw new EngineError("STAGE_NOT_READY", `no pool named "${name}" in the completed stage`, {
-      pool: name,
-    });
+    throw new EngineError(
+      "STAGE_NOT_READY",
+      `no pool "${name}" in the completed stage — available pools: ${tables.pools
+        .map((p) => p.pool)
+        .join(", ")}`,
+      { pool: name, available: tables.pools.map((p) => p.pool) },
+    );
   }
   return table;
 }
