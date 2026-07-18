@@ -80,6 +80,9 @@ export interface LeaderboardRow {
   squad_number: number | null;
   entrant: string | null;
   stats: Record<string, number>;
+  /** PROMPT-65: the person has a public profile (public_name consent) — rows
+   *  link there; non-consented rows stay plain text. */
+  public_profile: boolean;
 }
 
 /** GET /divisions/{id}/stats/players?metric=&sort= (Jul3/07 §6). Pro
@@ -108,8 +111,11 @@ export async function divisionPlayerStats(
 
     const personIds = rows.map((r) => r.personId);
     const people = personIds.length
-      ? await tx<{ id: string; full_name: string; squad_number: number | null; entrant: string | null }[]>`
-          select p.id, p.full_name, em.squad_number, e.display_name as entrant
+      ? await tx<
+          { id: string; full_name: string; squad_number: number | null; entrant: string | null; public_name: boolean }[]
+        >`
+          select p.id, p.full_name, em.squad_number, e.display_name as entrant,
+                 coalesce((p.consent->>'public_name')::boolean, false) as public_name
           from persons p
           left join entrant_members em on em.person_id = p.id
             and em.entrant_id in (select id from entrants where division_id = ${divisionId})
@@ -127,6 +133,7 @@ export async function divisionPlayerStats(
         squad_number: infoById.get(r.personId)?.squad_number ?? null,
         entrant: infoById.get(r.personId)?.entrant ?? null,
         stats: r.stats,
+        public_profile: infoById.get(r.personId)?.public_name ?? false,
       }))
       .sort((a, b) => dir * ((a.stats[metric] ?? 0) - (b.stats[metric] ?? 0)) || a.full_name.localeCompare(b.full_name));
 

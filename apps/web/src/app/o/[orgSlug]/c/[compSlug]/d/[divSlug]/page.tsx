@@ -296,7 +296,16 @@ export default async function DivisionPage({
           </div>
         )}
 
-        {tab === "stats" && <StatsPanel divisionId={id} />}
+        {tab === "stats" && (
+          <StatsPanel
+            divisionId={id}
+            publicBase={
+              competition.visibility !== "private"
+                ? `/shared/${orgSlug}/${compSlug}`
+                : null
+            }
+          />
+        )}
 
         {/* v8 spec §2: settings tab collects general/format/sharing/danger —
             the embed snippet and danger zone moved here from the page bottom. */}
