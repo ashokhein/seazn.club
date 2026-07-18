@@ -87,7 +87,7 @@ describe.skipIf(!HAS_DB)("deleteCompetition money guards", () => {
       (division_id, org_id, status, display_name, contact_email, amount_cents,
        payment_intent_id, refunded_cents, guardian_consent, answers, roster, access_token_hash)
       values (${divId}, ${orgId}, 'paid', 'P', 'p@x.test', 2000, 'pi_reg', 0,
-              false, '{}', '[]', 'h')`;
+              false, '{}', '[]', ${randomUUID()})`;
     await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({ status: 409 });
   });
 
@@ -108,7 +108,7 @@ describe.skipIf(!HAS_DB)("deleteCompetition money guards", () => {
       (division_id, org_id, status, display_name, contact_email, amount_cents,
        payment_intent_id, refunded_cents, guardian_consent, answers, roster, access_token_hash)
       values (${divId}, ${orgId}, 'withdrawn', 'P', 'p@x.test', 2000, 'pi_reg2', 2000,
-              false, '{}', '[]', 'h2')`;
+              false, '{}', '[]', ${randomUUID()})`;
     await deleteCompetition(auth, compId);
     const [gone] = await sql`select 1 from competitions where id = ${compId}`;
     expect(gone).toBeUndefined();

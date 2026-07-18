@@ -10,17 +10,49 @@ import { afterAll, beforeEach, describe, it, expect, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 
-// The duplicate refund is the only Stripe call on this path; spy on it without
-// a live network (sibling convention: registrations.test.ts).
+// The duplicate refund and the checkout-session mint are the only Stripe calls
+// on these paths; spy on both without a live network (sibling convention:
+// registrations.test.ts).
 const stripeMock = vi.hoisted(() => {
   const refundCreate = vi.fn().mockResolvedValue({ id: "re_test" });
-  return { refundCreate, stripe: { refunds: { create: refundCreate } } };
+  const checkoutCreate = vi.fn().mockResolvedValue({ client_secret: "cs_secret_test" });
+  return {
+    refundCreate,
+    checkoutCreate,
+    stripe: {
+      refunds: { create: refundCreate },
+      checkout: { sessions: { create: checkoutCreate } },
+    },
+  };
 });
 vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
+
+// Route-level auth is stubbed (no cookie/JWT in a unit test): getActiveOrgId
+// hands back the seeded org and requireOrgRole the requesting owner — the id
+// the per-user idempotency key is built from. Everything else the route does
+// (DB reads, buildPassCheckoutParams) runs for real. Same pattern as
+// app/api/orgs/[id]/__tests__/route.test.ts.
+const authState = vi.hoisted(() => ({
+  orgId: null as string | null,
+  user: {
+    id: "d0d0d0d0-0000-4000-8000-000000000001",
+    display_name: "Dup Owner",
+    email: "dup-owner@test.local",
+    avatar_url: null,
+    timezone: null as string | null,
+    locale: null as string | null,
+  },
+}));
+vi.mock("@/lib/auth", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/auth")>()),
+  getActiveOrgId: vi.fn(async () => authState.orgId),
+  requireOrgRole: vi.fn(async () => ({ user: authState.user, role: "owner" as const })),
+}));
 
 import { sql } from "@/lib/db";
 import { recordPassPurchase } from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
+import { POST as passCheckoutPOST } from "@/app/api/billing/pass-checkout/route";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -53,6 +85,7 @@ async function seedOrgWithComp(): Promise<{ orgId: string; compId: string }> {
 
 beforeEach(() => {
   stripeMock.refundCreate.mockClear();
+  stripeMock.checkoutCreate.mockClear();
 });
 
 afterAll(async () => {
@@ -148,5 +181,45 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
     expect(stripeMock.refundCreate).toHaveBeenCalledTimes(1);
     const [row] = await sql`select 1 from competition_passes where competition_id = ${compId}`;
     expect(row).toBeTruthy();
+  });
+});
+
+/** POST /api/billing/pass-checkout with a JSON body, as the client sends it. */
+function passCheckoutReq(competitionId: string): Request {
+  return new Request("http://localhost/api/billing/pass-checkout", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ competition_id: competitionId }),
+  });
+}
+
+describe.skipIf(!HAS_DB)("pass-checkout idempotency key is scoped per user (P0-3b)", () => {
+  it("keys checkout.sessions.create with pass-checkout-<org>-<comp>-<user>", async () => {
+    const { orgId, compId } = await seedOrgWithComp();
+    // A community sub carrying a currency short-circuits preferredCurrency BEFORE
+    // it reaches next/headers (no request scope in a unit test) and keeps the
+    // org pass-eligible (plan_key !== community would reject the pass).
+    await sql`insert into subscriptions (org_id, plan_key, status, currency)
+              values (${orgId}, 'community', 'active', 'usd')
+              on conflict (org_id) do update set plan_key = 'community', currency = 'usd'`;
+    // event_pass is a dark plan; its one-time price is written by stripe:sync in
+    // real deploys, so the migrated test DB has it NULL — set it so the route
+    // can mint a session instead of 503-ing.
+    await sql`update plans set stripe_price_id_onetime = 'price_test_pass'
+              where key = 'event_pass'`;
+    authState.orgId = orgId;
+
+    const res = await passCheckoutPOST(passCheckoutReq(compId));
+    expect(res.status).toBe(200);
+
+    // The SECOND argument is the Stripe idempotency options. Pinning it to the
+    // requesting user lets two DIFFERENT owners racing one comp mint DISTINCT
+    // sessions (an org+comp-only key would 400 on their per-user customer_email
+    // param mismatch) while a double-click still dedups. This fails if the key
+    // drops the userId or otherwise changes shape.
+    expect(stripeMock.checkoutCreate).toHaveBeenCalledTimes(1);
+    expect(stripeMock.checkoutCreate.mock.calls[0][1]).toEqual({
+      idempotencyKey: `pass-checkout-${orgId}-${compId}-${authState.user.id}`,
+    });
   });
 });
