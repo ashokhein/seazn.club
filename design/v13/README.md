@@ -1,6 +1,11 @@
 # v13 — Real-competition fidelity (any sport)
 
-> **Status (2026-07-16):** design only. PROMPT-59 + PROMPT-60 not yet implemented.
+> **Status (2026-07-18):** IMPLEMENTED — all eight prompts built on branch
+> `worktree-v13` (spec: docs/superpowers/specs/2026-07-18-v13-wave-build-design.md;
+> deviations: PROMPT-64 landed as bracket-slide + live-pinning on the EXISTING
+> /slideshow noticeboard plus public no-login /present wrappers; audit PDF
+> serves from the per-fixture route; migrations became V288/V289 after a
+> parallel branch took V286).
 > Target branch (build time): `feat/v13-real-competition-fidelity` (own worktree
 > off `main`). **No hard cross-version deps.** PROMPT-59 (engine) and PROMPT-60
 > (entrant identity + bulk enrol) are independent — land in either order.

@@ -7,7 +7,8 @@ import { notFound, permanentRedirect } from "next/navigation";
 import type { Metadata } from "next";
 import { resolveModule } from "@/server/engine-db";
 import type { StandingsRow } from "@seazn/engine/competition";
-import { getPublicDivision, resolveLogoUrl } from "@/server/public-site/data";
+import { getPublicDivision } from "@/server/public-site/data";
+import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import { sharedRenameTarget } from "@/server/slug-resolve";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { renderProse } from "@/lib/prose";
@@ -68,9 +69,16 @@ export default async function DivisionHomePage({ params }: Props) {
   }
 
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
-  // Badge chips (v3/03 §5): team → club resolved by the view; URL resolved here.
+  // Badge chips (v3/03 §5 + PROMPT-60): the entrant's own badge_url wins,
+  // then team → club logo resolved by the view.
   const entrantLogos = Object.fromEntries(
-    entrants.map((e) => [e.id, resolveLogoUrl(e.team_display?.logo_path ?? null, null)]),
+    entrants.map((e) => [
+      e.id,
+      resolveEntrantBadge({
+        badge_url: e.badge_url,
+        team_logo_path: e.team_display?.logo_path ?? null,
+      }),
+    ]),
   );
   const basePath = `/shared/${org.slug}/${competition.slug}/${division.slug}`;
   const poolName = new Map(pools.map((p) => [p.id, p.name]));
@@ -251,12 +259,21 @@ export default async function DivisionHomePage({ params }: Props) {
         <h1 className="font-display text-4xl font-bold uppercase leading-none tracking-tight text-ink sm:text-5xl">
           {division.name}
         </h1>
-        {/* Standings share (v3/10 #2) — the link unfurls into the OG card. */}
-        <ShareButton
-          title={`${division.name} — ${competition.name}`}
-          text={`${division.name} standings & fixtures — ${competition.name}:`}
-          url={`/shared/${org.slug}/${competition.slug}/${division.slug}`}
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          {/* v13 (PROMPT-64): kiosk mode — cast this URL to any screen. */}
+          <Link
+            href={`/shared/${org.slug}/${competition.slug}/${division.slug}/present`}
+            className="rounded-full bg-zinc-100 px-3 py-1.5 text-xs font-semibold uppercase tracking-wide text-ink-muted ring-1 ring-inset ring-zinc-200 transition hover:bg-zinc-200 hover:text-ink"
+          >
+            Present ▸
+          </Link>
+          {/* Standings share (v3/10 #2) — the link unfurls into the OG card. */}
+          <ShareButton
+            title={`${division.name} — ${competition.name}`}
+            text={`${division.name} standings & fixtures — ${competition.name}:`}
+            url={`/shared/${org.slug}/${competition.slug}/${division.slug}`}
+          />
+        </div>
       </div>
       <p className="mb-6 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <span className="font-medium text-zinc-600">

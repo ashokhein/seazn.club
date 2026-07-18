@@ -13,6 +13,8 @@ import type {
   ExportStandingsRow,
   ExportTicket,
 } from "./types.ts";
+import { EngineError } from "../core/errors.ts";
+import { twoSidedBracket } from "../scheduling/bracket-layout.ts";
 
 function base(
   kind: DocModel["kind"],
@@ -98,6 +100,7 @@ export function buildStandings(
 ): DocModel {
   const metricColumns = opts.metricColumns ?? [];
   const columns = ["#", "Team", "P", "W", "D", "L", ...metricColumns, "Pts"];
+  const hasBadges = rows.some((r) => r.badgeUrl != null);
   const table = {
     columns,
     rows: rows.map((r, i) => [
@@ -111,6 +114,9 @@ export function buildStandings(
       r.points,
     ]),
     ...(opts.landscape === true ? { landscape: true } : {}),
+    // PROMPT-60: aligned per-row crest URLs; omitted when nobody has one so
+    // the plain (badge-free) output is byte-identical to before.
+    ...(hasBadges ? { rowBadges: rows.map((r) => r.badgeUrl ?? null) } : {}),
   };
   return base("standings", title, [{ table }], opts);
 }
@@ -208,4 +214,125 @@ export function buildAdmitTickets(
 ): DocModel {
   const sections: DocSection[] = tickets.map((t) => ({ columnsHint: 2, ticket: t }));
   return base("admit_ticket", title, sections, opts);
+}
+
+// ---------------------------------------------------------------------------
+// Bracket results-poster (PROMPT-62 §4) — the twoSidedBracket layout with
+// names/headlines resolved into a DocBracket payload. Landscape by nature;
+// the renderer scales it onto ONE sheet. Throws CONFIG_INVALID for shapes the
+// two-sided geometry can't lay out (double-elim, stepladder, partial data).
+// ---------------------------------------------------------------------------
+
+export interface ExportBracketFixture {
+  id: string;
+  round_no: number;
+  seq_in_round: number;
+  home: string | null; // resolved display name; null = unresolved feed
+  away: string | null;
+  headline: string | null;
+  decided: boolean;
+}
+
+function bracketRoundLabel(fromEnd: number): string {
+  if (fromEnd === 0) return "Final";
+  if (fromEnd === 1) return "Semi-finals";
+  if (fromEnd === 2) return "Quarter-finals";
+  return `Round of ${2 ** (fromEnd + 1)}`;
+}
+
+export function buildBracket(
+  title: string,
+  fixtures: readonly ExportBracketFixture[],
+  opts: BuildOpts,
+): DocModel {
+  const result = twoSidedBracket(fixtures);
+  if (!result.ok) {
+    throw new EngineError("CONFIG_INVALID", `bracket poster: ${result.reason}`, {});
+  }
+  const layout = result.layout;
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const rowsPerSide = Math.max(
+    1,
+    layout.nodes.filter((n) => n.col === 0 && n.side === "L").length,
+  );
+  return {
+    ...base("bracket", title, [], opts),
+    bracket: {
+      nodes: layout.nodes.map((n) => {
+        const f = byId.get(n.fixtureId)!;
+        return {
+          fixtureId: n.fixtureId,
+          side: n.side,
+          col: n.col,
+          row: n.row,
+          home: f.home ?? "TBD",
+          away: f.away ?? "TBD",
+          headline: f.headline,
+          decided: f.decided,
+        };
+      }),
+      connectors: layout.connectors,
+      rounds: layout.rounds,
+      colsPerSide: layout.colsPerSide,
+      rowsPerSide,
+      roundLabels: Array.from({ length: layout.rounds }, (_, i) =>
+        bracketRoundLabel(layout.rounds - 1 - i),
+      ),
+      ...(layout.thirdPlaceId !== undefined ? { thirdPlaceId: layout.thirdPlaceId } : {}),
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Signed audit ledger, human-readable (PROMPT-63 §2): the per-fixture event
+// stream as a table, with the verification verdict + head hash + signature
+// carried in the description (the standard title block renders them — no
+// bespoke renderer code, so the stamp can never drift from the chrome).
+// ---------------------------------------------------------------------------
+
+export interface ExportAuditEvent {
+  seq: number;
+  at: string; // preformatted timestamp
+  actor: string;
+  type: string;
+  detail: string; // compact payload, pre-truncated
+  voids: string; // "" or "voids #N"
+}
+
+export function buildAuditLedger(
+  title: string,
+  input: {
+    events: readonly ExportAuditEvent[];
+    verified: boolean;
+    firstTamperedSeq: number | null;
+    headHash: string | null;
+    signature: { key_id: string; issued_at: string } | null;
+  },
+  opts: BuildOpts,
+): DocModel {
+  const stamp = input.verified
+    ? "VERIFIED ✓ — hash chain intact"
+    : `TAMPERED — chain breaks at #${input.firstTamperedSeq ?? "?"}`;
+  const sig =
+    input.signature === null
+      ? "unsigned export"
+      : `signed ed25519 key ${input.signature.key_id} at ${input.signature.issued_at}`;
+  const description = [
+    stamp,
+    input.headHash !== null ? `head ${input.headHash.slice(0, 16)}…` : "empty ledger",
+    sig,
+  ].join(" · ");
+  return base(
+    "audit",
+    title,
+    [
+      {
+        table: {
+          columns: ["#", "Time", "Actor", "Event", "Detail", "Void"],
+          rows: input.events.map((e) => [e.seq, e.at, e.actor, e.type, e.detail, e.voids]),
+        },
+      },
+    ],
+    { ...opts, description },
+  );
 }

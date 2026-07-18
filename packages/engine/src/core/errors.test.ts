@@ -38,6 +38,9 @@ describe("EngineError", () => {
       "STAGE_NOT_READY",
       // PROMPT-17 scheduling console (doc 12 §2 blocking conflicts)
       "SCHEDULE_CONFLICT",
+      // PROMPT-61 draw guard + PROMPT-59 combined qualification (v13)
+      "DRAW_NOT_ALLOWED",
+      "QUALIFICATION_INVALID",
       "ELIGIBILITY",
       // PROMPT-03 registry additions
       "MODULE_NOT_FOUND",

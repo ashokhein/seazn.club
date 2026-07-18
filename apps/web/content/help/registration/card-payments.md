@@ -8,7 +8,7 @@ Card entry fees run on **Stripe Connect**: registrants pay at sign-up, the money
 
 ## 1. Connect and verify (one-time)
 
-Under **Settings → Payments**, agree to the Terms of Service — connecting means your organisation bears the cost of chargebacks on its entry fees (see [§5 below](#5-disputes-chargebacks)) — then press **Connect Stripe**. You're sent to Stripe's secure onboarding — Seazn Club never sees your details. Stripe verifies who receives the money (**KYC**): legal name, date of birth and bank account; clubs and companies may be asked for registration documents. Usually minutes; occasionally Stripe asks for more and it takes a day or two. You can leave and resume anytime.
+Under **Settings → Connect**, agree to the Terms of Service — connecting means your organisation bears the cost of chargebacks on its entry fees (see [§5 below](#5-disputes-chargebacks)) — then press **Connect Stripe**. You're sent to Stripe's secure onboarding — Seazn Club never sees your details. Stripe verifies who receives the money (**KYC**): legal name, date of birth and bank account; clubs and companies may be asked for registration documents. Usually minutes; occasionally Stripe asks for more and it takes a day or two. You can leave and resume anytime.
 
 When Stripe finishes, your Payments page shows **Live — charges enabled** and divisions can choose **Card at sign-up**. Until then, saving a card division is blocked — and if verification ever lapses later, card divisions close to new entries automatically rather than take money that can't be collected.
 

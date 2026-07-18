@@ -35,7 +35,7 @@ export default async function PlayerCardPage({ params }: Props) {
   const { orgSlug, competitionSlug, personId } = await params;
   const data = await getPublicPlayer(orgSlug, competitionSlug, personId);
   if (!data) notFound();
-  const { org, competition, player, memberships } = data;
+  const { org, competition, player, memberships, stats } = data;
 
   return (
     <div>
@@ -103,6 +103,44 @@ export default async function PlayerCardPage({ params }: Props) {
           </ul>
         )}
       </section>
+
+      {/* PROMPT-65: per-division totals — labels come from the sport module's
+          declared playerStats model; nothing renders when there's nothing to
+          show (no layout shift). Free at every tier by design. */}
+      {stats.length > 0 && (
+        <section className="mt-6" data-testid="player-stats">
+          <h2 className="mb-2 font-display text-sm font-semibold uppercase tracking-[0.18em] text-ink-muted">
+            Stats
+          </h2>
+          <div className="space-y-3">
+            {stats.map((s) => (
+              <div
+                key={s.division_slug}
+                className="rounded-xl border border-zinc-200/80 bg-surface p-3 shadow-sm"
+              >
+                <Link
+                  href={`/shared/${org.slug}/${competition.slug}/${s.division_slug}`}
+                  className="text-sm font-medium text-accent-strong underline decoration-accent-line underline-offset-2 hover:decoration-accent"
+                >
+                  {s.division_name}
+                </Link>
+                <dl className="mt-2 flex flex-wrap gap-x-6 gap-y-2">
+                  {s.metrics.map((m) => (
+                    <div key={m.key} className="min-w-16">
+                      <dt className="text-[11px] uppercase tracking-wide text-ink-muted">
+                        {m.label}
+                      </dt>
+                      <dd className="font-display text-2xl font-bold tabular-nums text-ink">
+                        {m.value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

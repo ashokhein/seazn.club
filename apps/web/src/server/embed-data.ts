@@ -88,7 +88,7 @@ export async function embedDivisionData(divisionId: string): Promise<EmbedResolu
       select stage_id, pool_id, rows, updated_at
       from public_standings_v where division_id = ${divisionId}`,
     sql<PublicEntrant[]>`
-      select id, division_id, kind, display_name, seed, status, members, team_display
+      select id, division_id, kind, display_name, seed, status, members, team_display, badge_url
       from public_entrants_v where division_id = ${divisionId}
       order by seed nulls last, display_name`,
     sql<{ tz: string }[]>`

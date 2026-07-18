@@ -8,9 +8,11 @@ import {
   type EventEnvelope,
   type MatchOutcome,
   type ScoreSummary,
+  type StageKind,
 } from "@seazn/engine/core";
 import { resolveModule } from "./registry";
 import { loadLineupPair } from "./lineups";
+import { stageScopedCfg } from "./stage-cfg";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 
@@ -40,10 +42,15 @@ export interface AppendResult {
 interface FixtureRow {
   id: string;
   division_id: string;
+  stage_id: string;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
   status: string;
   outcome: unknown;
+}
+interface StageRow {
+  kind: string;
+  config: Record<string, unknown> | null;
 }
 interface DivisionRow {
   config: unknown;
@@ -115,7 +122,7 @@ export async function appendEvent(
     await tx`select pg_advisory_xact_lock(hashtext(${"fixture:" + fixtureId}))`;
 
     const [fixture] = await tx<FixtureRow[]>`
-      select id, division_id, home_entrant_id, away_entrant_id, status, outcome
+      select id, division_id, stage_id, home_entrant_id, away_entrant_id, status, outcome
       from fixtures where id = ${fixtureId}
     `;
     if (!fixture) {
@@ -140,6 +147,11 @@ export async function appendEvent(
       throw new EngineError("CONFIG_INVALID", "division not found for fixture", { fixtureId });
     }
     const sportModule = resolveModule(division.sport_key, division.module_version);
+    // The fixture's stage kind gates draw finalization (PROMPT-61); its config
+    // may carry stage-scoped decider overrides.
+    const [stage] = await tx<StageRow[]>`
+      select kind, config from stages where id = ${fixture.stage_id}
+    `;
 
     // Optimistic concurrency: the client's expectedSeq must equal the current
     // ledger tip. Gapless seq is assigned here, under the lock (doc 07 note 3).
@@ -191,10 +203,27 @@ export async function appendEvent(
     // (invalid event, already-decided, …) aborts the tx before any insert, so
     // the ledger only ever holds valid events (spec 03 §2 guarantee 2).
     const stream = [...prior, candidate];
-    const state = foldMatch(sportModule, division.config, lineups, stream);
+    const cfg = stageScopedCfg(division.config, stage?.config);
+    const state = foldMatch(sportModule, cfg, lineups, stream);
     const summary = sportModule.summary(state);
     const outcome = sportModule.outcome(state);
     const active = resolveVoids(stream);
+
+    // PROMPT-61: a stage that cannot end level refuses to finalize a draw —
+    // the throw aborts the tx before insert, so the bracket never silently
+    // stalls on an outcome with no winner to advance.
+    if (
+      outcome !== null &&
+      (outcome as { kind?: string }).kind === "draw" &&
+      stage !== undefined &&
+      !sportModule.supportsDraws(cfg as never, stage.kind as StageKind)
+    ) {
+      throw new EngineError(
+        "DRAW_NOT_ALLOWED",
+        "this stage cannot end level — decide it by extra time or a shootout",
+        { fixtureId, stage: stage.kind },
+      );
+    }
 
     await tx`
       insert into score_events (id, fixture_id, seq, type, payload, recorded_by, recorded_at, voids_event_id, device_link_id)

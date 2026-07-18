@@ -224,3 +224,106 @@ export async function getFixtureState(auth: AuthCtx, fixtureId: string): Promise
     };
   });
 }
+
+/** PROMPT-62 — ScoreSummary.headline per fixture (from match_states) for the
+ *  bracket panel's node scores. One query per division render. */
+export async function listFixtureHeadlines(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<Record<string, string>> {
+  const rows = await withTenant(auth.orgId, (tx) =>
+    tx<{ fixture_id: string; headline: string | null }[]>`
+      select ms.fixture_id, ms.summary->>'headline' as headline
+      from match_states ms
+      join fixtures f on f.id = ms.fixture_id
+      where f.division_id = ${divisionId}`,
+  );
+  return Object.fromEntries(
+    rows.filter((r) => r.headline !== null).map((r) => [r.fixture_id, r.headline as string]),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Signed per-match audit ledger (PROMPT-63). score_events is append-only and
+// hash-chained per fixture (V226: trg_zhash BEFORE INSERT sets prev_hash /
+// row_hash; verify_score_events_chain(fixture) returns the first tampered row
+// id or NULL). This read surfaces the WHOLE stream with the chain columns +
+// the verifier verdict; the route signs head_hash (audit-sign.ts).
+// ---------------------------------------------------------------------------
+
+/** The exact V226 canonical recipe, documented so an independent verifier can
+ *  re-walk the chain (payload::text must be the stored Postgres serialisation;
+ *  the Ed25519 signature is the primary cross-system proof). */
+export const AUDIT_CANONICAL_SPEC =
+  "row_hash = sha256(coalesce(prev_hash,'') || '|' || concat_ws('|', id, fixture_id, seq, type, payload::text, coalesce(voids_event_id::text,''), coalesce(recorded_by::text,''), recorded_at))";
+
+export interface AuditLedgerEvent {
+  seq: number;
+  type: string;
+  payload: unknown;
+  recorded_by: string | null;
+  recorded_at: string;
+  voids_event_id: string | null;
+  prev_hash: string | null;
+  row_hash: string;
+}
+
+export interface AuditLedger {
+  fixture: {
+    id: string;
+    division_id: string;
+    fixture_no: number | null;
+    home: string | null;
+    away: string | null;
+    status: string;
+  };
+  canonical_spec: string;
+  events: AuditLedgerEvent[];
+  head_hash: string | null;
+  verified: boolean;
+  first_tampered_seq: number | null;
+}
+
+export async function readAuditLedger(auth: AuthCtx, fixtureId: string): Promise<AuditLedger> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [fixture] = await tx<
+      {
+        id: string; division_id: string; fixture_no: number | null; status: string;
+        home_entrant_id: string | null; away_entrant_id: string | null;
+      }[]
+    >`
+      select id, division_id, fixture_no, status, home_entrant_id, away_entrant_id
+      from fixtures where id = ${fixtureId}`;
+    if (!fixture) throw new HttpError(404, "fixture not found");
+    const names = await tx<{ id: string; display_name: string }[]>`
+      select id, display_name from entrants
+      where id in (${fixture.home_entrant_id ?? null}, ${fixture.away_entrant_id ?? null})`;
+    const nameById = new Map(names.map((n) => [n.id, n.display_name]));
+    const events = await tx<AuditLedgerEvent[]>`
+      select seq, type, payload, recorded_by, recorded_at, voids_event_id, prev_hash, row_hash
+      from score_events where fixture_id = ${fixtureId} order by seq`;
+    const [{ bad }] = await tx<{ bad: string | null }[]>`
+      select verify_score_events_chain(${fixtureId})::text as bad`;
+    let firstTamperedSeq: number | null = null;
+    if (bad !== null) {
+      const [row] = await tx<{ seq: number }[]>`
+        select seq from score_events where id = ${bad}`;
+      firstTamperedSeq = row?.seq ?? null;
+    }
+    return {
+      fixture: {
+        id: fixture.id,
+        division_id: fixture.division_id,
+        fixture_no: fixture.fixture_no,
+        home: fixture.home_entrant_id ? (nameById.get(fixture.home_entrant_id) ?? null) : null,
+        away: fixture.away_entrant_id ? (nameById.get(fixture.away_entrant_id) ?? null) : null,
+        status: fixture.status,
+      },
+      canonical_spec: AUDIT_CANONICAL_SPEC,
+      events,
+      head_hash: events.length > 0 ? events[events.length - 1]!.row_hash : null,
+      verified: bad === null,
+      first_tampered_seq: firstTamperedSeq,
+    };
+  });
+}

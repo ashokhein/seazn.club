@@ -122,6 +122,7 @@ const RULES: RouteRule[] = [
   { method: "GET", path: "/fixtures/:id", scope: "read", pin: "fixture" },
   { method: "PATCH", path: "/fixtures/:id", scope: "manage", pin: "fixture" },
   { method: "GET", path: "/fixtures/:id/events", scope: "read", pin: "fixture" },
+  { method: "GET", path: "/fixtures/:id/audit", scope: "read", pin: "fixture" },
   { method: "POST", path: "/fixtures/:id/events", scope: "score", pin: "fixture" },
   { method: "POST", path: "/fixtures/:id/finalize", scope: "manage", pin: "fixture" },
   { method: "GET", path: "/fixtures/:id/lineups/:entrantId", scope: "read", pin: "fixture" },
@@ -150,6 +151,8 @@ const RULES: RouteRule[] = [
   { method: "PATCH", path: "/persons/:id", scope: "manage" },
   { method: "POST", path: "/persons/:id/merge", scope: "manage" },
   { method: "POST", path: "/persons/:id/photo", scope: "manage" },
+  { method: "POST", path: "/entrants/:id/badge", scope: "manage" },
+  { method: "DELETE", path: "/entrants/:id/badge", scope: "manage" },
   { method: "GET", path: "/persons/:id/profiles/:sport", scope: "read" },
   { method: "PUT", path: "/persons/:id/profiles/:sport", scope: "manage" },
   { method: "GET", path: "/persons/:id/stats", scope: "read" },
@@ -161,6 +164,7 @@ const RULES: RouteRule[] = [
   { method: "GET", path: "/stages/:id/americano", scope: "read", pin: "stage" },
   { method: "POST", path: "/stages/:id/challenges", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/complete", scope: "manage", pin: "stage" },
+  { method: "POST", path: "/stages/:id/fixtures", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/generate", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/officials/source", scope: "manage", pin: "stage" },
   { method: "POST", path: "/stages/:id/schedule/apply", scope: "manage", pin: "stage" },
@@ -225,6 +229,8 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "PUT /me/fixtures/:id/availability",
   "GET /me/persons",
   "PATCH /me/persons/:id/consent",
+  "POST /me/persons/:id/photo",
+  "DELETE /me/persons/:id/photo",
   "POST /fixtures/:id/checkin-link",
   // Official onboarding (PROMPT-57): the invite mints a login capability and
   // the officiating /me surface is session-personal — same rules as players.

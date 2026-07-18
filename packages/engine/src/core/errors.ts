@@ -15,6 +15,12 @@ export const EngineErrorCode = z.enum([
   // PROMPT-17 — a schedule write hit a blocking conflict (doc 12 §2:
   // conflict.court, or warn.order on a direct feed). data.conflicts lists them.
   "SCHEDULE_CONFLICT",
+  // PROMPT-61 — a stage whose supportsDraws(cfg, kind) is false refused to
+  // finalize a level outcome; decide it by extra time / a shootout.
+  "DRAW_NOT_ALLOWED",
+  // PROMPT-59 — a qualification spec is structurally invalid (e.g. the same
+  // entrant qualifying through two combined tiers).
+  "QUALIFICATION_INVALID",
   "ELIGIBILITY",
   // PROMPT-03 — registry resolution (spec 03 §3 registry & versioning).
   "MODULE_NOT_FOUND",

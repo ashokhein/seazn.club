@@ -303,6 +303,11 @@ async function main() {
   // on the pro org; flat free strip + 402 gates on a fresh community owner.
   await sponsorsSuite(admin, org2.id, renamed.slug);
 
+  // --- v13 real-competition fidelity: badge + inline members, ad-hoc match,
+  // knockout draw guard, bracket poster, signed audit (pro 200 / free 402),
+  // public presentation mode.
+  await v13Suite(admin, org2.id, renamed.slug);
+
   // --- v3 content + API wave (PROMPT-35/37/39): markdown editor render,
   // /help + /developers, scoped keys, OG/poster/embed/sponsors — pro + free.
   await v3ContentApiSuite(admin, org2.id, renamed.slug);
@@ -384,7 +389,7 @@ async function disputeSurfacesSuite() {
   const who = await signIn(owner, `tos_${tag}@example.com`);
   await setPlan(who.org_id, "pro");
   const refused = await v1(owner, `/api/v1/orgs/${who.org_id}/connect`, "POST", {
-    return_path: "/settings/payments",
+    return_path: "/settings/connect",
   });
   check("p55: connect refuses without ToS agreement (422)", refused.status === 422);
 }
@@ -1821,10 +1826,17 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
     "product tour: billing step anchor present (pro)",
     proBilling.body.includes('data-tour="billing-plan"'),
   );
-  const proPayments = await html(admin, `/o/${proOrgSlug}/settings/payments`);
+  const proPayments = await html(admin, `/o/${proOrgSlug}/settings/connect`);
   check(
-    "product tour: Connect step anchor present on payments (owner)",
+    "product tour: Connect step anchor present on Connect settings (owner)",
     proPayments.status === 200 && proPayments.body.includes('data-tour="connect-stripe"'),
+  );
+  // Rename regression (2026-07-18): the old Payments URL must forward to
+  // Connect — fetch follows the redirect, so the anchor proves the landing.
+  const legacyPayments = await html(admin, `/o/${proOrgSlug}/settings/payments?connect=return`);
+  check(
+    "legacy /settings/payments redirects to Connect (query preserved)",
+    legacyPayments.status === 200 && legacyPayments.body.includes('data-tour="connect-stripe"'),
   );
   const freeCancel = await raw(free, "/api/billing/cancel", "POST", {});
   check("v3/11 cancel wants a Stripe customer first (free)", freeCancel.status === 400);
@@ -3272,3 +3284,130 @@ main()
     console.log(`${pass} passed, ${fail} failed`);
     process.exit(1);
   });
+
+// --- v13 real-competition fidelity (PROMPT-59/60/61/62/63/64/66) -----------
+// Pro path on the given org; the free path flips the SAME org to community
+// for the audit 402 (cheapest honest gate check) and flips back.
+async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `V13 Cup ${tag}`,
+      visibility: "public",
+    }),
+  );
+
+  // --- PROMPT-60: badge on create (echoed) + inline new-person members.
+  const div = v1data<{ id: string; slug: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  const badged = await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", {
+    kind: "team",
+    display_name: `Mexico ${tag}`,
+    badge_url: "https://flags.example/mex.png",
+    members: [
+      { new_person: { full_name: `Striker ${tag}` }, squad_number: 9 },
+      { new_person: { full_name: `Keeper ${tag}` }, squad_number: 1 },
+    ],
+  });
+  check("v13 entrant carries badge_url + inline members (201)", badged.status === 201);
+  const badgedRow = v1data<{ badge_url: string | null; id: string }[] | { badge_url: string | null; id: string }>(badged);
+  const badgedOne = Array.isArray(badgedRow) ? badgedRow[0]! : badgedRow;
+  check("v13 badge_url echoed on the created entrant", badgedOne.badge_url === "https://flags.example/mex.png");
+  // --- PROMPT-66: league stage takes an ad-hoc match; it scores + counts.
+  const others: string[] = [];
+  for (const name of ["B", "C", "D"]) {
+    const row = await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", {
+      kind: "team", display_name: `${name} ${tag}`,
+    });
+    const data = v1data<{ id: string }[] | { id: string }>(row);
+    others.push(Array.isArray(data) ? data[0]!.id : data.id);
+  }
+  const league = await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
+    seq: 1, kind: "league", name: "League",
+  });
+  const leagueId = v1data<{ id: string }>(league).id;
+  await v1(admin, `/api/v1/stages/${leagueId}/generate`, "POST");
+  await v1(admin, `/api/v1/divisions/${div.id}/start`, "POST");
+  const adhoc = await v1(admin, `/api/v1/stages/${leagueId}/fixtures`, "POST", {
+    home_entrant_id: badgedOne.id,
+    away_entrant_id: others[0]!,
+  });
+  check("v13 addFixture on a league stage (201)", adhoc.status === 201);
+  const adhocId = v1data<{ fixture_id: string }>(adhoc).fixture_id;
+  await v1(admin, `/api/v1/fixtures/${adhocId}/events`, "POST", {
+    expected_seq: 0, type: "core.start", payload: {},
+  });
+  const adhocScore = await v1(admin, `/api/v1/fixtures/${adhocId}/events`, "POST", {
+    expected_seq: 1, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+  });
+  check("v13 ad-hoc match scores like any other", adhocScore.status === 201);
+
+  // --- PROMPT-61: a knockout can't finalize level; PROMPT-62: bracket PDF.
+  const kdiv = v1data<{ id: string; slug: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Knockout",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  for (const name of ["KA", "KB", "KC", "KD"]) {
+    await v1(admin, `/api/v1/divisions/${kdiv.id}/entrants`, "POST", {
+      kind: "team", display_name: `${name} ${tag}`,
+    });
+  }
+  const ko = await v1(admin, `/api/v1/divisions/${kdiv.id}/stages`, "POST", {
+    seq: 1, kind: "knockout", name: "KO",
+  });
+  const koId = v1data<{ id: string }>(ko).id;
+  const kgen = await v1(admin, `/api/v1/stages/${koId}/generate`, "POST");
+  const kf = v1data<{ fixtures: { id: string }[] }>(kgen).fixtures[0]!;
+  await v1(admin, `/api/v1/divisions/${kdiv.id}/start`, "POST");
+  await v1(admin, `/api/v1/fixtures/${kf.id}/events`, "POST", {
+    expected_seq: 0, type: "core.start", payload: {},
+  });
+  const level = await v1(admin, `/api/v1/fixtures/${kf.id}/events`, "POST", {
+    expected_seq: 1, type: "generic.result", payload: { p1Score: 1, p2Score: 1 },
+  });
+  check("v13 knockout refuses a level result (422 DRAW_NOT_ALLOWED)", level.status === 422);
+  const decided = await v1(admin, `/api/v1/fixtures/${kf.id}/events`, "POST", {
+    expected_seq: 1, type: "generic.result", payload: { p1Score: 2, p2Score: 1 },
+  });
+  check("v13 decisive knockout result lands", decided.status === 201);
+
+  const poster = await fetch(
+    `${BASE}/api/v1/divisions/${kdiv.id}/exports/bracket?format=pdf`,
+    { headers: { cookie: cookieHeader(admin) } },
+  );
+  const posterBytes = Buffer.from(await poster.arrayBuffer());
+  check(
+    "v13 bracket poster exports a PDF",
+    poster.status === 200 && posterBytes.subarray(0, 5).toString() === "%PDF-",
+  );
+
+  // --- PROMPT-63: audit trail — Pro 200 (verified + signature field), free 402.
+  const audit = await v1(admin, `/api/v1/fixtures/${kf.id}/audit`, "GET");
+  check("v13 audit trail downloads on Pro", audit.status === 200);
+  const auditData = v1data<{ verified: boolean; head_hash: string | null; signature: unknown }>(audit);
+  check("v13 audit chain verifies with a head hash", auditData.verified === true && auditData.head_hash !== null);
+  check("v13 audit carries the signature field (null without a key, never absent)", "signature" in auditData);
+  await setPlan(proOrgId, "community");
+  const gated = await v1(admin, `/api/v1/fixtures/${kf.id}/audit`, "GET");
+  check("v13 audit is Pro-gated (402 on community)", gated.status === 402);
+  await setPlan(proOrgId, "pro");
+
+  const keys = await fetch(`${BASE}/.well-known/seazn-audit-keys`);
+  check("v13 audit verify keys are public", keys.status === 200);
+
+  // --- PROMPT-64: no-login presentation mode renders for the public comp.
+  const present = await html(newSession(), `/shared/${proOrgSlug}/${comp.slug}/present`);
+  check(
+    "v13 presentation mode renders without login",
+    present.status === 200 && present.body.includes(`V13 Cup ${tag}`),
+  );
+}

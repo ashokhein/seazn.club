@@ -6,9 +6,11 @@ import "server-only";
 import type postgres from "postgres";
 import {
   buildAdmitTickets,
+  buildAuditLedger,
   buildOfficialsRota,
   buildParticipants,
   buildRoster,
+  buildBracket,
   buildStandings,
   buildTimetable,
   DocModel,
@@ -25,11 +27,13 @@ import { HttpError } from "@/lib/errors";
 import { hasFeature, requireFeature } from "@/lib/entitlements";
 import { fixtureWhen } from "@/lib/email-templates/official-assigned";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
+import { resolveEntrantBadge } from "@/lib/entrant-badge";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { resolveModule } from "@/server/engine-db";
 import { participantRows } from "./clubs";
 import { resolveSponsors } from "./sponsors";
 import { getMyOfficiating } from "./me-officiating";
+import { eventRecorderNames, type AuditLedger } from "./fixtures";
 
 type Tx = postgres.TransactionSql;
 
@@ -177,6 +181,7 @@ const DESCRIPTIONS: Record<string, string> = {
   roster: "Squads by team — sign each player in before play.",
   participants: "All registered players by club and division.",
   scoresheet: "One sheet per match — record the score and sign off.",
+  bracket: "The knockout tree — filled from live results.",
 };
 
 /** The pure model for a division export — separated for golden-style tests;
@@ -184,7 +189,7 @@ const DESCRIPTIONS: Record<string, string> = {
 export async function buildDivisionDocModel(
   auth: AuthCtx,
   divisionId: string,
-  kind: "timetable" | "standings" | "roster" | "participants" | "scoresheet",
+  kind: "timetable" | "standings" | "roster" | "participants" | "scoresheet" | "bracket",
   opts: ExportOpts,
 ): Promise<DocModel> {
   // Exports unlock via plan or an Event Pass on this competition (v3/07 §3).
@@ -220,9 +225,17 @@ export async function buildDivisionDocModel(
           where s.division_id = ${divisionId}
           order by s.seq desc, ss.updated_at desc limit 1`;
         if (!snapshot) throw new HttpError(404, "no standings yet");
-        const names = await tx<{ id: string; display_name: string }[]>`
-          select id, display_name from entrants where division_id = ${divisionId}`;
+        const names = await tx<{ id: string; display_name: string; badge_url: string | null }[]>`
+          select id, display_name, badge_url from entrants where division_id = ${divisionId}`;
         const nameById = new Map(names.map((n) => [n.id, n.display_name]));
+        // PROMPT-60: crests reach the PDF too (entrant badge only here — the
+        // team-logo fallback stays a web concern; keep the export cheap).
+        const badgeById = new Map(
+          names.map((n) => [
+            n.id,
+            n.badge_url ? resolveEntrantBadge({ badge_url: n.badge_url }) : null,
+          ]),
+        );
         const sportModule = resolveModule(meta.sport_key, meta.module_version);
         const metricColumns = sportModule.metrics.slice(0, 4).map((m) => m.key);
         const rows = [...snapshot.rows]
@@ -235,6 +248,7 @@ export async function buildDivisionDocModel(
             lost: r.lost,
             points: r.points,
             metrics: r.metrics,
+            ...(badgeById.get(r.entrantId) ? { badgeUrl: badgeById.get(r.entrantId) } : {}),
           }));
         return buildStandings(title, rows, {
           ...common,
@@ -331,6 +345,45 @@ export async function buildDivisionDocModel(
           sections,
           pageBreaks: opts.pageBreaks ?? "auto",
         });
+      }
+      case "bracket": {
+        // PROMPT-62 §4: the first knockout stage's tree as a landscape poster.
+        const [stage] = await tx<{ id: string }[]>`
+          select id from stages where division_id = ${divisionId} and kind = 'knockout'
+          order by seq limit 1`;
+        if (!stage) throw new HttpError(422, "this division has no knockout stage to poster");
+        const fixtures = await tx<
+          {
+            id: string; round_no: number; seq_in_round: number;
+            home_entrant_id: string | null; away_entrant_id: string | null;
+            outcome: unknown; headline: string | null;
+          }[]
+        >`
+          select f.id, f.round_no, f.seq_in_round, f.home_entrant_id, f.away_entrant_id,
+                 f.outcome, ms.summary->>'headline' as headline
+          from fixtures f
+          left join match_states ms on ms.fixture_id = f.id
+          where f.stage_id = ${stage.id}
+          order by f.round_no, f.seq_in_round`;
+        if (fixtures.length === 0) {
+          throw new HttpError(422, "the knockout bracket hasn't been generated yet");
+        }
+        const names = await tx<{ id: string; display_name: string }[]>`
+          select id, display_name from entrants where division_id = ${divisionId}`;
+        const nameById = new Map(names.map((n) => [n.id, n.display_name]));
+        return buildBracket(
+          title,
+          fixtures.map((f) => ({
+            id: f.id,
+            round_no: f.round_no,
+            seq_in_round: f.seq_in_round,
+            home: f.home_entrant_id ? (nameById.get(f.home_entrant_id) ?? null) : null,
+            away: f.away_entrant_id ? (nameById.get(f.away_entrant_id) ?? null) : null,
+            headline: f.headline,
+            decided: f.outcome !== null,
+          })),
+          { ...common, ...(liveUrl !== undefined ? { liveUrl } : {}) },
+        );
       }
     }
   });
@@ -543,5 +596,49 @@ export async function buildMyRotaDoc(
     printedAt: opts.printedAt,
     description: "Your upcoming duties across every organisation.",
     pageBreaks: "per_team",
+  });
+}
+
+// --- v13: signed audit ledger PDF (PROMPT-63 §2) -----------------------------
+
+/** Human-readable signed audit trail for one fixture: the hash-chained event
+ *  stream as a table, verification verdict + head hash + signature in the
+ *  description. Gating happens at the route (`scoring.audit_export`); this
+ *  assembles the model with the org's branded chrome where entitled. */
+export async function auditLedgerDoc(
+  auth: AuthCtx,
+  fixtureId: string,
+  ledger: AuditLedger,
+  signature: { key_id: string; issued_at: string } | null,
+  opts: { printedAt: string },
+): Promise<DocModel> {
+  const recorders = await eventRecorderNames(auth, fixtureId);
+  const [meta] = await sql<{ division_id: string }[]>`
+    select division_id from fixtures where id = ${fixtureId}`;
+  return withTenant(auth.orgId, async (tx) => {
+    const divMeta = await divisionMeta(tx, meta!.division_id);
+    const branding = await brandingFor(auth, divMeta);
+    const vs =
+      ledger.fixture.home !== null || ledger.fixture.away !== null
+        ? ` — ${ledger.fixture.home ?? "TBD"} vs ${ledger.fixture.away ?? "TBD"}`
+        : "";
+    return buildAuditLedger(
+      `${divMeta.competition_name} — ${divMeta.name}${vs}`,
+      {
+        events: ledger.events.map((e) => ({
+          seq: e.seq,
+          at: e.recorded_at,
+          actor: e.recorded_by ? (recorders[e.recorded_by] ?? e.recorded_by.slice(0, 8)) : "—",
+          type: e.type,
+          detail: JSON.stringify(e.payload ?? {}).slice(0, 80),
+          voids: e.voids_event_id !== null ? "void" : "",
+        })),
+        verified: ledger.verified,
+        firstTamperedSeq: ledger.first_tampered_seq,
+        headHash: ledger.head_hash,
+        signature,
+      },
+      { printedAt: opts.printedAt, ...(branding !== undefined ? { branding } : {}) },
+    );
   });
 }

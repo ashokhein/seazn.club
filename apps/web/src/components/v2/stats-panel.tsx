@@ -18,6 +18,8 @@ interface Row {
   squad_number: number | null;
   entrant: string | null;
   stats: Record<string, number>;
+  /** PROMPT-65: person consented to a public profile — the row links there. */
+  public_profile?: boolean;
 }
 interface Board {
   metrics: Metric[];
@@ -25,7 +27,15 @@ interface Board {
   requires_detailed_scoring: boolean;
 }
 
-export function StatsPanel({ divisionId }: { divisionId: string }) {
+export function StatsPanel({
+  divisionId,
+  publicBase = null,
+}: {
+  divisionId: string;
+  /** PROMPT-65: `/shared/{org}/{comp}` when the competition is public —
+   *  consented rows link to the player profile. */
+  publicBase?: string | null;
+}) {
   const msg = useMsg();
   const [board, setBoard] = useState<Board | null>(null);
   const [metric, setMetric] = useState<string | null>(null);
@@ -152,7 +162,18 @@ export function StatsPanel({ divisionId }: { divisionId: string }) {
                   {r.squad_number !== null && (
                     <span className="mr-1 text-slate-400">#{r.squad_number}</span>
                   )}
-                  {r.full_name}
+                  {publicBase !== null && r.public_profile ? (
+                    <a
+                      href={`${publicBase}/players/${r.person_id}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="hover:text-purple-700 hover:underline"
+                    >
+                      {r.full_name}
+                    </a>
+                  ) : (
+                    r.full_name
+                  )}
                 </td>
                 <td className="px-4 py-2 text-sm text-slate-500">{r.entrant ?? "—"}</td>
                 {cols.map((m) => (

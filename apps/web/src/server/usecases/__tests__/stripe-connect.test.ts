@@ -62,7 +62,7 @@ describe.skipIf(!HAS_DB)("Connect onboarding ToS gate (PROMPT-55)", () => {
   it("first connect without agreement → 422, no Stripe account created", async () => {
     const { owner, orgId } = await seedProOrg();
     await expect(
-      createConnectOnboardingLink(owner, orgId, "http://test.local", "/settings/payments"),
+      createConnectOnboardingLink(owner, orgId, "http://test.local", "/settings/connect"),
     ).rejects.toMatchObject({ status: 422 });
     expect(stripeMock.accountCreate).not.toHaveBeenCalled();
     const [org] = await sql<{ stripe_account_id: string | null }[]>`
@@ -73,7 +73,7 @@ describe.skipIf(!HAS_DB)("Connect onboarding ToS gate (PROMPT-55)", () => {
   it("agreement creates the account with the acceptance stamped in metadata", async () => {
     const { owner, orgId } = await seedProOrg();
     const { url } = await createConnectOnboardingLink(
-      owner, orgId, "http://test.local", "/settings/payments", true,
+      owner, orgId, "http://test.local", "/settings/connect", true,
     );
     expect(url).toBe("https://connect.stripe.test/onboard");
     expect(stripeMock.accountCreate).toHaveBeenCalledTimes(1);
@@ -92,7 +92,7 @@ describe.skipIf(!HAS_DB)("Connect onboarding ToS gate (PROMPT-55)", () => {
     await sql`update organizations set stripe_account_id = ${"acct_prior_" + orgId.slice(0, 8)}
               where id = ${orgId}`;
     const { url } = await createConnectOnboardingLink(
-      owner, orgId, "http://test.local", "/settings/payments",
+      owner, orgId, "http://test.local", "/settings/connect",
     );
     expect(url).toBe("https://connect.stripe.test/onboard");
     expect(stripeMock.accountCreate).not.toHaveBeenCalled();

@@ -172,6 +172,20 @@ export const EntrantMemberInput = z.object({
   roles: z.array(z.string()).default([]),
 });
 
+/** PROMPT-60 §2 — a member created inline with the entrant (same transaction),
+ *  so a whole team + roster is one request. Explicit person_id remains the way
+ *  to reuse an existing person; inline members are never merged/deduped
+ *  against existing org persons. Create-time only. */
+export const NewPersonMemberInput = z.object({
+  new_person: z.object({ full_name: z.string().min(1).max(200) }),
+  squad_number: z.number().int().min(0).nullish(),
+  default_position_key: z.string().nullish(),
+  is_captain: z.boolean().default(false),
+  roles: z.array(z.string()).default([]),
+});
+export const CreateEntrantMemberInput = z.union([EntrantMemberInput, NewPersonMemberInput]);
+export type CreateEntrantMemberInput = z.infer<typeof CreateEntrantMemberInput>;
+
 export const CreateEntrant = z
   .object({
     kind: EntrantKind,
@@ -180,10 +194,14 @@ export const CreateEntrant = z
     display_name: z.string().min(1).max(200).optional(),
     team_id: Uuid.nullish(),
     seed: z.number().int().min(1).nullish(),
-    members: z.array(EntrantMemberInput).default([]),
+    // National-squad sizes (~26) must pass; 40 caps abuse (PROMPT-60 §2).
+    members: z.array(CreateEntrantMemberInput).max(40).default([]),
     // Copy the roster from an earlier entrant of the SAME team (season rollover,
     // league + cup). Resolved server-side in the creation transaction.
     copy_roster_from_entrant_id: Uuid.nullish(),
+    // PROMPT-60: lightweight crest/badge/flag — an external URL or an
+    // assets-bucket storage path. Club-independent, so free orgs get it.
+    badge_url: z.string().min(1).max(1000).nullish(),
   })
   .refine((e) => e.display_name != null || e.team_id != null, {
     message: "display_name is required unless team_id is provided",
@@ -213,6 +231,7 @@ export const PatchEntrant = z
     seed: z.number().int().min(1).nullable(),
     status: EntrantStatus, // withdraw = status: 'withdrawn'
     members: z.array(EntrantMemberInput), // full replacement
+    badge_url: z.string().min(1).max(1000).nullable(), // PROMPT-60
   })
   .partial()
   .refine((p) => Object.keys(p).length > 0, "empty patch");
@@ -402,16 +421,62 @@ export const CheckinLink = z.object({ url: z.string(), expires_at: z.string() })
 // Stages
 // ---------------------------------------------------------------------------
 
+// PROMPT-59 §4 — typed qualification spec, so a bad shape 400s at the edge
+// instead of throwing deep inside the engine. Mirrors engine
+// `QualificationSpec` (TakePicks | TopN | BestOfRank | CombinedQualification).
+// `take[].pool` matches the pool KEY ("A"); the display name ("Pool A") is
+// also accepted — the engine normalises.
+const PoolRankPickS = z.object({ pool: z.string().min(1), rank: z.number().int().min(1) });
+const TakePicksS = z
+  .object({ from: z.string().optional(), take: z.array(PoolRankPickS).min(1) })
+  .strict();
+const TopNS = z.object({ from: z.string().optional(), topN: z.number().int().min(1) }).strict();
+const BestOfRankS = z
+  .object({
+    from: z.string().optional(),
+    bestOfRank: z.object({
+      rank: z.number().int().min(1),
+      count: z.number().int().min(1),
+      normaliseUnequalPools: z.boolean().optional(),
+    }),
+  })
+  .strict();
+export type QualificationSpecInput =
+  | z.infer<typeof TakePicksS>
+  | z.infer<typeof TopNS>
+  | z.infer<typeof BestOfRankS>
+  | { from?: string; combine: QualificationSpecInput[] };
+export const QualificationSpecSchema: z.ZodType<QualificationSpecInput> = z.lazy(() =>
+  z.union([
+    TakePicksS,
+    TopNS,
+    BestOfRankS,
+    z
+      .object({ from: z.string().optional(), combine: z.array(QualificationSpecSchema).min(2).max(8) })
+      .strict(),
+  ]),
+);
+
 export const CreateStage = z.object({
   seq: z.number().int().min(1),
   kind: StageKind,
   name: z.string().min(1).max(200),
   config: z.record(z.string(), z.unknown()).default({}),
-  qualification: z.record(z.string(), z.unknown()).nullish(),
+  qualification: QualificationSpecSchema.nullish(),
 });
 
 /** POST /divisions/{id}/stages — the stage graph, one or many (doc 08 §3). */
 export const CreateStages = z.union([CreateStage, z.array(CreateStage).min(1).max(20)]);
+
+/** POST /stages/{id}/fixtures — ad-hoc single fixture (PROMPT-66). */
+export const AddFixture = z.object({
+  home_entrant_id: Uuid,
+  away_entrant_id: Uuid,
+  round_no: z.number().int().min(1).optional(),
+  scheduled_at: z.string().datetime({ offset: true }).nullish(),
+  venue: z.string().max(200).nullish(),
+});
+export type AddFixture = z.infer<typeof AddFixture>;
 export type CreateStages = z.infer<typeof CreateStages>;
 
 export const Stage = z.object({

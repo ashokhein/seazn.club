@@ -23,3 +23,5 @@ It cycles standings, upcoming matchups and live scores on its own, refreshes its
 **The TV browser sleeps?** Most TVs have a "screensaver off while browsing" setting; failing that, a cheap HDMI stick with a kiosk browser is bulletproof.
 
 **Can I show several divisions?** Open the competition-level slideshow to rotate through all of them.
+
+Two v13 upgrades: knockout stages add a **bracket slide** (the same two-sided tree as everywhere else), and while matches are live the **in-play slide pins** — the rotation returns to it every other slide, so a screen with live action never parks on a static table. For a no-login venue screen anyone can open, see [presentation mode](/help/sharing/presentation-mode).

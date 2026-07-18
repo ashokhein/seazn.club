@@ -75,20 +75,28 @@ export interface PhotoFile {
   bytes: Buffer;
 }
 
+/** The one place person-photo bytes reach storage (PROMPT-65 §2 shares it
+ *  with the /me self-service route): MIME-check, content-hash path, upload.
+ *  Returns the storage path to record on persons.photo_path. */
+export async function uploadPersonPhotoBytes(orgId: string, file: PhotoFile): Promise<string> {
+  const ext = PHOTO_MIME.get(file.contentType);
+  if (!ext) throw new HttpError(415, `unsupported image type '${file.contentType}'`);
+  const hash = createHash("sha256").update(file.bytes).digest("hex").slice(0, 32);
+  const path = `orgs/${orgId}/persons/${hash}.${ext}`;
+  const { error } = await supabaseAdmin()
+    .storage.from(PHOTO_BUCKET)
+    .upload(path, file.bytes, { contentType: file.contentType, upsert: true });
+  if (error) throw new HttpError(502, `photo upload failed: ${error.message}`);
+  return path;
+}
+
 /** Upload a player's photo to storage and record its path (content-hash
  *  dedupe, mirroring club badges). */
 export async function setPersonPhoto(auth: AuthCtx, id: string, file: PhotoFile): Promise<PersonRow> {
-  const ext = PHOTO_MIME.get(file.contentType);
-  if (!ext) throw new HttpError(415, `unsupported image type '${file.contentType}'`);
+  const path = await uploadPersonPhotoBytes(auth.orgId, file);
   return withTenant(auth.orgId, async (tx) => {
     const [person] = await tx<PersonRow[]>`select id from persons where id = ${id}`;
     if (!person) throw new HttpError(404, "person not found");
-    const hash = createHash("sha256").update(file.bytes).digest("hex").slice(0, 32);
-    const path = `orgs/${auth.orgId}/persons/${hash}.${ext}`;
-    const { error } = await supabaseAdmin()
-      .storage.from(PHOTO_BUCKET)
-      .upload(path, file.bytes, { contentType: file.contentType, upsert: true });
-    if (error) throw new HttpError(502, `photo upload failed: ${error.message}`);
     const [row] = await tx<PersonRow[]>`
       update persons set photo_path = ${path} where id = ${id} returning ${tx(COLS)}`;
     return row!;

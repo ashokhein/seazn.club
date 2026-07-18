@@ -2,6 +2,8 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAdmitTickets,
+  buildAuditLedger,
+  buildBracket,
   buildOfficialsRota,
   buildParticipants,
   buildRoster,
@@ -144,5 +146,105 @@ describe("buildDocModel goldens (Jul3/06 §2)", () => {
     expect(m.sections[0]!.columnsHint).toBe(2);
     expect(m.sections[0]!.ticket?.qrUrl).toBe("https://x/r/AB12CD");
     expect(JSON.stringify(m)).not.toMatch(/data:image/); // no pixels in the model
+  });
+});
+
+describe("buildStandings — row badges (PROMPT-60)", () => {
+  it("threads badge URLs into the table when any row carries one", () => {
+    const model = buildStandings(
+      "Open — Standings",
+      [
+        { name: "Mexico", played: 3, won: 3, drawn: 0, lost: 0, points: 9, metrics: {},
+          badgeUrl: "https://flags.example/mex.png" },
+        { name: "Canada", played: 3, won: 0, drawn: 0, lost: 3, points: 0, metrics: {} },
+      ],
+      { printedAt: "2026-07-18T00:00:00Z" },
+    );
+    const table = model.sections[0]!.table!;
+    expect(table.rowBadges).toEqual(["https://flags.example/mex.png", null]);
+  });
+
+  it("omits rowBadges entirely when no row has a badge (plain output unchanged)", () => {
+    const model = buildStandings(
+      "Open — Standings",
+      [{ name: "A", played: 0, won: 0, drawn: 0, lost: 0, points: 0, metrics: {} }],
+      { printedAt: "2026-07-18T00:00:00Z" },
+    );
+    expect(model.sections[0]!.table!.rowBadges).toBeUndefined();
+  });
+});
+
+describe("buildBracket (PROMPT-62 §4)", () => {
+  const fx = (
+    id: string, round: number, seq: number,
+    home: string | null, away: string | null, headline: string | null, decided: boolean,
+  ) => ({ id, round_no: round, seq_in_round: seq, home, away, headline, decided });
+
+  const eight = [
+    fx("q1", 0, 1, "Mexico", "Chile", "2–0", true),
+    fx("q2", 0, 2, "Japan", "Ghana", "1–0", true),
+    fx("q3", 0, 3, "France", "Peru", null, false),
+    fx("q4", 0, 4, "Canada", "Italy", null, false),
+    fx("s1", 1, 1, "Mexico", "Japan", null, false),
+    fx("s2", 1, 2, null, null, null, false),
+    fx("f", 2, 1, null, null, null, false),
+  ];
+
+  it("produces a landscape-natured model with the laid-out payload + labels", () => {
+    const model = buildBracket("Cup — Open", eight, { printedAt: "2026-07-18T00:00:00Z" });
+    expect(model.kind).toBe("bracket");
+    expect(model.sections).toEqual([]);
+    expect(model.bracket!.roundLabels).toEqual(["Quarter-finals", "Semi-finals", "Final"]);
+    expect(model.bracket!.rowsPerSide).toBe(2);
+    const final = model.bracket!.nodes.find((n) => n.side === "center");
+    expect(final).toMatchObject({ home: "TBD", away: "TBD", decided: false });
+    const q1 = model.bracket!.nodes.find((n) => n.fixtureId === "q1");
+    expect(q1).toMatchObject({ home: "Mexico", headline: "2–0", decided: true });
+    // deterministic golden: printedAt is an input
+    expect(model.meta.printedAt).toBe("2026-07-18T00:00:00Z");
+  });
+
+  it("labels deep fields with Round of N", () => {
+    // 16-slot field: rounds = 4 → outermost label Round of 16
+    const refs = Array.from({ length: 8 }, (_, i) => fx(`r0-${i}`, 0, i + 1, `A${i}`, `B${i}`, null, false))
+      .concat(Array.from({ length: 4 }, (_, i) => fx(`r1-${i}`, 1, i + 1, null, null, null, false)))
+      .concat(Array.from({ length: 2 }, (_, i) => fx(`r2-${i}`, 2, i + 1, null, null, null, false)))
+      .concat([fx("fin", 3, 1, null, null, null, false)]);
+    const model = buildBracket("Cup", refs, { printedAt: "2026-07-18T00:00:00Z" });
+    expect(model.bracket!.roundLabels).toEqual(["Round of 16", "Quarter-finals", "Semi-finals", "Final"]);
+  });
+
+  it("throws CONFIG_INVALID for shapes the two-sided layout can't take", () => {
+    const ladder = [fx("a", 0, 1, "A", "B", null, false), fx("b", 1, 1, null, null, null, false), fx("c", 2, 1, null, null, null, false)];
+    expect(() => buildBracket("Cup", ladder, { printedAt: "x" })).toThrow(/bracket poster/);
+  });
+});
+
+describe("buildAuditLedger (PROMPT-63 §2)", () => {
+  const events = [
+    { seq: 1, at: "12:00:01", actor: "org", type: "core.start", detail: "{}", voids: "" },
+    { seq: 2, at: "12:31:07", actor: "Priya", type: "football.goal", detail: '{"by":"H","minute":31}', voids: "" },
+  ];
+
+  it("verified ledger: stamp + head + signature ride in the description", () => {
+    const model = buildAuditLedger("Cup — Match 14 audit", {
+      events, verified: true, firstTamperedSeq: null,
+      headHash: "deadbeef".repeat(8), signature: { key_id: "k1", issued_at: "2026-07-18T12:00:00Z" },
+    }, { printedAt: "2026-07-18T12:00:00Z" });
+    expect(model.kind).toBe("audit");
+    expect(model.description).toContain("VERIFIED ✓");
+    expect(model.description).toContain("deadbeefdeadbeef…");
+    expect(model.description).toContain("key k1");
+    expect(model.sections[0]!.table!.rows).toHaveLength(2);
+    expect(model.sections[0]!.table!.rows[1]).toEqual([2, "12:31:07", "Priya", "football.goal", '{"by":"H","minute":31}', ""]);
+  });
+
+  it("tampered + unsigned ledger says so", () => {
+    const model = buildAuditLedger("t", {
+      events, verified: false, firstTamperedSeq: 2, headHash: null, signature: null,
+    }, { printedAt: "x" });
+    expect(model.description).toContain("TAMPERED");
+    expect(model.description).toContain("#2");
+    expect(model.description).toContain("unsigned");
   });
 });
