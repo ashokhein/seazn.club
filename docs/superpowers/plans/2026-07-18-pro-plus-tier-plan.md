@@ -748,6 +748,8 @@ export default async function AdminEntitlementsPage() {
 
 - [ ] **Step 1: `proPlusSuite`** in `scripts/smoke.ts`, following the existing `*Suite` + SQL plan-flip conventions (see `pricingV3Suite` and the pro-flip trick): (a) community org: PATCH fixture officials with 2 officials → expect 402 `officials.per_fixture.max`; 2nd checkpoint POST → 402 `schedule.checkpoints.max`; (b) SQL-flip org to `pro_plus` → both succeed, manage-scope API key create succeeds; (c) `/pricing` HTML contains `pricing` matrix marker + "Pro Plus"; (d) restore the org's original plan. Register the suite in `main()` near `pricingV3Suite()` and BEFORE any suite that depends on the org's plan (read the ordering comments around lines 282–340 first — shared-DB poison is a known trap).
 - [ ] **Step 2: help articles** — update the pricing/billing help article (find via `grep -rln "Event Pass" apps/web/content/help`) for the 4-plan ladder; extend the officials article (1 official/fixture on Community) and the schedule/save-points article (1/5/unlimited). New slugs (if any new file) registered in `HELP_ARTICLE_SLUGS` — the registry test fails otherwise.
+
+- [ ] **Step 2b: e2e spec (user mandate 2026-07-18)** — add a Playwright spec in the root `e2e/` directory (follow the existing specs' conventions there — read one first; run from the REPO ROOT, known cwd gotcha): `pricing-pro-plus.spec.ts` — unauthenticated: goto `/en/pricing`; assert the Pro Plus card is NOT visible and the teaser + "Show Pro Plus" button ARE; click the button; assert the revealed card (`[data-plus-revealed]`) shows "Pro Plus" and the $39 price; assert the comparison table (`[data-pricing-matrix]`) contains a "Pro Plus" column header WITHOUT clicking anything (table always 4-col). Keep it self-contained (marketing page, no login).
 - [ ] **Step 3:** Full verify: `npm run typecheck --workspace apps/web && npm run test --workspace apps/web`. Then with DATABASE_URL, run the DB suites touched (pro-plus-matrix, officials, history, api-keys).
 - [ ] **Step 4: Commit** — `feat(pro-plus): smoke suite + help closing pass`
 
@@ -756,5 +758,6 @@ export default async function AdminEntitlementsPage() {
 ## Post-plan (controller, not a task)
 
 - Final whole-branch review (opus) via review-package MERGE_BASE..HEAD.
+- FULL VERIFY GATE before PR (user mandate): typecheck + unit + **headless Playwright e2e against a prod build** (`next build` + `next start`, never dev — dev dies under load/OOM; run playwright from the repo root).
 - `npm run stripe:sync` is an OPS step per environment (test/prod) — record in PR body, do not run in tests.
 - PR notes: deploy needs V286 + stripe:sync; Pro loses scheduling.ai/officials.auto/api.write-manage (approved hard move D4).
