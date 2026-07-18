@@ -39,7 +39,10 @@ const FEATURE_REASONS: Record<string, string> = {
   // Clubs & bulk import (Jul3/01 §7)
   "import.bulk": "Files over 20 rows need a Pro plan — split the file or upgrade.",
   "logos.bulk": "Multi-file logo upload is a Pro feature — you can still set logos one at a time.",
-  "clubs.hierarchy": "Club hierarchies (parent clubs, group-by-club) are a Pro feature.",
+  "clubs.hierarchy": "Club hierarchies (parent clubs, group-by-club) — your plan's limits apply.",
+  "clubs.max": "You've reached your plan's club limit.",
+  "teams.max": "You've reached your plan's team limit.",
+  "teams.squad_max": "This squad has reached your plan's size limit.",
   "scheduling.constraints": "The scheduling constraints solver is a Pro feature.",
   "scheduling.board": "Editing the schedule board is a Pro feature — it stays view-only on Community.",
   "scheduling.multi_division": "The competition-wide schedule board is a Pro feature.",
