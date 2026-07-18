@@ -1195,7 +1195,7 @@ async function seedNextStage(auth: AuthCtx, completedStageId: string): Promise<S
     const spec = next.qualification as unknown;
     const isSpec =
       typeof spec === "object" && spec !== null &&
-      ("take" in spec || "topN" in spec || "bestOfRank" in spec);
+      ("take" in spec || "topN" in spec || "bestOfRank" in spec || "combine" in spec);
     if (!isSpec) {
       throw new EngineError("CONFIG_INVALID", "unrecognised qualification spec", {
         stageId: next.id,
