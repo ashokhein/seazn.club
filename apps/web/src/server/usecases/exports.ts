@@ -6,6 +6,7 @@ import "server-only";
 import type postgres from "postgres";
 import {
   buildAdmitTickets,
+  buildAuditLedger,
   buildOfficialsRota,
   buildParticipants,
   buildRoster,
@@ -32,6 +33,7 @@ import { resolveModule } from "@/server/engine-db";
 import { participantRows } from "./clubs";
 import { resolveSponsors } from "./sponsors";
 import { getMyOfficiating } from "./me-officiating";
+import { eventRecorderNames, type AuditLedger } from "./fixtures";
 
 type Tx = postgres.TransactionSql;
 
@@ -594,5 +596,49 @@ export async function buildMyRotaDoc(
     printedAt: opts.printedAt,
     description: "Your upcoming duties across every organisation.",
     pageBreaks: "per_team",
+  });
+}
+
+// --- v13: signed audit ledger PDF (PROMPT-63 §2) -----------------------------
+
+/** Human-readable signed audit trail for one fixture: the hash-chained event
+ *  stream as a table, verification verdict + head hash + signature in the
+ *  description. Gating happens at the route (`scoring.audit_export`); this
+ *  assembles the model with the org's branded chrome where entitled. */
+export async function auditLedgerDoc(
+  auth: AuthCtx,
+  fixtureId: string,
+  ledger: AuditLedger,
+  signature: { key_id: string; issued_at: string } | null,
+  opts: { printedAt: string },
+): Promise<DocModel> {
+  const recorders = await eventRecorderNames(auth, fixtureId);
+  const [meta] = await sql<{ division_id: string }[]>`
+    select division_id from fixtures where id = ${fixtureId}`;
+  return withTenant(auth.orgId, async (tx) => {
+    const divMeta = await divisionMeta(tx, meta!.division_id);
+    const branding = await brandingFor(auth, divMeta);
+    const vs =
+      ledger.fixture.home !== null || ledger.fixture.away !== null
+        ? ` — ${ledger.fixture.home ?? "TBD"} vs ${ledger.fixture.away ?? "TBD"}`
+        : "";
+    return buildAuditLedger(
+      `${divMeta.competition_name} — ${divMeta.name}${vs}`,
+      {
+        events: ledger.events.map((e) => ({
+          seq: e.seq,
+          at: e.recorded_at,
+          actor: e.recorded_by ? (recorders[e.recorded_by] ?? e.recorded_by.slice(0, 8)) : "—",
+          type: e.type,
+          detail: JSON.stringify(e.payload ?? {}).slice(0, 80),
+          voids: e.voids_event_id !== null ? "void" : "",
+        })),
+        verified: ledger.verified,
+        firstTamperedSeq: ledger.first_tampered_seq,
+        headHash: ledger.head_hash,
+        signature,
+      },
+      { printedAt: opts.printedAt, ...(branding !== undefined ? { branding } : {}) },
+    );
   });
 }

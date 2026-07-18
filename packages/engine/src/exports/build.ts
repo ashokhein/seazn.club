@@ -282,3 +282,57 @@ export function buildBracket(
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Signed audit ledger, human-readable (PROMPT-63 §2): the per-fixture event
+// stream as a table, with the verification verdict + head hash + signature
+// carried in the description (the standard title block renders them — no
+// bespoke renderer code, so the stamp can never drift from the chrome).
+// ---------------------------------------------------------------------------
+
+export interface ExportAuditEvent {
+  seq: number;
+  at: string; // preformatted timestamp
+  actor: string;
+  type: string;
+  detail: string; // compact payload, pre-truncated
+  voids: string; // "" or "voids #N"
+}
+
+export function buildAuditLedger(
+  title: string,
+  input: {
+    events: readonly ExportAuditEvent[];
+    verified: boolean;
+    firstTamperedSeq: number | null;
+    headHash: string | null;
+    signature: { key_id: string; issued_at: string } | null;
+  },
+  opts: BuildOpts,
+): DocModel {
+  const stamp = input.verified
+    ? "VERIFIED ✓ — hash chain intact"
+    : `TAMPERED — chain breaks at #${input.firstTamperedSeq ?? "?"}`;
+  const sig =
+    input.signature === null
+      ? "unsigned export"
+      : `signed ed25519 key ${input.signature.key_id} at ${input.signature.issued_at}`;
+  const description = [
+    stamp,
+    input.headHash !== null ? `head ${input.headHash.slice(0, 16)}…` : "empty ledger",
+    sig,
+  ].join(" · ");
+  return base(
+    "audit",
+    title,
+    [
+      {
+        table: {
+          columns: ["#", "Time", "Actor", "Event", "Detail", "Void"],
+          rows: input.events.map((e) => [e.seq, e.at, e.actor, e.type, e.detail, e.voids]),
+        },
+      },
+    ],
+    { ...opts, description },
+  );
+}

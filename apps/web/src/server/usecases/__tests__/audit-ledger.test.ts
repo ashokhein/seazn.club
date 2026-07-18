@@ -100,3 +100,23 @@ describe.skipIf(!HAS_DB)("audit ledger (PROMPT-63)", () => {
     expect(await hasFeature(pro.orgId, "scoring.audit_export")).toBe(true);
   });
 });
+
+describe.skipIf(!HAS_DB)("audit PDF (PROMPT-63 §2)", () => {
+  it("renders a real PDF for a scored fixture (verdict + events in the model)", async () => {
+    const { auth, fixtureId } = await seedFixture("pro");
+    await appendEvent(auth.orgId, fixtureId, 0, { type: "core.start", payload: {} });
+    await appendEvent(auth.orgId, fixtureId, 1, {
+      type: "generic.result", payload: { p1Score: 3, p2Score: 2 },
+    });
+    const { auditLedgerDoc } = await import("../exports");
+    const { docModelToPdf } = await import("@/server/doc-render");
+    const ledger = await readAuditLedger(auth, fixtureId);
+    const model = await auditLedgerDoc(auth, fixtureId, ledger, { key_id: "k1", issued_at: "2026-07-18T12:00:00Z" }, { printedAt: "2026-07-18T12:00:00Z" });
+    expect(model.kind).toBe("audit");
+    expect(model.description).toContain("VERIFIED ✓");
+    expect(model.sections[0]!.table!.rows).toHaveLength(2);
+    const bytes = await docModelToPdf(model);
+    expect(bytes.subarray(0, 5).toString()).toBe("%PDF-");
+    expect(bytes.length).toBeGreaterThan(1024);
+  });
+});

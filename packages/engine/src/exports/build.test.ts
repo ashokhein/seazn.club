@@ -2,6 +2,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAdmitTickets,
+  buildAuditLedger,
   buildBracket,
   buildOfficialsRota,
   buildParticipants,
@@ -216,5 +217,34 @@ describe("buildBracket (PROMPT-62 §4)", () => {
   it("throws CONFIG_INVALID for shapes the two-sided layout can't take", () => {
     const ladder = [fx("a", 0, 1, "A", "B", null, false), fx("b", 1, 1, null, null, null, false), fx("c", 2, 1, null, null, null, false)];
     expect(() => buildBracket("Cup", ladder, { printedAt: "x" })).toThrow(/bracket poster/);
+  });
+});
+
+describe("buildAuditLedger (PROMPT-63 §2)", () => {
+  const events = [
+    { seq: 1, at: "12:00:01", actor: "org", type: "core.start", detail: "{}", voids: "" },
+    { seq: 2, at: "12:31:07", actor: "Priya", type: "football.goal", detail: '{"by":"H","minute":31}', voids: "" },
+  ];
+
+  it("verified ledger: stamp + head + signature ride in the description", () => {
+    const model = buildAuditLedger("Cup — Match 14 audit", {
+      events, verified: true, firstTamperedSeq: null,
+      headHash: "deadbeef".repeat(8), signature: { key_id: "k1", issued_at: "2026-07-18T12:00:00Z" },
+    }, { printedAt: "2026-07-18T12:00:00Z" });
+    expect(model.kind).toBe("audit");
+    expect(model.description).toContain("VERIFIED ✓");
+    expect(model.description).toContain("deadbeefdeadbeef…");
+    expect(model.description).toContain("key k1");
+    expect(model.sections[0]!.table!.rows).toHaveLength(2);
+    expect(model.sections[0]!.table!.rows[1]).toEqual([2, "12:31:07", "Priya", "football.goal", '{"by":"H","minute":31}', ""]);
+  });
+
+  it("tampered + unsigned ledger says so", () => {
+    const model = buildAuditLedger("t", {
+      events, verified: false, firstTamperedSeq: 2, headHash: null, signature: null,
+    }, { printedAt: "x" });
+    expect(model.description).toContain("TAMPERED");
+    expect(model.description).toContain("#2");
+    expect(model.description).toContain("unsigned");
   });
 });

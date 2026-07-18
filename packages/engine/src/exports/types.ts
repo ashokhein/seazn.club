@@ -64,6 +64,7 @@ export const DocKind = z.enum([
   "officials_rota",
   "admit_ticket",
   "bracket",
+  "audit",
 ]);
 export type DocKind = z.infer<typeof DocKind>;
 
