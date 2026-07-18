@@ -341,6 +341,38 @@ export async function deleteCompetition(auth: AuthCtx, id: string): Promise<void
     if (scored) {
       throw new HttpError(409, "competition has recorded score events — archive it instead");
     }
+    // Money guards (payments-hardening spec P0-1): a delete would CASCADE
+    // paid registrations, the Event Pass, and comp-scoped sponsorship —
+    // erasing the app's only record of live money. Archive is always allowed.
+    const [pass] = await tx`
+      select 1 from competition_passes where competition_id = ${id} limit 1`;
+    if (pass) {
+      throw new HttpError(409, "competition has an Event Pass — archive it instead");
+    }
+    const [liveMoney] = await tx`
+      select 1 from registrations r
+      join divisions d on d.id = r.division_id
+      where d.competition_id = ${id}
+        and r.payment_intent_id is not null
+        and r.refunded_cents < r.amount_cents
+      limit 1`;
+    if (liveMoney) {
+      throw new HttpError(
+        409,
+        "competition has card payments that are not fully refunded — refund them or archive it instead",
+      );
+    }
+    const [paidSponsor] = await tx`
+      select 1 from sponsor_orders o
+      join sponsor_packages p on p.id = o.package_id
+      where p.competition_id = ${id} and o.status = 'paid'
+      limit 1`;
+    if (paidSponsor) {
+      throw new HttpError(
+        409,
+        "competition has a paid sponsorship — refund the order or archive it instead",
+      );
+    }
     const deleted = await tx`delete from competitions where id = ${id} returning id`;
     if (deleted.length === 0) throw new HttpError(404, "competition not found");
   });
