@@ -169,7 +169,10 @@ export const checkoutSchema = z.object({
 
 // ---- billing types -----------------------------------------------------------
 
-export const PLAN_KEYS = ["community", "pro"] as const;
+// V286 added pro_plus above pro (Task 1) — Subscription.plan_key can hold it,
+// but this list was never updated (Task 6 only touched checkoutSchema), which
+// left every `sub.plan_key === "pro_plus"` comparison a TS2367 no-overlap error.
+export const PLAN_KEYS = ["community", "pro", "pro_plus"] as const;
 export const SUBSCRIPTION_STATUSES = [
   "trialing",
   "active",

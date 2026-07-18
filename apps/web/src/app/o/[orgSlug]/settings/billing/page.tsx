@@ -11,6 +11,7 @@ import {
   CancelSubscriptionButton,
   PaymentMethodsManager,
   PlanIntervalSwitcher,
+  PlanKeySwitcher,
   PromoCodeBox,
   ResumeSubscriptionButton,
   RetryPaymentButton,
@@ -20,7 +21,7 @@ import { type Subscription } from "@/lib/types";
 import { getLimit } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { asCurrency, formatMinor, proPrice } from "@/lib/currency";
+import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural, type Dict, type Locale } from "@/lib/i18n";
@@ -80,6 +81,10 @@ export default async function BillingPage({
   const planKey = sub?.plan_key ?? "community";
   const status = sub?.status ?? "active";
   const isPro = planKey === "pro";
+  // V286 added pro_plus above pro — isPaid recognises either paid plan (the
+  // upgrade section only shows on Community); isPro/isPlus stay exact-plan.
+  const isPaid = planKey === "pro" || planKey === "pro_plus";
+  const isPlus = planKey === "pro_plus";
   // One trial per org (V277): the upgrade CTA must not promise a trial the
   // checkout won't grant.
   const trialAvailable = !sub?.trial_used_at;
@@ -177,7 +182,7 @@ export default async function BillingPage({
             </div>
 
             {isOwner &&
-              isPro &&
+              isPaid &&
               status === "trialing" &&
               ((overview?.paymentMethods.length ?? 0) === 0 ? (
                 <a href="#payment-methods" className="btn btn-primary">
@@ -188,11 +193,11 @@ export default async function BillingPage({
                   {t(dict, "billing.cardOnFile")}
                 </p>
               ))}
-            {isOwner && isPro && !hasStripeSubscription && <DowngradeButton />}
+            {isOwner && isPaid && !hasStripeSubscription && <DowngradeButton />}
           </div>
 
           {/* In-app plan management (v3/11) — no Stripe portal. */}
-          {isOwner && isPro && hasStripeSubscription && (
+          {isOwner && isPaid && hasStripeSubscription && (
             <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4">
               {status === "past_due" && overview?.hasOpenInvoice && (
                 <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 px-4 py-3">
@@ -215,6 +220,28 @@ export default async function BillingPage({
                 )}
               </div>
               {overview && <PromoCodeBox discount={overview.discount} />}
+              {/* Live-sub plan change (Task 7): Pro -> Pro Plus upsell here;
+                  Pro Plus already has the ceiling, so it only gets the
+                  priority-support perk below. */}
+              {isPro && overview?.interval && (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3">
+                  <p className="text-sm font-semibold text-indigo-800">
+                    {t(dict, "billing.cta.goPlus")}
+                  </p>
+                  <p className="mt-1 text-xs text-indigo-700">{t(dict, "billing.plus.f5")}</p>
+                  <div className="mt-2">
+                    <PlanKeySwitcher currentPlanKey="pro" interval={overview.interval} />
+                  </div>
+                </div>
+              )}
+              {isPlus && (
+                <a
+                  href="mailto:plus@seazn.club"
+                  className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-800 hover:underline"
+                >
+                  {t(dict, "billing.plusSupport")}
+                </a>
+              )}
             </div>
           )}
         </section>
@@ -336,7 +363,7 @@ export default async function BillingPage({
         </section>
 
         {/* Upgrade / plan comparison */}
-        {!isPro && isOwner && (
+        {!isPaid && isOwner && (
           <section className="card p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
               {t(dict, "billing.upgradeToPro")}
@@ -374,6 +401,20 @@ export default async function BillingPage({
                   <li>✓ {t(dict, "billing.pro.f7")}</li>
                 </ul>
               </div>
+              <div className="rounded-xl border-2 border-indigo-500 bg-indigo-50 p-4">
+                <p className="mb-1 font-semibold text-indigo-700">Pro Plus</p>
+                <p className="text-2xl font-bold text-slate-800">
+                  {formatMinor(proPlusPrice("monthly", currency), currency)}
+                  <span className="text-base font-normal text-slate-500">{t(dict, "billing.perMo")}</span>
+                </p>
+                <ul className="mt-3 space-y-1 text-slate-700">
+                  <li>✓ {t(dict, "billing.plus.f1")}</li>
+                  <li>✓ {t(dict, "billing.plus.f2")}</li>
+                  <li>✓ {t(dict, "billing.plus.f3")}</li>
+                  <li>✓ {t(dict, "billing.plus.f4")}</li>
+                  <li>✓ {t(dict, "billing.plus.f5")}</li>
+                </ul>
+              </div>
             </div>
             <p className="mb-4 text-xs text-slate-500">
               {trialAvailable
@@ -400,6 +441,26 @@ export default async function BillingPage({
             <p className="mt-2 text-xs text-emerald-600">
               {t(dict, "billing.annualSaves")}
             </p>
+            {/* Pro Plus goes straight to checkout too — no separate compare
+                page; the card above already states what it adds over Pro. */}
+            <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+              <UpgradeButton
+                plan="pro_plus"
+                interval="annual"
+                label={`${t(dict, "billing.cta.goPlus")} — ${formatMinor(
+                  Math.round(proPlusPrice("annual", currency) / 12),
+                  currency,
+                )}${t(dict, "billing.perMoBilledYearly")}`}
+              />
+              <UpgradeButton
+                plan="pro_plus"
+                interval="monthly"
+                label={t(dict, "billing.orMonthly", {
+                  price: formatMinor(proPlusPrice("monthly", currency), currency),
+                })}
+                ghost
+              />
+            </div>
           </section>
         )}
       </main>
