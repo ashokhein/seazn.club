@@ -153,6 +153,34 @@ describe.skipIf(!HAS_DB)("replaceStages — format structure swap (v8)", () => {
   });
 });
 
+describe.skipIf(!HAS_DB)("entrant-kind guard (spec 2026-07-18)", () => {
+  it("blocks narrowing kinds that would orphan an active entrant, allows it once withdrawn", async () => {
+    const owner = await seedOwner();
+    const { division } = await rig(owner);
+
+    // Generic sport declares no entrant model → every kind is accepted, so a
+    // team entrant lands. Narrowing to individual-only would strand it.
+    const [team] = await createEntrants(owner, division.id, [
+      { kind: "team", display_name: "Team A", seed: 1, members: [] },
+    ]);
+
+    await expect(
+      patchDivision(owner, division.id, {
+        config: { entrants: { kinds: ["individual"], defaultKind: "individual" } },
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "ENTRANT_KIND_IN_USE" });
+
+    // Withdraw the team → the same narrowing now lands, and the override sticks.
+    await sql`update entrants set status = 'withdrawn' where id = ${team!.id}`;
+    const patched = await patchDivision(owner, division.id, {
+      config: { entrants: { kinds: ["individual"], defaultKind: "individual" } },
+    });
+    expect((patched.config as { entrants?: { kinds: string[] } }).entrants?.kinds).toEqual([
+      "individual",
+    ]);
+  });
+});
+
 afterAll(async () => {
   if (!HAS_DB) return;
   await sql.end();

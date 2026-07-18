@@ -18,6 +18,7 @@ import { getScheduleSettings } from "@/server/usecases/schedule";
 import { hasFeature } from "@/lib/entitlements";
 import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { resolveModule } from "@/server/engine-db";
+import { effectiveEntrantModel } from "@seazn/engine/sport";
 import { withTenant } from "@/lib/db";
 import { DivisionDangerZone } from "@/components/v2/division-danger-zone";
 import { EmbedSnippet } from "@/components/v2/embed-snippet";
@@ -331,6 +332,13 @@ export default async function DivisionPage({
               qualification: (st.qualification ?? null) as Record<string, unknown> | null,
             }))}
             canEdit={editable}
+            entrantModel={effectiveEntrantModel(sportModule.entrantModel ?? null, division.config)}
+            entrantModelSource={
+              (() => {
+                const e = (division.config as { entrants?: unknown } | null)?.entrants;
+                return e && typeof e === "object" ? "override" : "sport";
+              })()
+            }
             divisionPathPrefix={`/o/${orgSlug}/c/${compSlug}/d/`}
             fixturesHref={routes.division(orgSlug, compSlug, divSlug, "fixtures")}
             embed={

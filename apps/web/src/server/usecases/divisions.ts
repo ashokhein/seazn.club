@@ -7,6 +7,7 @@ import { sql, withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { withinLimit, requireFeature } from "@/lib/entitlements";
 import { EngineError } from "@seazn/engine/core";
+import { effectiveEntrantModel, type EntrantKind } from "@seazn/engine/sport";
 import { resolveModule } from "@/server/engine-db";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { CreateDivision, PatchDivision } from "@/server/api-v1/schemas";
@@ -427,8 +428,33 @@ export async function patchDivision(
           issues: parsed.error.issues,
         });
       }
+      // The entrant-shape override (spec 2026-07-18) rides in `config.entrants`
+      // but is NOT part of the sport's configSchema, which strips unknown keys —
+      // so carry it through the parse explicitly. Absent from the incoming
+      // config → the override is cleared back to the module default.
+      const finalConfig = parsed.data as Record<string, unknown>;
+      const incomingEntrants = (patch.config as { entrants?: unknown } | undefined)?.entrants;
+      if (incomingEntrants != null && typeof incomingEntrants === "object") {
+        finalConfig.entrants = incomingEntrants;
+      }
+      // Narrowing the allowed kinds must not orphan entrants that already exist:
+      // an active entrant of a kind the new model no longer accepts would become
+      // unschedulable. Reject with 422 ENTRANT_KIND_IN_USE — withdraw first.
+      const nextModel = effectiveEntrantModel(sportModule.entrantModel ?? null, finalConfig);
+      const inUse = await tx<{ kind: string }[]>`
+        select distinct kind from entrants
+        where division_id = ${id} and status not in ('withdrawn', 'disqualified')`;
+      for (const { kind } of inUse) {
+        if (!nextModel.kinds.includes(kind as EntrantKind)) {
+          throw new HttpError(
+            422,
+            `entrants of kind '${kind}' already exist — withdraw them first`,
+            "ENTRANT_KIND_IN_USE",
+          );
+        }
+      }
       effective.variant_key = variantKey;
-      effective.config = tx.json(parsed.data as never);
+      effective.config = tx.json(finalConfig as never);
     }
     // Eligibility edits re-derive the youth flag unless the same patch sets
     // it explicitly (v3/11 gap 8 — auto with organiser override).
