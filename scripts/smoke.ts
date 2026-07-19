@@ -4445,6 +4445,11 @@ async function cleanup(tag: string): Promise<void> {
     max: 1,
   });
   try {
+    // sponsor_orders are RESTRICT (V299): money rows must go before their org.
+    await sql`
+      delete from sponsor_orders
+      where org_id in (select id from organizations
+                       where created_by in (select id from users where email = any(${emails})))`;
     const orgs = await sql`
       delete from organizations
       where created_by in (select id from users where email = any(${emails}))`;

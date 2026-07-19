@@ -365,14 +365,25 @@ export async function deleteCompetition(auth: AuthCtx, id: string): Promise<void
     const [paidSponsor] = await tx`
       select 1 from sponsor_orders o
       join sponsor_packages p on p.id = o.package_id
-      where p.competition_id = ${id} and o.status = 'paid'
+      where p.competition_id = ${id}
+        and (o.payment_intent_id is not null
+             or o.disputed_at is not null
+             or o.status in ('paid', 'refunded'))
       limit 1`;
     if (paidSponsor) {
       throw new HttpError(
         409,
-        "competition has a paid sponsorship — refund the order or archive it instead",
+        "competition has sponsorship payment records — refund history is kept; archive it instead",
       );
     }
+    // V299 made sponsor_orders.package_id RESTRICT, so the comp→package
+    // cascade can no longer sweep abandoned checkouts implicitly. The
+    // sponsor_orders_prune policy (V300) fences this delete to rows that
+    // never became money: pending, intent-less, undisputed.
+    await tx`
+      delete from sponsor_orders o
+      using sponsor_packages p
+      where p.id = o.package_id and p.competition_id = ${id}`;
     const deleted = await tx`delete from competitions where id = ${id} returning id`;
     if (deleted.length === 0) throw new HttpError(404, "competition not found");
   });

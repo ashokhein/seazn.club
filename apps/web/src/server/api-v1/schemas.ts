@@ -1301,6 +1301,7 @@ export const SponsorOrder = z.object({
   sponsor_id: z.string().nullable(),
   created_at: z.string(),
   paid_at: z.string().nullable(),
+  disputed_at: z.string().nullable(),
 });
 
 export const StartSponsorCheckout = z.object({

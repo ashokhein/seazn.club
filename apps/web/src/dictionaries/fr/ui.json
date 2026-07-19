@@ -176,6 +176,7 @@
   "sponsors.order.status.pending": "En attente",
   "sponsors.order.status.paid": "Payée",
   "sponsors.order.status.failed": "Échouée",
+  "sponsors.order.status.disputed": "Contestée",
   "sponsors.order.status.refunded": "Remboursée",
   "sponsors.paidBadge": "Payé",
   "sponsors.deletePaid.title": "Supprimer un emplacement payé ?",

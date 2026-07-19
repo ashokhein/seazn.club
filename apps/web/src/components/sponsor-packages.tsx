@@ -32,6 +32,7 @@ interface OrderItem {
   amount_cents: number;
   currency: string;
   status: "pending" | "paid" | "failed" | "refunded";
+  disputed_at: string | null;
   created_at: string;
 }
 
@@ -446,11 +447,13 @@ export function SponsorPackages({
                   {money(order.amount_cents, order.currency)}
                 </span>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${STATUS_BADGE[order.status]}`}
+                  className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                    order.disputed_at ? "bg-rose-100 text-rose-700" : STATUS_BADGE[order.status]
+                  }`}
                 >
-                  {msg(STATUS_MSG[order.status])}
+                  {msg(order.disputed_at ? "sponsors.order.status.disputed" : STATUS_MSG[order.status])}
                 </span>
-                {order.status === "paid" ? (
+                {order.status === "paid" && !order.disputed_at ? (
                   <button
                     type="button"
                     disabled={busy}

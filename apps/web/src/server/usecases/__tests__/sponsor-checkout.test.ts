@@ -193,6 +193,12 @@ describe.skipIf(!HAS_DB)("sponsor monetization", () => {
       payment_intent_id: intent.id,
     });
     expect(emailMock.receipt).toHaveBeenCalledOnce();
+    // The "See it live" link must be absolute — mail clients have no origin
+    // to resolve "/shared/…" against (stg regression: NEXT_PUBLIC_APP_URL was
+    // never set anywhere, so every receipt shipped a relative link).
+    expect(emailMock.receipt.mock.calls[0]![0]).toMatchObject({
+      publicUrl: expect.stringMatching(/^https?:\/\/.+\/shared\//),
+    });
 
     // A late failure event never clobbers the paid order.
     await handleSponsorPaymentFailed(intent);
