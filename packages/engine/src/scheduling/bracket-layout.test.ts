@@ -185,3 +185,51 @@ describe("doubleElimBracket", () => {
     expect([0, 1, 2, 3].map(lbRowUnit)).toEqual([0, 0, 1, 1]);
   });
 });
+
+// pagePlayoffBracket (spec 2026-07-19) — the IPL Page-system shape.
+import { generatePagePlayoff } from "./bracket.ts";
+import { pagePlayoffBracket } from "./bracket-layout.ts";
+
+describe("generatePagePlayoff + pagePlayoffBracket", () => {
+  it("wires Q1/Eliminator/Q2/Final with the second-life feeds", () => {
+    const gen = generatePagePlayoff({ entrants: ["s1", "s2", "s3", "s4"] });
+    expect(gen.fixtures).toHaveLength(4);
+    const byId = new Map(gen.fixtures.map((f) => [f.id, f]));
+    expect(byId.get("pp-q1")).toMatchObject({ home: "s1", away: "s2", round: 0 });
+    expect(byId.get("pp-elim")).toMatchObject({ home: "s3", away: "s4", round: 0 });
+    expect(byId.get("pp-q2")).toMatchObject({
+      homeFrom: { fixtureId: "pp-q1", side: "loser" },
+      awayFrom: { fixtureId: "pp-elim", side: "winner" },
+    });
+    expect(byId.get("pp-final")).toMatchObject({
+      isFinal: true,
+      homeFrom: { fixtureId: "pp-q1", side: "winner" },
+      awayFrom: { fixtureId: "pp-q2", side: "winner" },
+    });
+  });
+
+  it("lays out the persisted rounds into the four named slots", () => {
+    const refs = [
+      { id: "a", round_no: 1, seq_in_round: 1 },
+      { id: "b", round_no: 1, seq_in_round: 2 },
+      { id: "c", round_no: 2, seq_in_round: 1 },
+      { id: "d", round_no: 3, seq_in_round: 1 },
+    ];
+    const res = pagePlayoffBracket(refs);
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.layout.nodes.map((n) => `${n.slot}:${n.fixtureId}`)).toEqual([
+      "q1:a", "eliminator:b", "q2:c", "final:d",
+    ]);
+  });
+
+  it("rejects non-Page shapes and wrong field sizes", () => {
+    expect(pagePlayoffBracket([])).toMatchObject({ ok: false });
+    const se = [
+      { id: "a", round_no: 1, seq_in_round: 1 }, { id: "b", round_no: 1, seq_in_round: 2 },
+      { id: "c", round_no: 1, seq_in_round: 3 }, { id: "d", round_no: 2, seq_in_round: 1 },
+    ];
+    expect(pagePlayoffBracket(se)).toMatchObject({ ok: false });
+    expect(() => generatePagePlayoff({ entrants: ["a", "b", "c"] })).toThrow(/exactly 4/);
+  });
+});

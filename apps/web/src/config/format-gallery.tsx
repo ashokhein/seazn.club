@@ -181,6 +181,23 @@ const DIAGRAMS: Record<string, () => React.ReactNode> = {
       </text>
     </Frame>
   ),
+  page_playoff: () => (
+    <Frame height={180}>
+      <Node x={16} y={20} w={118} label="Qualifier 1" sub="1st × 2nd" />
+      <Node x={16} y={110} w={118} label="Eliminator" sub="3rd × 4th" />
+      <Arrow x1={134} y1={30} x2={356} y2={70} label="winner" />
+      <Arrow x1={134} y1={48} x2={198} y2={74} label="loser" />
+      <Arrow x1={134} y1={120} x2={198} y2={92} label="winner" />
+      <Node x={200} y={64} w={118} label="Qualifier 2" sub="second chance" />
+      <Arrow x1={318} y1={81} x2={356} y2={81} label="winner" />
+      <Node x={358} y={64} w={90} label="Final" />
+      <Arrow x1={450} y1={81} x2={476} y2={81} />
+      <Node x={468} y={66} w={38} h={30} label="🏆" accent />
+      <text x={16} y={170} className="fill-slate-400 text-[10px]">
+        Lose Qualifier 1 and you get a second life in Qualifier 2.
+      </text>
+    </Frame>
+  ),
   americano: () => (
     <Frame height={160}>
       <Node x={16} y={20} w={130} label="Round 1" sub="A+B vs C+D" />
@@ -270,6 +287,15 @@ const FAMILY_STRUCTS: FamilyStruct[] = [
     cannedStages: [
       { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
       { kind: "stepladder", name: "Stepladder finals", config: {}, qualification: { topN: 4 } },
+    ],
+  },
+  {
+    slug: "page_playoff",
+    kinds: ["page_playoff"],
+    pro: true,
+    cannedStages: [
+      { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
+      { kind: "page_playoff", name: "Playoffs", config: {}, qualification: { topN: 4 } },
     ],
   },
   {

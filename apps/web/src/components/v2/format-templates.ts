@@ -73,6 +73,15 @@ export const STAGE_TEMPLATES: {
     ],
   },
   {
+    key: "group_playoffs",
+    label: "Group + Playoffs (IPL style)",
+    help: "Round robin, then Qualifier 1, Eliminator, Qualifier 2 and the Final — the top two get a second life.",
+    build: () => [
+      { kind: "league", name: "League", config: { legs: 1 }, qualification: null },
+      { kind: "page_playoff", name: "Playoffs", config: {}, qualification: { topN: 4 } },
+    ],
+  },
+  {
     key: "swiss",
     label: "Swiss",
     help: "Score-group pairings, fixed rounds.",
@@ -150,6 +159,7 @@ export function detectTemplate(
   if (kinds === "league+knockout") return "league_ko";
   if (kinds === "group+knockout") return "groups_ko";
   if (kinds === "league+stepladder") return "group_stepladder";
+  if (kinds === "league+page_playoff") return "group_playoffs";
   if (kinds === "swiss") return "swiss";
   if (kinds === "knockout") return "knockout";
   if (kinds === "double_elim") return "double_elim";

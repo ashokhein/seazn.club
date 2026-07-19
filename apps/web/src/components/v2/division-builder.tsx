@@ -44,6 +44,7 @@ const TEMPLATE_FAMILY: Record<string, string> = {
   league_ko: "league",
   groups_ko: "groups-knockout",
   group_stepladder: "stepladder",
+  group_playoffs: "page_playoff",
   swiss: "swiss",
   knockout: "knockout",
   double_elim: "double_elim",
@@ -508,7 +509,9 @@ export function DivisionBuilder({
                 onChange={() => {
                   setTemplate(t.key);
                   // Keep the qualifier valid for the template's option list.
-                  if (t.key === "group_stepladder" && ![3, 4, 5, 6].includes(qualified)) {
+                  if (t.key === "group_playoffs" && qualified !== 4) {
+                    setQualified(4); // the Page system is a fixed 4-team shape
+                  } else if (t.key === "group_stepladder" && ![3, 4, 5, 6].includes(qualified)) {
                     setQualified(4);
                   } else if (t.key !== "group_stepladder" && ![2, 4, 8, 16].includes(qualified)) {
                     setQualified(4);

@@ -18,7 +18,7 @@ import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { BracketSlideFixture, Slide } from "@/server/slideshow-data";
 import { slideAt, stepFor } from "@/components/v2/slideshow-rotation";
-import { doubleElimBracket, lbRowUnit, rowCenter, twoSidedBracket } from "@seazn/engine/scheduling";
+import { doubleElimBracket, lbRowUnit, pagePlayoffBracket, rowCenter, twoSidedBracket } from "@seazn/engine/scheduling";
 
 const SLIDE_MS = 9000;
 const POLL_MS = 45_000;
@@ -416,9 +416,10 @@ function BracketSlide({
   stageKind,
 }: {
   fixtures: BracketSlideFixture[];
-  stageKind: "knockout" | "double_elim" | "stepladder";
+  stageKind: "knockout" | "double_elim" | "stepladder" | "page_playoff";
 }) {
   if (stageKind === "stepladder") return <LadderSlide fixtures={fixtures} />;
+  if (stageKind === "page_playoff") return <PagePlayoffSlide fixtures={fixtures} />;
   if (stageKind === "double_elim") return <DoubleElimSlide fixtures={fixtures} />;
   const result = twoSidedBracket(fixtures);
   if (!result.ok) return null;
@@ -600,6 +601,65 @@ function DoubleElimSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
                 </span>
               )}
               {node(f, left, top)}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Page playoffs (IPL) on the big screen — same card as console/public/poster.
+function PagePlayoffSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
+  const result = pagePlayoffBracket(fixtures);
+  if (!result.ok) return null;
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const COL_W = 300;
+  const NODE_W = COL_W - 28;
+  const NODE_H = 72;
+  const LABEL_H = 26;
+  const pos: Record<string, { x: number; y: number }> = {
+    q1: { x: 0, y: LABEL_H },
+    eliminator: { x: 0, y: LABEL_H + 210 },
+    q2: { x: COL_W, y: LABEL_H + 132 },
+    final: { x: 2 * COL_W, y: LABEL_H + 62 },
+  };
+  const LABELS: Record<string, string> = { q1: "Qualifier 1", eliminator: "Eliminator", q2: "Qualifier 2", final: "Final" };
+  const totalW = 2 * COL_W + NODE_W;
+  const totalH = LABEL_H + 210 + NODE_H + 10;
+  const cy = (slot: string) => pos[slot]!.y + NODE_H / 2;
+  const rxx = (slot: string) => pos[slot]!.x + NODE_W;
+  return (
+    <div className="overflow-x-auto">
+      <div className="relative mx-auto" style={{ width: totalW, height: totalH }}>
+        <svg aria-hidden className="absolute inset-0" width={totalW} height={totalH} viewBox={`0 0 ${totalW} ${totalH}`}>
+          <path d={`M ${rxx("q1")} ${cy("q1")} H ${(rxx("q1") + pos.q2!.x) / 2} V ${cy("q2")} H ${pos.q2!.x}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" strokeDasharray="5 4" />
+          <path d={`M ${rxx("eliminator")} ${cy("eliminator")} H ${(rxx("eliminator") + pos.q2!.x) / 2} V ${cy("q2")} H ${pos.q2!.x}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" />
+          <path d={`M ${rxx("q1")} ${cy("q1")} H ${(rxx("q1") + pos.final!.x) / 2 + 44} V ${cy("final")} H ${pos.final!.x}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" />
+          <path d={`M ${rxx("q2")} ${cy("q2")} H ${(rxx("q2") + pos.final!.x) / 2} V ${cy("final")} H ${pos.final!.x}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" />
+        </svg>
+        {result.layout.nodes.map((n) => {
+          const f = byId.get(n.fixtureId);
+          if (!f) return null;
+          const p = pos[n.slot]!;
+          const live = f.status === "in_play";
+          return (
+            <span key={n.fixtureId} data-slot={n.slot} className="contents">
+              <span className="absolute font-display text-sm font-semibold uppercase tracking-[0.18em] text-white/50" style={{ left: p.x, top: p.y - LABEL_H + 4 }}>
+                {LABELS[n.slot]}
+              </span>
+              <div className={`absolute rounded-lg px-4 py-2 ring-1 ring-inset ring-white/10 ${live ? "bg-white/[0.12]" : "bg-white/[0.05]"}`} style={{ left: p.x, top: p.y, width: NODE_W, height: NODE_H }}>
+                <div className="flex h-full flex-col justify-center gap-0.5 font-display text-xl font-semibold leading-tight">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 truncate">{f.home ?? "TBD"}</span>
+                    {live && <span className="animate-live-pulse h-2 w-2 shrink-0 rounded-full bg-emerald-400" />}
+                  </span>
+                  <span className="flex items-center justify-between gap-2 text-white/80">
+                    <span className="min-w-0 truncate">{f.away ?? "TBD"}</span>
+                    {f.line !== null && <span className="shrink-0 font-bold tabular-nums text-accent-line">{f.line}</span>}
+                  </span>
+                </div>
+              </div>
             </span>
           );
         })}

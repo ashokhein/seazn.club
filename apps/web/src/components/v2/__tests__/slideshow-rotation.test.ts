@@ -53,6 +53,18 @@ describe("bracketSlideLaysOut (G-audit)", () => {
   });
   it("stepladder always lays out; the kind set covers all three", () => {
     expect(bracketSlideLaysOut("stepladder", [{ id: "r", round_no: 1, seq_in_round: 1 }])).toBe(true);
-    expect([...BRACKET_SLIDE_KINDS].sort()).toEqual(["double_elim", "knockout", "stepladder"]);
+    expect([...BRACKET_SLIDE_KINDS].sort()).toEqual(["double_elim", "knockout", "page_playoff", "stepladder"]);
+  });
+});
+
+describe("bracketSlideLaysOut — page playoffs", () => {
+  it("page_playoff needs the four-slot shape", () => {
+    const pp = [
+      { id: "a", round_no: 1, seq_in_round: 1 }, { id: "b", round_no: 1, seq_in_round: 2 },
+      { id: "c", round_no: 2, seq_in_round: 1 }, { id: "d", round_no: 3, seq_in_round: 1 },
+    ];
+    expect(bracketSlideLaysOut("page_playoff", pp)).toBe(true);
+    expect(bracketSlideLaysOut("page_playoff", pp.slice(1))).toBe(false);
+    expect([...BRACKET_SLIDE_KINDS]).toContain("page_playoff");
   });
 });

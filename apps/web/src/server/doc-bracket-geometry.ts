@@ -216,3 +216,43 @@ export function ladderPageGeometry(l: DocLadder, box: PageBox): BracketPageGeome
   }));
   return { rects, lines, labels };
 }
+
+// Page playoffs (IPL): Q1 + Eliminator left, Q2 centre, Final right — the
+// classic playoff card on one landscape sheet.
+import type { DocPagePlayoff } from "@seazn/engine/exports";
+
+export function pagePlayoffPageGeometry(pp: DocPagePlayoff, box: PageBox): BracketPageGeometry {
+  const colW = box.w / 3;
+  const nodeW = colW - GAP * 2;
+  const nodeH = 46;
+  const y0 = box.y + LABEL_H;
+  const pos: Record<string, { x: number; y: number }> = {
+    q1: { x: box.x + GAP, y: y0 },
+    eliminator: { x: box.x + GAP, y: y0 + Math.min(box.h * 0.45, 180) },
+    q2: { x: box.x + colW + GAP, y: y0 + Math.min(box.h * 0.28, 112) },
+    final: { x: box.x + 2 * colW + GAP, y: y0 + Math.min(box.h * 0.12, 50) },
+  };
+  const rects: BracketRect[] = pp.nodes.map((n) => ({
+    fixtureId: n.fixtureId,
+    x: pos[n.slot]!.x,
+    y: Math.min(pos[n.slot]!.y, box.y + box.h - nodeH),
+    w: nodeW, h: nodeH,
+    home: n.home, away: n.away, headline: n.headline, decided: n.decided,
+    isCenter: n.slot === "final",
+  }));
+  const c = (slot: string) => ({ x: pos[slot]!.x, y: Math.min(pos[slot]!.y, box.y + box.h - nodeH) + nodeH / 2 });
+  const rx2 = (slot: string) => pos[slot]!.x + nodeW;
+  const lines: BracketLine[] = [
+    { points: [[rx2("q1"), c("q1").y], [(rx2("q1") + pos.q2!.x) / 2, c("q1").y], [(rx2("q1") + pos.q2!.x) / 2, c("q2").y], [pos.q2!.x, c("q2").y]] },
+    { points: [[rx2("eliminator"), c("eliminator").y], [(rx2("eliminator") + pos.q2!.x) / 2, c("eliminator").y], [(rx2("eliminator") + pos.q2!.x) / 2, c("q2").y], [pos.q2!.x, c("q2").y]] },
+    { points: [[rx2("q1"), c("q1").y], [(rx2("q1") + pos.final!.x) / 2 + 30, c("q1").y], [(rx2("q1") + pos.final!.x) / 2 + 30, c("final").y], [pos.final!.x, c("final").y]] },
+    { points: [[rx2("q2"), c("q2").y], [(rx2("q2") + pos.final!.x) / 2, c("q2").y], [(rx2("q2") + pos.final!.x) / 2, c("final").y], [pos.final!.x, c("final").y]] },
+  ];
+  const labels: BracketLabel[] = pp.nodes.map((n) => ({
+    text: pp.slotLabels[n.slot],
+    x: pos[n.slot]!.x,
+    y: Math.min(pos[n.slot]!.y, box.y + box.h - nodeH) - LABEL_H + 2,
+    w: nodeW,
+  }));
+  return { rects, lines, labels };
+}

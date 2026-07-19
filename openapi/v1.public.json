@@ -10238,6 +10238,7 @@
                               "knockout",
                               "double_elim",
                               "stepladder",
+                              "page_playoff",
                               "americano",
                               "ladder"
                             ]
@@ -10495,6 +10496,7 @@
                           "knockout",
                           "double_elim",
                           "stepladder",
+                          "page_playoff",
                           "americano",
                           "ladder"
                         ]
@@ -10552,6 +10554,7 @@
                             "knockout",
                             "double_elim",
                             "stepladder",
+                            "page_playoff",
                             "americano",
                             "ladder"
                           ]
@@ -10758,6 +10761,7 @@
                                 "knockout",
                                 "double_elim",
                                 "stepladder",
+                                "page_playoff",
                                 "americano",
                                 "ladder"
                               ]
@@ -10836,6 +10840,7 @@
                                   "knockout",
                                   "double_elim",
                                   "stepladder",
+                                  "page_playoff",
                                   "americano",
                                   "ladder"
                                 ]
@@ -11137,6 +11142,7 @@
                           "knockout",
                           "double_elim",
                           "stepladder",
+                          "page_playoff",
                           "americano",
                           "ladder"
                         ]
@@ -11194,6 +11200,7 @@
                             "knockout",
                             "double_elim",
                             "stepladder",
+                            "page_playoff",
                             "americano",
                             "ladder"
                           ]
@@ -11400,6 +11407,7 @@
                               "knockout",
                               "double_elim",
                               "stepladder",
+                              "page_playoff",
                               "americano",
                               "ladder"
                             ]

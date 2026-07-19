@@ -105,3 +105,21 @@ describe("BracketPanel — stepladder", () => {
     expect(html).toContain("bracket.tbd"); // unresolved rung-3 slot
   });
 });
+
+describe("BracketPanel — page playoffs", () => {
+  it("kind=page_playoff renders the four-slot card with i18n captions", () => {
+    const fx = [
+      FIX("q1", 1, 1, "e1", "e2", { kind: "win", winner: "e1" }, "decided", 1),
+      FIX("el", 1, 2, "e3", "e4", null, "scheduled", 2),
+      FIX("q2", 2, 1, "e2", null, null, "scheduled", 3),
+      FIX("fin", 3, 1, "e1", null, null, "scheduled", 4),
+    ];
+    const html = markup({ kind: "page_playoff", fixtures: fx as never });
+    expect(html).toContain('data-testid="bracket-panel-page"');
+    for (const key of ["bracket.qualifier1", "bracket.eliminator", "bracket.qualifier2", "bracket.final"]) {
+      expect(html).toContain(key);
+    }
+    expect(html.match(/data-slot=/g)?.length).toBe(4);
+    expect(html).toContain('href="/o/org/c/cup/d/open/f/3"');
+  });
+});

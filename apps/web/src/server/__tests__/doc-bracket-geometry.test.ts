@@ -146,3 +146,23 @@ describe("ladderPageGeometry — one-sheet bounds", () => {
     expect(g.labels[g.labels.length - 1]!.text).toBe("Rung 1");
   });
 });
+
+describe("pagePlayoffPageGeometry — one-sheet bounds", () => {
+  it("all four slots, connectors and labels stay inside the box", async () => {
+    const { buildPagePoster } = await import("@seazn/engine/exports");
+    const { pagePlayoffPageGeometry } = await import("../doc-bracket-geometry");
+    const fixtures = [
+      { id: "q1", round_no: 1, seq_in_round: 1, home: "One", away: "Two", headline: "2–1", decided: true },
+      { id: "el", round_no: 1, seq_in_round: 2, home: "Three", away: "Four", headline: null, decided: false },
+      { id: "q2", round_no: 2, seq_in_round: 1, home: "Two", away: null, headline: null, decided: false },
+      { id: "fin", round_no: 3, seq_in_round: 1, home: "One", away: null, headline: null, decided: false },
+    ];
+    const model = buildPagePoster("Playoffs", fixtures, { q1: "Qualifier 1", eliminator: "Eliminator", q2: "Qualifier 2", final: "Final" }, { printedAt: "2026-07-19T00:00:00Z" });
+    const g = pagePlayoffPageGeometry(model.pagePlayoff!, BOX);
+    expect(g.rects).toHaveLength(4);
+    for (const r of g.rects) { inBox(r.x, r.y); inBox(r.x + r.w, r.y + r.h); }
+    for (const line of g.lines) for (const [x, y] of line.points) inBox(x, y);
+    for (const l of g.labels) inBox(l.x, l.y);
+    expect(g.labels.map((l) => l.text)).toEqual(["Qualifier 1", "Eliminator", "Qualifier 2", "Final"]);
+  });
+});

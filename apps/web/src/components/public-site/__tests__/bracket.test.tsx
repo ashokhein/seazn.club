@@ -111,4 +111,20 @@ describe("public Bracket", () => {
     );
     expect(without).not.toContain("<img");
   });
+
+  it("renders the Page-playoff card (Q1/Eliminator/Q2/Final) for page_playoff", () => {
+    const fixtures = [
+      F("q1", 1, 1, "a", "b", { kind: "win", winner: "a" }, "decided"),
+      F("el", 1, 2, "c", "d", null, "in_play"),
+      F("q2", 2, 1, "b", null, null),
+      F("fin", 3, 1, "a", null, null),
+    ];
+    const html = renderToStaticMarkup(
+      createElement(Bracket, { kind: "page_playoff", fixtures: fixtures as never, entrantNames: names, fixtureHref: href }),
+    );
+    expect(html).toContain('data-bracket="page-playoff"');
+    for (const cap of ["Qualifier 1", "Eliminator", "Qualifier 2", "Final"]) expect(html).toContain(cap);
+    expect(html.match(/data-slot=/g)?.length).toBe(4);
+    expect(html).toContain("<svg");
+  });
 });

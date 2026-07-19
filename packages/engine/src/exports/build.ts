@@ -14,7 +14,7 @@ import type {
   ExportTicket,
 } from "./types.ts";
 import { EngineError } from "../core/errors.ts";
-import { doubleElimBracket, twoSidedBracket } from "../scheduling/bracket-layout.ts";
+import { doubleElimBracket, pagePlayoffBracket, twoSidedBracket } from "../scheduling/bracket-layout.ts";
 
 function base(
   kind: DocModel["kind"],
@@ -343,6 +343,36 @@ export function buildLadderPoster(
         headline: f.headline,
         decided: f.decided,
       })),
+    },
+  };
+}
+
+export function buildPagePoster(
+  title: string,
+  fixtures: readonly ExportBracketFixture[],
+  slotLabels: { q1: string; eliminator: string; q2: string; final: string },
+  opts: BuildOpts,
+): DocModel {
+  const result = pagePlayoffBracket(fixtures);
+  if (!result.ok) {
+    throw new EngineError("CONFIG_INVALID", `page-playoff poster: ${result.reason}`, {});
+  }
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  return {
+    ...base("bracket", title, [], opts),
+    pagePlayoff: {
+      nodes: result.layout.nodes.map((n) => {
+        const f = byId.get(n.fixtureId)!;
+        return {
+          fixtureId: n.fixtureId,
+          slot: n.slot,
+          home: f.home ?? "TBD",
+          away: f.away ?? "TBD",
+          headline: f.headline,
+          decided: f.decided,
+        };
+      }),
+      slotLabels,
     },
   };
 }

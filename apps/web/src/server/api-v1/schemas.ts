@@ -20,7 +20,7 @@ export const Visibility = z.enum(["private", "unlisted", "public"]);
 export const CompetitionStatus = z.enum(["draft", "published", "live", "completed", "archived"]);
 // Doc 12 §1: 'scheduled' = timetable published, scoring not yet open.
 export const DivisionStatus = z.enum(["setup", "scheduled", "active", "completed"]);
-export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder", "americano", "ladder"]);
+export const StageKind = z.enum(["league", "group", "swiss", "knockout", "double_elim", "stepladder", "page_playoff", "americano", "ladder"]);
 export const EntrantKind = z.enum(["team", "individual", "pair"]);
 export const EntrantStatus = z.enum(["registered", "confirmed", "withdrawn", "disqualified"]);
 // v3/08 §2: ranked scopes — read < score < manage. "write" is the legacy

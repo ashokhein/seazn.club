@@ -148,6 +148,22 @@ export type DocLadderRung = z.infer<typeof DocLadderRung>;
 export const DocLadder = z.object({ rungs: z.array(DocLadderRung) });
 export type DocLadder = z.infer<typeof DocLadder>;
 
+// Page playoffs (IPL, spec 2026-07-19): four named slots on one card.
+export const DocPageSlot = z.enum(["q1", "eliminator", "q2", "final"]);
+export const DocPageNode = z.object({
+  fixtureId: z.string(),
+  slot: DocPageSlot,
+  home: z.string(),
+  away: z.string(),
+  headline: z.string().nullable(),
+  decided: z.boolean(),
+});
+export const DocPagePlayoff = z.object({
+  nodes: z.array(DocPageNode),
+  slotLabels: z.object({ q1: z.string(), eliminator: z.string(), q2: z.string(), final: z.string() }),
+});
+export type DocPagePlayoff = z.infer<typeof DocPagePlayoff>;
+
 export const PageBreaks = z.enum(["auto", "per_pitch", "per_team", "per_division"]);
 export type PageBreaks = z.infer<typeof PageBreaks>;
 
@@ -170,6 +186,8 @@ export const DocModel = z.object({
   bracketDe: DocBracketDe.optional(),
   /** Stepladder edition. */
   ladder: DocLadder.optional(),
+  /** Page-playoff (IPL) edition. */
+  pagePlayoff: DocPagePlayoff.optional(),
 });
 export type DocModel = z.infer<typeof DocModel>;
 

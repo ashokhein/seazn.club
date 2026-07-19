@@ -48,7 +48,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   };
 }
 
-const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
+const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder", "page_playoff"]);
 
 export default async function DivisionHomePage({ params }: Props) {
   const { orgSlug, competitionSlug, divisionSlug } = await params;
@@ -157,7 +157,7 @@ export default async function DivisionHomePage({ params }: Props) {
             <section key={stage.id}>
               <h3 className="mb-3 font-display text-lg font-semibold text-ink">{stage.name}</h3>
               <Bracket
-                kind={stage.kind as "knockout" | "double_elim" | "stepladder"}
+                kind={stage.kind as "knockout" | "double_elim" | "stepladder" | "page_playoff"}
                 fixtures={stageFixtures}
                 entrantNames={entrantNames}
                 entrantLogos={entrantLogos}
