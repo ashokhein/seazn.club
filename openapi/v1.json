@@ -54721,7 +54721,7 @@
         "tags": [
           "scheduling"
         ],
-        "x-required-scope": "none",
+        "x-required-scope": "read",
         "parameters": [
           {
             "name": "id",
