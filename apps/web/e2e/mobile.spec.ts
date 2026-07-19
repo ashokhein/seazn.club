@@ -74,6 +74,7 @@ test("console routes: no horizontal scroll", async ({ page }) => {
     `/divisions/${divisionId}?tab=standings`,
     `/divisions/${divisionId}/registrations`,
     "/settings?tab=organization",
+    "/settings?tab=news",
     "/settings?tab=sponsors",
     "/settings?tab=team",
     "/settings?tab=api",
@@ -105,6 +106,36 @@ test("public surfaces: no horizontal scroll (v3/11 gap 12)", async ({ browser })
       await anon.waitForTimeout(300);
       await expectNoHorizontalScroll(anon);
     }
+  } finally {
+    await anonCtx.close();
+  }
+});
+
+test("news (SPEC-2): feed + post page hold at mobile width", async ({ page, browser }) => {
+  // Publish a manual post (free on every plan) so the public feed has content.
+  const orgId = (await apiJson<{ id: string }[]>(page.request, "/api/orgs")).data![0]!.id;
+  const created = await apiJson<{ id: string }>(page.request, `/api/v1/orgs/${orgId}/posts`, "POST", {
+    title: `Mobile news ${TAG}`,
+    body_md: "Weekend round-up on a narrow phone.",
+    kind: "announcement",
+  });
+  const pub = await apiJson<{ slug: string }>(
+    page.request,
+    `/api/v1/posts/${created.data!.id}`,
+    "PATCH",
+    { action: "publish" },
+  );
+  const postSlug = pub.data!.slug;
+
+  const anonCtx = await browser.newContext();
+  try {
+    const anon = await anonCtx.newPage();
+    for (const path of [`/shared/${orgSlug}/news`, `/shared/${orgSlug}/news/${postSlug}`]) {
+      await anon.goto(path, { waitUntil: "load" });
+      await anon.waitForTimeout(300);
+      await expectNoHorizontalScroll(anon);
+    }
+    await expect(anon.getByTestId("news-card").first()).toBeVisible();
   } finally {
     await anonCtx.close();
   }

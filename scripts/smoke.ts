@@ -318,6 +318,11 @@ async function main() {
   // still Pro (the destructive downgrade is gapSuite, last).
   await marksReportsSuite(admin, org2.id, renamed.slug);
 
+  // --- v16 SPEC-2 news: opt-in division auto-drafts a result on the decided
+  // seam → publish → public feed/post/story.png on the Pro org; manual post
+  // publishes free on a fresh community org, whose auto toggle is gated 402.
+  await newsSuite(admin, org2.id, renamed.slug);
+
   // --- v3 content + API wave (PROMPT-35/37/39): markdown editor render,
   // /help + /developers, scoped keys, OG/poster/embed/sponsors — pro + free.
   await v3ContentApiSuite(admin, org2.id, renamed.slug);
@@ -1555,6 +1560,93 @@ async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: s
     "report free: files + submits on a community org (portal is free)",
     freeDraft.status === 200 && freeSubmit.status === 200 && v1data<{ status: string }>(freeSubmit).status === "submitted",
   );
+}
+
+/** v16 SPEC-2 org news over real HTTP. Pro path (org2 is Pro): an opted-in
+ *  division auto-drafts a result post on the decided seam → the organiser lists
+ *  it, publishes it, and the public feed / post page / story.png all serve.
+ *  Free path (fresh community owner): a MANUAL post creates + publishes (free on
+ *  every plan) and serves publicly, while the auto_posts toggle is gated 402
+ *  (Pro news.auto). Seeds the decided fixture BEFORE asserting (empty-data
+ *  false-green lesson). */
+async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  admin.cookies["seazn_org"] = proOrgId;
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", { name: `News ${tag}`, visibility: "public" }),
+  );
+  const div = v1data<{ id: string; slug: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "News Prem", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  const toggle = await v1(admin, `/api/v1/divisions/${div.id}`, "PATCH", { auto_posts: true });
+  check("news pro: auto_posts toggle allowed (news.auto)", toggle.status === 200);
+
+  await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+    { kind: "individual", display_name: `NHome ${tag}`, seed: 1, members: [] },
+    { kind: "individual", display_name: `NAway ${tag}`, seed: 2, members: [] },
+  ]);
+  const stage = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  );
+  const fx = v1data<{ fixtures: { id: string }[] }>(
+    await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST"),
+  ).fixtures[0]!.id;
+  await v1(admin, `/api/v1/divisions/${div.id}/start`, "POST");
+  const st = v1data<{ last_seq: number }>(await v1(admin, `/api/v1/fixtures/${fx}/state`));
+  await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
+    expected_seq: st.last_seq, type: "generic.result", payload: { p1Score: 3, p2Score: 1 },
+  });
+
+  const drafts = v1data<{ id: string; kind: string; auto_source: unknown | null }[]>(
+    await v1(admin, `/api/v1/orgs/${proOrgId}/posts?status=draft`),
+  );
+  const auto = drafts.find((d) => d.kind === "result" && d.auto_source);
+  check("news pro: a result post auto-drafted on the decided seam", !!auto);
+
+  const pub = await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", { action: "publish" });
+  const pubData = v1data<{ status: string; slug: string }>(pub);
+  check("news pro: draft publishes", pub.status === 200 && pubData.status === "published");
+
+  const feed = await html(newSession(), `/shared/${proOrgSlug}/news`);
+  check("news pro: public feed 200 + shows a post card", feed.status === 200 && feed.body.includes("news-card"));
+  const postPage = await html(newSession(), `/shared/${proOrgSlug}/news/${pubData.slug}`);
+  check("news pro: public post page 200", postPage.status === 200);
+  const story = await fetch(`${BASE}/shared/${proOrgSlug}/news/${pubData.slug}/story.png`);
+  check(
+    "news pro: story PNG 200 image/png",
+    story.status === 200 && (story.headers.get("content-type") ?? "").includes("image/png"),
+  );
+
+  // ---- Free path (fresh community owner) ----
+  const commOwner = newSession();
+  await signIn(commOwner, `newscomm_${tag}@example.com`);
+  const commOrg = ((await call(commOwner, "/api/orgs")) as { id: string; slug: string }[])[0]!;
+  commOwner.cookies["seazn_org"] = commOrg.id;
+
+  const manual = await v1(commOwner, `/api/v1/orgs/${commOrg.id}/posts`, "POST", {
+    title: `Free news ${tag}`, body_md: "Hello **world**.", kind: "announcement",
+  });
+  check("news free: manual post create (free on every plan)", manual.status === 201);
+  const manualPub = v1data<{ slug: string; status: string }>(
+    await v1(commOwner, `/api/v1/posts/${v1data<{ id: string }>(manual).id}`, "PATCH", { action: "publish" }),
+  );
+  check("news free: manual post publishes", manualPub.status === "published");
+  const freePost = await html(newSession(), `/shared/${commOrg.slug}/news/${manualPub.slug}`);
+  check("news free: manual post public page 200", freePost.status === 200);
+
+  const freeComp = v1data<{ id: string }>(
+    await v1(commOwner, "/api/v1/competitions", "POST", { name: `Free news comp ${tag}`, visibility: "public" }),
+  );
+  const freeDiv = v1data<{ id: string }>(
+    await v1(commOwner, `/api/v1/competitions/${freeComp.id}/divisions`, "POST", {
+      name: "Div", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  const freeToggle = await v1(commOwner, `/api/v1/divisions/${freeDiv.id}`, "PATCH", { auto_posts: true });
+  check("news free: auto_posts toggle gated 402 (Pro news.auto)", freeToggle.status === 402);
 }
 
 /** PLG growth loops (design/plg): the free-tier "Powered by Seazn Club"
