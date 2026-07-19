@@ -10,10 +10,22 @@ import "server-only";
 // by (display_name, id), and every timestamp is an ISO-8601 string carrying the division
 // timezone offset. DB reads reuse the schedule.ts / officials.ts loaders — no SQL is
 // re-derived here.
+import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { slotFixtures, type SchedulableFixture } from "@seazn/engine/scheduling";
+import {
+  slotFixtures,
+  validateAssignments,
+  type Assignment,
+  type Conflict,
+  type OrderDependency,
+  type SchedulableFixture,
+  type SchedulingConstraints,
+  type SlotConfig,
+} from "@seazn/engine/scheduling";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import { AiSchedulePlan, SYSTEM_PROMPT } from "./schedule-ai-prompt";
 import {
   MOVABLE_STATUS,
   divisionFixtures,
@@ -514,4 +526,283 @@ export async function buildSchedulePack(
 
     return { pack, movableIds: movableSet };
   });
+}
+
+// ===========================================================================
+// Phase A runner — the Anthropic structured-output call + engine verify/repair
+// loop (design/v4/00 §3-4, 01 §1,§5). Pure over the pack: no DB, no wall clock.
+// ===========================================================================
+
+const ROUND_TIMEOUT_MS = 120_000;
+const MAX_REPAIR_ROUNDS = 2;
+
+/**
+ * Single Anthropic client factory. Rejects early when the server is not
+ * configured (503) and honours the SCHEDULING_AI_BASE_URL escape hatch (Task
+ * 17's e2e fixture server points at it). Other AI tasks (officials) reuse this.
+ */
+export function anthropicClient(): Anthropic {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new HttpError(503, "AI scheduling is not configured on this server");
+  }
+  const baseURL = process.env.SCHEDULING_AI_BASE_URL;
+  return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+}
+
+export interface AiPlanResult {
+  proposal: { fixture_id: string; scheduled_at: string; court_label: string; schedule_locked?: boolean }[];
+  unschedulable: { fixture_id: string; reason: string }[];
+  warnings: Conflict[]; // non-blocking verifier conflicts
+  blocking: Conflict[]; // residual after ≤2 repairs
+  diff: { moved: string[]; placed: string[]; unscheduled: string[]; unchanged: string[] };
+  explanations: { fixture_id: string; note: string }[];
+  constraint_suggestions?: Partial<SchedulingConstraints>;
+  summary: string;
+  usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
+}
+
+// A verifier conflict blocks when it makes the schedule physically impossible —
+// a court double-booking, or a direct feed scheduled before its source ends.
+// Same taxonomy as the drag-drop board (schedule.ts mapConflicts). Rest,
+// blackout, session-window, person-overlap and indirect order land in warnings.
+function isBlocking(c: Conflict): boolean {
+  return c.reason === "court" || (c.reason === "order" && c.direct === true);
+}
+
+const toMs = (iso: string): number => new Date(iso).getTime();
+
+/** Structural gate run before the engine verifier (01 §1 hard rule 1/7): every
+ *  movable id appears exactly once, no foreign ids, no unknown courts, no pinned
+ *  fixture nudged off its current slot. Returns a human note on the first
+ *  violation, or null when the plan is well-formed. */
+function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: SchedulePack): string | null {
+  const courts = new Set(pack.settings.courts);
+  const pinned = new Map(pack.fixtures.movable.filter((f) => f.pinned).map((f) => [f.id, f]));
+  const seen = new Set<string>();
+  for (const a of plan.assignments) {
+    if (!movableIds.has(a.fixture_id)) return `assignment references non-movable fixture ${a.fixture_id}`;
+    if (seen.has(a.fixture_id)) return `fixture ${a.fixture_id} appears more than once`;
+    seen.add(a.fixture_id);
+    if (!courts.has(a.court_label)) return `assignment uses a court not in settings.courts: ${a.court_label}`;
+    const pin = pinned.get(a.fixture_id);
+    if (pin && (pin.current.at === null || toMs(pin.current.at) !== toMs(a.scheduled_at) || pin.current.court !== a.court_label)) {
+      return `pinned fixture ${a.fixture_id} must not move`;
+    }
+  }
+  for (const u of plan.unschedulable) {
+    if (!movableIds.has(u.fixture_id)) return `unschedulable references non-movable fixture ${u.fixture_id}`;
+    if (seen.has(u.fixture_id)) return `fixture ${u.fixture_id} appears more than once`;
+    seen.add(u.fixture_id);
+  }
+  for (const id of movableIds) {
+    if (!seen.has(id)) return `movable fixture ${id} is missing from the plan`;
+  }
+  return null;
+}
+
+/** Map the LLM proposal onto engine assignments (ISO → epoch ms). Entrants and
+ *  shared people come from the pack so the verifier can catch overlaps. */
+function toEngineAssignments(plan: AiSchedulePlan, pack: SchedulePack): Assignment[] {
+  const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
+  const personsByEntrant = new Map<string, string[]>();
+  for (const p of pack.people) {
+    for (const e of p.entrant_ids) {
+      (personsByEntrant.get(e) ?? personsByEntrant.set(e, []).get(e)!).push(p.person_id);
+    }
+  }
+  const durMs = pack.settings.matchMinutes * MS_PER_MIN;
+  return plan.assignments.map((a) => {
+    const f = fixtureById.get(a.fixture_id);
+    const entrants = f ? [f.home, f.away].filter((e): e is string => e !== null) : [];
+    const startAt = toMs(a.scheduled_at);
+    return {
+      fixtureId: a.fixture_id,
+      court: a.court_label,
+      startAt,
+      endAt: startAt + durMs,
+      entrants,
+      people: entrants.flatMap((e) => personsByEntrant.get(e) ?? []),
+    };
+  });
+}
+
+/** Fixed court occupancy the proposal must dodge (other stages + siblings). */
+function toObstacleAssignments(pack: SchedulePack): Assignment[] {
+  return pack.fixtures.obstacles.map((o, i) => ({
+    fixtureId: `obstacle:${i}`,
+    court: o.court,
+    startAt: toMs(o.from),
+    endAt: toMs(o.to),
+    entrants: [],
+    people: [],
+  }));
+}
+
+function verifyConfig(pack: SchedulePack): Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> {
+  return {
+    perEntrantMinRest: pack.settings.constraints?.restMin ?? 0,
+    gapMinutes: pack.settings.gapMinutes,
+    blackouts: pack.settings.blackouts.map((b) => ({
+      ...(b.court !== undefined ? { court: b.court } : {}),
+      from: toMs(b.from),
+      to: toMs(b.to),
+    })),
+    sessionWindows: pack.settings.sessionWindows.map((w) => ({ from: toMs(w.from), to: toMs(w.to) })),
+  };
+}
+
+/** feeds.after are direct winner/loser feeds (schedule.ts feedDependencies);
+ *  an order violation on one blocks. Deps whose source isn't placed are ignored
+ *  by validateAssignments. */
+function packFeedDependencies(pack: SchedulePack): OrderDependency[] {
+  const deps: OrderDependency[] = [];
+  for (const f of pack.fixtures.movable) {
+    for (const dependsOn of f.feeds.after) {
+      deps.push({ fixtureId: f.id, dependsOn, direct: true });
+    }
+  }
+  return deps;
+}
+
+/** proposal vs each movable fixture's current slot (design §3 diff groups). */
+function computeDiff(plan: AiSchedulePlan, pack: SchedulePack): AiPlanResult["diff"] {
+  const proposalById = new Map(plan.assignments.map((a) => [a.fixture_id, a]));
+  const unsched = new Set(plan.unschedulable.map((u) => u.fixture_id));
+  const diff: AiPlanResult["diff"] = { moved: [], placed: [], unscheduled: [], unchanged: [] };
+  for (const f of pack.fixtures.movable) {
+    const a = proposalById.get(f.id);
+    if (a) {
+      const hadSlot = f.current.at !== null && f.current.court !== null;
+      if (!hadSlot) diff.placed.push(f.id);
+      else if (toMs(f.current.at!) === toMs(a.scheduled_at) && f.current.court === a.court_label) diff.unchanged.push(f.id);
+      else diff.moved.push(f.id);
+    } else if (unsched.has(f.id)) {
+      diff.unscheduled.push(f.id);
+    }
+  }
+  return diff;
+}
+
+/** Echo an assistant turn back into the conversation unchanged (01 §5 — thinking
+ *  blocks included). Response ContentBlocks are valid input blocks at runtime. */
+function assistantTurn(response: { content?: unknown } | null | undefined): Anthropic.MessageParam {
+  return { role: "assistant", content: (response?.content ?? []) as Anthropic.ContentBlockParam[] };
+}
+
+async function callModel(
+  client: Anthropic,
+  model: string,
+  messages: Anthropic.MessageParam[],
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ROUND_TIMEOUT_MS);
+  try {
+    return await client.messages.parse(
+      {
+        model,
+        max_tokens: 32_000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "high", format: zodOutputFormat(AiSchedulePlan) },
+        system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+        messages: [...messages],
+      },
+      { signal: controller.signal },
+    );
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new HttpError(422, "AI scheduling timed out; please retry", "AI_PLAN_TIMEOUT");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Run the schedule architect over a pre-built pack: call the model, verify the
+ * proposal with the engine, and repair blocking conflicts up to twice before
+ * returning best-so-far. Takes the pack + movable id set as data — never touches
+ * the DB.
+ *
+ * @throws HttpError 503 (no ANTHROPIC_API_KEY), 422 AI_PLAN_FAILED (model
+ *   refusal, or an un-correctable structural violation), 422 AI_PLAN_TIMEOUT.
+ */
+export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Promise<AiPlanResult> {
+  const client = anthropicClient(); // 503 before any network if unconfigured
+  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-opus-4-8";
+
+  const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
+  const config = verifyConfig(pack);
+  const obstacles = toObstacleAssignments(pack);
+  const dependencies = packFeedDependencies(pack);
+
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let repairRounds = 0;
+  let correctiveUsed = false; // one non-repair retry for a malformed plan (01 §1)
+
+  for (;;) {
+    const response = await callModel(client, model, conversation);
+    inputTokens += response?.usage?.input_tokens ?? 0;
+    outputTokens += response?.usage?.output_tokens ?? 0;
+
+    // Refusal: bail before reading content (01 §1).
+    if (response?.stop_reason === "refusal") {
+      throw new HttpError(422, "AI_PLAN_FAILED", "AI_PLAN_FAILED");
+    }
+
+    const plan = response?.parsed_output ?? null;
+    const structuralError =
+      plan === null ? "the model returned no parseable plan" : structuralCheck(plan, movableIds, pack);
+    if (structuralError !== null) {
+      if (correctiveUsed) throw new HttpError(422, "AI_PLAN_FAILED", "AI_PLAN_FAILED");
+      correctiveUsed = true;
+      conversation.push(assistantTurn(response));
+      conversation.push({
+        role: "user",
+        content: JSON.stringify({
+          structural_error: structuralError,
+          note: "Your previous output was rejected before verification. Resend the full plan: every movable fixture exactly once (in assignments or unschedulable), only movable ids, court_label drawn from settings.courts, and never move a pinned fixture.",
+        }),
+      });
+      continue;
+    }
+
+    // Verify against the engine (obstacles are fixed occupancy).
+    const conflicts = validateAssignments(toEngineAssignments(plan!, pack), config, obstacles, dependencies);
+    const blocking = conflicts.filter(isBlocking);
+    const warnings = conflicts.filter((c) => !isBlocking(c));
+
+    if (blocking.length === 0 || repairRounds >= MAX_REPAIR_ROUNDS) {
+      return {
+        proposal: plan!.assignments.map((a) => ({
+          fixture_id: a.fixture_id,
+          scheduled_at: a.scheduled_at,
+          court_label: a.court_label,
+          ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
+        })),
+        unschedulable: plan!.unschedulable,
+        warnings,
+        blocking,
+        diff: computeDiff(plan!, pack),
+        explanations: plan!.explanations,
+        ...(plan!.constraint_suggestions !== undefined ? { constraint_suggestions: plan!.constraint_suggestions } : {}),
+        summary: plan!.summary,
+        usage: { input_tokens: inputTokens, output_tokens: outputTokens, repair_rounds: repairRounds },
+      };
+    }
+
+    // Blocking conflicts remain and rounds are left — send the report back and
+    // ask for minimal fixes (01 §5).
+    repairRounds++;
+    conversation.push(assistantTurn(response));
+    conversation.push({
+      role: "user",
+      content: JSON.stringify({
+        verifier_conflicts: conflicts,
+        note: "Fix only these conflicts. Move as few fixtures as possible. Do not reintroduce earlier conflicts.",
+      }),
+    });
+  }
 }
