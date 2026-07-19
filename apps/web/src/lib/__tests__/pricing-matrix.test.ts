@@ -58,6 +58,26 @@ const DATA: MatrixData = {
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
+  // W1 Task 11: clubs & teams register caps (real V291 values) render as
+  // numbers, ∞ for unlimited — never a bare ✓/— tick.
+  "clubs.max": {
+    community: cell(2, true),
+    event_pass: cell(2, true),
+    pro: cell(20, true),
+    pro_plus: cell(null, true),
+  },
+  "teams.max": {
+    community: cell(2, true),
+    event_pass: cell(2, true),
+    pro: cell(40, true),
+    pro_plus: cell(null, true),
+  },
+  "teams.squad_max": {
+    community: cell(20, true),
+    event_pass: cell(20, true),
+    pro: cell(null, true),
+    pro_plus: cell(null, true),
+  },
 };
 
 describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
@@ -101,6 +121,27 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
       free: "16",
       pass: "32",
       pro: "256",
+      plus: "∞",
+    });
+  });
+
+  it("renders the W1 clubs/teams caps as numbers, ∞ for unlimited (spec V291)", () => {
+    expect(row("pricing.matrix.clubs.max")).toMatchObject({
+      free: "2",
+      pass: "2",
+      pro: "20",
+      plus: "∞",
+    });
+    expect(row("pricing.matrix.teams.max")).toMatchObject({
+      free: "2",
+      pass: "2",
+      pro: "40",
+      plus: "∞",
+    });
+    expect(row("pricing.matrix.teams.squad_max")).toMatchObject({
+      free: "20",
+      pass: "20",
+      pro: "∞",
       plus: "∞",
     });
   });

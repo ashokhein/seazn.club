@@ -6,6 +6,7 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
   { slug: "scale", features: [
     "competitions.max_active", "orgs.max_owned", "divisions.per_competition.max",
     "entrants.per_division.max", "members.max", "scorers.max",
+    "clubs.max", "teams.max", "teams.squad_max",
     "stages.per_division.max", "dashboard.public.max", "import.bulk",
   ]},
   { slug: "money", features: [
