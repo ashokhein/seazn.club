@@ -6,6 +6,7 @@
 // tiebreak), matches the §2 shape, surfaces cross-org busy windows non-empty,
 // applies a dry-run schedule override, and 422s on an empty roster.
 // Real Postgres required; skipped without DATABASE_URL.
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
@@ -75,7 +76,12 @@ async function setSettings(divisionId: string): Promise<void> {
 // Seed one full RR board (2 courts, 8 entrants, a shared player, two referees)
 // in a FRESH pro org. Everything is persisted on STABLE domain keys — never
 // fixture UUIDs — so re-seeding an identical board yields the same logical pack.
-async function seedOfficialsBoard(): Promise<{ auth: AuthCtx; divisionId: string }> {
+async function seedOfficialsBoard(opts?: {
+  /** Add two officials that SHARE a display_name but differ only in role_keys
+   *  (a referee + an umpire), inserted with caller-chosen ids so a determinism
+   *  test can force the two reseeds to sort the pair oppositely by raw id. */
+  duplicate?: { refereeId: string; umpireId: string };
+}): Promise<{ auth: AuthCtx; divisionId: string }> {
   const { auth } = await seedOrg("pro");
   const comp = await createCompetition(auth, { name: "AI Off", visibility: "public", branding: {} });
   const division = await createDivision(auth, comp.id, {
@@ -129,6 +135,15 @@ async function seedOfficialsBoard(): Promise<{ auth: AuthCtx; divisionId: string
     insert into official_availability (org_id, official_id, date, status, note)
     values (${auth.orgId}, ${o1!.id}, '2026-08-02', 'unavailable', 'holiday')`;
 
+  if (opts?.duplicate) {
+    await sql`
+      insert into officials (id, org_id, display_name, role_keys)
+      values (${opts.duplicate.refereeId}, ${auth.orgId}, 'Sam Whistle', ${sql.json(["referee"])})`;
+    await sql`
+      insert into officials (id, org_id, display_name, role_keys)
+      values (${opts.duplicate.umpireId}, ${auth.orgId}, 'Sam Whistle', ${sql.json(["umpire"])})`;
+  }
+
   return { auth, divisionId };
 }
 
@@ -158,6 +173,30 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack (v4/03 §2)", () => {
     const packB = await buildOfficialsPack(boardB.auth, boardB.divisionId, {
       instruction: "Senior on the late games.", policy: POLICY,
     });
+    expect(redact(packA)).toEqual(redact(packB));
+  });
+
+  it("rebuilds byte-identical when two officials share a display_name (role_keys tiebreak)", async () => {
+    // Two "Sam Whistle" officials distinguished ONLY by role_keys (referee vs
+    // umpire). Force the adversarial cross-board id ordering: referee-Sam gets the
+    // LOWER id in board A but the HIGHER id in board B, so a raw-id tiebreak orders
+    // the pair oppositely between reseeds. Redaction cannot reconcile that (role_keys
+    // are literal, not redacted); only the role_keys domain tiebreak can — so this
+    // fails on pre-fix code (name-only ranks + name/id-only pack sort) and passes now.
+    const [aLo, aHi] = [randomUUID(), randomUUID()].sort();
+    const [bLo, bHi] = [randomUUID(), randomUUID()].sort();
+    const boardA = await seedOfficialsBoard({ duplicate: { refereeId: aLo, umpireId: aHi } });
+    const boardB = await seedOfficialsBoard({ duplicate: { refereeId: bHi, umpireId: bLo } });
+    const packA = await buildOfficialsPack(boardA.auth, boardA.divisionId, {
+      instruction: "Senior on the late games.", policy: POLICY,
+    });
+    const packB = await buildOfficialsPack(boardB.auth, boardB.divisionId, {
+      instruction: "Senior on the late games.", policy: POLICY,
+    });
+    const sams = (p: typeof packA): string[] =>
+      p.officials.filter((o) => o.name === "Sam Whistle").map((o) => o.role_keys.join());
+    expect(sams(packA)).toEqual(["referee", "umpire"]);
+    expect(sams(packA)).toEqual(sams(packB));
     expect(redact(packA)).toEqual(redact(packB));
   });
 

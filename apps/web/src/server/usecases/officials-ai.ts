@@ -157,10 +157,39 @@ export async function buildOfficialsPack(
         select id, display_name from entrants where id in ${tx(extraEntrantIds)}`;
       for (const e of extra) entrantNameById.set(e.id, e.display_name);
     }
+    // Entrants expose only their display name as domain data in this pack, so two
+    // entrants that share a name are true clones for ordering — the raw-id fallback
+    // merely fixes a stable total order, and the determinism contract's UUID
+    // redaction makes the two reseeds equivalent regardless of which id sorts first.
     const byEntrantName = (a: string, b: string): number =>
       cmp(entrantNameById.get(a) ?? "", entrantNameById.get(b) ?? "") || cmp(a, b);
     const entrantNameKey = (ids: readonly string[]): string =>
       ids.map((e) => entrantNameById.get(e) ?? e).join("|");
+
+    // Officials are ordered by their DOMAIN identity, never a raw UUID: display
+    // name, then role_keys, per-day cap, linked entrant NAMES, and blackout dates.
+    // Two officials that tie on ALL of these are true clones — only then may id
+    // order (redacted away in the determinism contract) decide, so a reseed with
+    // fresh UUIDs yields an equivalent pack. Sharing just a display_name (e.g. two
+    // "Sam Whistle" officials, one referee one umpire) no longer leaks id order.
+    const sortedKey = (xs: readonly string[]): string => [...xs].sort(cmp).join(",");
+    const entrantNamesKey = (ids: readonly string[]): string =>
+      sortedKey([...new Set(ids)].map((e) => entrantNameById.get(e) ?? e));
+    interface OfficialDomain {
+      name: string;
+      roleKeys: readonly string[];
+      maxPerDay: number | null;
+      entrantIds: readonly string[];
+      blackouts: readonly string[];
+      id: string;
+    }
+    const byOfficialDomain = (a: OfficialDomain, b: OfficialDomain): number =>
+      cmp(a.name, b.name) ||
+      cmp(sortedKey(a.roleKeys), sortedKey(b.roleKeys)) ||
+      (a.maxPerDay ?? -1) - (b.maxPerDay ?? -1) ||
+      cmp(entrantNamesKey(a.entrantIds), entrantNamesKey(b.entrantIds)) ||
+      cmp(sortedKey(a.blackouts), sortedKey(b.blackouts)) ||
+      cmp(a.id, b.id);
 
     // Locked assignments on the included fixtures.
     const lockedRows = await tx<{ fixture_id: string; official_id: string; role_key: string }[]>`
@@ -199,6 +228,15 @@ export async function buildOfficialsPack(
 
     const startById = new Map(engineFixtures.map((f) => [f.id, f.startAt]));
     const officialNameById = new Map(officialRows.map((o) => [o.id, o.display_name]));
+
+    // Blackout dates per official — loaded before the draft so they can feed the
+    // official domain ordering (a tiebreaker for same-name officials).
+    const blackoutByOfficial = new Map<string, string[]>();
+    for (const r of await loadOfficialBlackouts(tx)) {
+      (blackoutByOfficial.get(r.official_id) ?? blackoutByOfficial.set(r.official_id, []).get(r.official_id)!).push(
+        r.date,
+      );
+    }
     // Assignment ordering keys off DOMAIN values (fixture start, role, official
     // name) — never a bare UUID — so a reseeded board yields the same order.
     const sortAssignments = (list: FixtureOfficial[]): FixtureOfficial[] =>
@@ -224,7 +262,12 @@ export async function buildOfficialsPack(
         cmp(entrantNameKey(a.entrants), entrantNameKey(b.entrants)),
     );
     const fRank = new Map(rankedFixtures.map((f, i) => [f.id, `f${String(i).padStart(6, "0")}`]));
-    const rankedOfficials = [...officialRows].sort((a, b) => cmp(a.display_name, b.display_name));
+    const rankedOfficials = [...officialRows].sort((a, b) =>
+      byOfficialDomain(
+        { name: a.display_name, roleKeys: a.role_keys, maxPerDay: a.max_per_day, entrantIds: a.entrant_ids, blackouts: blackoutByOfficial.get(a.id) ?? [], id: a.id },
+        { name: b.display_name, roleKeys: b.role_keys, maxPerDay: b.max_per_day, entrantIds: b.entrant_ids, blackouts: blackoutByOfficial.get(b.id) ?? [], id: b.id },
+      ),
+    );
     const oRank = new Map(rankedOfficials.map((o, i) => [o.id, `o${String(i).padStart(6, "0")}`]));
     const realFByRank = new Map([...fRank].map(([real, rk]) => [rk, real]));
     const realOByRank = new Map([...oRank].map(([real, rk]) => [rk, real]));
@@ -271,12 +314,6 @@ export async function buildOfficialsPack(
       )
       .map((x) => x.fixture);
 
-    const blackoutByOfficial = new Map<string, string[]>();
-    for (const r of await loadOfficialBlackouts(tx)) {
-      (blackoutByOfficial.get(r.official_id) ?? blackoutByOfficial.set(r.official_id, []).get(r.official_id)!).push(
-        r.date,
-      );
-    }
     const busyByOfficial = new Map<string, string[]>();
     for (const r of busyElsewhere) {
       (busyByOfficial.get(r.official_id) ?? busyByOfficial.set(r.official_id, []).get(r.official_id)!).push(
@@ -294,7 +331,12 @@ export async function buildOfficialsPack(
         busy_elsewhere: [...(busyByOfficial.get(o.id) ?? [])].sort(cmp),
         entrant_ids: [...new Set(o.entrant_ids)].sort(byEntrantName),
       }))
-      .sort((a, b) => cmp(a.name, b.name) || cmp(a.id, b.id));
+      .sort((a, b) =>
+        byOfficialDomain(
+          { name: a.name, roleKeys: a.role_keys, maxPerDay: a.max_per_day, entrantIds: a.entrant_ids, blackouts: a.blackout_dates, id: a.id },
+          { name: b.name, roleKeys: b.role_keys, maxPerDay: b.max_per_day, entrantIds: b.entrant_ids, blackouts: b.blackout_dates, id: b.id },
+        ),
+      );
 
     return {
       division: { id: division.id, name: division.name, sport: division.sport_key, tz },
