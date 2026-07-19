@@ -101,13 +101,14 @@ async function seedDivision(
 async function seedDecidedFixture(
   ctx: Ctx,
   div: DivCtx,
-  opts: { round?: number; homeLine?: string; awayLine?: string; status?: string } = {},
+  opts: { round?: number; homeLine?: string; awayLine?: string; status?: string; stageId?: string } = {},
 ): Promise<string> {
   const round = opts.round ?? 1;
+  const stageId = opts.stageId ?? div.stageId;
   const [{ id }] = await sql<{ id: string }[]>`
     insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round,
       home_entrant_id, away_entrant_id, status, outcome)
-    values (${div.stageId}, ${div.divisionId}, ${ctx.orgId}, ${round}, 1,
+    values (${stageId}, ${div.divisionId}, ${ctx.orgId}, ${round}, 1,
       ${div.entrantA}, ${div.entrantB}, ${opts.status ?? "decided"},
       ${sql.json({ kind: "win", winner: div.entrantA, loser: div.entrantB })})
     returning id`;
@@ -340,6 +341,52 @@ describe.skipIf(!HAS_DB)("org-posts auto-drafts", () => {
     expect(recap[0]!.bodyMd).toContain("Riverside");
   });
 
+  it("round recaps are stage-scoped: a sibling stage's open round 1 neither blocks the recap nor shares its auto-once key", async () => {
+    const ctx = await seedOrg();
+    const div = await seedDivision(ctx, { autoPosts: true }); // stage A: kind 'league', round numbers restart per stage
+    // A second table stage in the SAME division, also carrying a round 1.
+    const [{ id: stageB }] = await sql<{ id: string }[]>`
+      insert into stages (division_id, org_id, seq, kind, name)
+      values (${div.divisionId}, ${ctx.orgId}, 2, 'group', 'Group') returning id`;
+
+    // Stage B round 1 has an OPEN (scheduled) fixture — under a division-wide
+    // completeness count this scheduled fixture blocks stage A's recap forever.
+    const [{ id: b1 }] = await sql<{ id: string }[]>`
+      insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round,
+        home_entrant_id, away_entrant_id, status)
+      values (${stageB}, ${div.divisionId}, ${ctx.orgId}, 1, 1,
+        ${div.entrantA}, ${div.entrantB}, 'scheduled') returning id`;
+
+    // Stage A round 1: two decided fixtures → its recap should fire even though
+    // stage B's round 1 is still open.
+    const a1 = await seedDecidedFixture(ctx, div, { round: 1, homeLine: "3", awayLine: "1" });
+    const a2 = await seedDecidedFixture(ctx, div, { round: 1, homeLine: "0", awayLine: "0" });
+    void a1;
+    await draft(ctx, a2);
+
+    let recap = (await listPosts(ctx.auth, ctx.orgId)).filter((p) => p.kind === "round_recap");
+    expect(recap).toHaveLength(1); // pre-fix: stage B's scheduled fixture keeps the round "open"
+    expect(recap[0]!.autoSource).toMatchObject({
+      trigger: "round_complete",
+      round_no: 1,
+      stage_id: div.stageId,
+    });
+
+    // Complete stage B's round 1 → its OWN recap, keyed on stage_id so the
+    // auto-once index does not treat it as a dup of stage A's division+round row.
+    await sql`
+      update fixtures set status = 'decided',
+        outcome = ${sql.json({ kind: "win", winner: div.entrantA, loser: div.entrantB })}
+      where id = ${b1}`;
+    await draft(ctx, b1);
+
+    recap = (await listPosts(ctx.auth, ctx.orgId)).filter((p) => p.kind === "round_recap");
+    expect(recap).toHaveLength(2);
+    expect(new Set(recap.map((r) => r.autoSource?.stage_id))).toEqual(
+      new Set([div.stageId, stageB]),
+    );
+  });
+
   it("drafts nothing when the division has not opted in", async () => {
     const ctx = await seedOrg();
     const div = await seedDivision(ctx, { autoPosts: false });
@@ -348,7 +395,7 @@ describe.skipIf(!HAS_DB)("org-posts auto-drafts", () => {
     expect(await listPosts(ctx.auth, ctx.orgId)).toEqual([]);
   });
 
-  it("the scoring decided seam drafts a result post (fire-and-forget, isolated)", async () => {
+  it("the scoring decided seam drafts a result post (awaited but swallowed, isolated)", async () => {
     const ctx = await seedOrg();
     const div = await seedDivision(ctx, { autoPosts: true });
     await sql`update divisions set status = 'active' where id = ${div.divisionId}`;

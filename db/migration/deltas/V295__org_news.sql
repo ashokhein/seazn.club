@@ -1,5 +1,5 @@
 -- =============================================================================
--- V294 — Org news, auto-drafted posts (SPEC-2 / PROMPT-82).
+-- V295 — Org news, auto-drafted posts (SPEC-2 / PROMPT-82).
 -- An org news feed: manual composer posts (free on every plan — the PLG ad
 -- network working as designed) plus system-auto-drafted result/round_recap
 -- posts on the decided-write seam (Pro `news.auto`). Server side only; the
@@ -39,15 +39,18 @@ create table org_posts (
 create index org_posts_public_idx on org_posts(org_id, status, published_at desc);
 
 -- Auto-draft idempotency (SPEC-2): at most one auto post per trigger per
--- fixture (result) or per round+division (round_recap). Enforced by a partial
--- unique index — the insert is on-conflict-do-nothing, never an app pre-check
--- (same discipline lesson as suspensions_auto_once). Human posts (auto_source
--- null) are exempt.
+-- fixture (result) or per stage+round+division (round_recap). Round numbers
+-- restart per stage (fixtures' natural key is stage+round+seq), so stage_id is
+-- part of the recap key — else a group and a knockout round 1 would collide.
+-- Enforced by a partial unique index — the insert is on-conflict-do-nothing,
+-- never an app pre-check (same discipline lesson as suspensions_auto_once).
+-- Human posts (auto_source null) are exempt.
 create unique index org_posts_auto_once on org_posts (
   org_id,
   (auto_source->>'trigger'),
   coalesce(auto_source->>'fixture_id', ''),
   coalesce(auto_source->>'division_id', ''),
+  coalesce(auto_source->>'stage_id', ''),
   coalesce(auto_source->>'round_no', '')
 ) where auto_source is not null;
 

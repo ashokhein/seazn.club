@@ -43,6 +43,7 @@ export interface OrgPost {
     stale?: boolean;
     fixture_id?: string;
     division_id?: string;
+    stage_id?: string;
     round_no?: number;
   } | null;
   publishedAt: string | null;
@@ -51,7 +52,8 @@ export interface OrgPost {
 }
 
 // Decided-seam triggers (auto_source.trigger). The V295 partial unique index
-// keys result on fixture_id, round_recap on division_id + round_no.
+// keys result on fixture_id, round_recap on division_id + stage_id + round_no
+// (round numbers restart per stage — fixtures' natural key is stage+round+seq).
 const TRIGGER_RESULT = "fixture_decided";
 const TRIGGER_RECAP = "round_complete";
 // League-stage kinds carry a table, so the standings-movement line + recap make
@@ -422,9 +424,13 @@ async function draftResult(tx: Tx, fx: FixtureCtx, locale: Locale): Promise<void
 
 async function maybeDraftRecap(tx: Tx, fx: FixtureCtx, locale: Locale): Promise<void> {
   const roundNo = fx.round_no!;
+  // Round numbers restart per stage (natural key stage+round+seq) — scope the
+  // completeness probe to THIS stage, else a scheduled knockout round 1 blocks
+  // the group round 1 recap forever.
   const [{ open }] = await tx<{ open: number }[]>`
     select count(*) filter (where status not in ('decided','finalized','forfeited'))::int as open
-    from fixtures where division_id = ${fx.division_id} and round_no = ${roundNo}`;
+    from fixtures
+    where division_id = ${fx.division_id} and stage_id = ${fx.stage_id} and round_no = ${roundNo}`;
   if (open > 0) return; // round not complete yet
 
   const resultRows = await tx<
@@ -436,7 +442,7 @@ async function maybeDraftRecap(tx: Tx, fx: FixtureCtx, locale: Locale): Promise<
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     left join match_states m on m.fixture_id = f.id
-    where f.division_id = ${fx.division_id} and f.round_no = ${roundNo}
+    where f.division_id = ${fx.division_id} and f.stage_id = ${fx.stage_id} and f.round_no = ${roundNo}
     order by f.fixture_no nulls last, f.id`;
   const results = resultRows.map((r) => ({
     homeName: r.home_name ?? "TBD",
@@ -458,6 +464,7 @@ async function maybeDraftRecap(tx: Tx, fx: FixtureCtx, locale: Locale): Promise<
   const autoSource = {
     trigger: TRIGGER_RECAP,
     division_id: fx.division_id,
+    stage_id: fx.stage_id,
     round_no: roundNo,
     stale: false,
   };
