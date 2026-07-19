@@ -1798,13 +1798,29 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
     freeShared.body.includes("Share on WhatsApp") && freeShared.body.includes("Copy link"),
   );
 
-  // --- /me: the player→organiser "run your own" CTA.
+  // --- /me: the player→organiser "run your own" CTA is gated to users with
+  // NO org (organisers must never see their own acquisition pitch). `free`
+  // owns an org → hidden; a fresh org-less session → shown.
   const meRun = await html(free, "/me");
   check(
-    "plg /me renders the run-your-own-tournament CTA",
-    meRun.status === 200 &&
-      meRun.body.includes("Run your own tournament") &&
-      meRun.body.includes("utm_source=me"),
+    "plg /me hides run-your-own from a user who has an org",
+    meRun.status === 200 && !meRun.body.includes("utm_source=me"),
+  );
+  // An org-less session needs consume-with-next: a bare signIn auto-creates
+  // "My organization" (ensureActiveOrg), but a `next` target skips the org
+  // bootstrap (postAuthLanding) — exactly how claim/invite emails land.
+  const playerOnly = newSession();
+  const plgReq = (await call(playerOnly, "/api/auth/magic-link", "POST", {
+    email: `plg_player_${tag}@example.com`,
+  })) as { login_url?: string };
+  const plgTok = new URL(plgReq.login_url ?? "").searchParams.get("token");
+  await call(playerOnly, "/api/auth/magic-link/consume", "POST", { token: plgTok, next: "/me" });
+  const meRunPlayer = await html(playerOnly, "/me");
+  check(
+    "plg /me renders run-your-own for an org-less player",
+    meRunPlayer.status === 200 &&
+      meRunPlayer.body.includes("Run your own tournament") &&
+      meRunPlayer.body.includes("utm_source=me"),
   );
 
   // --- /discover: the acquisition CTA back to /start (unconditional —
