@@ -3,7 +3,7 @@
 // home_primary/home_secondary/away_primary/away_secondary), contacts CRUD, and a
 // danger zone. patchClub + the contacts routes finally get a UI. The kit stripe
 // in the page header reads the same colours this tab edits.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -60,7 +60,15 @@ function roleLabelKey(role: string): MessageKey {
     : "clubs.contact.role.other") as MessageKey;
 }
 
-export function OverviewTab({ club, canEdit }: { club: ClubFull; canEdit: boolean }) {
+export function OverviewTab({
+  club,
+  canEdit,
+  storageBase,
+}: {
+  club: ClubFull;
+  canEdit: boolean;
+  storageBase: string;
+}) {
   const msg = useMsg();
   const router = useRouter();
   const confirmDialog = useConfirm();
@@ -226,6 +234,17 @@ export function OverviewTab({ club, canEdit }: { club: ClubFull; canEdit: boolea
         )}
       </section>
 
+      {/* Club crest — the identity every team without its own badge inherits. */}
+      <CrestCard
+        clubId={club.id}
+        logoPath={club.logo_path}
+        storageBase={storageBase}
+        canEdit={canEdit}
+        onError={setError}
+        onPaywall={setPaywall}
+        onChanged={() => router.refresh()}
+      />
+
       {/* Contacts */}
       <section className="card space-y-3 p-4" aria-label={msg("clubs.overview.contactsTitle")}>
         <h2 className="text-sm font-semibold text-slate-900">{msg("clubs.overview.contactsTitle")}</h2>
@@ -378,5 +397,133 @@ export function OverviewTab({ club, canEdit }: { club: ClubFull; canEdit: boolea
         </section>
       )}
     </div>
+  );
+}
+
+// Single-file club crest control. Reuses the bulk-logo endpoint with an
+// explicit one-file mapping pinned to this club — the `mapping` entry is the
+// input the server honours over its own filename stem-matching, so the upload
+// can never land on a sibling org club. Removal clears the pointer only
+// (crest objects are content-hash shared).
+function CrestCard({
+  clubId,
+  logoPath,
+  storageBase,
+  canEdit,
+  onError,
+  onPaywall,
+  onChanged,
+}: {
+  clubId: string;
+  logoPath: string | null;
+  storageBase: string;
+  canEdit: boolean;
+  onError: (msg: string | null) => void;
+  onPaywall: (feature: string | null) => void;
+  onChanged: () => void;
+}) {
+  const msg = useMsg();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function upload(file: File | undefined) {
+    if (!file) return;
+    setBusy(true);
+    onError(null);
+    try {
+      const form = new FormData();
+      form.append("files", file);
+      form.append("mapping", JSON.stringify({ [file.name]: clubId }));
+      form.append("assign_remaining", "false");
+      const res = await fetch("/api/v1/clubs/logos", { method: "POST", body: form });
+      const payload = (await res.json().catch(() => ({}))) as {
+        ok?: boolean;
+        error?: { message?: string; feature_key?: string };
+      };
+      if (!res.ok || payload.ok === false) {
+        if (res.status === 402) {
+          onPaywall(String(payload.error?.feature_key ?? ""));
+          return;
+        }
+        throw new Error(payload.error?.message ?? `Upload failed (${res.status})`);
+      }
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    onError(null);
+    try {
+      await apiV1(`/api/v1/clubs/${clubId}`, { method: "PATCH", json: { logo_path: null } });
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card space-y-3 p-4" aria-label={msg("clubs.crest.title")}>
+      <h2 className="text-sm font-semibold text-slate-900">{msg("clubs.crest.title")}</h2>
+      <div className="flex flex-wrap items-center gap-4">
+        {logoPath ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={`${storageBase}/${logoPath}`}
+            alt={msg("clubs.crest.title")}
+            className="h-16 w-16 rounded-lg border border-slate-200 object-contain"
+          />
+        ) : (
+          <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-slate-300 text-[10px] uppercase tracking-wide text-slate-400">
+            {msg("clubs.crest.emptyTile")}
+          </div>
+        )}
+        <div className="min-w-0 flex-1 space-y-2">
+          <p className="text-sm text-slate-500">{msg("clubs.crest.hint")}</p>
+          {canEdit && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                className="btn btn-primary min-h-[44px] text-sm"
+                disabled={busy}
+                onClick={() => inputRef.current?.click()}
+              >
+                {busy
+                  ? msg("clubs.team.uploading")
+                  : logoPath
+                    ? msg("clubs.crest.replace")
+                    : msg("clubs.crest.upload")}
+              </button>
+              <input
+                ref={inputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/svg+xml"
+                className="hidden"
+                onChange={(e) => {
+                  void upload(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+              {logoPath && (
+                <button
+                  type="button"
+                  className="btn min-h-[44px] text-sm"
+                  disabled={busy}
+                  onClick={() => void remove()}
+                >
+                  {msg("clubs.crest.remove")}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }

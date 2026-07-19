@@ -110,7 +110,9 @@ export async function getClub(
     if (!club) throw new HttpError(404, "club not found");
     const teams = await tx<Record<string, unknown>[]>`
       select t.id, t.name, t.short_name,
-             coalesce(t.logo_path, ${club.logo_path}) as logo_path,
+             -- RAW own badge, not the display fallback: the hub UI distinguishes
+             -- "own override" from "inherits the club crest" (effectiveBadge).
+             t.logo_path,
              coalesce((select jsonb_agg(jsonb_build_object(
                         'division_id', e.division_id, 'entrant_id', e.id,
                         'division_name', d.name, 'competition_id', d.competition_id)
