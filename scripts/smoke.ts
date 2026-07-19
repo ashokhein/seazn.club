@@ -356,6 +356,18 @@ await i18nSuite();
   // --- design/v9 PROMPT-55: dispute-loss recovery surfaces.
   await disputeSurfacesSuite();
 
+  // --- payments-hardening (PROMPT-72..75): the three delete-money 409 guards,
+  // the DELETE-competition NEVER_KEY 403, community card division
+  // payments_unavailable vs an Event-Pass comp staying open, and the
+  // stuck-webhook sweep cron. Own fresh orgs; keyless-safe.
+  await p72Suite();
+
+  // --- payments-hardening (Task 16): the 4-plan user matrix — one fresh owner
+  // per plan (community/pro/pro_plus/event_pass) asserting the entitlements that
+  // distinguish its tier at the resolution + HTTP-status level. Own fresh orgs;
+  // keyless-safe. The HTTP-level plan-truth net for the two e2e tasks that follow.
+  await smokePlanMatrix();
+
   await gapSuite(admin, org.id, org2.id);
 
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
@@ -392,6 +404,576 @@ async function disputeSurfacesSuite() {
     return_path: "/settings/connect",
   });
   check("p55: connect refuses without ToS agreement (422)", refused.status === 422);
+}
+
+/** payments-hardening wave (PROMPT-72..75) over real HTTP — the surfaces the
+ *  DB-backed vitest suites can't reach from the outside:
+ *   • the THREE competition-delete money guards, each 409 with its own copy
+ *     (Task 1, spec P0-1) — a CASCADE delete would erase the only record of
+ *     live money (Event Pass, unrefunded card registration, paid sponsorship);
+ *   • DELETE /competitions/:id is structurally key-excluded → 403 for a
+ *     manage-scope key (Task 1 NEVER_KEY_ROUTES);
+ *   • a community org's card division reads `payments_unavailable` on the
+ *     public register panel even with Connect live (P2-10: registration.paid
+ *     is Pro-gated), while the SAME setup on an Event-Pass comp stays open;
+ *   • the hourly stuck-webhook sweep cron (Task 12/P1-7): wrong secret 401,
+ *     right secret returns the {replayed,failed,alerted} shape.
+ *  Runs on its own fresh orgs (never touches org/org2 from main()); keyless-
+ *  safe, SQL-seeded like setConnect/grantPass. */
+async function p72Suite(): Promise<void> {
+  // === PRO PATH: the three delete-money guards, each pinned distinctly. ===
+  const owner = newSession();
+  const who = await signIn(owner, `p72_${tag}@example.com`);
+  const orgId = who.org_id;
+  await setPlan(orgId, "pro"); // sponsor packages + api keys are Pro surfaces
+
+  const makeComp = async (name: string) =>
+    v1data<{ id: string; slug: string }>(
+      await v1(owner, "/api/v1/competitions", "POST", { name: `${name} ${tag}`, visibility: "public" }),
+    );
+  const makeDiv = async (compId: string) =>
+    v1data<{ id: string; slug: string }>(
+      await v1(owner, `/api/v1/competitions/${compId}/divisions`, "POST", {
+        name: "Open", sport_key: "generic", variant_key: "score",
+        config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+      }),
+    );
+  const delMsg = (r: { json: { error?: { message?: string } } }) => r.json.error?.message ?? "";
+
+  // Guard 1 — Event Pass.
+  const passComp = await makeComp("P72 Pass Cup");
+  await grantPass(orgId, passComp.id);
+  const delPass = await v1(owner, `/api/v1/competitions/${passComp.id}`, "DELETE");
+  check(
+    "p72: delete blocked by an Event Pass (409, 'Event Pass')",
+    delPass.status === 409 && delMsg(delPass).includes("Event Pass"),
+  );
+
+  // Guard 2 — a card registration with unrefunded money.
+  const regComp = await makeComp("P72 Reg Cup");
+  const regDiv = await makeDiv(regComp.id);
+  await seedPaidRegistration(orgId, regDiv.id);
+  const delReg = await v1(owner, `/api/v1/competitions/${regComp.id}`, "DELETE");
+  check(
+    "p72: delete blocked by unrefunded card money (409, 'card payments')",
+    delReg.status === 409 && delMsg(delReg).includes("card payments"),
+  );
+
+  // Guard 3 — a paid sponsorship scoped to the comp via its package.
+  const sponComp = await makeComp("P72 Sponsor Cup");
+  await seedPaidSponsorOrder(orgId, sponComp.id);
+  const delSpon = await v1(owner, `/api/v1/competitions/${sponComp.id}`, "DELETE");
+  check(
+    "p72: delete blocked by a paid sponsorship (409, 'paid sponsorship')",
+    delSpon.status === 409 && delMsg(delSpon).includes("paid sponsorship"),
+  );
+
+  // === KEY AUTH: DELETE /competitions/:id is never key-accessible → 403 for
+  // ANY scope (the route is absent from the allowlist, so it default-denies).
+  // A read key is enough to prove the door, and — unlike a write-capable key,
+  // which V290 made Pro Plus only — it mints on a plain Pro org. ===
+  const mkKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
+    name: "p72 probe", scopes: ["read"],
+  });
+  check("p72: read key minted for the NEVER_KEY probe", mkKey.status === 201);
+  const keyAuth = { Authorization: `Bearer ${v1data<{ secret: string }>(mkKey).secret}` };
+  const cleanComp = await makeComp("P72 Key Delete Cup"); // no money — would otherwise delete
+  const keyDelete = await v1(newSession(), `/api/v1/competitions/${cleanComp.id}`, "DELETE", undefined, keyAuth);
+  check("p72: a key cannot DELETE a competition (403 NEVER_KEY)", keyDelete.status === 403);
+  // Prove the door, not the data: the same delete over the session succeeds.
+  const sessionDelete = await v1(owner, `/api/v1/competitions/${cleanComp.id}`, "DELETE");
+  check("p72: the owner session still deletes a money-free comp", sessionDelete.status === 200 || sessionDelete.status === 204);
+
+  // === COMMUNITY PATH: card division closed as payments_unavailable, but an
+  // Event-Pass comp with the same settings stays open (P2-10 entitlement). ===
+  const comm = newSession();
+  const commWho = await signIn(comm, `p72comm_${tag}@example.com`);
+  const commOrgId = commWho.org_id;
+  const commOrgs = (await call(comm, "/api/orgs")) as { id: string; slug: string }[];
+  const commSlug = commOrgs.find((o) => o.id === commOrgId)!.slug;
+  await setConnect(commOrgId, true); // Connect LIVE → isolate the entitlement dimension
+
+  // Unlisted (still served by the public register panel) sidesteps the
+  // community dashboard.public.max = 1 quota so both probe comps can coexist.
+  const brokeComp = v1data<{ id: string; slug: string }>(
+    await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Card Cup ${tag}`, visibility: "unlisted" }),
+  );
+  const brokeDiv = v1data<{ id: string }>(
+    await v1(comm, `/api/v1/competitions/${brokeComp.id}/divisions`, "POST", {
+      name: "Card", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await seedStripeFeeDivision(brokeDiv.id);
+  const brokeInfo = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${commSlug}/competitions/${brokeComp.slug}/registration`,
+  );
+  const brokeDivs = v1data<{ divisions: { open: boolean; closed_reason: string | null }[] }>(brokeInfo).divisions;
+  check(
+    "p72: community card division reads payments_unavailable (P2-10)",
+    brokeInfo.status === 200 &&
+      brokeDivs.length === 1 &&
+      brokeDivs[0]!.open === false &&
+      brokeDivs[0]!.closed_reason === "payments_unavailable",
+  );
+
+  // Free the community org's single active-competition slot (its read is done)
+  // so the pass comp can be created — then the pass grants THAT comp's paid
+  // entitlement independently.
+  await v1(comm, `/api/v1/competitions/${brokeComp.id}`, "PATCH", { status: "archived" });
+  const passInfoComp = v1data<{ id: string; slug: string }>(
+    await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Pass Card Cup ${tag}`, visibility: "unlisted" }),
+  );
+  const passInfoDiv = v1data<{ id: string }>(
+    await v1(comm, `/api/v1/competitions/${passInfoComp.id}/divisions`, "POST", {
+      name: "Card", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await seedStripeFeeDivision(passInfoDiv.id);
+  await grantPass(commOrgId, passInfoComp.id); // the pass grants registration.paid for THIS comp
+  const passInfo = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${commSlug}/competitions/${passInfoComp.slug}/registration`,
+  );
+  const passDivs = v1data<{ divisions: { open: boolean; closed_reason: string | null }[] }>(passInfo).divisions;
+  check(
+    "p72: an Event-Pass comp keeps its card division open (P2-10 scoped)",
+    passInfo.status === 200 &&
+      passDivs.length === 1 &&
+      passDivs[0]!.open === true &&
+      passDivs[0]!.closed_reason === null,
+  );
+
+  // === CRON: the hourly stuck-webhook sweep (Task 12/P1-7). ===
+  const cronSecret = process.env.CRON_SECRET;
+  const wrongCron = await fetch(`${BASE}/api/cron/billing-events`, {
+    method: "POST",
+    headers: { "x-cron-secret": "definitely-wrong" },
+  });
+  // 401 when the server has a secret; 503 when it isn't configured (CI) —
+  // either way the sweep never ran on a bad/absent secret.
+  check(
+    "p72: cron billing-events rejects a wrong secret (401, or 503 unconfigured)",
+    wrongCron.status === 401 || wrongCron.status === 503,
+  );
+  if (cronSecret) {
+    const rightCron = await fetch(`${BASE}/api/cron/billing-events`, {
+      method: "POST",
+      headers: { "x-cron-secret": cronSecret },
+    });
+    const body = (await rightCron.json().catch(() => ({}))) as {
+      ok?: boolean;
+      data?: { replayed?: number; failed?: number; alerted?: number };
+    };
+    if (rightCron.status === 200) {
+      check(
+        "p72: cron billing-events runs the sweep and returns {replayed:0,…}",
+        body.ok === true &&
+          body.data?.replayed === 0 &&
+          typeof body.data?.failed === "number" &&
+          typeof body.data?.alerted === "number",
+      );
+    } else {
+      // Server CRON_SECRET differs from the smoke env's — still a proven guard.
+      check(
+        "p72: cron right-secret path skipped (server secret differs)",
+        rightCron.status === 401 || rightCron.status === 503,
+      );
+    }
+  } else {
+    check("p72: cron right-secret shape skipped (no CRON_SECRET in smoke env)", true);
+  }
+}
+
+/** payments-hardening Task 16 — the 4-plan user matrix. Four fresh owners, one
+ *  per plan, created through the same HTTP surface the rest of smoke uses; each
+ *  asserts the entitlements that distinguish its tier at the resolution + HTTP-
+ *  status level. Keyless-safe: every check resolves entitlements or 402s BEFORE
+ *  any Stripe/LLM call, and each check runs AFTER its data is seeded. Own fresh
+ *  orgs (never touches org/org2 from main()); the pass persona stays community.
+ *
+ *  V291 truths this pins: Pro AI cap 5/division, Pro Plus unlimited (null); a
+ *  pass overlays comp-scoped Pro features INSIDE the passed comp only; the dead
+ *  Event-Pass members.max row is gone → org-wide keys resolve community for a
+ *  passed org. */
+async function smokePlanMatrix(): Promise<void> {
+  const genericDiv = {
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  };
+  // Resolved entitlements + plan for an org (any member may read) — the same
+  // endpoint /admin/entitlements and the settings billing tab consume. Reads
+  // plan_entitlements live (no cache-aside), so it reflects a setPlan flip at
+  // once and never masks it.
+  const readEnt = async (s: Session, orgId: string) =>
+    (await call(s, `/api/orgs/${orgId}/entitlements`)) as {
+      plan_key: string;
+      entitlements: Record<string, { enabled?: boolean; limit?: number | null }>;
+    };
+  const featureKey = (r: V1Res) =>
+    (r.json.error as { feature_key?: string; reason?: string } | undefined) ?? {};
+
+  // Task 20 — the four-users-per-org, full-data-feed, populated-competition
+  // pass. For a plan org's owner + host competition, seed a division that
+  // covers all three entrant shapes (individual + team + pair), generate and
+  // start it, provision the org's OTHER three users (member/scorer, official,
+  // player), record real results, then run the five tier-gated assertions
+  // against the now-POPULATED competition (not an empty shell). Plan-generic:
+  // the branded-vs-plain export outcome is driven by `expectBranded`, never a
+  // hardcoded plan. `hostComp` is the persona's existing competition (reused so
+  // no new competition trips the community active-comp cap; for event_pass it
+  // MUST be the PASSED comp so the comp-scoped `exports` grant is in force).
+  const seedFeedAndAssert = async (
+    owner: Session,
+    orgId: string,
+    hostCompId: string,
+    key: string, // email suffix + label: community | pro | proplus | pass
+    expectBranded: boolean,
+  ): Promise<void> => {
+    // --- Full data feed: one division, all three entrant shapes. Entrant #1
+    // carries a person so the player (below) can claim into a real fixture.
+    const feedDiv = v1data<{ id: string }>(
+      await v1(owner, `/api/v1/competitions/${hostCompId}/divisions`, "POST", {
+        name: `Matrix Feed ${key}`,
+        ...genericDiv,
+      }),
+    );
+    const person = v1data<{ id: string }>(
+      await v1(owner, "/api/v1/persons", "POST", { full_name: `Feed Player ${key} ${tag}`, consent: {} }),
+    );
+    await v1(owner, `/api/v1/divisions/${feedDiv.id}/entrants`, "POST", [
+      { kind: "individual", display_name: `Feed Solo ${key}`, seed: 1, members: [{ person_id: person.id }] },
+      { kind: "individual", display_name: `Feed Solo2 ${key}`, seed: 2 },
+      { kind: "team", display_name: `Feed Team ${key}`, seed: 3 },
+      { kind: "pair", display_name: `Feed Pair ${key}`, seed: 4 },
+    ]);
+    const feedStage = v1data<{ id: string }>(
+      await v1(owner, `/api/v1/divisions/${feedDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    );
+    const feedFixtures = v1data<{ fixtures: { id: string }[] }>(
+      await v1(owner, `/api/v1/stages/${feedStage.id}/generate`, "POST"),
+    ).fixtures;
+    await v1(owner, `/api/v1/divisions/${feedDiv.id}/start`, "POST");
+    check(
+      `matrix/${key}: full feed built — individual+team+pair entrants, fixtures generated`,
+      feedFixtures.length >= 4,
+    );
+
+    // --- User 2 (official): assigned to fixture[0], invited through the shared
+    // person-claim rail, claims + accepts, sees the duty and scores it exactly
+    // like a scorer (acceptedOfficialCovers). Officials are non-members — no
+    // members.max seat consumed, so this holds on community too.
+    const officialEmail = `official_${key}_${tag}@example.com`;
+    const officialSession = newSession();
+    await signIn(officialSession, officialEmail);
+    const official = v1data<{ id: string }>(
+      await v1(owner, "/api/v1/officials", "POST", { display_name: `Feed Ref ${key} ${tag}`, role_keys: ["referee"] }),
+    );
+    await v1(owner, `/api/v1/fixtures/${feedFixtures[0]!.id}/officials`, "PATCH", {
+      set: [{ official_id: official.id, role_key: "referee", locked: false }],
+    });
+    const offInvite = await v1(owner, `/api/v1/officials/${official.id}/invite`, "POST", { email: officialEmail });
+    const offToken = (v1data<{ claim_url: string }>(offInvite).claim_url ?? "").split("/claim/")[1] ?? "";
+    await call(officialSession, `/api/claims/${offToken}/accept`, "POST");
+    const offAccept = await v1(officialSession, `/api/v1/me/assigned-fixtures/${feedFixtures[0]!.id}/response`, "PATCH", {
+      response: "accepted",
+    });
+    const offDuties = v1data<unknown[]>(await v1(officialSession, "/api/v1/me/assigned-fixtures"));
+    check(
+      `matrix/${key}: the official sees their duty in the officiating lane`,
+      offAccept.status === 200 && Array.isArray(offDuties) && offDuties.length > 0,
+    );
+    const offState = await v1(officialSession, `/api/v1/fixtures/${feedFixtures[0]!.id}/state`);
+    const offScore = await v1(officialSession, `/api/v1/fixtures/${feedFixtures[0]!.id}/events`, "POST", {
+      expected_seq: v1data<{ last_seq: number }>(offState).last_seq,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    });
+    check(`matrix/${key}: the accepted official records a result`, offScore.status === 201);
+
+    // --- User 3 (member/scorer): a division-scoped scorer invite seats a
+    // member (scorers.max = 1 on community, so exactly one fits) who scores a
+    // DIFFERENT fixture via the assignment path (scoresViaAssignment).
+    const scorerEmail = `scorer_${key}_${tag}@example.com`;
+    const scorerSession = newSession();
+    await signIn(scorerSession, scorerEmail);
+    const scorerInvite = (await call(owner, `/api/orgs/${orgId}/invites`, "POST", {
+      role: "scorer",
+      max_uses: 1,
+      default_scope: { type: "division", id: feedDiv.id },
+    })) as { token: string };
+    await call(scorerSession, `/api/invites/${scorerInvite.token}/accept`, "POST", {});
+    const scorerAssigned = v1data<unknown[]>(await v1(scorerSession, "/api/v1/me/assigned-fixtures"));
+    const scorerState = await v1(scorerSession, `/api/v1/fixtures/${feedFixtures[1]!.id}/state`);
+    const scorerScore = await v1(scorerSession, `/api/v1/fixtures/${feedFixtures[1]!.id}/events`, "POST", {
+      expected_seq: v1data<{ last_seq: number }>(scorerState).last_seq,
+      type: "generic.result",
+      payload: { p1Score: 1, p2Score: 3 },
+    });
+    check(
+      `matrix/${key}: the scorer seats via invite and scores via assignment`,
+      Array.isArray(scorerAssigned) && scorerAssigned.length > 0 && scorerScore.status === 201,
+    );
+
+    // --- User 4 (player): claims the person on entrant #1 and reads their own
+    // fixtures. Only two fixtures were decided above; the player's entrant is
+    // in three, so at least one stays upcoming — the self-view is never empty.
+    const playerEmail = `player_${key}_${tag}@example.com`;
+    const playerSession = newSession();
+    await signIn(playerSession, playerEmail);
+    const claimInvite = await v1(owner, `/api/v1/persons/${person.id}/claim-invites`, "POST", { email: playerEmail });
+    const claimToken = (v1data<{ claim_url: string }>(claimInvite).claim_url ?? "").split("/claim/")[1] ?? "";
+    await call(playerSession, `/api/claims/${claimToken}/accept`, "POST");
+    const upcoming = v1data<{ upcoming: { id: string }[] }>(
+      await v1(playerSession, "/api/v1/me/fixtures"),
+    ).upcoming ?? [];
+    check(`matrix/${key}: the claimed player sees their own fixtures`, upcoming.length > 0);
+
+    // --- Populated standings: the two results above make the snapshot
+    // non-empty (was the empty shell before).
+    const feedStandings = await v1(owner, `/api/v1/stages/${feedStage.id}/standings`);
+    check(
+      `matrix/${key}: standings render non-empty after recorded results`,
+      feedStandings.status === 200 && v1data<{ rows: unknown[] }>(feedStandings).rows.length > 0,
+    );
+
+    // --- Export WITH DATA: the standings export 404s without a snapshot, so a
+    // 200 here proves it is content-bearing (empty-doc false-green avoided).
+    // community.exports=true (V285) → every tier renders; exports.branded is
+    // the exact gate orgBranding() keys off to switch chrome on, so asserting
+    // it at the resolution seam is the faithful branded-vs-plain signal (PDF
+    // byte-scanning is unreliable under font subsetting). For event_pass the
+    // render itself also proves the comp-scoped `exports` pass grant is live
+    // while branding stays plain (exports.branded is not pass-scoped).
+    const feedExport = await fetch(
+      `${BASE}/api/v1/divisions/${feedDiv.id}/exports/standings?format=pdf`,
+      { headers: { cookie: cookieHeader(owner) } },
+    );
+    const feedBytes = Buffer.from(await feedExport.arrayBuffer());
+    check(
+      `matrix/${key}: standings export renders a content-bearing PDF`,
+      feedExport.status === 200 && feedBytes.subarray(0, 5).toString() === "%PDF-",
+    );
+    const feedEnt = await readEnt(owner, orgId);
+    check(
+      `matrix/${key}: export chrome is ${expectBranded ? "branded (paid)" : "plain (community)"} (exports.branded=${expectBranded})`,
+      (feedEnt.entitlements["exports.branded"]?.enabled ?? false) === expectBranded,
+    );
+  };
+
+  // === PERSONA 1 — community (default plan, no flip) =====================
+  const comm = newSession();
+  const commOrg = (await signIn(comm, `smoke-community-${tag}@example.com`)).org_id;
+  const commEnt = await readEnt(comm, commOrg);
+  check("matrix/community: org resolves the community plan", commEnt.plan_key === "community");
+  check(
+    "matrix/community: exports.branded denies",
+    commEnt.entitlements["exports.branded"]?.enabled === false,
+  );
+  check(
+    "matrix/community: scheduling.ai denies",
+    commEnt.entitlements["scheduling.ai"]?.enabled === false,
+  );
+
+  // A scored-through division so a real export renders.
+  const cComp = v1data<{ id: string; slug: string }>(
+    await v1(comm, "/api/v1/competitions", "POST", { name: `Matrix Community ${tag}`, visibility: "unlisted" }),
+  );
+  const cDiv = v1data<{ id: string }>(
+    await v1(comm, `/api/v1/competitions/${cComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await v1(comm, `/api/v1/divisions/${cDiv.id}/entrants`, "POST", [
+    { kind: "individual", display_name: "A", seed: 1 },
+    { kind: "individual", display_name: "B", seed: 2 },
+  ]);
+  const cStage = v1data<{ id: string }>(
+    await v1(comm, `/api/v1/divisions/${cDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  );
+  await v1(comm, `/api/v1/stages/${cStage.id}/generate`, "POST");
+  await v1(comm, `/api/v1/divisions/${cDiv.id}/start`, "POST");
+
+  // Plain export path is OPEN on community (V285) — branding is silently dropped,
+  // not the whole export blocked. Proves the free export path still works.
+  const plainExport = await fetch(
+    `${BASE}/api/v1/divisions/${cDiv.id}/exports/timetable?format=pdf`,
+    { headers: { cookie: cookieHeader(comm) } },
+  );
+  const plainBytes = Buffer.from(await plainExport.arrayBuffer());
+  check(
+    "matrix/community: the plain export path renders a PDF (branding dropped, not blocked)",
+    plainExport.status === 200 && plainBytes.subarray(0, 5).toString() === "%PDF-",
+  );
+
+  // A Pro-gated surface 402s — and the 402 carries the contextual upgrade prompt
+  // (the paywall reason the UpgradeGate renders). Keyless: requireFeature fires
+  // before any LLM call.
+  const commAi = await v1(comm, `/api/v1/divisions/${cDiv.id}/schedule/ai-constraints`, "POST", {
+    prose: "two courts, weekday evenings only",
+  });
+  const commAiErr = featureKey(commAi);
+  check(
+    "matrix/community: AI schedule is Pro-gated (402 scheduling.ai)",
+    commAi.status === 402 && commAiErr.feature_key === "scheduling.ai",
+  );
+  check(
+    "matrix/community: the 402 carries the upgrade prompt (reason)",
+    typeof commAiErr.reason === "string" && commAiErr.reason.length > 0,
+  );
+
+  // === PERSONA 2 — pro ==================================================
+  const pro = newSession();
+  const proOrg = (await signIn(pro, `smoke-pro-${tag}@example.com`)).org_id;
+  await setPlan(proOrg, "pro");
+  const proEnt = await readEnt(pro, proOrg);
+  check("matrix/pro: org resolves the pro plan", proEnt.plan_key === "pro");
+  check(
+    "matrix/pro: exports.branded allowed",
+    proEnt.entitlements["exports.branded"]?.enabled === true,
+  );
+  check(
+    "matrix/pro: scheduling.ai allowed",
+    proEnt.entitlements["scheduling.ai"]?.enabled === true,
+  );
+  check(
+    "matrix/pro: scheduling.ai.runs_per_division.max resolves 5",
+    proEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 5,
+  );
+  check(
+    "matrix/pro: officials.per_fixture.max is unlimited (null)",
+    proEnt.entitlements["officials.per_fixture.max"]?.limit === null,
+  );
+
+  // Behavioural proof of the cap: seed 5 prior AI runs on a division, the 6th
+  // 402s at the cap (fires before the LLM → keyless-safe).
+  const proComp = v1data<{ id: string }>(
+    await v1(pro, "/api/v1/competitions", "POST", { name: `Matrix Pro ${tag}` }),
+  );
+  const proDiv = v1data<{ id: string }>(
+    await v1(pro, `/api/v1/competitions/${proComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await seedAiRuns(proOrg, proComp.id, proDiv.id, 5);
+  const proCapped = await v1(pro, `/api/v1/divisions/${proDiv.id}/schedule/ai-constraints`, "POST", {
+    prose: "spread evenly across both courts",
+  });
+  check(
+    "matrix/pro: the 6th AI run/division 402s at the cap (scheduling.ai.runs_per_division.max)",
+    proCapped.status === 402 && featureKey(proCapped).feature_key === "scheduling.ai.runs_per_division.max",
+  );
+
+  // === PERSONA 3 — pro_plus ============================================
+  const plus = newSession();
+  const plusOrg = (await signIn(plus, `smoke-proplus-${tag}@example.com`)).org_id;
+  await setPlan(plusOrg, "pro_plus");
+  const plusEnt = await readEnt(plus, plusOrg);
+  check("matrix/pro_plus: org resolves the pro_plus plan", plusEnt.plan_key === "pro_plus");
+  check(
+    "matrix/pro_plus: scheduling.ai.runs_per_division.max is unlimited (null)",
+    plusEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === null,
+  );
+  check(
+    "matrix/pro_plus: registration.fee_percent resolves 1",
+    plusEnt.entitlements["registration.fee_percent"]?.limit === 1,
+  );
+
+  // api.write grants: a write-capable (manage) key mints on Pro Plus — the same
+  // key 402s on a plain Pro org (proPlusSuite covers the negative).
+  const plusKey = await v1(plus, `/api/v1/orgs/${plusOrg}/api-keys`, "POST", {
+    name: `matrix plus ${tag}`, scopes: ["manage"],
+  });
+  check("matrix/pro_plus: api.write grants a manage-scope key (201)", plusKey.status === 201);
+
+  // officials.auto grant (Task 16 amendment): the auto-propose path a plain Pro
+  // org now 402s on (see jul3Suite) succeeds on Pro Plus — coverage of the
+  // feature moves to the right tier instead of vanishing.
+  const plusComp = v1data<{ id: string }>(
+    await v1(plus, "/api/v1/competitions", "POST", { name: `Matrix Plus ${tag}` }),
+  );
+  const plusDiv = v1data<{ id: string }>(
+    await v1(plus, `/api/v1/competitions/${plusComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await v1(plus, `/api/v1/divisions/${plusDiv.id}/entrants`, "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })));
+  const plusStage = v1data<{ id: string }>(
+    await v1(plus, `/api/v1/divisions/${plusDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  );
+  await v1(plus, `/api/v1/stages/${plusStage.id}/generate`, "POST");
+  await v1(plus, `/api/v1/divisions/${plusDiv.id}/start`, "POST");
+  await v1(plus, "/api/v1/officials", "POST", { display_name: `Matrix Ref ${tag}`, role_keys: ["referee"] });
+  const plusAuto = await v1(plus, `/api/v1/divisions/${plusDiv.id}/officials/auto`, "POST", {
+    policy: { roles: ["referee"] },
+  });
+  check(
+    "matrix/pro_plus: officials.auto is allowed (200, assignments proposed)",
+    plusAuto.status === 200 && Array.isArray(v1data<{ assignments: unknown[] }>(plusAuto).assignments),
+  );
+
+  // === PERSONA 4 — event_pass (community org + a single-comp pass) ======
+  const passer = newSession();
+  const passOrg = (await signIn(passer, `smoke-pass-${tag}@example.com`)).org_id;
+
+  // Passed comp: create, then grant its pass. Unlisted sidesteps the public
+  // dashboard cap; the pass frees the active-comp slot for the sibling below.
+  const passedComp = v1data<{ id: string; slug: string }>(
+    await v1(passer, "/api/v1/competitions", "POST", { name: `Matrix Passed ${tag}`, visibility: "unlisted" }),
+  );
+  const passedDiv = v1data<{ id: string }>(
+    await v1(passer, `/api/v1/competitions/${passedComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  await grantPass(passOrg, passedComp.id);
+
+  // A comp-scoped Pro feature (formats.advanced) resolves TRUE inside the passed
+  // comp — an advanced (americano) stage is accepted.
+  const passedAdv = await v1(passer, `/api/v1/divisions/${passedDiv.id}/stages`, "POST", {
+    seq: 1, kind: "americano", name: "Padel", config: { mode: "americano", courtCount: 2, rounds: 3 },
+  });
+  check(
+    "matrix/event_pass: formats.advanced is granted INSIDE the passed comp (201)",
+    passedAdv.status === 201,
+  );
+
+  // A second, unpassed comp in the SAME org denies the same feature (the pass is
+  // strictly comp-scoped).
+  const siblingComp = v1data<{ id: string }>(
+    await v1(passer, "/api/v1/competitions", "POST", { name: `Matrix Sibling ${tag}`, visibility: "unlisted" }),
+  );
+  const siblingDiv = v1data<{ id: string }>(
+    await v1(passer, `/api/v1/competitions/${siblingComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+  );
+  const siblingAdv = await v1(passer, `/api/v1/divisions/${siblingDiv.id}/stages`, "POST", {
+    seq: 1, kind: "americano", name: "Padel", config: { mode: "americano", courtCount: 2, rounds: 3 },
+  });
+  check(
+    "matrix/event_pass: the sibling (unpassed) comp denies formats.advanced (402)",
+    siblingAdv.status === 402 && featureKey(siblingAdv).feature_key === "formats.advanced",
+  );
+
+  // Org-wide key still resolves community (V291 dead-row fix): the pass overlays
+  // only comp-scoped features — the org's plan and members.max stay community.
+  const passEnt = await readEnt(passer, passOrg);
+  check(
+    "matrix/event_pass: the org still resolves the community plan (pass is comp-scoped)",
+    passEnt.plan_key === "community",
+  );
+  check(
+    "matrix/event_pass: org-wide members.max resolves the community value (3)",
+    passEnt.entitlements["members.max"]?.limit === 3,
+  );
+
+  // === Task 20 — populated-competition assertions per plan org ===========
+  // Each plan org now gets four users (owner + member/scorer + official +
+  // player) and a full data feed (individual + team + pair entrants, fixtures,
+  // recorded results), then the five tier-gated assertions run against the
+  // populated competition. Reuses each persona's existing competition; for
+  // event_pass the PASSED comp hosts the feed so the comp-scoped exports grant
+  // applies. Paid tiers (pro + pro_plus) get branded chrome; community and the
+  // event_pass overlay both render plain (exports.branded is not pass-scoped).
+  await seedFeedAndAssert(comm, commOrg, cComp.id, "community", false);
+  await seedFeedAndAssert(pro, proOrg, proComp.id, "pro", true);
+  await seedFeedAndAssert(plus, plusOrg, plusComp.id, "proplus", true);
+  await seedFeedAndAssert(passer, passOrg, passedComp.id, "pass", false);
 }
 
 /** PROMPT-53 player accounts over real HTTP: invite → claim → RSVP →
@@ -1250,6 +1832,122 @@ async function grantPass(orgId: string, competitionId: string): Promise<void> {
       insert into competition_passes (competition_id, org_id)
       values (${competitionId}, ${orgId})
       on conflict (competition_id) do nothing`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** payments-hardening P0-1: seed a PAID registration carrying unrefunded card
+ *  money (payment_intent set, refunded < amount) — the delete guard keys off
+ *  exactly this. Mirrors competitions-delete-money.test.ts's SQL seed; the
+ *  Stripe checkout can't run headless. */
+async function seedPaidRegistration(orgId: string, divisionId: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to seed a registration in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    await sql`
+      insert into registrations
+        (division_id, org_id, status, display_name, contact_email, amount_cents,
+         payment_intent_id, refunded_cents, guardian_consent, answers, roster, access_token_hash)
+      values (${divisionId}, ${orgId}, 'paid', 'Smoke Payer', 'payer@x.test', 2000,
+              ${"pi_smoke_" + divisionId.slice(0, 8)}, 0, false, '{}', '[]', ${crypto.randomUUID()})`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** payments-hardening P0-1: seed a PAID sponsor order scoped to a competition
+ *  through its package — the delete guard's third money record. Mirrors
+ *  competitions-delete-money.test.ts's SQL seed. */
+async function seedPaidSponsorOrder(orgId: string, competitionId: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to seed a sponsor order in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    const [pkg] = await sql<{ id: string }[]>`
+      insert into sponsor_packages (org_id, competition_id, name, price_cents, currency, tier)
+      values (${orgId}, ${competitionId}, 'Gold', 25000, 'gbp', 'gold') returning id`;
+    await sql`
+      insert into sponsor_orders
+        (org_id, package_id, sponsor_name, sponsor_email, amount_cents, currency, status, paid_at)
+      values (${orgId}, ${pkg!.id}, 'Smoke Sponsor', 'sponsor@x.test', 25000, 'gbp', 'paid', now())`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** payments-hardening P2-10: flip a division's registration settings to a
+ *  card (Stripe) fee directly — the settings PUT gates the stripe method on
+ *  the paid entitlement, but the public-read close reason is exactly what we
+ *  want to prove, so SQL-seed the state the read evaluates. Always-open
+ *  window (no opens/closes), uncapped. */
+async function seedStripeFeeDivision(divisionId: string): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to seed registration settings in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    await sql`
+      insert into registration_settings
+        (division_id, enabled, entrant_kind, opens_at, closes_at, capacity,
+         fee_cents, currency, refund_lock_at, form_fields, payment_method,
+         payment_instructions, updated_at)
+      values (${divisionId}, true, 'individual', null, null, null,
+              2000, 'gbp', null, '[]', 'stripe', null, now())
+      on conflict (division_id) do update set
+        enabled = true, fee_cents = 2000, currency = 'gbp',
+        payment_method = 'stripe', opens_at = null, closes_at = null,
+        capacity = null, updated_at = now()`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** payments-hardening Task 15 (Pro AI cap): seed N prior `schedule.ai_generated`
+ *  competition_events for a division — the per-division AI cap counts exactly
+ *  these. Mirrors schedule-plus.test.ts's seed; the LLM can't run headless, so
+ *  we seed the ledger the cap reads and let the (cap+1)th request 402 BEFORE the
+ *  model call (keyless-safe). */
+async function seedAiRuns(
+  orgId: string,
+  competitionId: string,
+  divisionId: string,
+  n: number,
+): Promise<void> {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required to seed AI runs in smoke");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  const sql = postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+  try {
+    for (let i = 0; i < n; i++) {
+      await sql`
+        insert into competition_events (competition_id, org_id, type, payload)
+        values (${competitionId}, ${orgId}, 'schedule.ai_generated',
+                ${sql.json({ division_id: divisionId })})`;
+    }
   } finally {
     await sql.end();
   }
@@ -2507,17 +3205,18 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
   await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
 
   const officialId = v1data<{ id: string }[]>(officials)[0]!.id;
-  // Pro Plus (V290): officials.auto moved above Pro — assert the gate both ways.
-  const autoGated = await v1(admin, `/api/v1/divisions/${divId}/officials/auto`, "POST", {
-    policy: { roles: ["referee"] },
-  });
-  check("jul3 officials auto is Pro Plus-gated (402 on pro)", autoGated.status === 402);
-  await setPlan(orgId, "pro_plus");
+  // V290 moved officials.auto up to Pro Plus (approved hard move, no grandfather).
+  // This suite runs on a plain Pro org, so the auto-propose path now 402s here —
+  // the ALLOWED path moved to smokePlanMatrix's pro_plus persona, so coverage of
+  // the feature lands on the right tier instead of vanishing.
   const auto = await v1(admin, `/api/v1/divisions/${divId}/officials/auto`, "POST", {
     policy: { roles: ["referee"] },
   });
-  check("jul3 officials auto proposes", auto.status === 200 && Array.isArray(v1data<{ assignments: unknown[] }>(auto).assignments));
-  await setPlan(orgId, "pro");
+  check(
+    "jul3 officials auto is Pro Plus only (402 officials.auto on Pro)",
+    auto.status === 402 &&
+      (auto.json.error as { feature_key?: string } | undefined)?.feature_key === "officials.auto",
+  );
   const patchOff = await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}/officials`, "PATCH", {
     set: [{ official_id: officialId, role_key: "referee", locked: false }],
   });
@@ -3263,6 +3962,18 @@ async function cleanup(tag: string): Promise<void> {
     `tos_${tag}@example.com`,
     `player_${tag}@example.com`,
     `ref_${tag}@example.com`,
+    `p72_${tag}@example.com`,
+    `p72comm_${tag}@example.com`,
+    `smoke-community-${tag}@example.com`,
+    `smoke-pro-${tag}@example.com`,
+    `smoke-proplus-${tag}@example.com`,
+    `smoke-pass-${tag}@example.com`,
+    // Task 20 — the three extra users seeded per plan org (owner is above).
+    ...["community", "pro", "proplus", "pass"].flatMap((k) => [
+      `scorer_${k}_${tag}@example.com`,
+      `official_${k}_${tag}@example.com`,
+      `player_${k}_${tag}@example.com`,
+    ]),
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {

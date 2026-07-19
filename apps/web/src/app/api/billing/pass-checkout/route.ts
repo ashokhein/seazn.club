@@ -61,6 +61,13 @@ export async function POST(req: Request) {
         customerId: sub?.stripe_customer_id ?? undefined,
         customerEmail: user.email,
       }),
+      // Scope the key to the REQUESTING owner (org+comp+user). A double-click /
+      // retry of the SAME owner's purchase still reuses one session (dedup,
+      // ~24h). But two DIFFERENT owners racing the same comp send different
+      // params (per-user customer_email) — an org+comp-only key would collide
+      // and 400 on the param mismatch, so each owner mints a DISTINCT session;
+      // the losing duplicate is caught by the pass auto-refund (P0-3b).
+      { idempotencyKey: `pass-checkout-${orgId}-${competition_id}-${user.id}` },
     );
 
     return { client_secret: session.client_secret };

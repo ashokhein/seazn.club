@@ -18,11 +18,14 @@ import {
   sendSponsorInvoiceEmail,
   sendSponsorReceiptEmail,
   sendSponsorRefundEmail,
+  sendSponsorDisputeAlertEmail,
+  sendSponsorDisputeLostEmail,
 } from "@/lib/email";
 import { deferred } from "@/lib/deferred";
 import { fireOrgRevalidate } from "@/server/public-site/revalidate";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { applicationFeeCents, feePercentFor } from "./registrations";
+import { recoverDisputedTransfer as recoverDisputedTransferCore } from "./dispute-recovery";
 
 export const SPONSOR_TIERS = ["title", "gold", "silver", "partner"] as const;
 export type SponsorTier = (typeof SPONSOR_TIERS)[number];
@@ -623,4 +626,164 @@ export async function handleSponsorChargeRefunded(charge: Stripe.Charge): Promis
     amountCents: refunded.amount_cents,
     currency: refunded.currency,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Dispute lifecycle (payments-hardening Task 6, P0-2)
+// ---------------------------------------------------------------------------
+
+/** Current owner via org_members, NOT organizations.created_by — an ownership
+ *  transfer flips the role but leaves created_by on the original creator. Local
+ *  copy (registrations.ts keeps its own too): importing billing-events'
+ *  orgOwnerEmail would make sponsors ⇄ billing-events a circular import. */
+async function currentOrgOwnerEmail(orgId: string): Promise<string | null> {
+  const [owner] = await sql<{ email: string }[]>`
+    select u.email from org_members m join users u on u.id = m.user_id
+    where m.org_id = ${orgId} and m.role = 'owner' limit 1`;
+  return owner?.email ?? null;
+}
+
+async function resolveOrgName(orgId: string): Promise<string | null> {
+  const [org] = await sql<{ name: string }[]>`
+    select name from organizations where id = ${orgId}`;
+  return org?.name ?? null;
+}
+
+async function resolvePackageName(packageId: string): Promise<string> {
+  const [pkg] = await sql<{ name: string }[]>`
+    select name from sponsor_packages where id = ${packageId}`;
+  return pkg?.name ?? "sponsorship";
+}
+
+/** Actorless audit breadcrumb for a sponsor recovery, on the same
+ *  competition_events ledger the registration recovery writes to. A sponsor
+ *  package can be org-wide (no competition) and there is no actorless
+ *  org-scoped audit table (staff_audit_log needs a staff actor), so an org-wide
+ *  order records no breadcrumb — the money records on sponsor_orders stay the
+ *  source of truth. Must NOT throw (the core's auditNote contract). */
+async function auditSponsorRecovery(
+  order: { org_id: string; competition_id: string | null },
+  type: string,
+  payload: Record<string, unknown>,
+): Promise<void> {
+  if (!order.competition_id) return;
+  await sql`
+    insert into competition_events (competition_id, org_id, type, payload, actor_id)
+    values (${order.competition_id}, ${order.org_id}, ${type},
+            ${sql.json(payload as never)}, ${null})`;
+}
+
+/** Sponsor-flavoured wrapper over the shared dispute-recovery core
+ *  (dispute-recovery.ts, Task 5): the charge→transfer→reversal mechanics and
+ *  the dispute_id replay guard live in the core; this namespaces the audit
+ *  under `sponsor.` and tags the reversal with sponsor_order_id. Never throws;
+ *  Stripe calls stay OUTSIDE any sql tx. */
+async function recoverSponsorDispute(
+  dispute: Stripe.Dispute,
+  order: { id: string; org_id: string; competition_id: string | null },
+): Promise<{ recoveredCents: number; already: boolean }> {
+  return recoverDisputedTransferCore(dispute, {
+    auditNote: (type, extra) =>
+      auditSponsorRecovery(order, `sponsor.${type}`, { order_id: order.id, ...extra }),
+    reversalMetadata: { sponsor_order_id: order.id },
+  });
+}
+
+/**
+ * charge.dispute.created / .closed for a sponsor package charge (P0-2 —
+ * destination charges make the PLATFORM liable, exactly like entry fees).
+ * `created` flags the order + parks the placement (pending) and alerts the
+ * owner; `closed` clears the flag and re-activates on a win, or writes the
+ * order off, deactivates the placement and reverses the club's transfer on a
+ * loss. Dispatched after handleRegistrationDispute for both event types —
+ * a non-sponsor intent matches no order row and no-ops.
+ *
+ * Replay-safe: the disputed_at/dispute_id + status writes converge, the
+ * created alert fires only on the first flag of a given dispute, and the lost
+ * recovery + its email short-circuit on the core's dispute_id metadata guard.
+ * Stripe calls stay OUTSIDE any sql tx.
+ */
+export async function handleSponsorDispute(
+  dispute: Stripe.Dispute,
+  phase: "created" | "closed",
+): Promise<void> {
+  const intent =
+    typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
+  if (!intent) return;
+  const [order] = await sql<
+    (SponsorOrderRow & {
+      org_id: string;
+      disputed_at: Date | null;
+      dispute_id: string | null;
+      competition_id: string | null;
+    })[]
+  >`
+    select ${sql(ORDER_COLS as unknown as string[])}, org_id, disputed_at, dispute_id,
+           (select competition_id from sponsor_packages p where p.id = sponsor_orders.package_id)
+             as competition_id
+    from sponsor_orders where payment_intent_id = ${intent}`;
+  if (!order) return; // not a sponsor charge
+
+  if (phase === "created") {
+    // A replayed created event re-stamps nothing new: coalesce keeps the first
+    // flag time and the alert / placement park run only the first time.
+    const firstFlag = order.dispute_id !== dispute.id;
+    await sql`update sponsor_orders
+              set disputed_at = coalesce(disputed_at, now()), dispute_id = ${dispute.id}
+              where id = ${order.id}`;
+    if (firstFlag) {
+      if (order.sponsor_id) {
+        await sql`update sponsors set status = 'pending' where id = ${order.sponsor_id}`;
+      }
+      const owner = await currentOrgOwnerEmail(order.org_id);
+      if (owner) {
+        void sendSponsorDisputeAlertEmail({
+          to: owner,
+          orgName: (await resolveOrgName(order.org_id)) ?? "your organisation",
+          packageName: await resolvePackageName(order.package_id),
+          sponsorName: order.sponsor_name,
+          amountCents: dispute.amount,
+          currency: order.currency,
+        }).catch(() => {});
+      }
+    }
+    bustPublicSponsors(order.org_id);
+    return;
+  }
+
+  if (dispute.status === "won") {
+    await sql`update sponsor_orders set disputed_at = null where id = ${order.id}`;
+    if (order.sponsor_id) {
+      await sql`update sponsors set status = 'active' where id = ${order.sponsor_id}`;
+    }
+    bustPublicSponsors(order.org_id);
+    return;
+  }
+
+  if (dispute.status === "lost") {
+    // The write-off must land whatever Stripe does next — same contract as the
+    // registration dispute-lost path. Both flips are idempotent under replay.
+    await sql`update sponsor_orders set status = 'refunded' where id = ${order.id}`;
+    if (order.sponsor_id) {
+      await sql`update sponsors set status = 'inactive' where id = ${order.sponsor_id}`;
+    }
+    const recovery = await recoverSponsorDispute(dispute, order);
+    // `already` = a replayed close (metadata guard hit) — the write-off + email
+    // already happened on the first run.
+    if (!recovery.already) {
+      const owner = await currentOrgOwnerEmail(order.org_id);
+      if (owner) {
+        void sendSponsorDisputeLostEmail({
+          to: owner,
+          orgName: (await resolveOrgName(order.org_id)) ?? "your organisation",
+          packageName: await resolvePackageName(order.package_id),
+          sponsorName: order.sponsor_name,
+          amountCents: dispute.amount,
+          currency: order.currency,
+          recoveredCents: recovery.recoveredCents,
+        }).catch(() => {});
+      }
+    }
+    bustPublicSponsors(order.org_id);
+  }
 }

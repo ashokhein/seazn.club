@@ -167,7 +167,11 @@ export async function syncSubscription(
   stripeSub: Stripe.Subscription,
 ): Promise<void> {
   const priceId = stripeSub.items.data[0]?.price?.id ?? null;
-  const planKey = priceId ? await planKeyForPrice(priceId) : null;
+  const knownPlanKey = priceId ? await planKeyForPrice(priceId) : null;
+  // Unknown price (grandfathered/migrated in Stripe but not synced into `plans`):
+  // keep the org's current plan instead of silently downgrading every affected
+  // customer — the stripe:sync drift is a staff problem, not the customer's.
+  if (priceId && !knownPlanKey) console.error("syncSubscription: unknown price", priceId);
   const status = STATUS_MAP[stripeSub.status] ?? "past_due";
   // In Stripe v22, current_period_end lives on each subscription item.
   const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
@@ -177,7 +181,7 @@ export async function syncSubscription(
       (org_id, plan_key, status, stripe_subscription_id,
        current_period_end, trial_end, trial_used_at, cancel_at_period_end, currency, updated_at)
     values
-      (${orgId}, ${planKey ?? "community"}, ${status},
+      (${orgId}, ${knownPlanKey ?? "community"}, ${status},
        ${stripeSub.id},
        ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
        ${stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null},
@@ -186,7 +190,8 @@ export async function syncSubscription(
        ${stripeSub.currency ?? null},
        now())
     on conflict (org_id) do update set
-      plan_key               = excluded.plan_key,
+      -- Unknown price keeps the org's current plan (never mass-downgrade on drift).
+      plan_key               = coalesce(${knownPlanKey}, subscriptions.plan_key, 'community'),
       status                 = excluded.status,
       stripe_subscription_id = excluded.stripe_subscription_id,
       current_period_end     = excluded.current_period_end,
@@ -195,24 +200,89 @@ export async function syncSubscription(
       trial_used_at          = coalesce(subscriptions.trial_used_at, excluded.trial_used_at),
       cancel_at_period_end   = excluded.cancel_at_period_end,
       currency               = coalesce(excluded.currency, subscriptions.currency),
+      -- Task 7 fold-in: a re-buy (new sub id) clears any stale dispute flags so an
+      -- old dispute's late loss can't downgrade the fresh sub; a renewal (same id)
+      -- leaves an in-flight dispute's flags intact.
+      disputed_at            = case when subscriptions.stripe_subscription_id
+                                      is distinct from excluded.stripe_subscription_id
+                                    then null else subscriptions.disputed_at end,
+      dispute_id             = case when subscriptions.stripe_subscription_id
+                                      is distinct from excluded.stripe_subscription_id
+                                    then null else subscriptions.dispute_id end,
       updated_at             = now()`;
 }
 
 /**
- * Record an Event Pass purchase (v3/07 §3). Idempotent — shared by the
- * webhook and the reconcile-on-return path. Invalidates the org's cached
- * entitlements so the pass takes effect immediately.
+ * Record an Event Pass purchase (v3/07 §3). Idempotent — shared by the webhook
+ * and the reconcile-on-return path; invalidates the org's cached entitlements
+ * so the pass takes effect immediately.
+ *
+ * The pass is keyed by competition_id, so only the FIRST payment records. An
+ * insert that loses the conflict is either a REPLAY of the same payment
+ * (webhook + reconcile racing on one intent — NOT a duplicate) or a genuine
+ * SECOND charge (two owners / two tabs). `duplicateIntent` is the losing intent
+ * only in the second case, so callers can send it straight back (P0-3b).
  */
 export async function recordPassPurchase(args: {
   orgId: string;
   competitionId: string;
   paymentIntent?: string | null;
-}): Promise<void> {
-  await sql`
+}): Promise<{ recorded: boolean; duplicateIntent: string | null }> {
+  const [inserted] = await sql<{ competition_id: string }[]>`
     insert into competition_passes (competition_id, org_id, stripe_payment_intent)
     values (${args.competitionId}, ${args.orgId}, ${args.paymentIntent ?? null})
-    on conflict (competition_id) do nothing`;
-  await invalidateOrgEntitlements(args.orgId);
+    on conflict (competition_id) do nothing
+    returning competition_id`;
+  if (inserted) {
+    await invalidateOrgEntitlements(args.orgId);
+    return { recorded: true, duplicateIntent: null };
+  }
+  const [existing] = await sql<{ stripe_payment_intent: string | null }[]>`
+    select stripe_payment_intent from competition_passes
+    where competition_id = ${args.competitionId}`;
+  const dup =
+    args.paymentIntent && existing?.stripe_payment_intent !== args.paymentIntent
+      ? args.paymentIntent
+      : null;
+  return { recorded: false, duplicateIntent: dup };
+}
+
+/**
+ * Send a duplicate Event Pass payment straight back (registrations' duplicate
+ * contract): a second owner / second tab paid for a competition that already
+ * has a pass. The Stripe call is deliberately OUTSIDE any transaction and
+ * swallows its own failure — a refund hiccup surfaces in the Stripe dashboard
+ * but NEVER blocks the webhook / reconcile ACK. A pass charge is a plain
+ * platform charge, so no reverse_transfer/application_fee flags. The idempotency
+ * key makes a retried refund of the same intent a no-op. (P0-3b)
+ */
+export async function refundDuplicatePassPayment(intent: string): Promise<void> {
+  try {
+    await getStripe().refunds.create(
+      { payment_intent: intent },
+      { idempotencyKey: `pass-dup-refund-${intent}` },
+    );
+  } catch {
+    /* surfaces in Stripe dashboard; never blocks the ACK */
+  }
+}
+
+/**
+ * charge.refunded for an Event Pass (dashboard refunds included): a FULLY
+ * refunded pass charge revokes the pass — money back means the comp rejoins
+ * the quota (the freeze machinery handles any overage lazily). Partial
+ * refunds leave the pass; owner outreach is a support flow, not code.
+ */
+export async function revokePassForRefundedCharge(charge: Stripe.Charge): Promise<boolean> {
+  const intent =
+    typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  if (!intent || !charge.refunded) return false;
+  const [revoked] = await sql<{ org_id: string; competition_id: string }[]>`
+    delete from competition_passes where stripe_payment_intent = ${intent}
+    returning org_id, competition_id`;
+  if (!revoked) return false;
+  await invalidateOrgEntitlements(revoked.org_id);
+  return true;
 }
 
 /**
@@ -231,11 +301,15 @@ export async function reconcilePassCheckout(
     if (session.metadata.org_id !== orgId) return false;
     const competitionId = session.metadata.competition_id;
     if (!competitionId || session.payment_status !== "paid") return false;
-    await recordPassPurchase({
+    const res = await recordPassPurchase({
       orgId,
       competitionId,
       paymentIntent: typeof session.payment_intent === "string" ? session.payment_intent : null,
     });
+    // Reconcile-on-return can land a second owner's payment; refund it (the
+    // pass is already active from the first). The helper swallows its own
+    // errors, so a refund hiccup never flips this reconcile to a failure.
+    if (res.duplicateIntent) await refundDuplicatePassPayment(res.duplicateIntent);
     return true;
   } catch {
     return false;
@@ -270,6 +344,10 @@ export async function reconcileCheckout(
     const subObj = session.subscription;
     if (subObj && typeof subObj !== "string") {
       await syncSubscription(orgId, subObj);
+      // The plan just changed in `subscriptions`; drop the cached entitlement
+      // resolver so a missed-webhook reconcile takes effect immediately instead
+      // of waiting out the TTL (mirrors recordPassPurchase on the pass path).
+      await invalidateOrgEntitlements(orgId);
       return true;
     }
     return false;

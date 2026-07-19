@@ -12,7 +12,7 @@ interface Props {
 }
 
 /** Pro pricing card with the annual toggle DEFAULT-ON (v3/07 §4): the yearly
- *  price is the real offer — "$16.67/mo billed yearly — save 17%". */
+ *  price is the real offer — "$13.25/mo billed yearly — save 30%". */
 export function ProPriceCard({ monthly, annualPerMonth, annualTotal, features }: Props) {
   const [annual, setAnnual] = useState(true);
 
@@ -28,7 +28,7 @@ export function ProPriceCard({ monthly, annualPerMonth, annualTotal, features }:
         {annual ? (
           <>
             {annualTotal} billed yearly —{" "}
-            <span className="font-semibold text-emerald-600">save 17%</span>
+            <span className="font-semibold text-emerald-600">save 30%</span>
           </>
         ) : (
           "Billed monthly · switch to yearly any time"

@@ -39,7 +39,10 @@ test.describe("pricing page v3", () => {
       await expect(page.locator("[data-annual-toggle]")).toHaveAttribute("aria-checked", "true");
       await expect(page.locator("main")).toContainText("$");
       await page.locator("[data-currency-switcher]").selectOption("gbp");
-      await expect(page.locator("main")).toContainText("£33", { timeout: 15_000 });
+      // Annual framing renders round(annual/12): Pro GBP 12500/12 → £10.42.
+      // (Repriced by the Pro $19 + 30%-annual change — the old £33 was Pro
+      // Plus monthly, which now sits behind the PlusReveal disclosure.)
+      await expect(page.locator("main")).toContainText("£10.42", { timeout: 15_000 });
     } finally {
       await ctx.close();
     }
@@ -106,7 +109,7 @@ test.describe.serial("event pass gate (community org)", () => {
     await page.getByRole("button", { name: "Create division" }).click();
     const gate = page.locator("[data-pass-gate]").first();
     await expect(gate).toBeVisible({ timeout: 20_000 });
-    await expect(gate.locator("[data-pass-cta]")).toContainText("$39");
+    await expect(gate.locator("[data-pass-cta]")).toContainText("$29");
     const passHref = await gate.locator("[data-pass-cta]").getAttribute("href");
     expect(passHref).toMatch(new RegExp(`/c/${comp.data!.slug}/upgrade$`));
 

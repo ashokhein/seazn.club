@@ -11,15 +11,15 @@
       "prices": {
         "monthly": {
           "lookup_key": "seazn_pro_monthly",
-          "unit_amount": 2000,
+          "unit_amount": 1900,
           "interval": "month",
-          "currency_options": { "eur": 1900, "gbp": 1600, "inr": 149900, "aud": 2900 }
+          "currency_options": { "eur": 1800, "gbp": 1500, "inr": 139900, "aud": 2800 }
         },
         "annual": {
           "lookup_key": "seazn_pro_annual",
-          "unit_amount": 20000,
+          "unit_amount": 15900,
           "interval": "year",
-          "currency_options": { "eur": 19000, "gbp": 16000, "inr": 1499000, "aud": 29000 }
+          "currency_options": { "eur": 14900, "gbp": 12500, "inr": 1149900, "aud": 23500 }
         }
       }
     },
@@ -38,9 +38,9 @@
         },
         "annual": {
           "lookup_key": "seazn_pro_plus_annual",
-          "unit_amount": 39000,
+          "unit_amount": 32700,
           "interval": "year",
-          "currency_options": { "eur": 37000, "gbp": 33000, "inr": 2999000, "aud": 59000 }
+          "currency_options": { "eur": 30900, "gbp": 27700, "inr": 2499900, "aud": 49500 }
         }
       }
     }
@@ -54,8 +54,8 @@
       },
       "price": {
         "lookup_key": "seazn_event_pass",
-        "unit_amount": 3900,
-        "currency_options": { "eur": 3900, "gbp": 3300, "inr": 299900, "aud": 5900 }
+        "unit_amount": 2900,
+        "currency_options": { "eur": 2900, "gbp": 2500, "inr": 199900, "aud": 4500 }
       }
     }
   ]

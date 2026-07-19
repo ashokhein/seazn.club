@@ -67,6 +67,10 @@ async function resolveFromDb(
     select case
       when s.comped_until is not null and s.comped_until <= now()
            and s.stripe_subscription_id is null then 'community'
+      -- past_due grace (spec P1-6): dunning gets 14 days, then reads degrade to
+      -- community until an invoice succeeds (which flips status back to active).
+      when s.status = 'past_due' and s.updated_at <= now() - interval '14 days'
+           then 'community'
       else coalesce(s.plan_key, 'community')
     end as plan_key
     from organizations o

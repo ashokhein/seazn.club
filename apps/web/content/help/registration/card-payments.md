@@ -36,6 +36,16 @@ If a cardholder disputes a payment, the registration is **flagged on your consol
 
 **If the dispute is lost**, Stripe repays the cardholder and the entry shows **dispute lost · refunded**. The disputed amount is then **recovered from your Stripe balance** — if the balance can't cover it, Stripe takes the difference from your upcoming payouts or your linked bank account on its own schedule. Seazn Club covers Stripe's dispute fee, and you get an email stating exactly what moved. Whether the entrant stays in the competition is your call — the entry is flagged, not withdrawn.
 
+### Sponsorship chargebacks work the same way
+
+A card sponsorship payment runs on the same Connect rail, so a disputed sponsorship charge follows the same path. The moment Stripe tells us, the sponsor's order is flagged, its **placement comes down** — boards and public pages stop showing it — and you get an alert. Win the dispute and the placement goes back up automatically; lose it and the order is written off, the placement stays down, and the amount is **recovered from your Stripe balance**. Seazn Club absorbs Stripe's dispute fee here too, and you're emailed what moved.
+
+### Event Pass chargebacks are different
+
+An **Event Pass** is paid to Seazn Club, not into your Connect account — there is no transfer to reverse. A refunded or lost-dispute pass instead **revokes the pass**, and the competition drops back to your plan's normal limits (nothing you've built is deleted). See [the Event Pass](/help/billing/event-pass).
+
+The same holds for a chargeback on a **Pro or Pro Plus subscription** payment: it's a platform charge, so there's nothing to reclaim from your Connect account. The subscription is flagged, and if the dispute is lost your org drops to **Community** limits — nothing is deleted, exactly like a [downgrade](/help/billing/downgrade). Subscribing again clears the flag and restores Pro.
+
 ## Common questions
 
 **Where do I change my bank account or see payouts?** In your Stripe dashboard — Seazn Club shows the entry-fee side; Stripe owns the banking side.

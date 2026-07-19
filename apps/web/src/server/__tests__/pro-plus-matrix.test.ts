@@ -14,15 +14,31 @@ describe.skipIf(!process.env.DATABASE_URL)("V290 pro_plus matrix", () => {
     expect(missing).toEqual([]);
   });
 
-  it("moved scheduling.ai / officials.auto / api.write off Pro", async () => {
+  it("keeps officials.auto / api.write Pro Plus only", async () => {
     const rows = await sql<{ feature_key: string; plan_key: string; bool_value: boolean | null }[]>`
       select feature_key, plan_key, bool_value from plan_entitlements
-      where feature_key in ('scheduling.ai','officials.auto','api.write')
+      where feature_key in ('officials.auto','api.write')
         and plan_key in ('pro','pro_plus')`;
-    for (const k of ["scheduling.ai", "officials.auto", "api.write"]) {
+    for (const k of ["officials.auto", "api.write"]) {
       expect(rows.find((r) => r.plan_key === "pro" && r.feature_key === k)?.bool_value).toBe(false);
       expect(rows.find((r) => r.plan_key === "pro_plus" && r.feature_key === k)?.bool_value).toBe(true);
     }
+  });
+
+  // Owner 2026-07-18 (amends pro-plus D4): Pro keeps AI scheduling, capped at
+  // 5 generations per division; Pro Plus is unlimited (null); community has no
+  // scheduling.ai row of its own beyond the bool deny.
+  it("keeps scheduling.ai on Pro, capped 5/division; Pro Plus unlimited; community denied", async () => {
+    const rows = await sql<{ feature_key: string; plan_key: string; bool_value: boolean | null; int_value: number | null }[]>`
+      select feature_key, plan_key, bool_value, int_value from plan_entitlements
+      where feature_key in ('scheduling.ai','scheduling.ai.runs_per_division.max')`;
+    const get = (k: string, p: string) => rows.find((r) => r.feature_key === k && r.plan_key === p);
+    expect(get("scheduling.ai", "pro")?.bool_value).toBe(true);
+    expect(get("scheduling.ai", "pro_plus")?.bool_value).toBe(true);
+    expect(get("scheduling.ai", "community")?.bool_value).toBe(false);
+    expect(get("scheduling.ai.runs_per_division.max", "pro")?.int_value).toBe(5);
+    // null int_value = unlimited.
+    expect(get("scheduling.ai.runs_per_division.max", "pro_plus")?.int_value).toBeNull();
   });
 
   it("seeds the new quota keys with the approved ladder", async () => {

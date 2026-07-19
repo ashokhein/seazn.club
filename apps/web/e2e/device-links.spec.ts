@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { apiJson, seedScoredDivision } from "./helpers";
+import { apiJson, mintLoginPathBySql, seedScoredDivision, TAG } from "./helpers";
 
 // Courtside device-link scoring: an editor mints a one-per-fixture dl_ token;
 // the token alone opens the score pad and authorises event writes. Pro-only.
@@ -61,11 +61,15 @@ test("device link opens the pad anonymously and authorises scoring", async ({
 });
 
 test("device links are Pro-only", async ({ browser }) => {
-  // Runs before journey-community (alphabetical), so the community org has
-  // competition headroom — and the competition is archived afterwards so it
-  // never counts against that journey's max_active assertions.
-  const ctx = await browser.newContext({ storageState: "e2e/.auth/community.json" });
+  // A fresh user auto-provisions their own community org, so this test never
+  // competes with journey-community for the SHARED community org's single
+  // active-competition slot (a real race under parallel workers).
+  const ctx = await browser.newContext();
   try {
+    const page = await ctx.newPage();
+    await page.goto(await mintLoginPathBySql(`e2e-dlgate-${TAG}@example.com`));
+    await page.waitForURL(/\/(me|onboarding|o\/)/, { timeout: 15_000 });
+    await page.close();
     const req = ctx.request;
     const comp = await apiJson<{ id: string }>(req, "/api/v1/competitions", "POST", {
       name: `DL Gate ${Date.now().toString(36)}`,
@@ -106,7 +110,8 @@ test("device links are Pro-only", async ({ browser }) => {
     expect(minted.status).toBe(402);
     expect(minted.error?.code).toBe("PAYMENT_REQUIRED");
 
-    // Free the community org's active-competition slot for later specs.
+    // Tidy up the throwaway org's slot (not strictly needed — the org is
+    // private to this test).
     const archived = await apiJson(req, `/api/v1/competitions/${comp.data!.id}`, "PATCH", {
       status: "archived",
     });

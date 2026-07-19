@@ -135,19 +135,19 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
 
 describe("currency price points (v3/07 §4)", () => {
   it("reads SET price points from stripe-plans.json", () => {
-    expect(proPrice("monthly", "usd")).toBe(2000);
-    expect(proPrice("monthly", "eur")).toBe(1900);
-    expect(proPrice("monthly", "gbp")).toBe(1600);
-    expect(proPrice("monthly", "inr")).toBe(149900);
-    expect(proPrice("annual", "usd")).toBe(20000);
-    expect(passPrice("usd")).toBe(3900);
-    expect(passPrice("gbp")).toBe(3300);
-    expect(passPrice("aud")).toBe(5900);
+    expect(proPrice("monthly", "usd")).toBe(1900);
+    expect(proPrice("monthly", "eur")).toBe(1800);
+    expect(proPrice("monthly", "gbp")).toBe(1500);
+    expect(proPrice("monthly", "inr")).toBe(139900);
+    expect(proPrice("annual", "usd")).toBe(15900);
+    expect(passPrice("usd")).toBe(2900);
+    expect(passPrice("gbp")).toBe(2500);
+    expect(passPrice("aud")).toBe(4500);
   });
 
   it("formats whole amounts without decimals", () => {
-    expect(formatMinor(2000, "usd")).toBe("$20");
-    expect(formatMinor(149900, "inr")).toBe("₹1,499");
+    expect(formatMinor(1900, "usd")).toBe("$19");
+    expect(formatMinor(139900, "inr")).toBe("₹1,399");
     expect(formatMinor(20000 / 12, "usd")).toBe("$16.67");
   });
 
@@ -168,12 +168,19 @@ describe("Pro Plus price points", () => {
     expect(proPlusPrice("monthly", "gbp")).toBe(3300);
     expect(proPlusPrice("monthly", "inr")).toBe(299900);
     expect(proPlusPrice("monthly", "aud")).toBe(5900);
-    expect(proPlusPrice("annual", "usd")).toBe(39000);
+    expect(proPlusPrice("annual", "usd")).toBe(32700);
   });
 
-  it("prices annual at exactly 10x monthly for every supported currency", () => {
-    for (const currency of SUPPORTED_CURRENCIES as readonly Currency[]) {
-      expect(proPlusPrice("annual", currency)).toBe(proPlusPrice("monthly", currency) * 10);
+  it("annual gives at least a 30% discount vs 12x monthly, Pro + Pro Plus, every currency", () => {
+    for (const price of [proPrice, proPlusPrice]) {
+      for (const currency of SUPPORTED_CURRENCIES as readonly Currency[]) {
+        const monthly = price("monthly", currency);
+        const annual = price("annual", currency);
+        // ≥30% off: a year of annual costs no more than 70% of 12 monthly bills.
+        expect(annual, `${price.name} annual ${currency}`).toBeLessThanOrEqual(
+          monthly * 12 * 0.7,
+        );
+      }
     }
   });
 });

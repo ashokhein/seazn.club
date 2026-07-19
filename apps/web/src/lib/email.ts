@@ -33,6 +33,14 @@ import {
   type SponsorReceiptArgs,
   sponsorRefundTemplate,
   type SponsorRefundArgs,
+  sponsorDisputeAlertTemplate,
+  type SponsorDisputeAlertArgs,
+  sponsorDisputeLostTemplate,
+  type SponsorDisputeLostArgs,
+  passRevokedTemplate,
+  type PassRevokedArgs,
+  staffDisputeAlertTemplate,
+  type StaffDisputeAlertArgs,
   officialInviteTemplate,
   type OfficialInviteArgs,
   officialAssignedTemplate,
@@ -40,6 +48,8 @@ import {
   officialAssignmentChangedTemplate,
   type OfficialAssignmentChangedArgs,
 } from "@/lib/email-templates";
+import { paragraph, panel, renderEmail } from "@/lib/email-templates/compose";
+import { escapeHtml } from "@/lib/email-templates/shared";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 
@@ -392,6 +402,99 @@ export async function sendSponsorRefundEmail(opts: SponsorRefundEmail): Promise<
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...sponsorRefundTemplate(args, dict) });
+}
+
+export interface SponsorDisputeAlertEmail extends SponsorDisputeAlertArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Organiser alert: a sponsorship package payment was disputed (P0-2). */
+export async function sendSponsorDisputeAlertEmail(
+  opts: SponsorDisputeAlertEmail,
+): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorDisputeAlertTemplate(args, dict) });
+}
+
+export interface SponsorDisputeLostEmail extends SponsorDisputeLostArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Organiser outcome mail: a sponsorship chargeback closed lost — states the
+ *  write-off and the balance recovery (P0-2). */
+export async function sendSponsorDisputeLostEmail(
+  opts: SponsorDisputeLostEmail,
+): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorDisputeLostTemplate(args, dict) });
+}
+
+export interface PassRevokedEmail extends PassRevokedArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Owner notice when an Event Pass is refunded (P0-3a): the pass is revoked and
+ *  the competition returns to the plan's active-competition allowance. */
+export async function sendPassRevokedEmail(opts: PassRevokedEmail): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...passRevokedTemplate(args, dict) });
+}
+
+export interface StaffDisputeAlertEmail extends StaffDisputeAlertArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Internal staff alert (payments-hardening Task 7): a PLATFORM charge — a
+ *  subscription invoice or an Event Pass — was disputed. Transactional: staff
+ *  must always receive it (bypasses the suppression list); the platform locale
+ *  is en. */
+export async function sendStaffDisputeAlertEmail(
+  opts: StaffDisputeAlertEmail,
+): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, transactional: true, ...staffDisputeAlertTemplate(args, dict) });
+}
+
+export interface StuckEventsAlertEmail {
+  to: string;
+  /** The Stripe event id (e.g. evt_…) that could not be auto-replayed. */
+  eventId: string;
+  eventType: string;
+  /** How many auto-replay attempts were made before parking it. */
+  attempts: number;
+}
+
+/** Internal staff alert (payments-hardening Task 11, P1-7): a webhook event
+ *  failed auto-replay `attempts` times and is now PARKED — the sweep caps
+ *  attempts and never re-selects it, so a human must inspect and replay it from
+ *  /admin/billing-events. Fires exactly once per event. Platform-locale (en)
+ *  and built inline — this is an ops-only alert with no user-facing i18n.
+ *  Transactional so it bypasses the suppression list. */
+export async function sendStuckEventsAlertEmail(opts: StuckEventsAlertEmail): Promise<boolean> {
+  const subject = `Stuck webhook event needs review: ${opts.eventId}`;
+  const bodyText =
+    `Stripe event ${opts.eventId} (${opts.eventType}) failed auto-replay ${opts.attempts} times ` +
+    `and is now parked. Inspect and replay it manually from /admin/billing-events.`;
+  const html = renderEmail({
+    subject,
+    preheader: `${opts.eventType} parked after ${opts.attempts} attempts`,
+    eyebrow: "Billing · Webhooks",
+    title: "Stuck webhook event",
+    contentHtml:
+      paragraph(escapeHtml(bodyText)) +
+      panel("Event", `${opts.eventId}\n${opts.eventType}\nattempts: ${opts.attempts}`),
+    footerNote: "Automated staff alert — webhook auto-replay cron (P1-7).",
+  });
+  const text = `${bodyText}\n\nEvent: ${opts.eventId} (${opts.eventType}) · attempts ${opts.attempts}`;
+  return send({ to: opts.to, transactional: true, subject, html, text });
 }
 
 /** True when Resend is configured. */

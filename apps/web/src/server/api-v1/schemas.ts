@@ -1058,6 +1058,9 @@ export const ConnectStatus = z.object({
   connected: z.boolean(),
   charges_enabled: z.boolean(),
   details_submitted: z.boolean().nullable(),
+  payouts_enabled: z.boolean(),
+  disabled_reason: z.string().nullable(),
+  requirements_due: z.number(),
 });
 
 export const CreateConnectOnboarding = z.object({

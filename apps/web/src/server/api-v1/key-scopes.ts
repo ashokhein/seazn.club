@@ -72,7 +72,8 @@ const RULES: RouteRule[] = [
   { method: "POST", path: "/competitions", scope: "manage" },
   { method: "GET", path: "/competitions/:id", scope: "read", pin: "competition" },
   { method: "PATCH", path: "/competitions/:id", scope: "manage", pin: "competition" },
-  { method: "DELETE", path: "/competitions/:id", scope: "manage", pin: "competition" },
+  // DELETE /competitions/:id is structurally excluded from keys — see
+  // NEVER_KEY_ROUTES (payments-hardening P0-1).
   { method: "GET", path: "/competitions/:id/divisions", scope: "read", pin: "competition" },
   { method: "POST", path: "/competitions/:id/divisions", scope: "manage", pin: "competition" },
   { method: "GET", path: "/competitions/:id/exports/timetable", scope: "read", pin: "competition" },
@@ -213,6 +214,10 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "GET /fixtures/:id/device-links",
   "DELETE /fixtures/:id/device-links/:linkId",
   "POST /registrations/:id/refund",
+  // Destructive + money-adjacent (payments-hardening P0-1): deleting a
+  // competition cascades registrations/passes; console has no button —
+  // keys must not have one either.
+  "DELETE /competitions/:id",
   // Dispute evidence pack: console-only download; keys must not exfiltrate
   // registrant PII bundles.
   "GET /registrations/:id/evidence",

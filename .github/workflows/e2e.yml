@@ -73,6 +73,14 @@ jobs:
       # login tokens straight in the Postgres service above and skip the specs
       # that assert dev link exposure. Same path the staging target uses.
       E2E_PROD_TARGET: "1"
+      # Payments-hardening e2e (payments-hardening.spec.ts): signed synthetic
+      # webhooks hit the REAL /api/webhooks/stripe route. constructEvent needs a
+      # non-empty STRIPE_SECRET_KEY (any value — signature verification uses the
+      # webhook secret) and the known webhook secret to sign against. CI-only
+      # dummies; no real Stripe call is made (checkout still 503s on unsynced
+      # prices, so the Stripe-gated billing specs stay skipped as before).
+      STRIPE_SECRET_KEY: sk_test_ci_e2e_dummy
+      STRIPE_WEBHOOK_SECRET: whsec_e2e_payments
 
     steps:
       - uses: actions/checkout@v5

@@ -14,6 +14,12 @@ export interface ConnectStatusRow {
   connected: boolean;
   charges_enabled: boolean;
   details_submitted: boolean | null;
+  // Connect health mirror (P1-8): a verification lapse freezes payouts while
+  // charges keep landing. Surfaced as an owner attention banner so the club
+  // resumes onboarding before Stripe support has to explain the frozen payout.
+  payouts_enabled: boolean;
+  disabled_reason: string | null;
+  requirements_due: number;
 }
 
 /** Billing surface — owner-only, session-only (matches /api/billing/*). */
@@ -27,11 +33,15 @@ function requireOwnerSession(auth: AuthCtx, orgId: string): void {
 interface OrgConnectCols {
   stripe_account_id: string | null;
   stripe_charges_enabled: boolean;
+  stripe_payouts_enabled: boolean;
+  stripe_disabled_reason: string | null;
+  stripe_requirements_due: number;
 }
 
 async function orgConnect(orgId: string): Promise<OrgConnectCols> {
   const [row] = await sql<OrgConnectCols[]>`
-    select stripe_account_id, stripe_charges_enabled
+    select stripe_account_id, stripe_charges_enabled,
+           stripe_payouts_enabled, stripe_disabled_reason, stripe_requirements_due
     from organizations where id = ${orgId}`;
   if (!row) throw new HttpError(404, "organization not found");
   return row;
@@ -64,6 +74,9 @@ export async function connectStatus(
     connected: row.stripe_account_id !== null,
     charges_enabled: row.stripe_charges_enabled,
     details_submitted: detailsSubmitted,
+    payouts_enabled: row.stripe_payouts_enabled,
+    disabled_reason: row.stripe_disabled_reason,
+    requirements_due: row.stripe_requirements_due,
   };
 }
 
@@ -133,6 +146,9 @@ export async function createConnectOnboardingLink(
 export async function syncConnectAccount(account: Stripe.Account): Promise<void> {
   await sql`
     update organizations
-    set stripe_charges_enabled = ${account.charges_enabled === true}
+    set stripe_charges_enabled  = ${account.charges_enabled === true},
+        stripe_payouts_enabled  = ${account.payouts_enabled === true},
+        stripe_disabled_reason  = ${account.requirements?.disabled_reason ?? null},
+        stripe_requirements_due = ${account.requirements?.currently_due?.length ?? 0}
     where stripe_account_id = ${account.id}`;
 }

@@ -18,7 +18,7 @@ import type Stripe from "stripe";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { LEGAL_VERSION } from "@/lib/legal";
-import { getLimit, requireFeature } from "@/lib/entitlements";
+import { getLimit, hasFeature, requireFeature } from "@/lib/entitlements";
 import { platformFeeDefault } from "@/lib/platform-settings";
 import { getStripe } from "@/lib/stripe";
 import { captureServer } from "@/lib/posthog-server";
@@ -45,6 +45,7 @@ import type {
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
+import { recoverDisputedTransfer as recoverDisputedTransferCore } from "./dispute-recovery";
 
 type Tx = postgres.TransactionSql;
 
@@ -673,14 +674,23 @@ export async function publicRegistrationInfo(
     where d.competition_id = ${comp.id} and rs.enabled
     order by d.name`;
 
+  // Card intake also depends on the paid entitlement (P2-10): an org that
+  // dropped to community (lost dispute, canceled sub, past_due grace expiry —
+  // Task 9 resolves the last as community at read time) can still have OPEN
+  // Stripe-fee divisions with Connect live. Scope by competition so an Event
+  // Pass keeps THAT comp's paid intake open.
+  const paidEntitled = await hasFeature(comp.org_id, "registration.paid", comp.id);
+
   const now = new Date();
   const divisions: PublicDivisionInfo[] = rows.map((r) => {
     const remaining =
       r.capacity === null ? null : Math.max(0, r.capacity - r.active);
-    // A card division with Connect broken can't take submissions — closing it
-    // with an honest reason beats accepting money we can't collect (spec #9).
+    // A card division can't take submissions when Connect is broken OR the
+    // paid entitlement is gone — closing it with an honest reason beats
+    // accepting money we can't keep (spec #9, P2-10).
     const paymentsBroken =
-      r.payment_method === "stripe" && r.fee_cents > 0 && !comp.charges_enabled;
+      r.payment_method === "stripe" && r.fee_cents > 0 &&
+      (!comp.charges_enabled || !paidEntitled);
     const open = windowOpen(r, now) && !paymentsBroken;
     let reason: string | null = open ? null : paymentsBroken ? "payments_unavailable" : "window";
     if (open && remaining === 0) reason = "full"; // still open — joins the waitlist
@@ -795,6 +805,15 @@ export async function submitRegistration(
       503,
       "Card payments are temporarily unavailable for this event — try again shortly or contact the organiser",
     );
+  }
+  // Card intake needs the paid entitlement, not just live Connect (P2-10): an
+  // org downgraded to community must stop collecting cards even though its
+  // Connect account still works. Competition-scoped so an Event Pass keeps the
+  // comp's paid intake open. In-flight rows are untouched — resumeRegistration-
+  // Checkout + the reminder sweep keep honouring snapshots (mid-flight money
+  // completes). requireFeature throws PaymentRequiredError → 402.
+  if (useStripe) {
+    await requireFeature(ctx.org_id, "registration.paid", ctx.competition_id);
   }
 
   // postgres types begin() as UnwrapPromiseArray (db.ts note) — safe cast.
@@ -1186,23 +1205,13 @@ async function currentOwnerEmail(orgId: string): Promise<string | null> {
  * PROMPT-55: on a LOST entry-fee dispute, pull the club's net back off its
  * connected balance so the platform's loss is Stripe's dispute fee only.
  *
- * Mechanics verified against the live API in test mode (2026-07-14, GBP):
- * destination charges transfer the FULL charge amount to the connected
- * account and collect the application fee from it separately, and a lost
- * dispute auto-reverses NEITHER — the platform is debited
- * dispute.amount + Stripe's dispute fee, the transfer stays unreversed and
- * the application fee stays earned. Worked example (fee 2000, app fee 100,
- * GBP dispute fee 2000): transfer = 2000, club net = 1900; on loss the
- * platform is debited 4000. Reversing 1900 leaves the club exactly flat on
- * the entry (2000 in − 100 app fee − 1900 reversed = 0) and the platform's
- * net cost is the dispute fee alone (−4000 + 1900 recovered + 100 app fee
- * kept = −2000). Absorbing that fee is the cost of owning the dispute flow.
- *
- * The reversal may push the club's Express balance negative; Stripe then
- * recovers from future payouts or bank debits per the Connect settings —
- * that is the intended liability chain: the platform owns the dispute
- * response (Express accounts have no dispute surface), clubs own the
- * economic risk of their own registrants.
+ * Thin registration-flavoured wrapper over the shared dispute-recovery core
+ * (dispute-recovery.ts, payments-hardening Task 5): all the charge→transfer→
+ * reversal mechanics + replay guard live in the core; this builds the audit
+ * closure that namespaces the ledger event under `registration.` and folds in
+ * registration_id/dispute_id/org context, and tags the reversal with
+ * registration_id. Behaviour is unchanged from the pre-extraction inline
+ * version — see the core's doc comment for the transfer/reversal economics.
  *
  * Never throws: recovery failure is audited and must not block the webhook
  * ACK or the write-off above. Stripe calls stay OUTSIDE any sql tx.
@@ -1212,59 +1221,15 @@ async function recoverDisputedTransfer(
   reg: RegistrationRow,
   ctx: DivisionCtx,
 ): Promise<{ recoveredCents: number; already: boolean }> {
-  const note = (type: string, extra: Record<string, unknown>) =>
-    audit(sql, ctx.competition_id, reg.org_id, type, {
-      registration_id: reg.id,
-      dispute_id: dispute.id,
-      ...extra,
-    }, null);
-  try {
-    const chargeId = typeof dispute.charge === "string" ? dispute.charge : dispute.charge?.id;
-    if (!chargeId) {
-      await note("registration.dispute_recovery_skipped", { reason: "no_charge" });
-      return { recoveredCents: 0, already: false };
-    }
-    const stripe = getStripe();
-    const charge = await stripe.charges.retrieve(chargeId, { expand: ["transfer"] });
-    let transfer = charge.transfer;
-    if (typeof transfer === "string") transfer = await stripe.transfers.retrieve(transfer);
-    if (!transfer) {
-      // e.g. the charge predates the Connect wiring.
-      await note("registration.dispute_recovery_skipped", { reason: "no_transfer" });
-      return { recoveredCents: 0, already: false };
-    }
-    // Stripe idempotency keys expire (~24h) but /admin/billing-events can
-    // replay a closed event much later — this metadata check is the durable
-    // guard against double reversals; the key below covers webhook retries.
-    const existing = await stripe.transfers.listReversals(transfer.id, { limit: 100 });
-    if (existing.data.some((r) => r.metadata?.dispute_id === dispute.id)) {
-      return { recoveredCents: 0, already: true };
-    }
-    // Club's net share of the disputed amount (partial disputes exist),
-    // capped by whatever is still unreversed on the transfer.
-    const net = transfer.amount - (charge.application_fee_amount ?? 0);
-    const share = Math.round((dispute.amount * net) / charge.amount);
-    const amount = Math.min(share, transfer.amount - transfer.amount_reversed);
-    if (amount <= 0) {
-      await note("registration.dispute_recovery_skipped", { reason: "nothing_to_reverse" });
-      return { recoveredCents: 0, already: false };
-    }
-    await stripe.transfers.createReversal(
-      transfer.id,
-      { amount, metadata: { dispute_id: dispute.id, registration_id: reg.id } },
-      { idempotencyKey: `dispute-reversal-${dispute.id}` },
-    );
-    await note("registration.dispute_recovered", {
-      transfer_id: transfer.id,
-      reversed_cents: amount,
-    });
-    return { recoveredCents: amount, already: false };
-  } catch (err) {
-    await note("registration.dispute_recovery_failed", {
-      error: err instanceof Error ? err.message : String(err),
-    });
-    return { recoveredCents: 0, already: false };
-  }
+  return recoverDisputedTransferCore(dispute, {
+    auditNote: (type, extra) =>
+      audit(sql, ctx.competition_id, reg.org_id, `registration.${type}`, {
+        registration_id: reg.id,
+        dispute_id: dispute.id,
+        ...extra,
+      }, null),
+    reversalMetadata: { registration_id: reg.id },
+  });
 }
 
 /** Mirror refunds made outside the app (Stripe dashboard) so the console

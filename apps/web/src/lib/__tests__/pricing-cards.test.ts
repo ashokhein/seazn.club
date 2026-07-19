@@ -16,11 +16,11 @@ describe("pricing cards", () => {
   });
   it("prices come from lib/currency (multi-currency stays correct)", () => {
     const [, passUsd, proUsd] = ticketTiers("usd");
-    expect(passUsd!.price).toBe("$39");
-    expect(proUsd!.price).toBe("$20");
+    expect(passUsd!.price).toBe("$29");
+    expect(proUsd!.price).toBe("$19");
     expect(proUsd!.period).toBe("/mo");
     const [, passInr] = ticketTiers("inr");
-    expect(passInr!.price).not.toBe("$39");
+    expect(passInr!.price).not.toBe("$29");
   });
   it("only the Event Pass glows", () => {
     expect(ticketTiers("usd").map((t) => Boolean(t.glow))).toEqual([false, true, false]);

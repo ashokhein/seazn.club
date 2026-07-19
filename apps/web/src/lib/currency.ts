@@ -53,7 +53,7 @@ export function passPrice(currency: Currency): number {
 
 /**
  * Format minor units in a currency for marketing surfaces: whole amounts drop
- * the decimals ("$20", "₹1,499"), fractional ones keep them ("$16.67").
+ * the decimals ("$19", "₹1,399"), fractional ones keep them ("$13.25").
  */
 export function formatMinor(
   amountMinor: number,

@@ -46,7 +46,9 @@ const FEATURE_REASONS: Record<string, string> = {
   "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro Plus feature — manual assignment still works.",
   "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
   "officials.per_fixture.max": "Community includes one official per fixture — more need Pro.",
-  "scheduling.ai": "AI-assisted planning (describe constraints in plain language) is a Pro Plus feature.",
+  "scheduling.ai": "AI-assisted planning (describe constraints in plain language) is a Pro feature.",
+  "scheduling.ai.runs_per_division.max":
+    "You've used all your AI schedule generations for this division — Pro includes five, Pro Plus is unlimited.",
   "schedule.versioning": "Multi-site scope locks are a Pro feature — undo/redo always works.",
   "schedule.checkpoints.max": "You've reached your plan's save points — Pro includes five, Pro Plus unlimited. Undo/redo always works.",
   "domains.custom": "Serving your public pages on your own domain is a Pro Plus feature.",
@@ -69,12 +71,13 @@ export function featureReason(featureKey: string): string {
 }
 
 // Cheapest plan that unlocks each feature (mirrors plan_entitlements,
-// V112 + V240 + V290). Everything not listed unlocks on Pro — only the
-// above-Pro (Pro Plus) exceptions need rows.
+// V112 + V240 + V290 + V291). Everything not listed unlocks on Pro — only the
+// above-Pro (Pro Plus) exceptions need rows. scheduling.ai itself unlocks on
+// Pro (V291, owner 2026-07-18); only lifting its 5/division cap needs Pro Plus.
 const PLUS_FEATURES = new Set([
   "api.write",
   "scorers.max",
-  "scheduling.ai",
+  "scheduling.ai.runs_per_division.max",
   "officials.auto",
   "domains.custom",
   "support.priority",

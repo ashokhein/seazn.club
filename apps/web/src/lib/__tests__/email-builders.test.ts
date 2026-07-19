@@ -14,6 +14,8 @@ import {
   officialAssignedTemplate,
   officialAssignmentChangedTemplate,
   officialInviteTemplate,
+  passRevokedTemplate,
+  staffDisputeAlertTemplate,
   passwordResetTemplate,
   paymentReminderTemplate,
   refundIssuedTemplate,
@@ -22,6 +24,8 @@ import {
   sponsorInvoiceTemplate,
   sponsorReceiptTemplate,
   sponsorRefundTemplate,
+  sponsorDisputeAlertTemplate,
+  sponsorDisputeLostTemplate,
   verificationTemplate,
 } from "../email-templates";
 import { standingsTable } from "../email-templates/compose";
@@ -167,6 +171,59 @@ function makeBuilders(
         dict,
       ),
       "sponsorRefund.subject",
+    ],
+    [
+      "sponsor-dispute-alert",
+      sponsorDisputeAlertTemplate(
+        {
+          orgName: "Riverside Racquets",
+          packageName: "Gold — Spring Open",
+          sponsorName: "Court & Co <Ltd>",
+          amountCents: 25_000,
+          currency: "gbp",
+        },
+        dict,
+      ),
+      "sponsorDisputeAlert.subject",
+    ],
+    [
+      "sponsor-dispute-lost",
+      sponsorDisputeLostTemplate(
+        {
+          orgName: "Riverside Racquets",
+          packageName: "Gold — Spring Open",
+          sponsorName: "Court & Co <Ltd>",
+          amountCents: 25_000,
+          currency: "gbp",
+          recoveredCents: 23_750,
+        },
+        dict,
+      ),
+      "sponsorDisputeLost.subject",
+    ],
+    [
+      "pass-revoked",
+      passRevokedTemplate(
+        { orgName: "Riverside Racquets", competitionName: "Spring Open 2026" },
+        dict,
+      ),
+      "passRevoked.subject",
+    ],
+    [
+      "staff-dispute-alert",
+      staffDisputeAlertTemplate(
+        {
+          kind: "subscription",
+          orgName: "Riverside Racquets",
+          phase: "closed",
+          status: "lost",
+          amountCents: 1900,
+          currency: "gbp",
+          disputeId: "dp_test123",
+        },
+        dict,
+      ),
+      "staffDisputeAlert.subject",
     ],
     [
       "official-invite",

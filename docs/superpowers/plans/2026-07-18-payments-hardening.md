@@ -11,12 +11,12 @@
 ## Global Constraints (house rules — every task inherits these)
 
 - Branch in a worktree: `git worktree add .claude/worktrees/payments-hardening -b feat/payments-hardening origin/main` — never checkout in the main repo dir. Copy `.env.local` from the main checkout (worktrees don't inherit it).
-- **Migration number = V287, and this wave MERGES AFTER the Pro Plus tier
-  branch** (`worktree-pro-plus-tier` owns `V286__pro_plus_plan.sql`, plan
+- **Migration number = V291, and this wave MERGES AFTER the Pro Plus tier
+  branch** (`worktree-pro-plus-tier` owns `V290__pro_plus_plan.sql`, plan
   `docs/superpowers/plans/2026-07-18-pro-plus-tier-plan.md`). Same V-number
   contention pattern as PR #84/#85 — state the ordering in the PR body. At
-  build time verify `ls db/migration/deltas | tail -1`: if V286 is not yet on
-  main, coordinate before applying V287 locally (Flyway rejects out-of-order).
+  build time verify `ls db/migration/deltas | tail -1`: if V290 is not yet on
+  main, coordinate before applying V291 locally (Flyway rejects out-of-order).
 - Pro Plus coordination: that branch adds a `pro_plus` plan row + matrix.
   Task 8's unknown-price guard PROTECTS its rollout (unsynced price no longer
   downgrades orgs); Task 9/10 must treat any non-community plan generically —
@@ -33,7 +33,7 @@
 
 ## File Structure (wave map)
 
-- Create: `db/migration/deltas/V287__payments_hardening.sql` (all wave DDL)
+- Create: `db/migration/deltas/V291__payments_hardening.sql` (all wave DDL)
 - Create: `apps/web/src/app/api/cron/billing-events/route.ts` (stuck-event sweep)
 - Create: `apps/web/src/lib/email-templates/sponsor-dispute-alert.ts`, `sponsor-dispute-lost.ts`, `pass-revoked.ts`
 - Modify: `apps/web/src/server/usecases/competitions.ts` (delete guards)
@@ -50,10 +50,10 @@
 
 ---
 
-### Task 0: Worktree + migration V287
+### Task 0: Worktree + migration V291
 
 **Files:**
-- Create: `db/migration/deltas/V287__payments_hardening.sql`
+- Create: `db/migration/deltas/V291__payments_hardening.sql`
 
 **Interfaces:**
 - Produces: columns used by every later task — `sponsor_orders.disputed_at timestamptz`, `sponsor_orders.dispute_id text`, `subscriptions.disputed_at timestamptz`, `subscriptions.dispute_id text`, `organizations.stripe_payouts_enabled boolean`, `organizations.stripe_disabled_reason text`, `organizations.stripe_requirements_due int`, `billing_events.replay_attempts int`.
@@ -67,7 +67,7 @@ cp /Users/ashokhein/github/seazn.club/apps/web/.env.local .claude/worktrees/paym
 cp /Users/ashokhein/github/seazn.club/.env.local .claude/worktrees/payments-hardening/.env.local 2>/dev/null || true
 ls .claude/worktrees/payments-hardening/db/migration/deltas | tail -1
 ```
-Expected: `V286__pro_plus_plan.sql` (Pro Plus merged first — required). If the tail is still V285, STOP: merge order violated, coordinate before proceeding.
+Expected: `V290__pro_plus_plan.sql` (Pro Plus merged first — required). If the tail is below V290, STOP: merge order violated, coordinate before proceeding.
 
 - [ ] **Step 1b: Carry the uncommitted Payments→Connect rename into this branch**
   (owner decision 2026-07-18: bundle into the wave PR). The main checkout holds
@@ -92,7 +92,7 @@ in the main checkout (`git checkout -- .` + delete the untracked connect dirs)
 - [ ] **Step 2: Write the migration**
 
 ```sql
--- V287 (payments hardening wave, spec 2026-07-18): dispute flags for sponsor
+-- V291 (payments hardening wave, spec 2026-07-18): dispute flags for sponsor
 -- orders + platform subscriptions, Connect health mirror, webhook retry
 -- counter, and the dead Event Pass members.max row (org-wide key can never
 -- resolve through the comp-scoped pass branch — pricing page over-promised).
@@ -127,8 +127,8 @@ Expected: migrate OK, count `0`.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add db/migration/deltas/V287__payments_hardening.sql
-git commit -m "feat(db): V287 payments hardening columns + drop dead pass members.max row"
+git add db/migration/deltas/V291__payments_hardening.sql
+git commit -m "feat(db): V291 payments hardening columns + drop dead pass members.max row"
 ```
 
 ---
@@ -481,7 +481,7 @@ Webhook caller (`handleCheckoutCompleted` pass branch) and `reconcilePassCheckou
 - Test: `apps/web/src/server/usecases/__tests__/sponsor-dispute.test.ts`
 
 **Interfaces:**
-- Consumes: V287 `sponsor_orders.disputed_at/dispute_id`; Task 5 `recoverDisputedTransfer`.
+- Consumes: V291 `sponsor_orders.disputed_at/dispute_id`; Task 5 `recoverDisputedTransfer`.
 - Produces: `handleSponsorDispute(dispute: Stripe.Dispute, phase: "created" | "closed"): Promise<void>` exported from sponsors.ts; dispatch calls it after `handleRegistrationDispute` for both dispute event types (each no-ops on the other's intents — same pattern as `charge.refunded`).
 
 - [ ] **Step 1: Failing tests**
@@ -614,7 +614,7 @@ Dispatch wiring in billing-events.ts:
 - Test: `apps/web/src/server/usecases/__tests__/platform-dispute.test.ts`
 
 **Interfaces:**
-- Consumes: V287 `subscriptions.disputed_at/dispute_id`; Task 3 `revokePassForRefundedCharge` pattern (pass lookup by intent).
+- Consumes: V291 `subscriptions.disputed_at/dispute_id`; Task 3 `revokePassForRefundedCharge` pattern (pass lookup by intent).
 - Produces: `handlePlatformDispute(dispute, phase)` called LAST in both dispute cases (after registration + sponsor handlers, which return without writes on platform charges).
 
 - [ ] **Step 1: Failing tests** — four cases, fully written in the suite:
@@ -818,7 +818,7 @@ and extend `paymentsBroken`:
 - Test: `apps/web/src/server/usecases/__tests__/billing-events-sweep.test.ts`
 
 **Interfaces:**
-- Consumes: V287 `billing_events.replay_attempts`; existing `replayEvent` (trust anchor = `stripe.events.retrieve`).
+- Consumes: V291 `billing_events.replay_attempts`; existing `replayEvent` (trust anchor = `stripe.events.retrieve`).
 - Produces: `sweepStuckEvents(limit?: number): Promise<{ replayed: number; failed: number; alerted: number }>`; route guarded by `x-cron-secret` (copy the header check verbatim from `app/api/cron/registrations/route.ts`).
 
 - [ ] **Step 1: Failing tests**: seed `billing_events` rows (received 20 min ago, no processed_at, attempts 0) with a stubbed `stripe.events.retrieve` (vi.mock `@/lib/stripe`) whose handler is a no-op type → after sweep: `processed_at` set. Second row where retrieve throws → `replay_attempts` incremented, `processed_at` null. Third row at `replay_attempts=3` → skipped (alert path counted).
@@ -876,7 +876,7 @@ Route: POST, `x-cron-secret` check, calls `sweepStuckEvents()`, returns counts. 
 - Test: `apps/web/src/server/usecases/__tests__/stripe-connect.test.ts` (extend)
 
 **Interfaces:**
-- Consumes: V287 org columns.
+- Consumes: V291 org columns.
 - Produces: `ConnectStatusRow` gains `payouts_enabled: boolean; disabled_reason: string | null; requirements_due: number` — consumed by the Connect settings page banner.
 
 - [ ] **Step 1: Failing test** — extend the existing suite: `syncConnectAccount` with an account literal `{ id, charges_enabled: true, payouts_enabled: false, requirements: { currently_due: ["individual.id_number"], disabled_reason: "requirements.pending_verification" } }` → org row mirrors all three; `connectStatus` returns them.
@@ -926,7 +926,7 @@ export async function syncConnectAccount(account: Stripe.Account): Promise<void>
 
 ```bash
 git add -A && git commit -m "feat(payments): hardening wave — smoke p72 + help"
-gh pr create --title "feat(payments): hardening wave (PROMPT-72..75)" --body "Spec: docs/superpowers/specs/2026-07-18-payments-hardening-design.md ... deploy notes: V287 (merges AFTER pro-plus V286), schedule /api/cron/billing-events hourly, STAFF_ALERT_EMAIL env.
+gh pr create --title "feat(payments): hardening wave (PROMPT-72..75)" --body "Spec: docs/superpowers/specs/2026-07-18-payments-hardening-design.md ... deploy notes: V291 (merges AFTER pro-plus V290), schedule /api/cron/billing-events hourly, STAFF_ALERT_EMAIL env.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)"
 ```
@@ -983,14 +983,14 @@ must exist to be edited). Supersedes pro-plus D2 annual amounts.
 Owner decision 2026-07-18: instead of removing `scheduling.ai` from Pro
 entirely (pro-plus D4), Pro keeps it capped at **5 AI schedule generations per
 division**; Pro Plus unlimited. Community stays without. This wave merges
-AFTER pro-plus, so V287 carries the amendment.
+AFTER pro-plus, so V291 carries the amendment.
 
 **Files:**
-- Modify: `db/migration/deltas/V287__payments_hardening.sql` (append)
+- Modify: `db/migration/deltas/V291__payments_hardening.sql` (append)
 - Modify: the AI-schedule generation usecase (locate: `grep -rn "scheduling.ai" apps/web/src/server` — the `requireFeature(orgId, "scheduling.ai", …)` call site in the schedule-generation path)
 - Test: colocated `__tests__` beside that usecase.
 
-- [ ] **Step 1: Migration append** (same V287 file, before first apply):
+- [ ] **Step 1: Migration append** (same V291 file, before first apply):
 
 ```sql
 -- Pro AI cap (owner 2026-07-18, amends pro-plus D4): Pro keeps AI scheduling,
@@ -1017,6 +1017,77 @@ on conflict (plan_key, feature_key) do update
 - [ ] **Step 5: Pricing-page row** — matrix renders from `plan_entitlements`;
   verify the new int key surfaces sensibly (label copy ×4 locales if the
   pricing table names it).
+
+---
+
+### Task 16: Smoke — 4-plan user matrix (owner ask 2026-07-18)
+
+Four fresh users, one per plan, created through the same HTTP surface smoke
+already uses; each asserts the features that distinguish its tier. Runs AFTER
+Task 15 (AI cap live) and Task 14 (pricing untouched by this task — no Stripe
+needed; keyless-degrade aware).
+
+**Files:**
+- Modify: `scripts/smoke.ts` (new section `smokePlanMatrix()` wired into main after existing sections)
+
+**Interfaces:**
+- Consumes: existing smoke helpers (HTTP register/login, org+comp+division creation idioms, SQL plan-flip pattern already used for the pro path); `plan_entitlements` matrix incl. V291 rows (`scheduling.ai.runs_per_division.max` pro=5, pro_plus=unlimited); `competition_passes` (PK=competition_id) for the pass persona.
+- Produces: smoke stays green in CI (keyless) and locally with keys; per-plan assertion block other waves can extend.
+
+- [ ] **Step 1: Personas.** Register 4 users with the run-unique suffix idiom smoke already uses: `smoke-community-<ts>@`, `smoke-pro-<ts>@`, `smoke-proplus-<ts>@`, `smoke-pass-<ts>@`. Each creates one org (+ one competition with one division where assertions need one).
+- [ ] **Step 2: Plans.** community = default (no-op). pro / pro_plus = the existing SQL subscription-flip idiom smoke uses for its pro path, with `plan_key='pro'` / `'pro_plus'`. pass = community org + SQL insert into `competition_passes (competition_id, org_id, stripe_payment_intent)` values `(comp, org, 'pi_smoke_pass_<ts>')` (mirrors recordPassPurchase).
+- [ ] **Step 3: Assertions per persona** (entitlement-resolution + HTTP status level, following existing smoke assertion idioms; every check runs AFTER its data is seeded — no false-greens):
+  - community: `exports.branded` denies (plain export path OK), a Pro-gated surface 402/403s (e.g. branded export or AI schedule), upgrade path visible where smoke already checks CTAs.
+  - pro: branded export allowed; `scheduling.ai` allowed and `scheduling.ai.runs_per_division.max` resolves 5; `officials.per_fixture.max` unlimited (null).
+  - pro_plus: `api.write` grants (key with write scope creatable where smoke exercises keys, else entitlement resolve check); `scheduling.ai.runs_per_division.max` unlimited; `registration.fee_percent` resolves 1.
+  - event_pass: passed competition resolves a comp-scoped pro feature (e.g. `formats.advanced`) true INSIDE that comp; a second unpassed comp in the same org denies it; an org-wide key (`members.max`) still resolves community values (the dead-row fix from V291).
+- [ ] **Step 4: Wire + run.** Call `smokePlanMatrix()` from main; run full smoke locally against dev server; ALL existing sections must stay green. Commit `feat(smoke): 4-plan user matrix (community/pro/pro_plus/event_pass)`.
+
+---
+
+### Task 17: Wave e2e suite — every change browser/API-proven (owner ask 2026-07-18)
+
+Owner requirement: e2e coverage for ALL wave changes. One Playwright spec
+file exercising each task's outcome through the running app (browser where a
+surface exists, signed webhook POST + UI assertion where the trigger is a
+Stripe event). Runs LAST (after T16), before the final whole-branch review.
+
+**Files:**
+- Create: `e2e/payments-hardening.spec.ts` (root e2e project, existing conventions: magic-link `login_url` trick, SQL pro-flip helper, dev server boot per e2e README/config)
+- Modify (if needed): e2e server-boot env to include a known `STRIPE_WEBHOOK_SECRET=whsec_e2e_payments` so tests can sign synthetic events
+
+**Interfaces:**
+- Consumes: `stripe.webhooks.generateTestHeaderString({ payload, secret })` (stripe lib, already a repo dep) to POST signed events to the real webhook route; T1 409 strings; T2 NEVER_KEY_ROUTES; T3/T4 pass lifecycle; T6/T7 dispute handlers; T9 grace copy; T10 intake close; T12 banner; T15 402.
+- Produces: `npx playwright test payments-hardening` green = wave's user-visible contract pinned.
+
+- [ ] **Step 1: Harness.** Follow existing e2e boot (dev server + DB env). Add `STRIPE_WEBHOOK_SECRET` to the e2e server env if absent. Helper `postSignedEvent(evt)` → POST `/api/stripe/webhook` (locate exact route via `git grep -rn "constructEvent" apps/web/src/app/api`) with `stripe-signature: generateTestHeaderString`. Assert 200.
+- [ ] **Step 2: T1/T2 guards.** Owner session (magic-link login): seed comp+pass via SQL, browser/API DELETE attempt → all THREE 409 strings asserted (satisfies the T13-REQUIREMENT from T1 review). API-key DELETE `/api/v1/competitions/:id` → barred (403/absent).
+- [ ] **Step 3: T3/T4 pass lifecycle.** Seed passed comp (SQL insert mirroring smoke idiom) → post signed `charge.refunded` (full) → billing/org UI no longer shows the pass; gated feature 402s again. Duplicate-intent case: post second `checkout.session.completed`/`charge.succeeded` shape per T4 dispatch path → auto-refund recorded (assert via billing_events/DB + no second pass row).
+- [ ] **Step 4: T6 sponsor dispute.** Seed paid sponsor order + active placement (SQL, smoke idiom) → signed `charge.dispute.created` → public page no longer renders the placement; `closed` lost → sponsor_orders reflects lost + placement stays pulled; `closed` won (fresh order) → placement restored.
+- [ ] **Step 5: T7 platform disputes.** Pro org (SQL pro-flip): signed `charge.dispute.created` (sub customer) → org billing UI still Pro + flag set; `closed lost` (matching dispute_id) → billing UI shows Community. Pass org: dispute lost → pass revoked in UI.
+- [ ] **Step 6: T8-T12/T15 surfaces** (extend as those tasks land; keep one `test.describe` per task): T9 past_due grace banner copy; T10 downgraded org's stripe-method division no longer renders card intake (registration page shows offline/closed state); T12 Connect health banner on org settings when payouts disabled (SQL-flip org columns); T15 Pro org 6th AI run → 402 surface in console (or API 402 if console flow too deep — assert response + UI error copy).
+- [ ] **Step 7: Run.** Full new spec green locally + existing e2e suite untouched-green. Commit `test(e2e): payments-hardening wave outcomes end-to-end`.
+
+---
+
+### Task 18: Pro Plus e2e retrofit (owner ask 2026-07-18 — previous session's surfaces)
+
+e2e coverage for the pro-plus tier wave (#125, merged without full browser
+e2e). Same conventions as Task 17; separate spec file; runs after Task 17.
+
+**Files:**
+- Create: `e2e/pro-plus-tier.spec.ts`
+
+**Interfaces:**
+- Consumes: V290 matrix (pro_plus grants incl. api.write/officials.auto/scheduling.ai unlimited, fee 1%, unlimited scale); V291 amendment (pro scheduling.ai capped 5); quota keys `officials.per_fixture.max` (community 1/pro ∞), `schedule.checkpoints.max` (1/5/∞); PlusReveal disclosure component; `/admin/entitlements` staff surface; plan-change/billing UI.
+- Produces: pro_plus tier contract pinned in browser.
+
+- [ ] **Step 1: Personas via SQL plan-flip** (e2e helper exists): community, pro, pro_plus orgs + owner sessions.
+- [ ] **Step 2: Billing surface.** pro_plus org billing page shows Pro Plus plan name + price; plan-change UI offers expected moves (no dead 'business' remnants).
+- [ ] **Step 3: Quota gates in browser.** community org: adding 2nd official to a fixture blocked (1/fixture); pro org: officials unlimited; community 2nd schedule save point blocked vs pro 5 vs pro_plus unlimited (assert gate copy/402 surfaces, not just API).
+- [ ] **Step 4: Moved-up features.** pro org: officials.auto + api.write surfaces show upgrade gate (moved to pro_plus); pro_plus org: same surfaces work. Pro org scheduling.ai ALLOWED (V291 amendment) — cap surface covered in Task 17 Step 6.
+- [ ] **Step 5: PlusReveal + /admin/entitlements.** PlusReveal disclosure renders where pro_plus features are gated; superadmin session loads /admin/entitlements and shows the pro_plus column incl. V291 cap row.
+- [ ] **Step 6: Run.** Spec green + existing e2e untouched-green. Commit `test(e2e): pro-plus tier surfaces (retrofit)`.
 
 ---
 

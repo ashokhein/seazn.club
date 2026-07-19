@@ -1,10 +1,12 @@
 // Sync Stripe products/prices from apps/web/src/config/stripe-plans.json into
 // Stripe + the `plans` table. Idempotent: a price is matched by its stable
-// `lookup_key`, so re-running never duplicates — and every run re-asserts the
-// multi-currency `currency_options` price points on existing prices (the one
-// mutable thing about a Stripe price), so editing the JSON and re-running is
-// the sanctioned way to roll out currency changes. Run after db:apply / any
-// wipe, once per environment (test/prod) by pointing the env at it:
+// `lookup_key`, so re-running never duplicates. Stripe price amounts are
+// immutable, so when the JSON's unit_amount or any currency_options amount
+// drifts from the live price, the script mints a REPLACEMENT price (carrying the
+// lookup_key via transfer_lookup_key) and archives the old one — that is the
+// sanctioned way to roll out a price change. Existing subscriptions keep their
+// original price id (Task 8 sync guards), so no one is repriced mid-term. Run
+// after db:apply / any wipe, once per environment (test/prod) by pointing at it:
 //   node --env-file=apps/web/.env.local --experimental-strip-types scripts/stripe-sync.ts
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -59,34 +61,32 @@ function currencyOptionsParam(
   );
 }
 
-/** Find a price by lookup_key (re-asserting currency_options), else create it
- *  (and a product if needed). Omitting `interval` makes it one-time. */
-async function ensurePrice(
-  spec: PriceSpec,
-  product: { name: string; description?: string },
-  planKey: string,
-  currency: string,
-  productId: string | null,
-): Promise<{ priceId: string; productId: string }> {
-  const options = currencyOptionsParam(spec);
-  const found = await stripe.prices.list({ lookup_keys: [spec.lookup_key], limit: 1, expand: ["data.product"] });
-  if (found.data[0]) {
-    const p = found.data[0];
-    // currency_options is the only mutable pricing field — keep it in sync so
-    // JSON edits roll out on re-run instead of silently drifting.
-    if (options) await stripe.prices.update(p.id, { currency_options: options });
-    const prod = typeof p.product === "string" ? p.product : p.product.id;
-    return { priceId: p.id, productId: prod };
+/** True when a live Stripe price no longer matches the seed's amounts. Both the
+ *  base `unit_amount` AND each per-currency `currency_options` amount are checked.
+ *  Stripe price amounts are immutable, so ANY drift forces a replacement price
+ *  (not an in-place update). Requires the price to have been fetched with
+ *  currency_options expanded, else `existing.currency_options` is null. */
+export function priceHasDrifted(existing: Stripe.Price, spec: PriceSpec): boolean {
+  if (existing.unit_amount !== spec.unit_amount) return true;
+  const wanted = spec.currency_options ?? {};
+  const have = existing.currency_options ?? {};
+  for (const [currency, amount] of Object.entries(wanted)) {
+    if (have[currency]?.unit_amount !== amount) return true;
   }
-  const prod =
-    productId ??
-    (await stripe.products.create({
-      name: product.name,
-      description: product.description,
-      metadata: { seazn_plan: planKey },
-    })).id;
+  return false;
+}
+
+/** Create a fresh Stripe price carrying the seed's lookup_key. `transfer_lookup_key`
+ *  moves the key off any existing price so the checkout route keeps resolving it. */
+async function createPrice(
+  spec: PriceSpec,
+  productId: string,
+  currency: string,
+  planKey: string,
+): Promise<string> {
+  const options = currencyOptionsParam(spec);
   const price = await stripe.prices.create({
-    product: prod,
+    product: productId,
     currency,
     unit_amount: spec.unit_amount,
     ...(spec.interval ? { recurring: { interval: spec.interval } } : {}),
@@ -95,7 +95,46 @@ async function ensurePrice(
     transfer_lookup_key: true,
     metadata: { seazn_plan: planKey },
   });
-  return { priceId: price.id, productId: prod };
+  return price.id;
+}
+
+/** Find a price by lookup_key; if any amount drifted, mint a replacement and
+ *  archive the old price; else create it (and a product if needed). Omitting
+ *  `interval` makes it one-time. */
+async function ensurePrice(
+  spec: PriceSpec,
+  product: { name: string; description?: string },
+  planKey: string,
+  currency: string,
+  productId: string | null,
+): Promise<{ priceId: string; productId: string }> {
+  const found = await stripe.prices.list({
+    lookup_keys: [spec.lookup_key],
+    limit: 1,
+    expand: ["data.product", "data.currency_options"],
+  });
+  if (found.data[0]) {
+    const p = found.data[0];
+    const prod = typeof p.product === "string" ? p.product : p.product.id;
+    if (!priceHasDrifted(p, spec)) return { priceId: p.id, productId: prod };
+    // Stripe price amounts are immutable: create a replacement carrying the
+    // lookup_key (transfer_lookup_key moves it off the old price), then archive
+    // the old price so nothing new resolves to it. Existing subscriptions keep
+    // their original price id (Task 8 sync guards) — no one is repriced mid-term.
+    const replacementId = await createPrice(spec, prod, currency, planKey);
+    await stripe.prices.update(p.id, { active: false });
+    console.log(`  ↳ ${spec.lookup_key}: amount drift → new price ${replacementId} (archived ${p.id})`);
+    return { priceId: replacementId, productId: prod };
+  }
+  const prod =
+    productId ??
+    (await stripe.products.create({
+      name: product.name,
+      description: product.description,
+      metadata: { seazn_plan: planKey },
+    })).id;
+  const priceId = await createPrice(spec, prod, currency, planKey);
+  return { priceId, productId: prod };
 }
 
 /** Write resolved price ids onto the plans row (the checkout route reads these). */

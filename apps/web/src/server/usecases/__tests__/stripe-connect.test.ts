@@ -20,9 +20,10 @@ const stripeMock = vi.hoisted(() => {
 
 vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 
+import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { createConnectOnboardingLink } from "../stripe-connect";
+import { connectStatus, createConnectOnboardingLink, syncConnectAccount } from "../stripe-connect";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -96,5 +97,45 @@ describe.skipIf(!HAS_DB)("Connect onboarding ToS gate (PROMPT-55)", () => {
     );
     expect(url).toBe("https://connect.stripe.test/onboard");
     expect(stripeMock.accountCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe.skipIf(!HAS_DB)("Connect health mirror (P1-8)", () => {
+  it("syncConnectAccount mirrors payouts/disabled-reason/requirements onto the org row", async () => {
+    const { owner, orgId } = await seedProOrg();
+    const acctId = "acct_health_" + orgId.slice(0, 8);
+    await sql`update organizations set stripe_account_id = ${acctId} where id = ${orgId}`;
+
+    const account = {
+      id: acctId,
+      charges_enabled: true,
+      payouts_enabled: false,
+      requirements: {
+        currently_due: ["individual.id_number"],
+        disabled_reason: "requirements.pending_verification",
+      },
+    } as unknown as Stripe.Account;
+    await syncConnectAccount(account);
+
+    const [org] = await sql<{
+      stripe_charges_enabled: boolean;
+      stripe_payouts_enabled: boolean;
+      stripe_disabled_reason: string | null;
+      stripe_requirements_due: number;
+    }[]>`
+      select stripe_charges_enabled, stripe_payouts_enabled,
+             stripe_disabled_reason, stripe_requirements_due
+      from organizations where id = ${orgId}`;
+    expect(org.stripe_charges_enabled).toBe(true);
+    expect(org.stripe_payouts_enabled).toBe(false);
+    expect(org.stripe_disabled_reason).toBe("requirements.pending_verification");
+    expect(org.stripe_requirements_due).toBe(1);
+
+    const status = await connectStatus(owner, orgId);
+    expect(status.connected).toBe(true);
+    expect(status.charges_enabled).toBe(true);
+    expect(status.payouts_enabled).toBe(false);
+    expect(status.disabled_reason).toBe("requirements.pending_verification");
+    expect(status.requirements_due).toBe(1);
   });
 });
