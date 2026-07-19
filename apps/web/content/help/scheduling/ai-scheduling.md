@@ -46,7 +46,7 @@ Each **schedule generation** counts against a per-division quota:
 | Pro | 20 |
 | Pro Plus | 50 |
 
-Refine and repair each use one generation. A run that fails or times out **does not** count. **Officials AI runs are not metered** — once you have automatic officials assignment, you can restaff as often as you like.
+The quota is a **lifetime total per division** — it doesn't reset weekly or monthly, and a new division starts a fresh count. Refine and repair each use one generation. A run that fails or times out **does not** count. Separately, every plan has a burst brake of **5 AI runs per hour per division**. **Officials AI runs are not metered** — once you have automatic officials assignment, you can restaff as often as you like.
 
 ## Applying and undo
 
