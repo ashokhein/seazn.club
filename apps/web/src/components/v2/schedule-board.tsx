@@ -12,6 +12,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { Tip } from "@/components/ui/tip";
 import { apiV1 } from "@/lib/client-v1";
+import { track, EVENTS } from "@/lib/analytics";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
@@ -22,6 +23,9 @@ import { BoardLanes } from "./board/board-lanes";
 import { BoardLegend } from "./board/board-legend";
 import { BoardTray } from "./board/board-tray";
 import { AiConsole, useAiSchedulingEnabled, type AiBriefContext } from "./board/ai-console";
+import { AiRepairBanner } from "./board/ai-repair-banner";
+import { useDisruptionSignals } from "./board/use-disruption-signals";
+import type { AiScope } from "./board/ai-console-state";
 import { computeAiDiff, ghostToneFor, type AiConsoleFixture } from "./board/ai-diff";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
@@ -119,6 +123,9 @@ export function ScheduleBoard({
   // entirely when flipped off; it is fail-open (see the hook).
   const aiFlagOn = useAiSchedulingEnabled();
   const [aiOpen, setAiOpen] = useState(false);
+  // Set by the repair nudge (Task 16) just before it opens the console, so the
+  // console mounts pre-armed in repair mode + this scope; null on a plain open.
+  const [aiRepairScope, setAiRepairScope] = useState<AiScope | null>(null);
   // The verified proposal the console is showing (null = none) — drives the grid
   // ghost overlay. The console notifies us on each RUN_DONE and on close.
   const [aiProposal, setAiProposal] = useState<AiPlanResponse | null>(null);
@@ -263,6 +270,41 @@ export function ScheduleBoard({
       isJunior: false,
     }));
   }, [single, actions.board, entrantNames, feedLabels]);
+
+  // ------------------------------------------------------- repair nudge (T16)
+  // Client-derived disruptions over the LIVE board + config — a blackout a slot
+  // now sits in, a court removed from settings, a match outside the play windows,
+  // a postponed match still holding a slot. Zero server calls; the amber banner
+  // and the console's repair scope both read this.
+  const divBoardFixtures = useMemo(
+    () => (single ? actions.board.filter((f) => f.division_id === single.id) : []),
+    [single, actions.board],
+  );
+  const disruptions = useDisruptionSignals(divBoardFixtures, cfg);
+  // Same gates as the launch button (role + single + flag) AND the paid read
+  // (aiAllowed) — the nudge only shows when the console it opens is usable. It
+  // also hides while the console is open and when nothing is disrupted.
+  const showRepairBanner =
+    aiAvailable && aiAllowed && !aiOpen && disruptions.fixtureIds.length > 0;
+  // "Shown" fires once per board load the first time the banner is visible; the
+  // ref lives on the board (which persists across console open/close) so toggling
+  // the console never re-fires it.
+  const repairShownRef = useRef(false);
+  useEffect(() => {
+    if (showRepairBanner && !repairShownRef.current) {
+      repairShownRef.current = true;
+      track(EVENTS.AI_REPAIR_NUDGE_SHOWN, {
+        division_id: single?.id,
+        count: disruptions.fixtureIds.length,
+      });
+    }
+  }, [showRepairBanner, single, disruptions.fixtureIds.length]);
+  // The nudge's CTA: arm the scope, then open the console (batched → it mounts
+  // already carrying prefillRepair). The click event fires inside the banner.
+  const openRepair = useCallback(() => {
+    setAiRepairScope(disruptions.scope);
+    setAiOpen(true);
+  }, [disruptions.scope]);
 
   // Ghost blocks for the whole proposal, positioned by the PROPOSED slot and
   // toned by diff bucket (blocking wins). Unscheduled (dropped) fixtures are not
@@ -499,7 +541,10 @@ export function ScheduleBoard({
         {aiAvailable && (
           <button
             type="button"
-            onClick={() => setAiOpen(true)}
+            onClick={() => {
+              setAiRepairScope(null);
+              setAiOpen(true);
+            }}
             title={msg("board.ai.buttonTitle")}
             aria-haspopup="dialog"
             aria-expanded={aiOpen}
@@ -688,6 +733,16 @@ export function ScheduleBoard({
         />
       )}
 
+      {/* Repair nudge (Task 16) — amber banner above the grid; its CTA opens the
+          console in repair mode pre-scoped to the disruptions. */}
+      {showRepairBanner && single && (
+        <AiRepairBanner
+          count={disruptions.fixtureIds.length}
+          divisionId={single.id}
+          onFix={openRepair}
+        />
+      )}
+
       {/* Board + tray share the row on desktop; tray is a sheet on mobile. */}
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
@@ -797,9 +852,11 @@ export function ScheduleBoard({
           aiAllowed={aiAllowed}
           brief={aiBrief}
           fixtures={aiFixtures}
+          prefillRepair={aiRepairScope}
           onClose={() => {
             setAiOpen(false);
             setAiProposal(null);
+            setAiRepairScope(null);
           }}
           onApplied={() => router.refresh()}
           onRefetch={() => router.refresh()}

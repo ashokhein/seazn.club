@@ -48,6 +48,7 @@ import {
   initialAiConsoleState,
   type AiConsoleState,
   type AiMode,
+  type AiScope,
   type AiStep,
 } from "./ai-console-state";
 
@@ -134,6 +135,7 @@ export function AiConsole({
   brief,
   fixtures,
   officialsPolicy,
+  prefillRepair,
   onClose,
   onApplied,
   onRefetch,
@@ -158,6 +160,10 @@ export function AiConsole({
    *  board leaves this undefined and the field is omitted; the seam is ready for
    *  when a policy is persisted. */
   officialsPolicy?: NonNullable<AiPlanRequest["officials_policy"]>;
+  /** Opened from the repair nudge (Task 16): pre-arm repair mode + the disrupted
+   *  scope on mount so the brief step lands pre-scoped. Undefined/null on a plain
+   *  open (the launch button), leaving the console in its default generate flow. */
+  prefillRepair?: AiScope | null;
   onClose: () => void;
   /** Called after a successful apply (and after an Undo) so the board refetches
    *  and the ghosts resolve to the applied — or reverted — state. */
@@ -175,6 +181,18 @@ export function AiConsole({
   const msg = useMsg();
   const pathname = usePathname();
   const [state, dispatch] = useReducer(aiConsoleReducer, initialAiConsoleState);
+  // Opened from the repair nudge (Task 16): pre-arm repair mode + the disrupted
+  // scope once on mount. The board conditionally renders the console, so mount
+  // means open; the ref guards against re-dispatching if the prop identity
+  // changes while it stays open. The brief step then shows repair mode active +
+  // the scope chip, and the run carries state.scope.
+  const prefilledRef = useRef(false);
+  useEffect(() => {
+    if (prefillRepair && !prefilledRef.current) {
+      prefilledRef.current = true;
+      dispatch({ type: "PREFILL_REPAIR", scope: prefillRepair });
+    }
+  }, [prefillRepair]);
   // Chip wishes live at the console level so they survive step navigation; the
   // instruction is always compileWishes(wishes) + preserved free text.
   const [wishes, setWishes] = useState<Wish[]>([]);
