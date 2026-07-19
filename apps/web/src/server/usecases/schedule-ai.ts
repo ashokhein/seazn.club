@@ -616,7 +616,13 @@ export function anthropicClient(): Anthropic {
     throw new HttpError(503, "AI scheduling is not configured on this server");
   }
   const baseURL = process.env.SCHEDULING_AI_BASE_URL;
-  return new Anthropic({ apiKey, ...(baseURL ? { baseURL } : {}) });
+  // The client-level timeout is load-bearing: when it is unset the SDK
+  // estimates non-streaming duration from max_tokens and throws synchronously
+  // for our 32k calls ("Streaming is required…" — client.mjs
+  // calculateNonstreamingTimeout; the per-request options.timeout spreads in
+  // AFTER that check, so it cannot bypass it). Each round's real deadline is
+  // the AbortController in callModel.
+  return new Anthropic({ apiKey, timeout: 60 * 60 * 1000, ...(baseURL ? { baseURL } : {}) });
 }
 
 export interface AiPlanResult {

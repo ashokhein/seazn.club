@@ -8,9 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 // Mock the SDK default export as a class exposing `messages.parse`. Must be
 // declared before importing the module under test.
 const parse = vi.fn();
+const ctorOpts: unknown[] = [];
 vi.mock("@anthropic-ai/sdk", () => ({
   default: class Anthropic {
     messages = { parse };
+    constructor(opts: unknown) {
+      ctorOpts.push(opts);
+    }
   },
 }));
 
@@ -154,12 +158,17 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
-  it("model calls carry an explicit request timeout — the SDK refuses non-streaming max_tokens:32000 without one", async () => {
+  it("client is constructed with an explicit timeout — without one the SDK refuses non-streaming max_tokens:32000 calls", async () => {
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);
+    // Client-level: the SDK's calculateNonstreamingTimeout throws when the
+    // constructor has no timeout (per-request options spread in after the check).
+    const ctor = ctorOpts.at(-1) as { timeout?: number };
+    expect(ctor.timeout).toBeTypeOf("number");
+    expect(ctor.timeout!).toBeGreaterThan(0);
+    // Per-request: the abort signal plus timeout still ride on every call.
     const opts = parse.mock.calls[0][1] as { timeout?: number; signal?: unknown };
     expect(opts.timeout).toBeTypeOf("number");
-    expect(opts.timeout!).toBeGreaterThan(0);
     expect(opts.signal).toBeDefined();
   });
 
