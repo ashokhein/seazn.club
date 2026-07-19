@@ -34,6 +34,8 @@ export interface DivisionRow {
   officials_hide_names: boolean;
   scheduling_mode: string;
   auto_progress: boolean;
+  /** SPEC-2: draft a news post when results land in this division. */
+  auto_posts: boolean;
   schedule_locked: boolean;
   archived_at: string | null;
   created_at: string;
@@ -50,7 +52,7 @@ export interface DivisionRow {
 const COLS = [
   "id", "competition_id", "name", "slug", "description", "sport_key", "variant_key", "config",
   "module_version", "eligibility", "tiebreakers", "status", "officials_hide_names",
-  "scheduling_mode", "auto_progress", "schedule_locked", "archived_at", "created_at",
+  "scheduling_mode", "auto_progress", "auto_posts", "schedule_locked", "archived_at", "created_at",
   "seq", "youth", "player_name_display", "logo_url", "logo_storage_path",
 ] as const;
 
@@ -411,6 +413,11 @@ export async function patchDivision(
     const [d] = await sql<{ competition_id: string }[]>`
       select competition_id from divisions where id = ${id}`;
     await requireFeature(auth.orgId, "formats.advanced", d?.competition_id);
+  }
+  // SPEC-2: turning auto-drafted news ON is Pro `news.auto` (402 PlusReveal);
+  // turning it off is always allowed (a downgraded org can quiet its toggle).
+  if (patch.auto_posts === true) {
+    await requireFeature(auth.orgId, "news.auto");
   }
   let previousSlug: string | null = null;
   let previousCompetitionId: string | null = null;

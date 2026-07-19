@@ -2004,6 +2004,9 @@
                           "auto_progress": {
                             "type": "boolean"
                           },
+                          "auto_posts": {
+                            "type": "boolean"
+                          },
                           "archived_at": {
                             "anyOf": [
                               {
@@ -2034,6 +2037,7 @@
                           "officials_hide_names",
                           "scheduling_mode",
                           "auto_progress",
+                          "auto_posts",
                           "archived_at",
                           "created_at"
                         ],
@@ -2069,6 +2073,7 @@
                       "officials_hide_names": true,
                       "scheduling_mode": "timed",
                       "auto_progress": true,
+                      "auto_posts": true,
                       "archived_at": "example",
                       "created_at": "example"
                     }
@@ -2454,6 +2459,9 @@
                         "auto_progress": {
                           "type": "boolean"
                         },
+                        "auto_posts": {
+                          "type": "boolean"
+                        },
                         "archived_at": {
                           "anyOf": [
                             {
@@ -2484,6 +2492,7 @@
                         "officials_hide_names",
                         "scheduling_mode",
                         "auto_progress",
+                        "auto_posts",
                         "archived_at",
                         "created_at"
                       ],
@@ -2517,6 +2526,7 @@
                     "officials_hide_names": true,
                     "scheduling_mode": "timed",
                     "auto_progress": true,
+                    "auto_posts": true,
                     "archived_at": "example",
                     "created_at": "example"
                   },
@@ -2889,6 +2899,9 @@
                         "auto_progress": {
                           "type": "boolean"
                         },
+                        "auto_posts": {
+                          "type": "boolean"
+                        },
                         "archived_at": {
                           "anyOf": [
                             {
@@ -2919,6 +2932,7 @@
                         "officials_hide_names",
                         "scheduling_mode",
                         "auto_progress",
+                        "auto_posts",
                         "archived_at",
                         "created_at"
                       ],
@@ -2952,6 +2966,7 @@
                     "officials_hide_names": true,
                     "scheduling_mode": "timed",
                     "auto_progress": true,
+                    "auto_posts": true,
                     "archived_at": "example",
                     "created_at": "example"
                   },
@@ -3208,6 +3223,9 @@
                   "auto_progress": {
                     "type": "boolean"
                   },
+                  "auto_posts": {
+                    "type": "boolean"
+                  },
                   "youth": {
                     "type": "boolean"
                   },
@@ -3379,6 +3397,9 @@
                         "auto_progress": {
                           "type": "boolean"
                         },
+                        "auto_posts": {
+                          "type": "boolean"
+                        },
                         "archived_at": {
                           "anyOf": [
                             {
@@ -3409,6 +3430,7 @@
                         "officials_hide_names",
                         "scheduling_mode",
                         "auto_progress",
+                        "auto_posts",
                         "archived_at",
                         "created_at"
                       ],
@@ -3442,6 +3464,7 @@
                     "officials_hide_names": true,
                     "scheduling_mode": "timed",
                     "auto_progress": true,
+                    "auto_posts": true,
                     "archived_at": "example",
                     "created_at": "example"
                   },
@@ -4048,6 +4071,9 @@
                         "auto_progress": {
                           "type": "boolean"
                         },
+                        "auto_posts": {
+                          "type": "boolean"
+                        },
                         "archived_at": {
                           "anyOf": [
                             {
@@ -4078,6 +4104,7 @@
                         "officials_hide_names",
                         "scheduling_mode",
                         "auto_progress",
+                        "auto_posts",
                         "archived_at",
                         "created_at"
                       ],
@@ -4111,6 +4138,7 @@
                     "officials_hide_names": true,
                     "scheduling_mode": "timed",
                     "auto_progress": true,
+                    "auto_posts": true,
                     "archived_at": "example",
                     "created_at": "example"
                   },
@@ -4437,6 +4465,9 @@
                         "auto_progress": {
                           "type": "boolean"
                         },
+                        "auto_posts": {
+                          "type": "boolean"
+                        },
                         "archived_at": {
                           "anyOf": [
                             {
@@ -4467,6 +4498,7 @@
                         "officials_hide_names",
                         "scheduling_mode",
                         "auto_progress",
+                        "auto_posts",
                         "archived_at",
                         "created_at"
                       ],
@@ -4500,6 +4532,7 @@
                     "officials_hide_names": true,
                     "scheduling_mode": "timed",
                     "auto_progress": true,
+                    "auto_posts": true,
                     "archived_at": "example",
                     "created_at": "example"
                   },

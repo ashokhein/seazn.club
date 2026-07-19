@@ -251,6 +251,13 @@ export const ROUTES: RouteSpec[] = [
   { path: "/me/officiating/{fixtureOfficialId}/report/submit", method: "post", summary: "Submit the draft (immutable thereafter, 409 on resubmit); misconduct incidents suggest pending suspensions when the org enforces discipline (session only)", tag: "officials", response: S.MatchReport, errors: [403, 409] },
   { path: "/fixtures/{id}/reports", method: "get", summary: "Submitted match reports for a fixture with the official's name (console; free)", tag: "officials", response: z.array(S.FixtureReport) },
   { path: "/me/officiating/{fixtureOfficialId}/squad", method: "get", summary: "Both entrants' squads behind the caller's assignment — the match report's optional person picker (session only, cross-org rail; free)", tag: "officials", response: z.array(S.FixtureSquadMember), errors: [404] },
+  // Org news (SPEC-2, PROMPT-82) — manual posts free on every plan; auto-drafts
+  // (news.auto) land on the decided seam, not through the API.
+  { path: "/orgs/{id}/posts", method: "get", summary: "Org news feed (console; free), optional ?status= filter", tag: "news", response: z.array(S.OrgPost), query: { status: { schema: { type: "string", enum: ["draft", "published", "archived"] } } } },
+  { path: "/orgs/{id}/posts", method: "post", summary: "Compose a post (draft; free on every plan)", tag: "news", request: S.CreatePost, response: S.OrgPost, status: 201, errors: [404] },
+  { path: "/posts/{id}", method: "get", summary: "Get a post (console; free)", tag: "news", response: S.OrgPost, errors: [404] },
+  { path: "/posts/{id}", method: "patch", summary: "Edit a post and/or publish|archive; publish stamps published_at and freezes the slug", tag: "news", request: S.PatchPost, response: S.OrgPost, errors: [404] },
+  { path: "/posts/{id}", method: "delete", summary: "Delete a post", tag: "news", status: 204, errors: [404] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -451,7 +458,8 @@ export function buildOpenApiDocument(
     { name: "scoring" }, { name: "scheduling" }, { name: "scorers" },
     { name: "device-links" }, { name: "api-keys" }, { name: "registration" },
     { name: "clubs" }, { name: "officials" }, { name: "sponsors" }, { name: "history" },
-    { name: "exports" }, { name: "stats" }, { name: "discipline" }, { name: "public" },
+    { name: "exports" }, { name: "stats" }, { name: "discipline" }, { name: "news" },
+    { name: "public" },
   ].filter((t) => usedTags.has(t.name));
   return {
     openapi: "3.1.0",

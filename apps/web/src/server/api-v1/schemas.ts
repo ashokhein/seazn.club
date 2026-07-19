@@ -133,6 +133,8 @@ export const PatchDivision = z
     scheduling_mode: z.enum(["timed", "flexible"]),
     /** Jul3/08 §5: progression fires without a button (Pro formats.advanced). */
     auto_progress: z.boolean(),
+    /** SPEC-2: draft a news post when results land (Pro `news.auto` on write). */
+    auto_posts: z.boolean(),
     /** Youth flag (v3/11 gap 8): auto-set from U-age eligibility, this is
      *  the organiser override. */
     youth: z.boolean(),
@@ -165,6 +167,7 @@ export const Division = z.object({
   officials_hide_names: z.boolean(),
   scheduling_mode: z.enum(["timed", "flexible"]),
   auto_progress: z.boolean(),
+  auto_posts: z.boolean(),
   archived_at: z.string().nullable(), // v3/09 §4 — set = archived (hidden, restorable)
   created_at: z.string(),
 });
@@ -1631,4 +1634,50 @@ export const FixtureSquadMember = z.object({
   full_name: z.string(),
   entrant_id: Uuid,
   entrant_name: z.string(),
+});
+
+// Org news (SPEC-2 / PROMPT-82) -----------------------------------------------
+
+export const PostKind = z.enum(["news", "result", "round_recap", "announcement"]);
+export const PostStatus = z.enum(["draft", "published", "archived"]);
+
+export const CreatePost = z.object({
+  title: z.string().min(1).max(300),
+  body_md: z.string().max(50_000).optional(),
+  kind: PostKind.optional(),
+  competition_id: Uuid.optional(),
+  division_id: Uuid.optional(),
+  hero_image_path: z.string().max(500).optional(),
+});
+export type CreatePost = z.infer<typeof CreatePost>;
+
+export const PatchPost = z
+  .object({
+    title: z.string().min(1).max(300),
+    body_md: z.string().max(50_000),
+    hero_image_path: z.string().max(500).nullable(),
+    competition_id: Uuid.nullable(),
+    division_id: Uuid.nullable(),
+    /** Lifecycle: publish stamps published_at + freezes the slug; archive hides. */
+    action: z.enum(["publish", "archive"]),
+  })
+  .partial()
+  .refine((p) => Object.keys(p).length > 0, "empty patch");
+export type PatchPost = z.infer<typeof PatchPost>;
+
+export const OrgPost = z.object({
+  id: Uuid,
+  orgId: Uuid,
+  competitionId: Uuid.nullable(),
+  divisionId: Uuid.nullable(),
+  kind: PostKind,
+  status: PostStatus,
+  slug: z.string(),
+  title: z.string(),
+  bodyMd: z.string(),
+  heroImagePath: z.string().nullable(),
+  autoSource: z.record(z.string(), z.unknown()).nullable(),
+  publishedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
 });

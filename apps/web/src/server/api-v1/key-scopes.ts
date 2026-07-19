@@ -277,6 +277,15 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "POST /me/officiating/:fixtureOfficialId/report/submit",
   "GET /me/officiating/:fixtureOfficialId/squad",
   "GET /fixtures/:id/reports",
+  // Org news (SPEC-2 / PROMPT-82): the composer + drafts queue are an organiser
+  // console CRM surface (like sponsors/discipline). Public reads flow through
+  // page-level server components (no public JSON API), not keys. Auto-drafts
+  // land on the decided seam, never via the API. None key-accessible.
+  "GET /orgs/:id/posts",
+  "POST /orgs/:id/posts",
+  "GET /posts/:id",
+  "PATCH /posts/:id",
+  "DELETE /posts/:id",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.
