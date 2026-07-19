@@ -7,7 +7,7 @@ import "server-only";
 // publicDivisionStats guard chain). Slug is slugify(title) with a `-2` collision
 // suffix and FROZEN at first publish (edits after publish keep the URL — a
 // data-model invariant enforced here, not just in the UI). Auto-draft
-// idempotency is the V294 partial unique index (org_posts_auto_once), never an
+// idempotency is the V295 partial unique index (org_posts_auto_once), never an
 // app pre-check; a void/re-decide stamps auto_source.stale on the DRAFT only.
 import type postgres from "postgres";
 import { aggregatePlayerStats } from "@seazn/engine/stats";
@@ -50,7 +50,7 @@ export interface OrgPost {
   updatedAt: string;
 }
 
-// Decided-seam triggers (auto_source.trigger). The V294 partial unique index
+// Decided-seam triggers (auto_source.trigger). The V295 partial unique index
 // keys result on fixture_id, round_recap on division_id + round_no.
 const TRIGGER_RESULT = "fixture_decided";
 const TRIGGER_RECAP = "round_complete";

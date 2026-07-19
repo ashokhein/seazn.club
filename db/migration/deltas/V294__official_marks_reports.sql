@@ -2,9 +2,9 @@
 -- V293 — Official marks & match reports (SPEC-3 / PROMPT-80).
 -- Two adjacent features on the fixture_officials assignment row: organiser
 -- marks (Pro, org-private) and official-filed match reports (free, cross-org).
--- Submitted reports feed SPEC-1 (V292) as *suggested* pending suspensions via a
+-- Submitted reports feed SPEC-1 (V293) as *suggested* pending suspensions via a
 -- soft, idempotent bridge that ships dark when discipline is absent. Drafted as
--- V293 (V291 claimed by an unmerged branch — same lesson as V290/V292).
+-- V294 (V291 payments, V292 clubs, V293 discipline — same lesson as V286 to V290).
 --
 -- fixture_officials predates single-row identity (composite PK
 -- fixture_id/role_key/official_id, no surrogate). The whole SPEC-3 surface and
@@ -12,7 +12,7 @@
 -- surrogate id here and reference it. Additive only: the composite PK and every
 -- existing on-conflict target stay intact; existing rows get an id via default.
 --
--- Tables + RLS mirror V284/V292 (explicit org_id, enable/force RLS, tenant
+-- Tables + RLS mirror V284/V293 (explicit org_id, enable/force RLS, tenant
 -- policy, app_user grants). Marks are written on the tenant rail (organiser),
 -- so the app_user gets full CRUD. Reports are written by the official through
 -- the superuser connection (the V284 official_availability rail — an official
@@ -55,7 +55,7 @@ create index match_reports_fixture_idx on match_reports(fixture_id);
 
 -- Report bridge idempotency (SPEC-3): at most one pending suspension per report
 -- incident, keyed rule_key = report:<fixture_official_id>, bucket = incident
--- index. V292 suspensions_auto_once excludes source=report, so the report lane
+-- index. V293 suspensions_auto_once excludes source=report, so the report lane
 -- needs its own partial unique index.
 create unique index suspensions_report_once
   on suspensions(division_id, person_id, rule_key, bucket)

@@ -5,9 +5,9 @@
 -- posts on the decided-write seam (Pro `news.auto`). Server side only; the
 -- console tab + public pages + OG cards land in PROMPT-83.
 --
--- Drafted as V292 in the spec; renumbered to V294 at build — V291 is
--- payments-hardening (main), V292 discipline, V293 marks/reports (same lesson
--- as V286→V290). Table + RLS mirror V284/V292/V293 (explicit org_id, enable/
+-- Drafted as V292 in the spec; renumbered to V295 at build — V291 is
+-- payments-hardening (main), V292 clubs-teams (main), V293 discipline,
+-- V294 marks/reports (same lesson as V286→V290). Table + RLS mirror V284/V293/V294 (explicit org_id, enable/
 -- force RLS, tenant policy, app_user CRUD grants). Public reads go through the
 -- superuser sql connection filtered status='published' + competition
 -- visibility — the publicDivisionStats guard chain, no extra policy.
@@ -67,7 +67,7 @@ grant select, insert, update, delete on org_posts to app_user;
 
 -- Entitlement news.auto (SPEC-2): auto-drafting is Pro; MANUAL posts stay free
 -- on every plan (a missing row DENIES in lib/entitlements, so every plan gets a
--- row). Mirrors V292's discipline.enforced seed. Idempotent.
+-- row). Mirrors V293's discipline.enforced seed. Idempotent.
 insert into plan_entitlements (plan_key, feature_key, bool_value, int_value) values
   ('community',  'news.auto', false, null),
   ('event_pass', 'news.auto', false, null),

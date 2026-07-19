@@ -1,9 +1,9 @@
 -- =============================================================================
--- V292 — Player discipline & suspensions (SPEC-1 / PROMPT-78).
+-- V293 — Player discipline & suspensions (SPEC-1 / PROMPT-78).
 -- Folds person-attributed card events (already in score_events) into a
 -- per-division disciplinary ledger. Read-side projection only: zero engine
 -- reducer/replay/golden change (README D2). Drafted as V291; renumbered to
--- V292 (V291 claimed by an unmerged branch) — same lesson as V286 to V290.
+-- V293 (V291 = payments-hardening, V292 = clubs-teams on main) — same lesson as V286 to V290.
 -- Tables + RLS mirror V284 (explicit org_id, enable/force RLS, tenant policy,
 -- app_user grants); public reads go through the superuser sql connection like
 -- publicDivisionStats (no extra policy). Idempotent seed at the tail.

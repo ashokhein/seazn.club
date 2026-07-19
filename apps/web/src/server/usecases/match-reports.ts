@@ -4,7 +4,7 @@ import "server-only";
 // cross-org superuser rail (an official is not an org member — same rail as
 // V284 official_availability / me-officiating.ts). Draft → submitted; a
 // submitted report is immutable. On submit, misconduct incidents feed SPEC-1
-// (V292) as *suggested* pending suspensions via a soft, idempotent bridge that
+// (V293) as *suggested* pending suspensions via a soft, idempotent bridge that
 // ships dark when discipline is absent. The organiser-console read
 // (fixtureReports) runs on the tenant rail and sees submitted reports only.
 import type postgres from "postgres";
@@ -238,7 +238,7 @@ async function notifyReportSubmitted(a: ReportAssignment, report: MatchReport): 
 }
 
 // Test seam — the suspensions-table existence probe, overridable so tests can
-// simulate the pre-V292 dark path without renaming the shared table (a rename
+// simulate the pre-V293 dark path without renaming the shared table (a rename
 // would flake thread-parallel discipline runs against the one local DB).
 type BridgeProbe = () => Promise<boolean>;
 const realBridgeProbe: BridgeProbe = async () => {
@@ -254,11 +254,11 @@ export function __setBridgeProbeForTests(fn: BridgeProbe | null): void {
 }
 
 /**
- * Soft bridge into SPEC-1 (V292): for each misconduct/red-card incident that
+ * Soft bridge into SPEC-1 (V293): for each misconduct/red-card incident that
  * names a person, raise a *pending* suspension the organiser confirms/adjusts.
  * Guarded so it ships dark: (1) the org must have discipline.enforced, (2) the
  * suspensions table must exist at all (to_regclass probe). Idempotent under the
- * V293 suspensions_report_once partial index — rule_key = report:<foId>,
+ * V294 suspensions_report_once partial index — rule_key = report:<foId>,
  * bucket = incident index. Never auto-confirms; never blocks the submit.
  */
 async function bridgeReportSuspensions(a: ReportAssignment, incidents: ReportIncident[]): Promise<void> {

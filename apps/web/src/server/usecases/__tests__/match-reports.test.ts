@@ -230,7 +230,7 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
   });
 
   it("bridges a named red card into a pending report-suspension (SPEC-1)", async () => {
-    const ctx = await seedOrg("pro"); // pro → discipline.enforced true (V292)
+    const ctx = await seedOrg("pro"); // pro → discipline.enforced true (V293)
     const ref = await makeClaimedOfficial(ctx);
     const player = await makePlayer(ctx);
     const { fixtureOfficialId } = await makeAssignment(ctx, ref.officialId);
@@ -288,7 +288,7 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
       incidents: [{ kind: "red_card", person_id: player, note: "sent off" }],
     });
 
-    // Simulate the pre-V292 world where the SPEC-1 table doesn't exist yet: the
+    // Simulate the pre-V293 world where the SPEC-1 table doesn't exist yet: the
     // bridge's existence probe reports absent. Injected via the module seam so
     // we never rename the shared `suspensions` table — a rename would flake a
     // thread-parallel discipline.test.ts run against the one local DB. Restore

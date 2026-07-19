@@ -19,7 +19,7 @@ export type OfficiatingResponse = "pending" | "accepted" | "declined";
 export interface MyOfficiatingAssignment {
   fixture_id: string;
   fixture_no: number;
-  /** Surrogate id of the fixture_officials assignment row (V293). The match
+  /** Surrogate id of the fixture_officials assignment row (V294). The match
    *  report endpoints key on this single uuid — the lane's report CTA needs it
    *  per completed assignment (a fixture can carry several officials). */
   fixture_official_id: string;
