@@ -1,7 +1,10 @@
 {
-  "board.ai.button": "AI schedule",
+  "board.ai.button": "AI Schedule",
   "board.ai.buttonTitle": "Plan, refine or repair the schedule with AI",
-  "board.ai.title": "AI schedule",
+  "board.ai.title": "AI Schedule",
+  "board.ai.beta": "Beta",
+  "board.ai.disclaimer": "AI can make mistakes — review the proposal before you apply it.",
+  "board.ai.runsLeft": "{left} of {max} AI generations left for this division",
   "board.ai.close": "Close",
   "board.ai.subtitle": "Describe the schedule you want. The engine checks every proposal before anything changes.",
   "board.ai.stepperAria": "AI console steps",

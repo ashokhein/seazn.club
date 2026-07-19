@@ -170,7 +170,7 @@ export function AiLastRun({
   last,
   onReuse,
 }: {
-  last: NonNullable<AiLastResult>;
+  last: NonNullable<AiLastResult["last"]>;
   onReuse: (instruction: string) => void;
 }) {
   const msg = useMsg();

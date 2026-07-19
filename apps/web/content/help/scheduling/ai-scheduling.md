@@ -27,6 +27,8 @@ The architect only ever sees this division's own scheduling picture, assembled i
 
 It cannot see another organisation's schedule, roster or results — only that a slot is taken.
 
+Your data stays yours: the brief is sent to our AI provider (Anthropic) only to produce the proposal, and it is **not used to train AI models**. Nothing beyond this division's scheduling brief ever leaves seazn.club — never your whole account, member emails or billing details.
+
 ## Generate, refine, repair
 
 - **Generate** builds a fresh timetable from your instruction.

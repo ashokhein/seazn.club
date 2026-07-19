@@ -205,7 +205,7 @@ export function AiConsole({
   // name resolution, and the "{official} only …" wish picker all read it. Kept
   // out of the board's initial payload; fetched once on open (gap 15).
   const [roster, setRoster] = useState<OfficialsRosterEntry[] | null>(null);
-  const [lastRun, setLastRun] = useState<AiLastResult>(null);
+  const [lastRun, setLastRun] = useState<AiLastResult | null>(null);
   // The division's current full scheduling config (incl. constraints, which the
   // board's slimmer settings prop drops) — the apply step needs it to overlay the
   // ticked rule suggestions and PUT the whole config back (§7). Fetched once here
@@ -661,6 +661,9 @@ export function AiConsole({
         <div className="flex items-center gap-2">
           <span aria-hidden className="text-lg leading-none">✦</span>
           <h2 className="text-sm font-semibold tracking-tight">{msg("board.ai.title")}</h2>
+          <span className="rounded-full bg-white/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide">
+            {msg("board.ai.beta")}
+          </span>
           <PlanBadge feature="scheduling.ai" />
           <button
             type="button"
@@ -675,6 +678,9 @@ export function AiConsole({
       </div>
 
       <div className="p-4">{body}</div>
+      <p className="sticky bottom-0 border-t border-slate-100 bg-white/95 px-4 py-2 text-[11px] text-slate-500 backdrop-blur-sm">
+        {msg("board.ai.disclaimer")}
+      </p>
     </aside>
   );
 }
@@ -774,7 +780,7 @@ function BriefStep({
   wishes: Wish[];
   onWishes: (next: Wish[]) => void;
   onFill: (value: string) => void;
-  lastRun: AiLastResult;
+  lastRun: AiLastResult | null;
 }) {
   const tooShort = state.instruction.trim().length < 3;
   const runLabel = msg(`board.ai.run.${state.mode}` as MessageKey);
@@ -812,8 +818,23 @@ function BriefStep({
         </p>
       )}
 
+      {/* Generation budget — the same count the ai-plan quota gate enforces,
+          so the number here never disagrees with a 402. Hidden when unlimited. */}
+      {lastRun && lastRun.runs.max !== null && (
+        <p
+          className={`text-[11px] ${
+            lastRun.runs.max - lastRun.runs.used <= 3 ? "font-medium text-amber-600" : "text-slate-500"
+          }`}
+        >
+          {msg("board.ai.runsLeft", {
+            left: Math.max(0, lastRun.runs.max - lastRun.runs.used),
+            max: lastRun.runs.max,
+          })}
+        </p>
+      )}
+
       {/* Last AI run — one tap refills the textarea (design/v4/03 §4). */}
-      {lastRun && <AiLastRun last={lastRun} onReuse={onFill} />}
+      {lastRun?.last && <AiLastRun last={lastRun.last} onReuse={onFill} />}
 
       {/* Wish chips compile into the instruction below. */}
       <AiWishChips wishes={wishes} onChange={onWishes} entrants={brief.entrants} courts={brief.courts} />

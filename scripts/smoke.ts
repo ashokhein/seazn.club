@@ -2576,9 +2576,17 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       );
 
       const last = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-last`);
+      const lastData = v1data<{
+        last?: { instruction?: string } | null;
+        runs?: { used?: number; max?: number | null };
+      }>(last);
       check(
         "v4 AI/plus: ai-last recalls the applied instruction",
-        last.status === 200 && v1data<{ instruction?: string } | null>(last)?.instruction === instruction,
+        last.status === 200 && lastData?.last?.instruction === instruction,
+      );
+      check(
+        "v4 AI/plus: ai-last reports the generation budget (1 used of pro_plus 50)",
+        lastData?.runs?.used === 1 && lastData?.runs?.max === 50,
       );
 
       const offRes = await v1(plus, `/api/v1/divisions/${divId}/officials/ai-plan`, "POST", {
