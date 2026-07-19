@@ -1149,7 +1149,7 @@ export async function aiPlanForDivision(
   }
 
   // Record this generation against the per-division cap counted above (owner
-  // 2026-07-18). Append-only audit; org_id is set by the trg_set_org trigger.
+  // 2026-07-18). Append-only audit; org_id is set explicitly by the insert below.
   const cost_usd = aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
   await withTenant(auth.orgId, async (tx) => {
     await tx`
