@@ -198,6 +198,7 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "DELETE /orgs/:id/api-keys/:keyId",
   "GET /orgs/:id/connect",
   "POST /orgs/:id/connect",
+  "POST /orgs/:id/connect/dashboard",
   // Sponsor CRM (v10): org-branding surface, console-only like api-keys.
   "GET /orgs/:id/sponsors",
   "POST /orgs/:id/sponsors",
