@@ -77,9 +77,10 @@ export default async function MePage({
       <DictProvider dict={ui} locale={locale}>
       <header className="app-gantry">
         <div className="mx-auto flex max-w-3xl items-center gap-3 px-4 py-3">
-          <span className="app-display text-base font-bold leading-none text-cream">
-            Seazn <span className="text-lime-400">Club</span>
-          </span>
+          {/* Same brand mark as the console gantry (nav.tsx) — the player
+              home is the same product, not a text-only cousin. */}
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo-wide-night.png" alt="Seazn Club" className="h-7 w-auto" />
           <span className="text-sm text-cream/60">{t(ui, "me.eyebrow")}</span>
           <div className="flex-1" />
           {activeOrg && (
@@ -103,7 +104,9 @@ export default async function MePage({
         )}
         <h1 className="page-title mb-6">{t(ui, "me.title")}</h1>
 
-        <RunYourOwnCta label={t(ui, "me.runYourOwn.title")} cta={t(ui, "me.runYourOwn.cta")} />
+        {orgs.length === 0 && (
+          <RunYourOwnCta label={t(ui, "me.runYourOwn.title")} cta={t(ui, "me.runYourOwn.cta")} />
+        )}
 
         {!officiating.is_official &&
           pendingOfficiatingClaims.length === 0 &&
@@ -333,13 +336,16 @@ export default async function MePage({
         {persons.length > 0 && <ConsentCard persons={persons} />}
 
         {/* Growth seam (PROMPT-53): every claimed player is a future
-            organiser. Quiet, last, and only when they run nothing yet. */}
-        <p className="mt-10 text-center text-xs text-slate-400">
-          {t(ui, "me.growth.q")}{" "}
-          <Link href="/orgs/new" className="text-purple-600 hover:underline">
-            {t(ui, "me.growth.cta")}
-          </Link>
-        </p>
+            organiser. Quiet, last, and only when they run nothing yet — the
+            comment always said so; the orgs gate now actually enforces it. */}
+        {orgs.length === 0 && (
+          <p className="mt-10 text-center text-xs text-slate-400">
+            {t(ui, "me.growth.q")}{" "}
+            <Link href="/orgs/new" className="text-purple-600 hover:underline">
+              {t(ui, "me.growth.cta")}
+            </Link>
+          </p>
+        )}
       </main>
       </DictProvider>
     </ViewerTzProvider>

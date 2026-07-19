@@ -245,4 +245,15 @@ test.describe("player accounts (PROMPT-53)", () => {
     // The unclaimed control never appeared at any point.
     expect((await request.get(cardUrl(ben.id))).status()).toBe(404);
   });
+
+  test("growth nudge: claimed player sees run-your-own; organiser does not", async ({ page }) => {
+    // Ada is player-only (claim never hands out a default org) → the PLG
+    // night ribbon shows. The organiser session has an org → both nudges
+    // (ribbon + footer "create an organisation" line) stay hidden.
+    await playerPage.goto("/me");
+    await expect(playerPage.getByTestId("run-your-own")).toBeVisible();
+    await page.goto("/me");
+    await expect(page.getByTestId("run-your-own")).toHaveCount(0);
+    await expect(page.locator('a[href="/orgs/new"]')).toHaveCount(0);
+  });
 });
