@@ -303,7 +303,7 @@ test.describe("community quota", () => {
 
       await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
       await openConsole(page);
-      // The community org CAN open the wizard (V297 grants scheduling.ai) …
+      // The community org CAN open the wizard (V302 grants scheduling.ai) …
       await page.locator("#ai-instruction").fill("Spread the matches across the day.");
       await page.getByRole("button", { name: "Generate schedule" }).click();
 

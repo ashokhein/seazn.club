@@ -1,4 +1,4 @@
--- V296: AI Schedule Architect (v4/03 §4) — fixtures placed by the AI accept
+-- V301: AI Schedule Architect (v4/03 §4) — fixtures placed by the AI accept
 -- flow carry schedule_source='ai' so the ledger and analytics can tell AI
 -- applies from auto/manual ones.
 alter table fixtures drop constraint if exists fixtures_schedule_source_check;

@@ -189,7 +189,7 @@ async function seedRuns(auth: AuthCtx, divisionId: string, n: number): Promise<v
     from generate_series(1, ${n})`;
 }
 
-describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V297)", () => {
+describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () => {
   it("free (community) org gets 5 runs/division — 5th works, 6th is 402 on the cap key", async () => {
     const { auth } = await seedOrg("community");
     const { divisionId, fixtureIds } = await seedPlannable(auth);
@@ -203,7 +203,7 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V297)", () 
     expect(parse).toHaveBeenCalledTimes(1); // over-quota never reaches the LLM
   });
 
-  it("Pro is capped at 20 runs/division; real runs record events, the 21st is 402 (V297)", async () => {
+  it("Pro is capped at 20 runs/division; real runs record events, the 21st is 402 (V302)", async () => {
     const { auth } = await seedOrg("pro");
     const { divisionId, fixtureIds } = await seedPlannable(auth);
     parse.mockResolvedValue(planResponse(legalPlan(fixtureIds)));
@@ -267,7 +267,7 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V297)", () 
     expect(n).toBe(1);
   });
 
-  it("Pro Plus is capped at 50 runs/division (V297 — no longer unlimited)", async () => {
+  it("Pro Plus is capped at 50 runs/division (V302 — no longer unlimited)", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedPlannable(auth);
     await seedRuns(auth, divisionId, 49);
@@ -280,7 +280,7 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V297)", () 
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
-  it("an Event Pass lifts a free org's quota to 10 for the passed competition (V297)", async () => {
+  it("an Event Pass lifts a free org's quota to 10 for the passed competition (V302)", async () => {
     const { auth } = await seedOrg("community");
     const { divisionId, fixtureIds } = await seedPlannable(auth);
     const [{ competition_id }] = await sql<{ competition_id: string }[]>`
@@ -303,7 +303,7 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V297)", () 
   it("org_entitlement_overrides lift the run cap beyond the plan quota (admin grant)", async () => {
     const { auth } = await seedOrg("community");
     const { divisionId, fixtureIds } = await seedPlannable(auth);
-    // Community's V297 quota is 5 — an admin override raises this org to 7.
+    // Community's V302 quota is 5 — an admin override raises this org to 7.
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value)
       values (${auth.orgId}, 'scheduling.ai.runs_per_division.max', 7)`;

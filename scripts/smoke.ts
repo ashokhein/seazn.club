@@ -804,10 +804,10 @@ async function smokePlanMatrix(): Promise<void> {
     "matrix/community: exports.branded denies",
     commEnt.entitlements["exports.branded"]?.enabled === false,
   );
-  // V297: the AI Schedule Architect is granted on EVERY plan; only the
+  // V302: the AI Schedule Architect is granted on EVERY plan; only the
   // per-division generation quota is graded (community 5).
   check(
-    "matrix/community: scheduling.ai is granted on every plan (V297)",
+    "matrix/community: scheduling.ai is granted on every plan (V302)",
     commEnt.entitlements["scheduling.ai"]?.enabled === true,
   );
   check(
@@ -877,7 +877,7 @@ async function smokePlanMatrix(): Promise<void> {
     proEnt.entitlements["scheduling.ai"]?.enabled === true,
   );
   check(
-    "matrix/pro: scheduling.ai.runs_per_division.max resolves 20 (V297)",
+    "matrix/pro: scheduling.ai.runs_per_division.max resolves 20 (V302)",
     proEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 20,
   );
   check(
@@ -909,7 +909,7 @@ async function smokePlanMatrix(): Promise<void> {
   const plusEnt = await readEnt(plus, plusOrg);
   check("matrix/pro_plus: org resolves the pro_plus plan", plusEnt.plan_key === "pro_plus");
   check(
-    "matrix/pro_plus: scheduling.ai.runs_per_division.max resolves 50 (V297)",
+    "matrix/pro_plus: scheduling.ai.runs_per_division.max resolves 50 (V302)",
     plusEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 50,
   );
   check(
