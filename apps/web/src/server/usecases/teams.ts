@@ -30,20 +30,25 @@ export interface TeamListRow {
   /** Most recently created entrant for this team, across all divisions — the
    *  default roster source when enrolling the team into a new division. */
   latest_entrant_id: string | null;
+  /** Current persistent-squad size — the enroll form's "N players will be
+   *  copied" preview (an empty squad silently seeds an empty roster). */
+  squad_count: number;
 }
 
 export async function listTeams(auth: AuthCtx): Promise<TeamListRow[]> {
   // team_display_v is a plain (non-security_invoker) view, so it does NOT
   // inherit the caller's RLS on `teams` — filter by org_id explicitly or it
-  // leaks every org's teams. The entrants subquery reads `entrants` directly,
-  // which IS RLS-scoped under withTenant.
+  // leaks every org's teams. The entrants/team_members subqueries read their
+  // tables directly, which ARE RLS-scoped under withTenant.
   return withTenant(auth.orgId, (tx) => tx<TeamListRow[]>`
     select v.team_id as id, v.name, v.short_name, v.club_id,
            v.club_name, v.club_short_name, v.logo_path,
            (select e.id from entrants e
              where e.team_id = v.team_id
              order by e.created_at desc, e.id desc
-             limit 1) as latest_entrant_id
+             limit 1) as latest_entrant_id,
+           (select count(*)::int from team_members tm
+             where tm.team_id = v.team_id) as squad_count
     from team_display_v v
     where v.org_id = ${auth.orgId}
     order by v.name, v.team_id`);
