@@ -2106,6 +2106,8 @@
   "news.edit": "Bewerken",
   "news.delete": "Verwijderen",
   "news.archive": "Archiveren",
+  "news.archived": "Gearchiveerd ({count})",
+  "news.republish": "Opnieuw publiceren",
   "news.viewPublic": "Openbare pagina bekijken",
   "news.actionFailed": "Er ging iets mis. Probeer opnieuw.",
   "news.kind.news": "Clubnieuws",

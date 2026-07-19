@@ -36,6 +36,10 @@ Publishing stamps the post live and **locks its URL**. After that first publish 
 
 Every published post has an **OG image** (the preview that appears when you paste the link into WhatsApp or a group chat) and, for result posts, a **Download image card** button — a portrait 1080×1350 PNG sized for an Instagram/WhatsApp story. Download it and post it yourself: no account linking, no permissions to grant.
 
+## Archiving
+
+**Archive** (the box icon next to a published post) takes a post off the public feed — its page returns "not found" until you bring it back. Nothing is deleted: archived posts live under **Archived (N)** at the bottom of the News tab (click to expand). From there, **Republish** puts a post back live at the **same URL** (the link was frozen at first publish), or delete it for good.
+
 ## Common questions
 
 **Do I need Pro to publish news?** No — writing and publishing posts is free. Only the automatic drafting of results is a Pro feature.
@@ -43,3 +47,5 @@ Every published post has an **OG image** (the preview that appears when you past
 **Will it post to Facebook/Instagram for me?** No. We give you the image card to post yourself — see [growing your club](/help/sharing/grow-your-club) for the wider share loop.
 
 **Can I schedule a post for later?** Not yet — publish is immediate.
+
+**Where do archived posts go?** Into the collapsed **Archived (N)** list at the bottom of Settings → News. They're hidden from the public feed and their pages 404 until you republish.

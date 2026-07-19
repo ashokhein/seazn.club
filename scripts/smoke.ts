@@ -1675,6 +1675,29 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
     story.status === 200 && (story.headers.get("content-type") ?? "").includes("image/png"),
   );
 
+  // Archive round-trip: off the public page, kept in ?status=archived, and
+  // republish restores the same frozen slug (console Archived disclosure).
+  const arch = await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", { action: "archive" });
+  check(
+    "news pro: publish\u2192archive flips status",
+    arch.status === 200 && v1data<{ status: string }>(arch).status === "archived",
+  );
+  const gonePage = await html(newSession(), `/shared/${proOrgSlug}/news/${pubData.slug}`);
+  check("news pro: archived post page 404s publicly", gonePage.status === 404);
+  const archList = v1data<{ id: string }[]>(
+    await v1(admin, `/api/v1/orgs/${proOrgId}/posts?status=archived`),
+  );
+  check("news pro: ?status=archived lists it", archList.some((x) => x.id === auto!.id));
+  const repub = v1data<{ status: string; slug: string }>(
+    await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", { action: "publish" }),
+  );
+  check(
+    "news pro: republish restores published at the frozen slug",
+    repub.status === "published" && repub.slug === pubData.slug,
+  );
+  const backPage = await html(newSession(), `/shared/${proOrgSlug}/news/${pubData.slug}`);
+  check("news pro: republished page 200 again", backPage.status === 200);
+
   // ---- Free path (fresh community owner) ----
   const commOwner = newSession();
   await signIn(commOwner, `newscomm_${tag}@example.com`);
