@@ -16,12 +16,20 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
-import type { AiPlanRequest, AiPlanResponse, AiLastResult } from "@/server/api-v1/schemas";
+import type {
+  AiPlanRequest,
+  AiPlanResponse,
+  AiOfficialsPlanRequest,
+  AiOfficialsPlanResponse,
+  AiLastResult,
+} from "@/server/api-v1/schemas";
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
 import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
+import { compileOfficialsWishes, type OfficialsWish } from "./officials-wish-compile";
 import { AiTrace, type TraceEvent } from "./ai-trace";
 import { AiDiffPanel } from "./ai-diff-panel";
+import { AiOfficialsReview, type OfficialsRosterEntry } from "./ai-officials-review";
 import type { AiConsoleFixture } from "./ai-diff";
 import {
   aiConsoleReducer,
@@ -76,6 +84,20 @@ export function useAiSchedulingEnabled(): boolean {
 }
 
 const STEPS: AiStep[] = ["brief", "schedule", "officials", "apply"];
+
+/** The officials policy the console runs Phase B with when the division has no
+ *  saved one (none is persisted today — see the `officialsPolicy` prop). Mirrors
+ *  the officials panel's auto-assign defaults ({ roles: ["referee"], … }) so the
+ *  free solver draft matches what an organiser gets from that panel. */
+const DEFAULT_OFFICIALS_POLICY: NonNullable<AiPlanRequest["officials_policy"]> = {
+  roles: ["referee"],
+  poolLock: false,
+  blockStay: true,
+  fairness: "tournament",
+  teamRefKeepDivision: false,
+  restMinMinutes: 0,
+  blockGapMinutes: 30,
+};
 
 /** A step is "done" (teal) once it has produced its artifact. */
 function stepDone(state: AiConsoleState, step: AiStep): boolean {
@@ -137,15 +159,21 @@ export function AiConsole({
   // Chip wishes live at the console level so they survive step navigation; the
   // instruction is always compileWishes(wishes) + preserved free text.
   const [wishes, setWishes] = useState<Wish[]>([]);
+  // Phase B (officials) wishes — a separate list so switching steps never mixes
+  // the two phases' chips.
+  const [officialsWishes, setOfficialsWishes] = useState<OfficialsWish[]>([]);
   // Fetched once on open (design/v4/03): officials roster size (pre-flight) and
   // the last AI-sourced apply (recall strip). Neither bloats the board payload.
-  const [rosterCount, setRosterCount] = useState<number | null>(null);
+  // Full roster (id + display name) — the pre-flight count, the officials-grid
+  // name resolution, and the "{official} only …" wish picker all read it. Kept
+  // out of the board's initial payload; fetched once on open (gap 15).
+  const [roster, setRoster] = useState<OfficialsRosterEntry[] | null>(null);
   const [lastRun, setLastRun] = useState<AiLastResult>(null);
   useEffect(() => {
     let cancelled = false;
-    apiV1<{ id: string }[]>("/api/v1/officials")
-      .then((r) => !cancelled && setRosterCount(r.length))
-      .catch(() => !cancelled && setRosterCount(0));
+    apiV1<{ id: string; display_name: string; role_keys: string[] }[]>("/api/v1/officials")
+      .then((r) => !cancelled && setRoster(r.map((o) => ({ id: o.id, name: o.display_name }))))
+      .catch(() => !cancelled && setRoster([]));
     apiV1<AiLastResult>(`/api/v1/divisions/${divisionId}/schedule/ai-last`)
       .then((r) => !cancelled && setLastRun(r))
       .catch(() => {});
@@ -153,6 +181,7 @@ export function AiConsole({
       cancelled = true;
     };
   }, [divisionId]);
+  const rosterCount = roster?.length ?? null;
 
   // Chips ↔ instruction: re-derive the compiled prefix, keep the free text.
   const applyWishes = useCallback(
@@ -170,6 +199,21 @@ export function AiConsole({
     dispatch({ type: "SET_INSTRUCTION", value });
   }, []);
 
+  // Officials chips ↔ officials instruction — same derive-prefix pattern, on the
+  // separate officialsInstruction field.
+  const applyOfficialsWishes = useCallback(
+    (next: OfficialsWish[]) => {
+      const free = deriveFreeText(state.officialsInstruction, compileOfficialsWishes(officialsWishes));
+      setOfficialsWishes(next);
+      dispatch({
+        type: "SET_INSTRUCTION",
+        officials: true,
+        value: joinNonEmpty(compileOfficialsWishes(next), free),
+      });
+    },
+    [state.officialsInstruction, officialsWishes],
+  );
+
   const preflight: PreflightInput = {
     divisionId,
     courts: brief.courts.length,
@@ -186,6 +230,12 @@ export function AiConsole({
   // Instruction that produced the on-screen proposal — lets a refine turn send
   // the right `prior.instruction` when it round-trips the previous assignments.
   const priorInstruction = useRef("");
+  // Phase B equivalents: the instruction behind the current officials proposal,
+  // and whether that proposal was produced with a prior (so the grid knows when
+  // `diff.changed` means "changed vs prior" — a first draft has none).
+  const priorOfficialsInstruction = useRef("");
+  const officialsHadPrior = useRef(false);
+  const officialsAutoStarted = useRef(false);
   // Cancel any in-flight run on close/unmount (the board conditionally renders
   // the dock, so unmount cleanup covers close too) — its rejection is ignored.
   const abortRef = useRef<AbortController | null>(null);
@@ -209,6 +259,7 @@ export function AiConsole({
   useEffect(() => () => onProposalRef.current?.(null), []);
   // A fresh animation per run — increments so AiTrace remounts and replays.
   const [traceNonce, setTraceNonce] = useState(0);
+  const [officialsTraceNonce, setOfficialsTraceNonce] = useState(0);
 
   const run = useCallback(async () => {
     const instruction = state.instruction.trim();
@@ -255,6 +306,69 @@ export function AiConsole({
     }
   }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.scope, state.schedulePlan]);
 
+  // Phase B run. Empty instruction + no prior = the zero-token solver draft (the
+  // auto-run on first entry); a non-empty instruction plans with the LLM; a
+  // `prior` refines / round-trips the previous (or a locally patched) proposal.
+  // It sends the Phase A proposal's dry-run times as `schedule` so officials are
+  // assigned over the *proposed* board — ai-plan's own empty-instruction path is
+  // the zero-token solver (usecase runOfficialsAiPlan), and unlike the free
+  // /officials/auto route it accepts those times and covers newly placed fixtures.
+  const runOfficials = useCallback(
+    async (opts: { instruction: string; priorAssignments?: AiOfficialsPlanResponse["assignments"] }) => {
+      if (busy || !state.schedulePlan) return;
+      abortRef.current?.abort();
+      const ac = new AbortController();
+      abortRef.current = ac;
+      setOfficialsTraceNonce((n) => n + 1);
+      officialsHadPrior.current = Boolean(opts.priorAssignments);
+      dispatch({ type: "RUN_START" });
+      const schedule = state.schedulePlan.proposal.map((p) => ({
+        fixture_id: p.fixture_id,
+        scheduled_at: p.scheduled_at,
+        court_label: p.court_label,
+      }));
+      const officialsBody: AiOfficialsPlanRequest = {
+        instruction: opts.instruction,
+        ...(schedule.length > 0 ? { schedule } : {}),
+        policy: officialsPolicy ?? DEFAULT_OFFICIALS_POLICY,
+        ...(opts.priorAssignments
+          ? { prior: { instruction: priorOfficialsInstruction.current, assignments: opts.priorAssignments } }
+          : {}),
+      };
+      try {
+        const plan = await apiV1<AiOfficialsPlanResponse>(
+          `/api/v1/divisions/${divisionId}/officials/ai-plan`,
+          { method: "POST", json: officialsBody, signal: ac.signal },
+        );
+        priorOfficialsInstruction.current = opts.instruction;
+        dispatch({ type: "OFFICIALS_DONE", plan });
+      } catch (err) {
+        if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+        const status = err instanceof ApiV1Error ? err.status : 0;
+        const code = err instanceof ApiV1Error ? err.code : undefined;
+        dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, code)) } });
+      }
+    },
+    [busy, divisionId, msg, officialsPolicy, state.schedulePlan],
+  );
+
+  // Auto-run the free solver draft the first time the organiser reaches the
+  // officials step so it is never blank (design/v4/03 §3). Fires once per open;
+  // refines are manual. On error the plan stays null and the ref stays set, so
+  // it never retries in a loop — the inline error offers Re-plan.
+  useEffect(() => {
+    if (
+      state.step === "officials" &&
+      state.officialsPlan === null &&
+      state.schedulePlan !== null &&
+      !officialsAutoStarted.current &&
+      !busy
+    ) {
+      officialsAutoStarted.current = true;
+      void runOfficials({ instruction: "" });
+    }
+  }, [state.step, state.officialsPlan, state.schedulePlan, busy, runOfficials]);
+
   const body = aiAllowed ? (
     <div className="space-y-4">
       <Stepper state={state} onGoto={(step) => dispatch({ type: "GOTO_STEP", step })} msg={msg} />
@@ -285,7 +399,35 @@ export function AiConsole({
           onPulse={(ids) => onPulseRef.current?.(ids)}
         />
       )}
-      {state.step === "officials" && <OfficialsStep dispatch={dispatch} msg={msg} />}
+      {state.step === "officials" && (
+        <OfficialsStep
+          state={state}
+          dispatch={dispatch}
+          fixtures={fixtures}
+          roster={roster ?? []}
+          policyRoles={(officialsPolicy ?? DEFAULT_OFFICIALS_POLICY).roles}
+          hadPrior={officialsHadPrior.current}
+          busy={busy}
+          traceNonce={officialsTraceNonce}
+          wishes={officialsWishes}
+          onWishes={applyOfficialsWishes}
+          onReplan={() =>
+            runOfficials({
+              instruction: state.officialsInstruction.trim(),
+              priorAssignments: state.officialsPlan?.assignments,
+            })
+          }
+          onAdopt={(fixtureId, roleKey, candidateId) => {
+            const cur = state.officialsPlan?.assignments ?? [];
+            const patched = [
+              ...cur.filter((a) => !(a.fixtureId === fixtureId && a.roleKey === roleKey)),
+              { fixtureId, officialId: candidateId, roleKey, locked: false },
+            ];
+            void runOfficials({ instruction: priorOfficialsInstruction.current, priorAssignments: patched });
+          }}
+          onPulse={(ids) => onPulseRef.current?.(ids)}
+        />
+      )}
       {state.step === "apply" && (
         <ApplyStep state={state} dispatch={dispatch} onApplied={onApplied} msg={msg} />
       )}
@@ -666,23 +808,65 @@ function ScheduleStep({
 }
 
 // ---------------------------------------------------------- officials step
-// Shell placeholder — the officials proposal UI is a later task (12–16). It is
-// only reachable once a schedule plan exists (reducer-gated).
+// Phase B — the officials review grid (design/v4/03 §3). Reachable only once a
+// schedule plan exists (reducer-gated); the auto-run in the parent fills it with
+// the free solver draft on first entry. The proposal's dry-run placements power
+// the grid's times so it reads consistently with the schedule step.
 function OfficialsStep({
+  state,
   dispatch,
-  msg,
+  fixtures,
+  roster,
+  policyRoles,
+  hadPrior,
+  busy,
+  traceNonce,
+  wishes,
+  onWishes,
+  onReplan,
+  onAdopt,
+  onPulse,
 }: {
+  state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
-  msg: ReturnType<typeof useMsg>;
+  fixtures: AiConsoleFixture[];
+  roster: OfficialsRosterEntry[];
+  policyRoles: string[];
+  hadPrior: boolean;
+  busy: boolean;
+  traceNonce: number;
+  wishes: OfficialsWish[];
+  onWishes: (next: OfficialsWish[]) => void;
+  onReplan: () => void;
+  onAdopt: (fixtureId: string, roleKey: string, candidateId: string) => void;
+  onPulse: (ids: string[]) => void;
 }) {
+  const placements = (state.schedulePlan?.proposal ?? []).map((p) => ({
+    fixture_id: p.fixture_id,
+    scheduled_at: p.scheduled_at,
+    court_label: p.court_label,
+  }));
   return (
-    <div className="space-y-3">
-      <p className="text-sm text-slate-700">{msg("board.ai.officials.lead")}</p>
-      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-3 py-6 text-center text-xs text-slate-500">
-        {msg("board.ai.officials.hint")}
-      </div>
-      <BackToSchedule dispatch={dispatch} msg={msg} />
-    </div>
+    <AiOfficialsReview
+      plan={state.officialsPlan}
+      placements={placements}
+      fixtures={fixtures}
+      roster={roster}
+      roles={policyRoles}
+      hasPrior={hadPrior}
+      busy={busy}
+      traceNonce={traceNonce}
+      error={state.run === "error" ? state.error : null}
+      instruction={state.officialsInstruction}
+      onInstruction={(v) => dispatch({ type: "SET_INSTRUCTION", officials: true, value: v })}
+      wishes={wishes}
+      onWishes={onWishes}
+      onReplan={onReplan}
+      onAdopt={onAdopt}
+      onBack={() => dispatch({ type: "GOTO_STEP", step: "schedule" })}
+      onContinue={() => dispatch({ type: "GOTO_STEP", step: "apply" })}
+      onPulse={onPulse}
+    />
   );
 }
 
