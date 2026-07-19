@@ -2734,12 +2734,17 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
     "sp click 302s to the sponsor url",
     click.status === 302 && (click.location ?? "").startsWith("https://goldco.example"),
   );
-  const afterClick = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`);
-  check(
-    "sp click_count incremented",
-    v1data<{ id: string; click_count: number }[]>(afterClick).find((s) => s.id === goldId)
-      ?.click_count === 1,
-  );
+  // The bump is deferred() tail work — it lands after the 302 by design, so
+  // poll briefly instead of racing it (CI runners lose the instant read).
+  let clicked = false;
+  for (let i = 0; i < 10 && !clicked; i++) {
+    const afterClick = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`);
+    clicked =
+      v1data<{ id: string; click_count: number }[]>(afterClick).find((s) => s.id === goldId)
+        ?.click_count === 1;
+    if (!clicked) await new Promise((r) => setTimeout(r, 300));
+  }
+  check("sp click_count incremented", clicked);
 
   // --- Monetization: package + order-first Connect checkout.
   const pkgRes = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-packages`, "POST", {
