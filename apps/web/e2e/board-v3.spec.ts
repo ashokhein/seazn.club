@@ -321,25 +321,34 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
       await dialog.locator("input[type=datetime-local]").fill(when);
       await dialog.getByRole("button", { name: "Move", exact: true }).click();
     };
-    const moveAndAwait = (p: Page, when: string, wantStatus: (s: number) => boolean) =>
-      Promise.all([
+    // Wait for the move's PATCH — whatever its status — then assert on it, so
+    // a CI failure names the actual HTTP status + body instead of timing out
+    // inside a status-filtered waitForResponse that silently ignores the real
+    // answer (the previous shape of this fix hid a non-2xx from client A).
+    const moveAndAwait = async (p: Page, when: string, want: "committed" | "seq-conflict") => {
+      const [res] = await Promise.all([
         p.waitForResponse(
           (r) =>
-            /\/api\/v1\/fixtures\/[0-9a-f-]+$/.test(r.url()) &&
-            r.request().method() === "PATCH" &&
-            wantStatus(r.status()),
+            /\/api\/v1\/fixtures\/[0-9a-f-]+$/.test(r.url()) && r.request().method() === "PATCH",
           { timeout: 20_000 },
         ),
         move(p, when),
       ]);
+      const status = res.status();
+      const ok = want === "committed" ? status >= 200 && status < 300 : status === 409;
+      if (!ok) {
+        const body = await res.text().catch(() => "<unreadable>");
+        throw new Error(`move expected ${want}, got HTTP ${status}: ${body.slice(0, 300)}`);
+      }
+    };
 
     // A's move must COMMIT (2xx) before B writes, so B is provably stale.
-    await moveAndAwait(page, "2026-09-16T18:00", (s) => s >= 200 && s < 300);
+    await moveAndAwait(page, "2026-09-16T18:00", "committed");
     // A's own board refreshes without complaint.
     await expect(page.getByText("Schedule changed by someone else")).toHaveCount(0);
 
     // Client B still holds the pre-move seq: its write must 409 → toast.
-    await moveAndAwait(pageB, "2026-09-16T19:00", (s) => s === 409);
+    await moveAndAwait(pageB, "2026-09-16T19:00", "seq-conflict");
     await expect(pageB.getByText("Schedule changed by someone else — board refreshed.")).toBeVisible(
       { timeout: 15_000 },
     );
