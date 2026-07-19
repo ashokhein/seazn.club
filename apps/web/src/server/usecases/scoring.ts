@@ -43,6 +43,37 @@ const SCORING_LIMIT = { max: 10, windowSeconds: 1 };
 
 const TABLE_KINDS = new Set(["league", "group", "swiss"]);
 
+const ENGINE_ID_RE = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** Engine rejections carry raw ids — the engine is pure and knows no names
+ *  ('scorer "9c87…" is not on the pitch for "7b94…"'). Swap person/entrant
+ *  UUIDs in the message for their display names before it reaches a scorer's
+ *  pad; the code and extra stay untouched so clients keep the machine part.
+ *  Best-effort: unknown ids stay as-is, and a lookup failure never masks the
+ *  original error. */
+export async function humanizeEngineMessage(orgId: string, message: string): Promise<string> {
+  const ids = [...new Set((message.match(ENGINE_ID_RE) ?? []).map((m) => m.toLowerCase()))];
+  if (ids.length === 0) return message;
+  try {
+    return await withTenant(orgId, async (tx) => {
+      const persons = await tx<{ id: string; full_name: string }[]>`
+        select id, full_name from persons where id = any(${ids}::uuid[])`;
+      const entrants = await tx<{ id: string; display_name: string }[]>`
+        select id, display_name from entrants where id = any(${ids}::uuid[])`;
+      let out = message;
+      for (const { id, full_name } of persons) {
+        out = out.replaceAll(`"${id}"`, full_name).replaceAll(id, full_name);
+      }
+      for (const { id, display_name } of entrants) {
+        out = out.replaceAll(`"${id}"`, display_name).replaceAll(id, display_name);
+      }
+      return out;
+    });
+  } catch {
+    return message;
+  }
+}
+
 /**
  * Append one score event. 201-shape on success; EngineError SEQ_CONFLICT →
  * 409 (v1 kernel maps it); module rejection → 422, nothing persisted.
@@ -63,18 +94,27 @@ export async function scoreEvent(
   await assertEntitledToScore(auth, fixtureId, input);
   if (input.type === "core.void") await assertUndoTarget(auth, fixtureId, input);
 
-  const result = await appendEvent(auth.orgId, fixtureId, input.expected_seq, {
-    type: input.type,
-    payload: input.payload,
-    // Device links: recorded_by = issued_by (auth.userId carries the issuer,
-    // doc 13 §7) + the device_link_id rider so the ledger distinguishes them.
-    recordedBy: auth.userId,
-    deviceLinkId: auth.deviceLinkId ?? null,
-    ...(input.type === "core.void" &&
-    typeof (input.payload as { event_id?: unknown })?.event_id === "string"
-      ? { voids: (input.payload as { event_id: string }).event_id }
-      : {}),
-  });
+  let result;
+  try {
+    result = await appendEvent(auth.orgId, fixtureId, input.expected_seq, {
+      type: input.type,
+      payload: input.payload,
+      // Device links: recorded_by = issued_by (auth.userId carries the issuer,
+      // doc 13 §7) + the device_link_id rider so the ledger distinguishes them.
+      recordedBy: auth.userId,
+      deviceLinkId: auth.deviceLinkId ?? null,
+      ...(input.type === "core.void" &&
+      typeof (input.payload as { event_id?: unknown })?.event_id === "string"
+        ? { voids: (input.payload as { event_id: string }).event_id }
+        : {}),
+    });
+  } catch (err) {
+    // SEQ_CONFLICT is the hot recovery path and carries no ids — skip it.
+    if (err instanceof EngineError && err.code !== "SEQ_CONFLICT") {
+      err.message = await humanizeEngineMessage(auth.orgId, err.message);
+    }
+    throw err;
+  }
 
   const out: ScoreOutcome = {
     seq: result.seq,
