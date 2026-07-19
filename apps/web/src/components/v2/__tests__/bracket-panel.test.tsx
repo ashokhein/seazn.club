@@ -89,3 +89,18 @@ describe("BracketPanel", () => {
     expect(html).toContain("<svg");
   });
 });
+
+describe("BracketPanel — stepladder", () => {
+  it("kind=stepladder renders the rung list with labels and fixture links", () => {
+    const rungs = [
+      FIX("r1", 1, 1, "e1", "e2", { kind: "win", winner: "e1" }, "decided", 1),
+      FIX("r2", 2, 1, "e1", "e3", null, "scheduled", 2),
+      FIX("r3", 3, 1, null, "e4", null, "scheduled", 3),
+    ];
+    const html = markup({ kind: "stepladder", fixtures: rungs as never });
+    expect(html).toContain('data-testid="bracket-panel-ladder"');
+    expect((html.match(/bracket\.rung/g) ?? []).length).toBe(3);
+    expect(html).toContain('href="/o/org/c/cup/d/open/f/2"');
+    expect(html).toContain("bracket.tbd"); // unresolved rung-3 slot
+  });
+});

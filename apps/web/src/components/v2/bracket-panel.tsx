@@ -30,6 +30,9 @@ interface FixtureLike {
 }
 
 interface Props {
+  /** Stage kind — stepladder gets the rung list; bracket shapes are detected
+   *  structurally from the fixtures. */
+  kind?: string;
   fixtures: FixtureLike[];
   entrantNames: Record<string, string>;
   /** entrant_id → resolved badge URL (PROMPT-60 resolver); null/absent = none. */
@@ -55,6 +58,7 @@ function colX(node: Pick<BracketNode, "side" | "col">, colsPerSide: number): num
 }
 
 export function BracketPanel({
+  kind,
   fixtures,
   entrantNames,
   entrantBadges,
@@ -64,6 +68,19 @@ export function BracketPanel({
   divSlug,
 }: Props) {
   const msg = useMsg();
+  if (kind === "stepladder") {
+    return (
+      <StepladderPanel
+        fixtures={fixtures}
+        entrantNames={entrantNames}
+        {...(entrantBadges === undefined ? {} : { entrantBadges })}
+        {...(headlines === undefined ? {} : { headlines })}
+        orgSlug={orgSlug}
+        compSlug={compSlug}
+        divSlug={divSlug}
+      />
+    );
+  }
   const result = twoSidedBracket(fixtures);
   // G8: double-elim divisions get the two-lane geometry instead of nothing.
   const de = result.ok ? null : doubleElimBracket(fixtures);
@@ -365,6 +382,92 @@ function DoubleElimPanel({
             );
           })}
         </div>
+      </div>
+    </section>
+  );
+}
+
+/** Stepladder — rung-by-rung list (the ladder IS the geometry): challenger
+ *  climbs bottom-up, each rung's winner feeds the next. Night-styled like
+ *  the bracket nodes; rung labels mirror the public view. */
+function StepladderPanel({
+  fixtures,
+  entrantNames,
+  entrantBadges,
+  headlines,
+  orgSlug,
+  compSlug,
+  divSlug,
+}: {
+  fixtures: FixtureLike[];
+  entrantNames: Record<string, string>;
+  entrantBadges?: Record<string, string | null>;
+  headlines?: Record<string, string>;
+  orgSlug: string;
+  compSlug: string;
+  divSlug: string;
+}) {
+  const msg = useMsg();
+  if (fixtures.length === 0) return null;
+  const rungs = [...fixtures].sort((a, b) => a.round_no - b.round_no);
+  const row = (f: FixtureLike, entrantId: string | null) => {
+    const winner = (f.outcome as { winner?: string } | null)?.winner ?? null;
+    const name = entrantId ? (entrantNames[entrantId] ?? entrantId) : null;
+    const badge = entrantId ? entrantBadges?.[entrantId] : null;
+    const isWinner = winner !== null && winner === entrantId;
+    const muted = winner !== null && winner !== entrantId;
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        {badge ? (
+          // eslint-disable-next-line @next/next/no-img-element -- tenant crest
+          <img src={badge} alt="" className="h-3.5 w-3.5 shrink-0 rounded-[3px] object-cover" />
+        ) : null}
+        <span
+          className={`truncate text-xs ${
+            name === null
+              ? "italic text-[color:var(--app-fg-muted,#94a3b8)]"
+              : isWinner
+                ? "font-semibold text-[color:var(--app-fg,#e2e8f0)]"
+                : muted
+                  ? "text-[color:var(--app-fg-muted,#94a3b8)]"
+                  : "text-[color:var(--app-fg,#e2e8f0)]"
+          }`}
+        >
+          {name ?? msg("bracket.tbd")}
+        </span>
+        {f.status === "in_play" && (
+          <span className="animate-live-pulse h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />
+        )}
+      </span>
+    );
+  };
+  return (
+    <section className="card overflow-hidden" data-testid="bracket-panel-ladder">
+      <header className="border-b border-slate-100 px-4 py-3">
+        <h3 className="text-sm font-semibold text-slate-800">{msg("bracket.title")}</h3>
+      </header>
+      <div className="space-y-3 bg-[color:var(--app-surface,#0f172a)] p-4">
+        {rungs.map((f, i) => (
+          <div key={f.id}>
+            <p className="mb-1 font-display text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--app-fg-muted,#94a3b8)]">
+              {msg("bracket.rung")} {i + 1}
+            </p>
+            <Link
+              href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
+              className="relative block max-w-md rounded-lg border border-[color:var(--app-hairline,#334155)] bg-[color:var(--app-card,#1e293b)] px-2.5 py-1.5 shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+            >
+              <span className="flex flex-col gap-0.5">
+                {row(f, f.home_entrant_id)}
+                {row(f, f.away_entrant_id)}
+              </span>
+              {headlines?.[f.id] !== undefined && (
+                <span className="absolute right-2 top-1.5 font-display text-[11px] tabular-nums text-[color:var(--app-fg-muted,#94a3b8)]">
+                  {headlines[f.id]}
+                </span>
+              )}
+            </Link>
+          </div>
+        ))}
       </div>
     </section>
   );

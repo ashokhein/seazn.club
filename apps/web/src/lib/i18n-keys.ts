@@ -308,6 +308,7 @@ export type DictionaryKey =
   | "bracket.grandFinal"
   | "bracket.losers"
   | "bracket.reset"
+  | "bracket.rung"
   | "bracket.tbd"
   | "bracket.title"
   | "bracket.winners"

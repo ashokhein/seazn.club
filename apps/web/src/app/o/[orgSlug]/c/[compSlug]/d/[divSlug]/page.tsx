@@ -81,7 +81,7 @@ export default async function DivisionPage({
   // by the entrants panel (add form + roster editor) and the Settings tab.
   const entrantModel = effectiveEntrantModel(sportModule.entrantModel ?? null, division.config);
   const entrantNames = Object.fromEntries(entrants.map((e) => [e.id, e.display_name]));
-  const BRACKET_STAGE_KINDS = new Set(["knockout", "double_elim"]);
+  const BRACKET_STAGE_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
   const hasKnockout = stages.some((s) => BRACKET_STAGE_KINDS.has(s.kind));
   // Badge chips on standings rows (v3/03 §5) — resolved once per render.
   // PROMPT-62: the bracket panel on the fixtures tab shows them too.
@@ -234,6 +234,7 @@ export default async function DivisionPage({
               .map((st) => (
                 <div key={st.id} className="mb-6">
                   <BracketPanel
+                    kind={st.kind}
                     fixtures={fixtures.filter((f) => f.stage_id === st.id)}
                     entrantNames={entrantNames}
                     entrantBadges={entrantLogos}
