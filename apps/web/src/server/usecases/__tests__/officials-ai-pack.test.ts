@@ -200,6 +200,53 @@ describe.skipIf(!HAS_DB)("buildOfficialsPack (v4/03 §2)", () => {
     expect(redact(packA)).toEqual(redact(packB));
   });
 
+  it("draft order breaks a same-start/same-name tie on domain rank, not raw fixture UUID", async () => {
+    // Task-8 review residual (binding decision 3): sortAssignments' final tiebreak
+    // fell back to raw fixture/official UUIDs, so two assignments that tied on
+    // (start, role, official-name) flipped order across reseeds. Two SIMULTANEOUS
+    // fixtures on two courts, each refereed by one of two same-named "Sam Whistle"
+    // officials, force that tie. Court 1 is given the HIGHER fixture UUID and
+    // Court 2 the LOWER, so a raw-UUID tiebreak would sort Court 2 first; the
+    // domain rank (court order) must keep Court 1 first regardless.
+    const { auth: tieAuth } = await seedOrg("pro");
+    const comp = await createCompetition(tieAuth, { name: "Tie", visibility: "public", branding: {} });
+    const div = await createDivision(tieAuth, comp.id, {
+      name: "Tie", slug: `tie-${randomUUID().slice(0, 6)}`, sport_key: "generic",
+      variant_key: "score", config: GENERIC_CONFIG, eligibility: [],
+    });
+    await createEntrants(
+      tieAuth, div.id,
+      Array.from({ length: 4 }, (_, i) => ({
+        kind: "individual" as const, display_name: `E${i + 1}`, seed: i + 1, members: [],
+      })),
+    );
+    await setSettings(div.id);
+    const [stage] = await createStages(tieAuth, div.id, { seq: 1, kind: "league", name: "L", config: {} });
+    const ents = await sql<{ id: string }[]>`select id from entrants where division_id = ${div.id} order by seed`;
+    // Unique per run, but Court 1 always draws the HIGHER of the two UUIDs.
+    const [court2Id, court1Id] = [randomUUID(), randomUUID()].sort();
+    const at = "2026-08-01T09:00:00.000Z"; // both fixtures start together
+    await sql`
+      insert into fixtures
+        (id, stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status,
+         scheduled_at, court_label, home_entrant_id, away_entrant_id)
+      values
+        (${court1Id}, ${stage!.id}, ${div.id}, ${tieAuth.orgId}, 1, 0, 'tie-c1', 'scheduled',
+         ${at}, 'Court 1', ${ents[0]!.id}, ${ents[1]!.id}),
+        (${court2Id}, ${stage!.id}, ${div.id}, ${tieAuth.orgId}, 1, 1, 'tie-c2', 'scheduled',
+         ${at}, 'Court 2', ${ents[2]!.id}, ${ents[3]!.id})`;
+    await sql`
+      insert into officials (org_id, display_name, role_keys) values
+        (${tieAuth.orgId}, 'Sam Whistle', ${sql.json(["referee"])}),
+        (${tieAuth.orgId}, 'Sam Whistle', ${sql.json(["referee"])})`;
+
+    const p = await buildOfficialsPack(tieAuth, div.id, { instruction: "x", policy: POLICY });
+    // Two refs, two simultaneous fixtures → each fixture refereed exactly once.
+    expect(p.draft.filter((d) => d.roleKey === "referee")).toHaveLength(2);
+    // Court 1's assignment must lead despite its higher fixture UUID.
+    expect(p.draft.findIndex((d) => d.fixtureId === court1Id)).toBe(0);
+  });
+
   it("pack is deterministic and matches the §2 shape", async () => {
     const a = await buildOfficialsPack(auth, divisionId, { instruction: "x", policy: POLICY });
     const b = await buildOfficialsPack(auth, divisionId, { instruction: "x", policy: POLICY });
