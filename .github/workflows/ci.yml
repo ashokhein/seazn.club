@@ -22,6 +22,11 @@ jobs:
     name: Unit + typecheck
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # paths-filter reads the PR's changed files via the API; the repo's
+    # default GITHUB_TOKEN is restricted and 403s without this.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v5
       # Engine coverage + sim matrix only run when the engine (or the
