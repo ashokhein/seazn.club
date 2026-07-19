@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
 import { LocaleSwitcher } from "@/components/i18n/locale-switcher";
+import { StripeBadge } from "@/components/stripe-badge";
 import { getDictionary, t } from "@/lib/i18n";
 import { toLocale } from "@/lib/i18n-constants";
 
@@ -79,6 +80,14 @@ export async function MarketingFooter({ lang = "en" }: { lang?: string }) {
           <span>{t(d, "footer.rights", { year: new Date().getFullYear() })}</span>
           <LocaleSwitcher />
           <span className="mk-display tracking-[0.2em]">{t(d, "footer.tagline")}</span>
+        </div>
+        {/* Trust line: entry fees run on Stripe (Checkout + Connect) — say so
+            where the whole site signs off. Quiet by design, dead-centered. */}
+        <div className="mt-4 flex w-full justify-center text-xs text-[#8d7fc0]">
+          <StripeBadge
+            label={t(d, "footer.securePayments")}
+            className="hover:text-[var(--mk-lime)]"
+          />
         </div>
       </div>
     </footer>

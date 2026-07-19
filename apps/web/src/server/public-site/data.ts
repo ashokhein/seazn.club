@@ -45,6 +45,9 @@ export interface PublicOrg {
    *  the page language for every visitor, keeping the page ISR-cacheable (it's
    *  a function of the org, not the request). */
   default_locale: string;
+  /** Live card intake (Connect charges enabled) — gates the Stripe trust
+   *  line in the public footer so cash-only orgs never claim card security. */
+  card_payments: boolean;
 }
 
 export interface PublicCompetition {
@@ -171,6 +174,7 @@ async function loadOrg(orgSlug: string): Promise<PublicOrg | null> {
     (Omit<PublicOrg, "logo"> & { logo_url: string | null; logo_storage_path: string | null })[]
   >`
     select o.id, o.name, o.slug, o.about, o.default_locale,
+           o.stripe_charges_enabled as card_payments,
            org_has_feature(o.id, 'branding') as branded,
            case when org_has_feature(o.id, 'dashboard.branding')
                 then o.branding else '{}'::jsonb end as branding,

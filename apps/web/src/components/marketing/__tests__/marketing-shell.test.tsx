@@ -26,6 +26,14 @@ describe("marketing shell pieces", () => {
     expect(html).toContain('href="/legal/privacy"');
     expect(html).toContain("ANY SPORT · LIVE IN MINUTES");
   });
+  it("footer carries the Stripe trust line (badge links stripe.com)", async () => {
+    const html = renderToStaticMarkup(await MarketingFooter({ lang: "en" }));
+    expect(html).toContain("Payments secured by");
+    expect(html).toContain('href="https://stripe.com"');
+    // Localized lead-in survives the dictionary round-trip (spot-check fr).
+    const fr = renderToStaticMarkup(await MarketingFooter({ lang: "fr" }));
+    expect(fr).toContain("Paiements sécurisés par");
+  });
   it("funnel night variant adds the dark classes", () => {
     const cls = funnelFormClasses(false, "night");
     expect(cls).toContain("mk-funnel-night");
