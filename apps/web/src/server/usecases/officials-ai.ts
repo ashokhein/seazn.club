@@ -759,7 +759,11 @@ async function callOfficialsModel(
         system: [{ type: "text", text: OFFICIALS_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [...messages],
       },
-      { signal: controller.signal },
+      // Explicit timeout is load-bearing: without it the SDK refuses
+      // non-streaming requests whose max_tokens implies >10 min and throws
+      // synchronously ("Streaming is required…"), masked downstream as
+      // AI_PLAN_FAILED. The AbortController above is the real deadline.
+      { signal: controller.signal, timeout: 600_000 },
     );
   } catch (err) {
     if (controller.signal.aborted) {

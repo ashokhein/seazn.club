@@ -786,7 +786,12 @@ async function callModel(
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [...messages],
       },
-      { signal: controller.signal },
+      // The explicit timeout is load-bearing: without it the SDK refuses
+      // non-streaming requests whose max_tokens implies >10 min and throws
+      // synchronously ("Streaming is required…"), which the corrective path
+      // would mask as AI_PLAN_FAILED. The AbortController above remains the
+      // real per-round deadline.
+      { signal: controller.signal, timeout: 600_000 },
     );
   } catch (err) {
     if (controller.signal.aborted) {

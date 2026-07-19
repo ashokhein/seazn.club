@@ -154,6 +154,15 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
+  it("model calls carry an explicit request timeout — the SDK refuses non-streaming max_tokens:32000 without one", async () => {
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    const opts = parse.mock.calls[0][1] as { timeout?: number; signal?: unknown };
+    expect(opts.timeout).toBeTypeOf("number");
+    expect(opts.timeout!).toBeGreaterThan(0);
+    expect(opts.signal).toBeDefined();
+  });
+
   it("residual blocking after 2 repairs returns best-so-far with blocking marked", async () => {
     parse
       .mockResolvedValueOnce(planResponse(clashingPlan))

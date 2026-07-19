@@ -176,6 +176,11 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     });
 
     expect(parse).toHaveBeenCalledTimes(1);
+    // Explicit request timeout is load-bearing: the SDK refuses non-streaming
+    // max_tokens:32000 calls without one ("Streaming is required…").
+    const callOpts = parse.mock.calls[0]![1] as { timeout?: number; signal?: unknown };
+    expect(callOpts.timeout).toBeTypeOf("number");
+    expect(callOpts.timeout!).toBeGreaterThan(0);
     const lockedRow = out.assignments.find((a) => a.fixtureId === fixtureIds[0] && a.officialId === refA);
     expect(lockedRow).toMatchObject({ roleKey: "referee", locked: true });
     expect(out.usage.repair_rounds).toBe(0);
