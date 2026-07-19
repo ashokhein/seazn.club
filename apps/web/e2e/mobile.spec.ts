@@ -130,12 +130,15 @@ test("news (SPEC-2): feed + post page hold at mobile width", async ({ page, brow
   const anonCtx = await browser.newContext();
   try {
     const anon = await anonCtx.newPage();
-    for (const path of [`/shared/${orgSlug}/news`, `/shared/${orgSlug}/news/${postSlug}`]) {
-      await anon.goto(path, { waitUntil: "load" });
-      await anon.waitForTimeout(300);
-      await expectNoHorizontalScroll(anon);
-    }
+    await anon.goto(`/shared/${orgSlug}/news`, { waitUntil: "load" });
+    await anon.waitForTimeout(300);
+    await expectNoHorizontalScroll(anon);
+    // Assert the card while still ON the feed — the post page has no cards.
     await expect(anon.getByTestId("news-card").first()).toBeVisible();
+
+    await anon.goto(`/shared/${orgSlug}/news/${postSlug}`, { waitUntil: "load" });
+    await anon.waitForTimeout(300);
+    await expectNoHorizontalScroll(anon);
   } finally {
     await anonCtx.close();
   }
