@@ -83,6 +83,14 @@ jobs:
       # prices, so the Stripe-gated billing specs stay skipped as before).
       STRIPE_SECRET_KEY: sk_test_ci_e2e_dummy
       STRIPE_WEBHOOK_SECRET: whsec_e2e_payments
+      # v4 AI architect e2e (ai-architect.spec.ts): the spec starts a model
+      # fixture server on 4319; the app server must point anthropicClient()
+      # at it and carry a non-empty key so the ai-plan routes never 503.
+      # Mirrors playwright.config.ts webServer.env, which only applies when
+      # Playwright boots the server itself — here the workflow boots it.
+      # CI-only dummy; no real Anthropic call is made.
+      SCHEDULING_AI_BASE_URL: "http://127.0.0.1:4319"
+      ANTHROPIC_API_KEY: sk-ant-e2e-fixture
 
     steps:
       - uses: actions/checkout@v5
