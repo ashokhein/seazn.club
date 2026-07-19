@@ -157,8 +157,14 @@ test.describe.serial("official marks & match reports", () => {
     await expect(form).toBeVisible();
 
     await form.getByLabel("What happened").fill("Tense derby, one sending-off.");
+    // Blur first and let the autosave settle — clicking straight into "Add
+    // incident" blurs the textarea mid-click and the save re-render can
+    // swallow the click (row never appears).
+    await form.getByLabel("What happened").blur();
+    await expect(form.getByText("Draft saved")).toBeVisible();
     await form.getByRole("button", { name: /add incident/i }).click();
     const incident = form.getByTestId("incident-row").first();
+    await expect(incident).toBeVisible();
     await incident.getByLabel("Kind").selectOption({ label: "Red card" });
     await incident.getByLabel("Player (optional)").selectOption(playerId);
     await incident.getByLabel("Note").fill("violent conduct in the 88th");
