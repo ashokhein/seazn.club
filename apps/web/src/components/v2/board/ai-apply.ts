@@ -16,7 +16,7 @@ import type { AiApplyMeta, AiPlanResponse, PutScheduleSettings, ScheduleConfig }
 /** The audit-block model string. The plan response carries no model name (the
  *  server picks it from SCHEDULING_AI_MODEL), so the apply stamps the documented
  *  default for provenance; the server trims + records whatever it receives. */
-export const AI_APPLY_MODEL = "claude-opus-4-8";
+export const AI_APPLY_MODEL = "claude-sonnet-5";
 
 /** Default checkpoint label — the save point the success toast's Undo restores. */
 export const AI_CHECKPOINT_LABEL = "before-ai";
