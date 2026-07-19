@@ -616,6 +616,154 @@ async function smokePlanMatrix(): Promise<void> {
   const featureKey = (r: V1Res) =>
     (r.json.error as { feature_key?: string; reason?: string } | undefined) ?? {};
 
+  // Task 20 — the four-users-per-org, full-data-feed, populated-competition
+  // pass. For a plan org's owner + host competition, seed a division that
+  // covers all three entrant shapes (individual + team + pair), generate and
+  // start it, provision the org's OTHER three users (member/scorer, official,
+  // player), record real results, then run the five tier-gated assertions
+  // against the now-POPULATED competition (not an empty shell). Plan-generic:
+  // the branded-vs-plain export outcome is driven by `expectBranded`, never a
+  // hardcoded plan. `hostComp` is the persona's existing competition (reused so
+  // no new competition trips the community active-comp cap; for event_pass it
+  // MUST be the PASSED comp so the comp-scoped `exports` grant is in force).
+  const seedFeedAndAssert = async (
+    owner: Session,
+    orgId: string,
+    hostCompId: string,
+    key: string, // email suffix + label: community | pro | proplus | pass
+    expectBranded: boolean,
+  ): Promise<void> => {
+    // --- Full data feed: one division, all three entrant shapes. Entrant #1
+    // carries a person so the player (below) can claim into a real fixture.
+    const feedDiv = v1data<{ id: string }>(
+      await v1(owner, `/api/v1/competitions/${hostCompId}/divisions`, "POST", {
+        name: `Matrix Feed ${key}`,
+        ...genericDiv,
+      }),
+    );
+    const person = v1data<{ id: string }>(
+      await v1(owner, "/api/v1/persons", "POST", { full_name: `Feed Player ${key} ${tag}`, consent: {} }),
+    );
+    await v1(owner, `/api/v1/divisions/${feedDiv.id}/entrants`, "POST", [
+      { kind: "individual", display_name: `Feed Solo ${key}`, seed: 1, members: [{ person_id: person.id }] },
+      { kind: "individual", display_name: `Feed Solo2 ${key}`, seed: 2 },
+      { kind: "team", display_name: `Feed Team ${key}`, seed: 3 },
+      { kind: "pair", display_name: `Feed Pair ${key}`, seed: 4 },
+    ]);
+    const feedStage = v1data<{ id: string }>(
+      await v1(owner, `/api/v1/divisions/${feedDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    );
+    const feedFixtures = v1data<{ fixtures: { id: string }[] }>(
+      await v1(owner, `/api/v1/stages/${feedStage.id}/generate`, "POST"),
+    ).fixtures;
+    await v1(owner, `/api/v1/divisions/${feedDiv.id}/start`, "POST");
+    check(
+      `matrix/${key}: full feed built — individual+team+pair entrants, fixtures generated`,
+      feedFixtures.length >= 4,
+    );
+
+    // --- User 2 (official): assigned to fixture[0], invited through the shared
+    // person-claim rail, claims + accepts, sees the duty and scores it exactly
+    // like a scorer (acceptedOfficialCovers). Officials are non-members — no
+    // members.max seat consumed, so this holds on community too.
+    const officialEmail = `official_${key}_${tag}@example.com`;
+    const officialSession = newSession();
+    await signIn(officialSession, officialEmail);
+    const official = v1data<{ id: string }>(
+      await v1(owner, "/api/v1/officials", "POST", { display_name: `Feed Ref ${key} ${tag}`, role_keys: ["referee"] }),
+    );
+    await v1(owner, `/api/v1/fixtures/${feedFixtures[0]!.id}/officials`, "PATCH", {
+      set: [{ official_id: official.id, role_key: "referee", locked: false }],
+    });
+    const offInvite = await v1(owner, `/api/v1/officials/${official.id}/invite`, "POST", { email: officialEmail });
+    const offToken = (v1data<{ claim_url: string }>(offInvite).claim_url ?? "").split("/claim/")[1] ?? "";
+    await call(officialSession, `/api/claims/${offToken}/accept`, "POST");
+    const offAccept = await v1(officialSession, `/api/v1/me/assigned-fixtures/${feedFixtures[0]!.id}/response`, "PATCH", {
+      response: "accepted",
+    });
+    const offDuties = v1data<unknown[]>(await v1(officialSession, "/api/v1/me/assigned-fixtures"));
+    check(
+      `matrix/${key}: the official sees their duty in the officiating lane`,
+      offAccept.status === 200 && Array.isArray(offDuties) && offDuties.length > 0,
+    );
+    const offState = await v1(officialSession, `/api/v1/fixtures/${feedFixtures[0]!.id}/state`);
+    const offScore = await v1(officialSession, `/api/v1/fixtures/${feedFixtures[0]!.id}/events`, "POST", {
+      expected_seq: v1data<{ last_seq: number }>(offState).last_seq,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    });
+    check(`matrix/${key}: the accepted official records a result`, offScore.status === 201);
+
+    // --- User 3 (member/scorer): a division-scoped scorer invite seats a
+    // member (scorers.max = 1 on community, so exactly one fits) who scores a
+    // DIFFERENT fixture via the assignment path (scoresViaAssignment).
+    const scorerEmail = `scorer_${key}_${tag}@example.com`;
+    const scorerSession = newSession();
+    await signIn(scorerSession, scorerEmail);
+    const scorerInvite = (await call(owner, `/api/orgs/${orgId}/invites`, "POST", {
+      role: "scorer",
+      max_uses: 1,
+      default_scope: { type: "division", id: feedDiv.id },
+    })) as { token: string };
+    await call(scorerSession, `/api/invites/${scorerInvite.token}/accept`, "POST", {});
+    const scorerAssigned = v1data<unknown[]>(await v1(scorerSession, "/api/v1/me/assigned-fixtures"));
+    const scorerState = await v1(scorerSession, `/api/v1/fixtures/${feedFixtures[1]!.id}/state`);
+    const scorerScore = await v1(scorerSession, `/api/v1/fixtures/${feedFixtures[1]!.id}/events`, "POST", {
+      expected_seq: v1data<{ last_seq: number }>(scorerState).last_seq,
+      type: "generic.result",
+      payload: { p1Score: 1, p2Score: 3 },
+    });
+    check(
+      `matrix/${key}: the scorer seats via invite and scores via assignment`,
+      Array.isArray(scorerAssigned) && scorerAssigned.length > 0 && scorerScore.status === 201,
+    );
+
+    // --- User 4 (player): claims the person on entrant #1 and reads their own
+    // fixtures. Only two fixtures were decided above; the player's entrant is
+    // in three, so at least one stays upcoming — the self-view is never empty.
+    const playerEmail = `player_${key}_${tag}@example.com`;
+    const playerSession = newSession();
+    await signIn(playerSession, playerEmail);
+    const claimInvite = await v1(owner, `/api/v1/persons/${person.id}/claim-invites`, "POST", { email: playerEmail });
+    const claimToken = (v1data<{ claim_url: string }>(claimInvite).claim_url ?? "").split("/claim/")[1] ?? "";
+    await call(playerSession, `/api/claims/${claimToken}/accept`, "POST");
+    const upcoming = v1data<{ upcoming: { id: string }[] }>(
+      await v1(playerSession, "/api/v1/me/fixtures"),
+    ).upcoming ?? [];
+    check(`matrix/${key}: the claimed player sees their own fixtures`, upcoming.length > 0);
+
+    // --- Populated standings: the two results above make the snapshot
+    // non-empty (was the empty shell before).
+    const feedStandings = await v1(owner, `/api/v1/stages/${feedStage.id}/standings`);
+    check(
+      `matrix/${key}: standings render non-empty after recorded results`,
+      feedStandings.status === 200 && v1data<{ rows: unknown[] }>(feedStandings).rows.length > 0,
+    );
+
+    // --- Export WITH DATA: the standings export 404s without a snapshot, so a
+    // 200 here proves it is content-bearing (empty-doc false-green avoided).
+    // community.exports=true (V285) → every tier renders; exports.branded is
+    // the exact gate orgBranding() keys off to switch chrome on, so asserting
+    // it at the resolution seam is the faithful branded-vs-plain signal (PDF
+    // byte-scanning is unreliable under font subsetting). For event_pass the
+    // render itself also proves the comp-scoped `exports` pass grant is live
+    // while branding stays plain (exports.branded is not pass-scoped).
+    const feedExport = await fetch(
+      `${BASE}/api/v1/divisions/${feedDiv.id}/exports/standings?format=pdf`,
+      { headers: { cookie: cookieHeader(owner) } },
+    );
+    const feedBytes = Buffer.from(await feedExport.arrayBuffer());
+    check(
+      `matrix/${key}: standings export renders a content-bearing PDF`,
+      feedExport.status === 200 && feedBytes.subarray(0, 5).toString() === "%PDF-",
+    );
+    const feedEnt = await readEnt(owner, orgId);
+    check(
+      `matrix/${key}: export chrome is ${expectBranded ? "branded (paid)" : "plain (community)"} (exports.branded=${expectBranded})`,
+      (feedEnt.entitlements["exports.branded"]?.enabled ?? false) === expectBranded,
+    );
+  };
+
   // === PERSONA 1 — community (default plan, no flip) =====================
   const comm = newSession();
   const commOrg = (await signIn(comm, `smoke-community-${tag}@example.com`)).org_id;
@@ -813,6 +961,19 @@ async function smokePlanMatrix(): Promise<void> {
     "matrix/event_pass: org-wide members.max resolves the community value (3)",
     passEnt.entitlements["members.max"]?.limit === 3,
   );
+
+  // === Task 20 — populated-competition assertions per plan org ===========
+  // Each plan org now gets four users (owner + member/scorer + official +
+  // player) and a full data feed (individual + team + pair entrants, fixtures,
+  // recorded results), then the five tier-gated assertions run against the
+  // populated competition. Reuses each persona's existing competition; for
+  // event_pass the PASSED comp hosts the feed so the comp-scoped exports grant
+  // applies. Paid tiers (pro + pro_plus) get branded chrome; community and the
+  // event_pass overlay both render plain (exports.branded is not pass-scoped).
+  await seedFeedAndAssert(comm, commOrg, cComp.id, "community", false);
+  await seedFeedAndAssert(pro, proOrg, proComp.id, "pro", true);
+  await seedFeedAndAssert(plus, plusOrg, plusComp.id, "proplus", true);
+  await seedFeedAndAssert(passer, passOrg, passedComp.id, "pass", false);
 }
 
 /** PROMPT-53 player accounts over real HTTP: invite → claim → RSVP →
@@ -3807,6 +3968,12 @@ async function cleanup(tag: string): Promise<void> {
     `smoke-pro-${tag}@example.com`,
     `smoke-proplus-${tag}@example.com`,
     `smoke-pass-${tag}@example.com`,
+    // Task 20 — the three extra users seeded per plan org (owner is above).
+    ...["community", "pro", "proplus", "pass"].flatMap((k) => [
+      `scorer_${k}_${tag}@example.com`,
+      `official_${k}_${tag}@example.com`,
+      `player_${k}_${tag}@example.com`,
+    ]),
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
