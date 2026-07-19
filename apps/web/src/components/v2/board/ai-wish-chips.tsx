@@ -112,11 +112,16 @@ export function AiWishChips({
         {KINDS.map((k) => {
           const enabled = kindEnabled(k);
           const isActive = active === k;
+          // Explain a greyed-out chip: which data the picker is missing.
+          const disabledReason = enabled
+            ? undefined
+            : msg(k === "final_last" ? "board.ai.wish.noCourts" : "board.ai.wish.noEntrants");
           return (
             <button
               key={k}
               type="button"
               disabled={!enabled}
+              title={disabledReason}
               aria-expanded={isActive}
               onClick={() => setActive(isActive ? null : k)}
               className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${

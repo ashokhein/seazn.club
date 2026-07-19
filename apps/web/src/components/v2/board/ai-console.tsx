@@ -19,7 +19,7 @@ import { PlanBadge } from "@/components/plan-badge";
 import type { AiPlanRequest, AiPlanResponse, AiLastResult } from "@/server/api-v1/schemas";
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
-import { compileWishes, type Wish } from "./wish-compile";
+import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
 import {
   aiConsoleReducer,
   aiErrorKey,
@@ -51,18 +51,6 @@ export interface AiBriefContext {
   entrants: { id: string; name: string }[];
   /** Officials with at least one blackout date (M in "N officials, M with …"). */
   officialsWithBlackout: number;
-}
-
-/** Free text = the current instruction minus the previous compiled prefix, so a
- *  chip add/remove re-derives the compiled part while keeping what was typed. */
-function deriveFreeText(instruction: string, prevCompiled: string): string {
-  if (prevCompiled === "") return instruction;
-  if (instruction.startsWith(prevCompiled)) return instruction.slice(prevCompiled.length).replace(/^\s+/, "");
-  return instruction; // edited into the compiled region — treat all as free text
-}
-
-function joinNonEmpty(a: string, b: string): string {
-  return [a, b].filter((s) => s.length > 0).join(" ");
 }
 
 /**

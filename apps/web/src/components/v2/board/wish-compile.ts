@@ -39,3 +39,23 @@ function sentence(w: Wish): string {
 export function compileWishes(wishes: Wish[]): string {
   return wishes.map(sentence).join(" ");
 }
+
+/** Join a compiled fragment and free text with one separating space, dropping
+ *  either side when empty (no stray leading/trailing space). */
+export function joinNonEmpty(a: string, b: string): string {
+  return [a, b].filter((s) => s.length > 0).join(" ");
+}
+
+/**
+ * Recover the organiser's free text from the current instruction by stripping
+ * the previously-compiled prefix. Used when a chip is added/removed: the
+ * compiled part re-derives while whatever was typed after it is kept. If the
+ * instruction no longer starts with that prefix — the organiser edited inside
+ * the compiled region — the whole thing is treated as free text: graceful, and
+ * it never corrupts or drops what they wrote.
+ */
+export function deriveFreeText(instruction: string, prevCompiled: string): string {
+  if (prevCompiled === "") return instruction;
+  if (instruction.startsWith(prevCompiled)) return instruction.slice(prevCompiled.length).replace(/^\s+/, "");
+  return instruction;
+}
