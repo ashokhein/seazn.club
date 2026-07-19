@@ -141,6 +141,24 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
     expect(a.kind).toBe("news");
   });
 
+  it("slug-collision posts are both independently publishable with distinct public URLs", async () => {
+    const ctx = await seedOrg();
+    const a = await createPost(ctx.auth, ctx.orgId, { title: "Match Day Report" });
+    const b = await createPost(ctx.auth, ctx.orgId, { title: "Match Day Report" });
+    await updatePost(ctx.auth, a.id, { action: "publish" });
+    await updatePost(ctx.auth, b.id, { action: "publish" });
+
+    const pubA = await publicPost(ctx.orgSlug, a.slug);
+    const pubB = await publicPost(ctx.orgSlug, b.slug);
+    expect(a.slug).not.toBe(b.slug);
+    expect(pubA.id).toBe(a.id);
+    expect(pubB.id).toBe(b.id);
+    const { posts } = await publicPosts(ctx.orgSlug);
+    expect(posts.map((p) => p.slug)).toEqual(
+      expect.arrayContaining(["match-day-report", "match-day-report-2"]),
+    );
+  });
+
   it("publish stamps published_at and freezes the slug across title edits", async () => {
     const ctx = await seedOrg();
     const post = await createPost(ctx.auth, ctx.orgId, { title: "Opening Weekend" });
@@ -168,6 +186,26 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
     expect(archived.status).toBe("archived");
     await deletePost(ctx.auth, post.id);
     await expect(getPost(ctx.auth, post.id)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("archiving a PUBLISHED post removes it from publicPosts but keeps it in the console with a frozen slug", async () => {
+    const ctx = await seedOrg();
+    const post = await createPost(ctx.auth, ctx.orgId, { title: "Season Wrap-Up" });
+    await updatePost(ctx.auth, post.id, { action: "publish" });
+    const { posts: before } = await publicPosts(ctx.orgSlug);
+    expect(before.map((p) => p.slug)).toContain("season-wrap-up");
+
+    const archived = await updatePost(ctx.auth, post.id, { action: "archive" });
+    expect(archived.status).toBe("archived");
+    expect(archived.slug).toBe("season-wrap-up");
+
+    const { posts: after } = await publicPosts(ctx.orgSlug);
+    expect(after.map((p) => p.id)).not.toContain(post.id);
+    await expect(publicPost(ctx.orgSlug, "season-wrap-up")).rejects.toMatchObject({ status: 404 });
+
+    // The console read still lists it, status archived, slug unchanged.
+    const consoleRow = (await listPosts(ctx.auth, ctx.orgId)).find((p) => p.id === post.id)!;
+    expect(consoleRow).toMatchObject({ status: "archived", slug: "season-wrap-up" });
   });
 
   it("manual posts succeed on a community org (ungated PLG surface)", async () => {
@@ -252,6 +290,33 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
     expect(page0.hasMore).toBe(true);
     expect(page1.posts).toHaveLength(2);
     expect(page1.hasMore).toBe(false);
+  });
+
+  it("paginates 25 published posts newest-first: page0 20, page1 the remaining 5", async () => {
+    const ctx = await seedOrg();
+    const ids: string[] = [];
+    for (let i = 0; i < 25; i++) {
+      const p = await createPost(ctx.auth, ctx.orgId, { title: `Story ${i}` });
+      await updatePost(ctx.auth, p.id, { action: "publish" });
+      ids.push(p.id);
+    }
+    // Stamp explicit, strictly increasing published_at so "newest first" is
+    // unambiguous even if sequential publish() calls land in the same instant.
+    for (let i = 0; i < ids.length; i++) {
+      await sql`update org_posts set published_at = now() + (${i} * interval '1 second') where id = ${ids[i]}`;
+    }
+
+    const page0 = await publicPosts(ctx.orgSlug, 0);
+    const page1 = await publicPosts(ctx.orgSlug, 1);
+    expect(page0.posts).toHaveLength(20);
+    expect(page0.hasMore).toBe(true);
+    expect(page1.posts).toHaveLength(5);
+    expect(page1.hasMore).toBe(false);
+    // Newest first: Story 24 (stamped last) leads page0; Story 0 trails page1.
+    expect(page0.posts[0]!.title).toBe("Story 24");
+    expect(page1.posts[4]!.title).toBe("Story 0");
+    const allIds = [...page0.posts, ...page1.posts].map((p) => p.id);
+    expect(new Set(allIds).size).toBe(25); // no overlap/duplication across pages
   });
 });
 

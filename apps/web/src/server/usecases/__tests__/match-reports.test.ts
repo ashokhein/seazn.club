@@ -209,6 +209,22 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     await expect(submitMyReport(ref.userId, fixtureOfficialId)).rejects.toMatchObject({ status: 409 });
   });
 
+  it("re-closes the window when a fixture is voided back to scheduled after a draft exists", async () => {
+    const ctx = await seedOrg();
+    const ref = await makeClaimedOfficial(ctx);
+    const { fixtureOfficialId, fixtureId } = await makeAssignment(ctx, ref.officialId);
+    const saved = await putMyReport(ref.userId, fixtureOfficialId, { body: "first draft", incidents: [] });
+    expect(saved.status).toBe("draft");
+
+    // Void the decision back to scheduled — the report window closes again even
+    // though a draft already exists (the window is derived from fixture status
+    // on every write, never cached on the report row).
+    await sql`update fixtures set status = 'scheduled' where id = ${fixtureId}`;
+    await expect(
+      putMyReport(ref.userId, fixtureOfficialId, { body: "second draft", incidents: [] }),
+    ).rejects.toMatchObject({ status: 403, code: "REPORT_WINDOW_CLOSED" });
+  });
+
   it("organiser fixtureReports returns submitted reports only", async () => {
     const ctx = await seedOrg();
     const ref1 = await makeClaimedOfficial(ctx);
@@ -301,6 +317,30 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     const submitted = await submitMyReport(refC.userId, asg.fixtureOfficialId);
     expect(submitted.status).toBe("submitted");
     expect(await pendingReportSuspensions(comm.divisionId)).toHaveLength(0);
+  });
+
+  it("bridge safety: a person_id crafted from another org is skipped, not inserted, and never throws", async () => {
+    const ctx = await seedOrg("pro"); // pro → discipline.enforced true
+    const other = await seedOrg("pro"); // a different org — its person is foreign here
+    const foreignPlayer = await makePlayer(other);
+    const ref = await makeClaimedOfficial(ctx);
+    const { fixtureOfficialId } = await makeAssignment(ctx, ref.officialId);
+
+    // PUT accepts the incident payload as-is (no cross-org FK check on write) —
+    // craft a red card naming a person from a different org.
+    await putMyReport(ref.userId, fixtureOfficialId, {
+      body: "eventful",
+      incidents: [{ kind: "red_card", person_id: foreignPlayer, note: "violent conduct" }],
+    });
+
+    // Submit must not throw, and the bridge's org-scoped validity check must
+    // silently skip the foreign id — no suspension row, in EITHER division.
+    const submitted = await submitMyReport(ref.userId, fixtureOfficialId);
+    expect(submitted.status).toBe("submitted");
+    expect(await pendingReportSuspensions(ctx.divisionId)).toHaveLength(0);
+    const [{ count: foreignCount }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from suspensions where person_id = ${foreignPlayer}`;
+    expect(foreignCount).toBe(0);
   });
 
   it("ships dark: submit succeeds with no error when the suspensions table is absent", async () => {

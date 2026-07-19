@@ -25,11 +25,13 @@ import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
+  activeSuspensionsByEntrant,
   createManualSuspension,
   decideSuspension,
   detectSuspensions,
   getDisciplineRules,
   listSuspensions,
+  publicSuspensions,
   putDisciplineRules,
 } from "../discipline";
 import { scoreEvent } from "../scoring";
@@ -472,5 +474,108 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     expect(emailMock.served.mock.calls[0]![0]).toBe(email);
     await listSuspensions(ctx.auth, ctx.divisionId);
     expect(emailMock.served).toHaveBeenCalledTimes(1);
+  });
+
+  it("waive: excluded from activeSuspensionsByEntrant/publicSuspensions; served email never fires", async () => {
+    const ctx = await seedFootballDivision();
+    const email = `claim-${randomUUID().slice(0, 8)}@test.local`;
+    await claimPerson(ctx.personX, email);
+    const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
+      personId: ctx.personX, matchesTotal: 1, reason: "dissent",
+    });
+    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    expect(active.status).toBe("active");
+    emailMock.served.mockClear();
+
+    const waived = await decideSuspension(ctx.auth, manual.id, { kind: "waive" });
+    expect(waived.status).toBe("waived");
+
+    const byEntrant = await withTenant(ctx.orgId, (tx) =>
+      activeSuspensionsByEntrant(tx, ctx.divisionId),
+    );
+    expect(byEntrant.get(ctx.entrantA) ?? []).toHaveLength(0);
+
+    const [org] = await sql<{ slug: string }[]>`select slug from organizations where id = ${ctx.orgId}`;
+    const [comp] = await sql<{ slug: string }[]>`select slug from competitions where org_id = ${ctx.orgId}`;
+    const [division] = await sql<{ slug: string }[]>`select slug from divisions where id = ${ctx.divisionId}`;
+    const pub = await publicSuspensions(org!.slug, comp!.slug, division!.slug);
+    expect(pub).toEqual([]); // waived is neither active nor listed publicly
+
+    // A further recompute-on-read pass (listSuspensions) must not fire the
+    // served notice for a waived row — it never enters the `active` set.
+    await listSuspensions(ctx.auth, ctx.divisionId);
+    expect(emailMock.served).not.toHaveBeenCalled();
+  });
+
+  it("a yellow-accumulation threshold and a straight red fire together without cross-contamination", async () => {
+    const ctx = await seedFootballDivision();
+    await setRules(ctx);
+    const fx = await makeFixture(ctx, 1, ctx.entrantA, ctx.entrantB);
+    // Same person, same window: 5 yellows AND a straight red.
+    for (let i = 0; i < 5; i++) await insertCard(ctx, fx, ctx.entrantA, ctx.personX, "yellow");
+    await insertCard(ctx, fx, ctx.entrantA, ctx.personX, "red");
+
+    await detect(ctx);
+    const rows = await listSuspensions(ctx.auth, ctx.divisionId);
+    expect(rows).toHaveLength(2);
+    const acc = rows.find((r) => r.source === "auto_accumulation")!;
+    const dis = rows.find((r) => r.source === "auto_dismissal")!;
+    expect(acc).toBeDefined();
+    expect(dis).toBeDefined();
+    expect(acc.personId).toBe(ctx.personX);
+    expect(dis.personId).toBe(ctx.personX);
+    const meta = await sql<{ rule_key: string; source: string; bucket: number }[]>`
+      select rule_key, source, bucket from suspensions where division_id = ${ctx.divisionId}
+      order by source`;
+    expect(meta).toEqual([
+      { rule_key: "yellow_5", source: "auto_accumulation", bucket: 1 },
+      { rule_key: "red", source: "auto_dismissal", bucket: 1 },
+    ]);
+  });
+
+  it("multi-match serving: a 2-match ban is served across two decided fixtures", async () => {
+    const ctx = await seedFootballDivision();
+    const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
+      personId: ctx.personX, matchesTotal: 2, reason: "violent conduct",
+    });
+    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    expect(active.entrantId).toBe(ctx.entrantA);
+    expect(active.status).toBe("active");
+
+    const stampDecided = async (round: number) => {
+      const fx = await makeFixture(ctx, round, ctx.entrantA, ctx.entrantB, "decided");
+      await sql`
+        insert into score_events (fixture_id, org_id, seq, type, payload, recorded_at)
+        values (${fx}, ${ctx.orgId}, ${nextSeq(fx)}, 'core.note', ${sql.json({ text: "d" })},
+                now() + interval '1 hour')`;
+    };
+    await stampDecided(2);
+    const partial = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.id === manual.id)!;
+    expect(partial.matchesServed).toBe(1);
+    expect(partial.status).toBe("active");
+
+    await stampDecided(3);
+    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.id === manual.id)!;
+    expect(served.matchesServed).toBe(2);
+    expect(served.status).toBe("served");
+  });
+
+  it("publicSuspensions masks a person without public_name consent (never omits)", async () => {
+    const ctx = await seedFootballDivision();
+    // personX carries the default consent '{}' from seedFootballDivision — no
+    // public_name grant, so public_person_name masks to initials.
+    const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
+      personId: ctx.personX, matchesTotal: 1, reason: "x",
+    });
+    await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+
+    const [org] = await sql<{ slug: string }[]>`select slug from organizations where id = ${ctx.orgId}`;
+    const [comp] = await sql<{ slug: string }[]>`select slug from competitions where org_id = ${ctx.orgId}`;
+    const [division] = await sql<{ slug: string }[]>`select slug from divisions where id = ${ctx.divisionId}`;
+    const pub = await publicSuspensions(org!.slug, comp!.slug, division!.slug);
+    expect(pub).toHaveLength(1); // masked, not omitted
+    expect(pub[0]!.name).not.toContain("Xavier");
+    expect(pub[0]!.name).not.toContain("Smith");
+    expect(pub[0]!.name).toBe("X.S."); // "Xavier Smith" initials, per public_person_name
   });
 });

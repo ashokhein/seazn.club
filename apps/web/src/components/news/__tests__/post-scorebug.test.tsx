@@ -42,6 +42,20 @@ describe("PostScorebug", () => {
     expect(html.match(/data-testid="crest-monogram"/g)?.length).toBe(1);
   });
 
+  it("very long team names carry the truncation class and still render (no layout break)", () => {
+    const longHome = "Riverside Rovers Athletic Football and Social Club First Team";
+    const longAway = "Northside United Old Boys Veterans Reserve Development Squad";
+    const html = renderToStaticMarkup(
+      <PostScorebug {...base} home={{ name: longHome }} away={{ name: longAway }} />,
+    );
+    // Name wrapper carries the truncation class regardless of string length.
+    expect(html).toContain("max-w-full truncate");
+    expect(html).toContain(longHome);
+    expect(html).toContain(longAway);
+    // A missing crest still falls back to a monogram even with a long name.
+    expect(html.match(/data-testid="crest-monogram"/g)?.length).toBe(2);
+  });
+
   it("animates the digits only for the hero size + animate flag", () => {
     const card = renderToStaticMarkup(<PostScorebug {...base} size="card" />);
     expect(card).not.toContain("news-digit-settle");

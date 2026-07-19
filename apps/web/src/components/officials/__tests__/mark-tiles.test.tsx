@@ -56,6 +56,18 @@ describe("MarkTiles (SPEC-3 signature: five scoreboard-digit tap targets)", () =
     expect(onSet).toHaveBeenCalledWith(3);
   });
 
+  it("arrow-key moves the selection and aria-pressed follows onto the new tile", () => {
+    const onSet = vi.fn();
+    const { el } = tiles(3, onSet);
+    el.props.onKeyDown({ key: "ArrowRight", preventDefault: () => {} });
+    expect(onSet).toHaveBeenCalledWith(4);
+    // The component is controlled — re-render with the value onSet just picked
+    // and confirm aria-pressed actually followed onto the new tile (not stuck).
+    const after = tiles(4, onSet).buttons;
+    expect(after.find((b) => b.props["data-mark"] === 4)!.props["aria-pressed"]).toBe(true);
+    expect(after.find((b) => b.props["data-mark"] === 3)!.props["aria-pressed"]).toBe(false);
+  });
+
   it("every tile meets the 44px mobile tap-target bar", () => {
     const { buttons } = tiles(null, () => {});
     for (const b of buttons) {

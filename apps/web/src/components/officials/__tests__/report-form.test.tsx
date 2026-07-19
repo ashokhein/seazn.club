@@ -30,6 +30,12 @@ describe("report-form incident note gate (data-loss regression)", () => {
     expect(res.incidents).toHaveLength(0);
   });
 
+  it("(c) a note on the default kind with no person is kept as an 'other' incident — not pruned, not incomplete", () => {
+    const res = partitionDrafts([{ kind: "other", person_id: "", note: "pitch was waterlogged" }]);
+    expect(res.incompleteCount).toBe(0);
+    expect(res.incidents).toEqual([{ kind: "other", note: "pitch was waterlogged" }]);
+  });
+
   it("keeps a valid incident (note present), trims it, and prunes empties alongside it", () => {
     const res = partitionDrafts([
       { kind: "red_card", person_id: "p1", note: "  violent conduct 88'  " },

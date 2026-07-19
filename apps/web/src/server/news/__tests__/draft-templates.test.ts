@@ -60,6 +60,27 @@ describe("resultDraft", () => {
     expect(resultDraft({ ...BASE, locale: "es", scorers }).bodyMd).toContain("Goleadores");
     expect(resultDraft({ ...BASE, locale: "nl", scorers }).bodyMd).toContain("Doelpuntenmakers");
   });
+
+  it("fr locale renders fully localized strings with no unresolved tokens", () => {
+    const { bodyMd } = resultDraft({
+      ...BASE,
+      locale: "fr",
+      scheduledAt: null,
+      venueTz: null,
+      scorers: [{ name: "A. Smith", count: 2 }],
+      movement: { team: "Riverside", position: 2 },
+    });
+    expect(bodyMd).not.toContain("undefined");
+    expect(bodyMd).not.toContain("null");
+    expect(bodyMd).not.toContain("{{");
+    // English fallbacks must not leak through when the locale is fr.
+    expect(bodyMd).not.toContain("Scorers");
+    expect(bodyMd).not.toContain("moves up");
+    expect(bodyMd).toContain("Buteurs");
+    expect(bodyMd).toContain("A. Smith (2)");
+    expect(bodyMd).toContain("Riverside monte à la 2e place.");
+    expect(bodyMd).toContain("À confirmer"); // localized TBC placeholder (no scheduledAt)
+  });
 });
 
 describe("roundRecapDraft", () => {
@@ -91,6 +112,27 @@ describe("roundRecapDraft", () => {
     expect(bodyMd).toContain("1. Riverside — 9 pts (3)");
     expect(bodyMd).toContain("2. Westgate — 5 pts (3)");
     expect(bodyMd).toContain("3. Eastend — 4 pts (3)");
+  });
+
+  it("clamps the standings block to exactly the given rows when fewer than 5 entrants exist — no padding/undefined", () => {
+    const twoTeamInput = {
+      ...input,
+      standings: [
+        { position: 1, name: "Riverside", played: 3, points: 9 },
+        { position: 2, name: "Northside", played: 3, points: 6 },
+      ],
+    };
+    const { bodyMd } = roundRecapDraft(twoTeamInput);
+    expect(bodyMd).not.toContain("undefined");
+    expect(bodyMd).not.toContain("null");
+    // Exactly two standings lines — no padding to a fixed 5-row block.
+    const standingsLines = bodyMd
+      .split("\n")
+      .filter((l) => /^\d+\. /.test(l));
+    expect(standingsLines).toHaveLength(2);
+    expect(bodyMd).toContain("1. Riverside — 9 pts (3)");
+    expect(bodyMd).toContain("2. Northside — 6 pts (3)");
+    expect(bodyMd).not.toContain("3. ");
   });
 
   it("localizes the section headings", () => {
