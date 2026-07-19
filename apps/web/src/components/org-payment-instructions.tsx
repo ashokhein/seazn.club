@@ -111,16 +111,23 @@ export function OrgPaymentInstructions({
 
   // Express Dashboard: payouts, charge history, and Stripe's own
   // "more information needed" prompts. Links are one-time — mint per click.
+  // Opens a NEW tab so the console stays put; the window is opened
+  // synchronously (inside the click) so popup blockers allow it, then
+  // pointed at the minted URL.
   async function openDashboard() {
     setDashBusy(true);
     setConnectError(null);
+    const win = window.open("about:blank", "_blank");
     try {
       const { url } = await apiV1<{ url: string }>(
         `/api/v1/orgs/${orgId}/connect/dashboard`,
         { method: "POST" },
       );
-      window.location.assign(url);
+      if (win) win.location.href = url;
+      else window.location.assign(url); // popup denied — same tab beats nothing
+      setDashBusy(false);
     } catch (err) {
+      win?.close();
       // Never surface Stripe's raw error (it names the platform key and
       // account id) — human copy only; the detail stays in the console.
       console.error("connect dashboard link failed", err);
