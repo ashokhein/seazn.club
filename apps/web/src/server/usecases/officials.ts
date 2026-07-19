@@ -20,6 +20,7 @@ import { HttpError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
 import { PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import { AiApplyMeta } from "@/server/api-v1/schemas";
 import { sendOfficialAssignedEmail } from "@/lib/email";
 import { createClaimInvite, type ClaimRow } from "./person-claims";
 import { parseUpload } from "./import-parse";
@@ -396,6 +397,9 @@ export const ApplyAssignmentsInput = z.object({
       locked: z.boolean().default(false),
     }),
   ),
+  /** Audit provenance when the assignment set came from the AI Officials
+   *  Architect (v4/03 §10) — merged into the officials_assigned event. */
+  ai: AiApplyMeta.optional(),
 });
 export type ApplyAssignmentsInput = z.infer<typeof ApplyAssignmentsInput>;
 
@@ -453,7 +457,7 @@ export async function applyOfficialAssignments(
     await tx`
       insert into division_events (division_id, seq, type, payload, actor_id)
       values (${divisionId}, ${seq + 1}, 'officials_assigned',
-              ${tx.json({ applied } as never)}, ${auth.userId})`;
+              ${tx.json({ applied, ...(input.ai ? { ai: { ...input.ai, instruction: input.ai.instruction.trim() } } : {}) } as never)}, ${auth.userId})`;
     const notices = await assignedNotices(tx, auth.orgId, fresh);
     return { applied, notices };
   }).then(({ applied, notices }) => {

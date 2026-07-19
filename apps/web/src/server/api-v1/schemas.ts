@@ -537,7 +537,7 @@ export const Fixture = z.object({
   officials: z.array(z.unknown()),
   status: z.enum(["scheduled", "in_play", "decided", "finalized", "abandoned", "forfeited", "cancelled"]),
   outcome: z.unknown().nullable(),
-  schedule_source: z.enum(["none", "auto", "manual"]),
+  schedule_source: z.enum(["none", "auto", "manual", "ai"]),
   schedule_locked: z.boolean(),
   created_at: z.string(),
 });
@@ -774,6 +774,21 @@ export const AutoScheduleResult = z.object({
 });
 
 /** POST /stages/{id}/schedule/apply — persist an assignment set. */
+/** Optional AI provenance stamped into the apply/assign ledger events (v4/03 §10).
+ *  Present only when the apply originated from the AI Schedule/Officials Architect;
+ *  the instruction is trimmed server-side and recalled by
+ *  GET /divisions/{id}/schedule/ai-last. Shared by ApplyScheduleRequest and the
+ *  officials ApplyAssignmentsInput. */
+export const AiApplyMeta = z.object({
+  /** Trimmed server-side at the apply seam (schedule.ts / officials.ts), so it
+   *  stays a plain string here — a zod transform would break openapi:gen. */
+  instruction: z.string().max(500),
+  summary: z.string().max(600),
+  model: z.string(),
+  repair_rounds: z.number().int().nonnegative(),
+});
+export type AiApplyMeta = z.infer<typeof AiApplyMeta>;
+
 export const ApplyScheduleRequest = z.object({
   assignments: z
     .array(
@@ -790,8 +805,17 @@ export const ApplyScheduleRequest = z.object({
   source: z.enum(["auto", "manual", "ai"]).default("auto"),
   /** Optimistic token (v3/11 gap 10) — see PatchFixture.expected_seq. */
   expected_seq: z.number().int().nonnegative().optional(),
+  /** Audit provenance when source === "ai" (v4/03 §10). */
+  ai: AiApplyMeta.optional(),
 });
 export type ApplyScheduleRequest = z.infer<typeof ApplyScheduleRequest>;
+
+/** GET /divisions/{id}/schedule/ai-last — the most recent AI-sourced apply, or
+ *  null when the division has never been scheduled by the AI Architect. */
+export const AiLastResult = z
+  .object({ at: z.string(), instruction: z.string(), summary: z.string() })
+  .nullable();
+export type AiLastResult = z.infer<typeof AiLastResult>;
 
 export const ApplyScheduleResult = z.object({
   applied: z.number().int(),

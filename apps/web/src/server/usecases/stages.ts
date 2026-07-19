@@ -83,7 +83,7 @@ export interface FixtureRow {
   officials: unknown[];
   status: string;
   outcome: unknown;
-  schedule_source: "none" | "auto" | "manual";
+  schedule_source: "none" | "auto" | "manual" | "ai";
   schedule_locked: boolean;
   created_at: string;
 }

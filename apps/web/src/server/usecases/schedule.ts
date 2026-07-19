@@ -545,12 +545,40 @@ export async function applySchedule(
       stageId,
       source: input.source,
       moves,
+      ...(input.ai ? { ai: { ...input.ai, instruction: input.ai.instruction.trim() } } : {}),
     });
     await tx`update divisions set seq = ${seq} where id = ${stage.division_id}`;
     return { divisionId: stage.division_id, competitionId: stage.competition_id, applied: input.assignments.length, conflicts };
   });
   afterScheduleWrite(out.divisionId, out.competitionId, "schedule");
   return { applied: out.applied, conflicts: out.conflicts };
+}
+
+/** GET /divisions/{id}/schedule/ai-last — recall the most recent AI-sourced
+ *  schedule apply from the division ledger (v4/03 §10). Returns the trimmed
+ *  instruction + human summary + apply timestamp, or null when the division has
+ *  never been scheduled by the AI Architect. Read-gated at the route. */
+export async function lastAiApply(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<{ at: string; instruction: string; summary: string } | null> {
+  return withTenant(auth.orgId, async (tx) => {
+    const rows = await tx<
+      { created_at: Date; payload: { ai?: { instruction?: string; summary?: string } } }[]
+    >`
+      select created_at, payload from division_events
+      where division_id = ${divisionId}
+        and type = 'schedule_applied'
+        and payload->>'source' = 'ai'
+      order by seq desc limit 1`;
+    if (rows.length === 0) return null;
+    const ai = rows[0]!.payload.ai ?? {};
+    return {
+      at: iso(ms(rows[0]!.created_at)),
+      instruction: ai.instruction ?? "",
+      summary: ai.summary ?? "",
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

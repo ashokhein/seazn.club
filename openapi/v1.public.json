@@ -12159,7 +12159,8 @@
                                 "enum": [
                                   "none",
                                   "auto",
-                                  "manual"
+                                  "manual",
+                                  "ai"
                                 ]
                               },
                               "schedule_locked": {
@@ -15179,6 +15180,34 @@
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 9007199254740991
+                  },
+                  "ai": {
+                    "type": "object",
+                    "properties": {
+                      "instruction": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "summary": {
+                        "type": "string",
+                        "maxLength": 600
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "repair_rounds": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "instruction",
+                      "summary",
+                      "model",
+                      "repair_rounds"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -15197,7 +15226,13 @@
                   }
                 ],
                 "source": "auto",
-                "expected_seq": 0
+                "expected_seq": 0,
+                "ai": {
+                  "instruction": "example",
+                  "summary": "example",
+                  "model": "example",
+                  "repair_rounds": 0
+                }
               }
             }
           }
@@ -16517,7 +16552,8 @@
                           "enum": [
                             "none",
                             "auto",
-                            "manual"
+                            "manual",
+                            "ai"
                           ]
                         },
                         "schedule_locked": {
@@ -16953,7 +16989,8 @@
                           "enum": [
                             "none",
                             "auto",
-                            "manual"
+                            "manual",
+                            "ai"
                           ]
                         },
                         "schedule_locked": {
