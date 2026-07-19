@@ -12,6 +12,7 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { putScheduleSettings, autoSchedule, applySchedule, lastAiApply } from "../schedule";
+import { schedulingAiModel } from "../schedule-ai";
 import { ApplyScheduleRequest, Fixture } from "@/server/api-v1/schemas";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -134,6 +135,9 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
         court_label: a.court_label,
       })),
       source: "ai",
+      // The client sends a DIFFERENT model string ("claude-x"); the audit must
+      // ignore it and stamp the server's runtime model (schedulingAiModel()) so
+      // a SCHEDULING_AI_MODEL override can never desync the ledger from reality.
       ai: { instruction: "  keep courts balanced  ", summary: "scheduled 6 fixtures across 1 court", model: "claude-x", repair_rounds: 2 },
     });
     expect(applied.applied).toBeGreaterThan(0);
@@ -146,7 +150,8 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
     expect(event.payload.source).toBe("ai");
     expect(event.payload.ai?.instruction).toBe("keep courts balanced");
     expect(event.payload.ai?.summary).toBe("scheduled 6 fixtures across 1 court");
-    expect(event.payload.ai?.model).toBe("claude-x");
+    // Server truth, not the client's "claude-x".
+    expect(event.payload.ai?.model).toBe(schedulingAiModel());
     expect(event.payload.ai?.repair_rounds).toBe(2);
 
     // ai-last recalls the trimmed instruction + summary + a timestamp.

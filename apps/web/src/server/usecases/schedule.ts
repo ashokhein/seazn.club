@@ -33,6 +33,7 @@ import {
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
+import { schedulingAiModel } from "./schedule-ai";
 
 type Tx = postgres.TransactionSql;
 
@@ -537,7 +538,13 @@ export async function applySchedule(
       stageId,
       source: input.source,
       moves,
-      ...(input.ai ? { ai: { ...input.ai, instruction: input.ai.instruction.trim() } } : {}),
+      // Stamp the runtime model, not the client's constant: SCHEDULING_AI_MODEL
+      // can override the model that actually ran, and the run ledger records the
+      // truth — so trusting the client's `model` here would misrecord the audit.
+      // The client field is still accepted (schema unchanged); it's just ignored.
+      ...(input.ai
+        ? { ai: { ...input.ai, instruction: input.ai.instruction.trim(), model: schedulingAiModel() } }
+        : {}),
     });
     await tx`update divisions set seq = ${seq} where id = ${stage.division_id}`;
     return { divisionId: stage.division_id, competitionId: stage.competition_id, applied: input.assignments.length, conflicts };
