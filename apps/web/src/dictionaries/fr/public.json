@@ -7,5 +7,20 @@
   "hero.subhead": "Suivez les scores en direct, les calendriers des matchs et les classements de chaque compétition — aucun compte requis.",
   "section.about": "À propos",
   "section.competitions": "Compétitions",
-  "empty": "Aucune compétition publique pour le moment — revenez bientôt."
+  "empty": "Aucune compétition publique pour le moment — revenez bientôt.",
+  "news.title": "Actualités",
+  "news.eyebrow": "Programme du match",
+  "news.empty": "Pas encore d'actualités — revenez après la prochaine journée.",
+  "news.older": "Articles précédents",
+  "news.newer": "Articles récents",
+  "news.pagination": "Pagination des actualités",
+  "news.feedIntro": "Dernières actualités et résultats de {org}.",
+  "news.download": "Télécharger la carte image",
+  "news.related": "Compétition liée",
+  "news.latest": "Dernières actualités",
+  "news.viewAll": "Voir toutes les actualités",
+  "news.kind.result": "Résultat",
+  "news.kind.recap": "Résumé",
+  "news.kind.announcement": "Annonce",
+  "news.kind.news": "Actualité du club"
 }

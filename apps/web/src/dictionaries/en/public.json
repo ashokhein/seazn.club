@@ -7,5 +7,20 @@
   "hero.subhead": "Follow live scores, match schedules and standings for every competition — no account needed.",
   "section.about": "About",
   "section.competitions": "Competitions",
-  "empty": "No public competitions right now — check back soon."
+  "empty": "No public competitions right now — check back soon.",
+  "news.title": "News",
+  "news.eyebrow": "Matchday programme",
+  "news.empty": "No news yet — check back after the next matchday.",
+  "news.older": "Older posts",
+  "news.newer": "Newer posts",
+  "news.pagination": "News pagination",
+  "news.feedIntro": "Latest news and results from {org}.",
+  "news.download": "Download image card",
+  "news.related": "Related competition",
+  "news.latest": "Latest news",
+  "news.viewAll": "View all news",
+  "news.kind.result": "Result",
+  "news.kind.recap": "Recap",
+  "news.kind.announcement": "Announcement",
+  "news.kind.news": "Club news"
 }

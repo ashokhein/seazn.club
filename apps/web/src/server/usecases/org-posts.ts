@@ -15,6 +15,8 @@ import type { EventEnvelope } from "@seazn/engine/core";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { hasFeature } from "@/lib/entitlements";
+import { captureServer } from "@/lib/posthog-server";
+import { EVENTS } from "@/lib/analytics-events";
 import { toLocale, type Locale } from "@/lib/i18n-constants";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { resolveModule } from "@/server/engine-db";
@@ -56,6 +58,16 @@ export interface OrgPost {
 // (round numbers restart per stage — fixtures' natural key is stage+round+seq).
 const TRIGGER_RESULT = "fixture_decided";
 const TRIGGER_RECAP = "round_complete";
+
+/** post_published fires only on the transition INTO published (mirrors
+ *  competitions.shouldFireMadePublic): a publish action from any non-published
+ *  status. Editing an already-published post (no action) never re-fires. */
+export function shouldFirePostPublished(
+  prevStatus: PostStatus,
+  action: "publish" | "archive" | undefined,
+): boolean {
+  return action === "publish" && prevStatus !== "published";
+}
 // League-stage kinds carry a table, so the standings-movement line + recap make
 // sense only for these (mirrors scoring.ts TABLE_KINDS).
 const TABLE_KINDS = new Set(["league", "group", "swiss"]);
@@ -163,7 +175,14 @@ export async function createPost(
               ${auth.userId}, ${input.kind ?? "news"}, 'draft', ${slug}, ${input.title},
               ${input.bodyMd ?? ""}, ${input.heroImagePath ?? null})
       returning ${COLS(tx)}`;
-    return mapPost(row!);
+    const post = mapPost(row!);
+    await captureServer({
+      event: EVENTS.POST_CREATED,
+      distinctId: auth.userId ?? `org:${auth.orgId}`,
+      orgId: auth.orgId,
+      properties: { kind: post.kind },
+    });
+    return post;
   });
 }
 
@@ -226,7 +245,17 @@ export async function updatePost(
       update org_posts set ${tx(patch as never, ...(cols as never[]))}
       where id = ${id}
       returning ${COLS(tx)}`;
-    return mapPost(row!);
+    const post = mapPost(row!);
+    if (shouldFirePostPublished(existing.status, input.action)) {
+      await captureServer({
+        event: EVENTS.POST_PUBLISHED,
+        distinctId: auth.userId ?? `org:${auth.orgId}`,
+        orgId: auth.orgId,
+        // { kind, auto }: an auto-draft carries auto_source; a manual post does not.
+        properties: { kind: post.kind, auto: post.autoSource !== null },
+      });
+    }
+    return post;
   });
 }
 

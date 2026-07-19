@@ -7,5 +7,20 @@
   "hero.subhead": "Volg live scores, wedstrijdschema's en standen voor elke competitie — geen account nodig.",
   "section.about": "Over",
   "section.competitions": "Competities",
-  "empty": "Op dit moment geen openbare competities — kom binnenkort terug."
+  "empty": "Op dit moment geen openbare competities — kom binnenkort terug.",
+  "news.title": "Nieuws",
+  "news.eyebrow": "Wedstrijdprogramma",
+  "news.empty": "Nog geen nieuws — kom terug na de volgende speeldag.",
+  "news.older": "Oudere berichten",
+  "news.newer": "Nieuwere berichten",
+  "news.pagination": "Nieuwspaginering",
+  "news.feedIntro": "Laatste nieuws en uitslagen van {org}.",
+  "news.download": "Afbeeldingskaart downloaden",
+  "news.related": "Gerelateerde competitie",
+  "news.latest": "Laatste nieuws",
+  "news.viewAll": "Alle nieuws bekijken",
+  "news.kind.result": "Uitslag",
+  "news.kind.recap": "Samenvatting",
+  "news.kind.announcement": "Aankondiging",
+  "news.kind.news": "Clubnieuws"
 }

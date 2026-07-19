@@ -488,6 +488,8 @@ export default async function DivisionPage({
             }
             divisionPathPrefix={`/o/${orgSlug}/c/${compSlug}/d/`}
             fixturesHref={routes.division(orgSlug, compSlug, divSlug, "fixtures")}
+            autoPosts={division.auto_posts}
+            canAutoPost={await hasFeature(auth.orgId, "news.auto")}
             embed={
               competition.visibility !== "private" ? (
                 <EmbedSnippet

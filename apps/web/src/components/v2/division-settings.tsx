@@ -11,6 +11,7 @@ import { apiV1 } from "@/lib/client-v1";
 import { divisionAccent, monogram } from "@/lib/division-hue";
 import { MatchRuleFields, buildRuleOverride } from "./match-rules";
 import { STAGE_TEMPLATES, buildTemplateStages, detectTemplate } from "./format-templates";
+import { UpgradeGate } from "@/components/upgrade-gate";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import type { EffectiveEntrantModel } from "@seazn/engine/sport";
@@ -108,6 +109,8 @@ export function DivisionSettings({
   danger,
   entrantModel,
   entrantModelSource,
+  autoPosts,
+  canAutoPost,
 }: {
   division: DivisionSettingsInfo;
   variants: { key: string; name: string }[];
@@ -131,6 +134,10 @@ export function DivisionSettings({
   /** Whether the effective model comes from the sport default or a saved
    *  `config.entrants` override — drives the caption + Reset affordance. */
   entrantModelSource: "sport" | "override";
+  /** SPEC-2 auto-draft opt-in (divisions.auto_posts). */
+  autoPosts: boolean;
+  /** news.auto entitlement (Pro) — off → the toggle shows the PlusReveal. */
+  canAutoPost: boolean;
 }) {
   const msg = useMsg();
   const router = useRouter();
@@ -168,6 +175,7 @@ export function DivisionSettings({
   const [entrantDefault, setEntrantDefault] = useState<string>(entrantModel.defaultKind);
   const [squadNumbers, setSquadNumbers] = useState<boolean>(entrantModel.squadNumbers);
   const [captain, setCaptain] = useState<boolean>(entrantModel.captain);
+  const [autoPostsOn, setAutoPostsOn] = useState<boolean>(autoPosts);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -313,6 +321,24 @@ export function DivisionSettings({
         json: { config: override },
       });
     }, msg("divset.entrants.resetDone"));
+
+  // SPEC-2: toggle divisions.auto_posts (Pro news.auto). Turning it ON while
+  // unentitled returns 402 server-side; the UI gates on canAutoPost so the
+  // control only enables when entitled (turning it off is always allowed).
+  const toggleAutoPosts = (next: boolean) => {
+    setAutoPostsOn(next); // optimistic
+    void run(async () => {
+      try {
+        await apiV1(`/api/v1/divisions/${division.id}`, {
+          method: "PATCH",
+          json: { auto_posts: next },
+        });
+      } catch (err) {
+        setAutoPostsOn(!next); // revert on failure
+        throw err;
+      }
+    }, msg("divset.news.saved"));
+  };
 
   return (
     <div className="max-w-2xl space-y-3" data-testid="division-settings">
@@ -676,6 +702,28 @@ export function DivisionSettings({
           </button>
         )}
         <p className="text-[11px] text-slate-400">{msg("divset.entrants.note")}</p>
+      </Group>
+
+      <Group
+        title={msg("divset.news.title")}
+        summary={autoPostsOn ? msg("divset.news.on") : msg("divset.news.off")}
+      >
+        <p className="text-xs text-slate-500">{msg("divset.news.desc")}</p>
+        {canAutoPost ? (
+          <label className="flex items-start gap-2 text-sm text-slate-600" data-testid="auto-posts-toggle">
+            <input
+              type="checkbox"
+              checked={autoPostsOn}
+              disabled={!canEdit || busy}
+              onChange={(e) => toggleAutoPosts(e.target.checked)}
+              className="mt-0.5"
+            />
+            {msg("divset.news.toggle")}
+          </label>
+        ) : (
+          <UpgradeGate feature="news.auto" />
+        )}
+        <p className="text-[11px] text-slate-400">{msg("divset.news.note")}</p>
       </Group>
 
       <Group title={msg("divset.sharing")} summary={msg("divset.sharingSummary")}>
