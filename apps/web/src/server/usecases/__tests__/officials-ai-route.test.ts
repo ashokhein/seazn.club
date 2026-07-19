@@ -278,6 +278,27 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
     expect(parse).toHaveBeenCalledTimes(2);
   });
+
+  it("a hallucinated official id fails the structural gate the same way → 422", async () => {
+    // Second branch of the same binding decision: an official_id outside the
+    // pack roster must also fail loudly, not be silently dropped by the referee.
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    const ghostRef = randomUUID();
+    const bad = resp({
+      assignments: fixtureIds.map((id) => ({ fixture_id: id, official_id: ghostRef, role_key: "referee" })),
+      unfilled: [], explanations: [], summary: "x",
+    });
+    parse.mockResolvedValueOnce(bad).mockResolvedValueOnce(bad);
+    await expect(
+      officialsAiPlanForDivision(auth, divisionId, {
+        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
+    expect(parse).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpus 00 §6)", () => {
