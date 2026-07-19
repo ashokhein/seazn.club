@@ -106,7 +106,7 @@
   "pricing.matrix.passedEvent": "El evento con pase",
   "pricing.matrix.fees": "Cuotas de inscripción pagadas a tu club",
   "pricing.matrix.competitions.max_active": "Competiciones activas",
-  "pricing.matrix.orgs.max_owned": "Clubes que puedes poseer",
+  "pricing.matrix.orgs.max_owned": "Organizaciones que puedes crear",
   "pricing.matrix.divisions.per_competition.max": "Divisiones por competición",
   "pricing.matrix.entrants.per_division.max": "Participantes por división",
   "pricing.matrix.members.max": "Miembros del equipo",

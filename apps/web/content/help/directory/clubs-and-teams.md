@@ -14,11 +14,11 @@ You don't have to model everything as a club. Pick the lightest step that fits:
 - **Standalone team** — a named, persistent squad you can re-enrol each season. It keeps its own roster, badge and short name without belonging to a club.
 - **Club** — group several teams under one badge, kit colours and contacts (for example a club that fields a first XI, a reserves side and a youth team).
 
-You can start with a standalone team and attach it to a club later, or detach a team from a club without losing its squad — the ladder is a convenience, not a lock-in.
+You can run a team standalone — it sits in the directory right alongside your clubs — or detach a team from a club without losing its squad. The ladder is a convenience, not a lock-in.
 
 ## The directory list
 
-The tab shows every club and standalone team with its crest, short name, team count and primary contact. Search filters by name as you type. Editors get **New club** and **New team** buttons, plus **Invite** to bring an existing team in. Opening a club takes you to its hub.
+The tab shows every club and standalone team with its crest, short name, team count and primary contact. Search filters by name as you type. Editors get **New club** and **New team** buttons, plus an **Import** link to bring clubs and teams in from a spreadsheet. Opening a club takes you to its hub.
 
 ## The club hub
 
