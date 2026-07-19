@@ -14,7 +14,7 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
   ]},
   { slug: "formats", features: [
     "formats.advanced", "formats.double_elim", "standings.custom_points",
-    "standings.carry_over", "tiebreakers.custom",
+    "standings.carry_over", "tiebreakers.custom", "discipline.enforced",
   ]},
   { slug: "scheduling", features: [
     "scheduling.board", "scheduling.constraints", "scheduling.multi_division",
@@ -25,12 +25,12 @@ export const ENTITLEMENT_DOMAINS: { slug: string; features: string[] }[] = [
     "scoring.device_links", "cricket.dls", "stats.player",
   ]},
   { slug: "officials", features: [
-    "officials.per_fixture.max", "officials.roles_multi", "officials.auto",
+    "officials.per_fixture.max", "officials.roles_multi", "officials.auto", "officials.marks",
   ]},
   { slug: "brand", features: [
     "branding", "dashboard.branding", "realtime", "embeds.enabled",
     "discovery.listed", "discovery.featured", "discovery.branding",
-    "exports", "exports.branded",
+    "exports", "exports.branded", "news.auto",
   ]},
   { slug: "platform", features: [
     "clubs.hierarchy", "logos.bulk", "api.access", "api.write", "support.priority",

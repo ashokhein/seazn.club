@@ -21,7 +21,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "cricket.dls": "DLS revised targets are a Pro feature — a manual umpire target still works.",
   "stats.player": "Player stats and scorecard entry are a Pro feature.",
   "scoring.audit_export": "The signed match audit trail download is a Pro feature.",
-  "discipline.enforced": "Player suspensions — card thresholds, a review queue and banned-player flags — are a Pro feature.",
+  "discipline.enforced": "Automatic suspension tracking is a Pro feature.",
   "stats.club_championship": "Club championship tables are a Pro feature.",
   "tiebreakers.custom": "Custom tiebreaker order is a Pro feature.",
   "standings.custom_points": "Bonus-point rules and forfeit points are a Pro feature — plain win/draw/loss points work on every plan.",
@@ -50,6 +50,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "officials.auto": "Auto-assigning officials (solver, phased sourcing) is a Pro Plus feature — manual assignment still works.",
   "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
   "officials.per_fixture.max": "Community includes one official per fixture — more need Pro.",
+  "officials.marks": "Rating your match officials is a Pro feature.",
   "scheduling.ai": "AI-assisted planning (describe constraints in plain language) is a Pro feature.",
   "scheduling.ai.runs_per_division.max":
     "You've used all your AI schedule generations for this division — Pro includes five, Pro Plus is unlimited.",
@@ -67,6 +68,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "discovery.listed": "Showcasing on seazn.club is not available on this plan.",
   "discovery.featured": "The featured showcase row is a Pro perk.",
   "discovery.branding": "Card tagline and hero image on seazn.club are a Pro feature.",
+  "news.auto": "Auto-drafted result posts are a Pro feature.",
 };
 
 /** Human, contextual sentence for a 402 / paywall. Never throws. */

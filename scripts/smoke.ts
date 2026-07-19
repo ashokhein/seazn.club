@@ -2392,6 +2392,13 @@ async function proPlusSuite(): Promise<void> {
       pricing.body.includes("data-pricing-matrix") &&
       pricing.body.includes("Pro Plus"),
   );
+  // T84: the three v16 league-ops entitlements (discipline, marks, auto
+  // news) are surfaced on the Pro card + comparison matrix, not just gated.
+  check(
+    "pp: /pricing surfaces the v16 league-ops entitlements",
+    pricing.body.includes("Suspensions &amp; discipline tracking") &&
+      pricing.body.includes("Automatic suspension tracking"),
+  );
 
   // Restore: this org is never touched by another suite in main(), but leave
   // it as found in case a later suite lands above this one (poison trap).
