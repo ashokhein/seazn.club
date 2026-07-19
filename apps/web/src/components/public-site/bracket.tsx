@@ -333,7 +333,11 @@ export function Bracket({ kind, fixtures, entrantNames, entrantLogos, fixtureHre
   // Double-elim round numbers encode WB/LB/GF lanes, so keep plain numbers.
   const maxRound = ordered.length > 0 ? ordered[ordered.length - 1][0] : 0;
   const roundName = (roundNo: number): string => {
-    if (kind === "stepladder") return `Rung ${roundNo}`;
+    if (kind === "stepladder") {
+      // The summit match IS the final — "Rung N" reads wrong at the top
+      // ("the winner plays seed 1 in the final", help copy).
+      return roundNo === maxRound ? "Final" : `Rung ${roundNo}`;
+    }
     if (kind === "knockout") {
       const fromEnd = maxRound - roundNo;
       if (fromEnd === 0) return "Final";

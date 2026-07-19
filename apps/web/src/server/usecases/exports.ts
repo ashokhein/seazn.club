@@ -393,7 +393,7 @@ export async function buildDivisionDocModel(
           }, buildOpts);
         }
         if (stage.kind === "stepladder") {
-          return buildLadderPoster(title, exportFixtures, (i) => `Rung ${i + 1}`, buildOpts);
+          return buildLadderPoster(title, exportFixtures, (i) => (i === exportFixtures.length - 1 ? "Final" : `Rung ${i + 1}`), buildOpts);
         }
         return buildBracket(title, exportFixtures, buildOpts);
       }

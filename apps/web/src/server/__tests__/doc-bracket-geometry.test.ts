@@ -130,7 +130,7 @@ describe("ladderPageGeometry — one-sheet bounds", () => {
       home: i === 0 ? "Challenger A" : null, away: `Seed ${n + 1 - i}`,
       headline: i === 0 ? "2–1" : null, decided: i === 0,
     }));
-    return buildLadderPoster("Ladder", fixtures, (i) => `Rung ${i + 1}`, { printedAt: "2026-07-19T00:00:00Z" }).ladder!;
+    return buildLadderPoster("Ladder", fixtures, (i) => (i === n - 1 ? "Final" : `Rung ${i + 1}`), { printedAt: "2026-07-19T00:00:00Z" }).ladder!;
   }
 
   it("7 rungs stay inside the box, summit drawn first (top)", () => {
@@ -142,7 +142,7 @@ describe("ladderPageGeometry — one-sheet bounds", () => {
     }
     for (const line of g.lines) for (const [x, y] of line.points) inBox(x, y);
     // Top rect is the last rung (the summit), bottom rect is rung 1.
-    expect(g.labels[0]!.text).toBe("Rung 7");
+    expect(g.labels[0]!.text).toBe("Final"); // summit label
     expect(g.labels[g.labels.length - 1]!.text).toBe("Rung 1");
   });
 });
