@@ -219,6 +219,7 @@ export default async function DivisionSchedulePage({
               competitionEnd={competition.ends_on}
               venueCap={venueLabel(division.sport_key)}
               showSettings={false}
+              officialsWithBlackout={new Set(blackouts.map((b) => b.official_id)).size}
             />
           </>
         )}

@@ -51,6 +51,9 @@ export const EVENTS = {
   /** v4 AI Schedule Architect (design/v4/00 §5): one metered architect run —
    *  fired on success AND on a 422 AI_PLAN_FAILED so refused spend is visible. */
   AI_PLAN_RUN: "ai_plan_run",
+  /** v4 brief step (design/v4/03 §5): organiser tapped a pre-flight warn row's
+   *  deep link to go fix a data gap (no windows, no officials, …) before running. */
+  AI_PREFLIGHT_GAP_FIXED: "ai_preflight_gap_fixed",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];

@@ -9,12 +9,17 @@
 // state machine and gating; this component renders it and runs Phase A. Tasks
 // 12–16 flesh out the schedule / officials / apply step bodies.
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
-import type { AiPlanRequest, AiPlanResponse } from "@/server/api-v1/schemas";
+import type { AiPlanRequest, AiPlanResponse, AiLastResult } from "@/server/api-v1/schemas";
+import { AiWishChips } from "./ai-wish-chips";
+import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
+import { compileWishes, type Wish } from "./wish-compile";
 import {
   aiConsoleReducer,
   aiErrorKey,
@@ -23,6 +28,42 @@ import {
   type AiMode,
   type AiStep,
 } from "./ai-console-state";
+
+/** The brief step's live inputs, derived by the board from data it already has
+ *  (schedule config + fixtures + entrants). Officials come from a fetch-on-open
+ *  in the console (kept out of the board's initial payload — gap 15); their
+ *  blackout count is the one already-loaded page datum threaded here, since no
+ *  client route exposes official availability. */
+export interface AiBriefContext {
+  /** Configured courts (settings.courts) — court picker + "courts set" row. */
+  courts: string[];
+  /** Session-window count. */
+  windows: number;
+  /** Blackout-period count. */
+  blackouts: number;
+  /** Any non-default constraint knobs set (rest / grouping / v2 constraints). */
+  constraintsSet: boolean;
+  /** Movable fixtures (status "scheduled") the AI would place. */
+  movable: number;
+  /** Pinned fixtures (schedule_locked) the AI must not move. */
+  pinned: number;
+  /** Entrants for the chip pickers, sorted by name. */
+  entrants: { id: string; name: string }[];
+  /** Officials with at least one blackout date (M in "N officials, M with …"). */
+  officialsWithBlackout: number;
+}
+
+/** Free text = the current instruction minus the previous compiled prefix, so a
+ *  chip add/remove re-derives the compiled part while keeping what was typed. */
+function deriveFreeText(instruction: string, prevCompiled: string): string {
+  if (prevCompiled === "") return instruction;
+  if (instruction.startsWith(prevCompiled)) return instruction.slice(prevCompiled.length).replace(/^\s+/, "");
+  return instruction; // edited into the compiled region — treat all as free text
+}
+
+function joinNonEmpty(a: string, b: string): string {
+  return [a, b].filter((s) => s.length > 0).join(" ");
+}
 
 /**
  * Client kill switch, mirroring the server "ai-scheduling" flag. Fail-open: only
@@ -62,6 +103,7 @@ function stepDone(state: AiConsoleState, step: AiStep): boolean {
 export function AiConsole({
   divisionId,
   aiAllowed,
+  brief,
   onClose,
   onApplied,
 }: {
@@ -69,13 +111,65 @@ export function AiConsole({
   /** Client-side entitlement read (server prop) — false renders the paywall
    *  inside the dock with no network call. */
   aiAllowed: boolean;
+  /** Live brief inputs derived by the board (pre-flight card + chip pickers). */
+  brief: AiBriefContext;
   onClose: () => void;
   /** Called after a successful apply so the board can refresh. Wired in a later
    *  task; accepted here so the seam is stable. */
   onApplied?: () => void;
 }) {
   const msg = useMsg();
+  const pathname = usePathname();
   const [state, dispatch] = useReducer(aiConsoleReducer, initialAiConsoleState);
+  // Chip wishes live at the console level so they survive step navigation; the
+  // instruction is always compileWishes(wishes) + preserved free text.
+  const [wishes, setWishes] = useState<Wish[]>([]);
+  // Fetched once on open (design/v4/03): officials roster size (pre-flight) and
+  // the last AI-sourced apply (recall strip). Neither bloats the board payload.
+  const [rosterCount, setRosterCount] = useState<number | null>(null);
+  const [lastRun, setLastRun] = useState<AiLastResult>(null);
+  useEffect(() => {
+    let cancelled = false;
+    apiV1<{ id: string }[]>("/api/v1/officials")
+      .then((r) => !cancelled && setRosterCount(r.length))
+      .catch(() => !cancelled && setRosterCount(0));
+    apiV1<AiLastResult>(`/api/v1/divisions/${divisionId}/schedule/ai-last`)
+      .then((r) => !cancelled && setLastRun(r))
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [divisionId]);
+
+  // Chips ↔ instruction: re-derive the compiled prefix, keep the free text.
+  const applyWishes = useCallback(
+    (next: Wish[]) => {
+      const free = deriveFreeText(state.instruction, compileWishes(wishes));
+      setWishes(next);
+      dispatch({ type: "SET_INSTRUCTION", value: joinNonEmpty(compileWishes(next), free) });
+    },
+    [state.instruction, wishes],
+  );
+  // Reuse a last run or tap a preset: the whole textarea becomes that text and
+  // the chips reset (so nothing re-prepends over it).
+  const fillInstruction = useCallback((value: string) => {
+    setWishes([]);
+    dispatch({ type: "SET_INSTRUCTION", value });
+  }, []);
+
+  const preflight: PreflightInput = {
+    divisionId,
+    courts: brief.courts.length,
+    windows: brief.windows,
+    blackouts: brief.blackouts,
+    constraintsSet: brief.constraintsSet,
+    movable: brief.movable,
+    pinned: brief.pinned,
+    officials: rosterCount,
+    officialsBlackout: brief.officialsWithBlackout,
+    settingsHref: `${pathname}?tab=settings`,
+    officialsHref: `${pathname}?tab=officials`,
+  };
   // Instruction that produced the on-screen proposal — lets a refine turn send
   // the right `prior.instruction` when it round-trips the previous assignments.
   const priorInstruction = useRef("");
@@ -131,7 +225,19 @@ export function AiConsole({
     <div className="space-y-4">
       <Stepper state={state} onGoto={(step) => dispatch({ type: "GOTO_STEP", step })} msg={msg} />
       {state.step === "brief" && (
-        <BriefStep state={state} dispatch={dispatch} run={run} busy={busy} msg={msg} />
+        <BriefStep
+          state={state}
+          dispatch={dispatch}
+          run={run}
+          busy={busy}
+          msg={msg}
+          brief={brief}
+          preflight={preflight}
+          wishes={wishes}
+          onWishes={applyWishes}
+          onFill={fillInstruction}
+          lastRun={lastRun}
+        />
       )}
       {state.step === "schedule" && (
         <ScheduleStep state={state} dispatch={dispatch} msg={msg} plural={plural} />
@@ -256,15 +362,28 @@ function BriefStep({
   run,
   busy,
   msg,
+  brief,
+  preflight,
+  wishes,
+  onWishes,
+  onFill,
+  lastRun,
 }: {
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
   run: () => void;
   busy: boolean;
   msg: ReturnType<typeof useMsg>;
+  brief: AiBriefContext;
+  preflight: PreflightInput;
+  wishes: Wish[];
+  onWishes: (next: Wish[]) => void;
+  onFill: (value: string) => void;
+  lastRun: AiLastResult;
 }) {
   const tooShort = state.instruction.trim().length < 3;
-  const runLabel = msg(`board.ai.run.${state.mode}` as Parameters<typeof msg>[0]);
+  const runLabel = msg(`board.ai.run.${state.mode}` as MessageKey);
+  const presetNums = [1, 2, 3] as const;
   return (
     <div className="space-y-3">
       {/* Run type */}
@@ -285,7 +404,7 @@ function BriefStep({
                 active ? "bg-white text-violet-700 shadow-sm" : "text-slate-500 hover:text-violet-700"
               }`}
             >
-              {msg(`board.ai.mode.${m}` as Parameters<typeof msg>[0])}
+              {msg(`board.ai.mode.${m}` as MessageKey)}
             </button>
           );
         })}
@@ -297,6 +416,12 @@ function BriefStep({
           {msg("board.ai.scoped")}
         </p>
       )}
+
+      {/* Last AI run — one tap refills the textarea (design/v4/03 §4). */}
+      {lastRun && <AiLastRun last={lastRun} onReuse={onFill} />}
+
+      {/* Wish chips compile into the instruction below. */}
+      <AiWishChips wishes={wishes} onChange={onWishes} entrants={brief.entrants} courts={brief.courts} />
 
       <div>
         <label htmlFor="ai-instruction" className="label">
@@ -312,6 +437,30 @@ function BriefStep({
         />
         <p className="mt-1 text-[11px] text-slate-500">{msg("board.ai.instructionHint")}</p>
       </div>
+
+      {/* One-tap example presets for the active mode (02 §4). */}
+      <div className="space-y-1">
+        <span className="label mb-0">{msg("board.ai.preset.label")}</span>
+        <div className="space-y-1">
+          {presetNums.map((n) => {
+            const text = msg(`board.ai.preset.${state.mode}.${n}` as MessageKey);
+            return (
+              <button
+                key={n}
+                type="button"
+                disabled={busy}
+                onClick={() => onFill(text)}
+                className="block w-full rounded-md border border-slate-200 bg-slate-50/60 px-2.5 py-1 text-left text-[11px] leading-snug text-slate-600 transition hover:border-violet-300 hover:bg-white hover:text-violet-700 disabled:opacity-50"
+              >
+                {text}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Pre-flight readiness — informational, never blocks the run. */}
+      <AiPreflight {...preflight} />
 
       {state.run === "error" && state.error && (
         <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">

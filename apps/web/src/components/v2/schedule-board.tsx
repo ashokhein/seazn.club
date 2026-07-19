@@ -21,7 +21,7 @@ import { BoardGrid } from "./board/board-grid";
 import { BoardLanes } from "./board/board-lanes";
 import { BoardLegend } from "./board/board-legend";
 import { BoardTray } from "./board/board-tray";
-import { AiConsole, useAiSchedulingEnabled } from "./board/ai-console";
+import { AiConsole, useAiSchedulingEnabled, type AiBriefContext } from "./board/ai-console";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
 import { SettingsPanel } from "./board/settings-panel";
@@ -72,6 +72,10 @@ interface Props {
   /** Render the inline settings card. The division schedule page turns this
    *  off and hosts the settings on its constraints tab instead. */
   showSettings?: boolean;
+  /** Officials with at least one blackout date (page-loaded official
+   *  availability), for the AI console pre-flight's "N officials, M with
+   *  blackout dates" row. Optional so non-schedule-page callers can omit it. */
+  officialsWithBlackout?: number;
 }
 
 /** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
@@ -96,6 +100,7 @@ export function ScheduleBoard({
   competitionEnd,
   venueCap = "Court",
   showSettings = true,
+  officialsWithBlackout = 0,
 }: Props) {
   const msg = useMsg();
   const locale = useLocale();
@@ -114,6 +119,29 @@ export function ScheduleBoard({
   // Entry point is role-gated (not entitlement-gated) so a free org reaches the
   // in-dock paywall; the plan check happens inside the console via aiAllowed.
   const aiAvailable = (canManage ?? canEdit) && single !== null && aiFlagOn;
+
+  // Live brief inputs for the AI console (pre-flight card + chip pickers),
+  // derived from data the board already holds — config, this division's
+  // fixtures, entrant names. Officials come from a fetch-on-open in the console;
+  // only their blackout count is threaded (page-loaded, no client route).
+  const aiBrief = useMemo<AiBriefContext>(() => {
+    const divFixtures = single ? fixtures.filter((f) => f.division_id === single.id) : fixtures;
+    return {
+      courts: cfg.courts,
+      windows: cfg.sessionWindows.length,
+      blackouts: cfg.blackouts.length,
+      constraintsSet:
+        cfg.perEntrantMinRest > 0 ||
+        (cfg.roundMinutes ?? 0) > 0 ||
+        Boolean((cfg as { constraints?: unknown }).constraints),
+      movable: divFixtures.filter((f) => f.status === "scheduled").length,
+      pinned: divFixtures.filter((f) => f.schedule_locked).length,
+      entrants: Object.entries(entrantNames)
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      officialsWithBlackout,
+    };
+  }, [cfg, fixtures, entrantNames, single, officialsWithBlackout]);
 
   // ------------------------------------------------- division filter (?d=)
   const selectedSlugs = useMemo(() => {
@@ -693,6 +721,7 @@ export function ScheduleBoard({
           key={single.id}
           divisionId={single.id}
           aiAllowed={aiAllowed}
+          brief={aiBrief}
           onClose={() => setAiOpen(false)}
           onApplied={() => router.refresh()}
         />
