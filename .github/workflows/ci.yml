@@ -24,6 +24,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # Engine coverage + sim matrix only run when the engine (or the
+      # dependency graph) changed — most PRs touch apps/web only.
+      - uses: dorny/paths-filter@v3
+        id: engine-changes
+        with:
+          filters: |
+            engine:
+              - 'packages/engine/**'
+              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -45,10 +55,12 @@ jobs:
       # defaults to 200 divisions per sport×format when CI=true) and the
       # coverage gate (≥90% lines; 100% on core/ and tiebreakers.ts).
       - run: npm run test:coverage --workspace packages/engine
+        if: steps.engine-changes.outputs.engine == 'true'
       # Sim matrix (v3/09 §3): bounded profile — every module × format ×
       # SIM_SEEDS seeds + the permanent scenario suites; emits sim-report.json.
       # A failure line prints its reproducing seed token.
       - name: Sim matrix (bounded CI profile)
+        if: steps.engine-changes.outputs.engine == 'true'
         run: SIM_SEEDS=5 npm run sim:matrix --workspace packages/engine
       - name: Sim report artifact
         if: always()
