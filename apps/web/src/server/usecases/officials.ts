@@ -90,16 +90,24 @@ export async function listOfficialsForConsole(auth: AuthCtx): Promise<OfficialCo
     order by o.display_name, o.id`);
 }
 
+export interface OfficialBlackoutRow {
+  official_id: string;
+  date: string;
+  note: string | null;
+}
+
+/** tx-level blackout loader (shared by the console read and the v4 AI pack —
+ *  same tenant-scoped query, one place). */
+export async function loadOfficialBlackouts(tx: Tx): Promise<OfficialBlackoutRow[]> {
+  return tx<OfficialBlackoutRow[]>`
+    select official_id, date::text as date, note
+    from official_availability order by date, official_id`;
+}
+
 /** Blackout dates for the org's officials (organiser-side read; the console
  *  warns before assigning someone onto a date they marked unavailable). */
-export async function listOfficialBlackouts(
-  auth: AuthCtx,
-): Promise<{ official_id: string; date: string; note: string | null }[]> {
-  return withTenant(auth.orgId, (tx) => tx<
-    { official_id: string; date: string; note: string | null }[]
-  >`
-    select official_id, date::text as date, note
-    from official_availability order by date, official_id`);
+export async function listOfficialBlackouts(auth: AuthCtx): Promise<OfficialBlackoutRow[]> {
+  return withTenant(auth.orgId, (tx) => loadOfficialBlackouts(tx));
 }
 
 export interface OfficialBusyRow {
@@ -264,6 +272,32 @@ export async function importOfficials(
 
 const DEFAULT_MATCH_MINUTES = 30;
 
+export interface OfficialWithEntrants extends OfficialRow {
+  /** entrant_members join (null when the official has no linked person). */
+  person_entrants: string[] | null;
+  /** team-as-ref entrant plus every entrant the official's person is rostered
+   *  into (Jul3/02 §3). Order follows array_agg — callers needing determinism
+   *  (v4 AI pack) must sort. */
+  entrant_ids: string[];
+}
+
+/** All org officials with their linked entrant ids — the read behind both the
+ *  officials auto pass (engineInput) and the v4 AI schedule pack. One query,
+ *  one place; do not duplicate the entrant_members correlation. */
+export async function loadOfficialsWithEntrants(tx: Tx): Promise<OfficialWithEntrants[]> {
+  const rows = await tx<(OfficialRow & { person_entrants: string[] | null })[]>`
+    select ${tx(COLS)},
+           case when person_id is not null then
+             (select array_agg(em.entrant_id) from entrant_members em
+              where em.person_id = officials.person_id)
+           end as person_entrants
+    from officials order by display_name, id`;
+  return rows.map((o) => ({
+    ...o,
+    entrant_ids: [...(o.entrant_id ? [o.entrant_id] : []), ...(o.person_entrants ?? [])],
+  }));
+}
+
 async function engineInput(
   tx: Tx,
   divisionId: string,
@@ -299,27 +333,15 @@ async function engineInput(
   // Officials + the entrant map that powers team-ref-self and plays-while-
   // reffing (Jul3/02 §3): the team-as-ref entrant plus every entrant the
   // official's person is rostered into.
-  const officialRows = await tx<(OfficialRow & { person_entrants: string[] | null })[]>`
-    select ${tx(COLS)},
-           case when person_id is not null then
-             (select array_agg(em.entrant_id) from entrant_members em
-              where em.person_id = officials.person_id)
-           end as person_entrants
-    from officials order by display_name, id`;
-  const officials: OfficialSpec[] = officialRows.map((o) => {
-    const entrantIds = [
-      ...(o.entrant_id ? [o.entrant_id] : []),
-      ...(o.person_entrants ?? []),
-    ];
-    return {
-      id: o.id,
-      roleKeys: o.role_keys,
-      homePoolId: o.home_pool_id ?? undefined,
-      maxPerDay: o.max_per_day ?? undefined,
-      entrantIds: entrantIds.length > 0 ? entrantIds : undefined,
-      homeDivisionId: divisionId,
-    };
-  });
+  const officialRows = await loadOfficialsWithEntrants(tx);
+  const officials: OfficialSpec[] = officialRows.map((o) => ({
+    id: o.id,
+    roleKeys: o.role_keys,
+    homePoolId: o.home_pool_id ?? undefined,
+    maxPerDay: o.max_per_day ?? undefined,
+    entrantIds: o.entrant_ids.length > 0 ? o.entrant_ids : undefined,
+    homeDivisionId: divisionId,
+  }));
 
   const lockedRows = await tx<{ fixture_id: string; official_id: string; role_key: string }[]>`
     select fo.fixture_id, fo.official_id, fo.role_key

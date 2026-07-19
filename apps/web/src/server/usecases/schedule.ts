@@ -54,7 +54,7 @@ function afterScheduleWrite(
 // A fixture the auto pass / board may still move; everything else on the
 // timetable is a fixed obstacle (doc 12 §6: decided fixtures are immutable —
 // rain-rescheduling touches remaining fixtures only).
-const MOVABLE_STATUS = "scheduled";
+export const MOVABLE_STATUS = "scheduled";
 // Statuses that still occupy a court (cancelled/abandoned ones do not).
 const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
 
@@ -118,7 +118,7 @@ export async function getScheduleSettings(
 
 // Settings row or the parsed defaults — the board and quick-start work
 // without an explicit PUT (single court, no constraints).
-async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSettingsOut> {
+export async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSettingsOut> {
   const [row] = await tx<{ division_id: string; config: unknown; tz: string; updated_at: string }[]>`
     select division_id, config, tz, updated_at from schedule_settings
     where division_id = ${divisionId}`;
@@ -135,12 +135,14 @@ async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSetting
 // Engine input assembly
 // ---------------------------------------------------------------------------
 
-interface FixtureLite {
+export interface FixtureLite {
   id: string;
   stage_id: string;
   division_id: string;
   pool_id: string | null;
   round_no: number;
+  seq_in_round: number;
+  ext_key: string | null;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
   scheduled_at: string | Date | null;
@@ -182,12 +184,13 @@ async function divisionLockState(
 }
 
 const FIXTURE_LITE_COLS = [
-  "id", "stage_id", "division_id", "pool_id", "round_no", "home_entrant_id", "away_entrant_id",
+  "id", "stage_id", "division_id", "pool_id", "round_no", "seq_in_round", "ext_key",
+  "home_entrant_id", "away_entrant_id",
   "scheduled_at", "court_label", "venue", "status", "schedule_locked",
   "winner_to_fixture", "loser_to_fixture",
 ] as const;
 
-async function divisionFixtures(tx: Tx, divisionId: string): Promise<FixtureLite[]> {
+export async function divisionFixtures(tx: Tx, divisionId: string): Promise<FixtureLite[]> {
   return tx<FixtureLite[]>`
     select ${tx(FIXTURE_LITE_COLS)} from fixtures
     where division_id = ${divisionId} and status in ${tx(OCCUPYING)}
@@ -195,7 +198,7 @@ async function divisionFixtures(tx: Tx, divisionId: string): Promise<FixtureLite
 }
 
 // person ids per entrant, for cross-division overlap warnings (doc 06 §4.3).
-async function peopleByEntrant(tx: Tx, entrantIds: string[]): Promise<Map<string, string[]>> {
+export async function peopleByEntrant(tx: Tx, entrantIds: string[]): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>();
   if (entrantIds.length === 0) return map;
   const rows = await tx<{ entrant_id: string; person_id: string }[]>`
@@ -213,7 +216,7 @@ function peopleOf(f: FixtureLite, people: Map<string, string[]>): string[] {
   ];
 }
 
-function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, string[]>): Assignment {
+export function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, string[]>): Assignment {
   const start = ms(f.scheduled_at as string | Date);
   return {
     fixtureId: f.id,
@@ -227,7 +230,7 @@ function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, 
 
 // Direct-feed dependencies (doc 12 §2 warn.order): the source fixture's
 // winner/loser feeds the target, so the target must not start earlier.
-function feedDependencies(fixtures: readonly FixtureLite[]): OrderDependency[] {
+export function feedDependencies(fixtures: readonly FixtureLite[]): OrderDependency[] {
   const ids = new Set(fixtures.map((f) => f.id));
   const deps: OrderDependency[] = [];
   for (const f of fixtures) {
@@ -243,7 +246,7 @@ function feedDependencies(fixtures: readonly FixtureLite[]): OrderDependency[] {
 // Sibling divisions' timetables (doc 06 §4.3): fixed court occupancy for the
 // pass, and the source of cross-division person-overlap warnings. Durations
 // use each sibling's own matchMinutes when it has settings.
-async function siblingAssignments(
+export async function siblingAssignments(
   tx: Tx,
   divisionId: string,
   competitionId: string,
@@ -271,7 +274,7 @@ async function siblingAssignments(
   );
 }
 
-function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
+export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
   const c = settings.config;
   return {
     startAt: c.startAt ? ms(c.startAt) : now,
