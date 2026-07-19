@@ -384,5 +384,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 
         properties: expect.objectContaining({ input_tokens: 100, output_tokens: 50, outcome: "failed" }),
       }),
     );
+    // A failed run never consumes quota — no schedule.ai_generated event lands.
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+    expect(n).toBe(0);
   });
 });
