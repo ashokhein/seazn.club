@@ -65,25 +65,36 @@ test.describe.serial("org news", () => {
       payload: { p1Score: 3, p2Score: 1 },
     });
 
-    // Console News tab: the ⚡ auto draft is queued.
+    // Console News tab: the ⚡ auto RESULT draft is queued. Deciding the only
+    // fixture also completes the round, so a round_recap draft lands in the
+    // SAME transaction — identical created_at, uuid tiebreak, random order.
+    // Select by the auto result title ("Alpha … 3–1 Beta …"), never .first():
+    // publishing the recap by accident yields a post with kind=round_recap,
+    // which renders no scorebug/story card and fails the second test.
     await page.goto(`/o/${orgSlug}/settings?tab=news`);
     await expect(page.getByTestId("news-tab")).toBeVisible();
-    const draft = page.getByTestId("draft-row").first();
+    const draft = page
+      .getByTestId("draft-row")
+      .filter({ hasText: `Alpha ${TAG} 3–1 Beta ${TAG}` });
     await expect(draft).toBeVisible();
     await expect(draft.getByTestId("auto-chip")).toBeVisible();
 
     // Edit the headline (keep it a scoreline so it still renders a scorebug).
     await draft.getByRole("button", { name: /edit/i }).click();
     await expect(page.getByTestId("news-composer")).toBeVisible();
-    await page.getByTestId("composer-title").fill(`Alpha ${TAG} 2–0 Beta ${TAG}`);
+    const editedTitle = `Alpha ${TAG} 2–0 Beta ${TAG}`;
+    await page.getByTestId("composer-title").fill(editedTitle);
     await page.getByTestId("composer-save").click();
 
-    // Publish from the drafts queue.
-    await page.getByTestId("draft-row").first().getByTestId("draft-publish").click();
-    await expect(page.getByTestId("published-row").first()).toBeVisible();
-    postSlug = await page
-      .getByTestId("published-row")
-      .first()
+    // Publish from the drafts queue — the result row now wears the edited title.
+    await page
+      .getByTestId("draft-row")
+      .filter({ hasText: editedTitle })
+      .getByTestId("draft-publish")
+      .click();
+    const published = page.getByTestId("published-row").filter({ hasText: editedTitle });
+    await expect(published).toBeVisible();
+    postSlug = await published
       .getByRole("link")
       .first()
       .getAttribute("href")
