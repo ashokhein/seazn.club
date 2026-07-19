@@ -6,7 +6,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/engine/package.json packages/engine/
-RUN npm ci
+# BuildKit cache mount: the npm cache persists on the Fly builder disk between
+# deploys, so a lockfile change re-downloads only what actually changed.
+RUN --mount=type=cache,id=npm,target=/root/.npm npm ci --prefer-offline
 
 COPY . .
 
