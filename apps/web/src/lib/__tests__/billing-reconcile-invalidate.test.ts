@@ -76,7 +76,12 @@ beforeEach(() => {
 
 afterAll(async () => {
   if (!HAS_DB) return;
-  if (tempPlanKeys.length) await sql`delete from plans where key = any(${tempPlanKeys})`;
+  if (tempPlanKeys.length) {
+    // Subscriptions seeded onto the temp plans must go first — plans.key is
+    // referenced by subscriptions_plan_key_fkey.
+    await sql`delete from subscriptions where plan_key = any(${tempPlanKeys})`;
+    await sql`delete from plans where key = any(${tempPlanKeys})`;
+  }
   const globalForDb = globalThis as { _sql?: { end(): Promise<void> } };
   const client = globalForDb._sql;
   globalForDb._sql = undefined;
