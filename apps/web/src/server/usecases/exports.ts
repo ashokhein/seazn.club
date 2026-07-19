@@ -11,6 +11,8 @@ import {
   buildParticipants,
   buildRoster,
   buildBracket,
+  buildBracketDe,
+  buildLadderPoster,
   buildStandings,
   buildTimetable,
   DocModel,
@@ -347,11 +349,14 @@ export async function buildDivisionDocModel(
         });
       }
       case "bracket": {
-        // PROMPT-62 §4: the first knockout stage's tree as a landscape poster.
-        const [stage] = await tx<{ id: string }[]>`
-          select id from stages where division_id = ${divisionId} and kind = 'knockout'
+        // PROMPT-62 §4 (+G-audit): the first bracket-shaped stage as a
+        // landscape poster — single-elim tree, double-elim lanes, or
+        // stepladder rungs.
+        const [stage] = await tx<{ id: string; kind: string }[]>`
+          select id, kind from stages
+          where division_id = ${divisionId} and kind in ('knockout', 'double_elim', 'stepladder')
           order by seq limit 1`;
-        if (!stage) throw new HttpError(422, "this division has no knockout stage to poster", "BRACKET_NOT_AVAILABLE");
+        if (!stage) throw new HttpError(422, "this division has no bracket stage to poster", "BRACKET_NOT_AVAILABLE");
         const fixtures = await tx<
           {
             id: string; round_no: number; seq_in_round: number;
@@ -366,24 +371,31 @@ export async function buildDivisionDocModel(
           where f.stage_id = ${stage.id}
           order by f.round_no, f.seq_in_round`;
         if (fixtures.length === 0) {
-          throw new HttpError(422, "the knockout bracket hasn't been generated yet", "BRACKET_NOT_AVAILABLE");
+          throw new HttpError(422, "the bracket hasn't been generated yet", "BRACKET_NOT_AVAILABLE");
         }
         const names = await tx<{ id: string; display_name: string }[]>`
           select id, display_name from entrants where division_id = ${divisionId}`;
         const nameById = new Map(names.map((n) => [n.id, n.display_name]));
-        return buildBracket(
-          title,
-          fixtures.map((f) => ({
-            id: f.id,
-            round_no: f.round_no,
-            seq_in_round: f.seq_in_round,
-            home: f.home_entrant_id ? (nameById.get(f.home_entrant_id) ?? null) : null,
-            away: f.away_entrant_id ? (nameById.get(f.away_entrant_id) ?? null) : null,
-            headline: f.headline,
-            decided: f.outcome !== null,
-          })),
-          { ...common, ...(liveUrl !== undefined ? { liveUrl } : {}) },
-        );
+        const exportFixtures = fixtures.map((f) => ({
+          id: f.id,
+          round_no: f.round_no,
+          seq_in_round: f.seq_in_round,
+          home: f.home_entrant_id ? (nameById.get(f.home_entrant_id) ?? null) : null,
+          away: f.away_entrant_id ? (nameById.get(f.away_entrant_id) ?? null) : null,
+          headline: f.headline,
+          decided: f.outcome !== null,
+        }));
+        const buildOpts = { ...common, ...(liveUrl !== undefined ? { liveUrl } : {}) };
+        if (stage.kind === "double_elim") {
+          return buildBracketDe(title, exportFixtures, {
+            winners: "Winners bracket", losers: "Losers bracket",
+            grandFinal: "Grand final", reset: "Reset",
+          }, buildOpts);
+        }
+        if (stage.kind === "stepladder") {
+          return buildLadderPoster(title, exportFixtures, (i) => `Rung ${i + 1}`, buildOpts);
+        }
+        return buildBracket(title, exportFixtures, buildOpts);
       }
     }
   });

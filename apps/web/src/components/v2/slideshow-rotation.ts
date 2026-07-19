@@ -35,3 +35,19 @@ export function stepFor(slideIndex: number, slides: readonly object[]): number {
   const pos = others.indexOf(slideIndex);
   return pos < 0 ? 0 : 2 * pos + 1;
 }
+
+// G-audit: which bracket-shaped stages earn a slideshow slide, and whether
+// the shape actually lays out. Pure — shared by the server slide builder and
+// its unit tests (stepladder always lays out: the rung list IS the shape).
+import { doubleElimBracket, twoSidedBracket } from "@seazn/engine/scheduling";
+
+export const BRACKET_SLIDE_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
+
+export function bracketSlideLaysOut(
+  kind: string,
+  refs: { id: string; round_no: number; seq_in_round: number }[],
+): boolean {
+  if (kind === "double_elim") return doubleElimBracket(refs).ok;
+  if (kind === "stepladder") return true;
+  return twoSidedBracket(refs).ok;
+}

@@ -116,3 +116,103 @@ export function bracketPageGeometry(b: DocBracket, box: PageBox): BracketPageGeo
 
   return { rects, lines, labels };
 }
+
+// ---------------------------------------------------------------------------
+// Double-elim edition (G-audit follow-up): winners lane above losers lane,
+// grand final (+ reset) joining the lane finals. Same contract as the
+// two-sided geometry — every rect/line/label proven inside the box by test.
+// ---------------------------------------------------------------------------
+import type { DocBracketDe, DocLadder } from "@seazn/engine/exports";
+
+export function bracketDePageGeometry(b: DocBracketDe, box: PageBox): BracketPageGeometry {
+  const cols = Math.max(b.k, b.lbCols) + (b.resetId !== undefined ? 2 : 1);
+  const colW = box.w / cols;
+  const laneGap = 16;
+  const wbRows = Math.max(1, b.wbRows);
+  const lbRows = Math.max(0, b.lbRows);
+  const bodyY = box.y + LABEL_H;
+  const bodyH = box.h - LABEL_H * (lbRows > 0 ? 2 : 1) - (lbRows > 0 ? laneGap : 0);
+  const slotH = bodyH / Math.max(wbRows + lbRows, 2);
+  const nodeH = Math.min(slotH - GAP, 46);
+  const nodeW = colW - GAP * 2;
+  const wbTop = bodyY;
+  const lbTop = wbTop + wbRows * slotH + laneGap + LABEL_H;
+  const gfX = box.x + Math.max(b.k, b.lbCols) * colW + GAP;
+  const lbUnit = (col: number) => 2 ** Math.floor(col / 2);
+  const wbY = (col: number, row: number) => wbTop + (row + 0.5) * 2 ** col * slotH;
+  const lbY = (col: number, row: number) => lbTop + (row + 0.5) * lbUnit(col) * slotH;
+  const gfY = lbRows > 0 ? (wbTop + lbTop + lbRows * slotH) / 2 : wbTop + (wbRows * slotH) / 2;
+
+  const rects: BracketRect[] = b.nodes.map((n) => {
+    const centerY = n.lane === "WB" ? wbY(n.col, n.row) : n.lane === "LB" ? lbY(n.col, n.row) : gfY;
+    const x = n.lane === "GF" ? gfX + n.col * colW : box.x + n.col * colW + GAP;
+    // Clamp inside the box — the reset column may sit at the right edge.
+    const y = Math.min(Math.max(centerY - nodeH / 2, box.y), box.y + box.h - nodeH);
+    return {
+      fixtureId: n.fixtureId,
+      x: Math.min(x, box.x + box.w - nodeW),
+      y, w: nodeW, h: nodeH,
+      home: n.home, away: n.away, headline: n.headline, decided: n.decided,
+      isCenter: n.lane === "GF",
+    };
+  });
+
+  const lines: BracketLine[] = b.connectors.map((c) => {
+    const y = c.lane === "WB" ? wbY : lbY;
+    const fx = box.x + (c.col - 1) * colW + GAP + nodeW;
+    const tx = box.x + c.col * colW + GAP;
+    const fy = y(c.col - 1, c.fromRow);
+    const ty = y(c.col, c.toRow);
+    const midX = (fx + tx) / 2;
+    return { points: [[fx, fy], [midX, fy], [midX, ty], [tx, ty]] };
+  });
+  // Grand-final joins from both lane finals.
+  const wbFx = box.x + (b.k - 1) * colW + GAP + nodeW;
+  lines.push({ points: [[wbFx, wbY(b.k - 1, 0)], [gfX - GAP, wbY(b.k - 1, 0)], [gfX - GAP, gfY], [gfX, gfY]] });
+  if (b.lbCols > 0) {
+    const lbFx = box.x + (b.lbCols - 1) * colW + GAP + nodeW;
+    lines.push({ points: [[lbFx, lbY(b.lbCols - 1, 0)], [gfX - GAP, lbY(b.lbCols - 1, 0)], [gfX - GAP, gfY], [gfX, gfY]] });
+  }
+
+  const labels: BracketLabel[] = [
+    { text: b.laneLabels.winners, x: box.x + GAP, y: box.y, w: colW * 2 },
+    { text: b.laneLabels.grandFinal, x: gfX, y: box.y, w: nodeW },
+  ];
+  if (lbRows > 0) {
+    labels.push({ text: b.laneLabels.losers, x: box.x + GAP, y: lbTop - LABEL_H, w: colW * 2 });
+  }
+  if (b.resetId !== undefined) {
+    labels.push({ text: b.laneLabels.reset, x: gfX + colW, y: box.y, w: nodeW });
+  }
+  return { rects, lines, labels };
+}
+
+// Stepladder edition: rungs stacked top (summit) to bottom, connectors up.
+export function ladderPageGeometry(l: DocLadder, box: PageBox): BracketPageGeometry {
+  const n = Math.max(1, l.rungs.length);
+  const slotH = (box.h - LABEL_H) / n;
+  const nodeH = Math.min(slotH - GAP, 52);
+  const nodeW = Math.min(box.w * 0.6, 360);
+  // Summit last in play order → drawn at the top.
+  const ordered = [...l.rungs].reverse();
+  const rects: BracketRect[] = ordered.map((r, i) => ({
+    fixtureId: r.fixtureId,
+    x: box.x + GAP,
+    y: box.y + LABEL_H + i * slotH + (slotH - nodeH) / 2,
+    w: nodeW, h: nodeH,
+    home: r.home, away: r.away, headline: r.headline, decided: r.decided,
+    isCenter: false,
+  }));
+  const lines: BracketLine[] = rects.slice(0, -1).map((r, i) => {
+    const below = rects[i + 1]!;
+    const x = r.x + nodeW + GAP * 2;
+    return { points: [[below.x + nodeW, below.y + nodeH / 2], [x, below.y + nodeH / 2], [x, r.y + nodeH / 2], [r.x + nodeW, r.y + nodeH / 2]] };
+  });
+  const labels: BracketLabel[] = ordered.map((r, i) => ({
+    text: r.label,
+    x: box.x + GAP,
+    y: box.y + LABEL_H + i * slotH - 2,
+    w: nodeW,
+  }));
+  return { rects, lines, labels };
+}

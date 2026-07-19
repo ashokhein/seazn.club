@@ -9,7 +9,7 @@ import { listEntrants } from "@/server/usecases/entrants";
 import { listEntrantLogoUrls } from "@/server/usecases/teams";
 import { hasFeature } from "@/lib/entitlements";
 import { maskDisplayName, resolveNameDisplay } from "@/lib/name-display";
-import { twoSidedBracket } from "@seazn/engine/scheduling";
+import { BRACKET_SLIDE_KINDS, bracketSlideLaysOut } from "@/components/v2/slideshow-rotation";
 import { resolveLogoUrl } from "@/server/public-site/data";
 import type { AuthCtx } from "@/server/api-v1/auth";
 
@@ -61,7 +61,14 @@ export type Slide =
        *  step while matches are in play (slideshow-rotation.ts). */
       pinned?: boolean;
     }
-  | { kind: "bracket"; division: string; title: string; fixtures: BracketSlideFixture[] };
+  | {
+      kind: "bracket";
+      division: string;
+      title: string;
+      /** Which geometry the client draws — absent means knockout (old payloads). */
+      stageKind?: "knockout" | "double_elim" | "stepladder";
+      fixtures: BracketSlideFixture[];
+    };
 
 /**
  * Org chrome for the noticeboard masthead — brand color blob and logo URL,
@@ -191,16 +198,17 @@ export async function buildDivisionSlides(
     slides.push({ kind: "fixtures", division: divisionName, title: "Coming up", items: upcoming });
 
   // ── Bracket — the knockout tree (v13/PROMPT-62 geometry), when it lays out ──
-  for (const stage of stages.filter((s) => s.kind === "knockout")) {
+  for (const stage of stages.filter((s) => BRACKET_SLIDE_KINDS.has(s.kind))) {
     const stageFixtures = fixtures.filter((f) => f.stage_id === stage.id);
     const refs = stageFixtures.map((f) => ({
       id: f.id, round_no: f.round_no, seq_in_round: f.seq_in_round,
     }));
-    if (stageFixtures.length > 0 && twoSidedBracket(refs).ok) {
+    if (stageFixtures.length > 0 && bracketSlideLaysOut(stage.kind, refs)) {
       slides.push({
         kind: "bracket",
         division: divisionName,
         title: stage.name,
+        stageKind: stage.kind as "knockout" | "double_elim" | "stepladder",
         fixtures: stageFixtures.map((f) => ({
           id: f.id,
           round_no: f.round_no,
@@ -295,14 +303,15 @@ export function buildPublicDivisionSlides(data: PublicSlideInput): Slide[] {
   if (upcoming.length > 0)
     slides.push({ kind: "fixtures", division: data.division.name, title: "Coming up", items: upcoming });
 
-  for (const stage of data.stages.filter((s) => s.kind === "knockout")) {
+  for (const stage of data.stages.filter((s) => BRACKET_SLIDE_KINDS.has(s.kind))) {
     const stageFixtures = data.fixtures.filter((f) => f.stage_id === stage.id);
     const refs = stageFixtures.map((f) => ({ id: f.id, round_no: f.round_no, seq_in_round: f.seq_in_round }));
-    if (stageFixtures.length > 0 && twoSidedBracket(refs).ok) {
+    if (stageFixtures.length > 0 && bracketSlideLaysOut(stage.kind, refs)) {
       slides.push({
         kind: "bracket",
         division: data.division.name,
         title: stage.name,
+        stageKind: stage.kind as "knockout" | "double_elim" | "stepladder",
         fixtures: stageFixtures.map((f) => ({
           id: f.id, round_no: f.round_no, seq_in_round: f.seq_in_round,
           home: f.home_entrant_id ? (names[f.home_entrant_id] ?? null) : null,

@@ -18,7 +18,7 @@ import { ArrowLeft } from "lucide-react";
 import { useRouter } from "next/navigation";
 import type { BracketSlideFixture, Slide } from "@/server/slideshow-data";
 import { slideAt, stepFor } from "@/components/v2/slideshow-rotation";
-import { rowCenter, twoSidedBracket } from "@seazn/engine/scheduling";
+import { doubleElimBracket, lbRowUnit, rowCenter, twoSidedBracket } from "@seazn/engine/scheduling";
 
 const SLIDE_MS = 9000;
 const POLL_MS = 45_000;
@@ -233,7 +233,7 @@ export function Slideshow({
             </div>
 
             {slide.kind === "bracket" ? (
-              <BracketSlide fixtures={slide.fixtures} />
+              <BracketSlide fixtures={slide.fixtures} stageKind={slide.stageKind ?? "knockout"} />
             ) : slide.kind === "standings" ? (
               <div>
                 <div className="grid grid-cols-[4rem_minmax(0,1fr)_repeat(4,4rem)_7rem] gap-x-5 px-6 pb-2 font-display text-base font-semibold uppercase tracking-[0.2em] text-court-muted">
@@ -408,9 +408,18 @@ export function Slideshow({
   );
 }
 
-// v13 (PROMPT-64): the knockout tree on the big screen — same shared engine
-// geometry as the console panel / public bracket / PDF poster.
-function BracketSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
+// v13 (PROMPT-64) + G-audit: bracket slides for all three shapes — the
+// knockout tree, the double-elim lanes, the stepladder rungs — from the same
+// shared engine geometry as console / public / PDF.
+function BracketSlide({
+  fixtures,
+  stageKind,
+}: {
+  fixtures: BracketSlideFixture[];
+  stageKind: "knockout" | "double_elim" | "stepladder";
+}) {
+  if (stageKind === "stepladder") return <LadderSlide fixtures={fixtures} />;
+  if (stageKind === "double_elim") return <DoubleElimSlide fixtures={fixtures} />;
   const result = twoSidedBracket(fixtures);
   if (!result.ok) return null;
   const layout = result.layout;
@@ -475,6 +484,123 @@ function BracketSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
                 </span>
               </div>
             </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Stepladder on the big screen: summit at the top, climbers below.
+function LadderSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
+  const rungs = [...fixtures].sort((a, b) => b.round_no - a.round_no);
+  return (
+    <div className="mx-auto flex max-w-3xl flex-col gap-4">
+      {rungs.map((f, i) => {
+        const live = f.status === "in_play";
+        return (
+          <div key={f.id}>
+            <p className="mb-1 font-display text-sm font-semibold uppercase tracking-[0.18em] text-white/50">
+              Rung {rungs.length - i}
+            </p>
+            <div className={`rounded-lg px-5 py-3 ring-1 ring-inset ring-white/10 ${live ? "bg-white/[0.12]" : "bg-white/[0.05]"}`}>
+              <div className="flex flex-col gap-1 font-display text-2xl font-semibold leading-tight">
+                <span className="flex items-center justify-between gap-3">
+                  <span className="min-w-0 truncate">{f.home ?? "TBD"}</span>
+                  {live && <span className="animate-live-pulse h-2 w-2 shrink-0 rounded-full bg-emerald-400" />}
+                </span>
+                <span className="flex items-center justify-between gap-3 text-white/80">
+                  <span className="min-w-0 truncate">{f.away ?? "TBD"}</span>
+                  {f.line !== null && <span className="shrink-0 font-bold tabular-nums text-accent-line">{f.line}</span>}
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Double elimination on the big screen: winners lane over losers lane, grand
+// final (+ reset) joining the lane finals — mirrors the console/public math.
+function DoubleElimSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
+  const result = doubleElimBracket(fixtures);
+  if (!result.ok) return null;
+  const layout = result.layout;
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const COL_W = 232;
+  const SLOT_H = 96;
+  const NODE_W = COL_W - 22;
+  const NODE_H = 66;
+  const LANE_GAP = 56;
+  const LABEL_H = 28;
+  const wbH = Math.max(layout.wbRows, 1) * SLOT_H;
+  const lbH = Math.max(layout.lbRows, 0) * SLOT_H;
+  const wbTop = LABEL_H;
+  const lbTop = wbTop + wbH + LANE_GAP + (lbH > 0 ? LABEL_H : 0);
+  const gfX = Math.max(layout.k, layout.lbCols) * COL_W;
+  const totalW = gfX + COL_W * (layout.resetId !== undefined ? 2 : 1);
+  const totalH = lbTop + lbH;
+  const wbY = (col: number, row: number) => wbTop + rowCenter(col, row) * SLOT_H;
+  const lbY = (col: number, row: number) => lbTop + rowCenter(lbRowUnit(col), row) * SLOT_H;
+  const gfY = (wbTop + (lbH > 0 ? lbTop + lbH : wbTop + wbH)) / 2;
+  const label = "absolute font-display text-sm font-semibold uppercase tracking-[0.18em] text-white/50";
+  const node = (f: BracketSlideFixture, left: number, top: number) => {
+    const live = f.status === "in_play";
+    return (
+      <div
+        key={f.id}
+        className={`absolute rounded-lg px-4 py-2 ring-1 ring-inset ring-white/10 ${live ? "bg-white/[0.12]" : "bg-white/[0.05]"}`}
+        style={{ left, top, width: NODE_W, height: NODE_H }}
+      >
+        <div className="flex h-full flex-col justify-center gap-0.5 font-display text-xl font-semibold leading-tight">
+          <span className="flex items-center justify-between gap-2">
+            <span className="min-w-0 truncate">{f.home ?? "TBD"}</span>
+            {live && <span className="animate-live-pulse h-2 w-2 shrink-0 rounded-full bg-emerald-400" />}
+          </span>
+          <span className="flex items-center justify-between gap-2 text-white/80">
+            <span className="min-w-0 truncate">{f.away ?? "TBD"}</span>
+            {f.line !== null && <span className="shrink-0 font-bold tabular-nums text-accent-line">{f.line}</span>}
+          </span>
+        </div>
+      </div>
+    );
+  };
+  return (
+    <div className="overflow-x-auto">
+      <div className="relative mx-auto" style={{ width: totalW, height: totalH }}>
+        <span className={label} style={{ left: 0, top: 0 }}>Winners bracket</span>
+        {lbH > 0 && <span className={label} style={{ left: 0, top: wbTop + wbH + LANE_GAP }}>Losers bracket</span>}
+        <svg aria-hidden className="absolute inset-0" width={totalW} height={totalH} viewBox={`0 0 ${totalW} ${totalH}`}>
+          {layout.connectors.map((c, i) => {
+            const y = c.lane === "WB" ? wbY : lbY;
+            const fx = (c.col - 1) * COL_W + NODE_W;
+            const tx = c.col * COL_W;
+            const fy = y(c.col - 1, c.fromRow);
+            const ty = y(c.col, c.toRow);
+            const midX = (fx + tx) / 2;
+            return <path key={i} d={`M ${fx} ${fy} H ${midX} V ${ty} H ${tx}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" />;
+          })}
+          <path d={`M ${(layout.k - 1) * COL_W + NODE_W} ${wbY(layout.k - 1, 0)} H ${gfX - 12} V ${gfY} H ${gfX}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" />
+          {layout.lbCols > 0 && (
+            <path d={`M ${(layout.lbCols - 1) * COL_W + NODE_W} ${lbY(layout.lbCols - 1, 0)} H ${gfX - 12} V ${gfY} H ${gfX}`} fill="none" stroke="rgba(255,255,255,0.18)" strokeWidth="2" />
+          )}
+        </svg>
+        {layout.nodes.map((n) => {
+          const f = byId.get(n.fixtureId);
+          if (!f) return null;
+          const top = n.lane === "WB" ? wbY(n.col, n.row) - NODE_H / 2 : n.lane === "LB" ? lbY(n.col, n.row) - NODE_H / 2 : gfY - NODE_H / 2;
+          const left = n.lane === "GF" ? gfX + n.col * COL_W : n.col * COL_W;
+          return (
+            <span key={n.fixtureId} data-lane={n.lane} className="contents">
+              {n.lane === "GF" && (
+                <span className={label} style={{ left, top: top - LABEL_H + 6 }}>
+                  {n.col === 0 ? "Grand final" : "Reset"}
+                </span>
+              )}
+              {node(f, left, top)}
+            </span>
           );
         })}
       </div>

@@ -14,7 +14,7 @@ import type {
   ExportTicket,
 } from "./types.ts";
 import { EngineError } from "../core/errors.ts";
-import { twoSidedBracket } from "../scheduling/bracket-layout.ts";
+import { doubleElimBracket, twoSidedBracket } from "../scheduling/bracket-layout.ts";
 
 function base(
   kind: DocModel["kind"],
@@ -279,6 +279,70 @@ export function buildBracket(
         bracketRoundLabel(layout.rounds - 1 - i),
       ),
       ...(layout.thirdPlaceId !== undefined ? { thirdPlaceId: layout.thirdPlaceId } : {}),
+    },
+  };
+}
+
+export function buildBracketDe(
+  title: string,
+  fixtures: readonly ExportBracketFixture[],
+  laneLabels: { winners: string; losers: string; grandFinal: string; reset: string },
+  opts: BuildOpts,
+): DocModel {
+  const result = doubleElimBracket(fixtures);
+  if (!result.ok) {
+    throw new EngineError("CONFIG_INVALID", `double-elim poster: ${result.reason}`, {});
+  }
+  const layout = result.layout;
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  return {
+    ...base("bracket", title, [], opts),
+    bracketDe: {
+      nodes: layout.nodes.map((n) => {
+        const f = byId.get(n.fixtureId)!;
+        return {
+          fixtureId: n.fixtureId,
+          lane: n.lane,
+          col: n.col,
+          row: n.row,
+          home: f.home ?? "TBD",
+          away: f.away ?? "TBD",
+          headline: f.headline,
+          decided: f.decided,
+        };
+      }),
+      connectors: layout.connectors,
+      k: layout.k,
+      wbRows: layout.wbRows,
+      lbRows: layout.lbRows,
+      lbCols: layout.lbCols,
+      laneLabels,
+      ...(layout.resetId !== undefined ? { resetId: layout.resetId } : {}),
+    },
+  };
+}
+
+export function buildLadderPoster(
+  title: string,
+  fixtures: readonly ExportBracketFixture[],
+  rungLabel: (i: number) => string,
+  opts: BuildOpts,
+): DocModel {
+  if (fixtures.length === 0) {
+    throw new EngineError("CONFIG_INVALID", "stepladder poster: no fixtures", {});
+  }
+  const rungs = [...fixtures].sort((a, b) => a.round_no - b.round_no);
+  return {
+    ...base("bracket", title, [], opts),
+    ladder: {
+      rungs: rungs.map((f, i) => ({
+        fixtureId: f.id,
+        label: rungLabel(i),
+        home: f.home ?? "TBD",
+        away: f.away ?? "TBD",
+        headline: f.headline,
+        decided: f.decided,
+      })),
     },
   };
 }
