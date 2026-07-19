@@ -187,20 +187,61 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5)", () => {
     expect(parse).not.toHaveBeenCalled();
   });
 
-  it("pro (not pro_plus) org → 402 — scheduling.ai is a Plus feature", async () => {
+  it("Pro AI scheduling is capped at 5 runs/division; each run records an event, the 6th is 402 (owner 2026-07-18, V291)", async () => {
     const { auth } = await seedOrg("pro");
-    const { divisionId } = await seedPlannable(auth);
+    const { divisionId, fixtureIds } = await seedPlannable(auth);
+    parse.mockResolvedValue(planResponse(legalPlan(fixtureIds)));
+    // Five generations succeed; each appends a schedule.ai_generated event that
+    // advances the per-division counter.
+    for (let i = 0; i < 5; i++) {
+      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+      expect(out.proposal).toHaveLength(fixtureIds.length);
+    }
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where type = 'schedule.ai_generated'
+        and payload->>'division_id' = ${divisionId} and payload->>'mode' = 'generate'`;
+    expect(n).toBe(5);
+    // The sixth breaches the cap BEFORE the LLM is called → 402 on the run-cap key.
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai" });
+      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
+    ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai.runs_per_division.max" });
+    expect(parse).toHaveBeenCalledTimes(5); // over-quota never burned a request
+    // A blocked run is never recorded (still five).
+    const [{ n: after }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+    expect(after).toBe(5);
   });
 
-  it("an org_entitlement_overrides row grants a community org → 200", async () => {
+  it("Pro Plus AI scheduling is uncapped (null limit) even past five prior runs", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedPlannable(auth);
+    const [{ competition_id }] = await sql<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    // Seed six prior runs directly — more than the Pro cap of five.
+    for (let i = 0; i < 6; i++) {
+      await sql`
+        insert into competition_events (competition_id, org_id, type, payload)
+        values (${competition_id}, ${auth.orgId}, 'schedule.ai_generated',
+                ${sql.json({ division_id: divisionId })})`;
+    }
+    parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
+    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+    expect(out.proposal).toHaveLength(fixtureIds.length);
+  });
+
+  it("org_entitlement_overrides (scheduling.ai + run cap) grant a community org → 200", async () => {
     const { auth } = await seedOrg("community");
     const { divisionId, fixtureIds } = await seedPlannable(auth);
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
       values (${auth.orgId}, 'scheduling.ai', true)`;
+    // The per-division run cap (V291) is a distinct key — without an override it
+    // resolves to the community matrix (limit 0) and blocks the run, so grant it too.
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, int_value)
+      values (${auth.orgId}, 'scheduling.ai.runs_per_division.max', 5)`;
     await invalidateOrgEntitlements(auth.orgId);
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
     const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" });

@@ -13,8 +13,8 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { withTenant } from "@/lib/db";
-import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
+import { HttpError, PaymentRequiredError } from "@/lib/errors";
+import { requireFeature, withinLimit } from "@/lib/entitlements";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import {
@@ -997,14 +997,16 @@ function isoConstraintSuggestions(
 /**
  * POST /divisions/{id}/schedule/ai-plan orchestrator. Gate order is deliberate
  * (design/v4/00 §5): the staged-rollout kill switch (fail-open) → the paid gate
- * (Pro Plus `scheduling.ai`, 402) → the spend limiter (5/division/hour, 429) →
- * build the deterministic pack → run the architect → optional dry officials
- * coverage. Telemetry fires on success AND on a 422 AI_PLAN_FAILED (usage rides
- * on the error's extra) so refused spend is still metered.
+ * (`scheduling.ai`, 402) → the per-division run cap (upstream V291, 402 before
+ * any LLM spend) → the spend limiter (5/division/hour, 429) → build the
+ * deterministic pack → run the architect → append the schedule.ai_generated
+ * audit event → optional dry officials coverage. Telemetry fires on success AND
+ * on a 422 AI_PLAN_FAILED (usage rides on the error's extra) so refused spend is
+ * still metered.
  *
- * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (paid gate),
- *   429 (rate limit), plus everything buildSchedulePack/runAiPlan raise
- *   (409/422/400/503).
+ * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (paid gate or
+ *   over-quota run cap), 429 (rate limit), plus everything
+ *   buildSchedulePack/runAiPlan raise (409/422/400/503).
  */
 export async function aiPlanForDivision(
   auth: AuthCtx,
@@ -1022,6 +1024,31 @@ export async function aiPlanForDivision(
     throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
   }
   await requireFeature(auth.orgId, "scheduling.ai");
+
+  // Pro AI cap (owner 2026-07-18, amends pro-plus D4): Pro keeps AI scheduling
+  // but is limited to N generations per division; Pro Plus is unlimited (null
+  // int_value → withinLimit returns ok). Count prior runs from the audit ledger
+  // and refuse the (cap+1)th here, before the LLM call, so an over-quota org
+  // never burns a request.
+  const gate = await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    const [row] = await tx<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where competition_id = ${division.competition_id}
+        and type = 'schedule.ai_generated'
+        and payload->>'division_id' = ${divisionId}`;
+    return { competitionId: division.competition_id, priorRuns: row?.n ?? 0 };
+  });
+  const cap = await withinLimit(
+    auth.orgId,
+    "scheduling.ai.runs_per_division.max",
+    gate.priorRuns + 1,
+    gate.competitionId,
+  );
+  if (!cap.ok) throw new PaymentRequiredError("scheduling.ai.runs_per_division.max");
+
   await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
 
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
@@ -1056,6 +1083,15 @@ export async function aiPlanForDivision(
     }
     throw err;
   }
+
+  // Record this generation against the per-division cap counted above (owner
+  // 2026-07-18). Append-only audit; org_id is set by the trg_set_org trigger.
+  await withTenant(auth.orgId, async (tx) => {
+    await tx`
+      insert into competition_events (competition_id, org_id, type, payload, actor_id)
+      values (${gate.competitionId}, ${auth.orgId}, 'schedule.ai_generated',
+              ${tx.json({ division_id: divisionId, mode: input.mode } as never)}, ${auth.userId})`;
+  });
 
   const officials_coverage = input.officials_policy
     ? coveragePreview(pack, result.proposal, input.officials_policy)
