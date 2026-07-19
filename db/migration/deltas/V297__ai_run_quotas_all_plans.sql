@@ -1,4 +1,4 @@
--- V294 (v4 AI architect, owner 2026-07-19): AI schedule generations become a
+-- V297 (v4 AI architect, owner 2026-07-19): AI schedule generations become a
 -- per-division quota on EVERY tier — free 5 / event pass 10 / pro 20 /
 -- pro plus 50 (supersedes V291's pro=5, plus=unlimited). The pass overlay
 -- only upgrades community bases (lib/entitlements.ts resolution), so the

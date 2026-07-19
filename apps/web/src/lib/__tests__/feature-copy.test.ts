@@ -8,7 +8,7 @@ describe("feature-copy V290", () => {
     }
     expect(featurePlan("scheduling.board")).toBe("pro");
     expect(featurePlan("officials.roles_multi")).toBe("pro");
-    // V294 (owner 2026-07-19): AI scheduling exists on every tier as a graded
+    // V297 (owner 2026-07-19): AI scheduling exists on every tier as a graded
     // per-division quota (free 5 / pass 10 / pro 20 / plus 50); both keys
     // advertise Pro as the next step up, the reason copy names the ladder.
     expect(featurePlan("scheduling.ai")).toBe("pro");
@@ -20,7 +20,7 @@ describe("feature-copy V290", () => {
     expect(featureReason("scheduling.ai")).toMatch(/architect/i);
     expect(featureReason("domains.custom")).toMatch(/domain/i);
     expect(featureReason("support.priority")).toMatch(/priority/i);
-    // V294: the cap breach copy names the full quota ladder.
+    // V297: the cap breach copy names the full quota ladder.
     const cap = featureReason("scheduling.ai.runs_per_division.max");
     for (const part of ["5", "10", "20", "50"]) expect(cap).toContain(part);
     // officials.assignment was deleted (D5) — falls back to the generic line.

@@ -77,9 +77,9 @@ export function featureReason(featureKey: string): string {
 }
 
 // Cheapest plan that unlocks each feature (mirrors plan_entitlements,
-// V112 + V240 + V290 + V291 + V294). Everything not listed unlocks on Pro —
+// V112 + V240 + V290 + V291 + V297). Everything not listed unlocks on Pro —
 // only the above-Pro (Pro Plus) exceptions need rows. The AI run cap is a
-// graded quota on every tier (V294: 5/10/20/50), so like
+// graded quota on every tier (V297: 5/10/20/50), so like
 // schedule.checkpoints.max it advertises Pro as the next step up and the
 // reason copy spells out the full ladder.
 const PLUS_FEATURES = new Set([
