@@ -1625,3 +1625,10 @@ export const MatchReport = z.object({
 });
 
 export const FixtureReport = MatchReport.extend({ officialName: z.string() });
+
+export const FixtureSquadMember = z.object({
+  person_id: Uuid,
+  full_name: z.string(),
+  entrant_id: Uuid,
+  entrant_name: z.string(),
+});

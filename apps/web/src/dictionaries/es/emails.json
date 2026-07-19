@@ -286,5 +286,14 @@
   "suspensionServed.body": "Tu sanción en <strong>{division}</strong> ({reason}) está totalmente cumplida — ya puedes volver a jugar.",
   "suspensionServed.button": "Ver mis sanciones",
   "suspensionServed.footer": "Recibes esto porque juegas en {division} en Seazn Club.",
-  "suspensionServed.text": "Tu sanción en {division} ({reason}) está cumplida — ya puedes volver a jugar. {meUrl}"
+  "suspensionServed.text": "Tu sanción en {division} ({reason}) está cumplida — ya puedes volver a jugar. {meUrl}",
+  "reportSubmitted.subject": "Informe del partido presentado — {fixture}",
+  "reportSubmitted.preheader": "{official} presentó un informe — {incidents}.",
+  "reportSubmitted.title": "Se presentó un informe del partido",
+  "reportSubmitted.body": "<strong>{official}</strong> presentó un informe del partido de <strong>{fixture}</strong>: {incidents}.",
+  "reportSubmitted.button": "Ver el informe",
+  "reportSubmitted.footer": "Recibiste esto porque gestionas el arbitraje en Seazn Club.",
+  "reportSubmitted.text": "{official} presentó un informe del partido de {fixture}: {incidents}. Ver: {url}",
+  "reportSubmitted.incident": "{n} incidente",
+  "reportSubmitted.incidents": "{n} incidentes"
 }

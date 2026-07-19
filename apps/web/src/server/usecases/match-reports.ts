@@ -11,6 +11,8 @@ import type postgres from "postgres";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { hasFeature } from "@/lib/entitlements";
+import { sendReportSubmittedEmail } from "@/lib/email";
+import type { Locale } from "@/lib/i18n-constants";
 import type { AuthCtx } from "@/server/api-v1/auth";
 
 type Tx = postgres.TransactionSql;
@@ -154,7 +156,85 @@ export async function submitMyReport(userId: string, fixtureOfficialId: string):
     returning id, fixture_official_id, status, body, incidents, submitted_at`;
   const report = mapReport(row!);
   await bridgeReportSuspensions(a, report.incidents);
+  // After the report is committed, notify the org owner/admins (D-direction:
+  // organiser side gets the signal; the official gets no per-mark signal, D4).
+  await notifyReportSubmitted(a, report);
   return report;
+}
+
+/** Both entrants' squads behind an assignment, for the report's optional person
+ *  picker. Cross-org superuser rail with the caller's identity proven first
+ *  (404 when the assignment isn't theirs) — an official is not an org member. */
+export interface FixtureSquadMember {
+  person_id: string;
+  full_name: string;
+  entrant_id: string;
+  entrant_name: string;
+}
+export async function myFixtureSquad(
+  userId: string,
+  fixtureOfficialId: string,
+): Promise<FixtureSquadMember[]> {
+  const a = await myAssignment(userId, fixtureOfficialId);
+  return superuser<FixtureSquadMember[]>`
+    select distinct p.id as person_id, p.full_name,
+           e.id as entrant_id, e.display_name as entrant_name
+    from fixtures f
+    join entrants e on e.id in (f.home_entrant_id, f.away_entrant_id)
+    join entrant_members em on em.entrant_id = e.id
+    join persons p on p.id = em.person_id
+    where f.id = ${a.fixture_id}
+    order by e.display_name, p.full_name`;
+}
+
+/** Fire the report_submitted email to every org owner/admin. Fire-and-forget,
+ *  superuser resolve (the official is not an org member); a mail failure never
+ *  fails the submit. */
+async function notifyReportSubmitted(a: ReportAssignment, report: MatchReport): Promise<void> {
+  const [ctx] = await superuser<
+    {
+      org_name: string;
+      org_slug: string;
+      competition_slug: string;
+      division_slug: string;
+      fixture_no: number;
+      home_name: string | null;
+      away_name: string | null;
+      official_name: string;
+    }[]
+  >`
+    select org.name as org_name, org.slug as org_slug,
+           c.slug as competition_slug, d.slug as division_slug, f.fixture_no,
+           h.display_name as home_name, aw.display_name as away_name,
+           o.display_name as official_name
+    from fixtures f
+    join divisions d on d.id = f.division_id
+    join competitions c on c.id = d.competition_id
+    join organizations org on org.id = f.org_id
+    join fixture_officials fo on fo.id = ${a.fixture_official_id}
+    join officials o on o.id = fo.official_id
+    left join entrants h on h.id = f.home_entrant_id
+    left join entrants aw on aw.id = f.away_entrant_id
+    where f.id = ${a.fixture_id}`;
+  if (!ctx) return;
+  const recipients = await superuser<{ email: string | null; locale: string | null }[]>`
+    select u.email, u.locale from org_members m
+    join users u on u.id = m.user_id
+    where m.org_id = ${a.org_id} and m.role in ('owner', 'admin')`;
+  const fixtureLine = `${ctx.home_name ?? "TBD"} vs ${ctx.away_name ?? "TBD"}`;
+  const args = {
+    orgName: ctx.org_name,
+    fixtureLine,
+    officialName: ctx.official_name,
+    incidentCount: report.incidents.length,
+    orgSlug: ctx.org_slug,
+    competitionSlug: ctx.competition_slug,
+    divisionSlug: ctx.division_slug,
+  };
+  for (const r of recipients) {
+    if (!r.email) continue;
+    void sendReportSubmittedEmail(r.email, args, (r.locale as Locale) ?? "en").catch(() => {});
+  }
 }
 
 // Test seam — the suspensions-table existence probe, overridable so tests can

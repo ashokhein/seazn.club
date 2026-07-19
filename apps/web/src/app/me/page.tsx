@@ -16,6 +16,7 @@ import {
   type MyResult,
 } from "@/server/usecases/me";
 import { getMyOfficiating, listPendingOfficiatingClaims } from "@/server/usecases/me-officiating";
+import { myMarksAverage } from "@/server/usecases/official-marks";
 import { RsvpControl } from "@/components/me/rsvp-control";
 import { OfficiatingLane } from "@/components/me/officiating-lane";
 import { SuspensionsLane } from "@/components/me/suspensions-lane";
@@ -48,6 +49,7 @@ export default async function MePage({
     orgs,
     activeOrgId,
     mySuspensions,
+    myAverage,
   ] = await Promise.all([
       listMyFixtures(user.id),
       getMyOfficiating(user.id),
@@ -63,6 +65,8 @@ export default async function MePage({
       getUserOrgs(user.id),
       getActiveOrgId(),
       getMySuspensions(user.id),
+      // The official's own cross-org average (D4) — null below 3 marks.
+      myMarksAverage(user.id),
     ]);
   const activeOrg = orgs.find((o) => o.id === activeOrgId) ?? orgs[0] ?? null;
   const { claimed } = await searchParams;
@@ -226,6 +230,7 @@ export default async function MePage({
             completed={officiating.completed}
             blackouts={officiating.blackouts}
             pendingClaims={pendingOfficiatingClaims}
+            myAverage={myAverage}
           />
         )}
 

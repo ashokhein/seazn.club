@@ -275,6 +275,7 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "GET /me/officiating/:fixtureOfficialId/report",
   "PUT /me/officiating/:fixtureOfficialId/report",
   "POST /me/officiating/:fixtureOfficialId/report/submit",
+  "GET /me/officiating/:fixtureOfficialId/squad",
   "GET /fixtures/:id/reports",
 ];
 

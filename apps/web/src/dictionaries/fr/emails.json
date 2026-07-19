@@ -286,5 +286,14 @@
   "suspensionServed.body": "Votre suspension dans <strong>{division}</strong> ({reason}) est entièrement purgée — vous pouvez rejouer.",
   "suspensionServed.button": "Voir mes suspensions",
   "suspensionServed.footer": "Vous recevez ceci car vous jouez dans {division} sur Seazn Club.",
-  "suspensionServed.text": "Votre suspension dans {division} ({reason}) est purgée — vous pouvez rejouer. {meUrl}"
+  "suspensionServed.text": "Votre suspension dans {division} ({reason}) est purgée — vous pouvez rejouer. {meUrl}",
+  "reportSubmitted.subject": "Rapport de match déposé — {fixture}",
+  "reportSubmitted.preheader": "{official} a déposé un rapport — {incidents}.",
+  "reportSubmitted.title": "Un rapport de match a été déposé",
+  "reportSubmitted.body": "<strong>{official}</strong> a déposé un rapport de match pour <strong>{fixture}</strong> : {incidents}.",
+  "reportSubmitted.button": "Voir le rapport",
+  "reportSubmitted.footer": "Vous recevez ce message car vous gérez l'arbitrage sur Seazn Club.",
+  "reportSubmitted.text": "{official} a déposé un rapport de match pour {fixture} : {incidents}. Voir : {url}",
+  "reportSubmitted.incident": "{n} incident",
+  "reportSubmitted.incidents": "{n} incidents"
 }

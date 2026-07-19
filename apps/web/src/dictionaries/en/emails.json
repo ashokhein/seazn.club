@@ -286,5 +286,14 @@
   "suspensionServed.body": "Your suspension in <strong>{division}</strong> ({reason}) is fully served — you're eligible to play again.",
   "suspensionServed.button": "View my suspensions",
   "suspensionServed.footer": "You received this because you play in {division} on Seazn Club.",
-  "suspensionServed.text": "Your suspension in {division} ({reason}) is served — you're eligible again. {meUrl}"
+  "suspensionServed.text": "Your suspension in {division} ({reason}) is served — you're eligible again. {meUrl}",
+  "reportSubmitted.subject": "Match report filed — {fixture}",
+  "reportSubmitted.preheader": "{official} filed a report — {incidents}.",
+  "reportSubmitted.title": "A match report was filed",
+  "reportSubmitted.body": "<strong>{official}</strong> filed a match report for <strong>{fixture}</strong>: {incidents}.",
+  "reportSubmitted.button": "View the report",
+  "reportSubmitted.footer": "You received this because you manage officiating on Seazn Club.",
+  "reportSubmitted.text": "{official} filed a match report for {fixture}: {incidents}. View: {url}",
+  "reportSubmitted.incident": "{n} incident",
+  "reportSubmitted.incidents": "{n} incidents"
 }

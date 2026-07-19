@@ -12,6 +12,7 @@ function makeAssignment(overrides: Partial<MyOfficiatingAssignment> = {}): MyOff
   return {
     fixture_id: "fx1",
     fixture_no: 1,
+    fixture_official_id: "fo1",
     official_id: "off1",
     org_name: "Riverside Cup",
     org_slug: "riverside",
@@ -32,6 +33,7 @@ function makeAssignment(overrides: Partial<MyOfficiatingAssignment> = {}): MyOff
     response: "accepted",
     decline_reason: null,
     responded_at: null,
+    report_status: null,
     ...overrides,
   };
 }
@@ -105,6 +107,65 @@ describe("OfficiatingLane — score action repoints at the full board", () => {
       <OfficiatingLane isOfficial assignments={[a]} completed={[]} blackouts={[]} pendingClaims={[]} />,
     );
     expect(html).not.toContain("Score this match");
+  });
+});
+
+// SPEC-3: the report CTA rides the completed[] union (not a date window, #122),
+// and the lane header carries the official's own average badge once ≥3 marks.
+describe("OfficiatingLane — SPEC-3 report CTA + marks badge", () => {
+  it("shows a File-match-report CTA on an accepted, decided completed row", () => {
+    const a = makeAssignment({ response: "accepted", fixture_status: "decided", report_status: null });
+    const html = renderToStaticMarkup(
+      <OfficiatingLane isOfficial assignments={[]} completed={[a]} blackouts={[]} pendingClaims={[]} />,
+    );
+    expect(html).toContain("File match report");
+  });
+
+  it("labels the CTA 'filed' once a report is submitted", () => {
+    const a = makeAssignment({ response: "accepted", fixture_status: "decided", report_status: "submitted" });
+    const html = renderToStaticMarkup(
+      <OfficiatingLane isOfficial assignments={[]} completed={[a]} blackouts={[]} pendingClaims={[]} />,
+    );
+    expect(html).toContain("Match report filed");
+  });
+
+  it("hides the report CTA for a declined completed assignment", () => {
+    const a = makeAssignment({ response: "declined", fixture_status: "decided", report_status: null });
+    const html = renderToStaticMarkup(
+      <OfficiatingLane isOfficial assignments={[]} completed={[a]} blackouts={[]} pendingClaims={[]} />,
+    );
+    expect(html).not.toContain("File match report");
+  });
+
+  it("renders the average badge when the official has ≥3 marks", () => {
+    const html = renderToStaticMarkup(
+      <OfficiatingLane
+        isOfficial
+        assignments={[]}
+        completed={[]}
+        blackouts={[]}
+        pendingClaims={[]}
+        myAverage={{ average: 4.2, count: 5 }}
+      />,
+    );
+    expect(html).toContain("4.2");
+    expect(html).toContain("avg · 5");
+  });
+
+  it("shows the collecting-marks note (not a badge) below the threshold with completed work", () => {
+    const a = makeAssignment({ response: "accepted", fixture_status: "decided" });
+    const html = renderToStaticMarkup(
+      <OfficiatingLane
+        isOfficial
+        assignments={[]}
+        completed={[a]}
+        blackouts={[]}
+        pendingClaims={[]}
+        myAverage={null}
+      />,
+    );
+    expect(html).toContain("Collecting marks");
+    expect(html).not.toContain('data-testid="mark-badge"');
   });
 });
 

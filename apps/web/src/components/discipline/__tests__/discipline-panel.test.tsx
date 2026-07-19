@@ -82,4 +82,17 @@ describe("DisciplinePanel", () => {
     expect(html).toContain('data-testid="record-form"');
     expect(html).toContain("K. Doe");
   });
+
+  it("tags a report-sourced pending row with a From-match-report chip + view link", () => {
+    const html = render([
+      sus({ id: "rp1", status: "pending", source: "report", fixtureId: "fx1", reason: "violent conduct" }),
+    ]);
+    expect(html).toContain("From match report");
+    expect(html).toContain("View report");
+  });
+
+  it("does not tag non-report sources", () => {
+    const html = render([sus({ status: "pending", source: "auto_dismissal", fixtureId: "fx1" })]);
+    expect(html).not.toContain("From match report");
+  });
 });

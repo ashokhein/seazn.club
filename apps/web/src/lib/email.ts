@@ -51,6 +51,8 @@ import {
   type SuspensionConfirmedArgs,
   suspensionServedTemplate,
   type SuspensionServedArgs,
+  reportSubmittedTemplate,
+  type ReportSubmittedArgs,
 } from "@/lib/email-templates";
 import { paragraph, panel, renderEmail } from "@/lib/email-templates/compose";
 import { escapeHtml } from "@/lib/email-templates/shared";
@@ -257,6 +259,28 @@ export async function sendSuspensionConfirmedEmail(
     to,
     transactional: true,
     ...suspensionConfirmedTemplate({ ...args, meUrl: `${appOrigin()}/me` }, dict),
+  });
+}
+
+/** An official submitted a match report (SPEC-3) — sent to the org's
+ *  owner/admins, deep-linked to the fixture's officials panel. `args` carries
+ *  the org/competition/division slugs; the URL is built here. */
+export async function sendReportSubmittedEmail(
+  to: string,
+  args: Omit<ReportSubmittedArgs, "url"> & {
+    orgSlug: string;
+    competitionSlug: string;
+    divisionSlug: string;
+  },
+  locale: Locale = "en",
+): Promise<boolean> {
+  const dict = await getDictionary(locale, "emails");
+  const { orgSlug, competitionSlug, divisionSlug, ...rest } = args;
+  const url = `${appOrigin()}/o/${orgSlug}/c/${competitionSlug}/d/${divisionSlug}/schedule?tab=officials`;
+  return send({
+    to,
+    transactional: true,
+    ...reportSubmittedTemplate({ ...rest, url }, dict),
   });
 }
 

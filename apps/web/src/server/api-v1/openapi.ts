@@ -250,6 +250,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/me/officiating/{fixtureOfficialId}/report", method: "put", summary: "Save the match report draft body + incident rows (session only; free); draft only — a submitted report is immutable (409); 403 outside the window", tag: "officials", request: S.PutReportBody, response: S.MatchReport, errors: [403, 409] },
   { path: "/me/officiating/{fixtureOfficialId}/report/submit", method: "post", summary: "Submit the draft (immutable thereafter, 409 on resubmit); misconduct incidents suggest pending suspensions when the org enforces discipline (session only)", tag: "officials", response: S.MatchReport, errors: [403, 409] },
   { path: "/fixtures/{id}/reports", method: "get", summary: "Submitted match reports for a fixture with the official's name (console; free)", tag: "officials", response: z.array(S.FixtureReport) },
+  { path: "/me/officiating/{fixtureOfficialId}/squad", method: "get", summary: "Both entrants' squads behind the caller's assignment — the match report's optional person picker (session only, cross-org rail; free)", tag: "officials", response: z.array(S.FixtureSquadMember), errors: [404] },
 ];
 
 // ---------------------------------------------------------------------------

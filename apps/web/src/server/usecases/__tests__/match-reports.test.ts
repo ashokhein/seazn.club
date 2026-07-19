@@ -5,15 +5,27 @@
 // immutability (409), organiser fixtureReports (submitted only), and the soft
 // bridge — pending suspension on a named red card, dark on missing person /
 // discipline / table.
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql, withTenant } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
+
+// Spy the report_submitted email at the module boundary — submit fires it
+// fire-and-forget, so the mock is invoked synchronously inside the awaited
+// usecase (conv_vitest email-spy pattern). Above the usecase import so the
+// binding is the spy.
+const emailMock = vi.hoisted(() => ({ report: vi.fn().mockResolvedValue(true) }));
+vi.mock("@/lib/email", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/email")>()),
+  sendReportSubmittedEmail: emailMock.report,
+}));
+
 import {
   __setBridgeProbeForTests,
   fixtureReports,
   getMyReport,
+  myFixtureSquad,
   putMyReport,
   submitMyReport,
   type ReportIncident,
@@ -94,6 +106,15 @@ async function makePlayer(ctx: OrgCtx): Promise<string> {
   return id;
 }
 
+/** Roster a fresh person onto an entrant (entrant_members) so myFixtureSquad
+ *  can surface them in the report person picker. */
+async function rosterMember(ctx: OrgCtx, entrantId: string, name: string): Promise<string> {
+  const [{ id }] = await sql<{ id: string }[]>`
+    insert into persons (org_id, full_name) values (${ctx.orgId}, ${name}) returning id`;
+  await sql`insert into entrant_members (entrant_id, person_id) values (${entrantId}, ${id})`;
+  return id;
+}
+
 async function makeAssignment(
   ctx: OrgCtx,
   officialId: string,
@@ -130,6 +151,8 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
+  beforeEach(() => emailMock.report.mockClear());
+
   it("404s when the assignment isn't the caller's claimed official", async () => {
     const ctx = await seedOrg();
     const ref = await makeClaimedOfficial(ctx);
@@ -279,5 +302,56 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     } finally {
       __setBridgeProbeForTests(null);
     }
+  });
+
+  it("myFixtureSquad returns both entrants' members for the caller (404 for a stranger)", async () => {
+    const ctx = await seedOrg();
+    const ref = await makeClaimedOfficial(ctx);
+    const { fixtureOfficialId } = await makeAssignment(ctx, ref.officialId);
+    const pA = await rosterMember(ctx, ctx.entrantA, "Home Player");
+    const pB = await rosterMember(ctx, ctx.entrantB, "Away Player");
+
+    const squad = await myFixtureSquad(ref.userId, fixtureOfficialId);
+    const ids = squad.map((m) => m.person_id);
+    expect(ids).toContain(pA);
+    expect(ids).toContain(pB);
+    expect(squad.find((m) => m.person_id === pA)).toMatchObject({
+      full_name: "Home Player",
+      entrant_name: "Alpha",
+    });
+
+    const [{ id: stranger }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`x-${randomUUID().slice(0, 8)}@test.local`}, 'X', true) returning id`;
+    await expect(myFixtureSquad(stranger, fixtureOfficialId)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("emails owner + admins on submit with the fixture line, official name and incident count", async () => {
+    const ctx = await seedOrg();
+    // Add a second org member as admin — both should be notified.
+    const [{ id: adminId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`admin-${randomUUID().slice(0, 8)}@test.local`}, 'Admin', true) returning id`;
+    await sql`insert into org_members (org_id, user_id, role) values (${ctx.orgId}, ${adminId}, 'admin')`;
+
+    const ref = await makeClaimedOfficial(ctx);
+    const player = await rosterMember(ctx, ctx.entrantA, "Home Player");
+    const { fixtureOfficialId } = await makeAssignment(ctx, ref.officialId);
+    await putMyReport(ref.userId, fixtureOfficialId, {
+      body: "eventful",
+      incidents: [{ kind: "red_card", person_id: player, note: "sent off" }],
+    });
+    await submitMyReport(ref.userId, fixtureOfficialId);
+
+    expect(emailMock.report).toHaveBeenCalledTimes(2); // owner + admin
+    const recipients = emailMock.report.mock.calls.map((c) => c[0] as string);
+    expect(recipients.every((r) => r.endsWith("@test.local"))).toBe(true);
+    const args = emailMock.report.mock.calls[0]![1] as Record<string, unknown>;
+    expect(args).toMatchObject({
+      fixtureLine: "Alpha vs Bravo",
+      officialName: "The Ref",
+      incidentCount: 1,
+    });
+    expect(args.orgSlug).toBeTruthy();
   });
 });

@@ -79,6 +79,73 @@ export default async function DivisionSchedulePage({
       from fixtures where division_id = ${id}`,
   );
 
+  // SPEC-3 marks & reports for the Officials tab: the fixture_officials
+  // surrogate ids (the cache jsonb doesn't carry them), existing marks (Pro
+  // only), and submitted reports. Loaded only on the officials tab.
+  const marksEnabled = tab === "officials" && (await hasFeature(auth.orgId, "officials.marks"));
+  const officialsMeta =
+    tab === "officials"
+      ? await withTenant(auth.orgId, async (tx) => {
+          const ids = await tx<
+            { id: string; fixture_id: string; official_id: string; role_key: string }[]
+          >`
+            select fo.id, fo.fixture_id, fo.official_id, fo.role_key
+            from fixture_officials fo join fixtures f on f.id = fo.fixture_id
+            where f.division_id = ${id}`;
+          const marks = marksEnabled
+            ? await tx<{ fixture_official_id: string; mark: number }[]>`
+                select om.fixture_official_id, om.mark from official_marks om
+                join fixtures f on f.id = om.fixture_id where f.division_id = ${id}`
+            : [];
+          const reports = await tx<
+            {
+              fixture_id: string;
+              id: string;
+              fixture_official_id: string;
+              body: string;
+              incidents: unknown;
+              submitted_at: Date | null;
+              official_name: string;
+            }[]
+          >`
+            select mr.fixture_id, mr.id, mr.fixture_official_id, mr.body, mr.incidents,
+                   mr.submitted_at, o.display_name as official_name
+            from match_reports mr join officials o on o.id = mr.official_id
+            join fixtures f on f.id = mr.fixture_id
+            where f.division_id = ${id} and mr.status = 'submitted'`;
+          return { ids, marks, reports };
+        })
+      : null;
+  const foIdByAssignment = Object.fromEntries(
+    (officialsMeta?.ids ?? []).map((r) => [`${r.fixture_id}:${r.official_id}:${r.role_key}`, r.id]),
+  );
+  const marksByFoId = Object.fromEntries(
+    (officialsMeta?.marks ?? []).map((r) => [r.fixture_official_id, r.mark]),
+  );
+  const reportsByFixture: Record<
+    string,
+    {
+      id: string;
+      fixtureOfficialId: string;
+      status: "submitted";
+      body: string;
+      incidents: { kind: "red_card" | "misconduct" | "injury" | "other"; person_id?: string; entrant_id?: string; note: string }[];
+      submittedAt: string | null;
+      officialName: string;
+    }[]
+  > = {};
+  for (const r of officialsMeta?.reports ?? []) {
+    (reportsByFixture[r.fixture_id] ??= []).push({
+      id: r.id,
+      fixtureOfficialId: r.fixture_official_id,
+      status: "submitted",
+      body: r.body,
+      incidents: (r.incidents ?? []) as never,
+      submittedAt: r.submitted_at ? r.submitted_at.toISOString() : null,
+      officialName: r.official_name,
+    });
+  }
+
   const frozen = competition.frozen ?? false;
   const editable = canEdit && !frozen && boardEditable;
 
@@ -186,6 +253,10 @@ export default async function DivisionSchedulePage({
           blackouts={blackouts}
           busyElsewhere={busy}
           venueTz={settings.tz}
+          marksEnabled={marksEnabled}
+          foIdByAssignment={foIdByAssignment}
+          marksByFoId={marksByFoId}
+          reportsByFixture={reportsByFixture}
         />
         )}
 

@@ -286,5 +286,14 @@
   "suspensionServed.body": "Je schorsing in <strong>{division}</strong> ({reason}) is volledig uitgezeten — je mag weer spelen.",
   "suspensionServed.button": "Mijn schorsingen bekijken",
   "suspensionServed.footer": "Je ontvangt dit omdat je speelt in {division} op Seazn Club.",
-  "suspensionServed.text": "Je schorsing in {division} ({reason}) is uitgezeten — je mag weer spelen. {meUrl}"
+  "suspensionServed.text": "Je schorsing in {division} ({reason}) is uitgezeten — je mag weer spelen. {meUrl}",
+  "reportSubmitted.subject": "Wedstrijdrapport ingediend — {fixture}",
+  "reportSubmitted.preheader": "{official} diende een rapport in — {incidents}.",
+  "reportSubmitted.title": "Er is een wedstrijdrapport ingediend",
+  "reportSubmitted.body": "<strong>{official}</strong> diende een wedstrijdrapport in voor <strong>{fixture}</strong>: {incidents}.",
+  "reportSubmitted.button": "Bekijk het rapport",
+  "reportSubmitted.footer": "Je ontvangt dit omdat je het arbitrage beheert op Seazn Club.",
+  "reportSubmitted.text": "{official} diende een wedstrijdrapport in voor {fixture}: {incidents}. Bekijk: {url}",
+  "reportSubmitted.incident": "{n} incident",
+  "reportSubmitted.incidents": "{n} incidenten"
 }

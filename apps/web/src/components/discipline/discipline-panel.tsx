@@ -13,6 +13,7 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import type { Suspension } from "@/server/usecases/discipline";
 import { CardGlyph, toneForSource } from "./card-glyph";
 import { ServePips } from "./serve-pips";
+import { ReportDrawer, type MatchReport } from "@/components/officials/report-drawer";
 
 export function DisciplinePanel({
   divisionId,
@@ -105,6 +106,9 @@ export function DisciplinePanel({
                       <span className="mt-1 inline-block rounded bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500">
                         {msg("disc.panel.triggerVoided")}
                       </span>
+                    )}
+                    {s.source === "report" && s.fixtureId && (
+                      <ReportSourceTag fixtureId={s.fixtureId} personId={s.personId} />
                     )}
                   </div>
                 </div>
@@ -206,6 +210,61 @@ export function DisciplinePanel({
         </details>
       )}
     </section>
+  );
+}
+
+/** SPEC-3 bridge tag: a suspension raised from a submitted match report wears a
+ *  "From match report" chip + a link that fetches the fixture's reports and
+ *  opens the read-only drawer (the report whose incidents name this person, or
+ *  the first). Free read — reports have no gate. */
+function ReportSourceTag({ fixtureId, personId }: { fixtureId: string; personId: string }) {
+  const msg = useMsg();
+  const [report, setReport] = useState<(MatchReport & { officialName: string }) | null>(null);
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function view() {
+    if (report) {
+      setOpen((v) => !v);
+      return;
+    }
+    setBusy(true);
+    try {
+      const reports = await apiV1<(MatchReport & { officialName: string })[]>(
+        `/api/v1/fixtures/${fixtureId}/reports`,
+      );
+      const match =
+        reports.find((r) => r.incidents.some((i) => i.person_id === personId)) ?? reports[0] ?? null;
+      setReport(match);
+      setOpen(true);
+    } catch {
+      // Free read; a transient failure just leaves the drawer closed.
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mt-1 space-y-2">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="rounded bg-red-50 px-1.5 py-0.5 text-[11px] font-medium text-red-700">
+          {msg("disc.panel.fromReport")}
+        </span>
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => void view()}
+          className="inline-flex min-h-[44px] items-center text-[11px] font-medium text-purple-600 hover:underline"
+        >
+          {msg("disc.panel.viewReport")}
+        </button>
+      </span>
+      {open && report && (
+        <div className="rounded-lg border border-slate-200 p-3">
+          <ReportDrawer report={report} officialName={report.officialName} />
+        </div>
+      )}
+    </div>
   );
 }
 
