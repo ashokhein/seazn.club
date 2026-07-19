@@ -96,6 +96,14 @@ const fixedPlan = plan([
   assign(F3, "2026-08-01T14:30:00+01:00", "Court 2"),
   assign(F4, "2026-08-01T14:30:00+01:00", "Court 1"),
 ]);
+// TWO court double-books (F1+F2 on Court 1, F3+F4 on Court 2, all @14:00) →
+// strictly more blocking conflicts than clashingPlan's single clash.
+const twoClashPlan = plan([
+  assign(F1, "2026-08-01T14:00:00+01:00", "Court 1"),
+  assign(F2, "2026-08-01T14:00:00+01:00", "Court 1"),
+  assign(F3, "2026-08-01T14:00:00+01:00", "Court 2"),
+  assign(F4, "2026-08-01T14:00:00+01:00", "Court 2"),
+]);
 // Everything in the morning: legal + every match ends well before 18:00.
 const finishBy18Plan = plan([
   assign(F1, "2026-08-01T09:00:00+01:00", "Court 1"),
@@ -159,9 +167,79 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(parse).toHaveBeenCalledTimes(3);
   });
 
-  it("refusal → 422 AI_PLAN_FAILED (never reads content first)", async () => {
+  it("best-so-far: repair round 2 with MORE blocking → returns round-1's fewer-blocking plan", async () => {
+    parse
+      .mockResolvedValueOnce(planResponse(clashingPlan)) // round 1: one clash (fewest)
+      .mockResolvedValueOnce(planResponse(twoClashPlan)) // repair 1: two clashes (worse)
+      .mockResolvedValueOnce(planResponse(twoClashPlan)); // repair 2: two clashes (worse)
+    const out = await runAiPlan(pack, movableIds);
+    // Two repair rounds ran, but the kept plan is the earlier, fewer-blocking one.
+    expect(out.usage.repair_rounds).toBe(2);
+    expect(parse).toHaveBeenCalledTimes(3);
+    expect(
+      out.proposal.map(({ fixture_id, scheduled_at, court_label }) => ({ fixture_id, scheduled_at, court_label })),
+    ).toEqual(clashingPlan.assignments);
+    // clashingPlan has strictly fewer blocking conflicts than twoClashPlan.
+    expect(out.blocking.length).toBeLessThan(twoClashPlan.assignments.length);
+  });
+
+  it("pinned fixture pushed into unschedulable → one corrective retry, then 422", async () => {
+    const packPinnedMovable = makePack({
+      fixtures: {
+        movable: [F1, F2, F3, F4].map((id, i) => ({
+          id,
+          ext_key: `f${i + 1}`,
+          round: 1,
+          seq: i,
+          pool: null,
+          home: E(2 * i + 1),
+          away: E(2 * i + 2),
+          feeds: { winner_to: null, after: [] },
+          // F4 is pinned AND movable — it must keep its exact current slot.
+          current: id === F4 ? { at: "2026-08-01T16:00:00+01:00", court: "Court 1" } : { at: null, court: null },
+          pinned: id === F4,
+        })),
+        obstacles: [],
+      },
+    });
+    // The model tries to silently drop the pinned fixture as unschedulable.
+    const dropsPinned = plan(
+      [
+        assign(F1, "2026-08-01T09:00:00+01:00", "Court 1"),
+        assign(F2, "2026-08-01T09:00:00+01:00", "Court 2"),
+        assign(F3, "2026-08-01T09:30:00+01:00", "Court 1"),
+      ],
+      [{ fixture_id: F4, reason: "no room" }],
+    );
+    parse
+      .mockResolvedValueOnce(planResponse(dropsPinned))
+      .mockResolvedValueOnce(planResponse(dropsPinned));
+    await expect(runAiPlan(packPinnedMovable, movableIds)).rejects.toMatchObject({ status: 422 });
+    // The corrective retry ran (structural rejection, not a coverage pass-through).
+    expect(parse).toHaveBeenCalledTimes(2);
+    const corrective = parse.mock.calls[1]![0].messages.at(-1);
+    expect(JSON.stringify(corrective)).toContain("structural_error");
+  });
+
+  it("SDK parse throwing on schema-invalid output → corrective retry, then success", async () => {
+    parse
+      .mockRejectedValueOnce(new Error("could not parse structured output"))
+      .mockResolvedValueOnce(planResponse(finishBy18Plan));
+    const out = await runAiPlan(pack, movableIds);
+    expect(out.blocking).toHaveLength(0);
+    expect(out.usage.repair_rounds).toBe(0);
+    // Initial (threw → normalized to null-parsed) + corrective retry.
+    expect(parse).toHaveBeenCalledTimes(2);
+  });
+
+  it("refusal → 422 AI_PLAN_FAILED (code discriminant + human message; usage attached)", async () => {
     parse.mockResolvedValueOnce({ parsed_output: null, stop_reason: "refusal", usage: {}, content: [] });
-    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 422, message: "AI_PLAN_FAILED" });
+    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({
+      status: 422,
+      code: "AI_PLAN_FAILED",
+      message: "AI scheduling could not produce a usable plan; please retry",
+      extra: { usage: { input_tokens: 0, output_tokens: 0, repair_rounds: 0 } },
+    });
   });
 
   it("missing ANTHROPIC_API_KEY → 503 before any call", async () => {
@@ -170,9 +248,14 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(parse).not.toHaveBeenCalled();
   });
 
-  it("foreign id → one corrective retry, then 422", async () => {
+  it("foreign id → one corrective retry, then 422 (accumulated usage preserved)", async () => {
     parse.mockResolvedValueOnce(planResponse(planWithForeignId));
-    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 422 });
+    // The 422 carries the tokens already spent on the first (rejected) call.
+    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({
+      status: 422,
+      code: "AI_PLAN_FAILED",
+      extra: { usage: { input_tokens: 1000, output_tokens: 500, repair_rounds: 0 } },
+    });
     // A corrective retry was attempted (a second call was made).
     expect(parse).toHaveBeenCalledTimes(2);
     const corrective = parse.mock.calls[1]![0].messages.at(-1);

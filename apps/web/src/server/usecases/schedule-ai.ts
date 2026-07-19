@@ -580,10 +580,12 @@ function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: Sc
   const courts = new Set(pack.settings.courts);
   const pinned = new Map(pack.fixtures.movable.filter((f) => f.pinned).map((f) => [f.id, f]));
   const seen = new Set<string>();
+  const placed = new Set<string>();
   for (const a of plan.assignments) {
     if (!movableIds.has(a.fixture_id)) return `assignment references non-movable fixture ${a.fixture_id}`;
     if (seen.has(a.fixture_id)) return `fixture ${a.fixture_id} appears more than once`;
     seen.add(a.fixture_id);
+    placed.add(a.fixture_id);
     if (!courts.has(a.court_label)) return `assignment uses a court not in settings.courts: ${a.court_label}`;
     const pin = pinned.get(a.fixture_id);
     if (pin && (pin.current.at === null || toMs(pin.current.at) !== toMs(a.scheduled_at) || pin.current.court !== a.court_label)) {
@@ -594,9 +596,17 @@ function structuralCheck(plan: AiSchedulePlan, movableIds: Set<string>, pack: Sc
     if (!movableIds.has(u.fixture_id)) return `unschedulable references non-movable fixture ${u.fixture_id}`;
     if (seen.has(u.fixture_id)) return `fixture ${u.fixture_id} appears more than once`;
     seen.add(u.fixture_id);
+    // A pinned (schedule-locked) fixture may never be dropped: marking it
+    // unschedulable silently loses a locked slot, so reject before verification.
+    if (pinned.has(u.fixture_id)) return `pinned fixture ${u.fixture_id} cannot be marked unschedulable`;
   }
   for (const id of movableIds) {
     if (!seen.has(id)) return `movable fixture ${id} is missing from the plan`;
+  }
+  // Every pinned movable fixture must land in assignments (at its exact current
+  // slot, enforced in the assignments loop) — never absent, never diverted.
+  for (const [id] of pinned) {
+    if (movableIds.has(id) && !placed.has(id)) return `pinned fixture ${id} must stay at its current slot`;
   }
   return null;
 }
@@ -713,7 +723,14 @@ async function callModel(
     if (controller.signal.aborted) {
       throw new HttpError(422, "AI scheduling timed out; please retry", "AI_PLAN_TIMEOUT");
     }
-    throw err;
+    // Genuine transport/API failures propagate (→ 5xx). The SDK, however, throws
+    // on schema-invalid structured output instead of returning parsed_output:
+    // null — fold that into the null-parsed path so the corrective retry (01 §1)
+    // runs rather than surfacing a raw 500.
+    if (err instanceof HttpError || (Anthropic.APIError && err instanceof Anthropic.APIError)) {
+      throw err;
+    }
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -742,6 +759,15 @@ export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Pr
   let repairRounds = 0;
   let correctiveUsed = false; // one non-repair retry for a malformed plan (01 §1)
 
+  // Best-so-far across repair rounds: repair round 2 can leave MORE blocking
+  // conflicts than round 1, so we keep the plan with the fewest blocking (ties
+  // resolve to the later round) and return that — never blindly the last round.
+  let best: { plan: AiSchedulePlan; blocking: Conflict[]; warnings: Conflict[] } | null = null;
+
+  // Accumulated usage rides along on a 422 too, so callers can meter a refused
+  // or un-correctable run rather than losing the tokens already spent.
+  const usageNow = () => ({ input_tokens: inputTokens, output_tokens: outputTokens, repair_rounds: repairRounds });
+
   for (;;) {
     const response = await callModel(client, model, conversation);
     inputTokens += response?.usage?.input_tokens ?? 0;
@@ -749,14 +775,26 @@ export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Pr
 
     // Refusal: bail before reading content (01 §1).
     if (response?.stop_reason === "refusal") {
-      throw new HttpError(422, "AI_PLAN_FAILED", "AI_PLAN_FAILED");
+      throw new HttpError(
+        422,
+        "AI scheduling could not produce a usable plan; please retry",
+        "AI_PLAN_FAILED",
+        { usage: usageNow() },
+      );
     }
 
     const plan = response?.parsed_output ?? null;
     const structuralError =
       plan === null ? "the model returned no parseable plan" : structuralCheck(plan, movableIds, pack);
     if (structuralError !== null) {
-      if (correctiveUsed) throw new HttpError(422, "AI_PLAN_FAILED", "AI_PLAN_FAILED");
+      if (correctiveUsed) {
+        throw new HttpError(
+          422,
+          "AI scheduling could not produce a usable plan; please retry",
+          "AI_PLAN_FAILED",
+          { usage: usageNow() },
+        );
+      }
       correctiveUsed = true;
       conversation.push(assistantTurn(response));
       conversation.push({
@@ -774,21 +812,29 @@ export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Pr
     const blocking = conflicts.filter(isBlocking);
     const warnings = conflicts.filter((c) => !isBlocking(c));
 
+    // Keep the fewest-blocking plan; `<=` lets a later round win an exact tie.
+    if (best === null || blocking.length <= best.blocking.length) {
+      best = { plan: plan!, blocking, warnings };
+    }
+
     if (blocking.length === 0 || repairRounds >= MAX_REPAIR_ROUNDS) {
+      const chosen = best;
       return {
-        proposal: plan!.assignments.map((a) => ({
+        proposal: chosen.plan.assignments.map((a) => ({
           fixture_id: a.fixture_id,
           scheduled_at: a.scheduled_at,
           court_label: a.court_label,
           ...(a.schedule_locked !== undefined ? { schedule_locked: a.schedule_locked } : {}),
         })),
-        unschedulable: plan!.unschedulable,
-        warnings,
-        blocking,
-        diff: computeDiff(plan!, pack),
-        explanations: plan!.explanations,
-        ...(plan!.constraint_suggestions !== undefined ? { constraint_suggestions: plan!.constraint_suggestions } : {}),
-        summary: plan!.summary,
+        unschedulable: chosen.plan.unschedulable,
+        warnings: chosen.warnings,
+        blocking: chosen.blocking,
+        diff: computeDiff(chosen.plan, pack),
+        explanations: chosen.plan.explanations,
+        ...(chosen.plan.constraint_suggestions !== undefined
+          ? { constraint_suggestions: chosen.plan.constraint_suggestions }
+          : {}),
+        summary: chosen.plan.summary,
         usage: { input_tokens: inputTokens, output_tokens: outputTokens, repair_rounds: repairRounds },
       };
     }
