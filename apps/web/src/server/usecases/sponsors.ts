@@ -44,6 +44,11 @@ export interface SponsorRow {
   /** The paid order that activated this placement, when it was bought
    *  through a package (list reads only — write paths return it unset). */
   paid_order_id?: string | null;
+  /** True while that order carries an OPEN dispute (paid + disputed_at):
+   *  the placement was parked by the dispute handler, not by the manager.
+   *  Cleared when the dispute is won; a lost dispute flips the order off
+   *  'paid' so this goes false with it (list reads only). */
+  dispute_parked?: boolean;
 }
 
 const COLS = [
@@ -100,7 +105,10 @@ export async function listSponsorRows(orgId: string): Promise<SponsorRow[]> {
     select ${tx(COLS)},
            (select o.id from sponsor_orders o
             where o.sponsor_id = sponsors.id and o.status = 'paid'
-            limit 1) as paid_order_id
+            limit 1) as paid_order_id,
+           exists(select 1 from sponsor_orders o
+                  where o.sponsor_id = sponsors.id and o.status = 'paid'
+                    and o.disputed_at is not null) as dispute_parked
     from sponsors
     order by array_position(array['title','gold','silver','partner'], tier),
              display_order, created_at, id`);
@@ -149,6 +157,21 @@ export async function patchSponsor(
   // existing tiered sponsor stays allowed after a downgrade.
   await assertTierAllowed(auth.orgId, patch.tier, patch.competition_id);
   return withTenant(auth.orgId, async (tx) => {
+    // A placement parked by an open dispute stays down until the dispute
+    // closes — reactivating it by hand would put a charged-back sponsor
+    // back on boards and public pages.
+    if (patch.status === "active") {
+      const [open] = await tx`
+        select 1 from sponsor_orders o
+        where o.sponsor_id = ${id} and o.status = 'paid'
+          and o.disputed_at is not null limit 1`;
+      if (open) {
+        throw new HttpError(
+          409,
+          "this placement is parked by an open payment dispute — it comes back automatically if the dispute is won",
+        );
+      }
+    }
     const [row] = await tx<SponsorRow[]>`
       update sponsors set ${tx(patch as never, ...(cols as never[]))}
       where id = ${id} returning ${tx(COLS)}`;
@@ -809,4 +832,146 @@ export async function handleSponsorDispute(
     bustPublicSponsors(order.org_id);
   }
   return true;
+}
+
+// ---------------------------------------------------------------------------
+// Dispute evidence pack — sponsor twin of registrations' buildDisputeEvidence
+// ---------------------------------------------------------------------------
+
+const escHtml = (s: string) =>
+  s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+function evRow(label: string, value: string): string {
+  return `<tr><td style="padding:6px 14px 6px 0;color:#6b7280;white-space:nowrap;vertical-align:top">${escHtml(label)}</td><td style="padding:6px 0;font-weight:600">${escHtml(value)}</td></tr>`;
+}
+
+/**
+ * Everything the platform holds that shows a disputed sponsorship was
+ * genuine, as one printable HTML document mapped to Stripe's evidence
+ * fields: the order record, the reconstructed payment receipt (customer
+ * communication), the placement's delivery proof (live period, public page,
+ * click count) and the audit trail. Organisers download it from the
+ * disputed order row and paste/upload into the dispute response.
+ */
+export async function buildSponsorDisputeEvidence(
+  auth: AuthCtx,
+  orderId: string,
+  origin: string,
+): Promise<{ ref: string; html: string }> {
+  const order = await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<
+      (SponsorOrderRow & { dispute_id: string | null })[]
+    >`select ${tx(ORDER_COLS)}, dispute_id from sponsor_orders where id = ${orderId}`;
+    if (!row) throw new HttpError(404, "order not found");
+    return row;
+  });
+  const [pkg] = await sql<
+    { name: string; tier: SponsorTier; competition_id: string | null }[]
+  >`select name, tier, competition_id from sponsor_packages where id = ${order.package_id}`;
+  const [org] = await sql<{ name: string; slug: string }[]>`
+    select name, slug from organizations where id = ${auth.orgId}`;
+  const [comp] = pkg?.competition_id
+    ? await sql<{ name: string; slug: string }[]>`
+        select name, slug from competitions where id = ${pkg.competition_id}`
+    : [undefined];
+  const [placement] = order.sponsor_id
+    ? await sql<{ tier: string; status: string; click_count: number; created_at: Date }[]>`
+        select tier, status, click_count, created_at from sponsors where id = ${order.sponsor_id}`
+    : [undefined];
+
+  const events = await sql<{ type: string; payload: unknown; created_at: Date }[]>`
+    select e.type, e.payload, e.created_at
+    from competition_events e
+    join competitions c on c.id = e.competition_id
+    where c.org_id = ${auth.orgId} and e.payload->>'order_id' = ${orderId}
+    order by e.created_at`;
+
+  // The receipt, reconstructed with the exact sender inputs (sponsor emails
+  // are sent in en — orders carry no locale).
+  const { sponsorReceiptTemplate } = await import("@/lib/email-templates/sponsor-receipt");
+  const { getDictionary } = await import("@/lib/i18n");
+  const publicUrl = org ? `${origin}/shared/${org.slug}` : null;
+  const emailText = sponsorReceiptTemplate(
+    {
+      orgName: org?.name ?? "the organiser",
+      packageName: pkg?.name ?? "sponsorship",
+      sponsorName: order.sponsor_name,
+      amountCents: order.amount_cents,
+      currency: order.currency,
+      publicUrl,
+    },
+    await getDictionary("en", "emails"),
+  ).text;
+
+  const when = (d: Date | string | null) => (d ? new Date(d).toISOString() : "—");
+  const ref = orderId.slice(0, 8);
+
+  const html = `<!doctype html>
+<html><head><meta charset="utf-8"><title>Dispute evidence — sponsorship ${escHtml(ref)}</title></head>
+<body style="margin:0;font-family:system-ui,-apple-system,sans-serif;color:#18181b">
+<div style="background:#150b36;color:#f5f0e8;padding:18px 32px 8px">
+  <div style="font-size:18px;font-weight:800;letter-spacing:2px">SEAZN <span style="color:#a3e635">CLUB</span></div>
+  <div style="text-align:right;color:#ef4444;font-size:14px;line-height:8px">&#9679;</div>
+</div>
+<div style="height:4px;background:#a3e635"></div>
+<div style="max-width:760px;margin:0 auto;padding:28px 32px">
+  <h1 style="font-size:22px;margin:0 0 2px">Dispute evidence pack — sponsorship ${escHtml(ref)}</h1>
+  <p style="margin:0 0 20px;color:#6b7280;font-size:13px">
+    Generated ${new Date().toISOString()} · ${escHtml(org?.name ?? "")} · for the Stripe dispute response${order.dispute_id ? ` (${escHtml(order.dispute_id)})` : ""}.
+  </p>
+
+  <h2 style="font-size:15px;margin:20px 0 6px">Sponsorship order (product/service + customer)</h2>
+  <table style="font-size:14px;border-collapse:collapse">
+    ${evRow("Order", orderId)}
+    ${evRow("Sponsor", order.sponsor_name)}
+    ${evRow("Customer email", order.sponsor_email)}
+    ${evRow("Package", `${pkg?.name ?? "—"} (${pkg?.tier ?? "—"})`)}
+    ${evRow("Scope", comp ? comp.name : "whole organisation")}
+    ${evRow("Amount", `${(order.amount_cents / 100).toFixed(2)} ${order.currency.toUpperCase()}`)}
+    ${evRow("Payment intent", order.payment_intent_id ?? "—")}
+    ${evRow("Ordered at", when(order.created_at))}
+    ${evRow("Paid at", when(order.paid_at))}
+    ${evRow("Status", order.status)}
+    ${evRow("Disputed at", when(order.disputed_at ?? null))}
+  </table>
+
+  <h2 style="font-size:15px;margin:24px 0 6px">Receipt email (customer communication)</h2>
+  <p style="margin:0 0 6px;color:#6b7280;font-size:12px">Reconstruction of the transactional receipt sent to ${escHtml(order.sponsor_email)} on payment.</p>
+  <pre style="background:#f6f5f8;border-radius:8px;padding:14px;font-size:12px;white-space:pre-wrap">${escHtml(emailText)}</pre>
+
+  <h2 style="font-size:15px;margin:24px 0 6px">Placement delivered (service provided)</h2>
+  ${
+    placement
+      ? `<table style="font-size:14px;border-collapse:collapse">
+    ${evRow("Placement tier", placement.tier)}
+    ${evRow("Live from", when(order.paid_at))}
+    ${evRow("Current state", placement.status === "pending" ? "parked by this dispute" : placement.status)}
+    ${evRow("Public page", publicUrl ?? "—")}
+    ${evRow("Logo clicks recorded", String(placement.click_count))}
+  </table>`
+      : `<p style="color:#6b7280;font-size:13px;margin:0">No placement row (payment did not activate one).</p>`
+  }
+
+  <h2 style="font-size:15px;margin:24px 0 6px">Activity log (${events.length})</h2>
+  ${
+    events.length === 0
+      ? `<p style="color:#6b7280;font-size:13px;margin:0">No competition-scoped events reference this order.</p>`
+      : `<table style="font-size:13px;border-collapse:collapse">${events
+          .map((e) =>
+            evRow(new Date(e.created_at).toISOString(), `${e.type} ${JSON.stringify(e.payload)}`),
+          )
+          .join("")}</table>`
+  }
+
+  <h2 style="font-size:15px;margin:24px 0 6px">How to use</h2>
+  <ol style="font-size:13px;color:#374151;padding-left:18px;margin:0">
+    <li>Open the dispute in your Stripe Dashboard (platform account).</li>
+    <li>Product/service: paste the Sponsorship order section; the service is the placement period above.</li>
+    <li>Customer communication / receipt: paste the receipt reconstruction.</li>
+    <li>Placement + activity log: upload this document as supporting evidence.</li>
+  </ol>
+</div>
+</body></html>`;
+
+  return { ref, html };
 }

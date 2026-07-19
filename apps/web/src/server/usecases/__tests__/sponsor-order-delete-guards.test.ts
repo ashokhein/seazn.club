@@ -13,7 +13,12 @@ import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, deleteCompetition } from "@/server/usecases/competitions";
-import { refundSponsorOrder } from "@/server/usecases/sponsors";
+import {
+  buildSponsorDisputeEvidence,
+  listSponsorRows,
+  patchSponsor,
+  refundSponsorOrder,
+} from "@/server/usecases/sponsors";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
@@ -112,6 +117,49 @@ describe.skipIf(!HAS_DB)("sponsor order delete protection (V299)", () => {
     const pkg = await seedPackage(orgId, compId);
     await seedOrder(orgId, pkg, { status: "refunded", disputedAt: new Date() });
     await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({ status: 409 });
+  });
+
+  it("a dispute-parked placement reads dispute_parked and refuses manual re-activation", async () => {
+    const { auth, orgId, compId } = await seedOrgWithComp();
+    const pkg = await seedPackage(orgId, compId);
+    const [{ id: sponsorId }] = await sql<{ id: string }[]>`
+      insert into sponsors (org_id, competition_id, name, tier, status)
+      values (${orgId}, ${compId}, 'Parked Co', 'gold', 'pending') returning id`;
+    await sql`update sponsor_orders set sponsor_id = ${sponsorId}
+              where id = ${await seedOrder(orgId, pkg, { disputedAt: new Date() })}`;
+    const rows = await listSponsorRows(orgId);
+    expect(rows.find((r) => r.id === sponsorId)).toMatchObject({ dispute_parked: true });
+    await expect(patchSponsor(auth, sponsorId, { status: "active" })).rejects.toMatchObject({
+      status: 409,
+      message: expect.stringContaining("dispute"),
+    });
+    // Editing anything else on the parked placement stays allowed.
+    await expect(patchSponsor(auth, sponsorId, { name: "Parked Co Ltd" })).resolves.toMatchObject({
+      name: "Parked Co Ltd",
+    });
+  });
+
+  it("evidence pack carries order, receipt, placement proof and dispute id", async () => {
+    const { auth, orgId, compId } = await seedOrgWithComp();
+    const pkg = await seedPackage(orgId, compId);
+    const [{ id: sponsorId }] = await sql<{ id: string }[]>`
+      insert into sponsors (org_id, competition_id, name, tier, status, click_count)
+      values (${orgId}, ${compId}, 'Evidence Co', 'gold', 'pending', 7) returning id`;
+    const orderId = await seedOrder(orgId, pkg, { disputedAt: new Date() });
+    await sql`update sponsor_orders
+              set sponsor_id = ${sponsorId}, dispute_id = 'dp_ev_test'
+              where id = ${orderId}`;
+    const pack = await buildSponsorDisputeEvidence(auth, orderId, "https://ev.test");
+    expect(pack.html).toContain("Gold"); // package
+    expect(pack.html).toContain("s@x.test"); // customer email
+    expect(pack.html).toContain("dp_ev_test"); // dispute id
+    expect(pack.html).toContain("parked by this dispute"); // placement state
+    expect(pack.html).toContain(">7<"); // click count as delivery proof
+    expect(pack.html).toContain("https://ev.test/shared/"); // absolute public page
+    expect(pack.html).toMatch(/Receipt email/); // reconstruction section
+    await expect(
+      buildSponsorDisputeEvidence(auth, randomUUID(), "https://ev.test"),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("refunding a disputed order 409s in our own words, before Stripe", async () => {

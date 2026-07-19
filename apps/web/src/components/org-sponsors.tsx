@@ -37,6 +37,7 @@ export interface SponsorItem {
   tier: SponsorTier;
   display_order: number;
   status: string;
+  dispute_parked?: boolean;
   click_count: number;
   /** The paid package order that activated this placement, if any. */
   paid_order_id?: string | null;
@@ -505,7 +506,13 @@ export function OrgSponsors({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-slate-800">
                         {s.name}
-                        {s.paid_order_id ? (
+                        {s.dispute_parked ? (
+                          // Parked by an open payment dispute — the handler
+                          // took it down; it returns if the dispute is won.
+                          <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-rose-700">
+                            {msg("sponsors.parkedBadge")}
+                          </span>
+                        ) : s.paid_order_id ? (
                           // Bought through a package — ties the sponsor list
                           // back to the Sell section's orders.
                           <span className="ml-2 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">

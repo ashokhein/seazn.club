@@ -221,9 +221,10 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   // competition cascades registrations/passes; console has no button —
   // keys must not have one either.
   "DELETE /competitions/:id",
-  // Dispute evidence pack: console-only download; keys must not exfiltrate
-  // registrant PII bundles.
+  // Dispute evidence packs: console-only downloads; keys must not exfiltrate
+  // registrant/sponsor PII bundles.
   "GET /registrations/:id/evidence",
+  "GET /orgs/:id/sponsor-orders/:orderId/evidence",
   // Browser-upload handshake (v8): signed URLs are a console UX, not an API
   // surface — a leaked key must not mint writable storage URLs.
   "POST /divisions/:id/logo-upload-url",

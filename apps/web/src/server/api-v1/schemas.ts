@@ -1253,6 +1253,9 @@ export const Sponsor = z.object({
   created_at: z.string(),
   /** Set on list reads when a paid package order activated this placement. */
   paid_order_id: z.string().nullable().optional(),
+  /** List reads: true while that order carries an open payment dispute — the
+   *  placement was parked by the dispute handler and can't be re-activated. */
+  dispute_parked: z.boolean().optional(),
 });
 
 export const CreateSponsor = z.object({

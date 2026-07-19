@@ -139,6 +139,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/orgs/{id}/sponsor-orders", method: "get", summary: "List sponsor orders (payment audit trail)", tag: "sponsors", response: z.array(S.SponsorOrder) },
   { path: "/orgs/{id}/sponsor-orders", method: "post", summary: "Start a package checkout — pending order + Connect destination-charge session + invoice email; 409 when the org isn't Connect-onboarded", tag: "sponsors", request: S.StartSponsorCheckout, response: S.SponsorCheckoutStarted, status: 201, errors: [402, 409, 422] },
   { path: "/orgs/{id}/sponsor-orders/{orderId}/refund", method: "post", summary: "Full refund of a paid order — transfer reversed, platform fee returned, placement deactivated", tag: "sponsors", response: S.SponsorOrder, errors: [422] },
+  { path: "/orgs/{id}/sponsor-orders/{orderId}/evidence", method: "get", summary: "Dispute evidence pack as a printable HTML attachment — order record, receipt reconstruction, placement delivery proof, activity log (session console, not key-accessible)", tag: "sponsors", errors: [404] },
   // Public (no auth, cacheable, consent-filtered)
   { path: "/public/orgs/{orgSlug}/competitions/{slug}", method: "get", summary: "Public competition: description + divisions", tag: "public", public: true },
   { path: "/public/orgs/{orgSlug}/competitions/{slug}/divisions/{divisionSlug}/schedule", method: "get", summary: "Public schedule", tag: "public", public: true },

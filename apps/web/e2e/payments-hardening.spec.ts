@@ -340,7 +340,7 @@ test.describe("T1 · competition delete is blocked while money is on file", () =
       "DELETE",
     );
     expect(sponsorDel.status).toBe(409);
-    expect(sponsorDel.error?.message ?? "").toContain("paid sponsorship");
+    expect(sponsorDel.error?.message ?? "").toContain("sponsorship payment records");
   });
 });
 

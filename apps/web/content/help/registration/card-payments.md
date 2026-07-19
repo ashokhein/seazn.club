@@ -40,7 +40,9 @@ If a cardholder disputes a payment, the registration is **flagged on your consol
 
 ### Sponsorship chargebacks work the same way
 
-A card sponsorship payment runs on the same Connect rail, so a disputed sponsorship charge follows the same path. The moment Stripe tells us, the sponsor's order is flagged **Disputed** in your monetization console, its **placement comes down** — boards and public pages stop showing it — and you get an alert. Win the dispute and the placement goes back up automatically; lose it and the order is written off, the placement stays down, and the amount is **recovered from your Stripe balance**. Seazn Club absorbs Stripe's dispute fee here too, and you're emailed what moved.
+A card sponsorship payment runs on the same Connect rail, so a disputed sponsorship charge follows the same path. The moment Stripe tells us, the sponsor's order is flagged **Disputed** in your monetization console, its **placement comes down** — boards and public pages stop showing it, the sponsor list marks it **Disputed — parked** — and you get an alert. You can't switch a parked placement back to active yourself: win the dispute and it goes back up automatically; lose it and the order is written off, the placement stays down, and the amount is **recovered from your Stripe balance**. Seazn Club absorbs Stripe's dispute fee here too, and you're emailed what moved.
+
+Just like a disputed entry, a disputed order carries an **Evidence pack** button — one document with the order record, a reconstruction of the sponsor's receipt email, proof the placement was delivered (live period, public page, logo clicks) and the activity log, mapped to Stripe's evidence fields and ready to paste into the dispute response.
 
 While an order is disputed you can't refund it — the card networks freeze a charged-back payment, so the money moves with the dispute's outcome instead. The Refund button reappears only if the dispute is won. Payment records themselves are permanent: paid, refunded or disputed sponsorship orders survive even if the package or organisation that produced them is later removed.
 

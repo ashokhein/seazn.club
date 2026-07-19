@@ -464,6 +464,18 @@ export function SponsorPackages({
                     {msg("sponsors.order.refund")}
                   </button>
                 ) : null}
+                {order.disputed_at ? (
+                  // Same rail as registrations: one document, mapped to
+                  // Stripe's evidence fields, downloaded from the flagged row.
+                  <a
+                    href={`/api/v1/orgs/${orgId}/sponsor-orders/${order.id}/evidence`}
+                    download
+                    className="btn btn-ghost text-xs font-medium text-rose-700"
+                    title={msg("sponsors.order.evidenceTitle")}
+                  >
+                    {msg("sponsors.order.evidence")}
+                  </a>
+                ) : null}
               </li>
             ))}
           </ul>
