@@ -107,15 +107,11 @@ describe.skipIf(!HAS_DB)("funnel drafts (v3/07 §6)", () => {
     expect(n).toBe(1);
   });
 
-  // KNOWN BUG, pinned executable: an unknown sport should fall back to the
-  // generic module, but the generic `score`/`win_loss` variant presets (both
-  // in generic.ts `variants` and the rows sync:sports seeds from them) are
-  // missing the `points` and `progressScore` fields GenericCfg requires, so
-  // createDivision throws EngineError CONFIG_INVALID. This test PASSES while
-  // the bug exists and flips red when the fallback is fixed — remove `.fails`
-  // then. Fix candidates: zod defaults on GenericCfg, or complete presets +
-  // re-run sync:sports per env.
-  it.fails("unknown sport falls back to the generic module", async () => {
+  // Unknown-sport fallback: GenericCfg now defaults points/progressScore, so
+  // a partial preset (engine variants or a stale synced sport_variants row)
+  // parses instead of throwing CONFIG_INVALID at createDivision. Guards the
+  // /start funnel's generic fallback end to end.
+  it("unknown sport falls back to the generic module", async () => {
     await seedGenericSport();
     const userId = await seedUser();
     const { token } = await createFunnelDraft("builder@example.com", {
