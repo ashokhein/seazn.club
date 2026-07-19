@@ -12,32 +12,32 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
   "draft": [
     {
       "court_label": "Court 1",
+      "fixture_id": "<id:11>",
+      "scheduled_at": "2026-08-01T10:00:00+01:00",
+    },
+    {
+      "court_label": "Court 2",
       "fixture_id": "<id:13>",
       "scheduled_at": "2026-08-01T10:00:00+01:00",
     },
     {
-      "court_label": "Court 2",
+      "court_label": "Court 1",
       "fixture_id": "<id:12>",
-      "scheduled_at": "2026-08-01T10:00:00+01:00",
+      "scheduled_at": "2026-08-01T10:30:00+01:00",
     },
     {
-      "court_label": "Court 1",
+      "court_label": "Court 2",
       "fixture_id": "<id:14>",
       "scheduled_at": "2026-08-01T10:30:00+01:00",
     },
     {
-      "court_label": "Court 2",
-      "fixture_id": "<id:11>",
-      "scheduled_at": "2026-08-01T10:30:00+01:00",
-    },
-    {
       "court_label": "Court 1",
-      "fixture_id": "<id:16>",
+      "fixture_id": "<id:15>",
       "scheduled_at": "2026-08-01T11:20:00+01:00",
     },
     {
       "court_label": "Court 2",
-      "fixture_id": "<id:15>",
+      "fixture_id": "<id:16>",
       "scheduled_at": "2026-08-01T11:20:00+01:00",
     },
     {
@@ -52,97 +52,92 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
     },
     {
       "court_label": "Court 1",
-      "fixture_id": "<id:22>",
+      "fixture_id": "<id:19>",
       "scheduled_at": "2026-08-01T12:40:00+01:00",
     },
     {
       "court_label": "Court 1",
-      "fixture_id": "<id:21>",
+      "fixture_id": "<id:20>",
       "scheduled_at": "2026-08-01T13:10:00+01:00",
     },
     {
       "court_label": "Court 1",
-      "fixture_id": "<id:20>",
+      "fixture_id": "<id:21>",
       "scheduled_at": "2026-08-01T13:40:00+01:00",
     },
     {
       "court_label": "Court 2",
-      "fixture_id": "<id:19>",
+      "fixture_id": "<id:22>",
       "scheduled_at": "2026-08-01T14:00:00+01:00",
     },
     {
       "court_label": "Court 1",
-      "fixture_id": "<id:26>",
+      "fixture_id": "<id:25>",
       "scheduled_at": "2026-08-01T14:10:00+01:00",
     },
     {
       "court_label": "Court 2",
-      "fixture_id": "<id:24>",
+      "fixture_id": "<id:23>",
       "scheduled_at": "2026-08-01T14:30:00+01:00",
     },
     {
       "court_label": "Court 1",
-      "fixture_id": "<id:23>",
+      "fixture_id": "<id:24>",
       "scheduled_at": "2026-08-01T14:50:00+01:00",
     },
     {
       "court_label": "Court 2",
-      "fixture_id": "<id:25>",
+      "fixture_id": "<id:26>",
       "scheduled_at": "2026-08-01T15:00:00+01:00",
     },
     {
       "court_label": "Court 1",
+      "fixture_id": "<id:27>",
+      "scheduled_at": "2026-08-01T15:50:00+01:00",
+    },
+    {
+      "court_label": "Court 2",
       "fixture_id": "<id:28>",
-      "scheduled_at": "2026-08-01T15:20:00+01:00",
+      "scheduled_at": "2026-08-01T15:50:00+01:00",
     },
     {
       "court_label": "Court 1",
       "fixture_id": "<id:30>",
-      "scheduled_at": "2026-08-01T15:50:00+01:00",
+      "scheduled_at": "2026-08-01T16:20:00+01:00",
     },
     {
       "court_label": "Court 2",
       "fixture_id": "<id:29>",
-      "scheduled_at": "2026-08-01T15:50:00+01:00",
-    },
-    {
-      "court_label": "Court 2",
-      "fixture_id": "<id:27>",
       "scheduled_at": "2026-08-01T16:20:00+01:00",
-    },
-    {
-      "court_label": "Court 1",
-      "fixture_id": "<id:34>",
-      "scheduled_at": "2026-08-01T16:40:00+01:00",
-    },
-    {
-      "court_label": "Court 2",
-      "fixture_id": "<id:31>",
-      "scheduled_at": "2026-08-01T16:50:00+01:00",
-    },
-    {
-      "court_label": "Court 1",
-      "fixture_id": "<id:33>",
-      "scheduled_at": "2026-08-01T17:10:00+01:00",
     },
     {
       "court_label": "Court 2",
       "fixture_id": "<id:32>",
-      "scheduled_at": "2026-08-01T17:40:00+01:00",
+      "scheduled_at": "2026-08-01T16:50:00+01:00",
     },
     {
       "court_label": "Court 1",
-      "fixture_id": "<id:35>",
-      "scheduled_at": "2026-08-01T18:00:00+01:00",
+      "fixture_id": "<id:31>",
+      "scheduled_at": "2026-08-01T17:10:00+01:00",
     },
     {
       "court_label": "Court 2",
-      "fixture_id": "<id:36>",
+      "fixture_id": "<id:33>",
+      "scheduled_at": "2026-08-01T17:20:00+01:00",
+    },
+    {
+      "court_label": "Court 1",
+      "fixture_id": "<id:34>",
+      "scheduled_at": "2026-08-01T17:40:00+01:00",
+    },
+    {
+      "court_label": "Court 2",
+      "fixture_id": "<id:35>",
       "scheduled_at": "2026-08-01T18:10:00+01:00",
     },
     {
       "court_label": "Court 1",
-      "fixture_id": "<id:37>",
+      "fixture_id": "<id:36>",
       "scheduled_at": "2026-08-01T18:30:00+01:00",
     },
   ],
@@ -201,8 +196,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:9>",
         "current": {
-          "at": "2026-08-01T20:30:00+01:00",
-          "court": "Court 2",
+          "at": "2026-08-01T10:00:00+01:00",
+          "court": "Court 1",
         },
         "ext_key": "rr-r1-c1",
         "feeds": {
@@ -219,7 +214,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:8>",
         "current": {
-          "at": "2026-08-01T13:30:00+01:00",
+          "at": "2026-08-01T10:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r1-c2",
@@ -237,8 +232,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:7>",
         "current": {
-          "at": "2026-08-01T11:30:00+01:00",
-          "court": "Court 2",
+          "at": "2026-08-01T11:00:00+01:00",
+          "court": "Court 1",
         },
         "ext_key": "rr-r1-c3",
         "feeds": {
@@ -255,7 +250,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:6>",
         "current": {
-          "at": "2026-08-01T19:30:00+01:00",
+          "at": "2026-08-01T11:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r1-c4",
@@ -273,7 +268,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:5>",
         "current": {
-          "at": "2026-08-01T11:00:00+01:00",
+          "at": "2026-08-01T12:00:00+01:00",
           "court": "Court 1",
         },
         "ext_key": "rr-r2-c1",
@@ -291,8 +286,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:2>",
         "current": {
-          "at": "2026-08-01T14:00:00+01:00",
-          "court": "Court 1",
+          "at": "2026-08-01T12:30:00+01:00",
+          "court": "Court 2",
         },
         "ext_key": "rr-r2-c2",
         "feeds": {
@@ -309,7 +304,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:7>",
         "current": {
-          "at": "2026-08-01T17:00:00+01:00",
+          "at": "2026-08-01T13:00:00+01:00",
           "court": "Court 1",
         },
         "ext_key": "rr-r2-c3",
@@ -327,8 +322,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:6>",
         "current": {
-          "at": "2026-08-01T22:00:00+01:00",
-          "court": "Court 1",
+          "at": "2026-08-01T13:30:00+01:00",
+          "court": "Court 2",
         },
         "ext_key": "rr-r2-c4",
         "feeds": {
@@ -345,7 +340,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:5>",
         "current": {
-          "at": "2026-08-01T21:00:00+01:00",
+          "at": "2026-08-01T14:00:00+01:00",
           "court": "Court 1",
         },
         "ext_key": "rr-r3-c1",
@@ -363,8 +358,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:4>",
         "current": {
-          "at": "2026-08-01T18:00:00+01:00",
-          "court": "Court 1",
+          "at": "2026-08-01T14:30:00+01:00",
+          "court": "Court 2",
         },
         "ext_key": "rr-r3-c2",
         "feeds": {
@@ -381,8 +376,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:7>",
         "current": {
-          "at": "2026-08-01T10:30:00+01:00",
-          "court": "Court 2",
+          "at": "2026-08-01T15:00:00+01:00",
+          "court": "Court 1",
         },
         "ext_key": "rr-r3-c3",
         "feeds": {
@@ -399,8 +394,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:6>",
         "current": {
-          "at": "2026-08-01T10:00:00+01:00",
-          "court": "Court 1",
+          "at": "2026-08-01T15:30:00+01:00",
+          "court": "Court 2",
         },
         "ext_key": "rr-r3-c4",
         "feeds": {
@@ -417,7 +412,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:5>",
         "current": {
-          "at": "2026-08-01T13:00:00+01:00",
+          "at": "2026-08-01T16:00:00+01:00",
           "court": "Court 1",
         },
         "ext_key": "rr-r4-c1",
@@ -435,7 +430,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:4>",
         "current": {
-          "at": "2026-08-01T12:30:00+01:00",
+          "at": "2026-08-01T16:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r4-c2",
@@ -453,7 +448,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:3>",
         "current": {
-          "at": "2026-08-01T19:00:00+01:00",
+          "at": "2026-08-01T17:00:00+01:00",
           "court": "Court 1",
         },
         "ext_key": "rr-r4-c3",
@@ -471,7 +466,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:2>",
         "current": {
-          "at": "2026-08-01T16:30:00+01:00",
+          "at": "2026-08-01T17:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r4-c4",
@@ -489,8 +484,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:5>",
         "current": {
-          "at": "2026-08-01T18:30:00+01:00",
-          "court": "Court 2",
+          "at": "2026-08-01T18:00:00+01:00",
+          "court": "Court 1",
         },
         "ext_key": "rr-r5-c1",
         "feeds": {
@@ -507,8 +502,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:4>",
         "current": {
-          "at": "2026-08-01T23:00:00+01:00",
-          "court": "Court 1",
+          "at": "2026-08-01T18:30:00+01:00",
+          "court": "Court 2",
         },
         "ext_key": "rr-r5-c2",
         "feeds": {
@@ -525,7 +520,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:3>",
         "current": {
-          "at": "2026-08-01T16:00:00+01:00",
+          "at": "2026-08-01T19:00:00+01:00",
           "court": "Court 1",
         },
         "ext_key": "rr-r5-c3",
@@ -543,8 +538,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:9>",
         "current": {
-          "at": "2026-08-01T12:00:00+01:00",
-          "court": "Court 1",
+          "at": "2026-08-01T19:30:00+01:00",
+          "court": "Court 2",
         },
         "ext_key": "rr-r5-c4",
         "feeds": {
@@ -579,7 +574,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:2>",
         "current": {
-          "at": "2026-08-01T23:30:00+01:00",
+          "at": "2026-08-01T20:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r6-c2",
@@ -597,7 +592,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:3>",
         "current": {
-          "at": "2026-08-01T15:00:00+01:00",
+          "at": "2026-08-01T21:00:00+01:00",
           "court": "Court 1",
         },
         "ext_key": "rr-r6-c3",
@@ -615,7 +610,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:9>",
         "current": {
-          "at": "2026-08-01T14:30:00+01:00",
+          "at": "2026-08-01T21:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r6-c4",
@@ -633,8 +628,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:8>",
         "current": {
-          "at": "2026-08-01T15:30:00+01:00",
-          "court": "Court 2",
+          "at": "2026-08-01T22:00:00+01:00",
+          "court": "Court 1",
         },
         "ext_key": "rr-r7-c1",
         "feeds": {
@@ -651,7 +646,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:7>",
         "current": {
-          "at": "2026-08-01T17:30:00+01:00",
+          "at": "2026-08-01T22:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r7-c2",
@@ -669,8 +664,8 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:3>",
         "current": {
-          "at": "2026-08-01T21:30:00+01:00",
-          "court": "Court 2",
+          "at": "2026-08-01T23:00:00+01:00",
+          "court": "Court 1",
         },
         "ext_key": "rr-r7-c3",
         "feeds": {
@@ -687,7 +682,7 @@ exports[`buildSchedulePack (v4/01 §2) > pack is deterministic and matches the 0
       {
         "away": "<id:9>",
         "current": {
-          "at": "2026-08-01T22:30:00+01:00",
+          "at": "2026-08-01T23:30:00+01:00",
           "court": "Court 2",
         },
         "ext_key": "rr-r7-c4",

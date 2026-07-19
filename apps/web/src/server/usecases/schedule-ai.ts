@@ -302,8 +302,37 @@ export async function buildSchedulePack(
     // verbatim; repair → the movable set's current persisted slots.
     let draft: PackAssignment[];
     if (opts.mode === "generate") {
+      // Determinism (defect fix): the greedy solver breaks intra-round ties on
+      // SchedulableFixture.id — which is a per-seed random fixture UUID — so an
+      // identical logical board produced a different draft (and golden pack) on
+      // every reseed. Order the movable set on STABLE domain keys (round_no,
+      // seq_in_round, ext_key, then entrant NAMES — never the UUID) and hand the
+      // solver a domain-ranked id in place of the UUID, mapping its result back
+      // to real fixture ids afterwards. The engine stays untouched.
+      const movableEntrantIds = [
+        ...new Set(movable.flatMap((f) => [f.home_entrant_id, f.away_entrant_id])),
+      ].filter((e): e is string => e !== null);
+      const nameByEntrant = new Map<string, string>();
+      if (movableEntrantIds.length > 0) {
+        const nameRows = await tx<{ id: string; display_name: string }[]>`
+          select id, display_name from entrants where id in ${tx(movableEntrantIds)}`;
+        for (const r of nameRows) nameByEntrant.set(r.id, r.display_name);
+      }
+      const nameOf = (e: string | null): string => (e !== null ? nameByEntrant.get(e) ?? "" : "");
+      const orderedMovable = [...movable].sort(
+        (a, b) =>
+          a.round_no - b.round_no ||
+          a.seq_in_round - b.seq_in_round ||
+          cmp(a.ext_key ?? "", b.ext_key ?? "") ||
+          cmp(nameOf(a.home_entrant_id), nameOf(b.home_entrant_id)) ||
+          cmp(nameOf(a.away_entrant_id), nameOf(b.away_entrant_id)),
+      );
+      const rankById = new Map(orderedMovable.map((f, i) => [f.id, String(i).padStart(6, "0")]));
+      const realIdByRank = new Map(orderedMovable.map((f, i) => [String(i).padStart(6, "0"), f.id]));
+
       const schedulable: SchedulableFixture[] = movable.map((f) => ({
-        id: f.id,
+        // Domain-ranked stand-in for the UUID so the solver's tie-break is stable.
+        id: rankById.get(f.id)!,
         roundNo: f.round_no,
         ...(f.pool_id !== null ? { poolId: f.pool_id } : {}),
         divisionId: f.division_id,
@@ -324,7 +353,7 @@ export async function buildSchedulePack(
         existing: [...obstacleAssignments, ...siblings],
       });
       draft = result.assignments.map((a) => ({
-        fixture_id: a.fixtureId,
+        fixture_id: realIdByRank.get(a.fixtureId) ?? a.fixtureId,
         scheduled_at: zonedIso(a.startAt, tz),
         court_label: a.court,
       }));
@@ -424,6 +453,16 @@ export async function buildSchedulePack(
           cmp(a.id, b.id),
       );
 
+    // Entrant-id arrays nested inside people/officials must order on a STABLE
+    // domain key — the entrant NAME, never the per-seed UUID — so the pack is
+    // byte-identical across reseeds of the same logical board. (Officials may
+    // link entrants outside this division; those names are backfilled below.)
+    const entrantNameById = new Map(entrantRows.map((e) => [e.id, e.display_name]));
+    const byEntrantName = (a: string, b: string): number =>
+      cmp(entrantNameById.get(a) ?? "", entrantNameById.get(b) ?? "") || cmp(a, b);
+    const entrantNameKey = (ids: readonly string[]): string =>
+      ids.map((e) => entrantNameById.get(e) ?? e).join("|");
+
     // Shared-player map: persons rostered into two or more of this division's
     // entrants — the only ones that create a cross-entrant clash.
     const divEntrantIds = entrantRows.map((e) => e.id);
@@ -439,12 +478,26 @@ export async function buildSchedulePack(
     }
     const packPeople: PackPerson[] = [...personEntrants.entries()]
       .filter(([, ents]) => ents.size >= 2)
-      .map(([person_id, ents]) => ({ person_id, entrant_ids: [...ents].sort(cmp) }))
-      .sort((a, b) => cmp(a.person_id, b.person_id));
+      .map(([person_id, ents]) => ({ person_id, entrant_ids: [...ents].sort(byEntrantName) }))
+      // Order people by their (name-sorted) entrant set, not the random
+      // person UUID; person_id is only a last-resort tie-break.
+      .sort(
+        (a, b) => cmp(entrantNameKey(a.entrant_ids), entrantNameKey(b.entrant_ids)) || cmp(a.person_id, b.person_id),
+      );
 
     // Officials availability (soft context): roster + role_keys + max_per_day
     // + blackout dates + cross-org busy windows + linked entrant ids.
     const officialRows = await loadOfficialsWithEntrants(tx);
+    // Backfill names for any official-linked entrants outside this division so
+    // their entrant_ids still order by name rather than UUID.
+    const unknownEntrantIds = [...new Set(officialRows.flatMap((o) => o.entrant_ids))].filter(
+      (e) => !entrantNameById.has(e),
+    );
+    if (unknownEntrantIds.length > 0) {
+      const extraNames = await tx<{ id: string; display_name: string }[]>`
+        select id, display_name from entrants where id in ${tx(unknownEntrantIds)}`;
+      for (const r of extraNames) entrantNameById.set(r.id, r.display_name);
+    }
     const blackoutByOfficial = new Map<string, string[]>();
     for (const r of await loadOfficialBlackouts(tx)) {
       (blackoutByOfficial.get(r.official_id) ?? blackoutByOfficial.set(r.official_id, []).get(r.official_id)!).push(
@@ -465,7 +518,7 @@ export async function buildSchedulePack(
         max_per_day: o.max_per_day,
         blackout_dates: [...(blackoutByOfficial.get(o.id) ?? [])].sort(cmp),
         busy_elsewhere: [...(busyByOfficial.get(o.id) ?? [])].sort(cmp),
-        entrant_ids: [...new Set(o.entrant_ids)].sort(cmp),
+        entrant_ids: [...new Set(o.entrant_ids)].sort(byEntrantName),
       }))
       .sort((a, b) => cmp(a.name, b.name) || cmp(a.id, b.id));
 
