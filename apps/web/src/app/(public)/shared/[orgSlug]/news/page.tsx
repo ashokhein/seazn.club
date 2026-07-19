@@ -14,10 +14,10 @@ import { PostCard, type PostCardView } from "@/components/news/post-card";
 import { getDictionary, t } from "@/lib/i18n";
 import { hasLocale, DEFAULT_LOCALE, type Locale } from "@/lib/i18n-constants";
 
-export const revalidate = 30;
-export async function generateStaticParams() {
-  return [];
-}
+// No ISR here: the feed paginates via ?page= and reading searchParams is
+// request-bound — under `revalidate` the prod render throws
+// DYNAMIC_SERVER_USAGE (500). The per-post page keeps ISR (no searchParams).
+export const dynamic = "force-dynamic";
 
 type Props = {
   params: Promise<{ orgSlug: string }>;
