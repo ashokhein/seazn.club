@@ -22,6 +22,7 @@ import { BoardLanes } from "./board/board-lanes";
 import { BoardLegend } from "./board/board-legend";
 import { BoardTray } from "./board/board-tray";
 import { AiConsole, useAiSchedulingEnabled, type AiBriefContext } from "./board/ai-console";
+import { computeAiDiff, ghostToneFor, type AiConsoleFixture } from "./board/ai-diff";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
 import { SettingsPanel } from "./board/settings-panel";
@@ -33,7 +34,9 @@ import {
   type BoardFixture,
   type BoardStage,
   type Density,
+  type GhostBlock,
 } from "./board/types";
+import type { AiPlanResponse } from "@/server/api-v1/schemas";
 import { useBoardActions } from "./board/use-board-actions";
 
 export type { BoardConfig, BoardConflict, BoardDivision, BoardFixture, BoardStage } from "./board/types";
@@ -116,6 +119,18 @@ export function ScheduleBoard({
   // entirely when flipped off; it is fail-open (see the hook).
   const aiFlagOn = useAiSchedulingEnabled();
   const [aiOpen, setAiOpen] = useState(false);
+  // The verified proposal the console is showing (null = none) — drives the grid
+  // ghost overlay. The console notifies us on each RUN_DONE and on close.
+  const [aiProposal, setAiProposal] = useState<AiPlanResponse | null>(null);
+  // Fixtures the referee just flagged — pulse red on the grid for ~1.5s (§0.3).
+  const [pulseIds, setPulseIds] = useState<string[]>([]);
+  const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pulse = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setPulseIds(ids);
+    if (pulseTimer.current) clearTimeout(pulseTimer.current);
+    pulseTimer.current = setTimeout(() => setPulseIds([]), 1500);
+  }, []);
   // Entry point is role-gated (not entitlement-gated) so a free org reaches the
   // in-dock paywall; the plan check happens inside the console via aiAllowed.
   const aiAvailable = (canManage ?? canEdit) && single !== null && aiFlagOn;
@@ -227,6 +242,52 @@ export function ScheduleBoard({
   const scheduled = board.filter((f) => f.scheduled_at !== null);
   const unscheduled = board.filter((f) => f.scheduled_at === null && f.status === "scheduled");
 
+  // ------------------------------------------------------- AI proposal ghosts
+  // The single division's current fixtures, enriched with the label bits a ghost
+  // block and diff row show (§3). Built from the live board so the diff compares
+  // against what is actually on screen. "Final" is a light heuristic (the sole
+  // fixture in the last round); there is no junior signal in the board data.
+  const aiFixtures = useMemo<AiConsoleFixture[]>(() => {
+    if (!single) return [];
+    const divFx = actions.board.filter((f) => f.division_id === single.id);
+    const maxRound = divFx.reduce((m, f) => Math.max(m, f.round_no), 0);
+    const atMaxRound = divFx.filter((f) => f.round_no === maxRound).length;
+    return divFx.map((f) => ({
+      id: f.id,
+      scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
+      court_label: f.court_label,
+      code: `R${f.round_no}·${f.seq_in_round}`,
+      matchup: cardTitle(f, entrantNames, feedLabels),
+      isFinal: maxRound > 0 && f.round_no === maxRound && atMaxRound === 1,
+      isJunior: false,
+    }));
+  }, [single, actions.board, entrantNames, feedLabels]);
+
+  // Ghost blocks for the whole proposal, positioned by the PROPOSED slot and
+  // toned by diff bucket (blocking wins). Unscheduled (dropped) fixtures are not
+  // in the proposal, so they simply leave the grid — they live in the diff list.
+  const ghosts = useMemo<GhostBlock[] | null>(() => {
+    if (!aiProposal) return null;
+    const meta = new Map(aiFixtures.map((f) => [f.id, f]));
+    const diff = computeAiDiff(aiProposal, aiFixtures);
+    const blocking = new Set(aiProposal.blocking.map((b) => b.fixtureId));
+    const pulsing = new Set(pulseIds);
+    return aiProposal.proposal.map((p) => {
+      const m = meta.get(p.fixture_id);
+      return {
+        id: p.fixture_id,
+        code: m?.code ?? p.fixture_id.slice(0, 6),
+        matchup: m?.matchup ?? "—",
+        isFinal: m?.isFinal ?? false,
+        isJunior: m?.isJunior ?? false,
+        at: new Date(p.scheduled_at).getTime(),
+        court: p.court_label ?? null,
+        tone: ghostToneFor(p.fixture_id, diff, blocking),
+        pulse: pulsing.has(p.fixture_id),
+      };
+    });
+  }, [aiProposal, aiFixtures, pulseIds]);
+
   // ------------------------------------------------------- density modes
   const [density, setDensity] = useState<Density>("board");
   const [view, setView] = useState<"day" | "week">("day");
@@ -247,10 +308,12 @@ export function ScheduleBoard({
   // ------------------------------------------------------------ day tabs
   const days = useMemo(() => {
     const set = new Set(scheduled.map((f) => dayKey(f.scheduled_at as string)));
+    // A proposal may place fixtures on days the board has none yet.
+    for (const g of ghosts ?? []) set.add(dayKey(new Date(g.at).toISOString()));
     if (set.size === 0 && cfg.startAt) set.add(dayKey(cfg.startAt));
     if (set.size === 0) set.add(dayKey(new Date()));
     return [...set].sort();
-  }, [scheduled, cfg.startAt]);
+  }, [scheduled, ghosts, cfg.startAt]);
   const [day, setDay] = useState<string>(days[0] as string);
   if (!day) setDay(days[0] as string);
 
@@ -276,14 +339,18 @@ export function ScheduleBoard({
     return out;
   }, [scheduled, competitionStart, competitionEnd, cfg.startAt, cfg.endAt]);
 
-  // Courts: configured list plus anything already used on the board.
+  // Courts: configured list plus anything already used on the board or proposed
+  // by a ghost, so a proposal's court always has a column.
   const courts = useMemo(() => {
     const list = [...cfg.courts];
     for (const f of scheduled) {
       if (f.court_label && !list.includes(f.court_label)) list.push(f.court_label);
     }
+    for (const g of ghosts ?? []) {
+      if (g.court && !list.includes(g.court)) list.push(g.court);
+    }
     return list;
-  }, [cfg.courts, scheduled]);
+  }, [cfg.courts, scheduled, ghosts]);
 
   // ------------------------------------------- pick-then-place (gap 11)
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -368,9 +435,13 @@ export function ScheduleBoard({
   // ------------------------------------------------------------ grid math
   const slotMinutes = cfg.matchMinutes + cfg.gapMinutes;
   const dayFixtures = scheduled.filter((f) => dayKey(f.scheduled_at as string) === day);
+  // Ghosts on this day drive the grid layout while a proposal is on screen.
+  const dayGhosts = ghosts ? ghosts.filter((g) => dayKey(new Date(g.at).toISOString()) === day) : null;
   const dayStartDefault = new Date(`${day}T08:00`).getTime();
   const dayEndDefault = new Date(`${day}T22:00`).getTime();
-  const times = dayFixtures.map((f) => new Date(f.scheduled_at as string).getTime());
+  const times = dayGhosts
+    ? dayGhosts.map((g) => g.at)
+    : dayFixtures.map((f) => new Date(f.scheduled_at as string).getTime());
   const gridFrom = times.length > 0 ? Math.min(...times, dayStartDefault) : dayStartDefault;
   const gridTo =
     times.length > 0
@@ -639,6 +710,7 @@ export function ScheduleBoard({
               onTogglePin={(f) => void actions.togglePin(f)}
               venueCap={venueCap}
               highlightId={highlightId}
+              ghosts={dayGhosts}
             />
           )}
 
@@ -722,8 +794,21 @@ export function ScheduleBoard({
           divisionId={single.id}
           aiAllowed={aiAllowed}
           brief={aiBrief}
-          onClose={() => setAiOpen(false)}
+          fixtures={aiFixtures}
+          onClose={() => {
+            setAiOpen(false);
+            setAiProposal(null);
+          }}
           onApplied={() => router.refresh()}
+          onProposalChange={(plan) => {
+            setAiProposal(plan);
+            // Jump to the earliest day the proposal touches so the ghosts show.
+            if (plan && plan.proposal.length > 0) {
+              const earliest = Math.min(...plan.proposal.map((p) => new Date(p.scheduled_at).getTime()));
+              setDay(dayKey(new Date(earliest).toISOString()));
+            }
+          }}
+          onPulse={pulse}
         />
       )}
 

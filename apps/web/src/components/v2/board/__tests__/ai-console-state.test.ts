@@ -149,6 +149,20 @@ describe("aiConsoleReducer", () => {
     expect(s.step).toBe("apply");
   });
 
+  it("TOGGLE_EXCLUDE adds then removes a blocking fixture from the drop-to-tray set", () => {
+    const on = aiConsoleReducer(withProposal(), { type: "TOGGLE_EXCLUDE", fixtureId: "f1" });
+    expect(on.excludedFixtures).toEqual(["f1"]);
+    const off = aiConsoleReducer(on, { type: "TOGGLE_EXCLUDE", fixtureId: "f1" });
+    expect(off.excludedFixtures).toEqual([]);
+  });
+
+  it("a fresh RUN_DONE clears any prior untick choices", () => {
+    const excluded = aiConsoleReducer(withProposal(), { type: "TOGGLE_EXCLUDE", fixtureId: "f1" });
+    expect(excluded.excludedFixtures).toEqual(["f1"]);
+    const rerun = aiConsoleReducer(excluded, { type: "RUN_DONE", plan: schedulePlan });
+    expect(rerun.excludedFixtures).toEqual([]);
+  });
+
   it("PREFILL_REPAIR sets repair mode, the scope, and returns to the brief step", () => {
     const scope = { from: "2026-08-01T09:00:00+01:00", courts: ["Court 2"] };
     const s = aiConsoleReducer(withProposal(), { type: "PREFILL_REPAIR", scope });

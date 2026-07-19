@@ -97,6 +97,26 @@ export function cardTitle(
   return `${home} vs ${away}`;
 }
 
+/** One proposal block painted over the grid while an AI proposal is on screen
+ *  (v4 Task 13, design/v4/02 §3). Positioned by the PROPOSED slot (`at`/`court`),
+ *  not the fixture's current one; `tone` is its state-palette bucket. The block
+ *  shows code + JR/Final marker + matchup + time only — move provenance lives in
+ *  the diff list, never here. */
+export interface GhostBlock {
+  id: string;
+  code: string;
+  matchup: string;
+  isFinal: boolean;
+  isJunior: boolean;
+  /** Proposed kick-off, epoch ms. */
+  at: number;
+  /** Proposed court (null → unassigned column). */
+  court: string | null;
+  tone: "moved" | "placed" | "unchanged" | "blocking";
+  /** Referee just flagged this fixture — pulse red for ~1.5s (§0.3). */
+  pulse?: boolean;
+}
+
 /** Board density modes (v3/04 §2). Week view lives inside Board mode — the
  *  cross-day drag affordance predates v3 and stays (no regression). */
 export type Density = "board" | "agenda" | "lanes";

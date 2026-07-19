@@ -8,11 +8,11 @@
 // the board's slate/purple system. The reducer (ai-console-state) owns the
 // state machine and gating; this component renders it and runs Phase A. Tasks
 // 12–16 flesh out the schedule / officials / apply step bodies.
-import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
-import { useMsg, usePlural } from "@/components/i18n/dict-provider";
+import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
@@ -20,6 +20,9 @@ import type { AiPlanRequest, AiPlanResponse, AiLastResult } from "@/server/api-v
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
 import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
+import { AiTrace, type TraceEvent } from "./ai-trace";
+import { AiDiffPanel } from "./ai-diff-panel";
+import type { AiConsoleFixture } from "./ai-diff";
 import {
   aiConsoleReducer,
   aiErrorKey,
@@ -88,12 +91,19 @@ function stepDone(state: AiConsoleState, step: AiStep): boolean {
   }
 }
 
+// Re-export so the board imports the ghost/diff fixture shape from one place.
+export type { AiConsoleFixture } from "./ai-diff";
+
 export function AiConsole({
   divisionId,
   aiAllowed,
   brief,
+  fixtures,
+  officialsPolicy,
   onClose,
   onApplied,
+  onProposalChange,
+  onPulse,
 }: {
   divisionId: string;
   /** Client-side entitlement read (server prop) — false renders the paywall
@@ -101,10 +111,25 @@ export function AiConsole({
   aiAllowed: boolean;
   /** Live brief inputs derived by the board (pre-flight card + chip pickers). */
   brief: AiBriefContext;
+  /** This division's current fixtures (before any proposal) — powers the diff
+   *  panel's from→to provenance and the grid ghosts. */
+  fixtures: AiConsoleFixture[];
+  /** A saved officials AssignPolicy, if the division has one — sent with the run
+   *  for a dry coverage preview (§2). No persisted policy source exists today
+   *  (the officials/auto flow composes it ad-hoc from unsaved UI state), so the
+   *  board leaves this undefined and the field is omitted; the seam is ready for
+   *  when a policy is persisted. */
+  officialsPolicy?: NonNullable<AiPlanRequest["officials_policy"]>;
   onClose: () => void;
   /** Called after a successful apply so the board can refresh. Wired in a later
    *  task; accepted here so the seam is stable. */
   onApplied?: () => void;
+  /** Notifies the board of the current proposal (or null) so it can paint the
+   *  grid ghosts; fired on each RUN_DONE and cleared on unmount. */
+  onProposalChange?: (plan: AiPlanResponse | null) => void;
+  /** Fired when the trace flags a repair — the board pulses these fixture ids
+   *  red on the grid for ~1.5s (design §0.3). */
+  onPulse?: (fixtureIds: string[]) => void;
 }) {
   const msg = useMsg();
   const pathname = usePathname();
@@ -165,8 +190,25 @@ export function AiConsole({
   // the dock, so unmount cleanup covers close too) — its rejection is ignored.
   const abortRef = useRef<AbortController | null>(null);
   useEffect(() => () => abortRef.current?.abort(), []);
-  const plural = usePlural();
   const busy = state.run === "running" || state.run === "flagged";
+
+  // Board callbacks held by ref so the unmount cleanup + proposal mirror can fire
+  // the latest without listing them as deps. Synced in an effect (never during
+  // render) so a changed callback can't cause a stale update.
+  const onProposalRef = useRef(onProposalChange);
+  const onPulseRef = useRef(onPulse);
+  useEffect(() => {
+    onProposalRef.current = onProposalChange;
+    onPulseRef.current = onPulse;
+  });
+  // Mirror the current proposal to the board (grid ghosts); clear it on unmount
+  // so closing the console wipes the overlay.
+  useEffect(() => {
+    onProposalRef.current?.(state.schedulePlan);
+  }, [state.schedulePlan]);
+  useEffect(() => () => onProposalRef.current?.(null), []);
+  // A fresh animation per run — increments so AiTrace remounts and replays.
+  const [traceNonce, setTraceNonce] = useState(0);
 
   const run = useCallback(async () => {
     const instruction = state.instruction.trim();
@@ -174,11 +216,15 @@ export function AiConsole({
     abortRef.current?.abort(); // cancel a prior in-flight run
     const ac = new AbortController();
     abortRef.current = ac;
+    setTraceNonce((n) => n + 1); // fresh trace animation for this run
     dispatch({ type: "RUN_START" });
     const body: AiPlanRequest = {
       instruction,
       mode: state.mode,
       ...(state.scope ? { scope: state.scope } : {}),
+      // A dry officials-coverage preview rides along only when the division has a
+      // saved policy (none is persisted today, so this is omitted — see the prop).
+      ...(officialsPolicy ? { officials_policy: officialsPolicy } : {}),
       ...(state.mode === "refine" && state.schedulePlan && priorInstruction.current
         ? {
             prior: {
@@ -207,7 +253,7 @@ export function AiConsole({
       const code = err instanceof ApiV1Error ? err.code : undefined;
       dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, code)) } });
     }
-  }, [busy, divisionId, msg, state.instruction, state.mode, state.scope, state.schedulePlan]);
+  }, [busy, divisionId, msg, officialsPolicy, state.instruction, state.mode, state.scope, state.schedulePlan]);
 
   const body = aiAllowed ? (
     <div className="space-y-4">
@@ -228,7 +274,16 @@ export function AiConsole({
         />
       )}
       {state.step === "schedule" && (
-        <ScheduleStep state={state} dispatch={dispatch} msg={msg} plural={plural} />
+        <ScheduleStep
+          state={state}
+          dispatch={dispatch}
+          msg={msg}
+          fixtures={fixtures}
+          courts={brief.courts.length}
+          busy={busy}
+          traceNonce={traceNonce}
+          onPulse={(ids) => onPulseRef.current?.(ids)}
+        />
       )}
       {state.step === "officials" && <OfficialsStep dispatch={dispatch} msg={msg} />}
       {state.step === "apply" && (
@@ -479,51 +534,104 @@ function BriefStep({
 }
 
 // ----------------------------------------------------------- schedule step
+/**
+ * Compose the referee trace from the verified plan (design §0). There is no
+ * server trace field, so the console narrates what the engine did from the
+ * result: a draft/plan/verify spine, then — when a repair ran or conflicts
+ * surfaced — flag lines (the caught conflicts, pulsed on the grid) and a repair
+ * round, and finally either the mandated CLEAN line + Ready, or, when blocking
+ * conflicts remain, a red "unresolved" tail (no clean, spine stays flagged).
+ */
+function buildScheduleTrace(
+  plan: AiPlanResponse,
+  courts: number,
+  msg: ReturnType<typeof useMsg>,
+): { events: TraceEvent[]; flaggedIds: string[] } {
+  const events: TraceEvent[] = [];
+  const node = (k: MessageKey) => events.push({ t: "step", text: msg(k) });
+  const log = (text: string) => events.push({ t: "log", text });
+
+  node("board.ai.trace.node.draft");
+  log(msg("board.ai.trace.line.draft", { fixtures: plan.proposal.length, courts }));
+  node("board.ai.trace.node.plan");
+  log(msg("board.ai.trace.line.plan", { count: plan.proposal.length }));
+  node("board.ai.trace.node.referee");
+  log(msg("board.ai.trace.line.verify"));
+
+  const conflicts = [...plan.blocking, ...plan.warnings];
+  const flaggedIds = Array.from(new Set(conflicts.map((c) => c.fixtureId)));
+  const repaired = plan.usage.repair_rounds > 0;
+
+  if (repaired || conflicts.length > 0) {
+    const shown = conflicts.slice(0, 3);
+    if (shown.length > 0) {
+      for (const c of shown) {
+        events.push({ t: "flag", text: msg("board.ai.trace.line.flag", { what: c.detail || c.reason }) });
+      }
+    } else {
+      events.push({ t: "flag", text: msg("board.ai.trace.line.flagGeneric") });
+    }
+    if (repaired) {
+      node("board.ai.trace.node.repair");
+      log(msg("board.ai.trace.line.repair", { rounds: plan.usage.repair_rounds }));
+    }
+  }
+
+  if (plan.blocking.length > 0) {
+    // Not clean — the engine could not fully verify; spine ends flagged.
+    events.push({ t: "flag", text: msg("board.ai.trace.line.blockingRemain", { count: plan.blocking.length }) });
+  } else {
+    events.push({ t: "clean", text: msg("board.ai.trace.line.clean") });
+    node("board.ai.trace.node.ready");
+  }
+
+  return { events, flaggedIds };
+}
+
 function ScheduleStep({
   state,
   dispatch,
   msg,
-  plural,
+  fixtures,
+  courts,
+  busy,
+  traceNonce,
+  onPulse,
 }: {
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
   msg: ReturnType<typeof useMsg>;
-  plural: ReturnType<typeof usePlural>;
+  fixtures: AiConsoleFixture[];
+  courts: number;
+  busy: boolean;
+  traceNonce: number;
+  onPulse: (ids: string[]) => void;
 }) {
   const plan = state.schedulePlan;
+  const { events, flaggedIds } = useMemo(
+    () => (plan ? buildScheduleTrace(plan, courts, msg) : { events: [], flaggedIds: [] }),
+    [plan, courts, msg],
+  );
   if (!plan) return <Empty msg={msg} k="board.ai.schedule.empty" />;
-  const d = plan.diff;
-  const stats: { label: string; n: number; tone: string }[] = [
-    { label: msg("board.ai.diff.placed"), n: d.placed.length, tone: "text-teal-700 bg-teal-50" },
-    { label: msg("board.ai.diff.moved"), n: d.moved.length, tone: "text-violet-700 bg-violet-50" },
-    { label: msg("board.ai.diff.unscheduled"), n: d.unscheduled.length, tone: "text-slate-600 bg-slate-100" },
-  ];
+
   return (
     <div className="space-y-3">
-      <div className="rounded-lg border border-slate-200 bg-slate-50/70 p-3">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          {msg("board.ai.summaryLabel")}
-        </p>
-        <p className="mt-0.5 text-sm text-slate-700">{plan.summary}</p>
-      </div>
+      {/* The referee trace — the headline (§0). */}
+      <AiTrace
+        key={traceNonce}
+        phase="schedule"
+        events={events}
+        running={busy}
+        onFlag={() => onPulse(flaggedIds)}
+      />
 
-      <div className="flex flex-wrap gap-1.5">
-        {stats.map((s) => (
-          <span key={s.label} className={`rounded-full px-2.5 py-1 text-xs font-medium ${s.tone}`}>
-            {s.n} {s.label}
-          </span>
-        ))}
-        {plan.blocking.length > 0 && (
-          <span className="rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
-            {msg("board.ai.blocking", { n: plan.blocking.length })}
-          </span>
-        )}
-        {plan.warnings.length > 0 && (
-          <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
-            {plural("board.ai.warnings", plan.warnings.length)}
-          </span>
-        )}
-      </div>
+      {/* Summary + usage + coverage + the "why it did that" diff (§3/§5/§6). */}
+      <AiDiffPanel
+        plan={plan}
+        fixtures={fixtures}
+        excluded={state.excludedFixtures}
+        onToggleExclude={(fixtureId) => dispatch({ type: "TOGGLE_EXCLUDE", fixtureId })}
+      />
 
       <p className="text-[11px] text-slate-500">{msg("board.ai.schedule.reviewNote")}</p>
 

@@ -31,6 +31,11 @@ export interface AiConsoleState {
   scope?: AiScope;
   schedulePlan: AiPlanResponse | null; // Phase A result
   officialsPlan: AiOfficialsPlanResponse | null; // Phase B result
+  /** Blocking fixtures the organiser unticked in the diff panel — they drop to
+   *  the tray (unscheduled) in the accept payload rather than block the whole
+   *  apply (02 §6). Task 15's accept reads this; Task 13 only wires it. Cleared
+   *  whenever a fresh proposal lands. */
+  excludedFixtures: string[];
   error: { status: number; message: string } | null;
 }
 
@@ -44,6 +49,7 @@ export type AiConsoleAction =
   | { type: "RUN_ERROR"; error: { status: number; message: string } }
   | { type: "GOTO_STEP"; step: AiStep }
   | { type: "OFFICIALS_DONE"; plan: AiOfficialsPlanResponse }
+  | { type: "TOGGLE_EXCLUDE"; fixtureId: string }
   | { type: "APPLIED" }
   | { type: "RESET" }
   | { type: "PREFILL_REPAIR"; scope?: AiScope };
@@ -57,6 +63,7 @@ export const initialAiConsoleState: AiConsoleState = {
   scope: undefined,
   schedulePlan: null,
   officialsPlan: null,
+  excludedFixtures: [],
   error: null,
 };
 
@@ -83,8 +90,17 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
       return { ...s, run: "flagged" };
 
     case "RUN_DONE":
-      // Phase A landed: store it, show it, and move to the schedule step.
-      return { ...s, schedulePlan: a.plan, run: "proposal", step: "schedule", error: null };
+      // Phase A landed: store it, show it, and move to the schedule step. A new
+      // proposal has its own (possibly empty) set of blockers, so any prior
+      // untick choices are dropped.
+      return {
+        ...s,
+        schedulePlan: a.plan,
+        run: "proposal",
+        step: "schedule",
+        excludedFixtures: [],
+        error: null,
+      };
 
     case "RUN_ERROR":
       // Keep whatever proposal the organiser was already looking at — an error
@@ -102,6 +118,14 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
 
     case "OFFICIALS_DONE":
       return { ...s, officialsPlan: a.plan, run: "proposal", step: "officials", error: null };
+
+    case "TOGGLE_EXCLUDE":
+      // Per-row untick on a blocking fixture: toggle its membership in the
+      // drop-to-tray set (02 §6). Accept (Task 15) enables once every blocker is
+      // excluded.
+      return s.excludedFixtures.includes(a.fixtureId)
+        ? { ...s, excludedFixtures: s.excludedFixtures.filter((id) => id !== a.fixtureId) }
+        : { ...s, excludedFixtures: [...s.excludedFixtures, a.fixtureId] };
 
     case "APPLIED":
       return { ...s, run: "applied", step: "apply" };
