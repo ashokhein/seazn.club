@@ -11,6 +11,7 @@ import { requireFeature } from "@/lib/entitlements";
 import { cacheDelPattern } from "@/lib/cache";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
+import { REASON_CODE } from "@/lib/schedule-board";
 import { EngineError } from "@seazn/engine/core";
 import {
   slotFixtures,
@@ -312,19 +313,10 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
 }
 
 // ---------------------------------------------------------------------------
-// Conflict taxonomy (doc 12 §2) — engine reasons → API codes
+// Conflict taxonomy (doc 12 §2) — engine reasons → API codes. REASON_CODE is
+// the single shared table in lib/schedule-board (isomorphic), so the AI diff
+// panel maps blocking-row reasons through the exact same map client-side.
 // ---------------------------------------------------------------------------
-
-const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> = {
-  court: "conflict.court",
-  rest: "warn.rest",
-  person_overlap: "warn.person_overlap",
-  order: "warn.order",
-  blackout: "warn.blackout",
-  no_slot: "warn.no_slot",
-  // Jul3/04 §3: an unsatisfiable start window is a hard bound, not a warning
-  start_window: "conflict.start_window",
-};
 
 function mapConflicts(conflicts: readonly Conflict[]): ScheduleConflict[] {
   return conflicts.map((c) => ({

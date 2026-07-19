@@ -1,6 +1,28 @@
 // Pure helpers for the schedule board (doc 12 §2). Isomorphic — used by the
 // server page (feed labels) and the client board (grid math); unit-testable
 // without React or a DB.
+import type { Conflict } from "@seazn/engine/scheduling";
+import type { ScheduleConflict } from "@/server/api-v1/schemas";
+
+// ---------------------------------------------------------------------------
+// Conflict taxonomy (doc 12 §2) — engine verifier reason tokens → API conflict
+// codes. The single source of truth for the mapping, lifted here (isomorphic,
+// no server-only) so both sides share ONE table: usecases/schedule.ts maps
+// drag-drop conflicts through it on the server, and the AI diff panel maps a
+// blocking row's engine reason through it on the client to reach the shared
+// `board.conflict.*` labels the conflicts panel already localizes (v4 Task 13).
+// The Record key type keeps it exhaustive against the engine's reason union.
+// ---------------------------------------------------------------------------
+export const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> = {
+  court: "conflict.court",
+  rest: "warn.rest",
+  person_overlap: "warn.person_overlap",
+  order: "warn.order",
+  blackout: "warn.blackout",
+  no_slot: "warn.no_slot",
+  // Jul3/04 §3: an unsatisfiable start window is a hard bound, not a warning
+  start_window: "conflict.start_window",
+};
 
 export interface FeedRow {
   id: string;

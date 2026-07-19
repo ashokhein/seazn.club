@@ -201,7 +201,7 @@ export function AiTrace({
         className="max-h-40 overflow-y-auto border-t border-slate-800 bg-slate-950 px-3 py-2 font-mono text-[11px] leading-relaxed"
       >
         {consoleLines.length === 0 && (
-          <li className="text-slate-500">{msg("board.ai.trace.consoleWaiting")}</li>
+          <li className="text-slate-400">{msg("board.ai.trace.consoleWaiting")}</li>
         )}
         {consoleLines.map(({ e, i }) => (
           <li

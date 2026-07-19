@@ -5,6 +5,8 @@
 // §3) and the board derives each ghost's state-palette tone from it. Pure and
 // React-free so the bucketing is unit-testable and asserted against the server diff.
 import type { AiPlanResponse } from "@/server/api-v1/schemas";
+import type { MessageKey } from "@/lib/messages";
+import { REASON_CODE } from "@/lib/schedule-board";
 
 /** A fixture's current placement — the board's live truth before the proposal. */
 export interface AiFixtureRef {
@@ -120,4 +122,25 @@ export function ghostToneFor(fixtureId: string, diff: AiDiff, blocking: Set<stri
   if (diff.moved.some((m) => m.fixture_id === fixtureId)) return "moved";
   if (diff.placed.some((p) => p.fixture_id === fixtureId)) return "placed";
   return "unchanged";
+}
+
+/**
+ * The API conflict code a blocking row's engine `reason` maps to (v4 Task 13,
+ * design/v4/02 §6). A blocking row carries the engine verifier's raw camelCase
+ * reason token (`court`, `order`, …); this routes it through the one shared
+ * REASON_CODE table (lib/schedule-board — the same map the server applies) so
+ * the console reaches the board's localized `board.conflict.*` labels instead
+ * of leaking the engine's English `detail`. An unmapped token falls through as
+ * its own pseudo-code, so the caller's fallback mirrors the conflicts panel
+ * (CONFLICT_LABEL[code] ?? code) rather than the raw engine string.
+ */
+export function blockingConflictCode(reason: string): string {
+  return REASON_CODE[reason as keyof typeof REASON_CODE] ?? reason;
+}
+
+/** The `board.conflict.*` dict key for a blocking row's engine reason — the
+ *  reason→dict-key helper the diff panel localizes with useMsg(), the exact
+ *  keys the conflicts panel resolves for a drag-drop conflict code. */
+export function blockingConflictKey(reason: string): MessageKey {
+  return `board.conflict.${blockingConflictCode(reason)}` as MessageKey;
 }

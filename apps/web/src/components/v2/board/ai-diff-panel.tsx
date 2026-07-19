@@ -11,7 +11,14 @@ import { timeLabel } from "@/lib/day-label";
 import { useMsg, usePlural } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import type { AiPlanResponse } from "@/server/api-v1/schemas";
-import { computeAiDiff, type AiConsoleFixture, type AiDiffSlot } from "./ai-diff";
+import {
+  blockingConflictCode,
+  blockingConflictKey,
+  computeAiDiff,
+  type AiConsoleFixture,
+  type AiDiffSlot,
+} from "./ai-diff";
+import { CONFLICT_LABEL } from "./types";
 
 export function AiDiffPanel({
   plan,
@@ -47,6 +54,17 @@ export function AiDiffPanel({
       matchup: f?.matchup ?? id.slice(0, 8),
       marker: f?.isFinal ? "FN" : f?.isJunior ? "JR" : null,
     };
+  };
+  // Blocking rows carry the engine verifier's raw camelCase reason token; route
+  // it through the shared conflict taxonomy so the primary text is a localized
+  // `board.conflict.*` label (never the engine's English) — mirrors the conflicts
+  // panel, including its fallback to the code when a locale lacks the key. The
+  // raw `detail` survives only as muted supplementary text below (§6).
+  const conflictLabel = (reason: string): string => {
+    const code = blockingConflictCode(reason);
+    const key = blockingConflictKey(reason);
+    const localized = msg(key);
+    return localized === key ? (CONFLICT_LABEL[code] ?? code) : localized;
   };
 
   const usage: { k: MessageKey; v: string }[] = [
@@ -118,7 +136,12 @@ export function AiDiffPanel({
                       {l.marker && <Marker kind={l.marker} />}
                       <span className="min-w-0 truncate text-slate-600">{l.matchup}</span>
                     </p>
-                    <p className="text-[11px] text-red-600">{c.detail || c.reason}</p>
+                    <p className="text-[11px] font-medium text-red-600">
+                      {conflictLabel(c.reason)}
+                    </p>
+                    {c.detail && (
+                      <p className="mt-0.5 text-[10px] text-slate-500">{c.detail}</p>
+                    )}
                     {isExcluded && (
                       <p className="text-[10px] font-medium text-slate-500">
                         {msg("board.ai.diff.toTray")}
