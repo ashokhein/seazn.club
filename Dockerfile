@@ -34,6 +34,10 @@ ENV SENTRY_ORG=$SENTRY_ORG
 ENV SENTRY_PROJECT=$SENTRY_PROJECT
 ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
 
+# Builder VMs OOM-SIGKILL Next's type-check phase (the compile itself passes
+# in ~70s; tsc then grinds for 40min and dies even with a 6GB old-space cap).
+# CI type-checks every PR, so the image build skips the phase entirely.
+ENV SKIP_BUILD_TYPECHECK=1
 RUN npm run build --workspace apps/web
 
 # ── Stage 2: minimal production image ────────────────────────────────────────

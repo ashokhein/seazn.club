@@ -27,6 +27,10 @@ const securityHeaders = [
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  // Fly/depot builder VMs OOM-SIGKILL the type-check build phase (compile
+  // itself passes in ~70s). CI type-checks every PR, so image builds may skip
+  // the phase — only when the Dockerfile sets this flag, never locally.
+  typescript: { ignoreBuildErrors: process.env.SKIP_BUILD_TYPECHECK === "1" },
   // Don't advertise the framework (removes the `X-Powered-By: Next.js` header).
   poweredByHeader: false,
   // Monorepo: trace from the workspace root so hoisted node_modules land in
