@@ -179,6 +179,8 @@
   "sponsors.pkg.retireConfirm.title": "Retirer cette offre ?",
   "sponsors.pkg.retireConfirm.body": "Retirer l'offre empêche de nouvelles factures pour {name}. Les emplacements payés et les commandes passées ne sont pas affectés.",
   "sponsors.pkg.retireConfirm.label": "Retirer l'offre",
+  "sponsors.order.evidence": "Dossier de preuves",
+  "sponsors.order.evidenceTitle": "Téléchargez le dossier de preuves du litige — commande, reçu, preuve de diffusion et journal d'activité, prêt pour la réponse Stripe",
   "sponsors.order.refund": "Rembourser",
   "sponsors.order.refundConfirm.title": "Rembourser cette commande ?",
   "sponsors.order.refundConfirm.body": "{amount} retourne sur la carte de {name}, votre versement est annulé et l'emplacement est retiré de vos pages publiques. Cette action est irréversible.",

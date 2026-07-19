@@ -179,6 +179,8 @@
   "sponsors.pkg.retireConfirm.title": "¿Retirar este paquete?",
   "sponsors.pkg.retireConfirm.body": "Retirarlo impide nuevas facturas para {name}. Los espacios pagados y los pedidos anteriores no se ven afectados.",
   "sponsors.pkg.retireConfirm.label": "Retirar paquete",
+  "sponsors.order.evidence": "Paquete de pruebas",
+  "sponsors.order.evidenceTitle": "Descarga el paquete de pruebas de la disputa: pedido, recibo, prueba de exposición y registro de actividad, listo para la respuesta de Stripe",
   "sponsors.order.refund": "Reembolsar",
   "sponsors.order.refundConfirm.title": "¿Reembolsar este pedido?",
   "sponsors.order.refundConfirm.body": "{amount} vuelve a la tarjeta de {name}, tu cobro se revierte y el espacio se retira de tus páginas públicas. Esta acción no se puede deshacer.",

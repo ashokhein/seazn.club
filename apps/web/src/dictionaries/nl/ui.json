@@ -179,6 +179,8 @@
   "sponsors.pkg.retireConfirm.title": "Dit pakket intrekken?",
   "sponsors.pkg.retireConfirm.body": "Intrekken voorkomt nieuwe facturen voor {name}. Betaalde plekken en eerdere bestellingen blijven ongewijzigd.",
   "sponsors.pkg.retireConfirm.label": "Pakket intrekken",
+  "sponsors.order.evidence": "Bewijspakket",
+  "sponsors.order.evidenceTitle": "Download het bewijspakket voor het geschil — order, ontvangstbewijs, plaatsingsbewijs en activiteitenlog, klaar voor de Stripe-reactie",
   "sponsors.order.refund": "Terugbetalen",
   "sponsors.order.refundConfirm.title": "Deze bestelling terugbetalen?",
   "sponsors.order.refundConfirm.body": "{amount} gaat terug naar de kaart van {name}, je uitbetaling wordt teruggedraaid en de plek verdwijnt van je openbare pagina's. Dit kan niet ongedaan worden gemaakt.",
