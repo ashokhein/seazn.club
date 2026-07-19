@@ -21,14 +21,19 @@ import type { ModuleEvent, SportModule } from "../../sport/module.ts";
 export const GenericCfg = z.object({
   resultMode: z.enum(["win_loss", "score"]),
   allowDraws: z.boolean(),
-  points: z.object({
-    w: z.number().int().nonnegative(),
-    d: z.number().int().nonnegative(),
-    l: z.number().int().nonnegative(),
-  }),
+  // Defaults (3/1/0, no carry) are the v1 league-table values — they let a
+  // partial config (variant presets, unknown-sport /start fallback) parse
+  // instead of failing CONFIG_INVALID at createDivision.
+  points: z
+    .object({
+      w: z.number().int().nonnegative(),
+      d: z.number().int().nonnegative(),
+      l: z.number().int().nonnegative(),
+    })
+    .default({ w: 3, d: 1, l: 0 }),
   // v1 stepladder progress-score carry; stored for the PROMPT-15 cutover,
   // no scoring effect inside the module.
-  progressScore: z.boolean(),
+  progressScore: z.boolean().default(false),
 });
 export type GenericCfg = z.infer<typeof GenericCfg>;
 
@@ -159,8 +164,20 @@ export const generic: SportModule<GenericCfg, GenericEv, GenericState> = {
   // pass a single placeholder slot per side (like chess: lineup size 1).
   positions: { groups: [], lineup: { size: 1, benchMax: 0 } },
   variants: {
-    win_loss: { resultMode: "win_loss", allowDraws: false },
-    score: { resultMode: "score", allowDraws: true },
+    // Complete configs (not leaning on the schema defaults): these rows are
+    // synced into sport_variants and served as default_config to clients.
+    win_loss: {
+      resultMode: "win_loss",
+      allowDraws: false,
+      points: { w: 3, d: 1, l: 0 },
+      progressScore: false,
+    },
+    score: {
+      resultMode: "score",
+      allowDraws: true,
+      points: { w: 3, d: 1, l: 0 },
+      progressScore: false,
+    },
   },
 
   init(cfg, lineups: LineupPair): GenericState {

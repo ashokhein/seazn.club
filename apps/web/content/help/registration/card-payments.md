@@ -12,6 +12,8 @@ Under **Settings → Connect**, agree to the Terms of Service — connecting mea
 
 When Stripe finishes, your Payments page shows **Live — charges enabled** and divisions can choose **Card at sign-up**. Until then, saving a card division is blocked — and if verification ever lapses later, card divisions close to new entries automatically rather than take money that can't be collected.
 
+**If Stripe asks for more information later** — even while you're live — an amber notice appears on the Payments page with a **Finish Stripe verification** button that takes you straight to whatever Stripe still needs. And once connected, **Open Stripe dashboard** on the same page signs you into your Stripe Express dashboard for payouts, charge history and bank details — no separate Stripe login to remember.
+
 ## 2. A registrant pays
 
 Sign-up opens Stripe checkout. On payment the entry is **confirmed automatically** and the confirmation email goes out. If they close checkout without paying, their spot is **held for 48 hours** — a reminder with a fresh payment link lands at 24 hours, and if the window passes the entry expires and the first person on the [waitlist](/help/registration/waitlist) is promoted into it.
@@ -48,6 +50,6 @@ The same holds for a chargeback on a **Pro or Pro Plus subscription** payment: i
 
 ## Common questions
 
-**Where do I change my bank account or see payouts?** In your Stripe dashboard — Seazn Club shows the entry-fee side; Stripe owns the banking side.
+**Where do I change my bank account or see payouts?** In your Stripe dashboard — the **Open Stripe dashboard** button on your Payments page signs you in. Seazn Club shows the entry-fee side; Stripe owns the banking side.
 
 **Prefer cash or bank transfer?** Pick **Pay the organiser** instead — see [opening registration](/help/registration/open-registration) for how offline instructions and `{{reference}}` work.

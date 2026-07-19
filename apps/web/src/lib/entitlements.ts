@@ -69,7 +69,11 @@ async function resolveFromDb(
            and s.stripe_subscription_id is null then 'community'
       -- past_due grace (spec P1-6): dunning gets 14 days, then reads degrade to
       -- community until an invoice succeeds (which flips status back to active).
-      when s.status = 'past_due' and s.updated_at <= now() - interval '14 days'
+      -- Anchored on the TRANSITION (status_changed_at): dunning retries touch
+      -- updated_at and must not re-arm the window. Coalesce covers rows the
+      -- V291 backfill never saw.
+      when s.status = 'past_due'
+           and coalesce(s.status_changed_at, s.updated_at) <= now() - interval '14 days'
            then 'community'
       else coalesce(s.plan_key, 'community')
     end as plan_key

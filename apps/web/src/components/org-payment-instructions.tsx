@@ -41,6 +41,7 @@ export function OrgPaymentInstructions({
   const [connect, setConnect] = useState<ConnectStatus | null>(null);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectBusy, setConnectBusy] = useState(false);
+  const [dashBusy, setDashBusy] = useState(false);
   const [tosAgreed, setTosAgreed] = useState(false);
   const dirty = value.trim() !== (initialValue ?? "").trim();
 
@@ -105,6 +106,26 @@ export function OrgPaymentInstructions({
             : msg("pay.onboardErr"),
       );
       setConnectBusy(false);
+    }
+  }
+
+  // Express Dashboard: payouts, charge history, and Stripe's own
+  // "more information needed" prompts. Links are one-time — mint per click.
+  async function openDashboard() {
+    setDashBusy(true);
+    setConnectError(null);
+    try {
+      const { url } = await apiV1<{ url: string }>(
+        `/api/v1/orgs/${orgId}/connect/dashboard`,
+        { method: "POST" },
+      );
+      window.location.assign(url);
+    } catch (err) {
+      // Never surface Stripe's raw error (it names the platform key and
+      // account id) — human copy only; the detail stays in the console.
+      console.error("connect dashboard link failed", err);
+      setConnectError(msg("pay.dashErr"));
+      setDashBusy(false);
     }
   }
 
@@ -228,20 +249,41 @@ export function OrgPaymentInstructions({
               </span>
             </label>
           )}
-          {!connect?.charges_enabled && (
-            <button
-              type="button"
-              onClick={startOnboarding}
-              disabled={connectBusy || (!connect?.connected && !tosAgreed)}
-              className="btn btn-primary mt-3 px-4 text-sm"
-            >
-              {connectBusy
-                ? msg("pay.opening")
-                : connect?.connected
-                  ? msg("pay.resume")
-                  : msg("pay.connect")}
-            </button>
-          )}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            {/* Onboarding CTA — also shown on a LIVE account when Stripe wants
+                more info (requirements due / payouts paused): the same
+                account_onboarding link collects whatever is currently due. */}
+            {(!connect?.charges_enabled ||
+              !connect.payouts_enabled ||
+              connect.requirements_due > 0) && (
+              <button
+                type="button"
+                onClick={startOnboarding}
+                disabled={connectBusy || (!connect?.connected && !tosAgreed)}
+                className="btn btn-primary px-4 text-sm"
+              >
+                {connectBusy
+                  ? msg("pay.opening")
+                  : !connect?.connected
+                    ? msg("pay.connect")
+                    : connect.charges_enabled
+                      ? msg("pay.finishVerification")
+                      : msg("pay.resume")}
+              </button>
+            )}
+            {/* Payouts, charge history, account details — Stripe-hosted. */}
+            {connect?.connected && (
+              <button
+                type="button"
+                onClick={openDashboard}
+                disabled={dashBusy}
+                className="btn btn-ghost px-4 text-sm"
+                data-testid="connect-dashboard"
+              >
+                {dashBusy ? msg("pay.opening") : msg("pay.openDashboard")}
+              </button>
+            )}
+          </div>
           {connectError && <p className="mt-2 text-xs text-red-600">{connectError}</p>}
         </div>
       )}
