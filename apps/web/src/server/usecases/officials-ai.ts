@@ -36,7 +36,8 @@ import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiOfficialsPlanRequest, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { AiOfficialsPlan, OFFICIALS_SYSTEM_PROMPT } from "./officials-ai-prompt";
-import { anthropicClient, zonedIso } from "./schedule-ai";
+import { anthropicClient, schedulingAiModel, zonedIso } from "./schedule-ai";
+import { aiRunCostUsd } from "@/lib/ai-pricing";
 import { divisionFixtures, loadSettings } from "./schedule";
 import {
   listOfficialBusyElsewhere,
@@ -802,10 +803,7 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
   }
 
   const client = anthropicClient(); // 503 before any network if unconfigured
-  // Same default as schedule-ai.ts (measured 2026-07-19: opus-4-8 cannot
-  // finish a live round inside 300s; sonnet-5 verified clean, cheaper). The
-  // referee re-checks every assignment, so model choice never bypasses safety.
-  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
+  const model = schedulingAiModel();
 
   const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
   let inputTokens = 0;
@@ -824,7 +822,17 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
   });
 
   for (;;) {
-    const response = await callOfficialsModel(client, model, conversation);
+    let response: Awaited<ReturnType<typeof callOfficialsModel>>;
+    try {
+      response = await callOfficialsModel(client, model, conversation);
+    } catch (err) {
+      // A timed-out round still spent the earlier rounds' tokens — ride the
+      // accumulated usage on the 422 (same contract as AI_PLAN_FAILED).
+      if (err instanceof HttpError && err.code === "AI_PLAN_TIMEOUT") {
+        throw new HttpError(422, err.message, "AI_PLAN_TIMEOUT", { usage: usageNow() });
+      }
+      throw err;
+    }
     inputTokens += response?.usage?.input_tokens ?? 0;
     outputTokens += response?.usage?.output_tokens ?? 0;
 
@@ -930,35 +938,68 @@ export async function officialsAiPlanForDivision(
       : {}),
   });
 
+  const model = schedulingAiModel();
   let result: AiOfficialsPlanResponse;
   try {
     result = await runOfficialsAiPlan(pack);
   } catch (err) {
-    // Meter a refused / un-correctable run's token spend too — usage rides on the
-    // 422 extra so a failed architect call is not invisible in analytics.
-    if (err instanceof HttpError && err.code === "AI_PLAN_FAILED") {
+    // Meter a refused / un-correctable / timed-out run's token spend too —
+    // usage rides on the 422 extra so a failed architect call is not invisible
+    // in analytics or the run ledger ('schedule.ai_failed' — officials runs are
+    // uncapped, so the event type only matters for the /admin/ai-runs ledger).
+    if (err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT")) {
       const usage = (err.extra?.usage ?? {}) as {
         input_tokens?: number;
         output_tokens?: number;
         repair_rounds?: number;
       };
+      const outcome = err.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
+      const cost_usd = aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
+      await recordOfficialsRun(auth, divisionId, "schedule.ai_failed", {
+        division_id: divisionId,
+        phase: "officials",
+        outcome,
+        model,
+        usage: {
+          input_tokens: usage.input_tokens ?? 0,
+          output_tokens: usage.output_tokens ?? 0,
+          repair_rounds: usage.repair_rounds ?? 0,
+        },
+        cost_usd,
+      });
       await captureServer({
         event: "ai_plan_run",
         distinctId,
         orgId: auth.orgId,
         properties: {
           phase: "officials",
+          model,
           fixtures: pack.fixtures.length,
           repair_rounds: usage.repair_rounds ?? 0,
           input_tokens: usage.input_tokens ?? 0,
           output_tokens: usage.output_tokens ?? 0,
+          cost_usd,
           blocking: 0,
-          outcome: "failed",
+          outcome,
         },
       });
     }
     throw err;
   }
+
+  // Zero-token result = the deterministic solver draft (empty instruction) —
+  // stamp it as such so the run ledger never misattributes it to the LLM.
+  const usedModel =
+    result.usage.input_tokens === 0 && result.usage.output_tokens === 0 ? "solver-draft" : model;
+  const cost_usd = aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
+  await recordOfficialsRun(auth, divisionId, "schedule.ai_officials_generated", {
+    division_id: divisionId,
+    phase: "officials",
+    outcome: "ok",
+    model: usedModel,
+    usage: result.usage,
+    cost_usd,
+  });
 
   await captureServer({
     event: "ai_plan_run",
@@ -966,14 +1007,37 @@ export async function officialsAiPlanForDivision(
     orgId: auth.orgId,
     properties: {
       phase: "officials",
+      model: usedModel,
       fixtures: pack.fixtures.length,
       repair_rounds: result.usage.repair_rounds,
       input_tokens: result.usage.input_tokens,
       output_tokens: result.usage.output_tokens,
+      cost_usd,
       blocking: result.conflicts.filter((c) => c.severity === "block").length,
       outcome: "ok",
     },
   });
 
   return result;
+}
+
+/** Append one officials architect run to the competition audit ledger. Own
+ *  event types ('schedule.ai_officials_generated' / 'schedule.ai_failed') —
+ *  the Phase A quota counts 'schedule.ai_generated' only, so nothing here can
+ *  ever consume a schedule generation. */
+async function recordOfficialsRun(
+  auth: AuthCtx,
+  divisionId: string,
+  type: "schedule.ai_officials_generated" | "schedule.ai_failed",
+  payload: Record<string, unknown>,
+): Promise<void> {
+  await withTenant(auth.orgId, async (tx) => {
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    if (!division) return; // division vanished mid-run — nothing to ledger
+    await tx`
+      insert into competition_events (competition_id, org_id, type, payload, actor_id)
+      values (${division.competition_id}, ${auth.orgId}, ${type},
+              ${tx.json(payload as never)}, ${auth.userId})`;
+  });
 }

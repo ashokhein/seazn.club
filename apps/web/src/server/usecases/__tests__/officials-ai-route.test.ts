@@ -206,6 +206,15 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     expect(
       out.assignments.some((a) => a.fixtureId === fixtureIds[0] && a.officialId === refA && a.locked === true),
     ).toBe(true);
+
+    // Run ledger: the zero-token draft is stamped solver-draft with $0 cost —
+    // never attributed to the LLM.
+    const [ev] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_officials_generated' and payload->>'division_id' = ${divisionId}`;
+    expect(ev!.payload.model).toBe("solver-draft");
+    expect(ev!.payload.cost_usd).toBe(0);
+    expect(ev!.payload.outcome).toBe("ok");
   });
 
   it("an overlap is repaired: repair_rounds:1 and no residual official_overlap", async () => {

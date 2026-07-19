@@ -158,6 +158,23 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
+  it("a timed-out round rides accumulated usage on the 422 (AI_PLAN_TIMEOUT is metered like AI_PLAN_FAILED)", async () => {
+    // Round 1: malformed (null plan) burns tokens and triggers the corrective
+    // retry; round 2: the abort fires as AI_PLAN_TIMEOUT. The earlier spend
+    // must ride on the error's extra.
+    const { HttpError } = await import("@/lib/errors");
+    parse
+      .mockResolvedValueOnce(planResponse(null, { input_tokens: 1000, output_tokens: 500 }))
+      .mockRejectedValueOnce(new HttpError(422, "AI scheduling timed out; please retry", "AI_PLAN_TIMEOUT"));
+    const err = await runAiPlan(pack, movableIds).then(
+      () => null,
+      (e: unknown) => e as { code?: string; extra?: { usage?: { input_tokens: number; output_tokens: number } } },
+    );
+    expect(err?.code).toBe("AI_PLAN_TIMEOUT");
+    expect(err?.extra?.usage?.input_tokens).toBe(1000);
+    expect(err?.extra?.usage?.output_tokens).toBe(500);
+  });
+
   it("defaults to claude-sonnet-5 when SCHEDULING_AI_MODEL is unset (opus cannot finish a live round — 2026-07-19 measurement)", async () => {
     delete process.env.SCHEDULING_AI_MODEL;
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));

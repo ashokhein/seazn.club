@@ -231,6 +231,42 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V297)", () 
     expect(after).toBe(20);
   });
 
+  it("run ledger carries model/usage/cost; failures land as schedule.ai_failed and never consume quota", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedPlannable(auth);
+
+    // Success: audit payload + capture both stamp model, usage and cost_usd.
+    parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
+    await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+    const [ok] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+    expect(ok!.payload.model).toBe("claude-sonnet-5");
+    expect((ok!.payload.usage as { input_tokens: number }).input_tokens).toBeGreaterThan(0);
+    expect(typeof ok!.payload.cost_usd).toBe("number");
+    const okCall = captureServer.mock.calls.find(
+      (c) => (c[0] as { properties: { outcome: string } }).properties.outcome === "ok",
+    )![0] as { properties: { model: string; cost_usd: number } };
+    expect(okCall.properties.model).toBe("claude-sonnet-5");
+    expect(typeof okCall.properties.cost_usd).toBe("number");
+
+    // Failure (refusal → 422 AI_PLAN_FAILED): metered as schedule.ai_failed…
+    parse.mockResolvedValueOnce({ parsed_output: null, stop_reason: "refusal", usage: { input_tokens: 700, output_tokens: 40 } });
+    await expect(
+      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
+    ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
+    const [failed] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_failed' and payload->>'division_id' = ${divisionId}`;
+    expect(failed!.payload.outcome).toBe("failed");
+    expect((failed!.payload.usage as { input_tokens: number }).input_tokens).toBe(700);
+    // …and the quota-counted type still shows exactly the one success.
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+    expect(n).toBe(1);
+  });
+
   it("Pro Plus is capped at 50 runs/division (V297 — no longer unlimited)", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedPlannable(auth);

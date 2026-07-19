@@ -17,6 +17,7 @@ import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
 import { rateLimit } from "@/lib/rate-limit";
 import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
+import { aiRunCostUsd } from "@/lib/ai-pricing";
 import {
   slotFixtures,
   validateAssignments,
@@ -614,6 +615,17 @@ const MAX_REPAIR_ROUNDS = 2;
  * configured (503) and honours the SCHEDULING_AI_BASE_URL escape hatch (Task
  * 17's e2e fixture server points at it). Other AI tasks (officials) reuse this.
  */
+/** The model every architect run uses (both phases import this — single
+ *  source). Default measured live 2026-07-19 (17-fixture pack, adaptive
+ *  thinking, effort:high): opus-4-8 could not finish round 1 inside 300s;
+ *  sonnet-5 returned an engine-verified CLEAN plan in one 249s round at
+ *  $0.42. The deterministic referee checks every proposal regardless of
+ *  model, so the faster model is the safe default; SCHEDULING_AI_MODEL
+ *  still overrides. */
+export function schedulingAiModel(): string {
+  return process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
+}
+
 export function anthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -831,12 +843,7 @@ async function callModel(
  */
 export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Promise<AiPlanResult> {
   const client = anthropicClient(); // 503 before any network if unconfigured
-  // Default measured live 2026-07-19 (17-fixture pack, adaptive thinking,
-  // effort:high): opus-4-8 could not finish round 1 inside 300s; sonnet-5
-  // returned an engine-verified CLEAN plan in one 249s round at $0.42. The
-  // deterministic referee catches blocking conflicts regardless of model, so
-  // the faster model is the safe default; SCHEDULING_AI_MODEL still overrides.
-  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
+  const model = schedulingAiModel();
 
   const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
   const config = verifyConfig(pack);
@@ -858,7 +865,18 @@ export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Pr
   const usageNow = () => ({ input_tokens: inputTokens, output_tokens: outputTokens, repair_rounds: repairRounds });
 
   for (;;) {
-    const response = await callModel(client, model, conversation);
+    let response: Awaited<ReturnType<typeof callModel>>;
+    try {
+      response = await callModel(client, model, conversation);
+    } catch (err) {
+      // A timed-out round still spent the earlier rounds' tokens — ride the
+      // accumulated usage on the 422 so callers can meter it (same contract
+      // as AI_PLAN_FAILED).
+      if (err instanceof HttpError && err.code === "AI_PLAN_TIMEOUT") {
+        throw new HttpError(422, err.message, "AI_PLAN_TIMEOUT", { usage: usageNow() });
+      }
+      throw err;
+    }
     inputTokens += response?.usage?.input_tokens ?? 0;
     outputTokens += response?.usage?.output_tokens ?? 0;
 
@@ -1073,18 +1091,42 @@ export async function aiPlanForDivision(
 
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
 
+  const model = schedulingAiModel();
   let result: AiPlanResult;
   try {
     result = await runAiPlan(pack, movableIds);
   } catch (err) {
-    // Meter a refused / un-correctable run's token spend too — usage rides on
-    // the 422 extra so a failed architect call is not invisible in analytics.
-    if (err instanceof HttpError && err.code === "AI_PLAN_FAILED") {
+    // Meter a refused / un-correctable / timed-out run's token spend too —
+    // usage rides on the 422 extra so a failed architect call is not invisible
+    // in analytics or the run ledger. The failure row uses its own event type
+    // ('schedule.ai_failed'): the quota above counts 'schedule.ai_generated'
+    // only, so failures never consume a generation.
+    if (err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT")) {
       const usage = (err.extra?.usage ?? {}) as {
         input_tokens?: number;
         output_tokens?: number;
         repair_rounds?: number;
       };
+      const outcome = err.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
+      const cost_usd = aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
+      await withTenant(auth.orgId, async (tx) => {
+        await tx`
+          insert into competition_events (competition_id, org_id, type, payload, actor_id)
+          values (${gate.competitionId}, ${auth.orgId}, 'schedule.ai_failed',
+                  ${tx.json({
+                    division_id: divisionId,
+                    phase: "schedule",
+                    mode: input.mode,
+                    outcome,
+                    model,
+                    usage: {
+                      input_tokens: usage.input_tokens ?? 0,
+                      output_tokens: usage.output_tokens ?? 0,
+                      repair_rounds: usage.repair_rounds ?? 0,
+                    },
+                    cost_usd,
+                  } as never)}, ${auth.userId})`;
+      });
       await captureServer({
         event: "ai_plan_run",
         distinctId,
@@ -1092,12 +1134,14 @@ export async function aiPlanForDivision(
         properties: {
           phase: "schedule",
           mode: input.mode,
+          model,
           fixtures: movableIds.size,
           repair_rounds: usage.repair_rounds ?? 0,
           input_tokens: usage.input_tokens ?? 0,
           output_tokens: usage.output_tokens ?? 0,
+          cost_usd,
           blocking: 0,
-          outcome: "failed",
+          outcome,
         },
       });
     }
@@ -1106,11 +1150,18 @@ export async function aiPlanForDivision(
 
   // Record this generation against the per-division cap counted above (owner
   // 2026-07-18). Append-only audit; org_id is set by the trg_set_org trigger.
+  const cost_usd = aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
   await withTenant(auth.orgId, async (tx) => {
     await tx`
       insert into competition_events (competition_id, org_id, type, payload, actor_id)
       values (${gate.competitionId}, ${auth.orgId}, 'schedule.ai_generated',
-              ${tx.json({ division_id: divisionId, mode: input.mode } as never)}, ${auth.userId})`;
+              ${tx.json({
+                division_id: divisionId,
+                mode: input.mode,
+                model,
+                usage: result.usage,
+                cost_usd,
+              } as never)}, ${auth.userId})`;
   });
 
   const officials_coverage = input.officials_policy
@@ -1124,10 +1175,12 @@ export async function aiPlanForDivision(
     properties: {
       phase: "schedule",
       mode: input.mode,
+      model,
       fixtures: movableIds.size,
       repair_rounds: result.usage.repair_rounds,
       input_tokens: result.usage.input_tokens,
       output_tokens: result.usage.output_tokens,
+      cost_usd,
       blocking: result.blocking.length,
       outcome: "ok",
     },
