@@ -398,7 +398,7 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
     }
   });
 
-  test("/admin/entitlements shows the Pro Plus column incl. the V291 AI-cap row", async ({ page }) => {
+  test("/admin/entitlements shows the Pro Plus column incl. the V302 AI-cap row", async ({ page }) => {
     const org = await seedOrg({ plan: "pro_plus", staff: true });
     await loginAsOwner(page, org.ownerEmail);
     await page.goto("/admin/entitlements");
@@ -408,13 +408,13 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
       timeout: 20_000,
     });
 
-    // V291 amendment: Pro AI scheduling capped at 5/division, Pro Plus unlimited.
+    // V302 grading: AI runs per division — community 5 / Event Pass 10 / Pro 20 / Pro Plus 50.
     const capRow = page
       .locator("tbody tr")
       .filter({ has: page.getByRole("cell", { name: "scheduling.ai.runs_per_division.max", exact: true }) });
     await expect(capRow).toHaveCount(1);
-    await expect(capRow.locator("td").nth(4)).toHaveText("5"); // Pro
-    await expect(capRow.locator("td").nth(5)).toHaveText("∞"); // Pro Plus
+    await expect(capRow.locator("td").nth(4)).toHaveText("20"); // Pro
+    await expect(capRow.locator("td").nth(5)).toHaveText("50"); // Pro Plus
 
     // V290 quota: officials-per-fixture community 1 / pro ∞ / pro_plus ∞.
     const ofpRow = page
