@@ -250,6 +250,34 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     ).rejects.toMatchObject({ status: 422, message: "NO_OFFICIALS" });
     expect(parse).not.toHaveBeenCalled();
   });
+
+  it("a hallucinated fixture id fails the structural gate (never silently skipped) → 422", async () => {
+    // Binding decision (project ledger): the structural gate MUST reject a plan
+    // row whose fixture id is not in the pack. The engine referee silently skips
+    // unknown ids, so without the gate a hallucinated id would vanish instead of
+    // failing. Both the initial output and the one corrective retry carry it, so
+    // the runner 422s AI_PLAN_FAILED after exactly two calls.
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    const refA = officialIds[0]!;
+    const ghost = randomUUID();
+    const bad = resp({
+      assignments: [
+        { fixture_id: ghost, official_id: refA, role_key: "referee" },
+        ...fixtureIds.slice(1).map((id) => ({ fixture_id: id, official_id: refA, role_key: "referee" })),
+      ],
+      unfilled: [], explanations: [], summary: "x",
+    });
+    parse.mockResolvedValueOnce(bad).mockResolvedValueOnce(bad);
+    await expect(
+      officialsAiPlanForDivision(auth, divisionId, {
+        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
+    expect(parse).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpus 00 §6)", () => {
@@ -280,7 +308,27 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpu
     expect(parse).not.toHaveBeenCalled();
   });
 
-  it("6th call in the hour → 429", async () => {
+  it("policy asking for >1 role without officials.roles_multi → 402", async () => {
+    // pro_plus grants officials.roles_multi; override it off so the >1-role branch
+    // is what 402s (not the base officials.auto gate that precedes it).
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+      values (${auth.orgId}, 'officials.roles_multi', false)`;
+    await invalidateOrgEntitlements(auth.orgId);
+    await expect(
+      officialsAiPlanForDivision(auth, divisionId, {
+        instruction: "assign", policy: { ...POLICY, roles: ["referee", "umpire"] },
+        schedule: spread(fixtureIds),
+      }),
+    ).rejects.toMatchObject({ status: 402, featureKey: "officials.roles_multi" });
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it("6th call in the hour → 429 (5/h per division, no run cap)", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
       entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
@@ -296,5 +344,50 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpu
         instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 429 });
+    expect(parse).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — telemetry (v4/03 §2)", () => {
+  it("ai_plan_run fires with phase officials + usage on success", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, officialIds[0]!), { input_tokens: 900, output_tokens: 220 }));
+    await officialsAiPlanForDivision(auth, divisionId, {
+      instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+    });
+    expect(captureServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "ai_plan_run",
+        distinctId: auth.userId,
+        orgId: auth.orgId,
+        properties: expect.objectContaining({
+          phase: "officials", input_tokens: 900, output_tokens: 220, blocking: 0, outcome: "ok",
+        }),
+      }),
+    );
+  });
+
+  it("a refusal 422 still meters the spent tokens (phase officials)", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    parse.mockResolvedValueOnce({
+      parsed_output: null, stop_reason: "refusal", usage: { input_tokens: 60, output_tokens: 20 }, content: [],
+    });
+    await expect(
+      officialsAiPlanForDivision(auth, divisionId, {
+        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+      }),
+    ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
+    expect(captureServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "ai_plan_run",
+        properties: expect.objectContaining({ phase: "officials", input_tokens: 60, output_tokens: 20, outcome: "failed" }),
+      }),
+    );
   });
 });
