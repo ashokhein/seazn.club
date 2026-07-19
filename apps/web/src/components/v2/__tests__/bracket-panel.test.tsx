@@ -99,7 +99,8 @@ describe("BracketPanel — stepladder", () => {
     ];
     const html = markup({ kind: "stepladder", fixtures: rungs as never });
     expect(html).toContain('data-testid="bracket-panel-ladder"');
-    expect((html.match(/bracket\.rung/g) ?? []).length).toBe(3);
+    expect((html.match(/bracket\.rung/g) ?? []).length).toBe(2);
+    expect(html).toContain("bracket.final"); // the summit match is the Final
     expect(html).toContain('href="/o/org/c/cup/d/open/f/2"');
     expect(html).toContain("bracket.tbd"); // unresolved rung-3 slot
   });

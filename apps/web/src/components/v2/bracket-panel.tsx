@@ -450,7 +450,7 @@ function StepladderPanel({
         {rungs.map((f, i) => (
           <div key={f.id}>
             <p className="mb-1 font-display text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--app-fg-muted,#94a3b8)]">
-              {msg("bracket.rung")} {i + 1}
+              {i === rungs.length - 1 ? msg("bracket.final") : `${msg("bracket.rung")} ${i + 1}`}
             </p>
             <Link
               href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}

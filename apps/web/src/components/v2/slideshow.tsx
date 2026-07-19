@@ -501,7 +501,7 @@ function LadderSlide({ fixtures }: { fixtures: BracketSlideFixture[] }) {
         return (
           <div key={f.id}>
             <p className="mb-1 font-display text-sm font-semibold uppercase tracking-[0.18em] text-white/50">
-              Rung {rungs.length - i}
+              {i === 0 ? "Final" : `Rung ${rungs.length - i}`}
             </p>
             <div className={`rounded-lg px-5 py-3 ring-1 ring-inset ring-white/10 ${live ? "bg-white/[0.12]" : "bg-white/[0.05]"}`}>
               <div className="flex flex-col gap-1 font-display text-2xl font-semibold leading-tight">
