@@ -74,8 +74,18 @@ export function describeEvent(
         text: `Match abandoned${p.reason ? ` — ${p.reason}` : ""}`,
         tone: "admin",
       };
-    case "core.award":
-      return { label: "Awarded", text: `Awarded to ${name(names, p.to)}`, tone: "admin" };
+    case "core.award": {
+      // Canonical CoreAward is { person, key } (Jul3/07 §4 — MOTM/MVP and
+      // friends); `to` is a legacy fallback so old ledger rows keep a name.
+      const who = name(names, p.person ?? p.to);
+      const key = typeof p.key === "string" ? p.key : null;
+      if (key === "motm") return { label: "MOTM", text: `Man of the match — ${who}`, tone: "admin" };
+      return {
+        label: "Award",
+        text: `${key ? prettify(`award.${key}`) : "Awarded"} — ${who}`,
+        tone: "admin",
+      };
+    }
 
     // ── football ──
     case "football.goal": {
