@@ -486,8 +486,8 @@ async function p72Suite(): Promise<void> {
   await seedPaidSponsorOrder(orgId, sponComp.id);
   const delSpon = await v1(owner, `/api/v1/competitions/${sponComp.id}`, "DELETE");
   check(
-    "p72: delete blocked by a paid sponsorship (409, 'paid sponsorship')",
-    delSpon.status === 409 && delMsg(delSpon).includes("paid sponsorship"),
+    "p72: delete blocked by a paid sponsorship (409, 'sponsorship payment records')",
+    delSpon.status === 409 && delMsg(delSpon).includes("sponsorship payment records"),
   );
 
   // === KEY AUTH: DELETE /competitions/:id is never key-accessible → 403 for
