@@ -10,15 +10,17 @@ import {
   getAiScheduleApply,
   getFixtureScheduleSources,
 } from "./helpers";
-import { startAiFixtureServer, type AiFixtureServer } from "./ai-fixture-server";
+import { startAiFixtureServer, FIXTURE_REFUSE, type AiFixtureServer } from "./ai-fixture-server";
 
 // v4 Task 17 — the full AI Schedule Architect wizard, end to end, against a
-// canned model (ai-fixture-server.ts). Four scenarios:
+// canned model (ai-fixture-server.ts). Scenarios:
 //   1. Pro org: brief → run → CLEAN → officials auto-draft → apply → undo.
-//   2. Blackout injected over a scheduled fixture → amber repair nudge → console
+//   2. Model refusal (FIXTURE_REFUSE) → 422 AI_PLAN_FAILED → the console surfaces
+//      the "invalid instruction" copy; proves the model was actually called.
+//   3. Blackout injected over a scheduled fixture → amber repair nudge → console
 //      opens in a scoped repair.
-//   3. Community org at its 5-runs/division quota → 402 → quota copy, no model call.
-//   4. 390px viewport: the happy flow, no horizontal scroll.
+//   4. Community org at its 5-runs/division quota → 402 → quota copy, no model call.
+//   5. 390px viewport: the happy flow, no horizontal scroll.
 //
 // Serial in one worker: the fixture server binds a fixed port (AI_FIXTURE_PORT),
 // so the file must not fan out across workers (each would re-bind and collide).
@@ -201,6 +203,35 @@ test("pro: brief → run → CLEAN → officials → apply → undo", async ({ p
   expect(afterUndo.every((s) => s.scheduled_at === null)).toBe(true);
 });
 
+test("a model refusal surfaces the AI_PLAN_FAILED copy (and proves the model was called)", async ({
+  page,
+  request,
+}) => {
+  fixture.reset();
+  await activateFreshProPlusOrg(page, request);
+  const { divisionId } = await seedAiDivision(request);
+
+  await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
+  await openConsole(page);
+
+  // The magic instruction makes the fixture server answer stop_reason:"refusal"
+  // with empty content, which schedule-ai.ts maps to 422 AI_PLAN_FAILED.
+  await page.locator("#ai-instruction").fill(`${FIXTURE_REFUSE} — do the impossible.`);
+  await page.getByRole("button", { name: "Generate schedule" }).click();
+
+  // aiErrorKey(422, "AI_PLAN_FAILED") → board.ai.error.invalid.
+  await expect(
+    page.getByText("That instruction couldn't be used — try rephrasing it."),
+  ).toBeVisible({ timeout: 20_000 });
+  await shot(page, "10-refusal");
+
+  // The refusal path is exercised, not skipped: the fixture server logged the
+  // call and flagged it as a refusal, so this scenario can't silently pass by
+  // never reaching the model.
+  expect(fixture.calls.length).toBeGreaterThanOrEqual(1);
+  expect(fixture.calls.some((c) => c.refusal)).toBe(true);
+});
+
 test("blackout injected over a scheduled fixture surfaces the repair nudge", async ({
   page,
   request,
@@ -302,9 +333,17 @@ test.describe("mobile viewport", () => {
     await page.getByRole("button", { name: "Generate schedule" }).click();
     await expect(page.getByText(/CLEAN · 0 blocking/)).toBeVisible({ timeout: 20_000 });
 
-    // The diff panel groups the placements as an agenda list (no grid ghosts at
-    // this width) — the "placed" provenance rows are present.
-    await expect(page.getByRole("region", { name: "AI schedule architect" })).toBeVisible();
+    // The diff panel groups the placements as an agenda list: the "Why it did
+    // that" provenance section renders with all six seeded fixtures in the
+    // "placed" group (they were unscheduled before the run).
+    const region = page.getByRole("region", { name: "AI schedule architect" });
+    await expect(region).toBeVisible();
+    await expect(region.getByText("Why it did that")).toBeVisible();
+    await expect(region.getByText("6 placed")).toBeVisible();
+    // No board-grid ghosts at 390px: the board falls back to agenda density
+    // (max-width 640px), so BoardGrid — the only source of [data-ghost-id] — is
+    // never mounted.
+    await expect(page.locator("[data-ghost-id]")).toHaveCount(0);
     await shot(page, "08-mobile-schedule");
 
     await page.getByRole("button", { name: "Assign officials" }).click();
