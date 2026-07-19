@@ -39,7 +39,10 @@ test.describe("pricing page v3", () => {
       await expect(page.locator("[data-annual-toggle]")).toHaveAttribute("aria-checked", "true");
       await expect(page.locator("main")).toContainText("$");
       await page.locator("[data-currency-switcher]").selectOption("gbp");
-      await expect(page.locator("main")).toContainText("£33", { timeout: 15_000 });
+      // Annual framing renders round(annual/12): Pro GBP 12500/12 → £10.42.
+      // (Repriced by the Pro $19 + 30%-annual change — the old £33 was Pro
+      // Plus monthly, which now sits behind the PlusReveal disclosure.)
+      await expect(page.locator("main")).toContainText("£10.42", { timeout: 15_000 });
     } finally {
       await ctx.close();
     }
