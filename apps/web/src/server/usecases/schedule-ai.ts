@@ -84,8 +84,10 @@ function tzOffsetMinutes(instant: Date, tz: string): number {
   }
 }
 
-/** An instant formatted `YYYY-MM-DDTHH:mm:ss±HH:mm` in the division timezone. */
-function zonedIso(value: string | number | Date, tz: string): string {
+/** An instant formatted `YYYY-MM-DDTHH:mm:ss±HH:mm` in the division timezone.
+ *  Exported so the Phase B officials pack (officials-ai.ts) formats times the
+ *  same way — one zoned-ISO helper, not two. */
+export function zonedIso(value: string | number | Date, tz: string): string {
   const d = value instanceof Date ? value : new Date(value);
   const off = tzOffsetMinutes(d, tz);
   const local = new Date(d.getTime() + off * MS_PER_MIN);
