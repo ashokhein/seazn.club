@@ -17,8 +17,11 @@ import { listEntrantLogoUrls, setTeamSquad } from "../teams";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 // publicStorageUrl returns "" without this — the logo-map assertions below
-// need real URLs (same stub as the sibling badge suite).
-process.env.NEXT_PUBLIC_SUPABASE_URL ??= "https://stub.supabase.co";
+// need real URLs. CI's smoke job sets the var to the EMPTY STRING (keyless
+// run), which `??=` would keep — overwrite anything falsy.
+if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+  process.env.NEXT_PUBLIC_SUPABASE_URL = "https://stub.supabase.co";
+}
 
 const GENERIC_CONFIG = {
   resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
