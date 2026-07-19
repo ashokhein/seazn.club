@@ -1,5 +1,5 @@
 import { test, expect, type Locator } from "@playwright/test";
-import { TAG } from "./helpers";
+import { TAG, apiJson } from "./helpers";
 
 // W1 clubs & teams: the thin Directory → Clubs & Teams list creates a club
 // through an in-app inline form (never a native prompt) and lands on the club's
@@ -111,4 +111,31 @@ test("club controls clear the 44px touch target at 375px", async ({ page }) => {
   await teamToggle.click();
   await page.getByPlaceholder("Find player…").fill(`E2E NoMatch ${Date.now()}`);
   await atLeast44(page.getByRole("button", { name: /as a new player/ }), "Quick-add button");
+});
+
+test("standalone team joins a club from the directory list", async ({ page, request }) => {
+  // Seed one club and one standalone team over the API, then adopt via the UI.
+  const tag = stamp();
+  const club = (await apiJson<{ id: string; name: string }>(request, "/api/v1/clubs", "POST", {
+    name: `Adopt FC ${tag}`,
+  })).data!;
+  const team = (await apiJson<{ id: string }>(request, "/api/v1/teams", "POST", {
+    name: `Wanderers ${tag}`,
+  })).data!;
+
+  await page.goto("/directory?tab=clubs");
+  const row = page.getByRole("row", { name: new RegExp(`Wanderers ${tag}`) });
+  await expect(row.getByText("standalone")).toBeVisible();
+
+  await Promise.all([
+    page.waitForResponse(
+      (r) => r.url().includes(`/api/v1/teams/${team.id}`) && r.request().method() === "PATCH" && r.ok(),
+    ),
+    row.getByRole("combobox", { name: `Add ${`Wanderers ${tag}`} to a club` }).selectOption(club.id),
+  ]);
+
+  // The team leaves the standalone section; its club now counts one team.
+  await expect(page.getByRole("row", { name: new RegExp(`Wanderers ${tag}`) })).toHaveCount(0);
+  const clubRow = page.getByRole("row", { name: new RegExp(`Adopt FC ${tag}`) });
+  await expect(clubRow.getByRole("cell").nth(1)).toHaveText("1");
 });

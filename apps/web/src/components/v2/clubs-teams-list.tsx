@@ -98,6 +98,23 @@ export function ClubsTeamsList({
     setPaywall(null);
   }
 
+  // Adopt a standalone team into a club (the reverse of the hub's Detach).
+  async function attachToClub(teamId: string, clubId: string) {
+    setBusy(true);
+    setError(null);
+    setPaywall(null);
+    try {
+      await apiV1(`/api/v1/teams/${teamId}`, { method: "PATCH", json: { club_id: clubId } });
+      router.refresh();
+    } catch (err) {
+      if (err instanceof ApiV1Error && err.code === "PAYMENT_REQUIRED")
+        setPaywall(String(err.extra.feature_key ?? ""));
+      else setError(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submitCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const name = draft.trim();
@@ -139,9 +156,11 @@ export function ClubsTeamsList({
         <div className="flex-1" />
         {canEdit && (
           <>
+            {/* The active kind carries btn-primary — the highlight follows the
+                open form instead of sitting on New club permanently. */}
             <button
               type="button"
-              className="btn btn-primary min-h-[44px]"
+              className={`btn min-h-[44px] sm:min-h-0 ${creating === "club" ? "btn-primary" : ""}`}
               disabled={busy}
               aria-expanded={creating === "club"}
               onClick={() => startCreate("club")}
@@ -150,7 +169,7 @@ export function ClubsTeamsList({
             </button>
             <button
               type="button"
-              className="btn min-h-[44px]"
+              className={`btn min-h-[44px] sm:min-h-0 ${creating === "team" ? "btn-primary" : ""}`}
               disabled={busy}
               aria-expanded={creating === "team"}
               onClick={() => startCreate("team")}
@@ -177,10 +196,19 @@ export function ClubsTeamsList({
               aria-label={msg(creating === "club" ? "clubs.list.newClubPrompt" : "clubs.list.newTeamPrompt")}
             />
           </label>
-          <button type="submit" className="btn btn-primary min-h-[44px]" disabled={busy || !draft.trim()}>
+          <button
+            type="submit"
+            className="btn btn-primary min-h-[44px] sm:min-h-0"
+            disabled={busy || !draft.trim()}
+          >
             {msg("clubs.list.create")}
           </button>
-          <button type="button" className="btn min-h-[44px]" disabled={busy} onClick={() => setCreating(null)}>
+          <button
+            type="button"
+            className="btn min-h-[44px] sm:min-h-0"
+            disabled={busy}
+            onClick={() => setCreating(null)}
+          >
             {msg("clubs.list.cancel")}
           </button>
         </form>
@@ -237,6 +265,28 @@ export function ClubsTeamsList({
                       {msg("clubs.list.standalone")}
                     </span>
                   </button>
+                  {canEdit && clubs.length > 0 && (
+                    <div className="mt-1 pl-8">
+                      {/* The ladder's missing rung: PATCH club_id adopts the
+                          standalone team into a club (detach lives on the hub). */}
+                      <select
+                        className="input min-h-[44px] w-auto max-w-full text-sm sm:min-h-0"
+                        aria-label={msg("clubs.list.addToClubAria", { name: t.name })}
+                        value=""
+                        disabled={busy}
+                        onChange={(e) => {
+                          if (e.target.value) void attachToClub(t.id, e.target.value);
+                        }}
+                      >
+                        <option value="">{msg("clubs.list.addToClub")}</option>
+                        {clubs.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
                   {openTeam === t.id && (
                     <div className="mt-2">
                       <TeamSquadPanel teamId={t.id} canEdit={canEdit} />

@@ -563,6 +563,8 @@
   "clubs.list.create": "Aanmaken",
   "clubs.list.cancel": "Annuleren",
   "clubs.list.standalone": "zelfstandig",
+  "clubs.list.addToClub": "Aan een club toevoegen…",
+  "clubs.list.addToClubAria": "{name} aan een club toevoegen",
   "clubs.list.col.teams": "Teams",
   "clubs.list.col.contact": "Contact",
   "clubs.list.noMatch": "Geen clubs of teams komen overeen met je zoekopdracht.",
