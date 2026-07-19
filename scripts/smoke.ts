@@ -986,7 +986,7 @@ async function smokePlanMatrix(): Promise<void> {
  *  walks the whole /clubs/[id] hub lifecycle over HTTP — create a club, PATCH
  *  its profile (home ground), add a committee contact, create a *standalone*
  *  team, move it under the club, then replace its squad with a person created
- *  inline (the squad editor's quick-add). The free path proves the V291
+ *  inline (the squad editor's quick-add). The free path proves the V292
  *  community cap: clubs.max = 2, so two clubs succeed and the third 402s with
  *  the `feature_key` the contextual <UpgradeGate> reads. Both run on their own
  *  fresh orgs (Pro flipped via setPlan, free stays community) so the suite is
@@ -1057,7 +1057,7 @@ async function clubsSuite(): Promise<void> {
       members[0]!.squad_number === 7,
   );
 
-  // --- Free path: the tunable community clubs.max = 2 (V291). Two clubs land,
+  // --- Free path: the tunable community clubs.max = 2 (V292). Two clubs land,
   // the third 402s with the feature key that drives the paywall.
   const free = newSession();
   await signIn(free, `clubfree_${tag}@example.com`);

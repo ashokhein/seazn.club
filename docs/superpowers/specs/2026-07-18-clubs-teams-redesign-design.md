@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-18
 **Status:** Approved design, pending implementation plan
-**Migration:** V291 (next free after V290 pro_plus_plan)
+**Migration:** V292 (next free after V290 pro_plus_plan)
 
 ## 1. Problem
 
@@ -54,7 +54,7 @@ ops, and public presence.
 | 7 | Caps: Community 2 clubs / 2 teams (org-wide) / squad 20. Pro 20 clubs / 40 teams / squad ∞. Pro Plus ∞ / ∞ / ∞. Defaults are migration inserts, tunable live in admin. |
 | 8 | Inline player quick-add from the squad picker (create person + add to squad in one step, fold-match dedupe warning) — removes the "add player first" ordering constraint. |
 
-## 4. Data model (V291)
+## 4. Data model (V292)
 
 ### 4.1 `clubs` additions
 
@@ -105,7 +105,7 @@ No schema change — `teams.club_id` is already nullable. `createTeam` makes
 `clubId` optional (standalone teams). A "move team into club" action is a
 plain `update teams set club_id = …`.
 
-### 4.4 Entitlements (V291 inserts)
+### 4.4 Entitlements (V292 inserts)
 
 | Key | Type | Community | Event Pass | Pro | Pro Plus | Enforced at |
 |---|---|---|---|---|---|---|
@@ -220,7 +220,7 @@ Three tabs:
 
 | Wave | Contents | Migration |
 |---|---|---|
-| **W1 Foundation** | V291 schema + entitlement rows; thin "Clubs & Teams" list; hub page (Overview/Teams/Entries); patchClub UI; colours UI; contacts CRUD (no invite yet); standalone team create; move/detach team; player quick-add; cap enforcement; admin inline plan editing; help pages; i18n ×4; openapi regen; smoke/e2e | V291 |
+| **W1 Foundation** | V292 schema + entitlement rows; thin "Clubs & Teams" list; hub page (Overview/Teams/Entries); patchClub UI; colours UI; contacts CRUD (no invite yet); standalone team create; move/detach team; player quick-add; cap enforcement; admin inline plan editing; help pages; i18n ×4; openapi regen; smoke/e2e | V292 |
 | **W2 Public + PLG** | public club page; slug backfill for existing clubs; crest-chip links; share bar + attribution; og image; analytics events | — |
 | **W3 Delegation** | contact invite + claim rail; `/me` My clubs lane; propose-enrollment + approval inbox; activity feed | possible small delta (claims/audit) |
 | **W4 Ops + stats** | enroll wizard; comms templates; export surfacing; stats/honours block | — |
@@ -249,7 +249,7 @@ Each wave = own branch/PR wave, own plan, help-page pass every wave
   generation/conflict, standalone team create, move/detach, wizard planning
   (locked cells, partial failure), claim state machine, contacts CRUD,
   admin plan PATCH (auth + cache bust).
-- **DB tests:** RLS on `club_contacts` (cross-org invisible), V291 idempotent.
+- **DB tests:** RLS on `club_contacts` (cross-org invisible), V292 idempotent.
 - **e2e:** directory list → create club → hub → rename + colours → add team →
   quick-add player into squad → enroll via wizard (W4) → public page renders
   badge/teams (W2) → rep claim + squad edit (W3). Free-tier path: hit club
@@ -272,7 +272,7 @@ Each wave = own branch/PR wave, own plan, help-page pass every wave
 ## Appendix A — D3 club invoices (design-only, no migration now)
 
 ```sql
--- future table, shape agreed so V291 stays compatible
+-- future table, shape agreed so V292 stays compatible
 create table club_invoices (
   id          uuid primary key default gen_random_uuid(),
   org_id      uuid not null references organizations(id) on delete cascade,
@@ -291,5 +291,5 @@ create table club_invoices (
 - One invoice aggregates N team entries for one club; paying it marks the
   linked registrations paid (reuse the existing reconcile-without-webhook
   rail). Refund/dispute semantics follow the payments-hardening decisions.
-- `club_contacts` (V291) already provides the billing recipient; nothing in
+- `club_contacts` (V292) already provides the billing recipient; nothing in
   this design needs to change for D3 later.

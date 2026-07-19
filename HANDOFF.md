@@ -9,7 +9,7 @@ Final whole-branch review in flight; then battery → PR → CI → merge (pre-a
 Final review findings fix pass → full battery → PR → watch CI → merge → walkthrough artifact.
 
 ## Done
-V291 clubs profile (slug/home_ground/website/notes, colors flat home_/away_ keys) +
+V292 clubs profile (slug/home_ground/website/notes, colors flat home_/away_ keys) +
 club_contacts w/ tenant RLS · caps clubs.max 2/2/20/∞, teams.max 2/2/40/∞,
 teams.squad_max 20/20/∞/∞ via withinLimit→402 feature_key→UpgradeGate; clubs.hierarchy
 all plans · club/team create + contacts CRUD APIs (key-scopes+openapi gated) · import
@@ -32,8 +32,8 @@ minors triage list .superpowers/sdd/final-review-minors.md; ledger MAIN repo
    (base main); watch CI; MERGE (user pre-authorized on green).
 2. Playwright visual walkthrough artifact (desktop+375px: directory, hub tabs,
    quick-add, 402 gate, admin editor) → claude.ai artifact.
-3. Post-merge deploy backlog: stg/prod db:apply (V285..V291 pending), stripe:sync,
-   smoke; V291 renumber note: main's v4 docs branch owns V292.
+3. Post-merge deploy backlog: stg/prod db:apply (V285..V292 pending), stripe:sync,
+   smoke; V292 renumber note: main's v4 docs branch owns V292.
 
 ## Key decisions
 - (v13 era, see git history: draw-guard in-wave; badge=URL+upload; V288/V289 renumber.)
