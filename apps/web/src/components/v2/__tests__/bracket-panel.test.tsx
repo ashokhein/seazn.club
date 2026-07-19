@@ -63,8 +63,29 @@ describe("BracketPanel", () => {
     expect(html).toContain("animate-live-pulse"); // in-play node pulses
   });
 
-  it("returns null for non-single-elim shapes (page falls back to the flat list)", () => {
+  it("returns null for non-bracket shapes (page falls back to the flat list)", () => {
     const ladder = [FIX("a", 0, 1, "e1", "e2", null, "scheduled", 1), FIX("b", 1, 1, null, null, null, "scheduled", 2), FIX("c", 2, 1, null, null, null, "scheduled", 3)];
     expect(markup({ fixtures: ladder as never })).toBe("");
+  });
+
+  it("renders the two-lane geometry for a double-elim shape (G8)", () => {
+    // 4-entrant DE, persisted round numbering (k=2): WB 1–2, LB 5–6, GF 9.
+    const de = [
+      FIX("w1", 1, 1, "e1", "e2", null, "scheduled", 1),
+      FIX("w2", 1, 2, "e3", "e4", null, "scheduled", 2),
+      FIX("wf", 2, 1, null, null, null, "scheduled", 3),
+      FIX("l1", 5, 1, null, null, null, "scheduled", 4),
+      FIX("lf", 6, 1, null, null, null, "scheduled", 5),
+      FIX("gf", 9, 1, null, null, null, "scheduled", 6),
+    ];
+    const html = markup({ fixtures: de as never });
+    expect(html).toContain('data-testid="bracket-panel-de"');
+    expect(html).toContain("bracket.winners");
+    expect(html).toContain("bracket.losers");
+    expect(html).toContain("bracket.grandFinal");
+    expect(html.match(/data-lane="WB"/g)?.length).toBe(3);
+    expect(html.match(/data-lane="LB"/g)?.length).toBe(2);
+    expect(html).toContain('href="/o/org/c/cup/d/open/f/6"');
+    expect(html).toContain("<svg");
   });
 });

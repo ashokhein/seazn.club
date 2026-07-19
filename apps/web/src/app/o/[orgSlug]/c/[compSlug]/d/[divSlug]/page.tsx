@@ -2,7 +2,7 @@ export const dynamic = "force-dynamic";
 // Division console (PROMPT-15 task 1): entrants & rosters, fixture console
 // (per stage: generate/complete/schedule), standings with the cascade trace.
 import Link from "@/components/ui/console-link";
-import { ClipboardList, MonitorPlay, Printer } from "lucide-react";
+import { ClipboardList, Globe, MonitorPlay, Printer } from "lucide-react";
 import { StatusChip, divisionChipState } from "@/components/ui/status-chip";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -29,6 +29,7 @@ import { EntrantsPanel } from "@/components/v2/entrants-panel";
 import { StagesPanel } from "@/components/v2/stages-panel";
 import { LaunchActions } from "@/components/v2/launch-actions";
 import { StandingsTable } from "@/components/public-site/standings-table";
+import { ResultsMatrix } from "@/components/public-site/results-matrix";
 import { StatsPanel } from "@/components/v2/stats-panel";
 import { LadderPanel } from "@/components/v2/ladder-panel";
 import { AmericanoPanel } from "@/components/v2/americano-panel";
@@ -89,7 +90,9 @@ export default async function DivisionPage({
       : undefined;
   // PROMPT-62: score headlines for bracket nodes (match_states join).
   const headlines =
-    tab === "fixtures" && hasKnockout ? await listFixtureHeadlines(auth, id) : undefined;
+    (tab === "fixtures" && hasKnockout) || tab === "standings"
+      ? await listFixtureHeadlines(auth, id)
+      : undefined;
   const cascade = division.tiebreakers ?? sportModule.defaultTiebreakers;
 
   // Standings per table stage (+ per pool), with pool labels.
@@ -107,10 +110,11 @@ export default async function DivisionPage({
                 ? await Promise.all(
                     pools.map(async (p) => ({
                       caption: `${stage.name} — ${p.name}`,
+                      poolId: p.id as string | null,
                       snap: await getStandings(auth, stage.id, p.id),
                     })),
                   )
-                : [{ caption: stage.name, snap: await getStandings(auth, stage.id) }];
+                : [{ caption: stage.name, poolId: null as string | null, snap: await getStandings(auth, stage.id) }];
             return { stage, tables };
           }),
         )
@@ -151,6 +155,18 @@ export default async function DivisionPage({
               <ClipboardList className="h-4 w-4" strokeWidth={1.75} />
               <span className="hidden sm:inline">{t(dict, "action.registrations")}</span>
             </Link>
+            {competition.visibility !== "private" && (
+              // G9: straight to this division's public page.
+              <a
+                href={`/shared/${orgSlug}/${competition.slug}/${divSlug}`}
+                target="_blank"
+                aria-label={t(dict, "aria.viewPublic")}
+                className="btn btn-ghost gap-1.5"
+              >
+                <Globe className="h-4 w-4" strokeWidth={1.75} />
+                <span className="hidden sm:inline">{t(dict, "action.viewPublic")} ↗</span>
+              </a>
+            )}
             {competition.visibility !== "private" && (
               // v3/10 #3: division-scoped QR poster PDF for the venue wall.
               <a
@@ -270,18 +286,56 @@ export default async function DivisionPage({
             )}
             {standings.map(({ stage, tables }) => (
               <section key={stage.id} className="card p-5">
-                {tables.map(({ caption, snap }) => (
-                  <div key={caption} className="mb-6 last:mb-0">
-                    <StandingsTable
-                      rows={snap.rows as StandingsRow[]}
-                      metricSpecs={sportModule.metrics as MetricSpecLike[]}
-                      cascade={cascade}
-                      entrantNames={entrantNames}
-                      entrantLogos={entrantLogos}
-                      caption={caption}
-                    />
-                  </div>
-                ))}
+                {tables.map(({ caption, poolId, snap }) => {
+                  const poolFixtures = fixtures
+                    .filter(
+                      (f) =>
+                        f.stage_id === stage.id && (f.pool_id ?? null) === poolId,
+                    )
+                    .map((f) => ({
+                      ...f,
+                      summary:
+                        headlines?.[f.id] !== undefined
+                          ? { headline: headlines[f.id] }
+                          : null,
+                    }));
+                  const ranked = [...(snap.rows as StandingsRow[])].sort(
+                    (a, b) => (a.rank ?? 99) - (b.rank ?? 99),
+                  );
+                  return (
+                    <div key={caption} className="mb-6 last:mb-0 space-y-3">
+                      <StandingsTable
+                        rows={snap.rows as StandingsRow[]}
+                        metricSpecs={sportModule.metrics as MetricSpecLike[]}
+                        cascade={cascade}
+                        entrantNames={entrantNames}
+                        entrantLogos={entrantLogos}
+                        caption={caption}
+                      />
+                      {poolFixtures.length > 0 && (
+                        <details>
+                          <summary className="cursor-pointer text-xs font-medium text-slate-500 hover:text-slate-700">
+                            {t(dict, "div.detail.resultsGrid")}
+                          </summary>
+                          <div className="mt-2">
+                            <ResultsMatrix
+                              entrantIds={ranked.map((r) => r.entrantId)}
+                              entrantNames={entrantNames}
+                              entrantLogos={entrantLogos}
+                              fixtures={poolFixtures as never}
+                              fixtureHref={(fid) => {
+                                const row = fixtures.find((f) => f.id === fid);
+                                return row
+                                  ? routes.fixture(orgSlug, compSlug, divSlug, row.fixture_no)
+                                  : "#";
+                              }}
+                            />
+                          </div>
+                        </details>
+                      )}
+                    </div>
+                  );
+                })}
                 {/* Cascade trace (doc 05 §4): the exact tie-break order in force. */}
                 <p className="mt-3 border-t border-slate-100 pt-3 text-xs text-slate-500">
                   {t(dict, "div.detail.tiebreak.label")}{" "}
