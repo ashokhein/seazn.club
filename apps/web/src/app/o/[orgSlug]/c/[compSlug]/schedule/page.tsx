@@ -72,9 +72,10 @@ export default async function CompetitionSchedulePage({
     );
   }
 
-  const [boardEditable, constraints] = await Promise.all([
+  const [boardEditable, constraints, aiAllowed] = await Promise.all([
     hasFeature(auth.orgId, "scheduling.board"),
     hasFeature(auth.orgId, "scheduling.constraints"),
+    hasFeature(auth.orgId, "scheduling.ai"),
   ]);
   const perDivision = await Promise.all(
     divisions.map(async (d) => ({
@@ -144,6 +145,8 @@ export default async function CompetitionSchedulePage({
           }}
           canEdit={canEdit && !frozen && boardEditable}
           constraintsAllowed={constraints}
+          canManage={canEdit && !frozen}
+          aiAllowed={aiAllowed}
         />
       </main>
     </>

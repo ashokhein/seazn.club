@@ -27,6 +27,7 @@ import {
 import { patchFixture } from "../fixtures";
 import { scoreEvent } from "../scoring";
 import { publicSchedule } from "../public";
+import { ApplyScheduleRequest } from "@/server/api-v1/schemas";
 import { seedOrg as seedOfficialsOrg, seedFutureDivision } from "./_seed";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -84,6 +85,36 @@ afterAll(async () => {
   const client = globalForDb._sql;
   globalForDb._sql = undefined;
   await client?.end();
+});
+
+// Pure schema contract (no DB): the apply request must accept source "ai"
+// (v4/03 §4). This guards the zod enum widening at schemas.ts ApplyScheduleRequest
+// — it goes red if the "ai" member is reverted, independent of the DB constraint.
+describe("ApplyScheduleRequest schema (v4/03 §4)", () => {
+  const validAssignment = {
+    fixture_id: randomUUID(),
+    scheduled_at: "2026-08-01T09:00:00.000Z",
+    court_label: "Court 1",
+  };
+
+  it("accepts source 'ai'", () => {
+    const parsed = ApplyScheduleRequest.parse({
+      assignments: [validAssignment],
+      source: "ai",
+      expected_seq: 0,
+    });
+    expect(parsed.source).toBe("ai");
+  });
+
+  it("still accepts 'auto' and 'manual' and defaults to 'auto'", () => {
+    expect(ApplyScheduleRequest.parse({ assignments: [validAssignment], source: "auto" }).source).toBe("auto");
+    expect(ApplyScheduleRequest.parse({ assignments: [validAssignment], source: "manual" }).source).toBe("manual");
+    expect(ApplyScheduleRequest.parse({ assignments: [validAssignment] }).source).toBe("auto");
+  });
+
+  it("rejects an unknown source", () => {
+    expect(() => ApplyScheduleRequest.parse({ assignments: [validAssignment], source: "robot" })).toThrow();
+  });
 });
 
 describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
@@ -460,6 +491,42 @@ describe.skipIf(!HAS_DB)("scheduling console (doc 12, PROMPT-17)", () => {
 
     // Writes without the token stay accepted (older clients keep working).
     await patchFixture(auth, fa!.id, { scheduled_at: at(120) });
+  });
+
+  it("accepts source 'ai' and stamps schedule_source (v4/03 §4)", async () => {
+    const { auth } = await seedOrg("pro");
+    const competition = await createCompetition(auth, { name: "AI Cup", visibility: "private", branding: {} });
+    const division = await createDivision(auth, competition.id, {
+      name: "Open", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    });
+    await createEntrants(auth, division.id, [
+      { kind: "individual", display_name: "A", seed: 1, members: [] },
+      { kind: "individual", display_name: "B", seed: 2, members: [] },
+      { kind: "individual", display_name: "C", seed: 3, members: [] },
+      { kind: "individual", display_name: "D", seed: 4, members: [] },
+    ]);
+    const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+    await putScheduleSettings(auth, division.id, {
+      config: {
+        startAt: T0, matchMinutes: 30, gapMinutes: 0,
+        courts: ["C1", "C2"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      },
+      tz: "UTC",
+    });
+    const { fixtures } = await generateStageFixtures(auth, stage!.id);
+    const target = fixtures[0]!;
+
+    // The AI accept flow applies with source:"ai"; the placed fixture carries it
+    // so the ledger/analytics can tell AI applies from auto/manual ones.
+    const out = await applySchedule(auth, stage!.id, {
+      source: "ai",
+      assignments: [{ fixture_id: target.id, scheduled_at: at(0), court_label: "C1" }],
+    });
+    expect(out.applied).toBeGreaterThan(0);
+    const [row] = await sql<{ schedule_source: string }[]>`
+      select schedule_source from fixtures where id = ${target.id}`;
+    expect(row!.schedule_source).toBe("ai");
   });
 });
 

@@ -86,5 +86,16 @@ export default defineConfig({
     url: `${BASE}/api/health`,
     timeout: 300_000,
     reuseExistingServer: true,
+    // v4 Task 17: point the AI Schedule Architect at the e2e model fixture
+    // server (ai-fixture-server.ts, started by the spec on AI_FIXTURE_PORT) and
+    // give the client a key so anthropicClient() never 503s. Only affects a
+    // server Playwright itself starts; a reused server must be booted with these
+    // vars (the spec's local-run recipe does so). Harmless to every other spec.
+    env: {
+      SCHEDULING_AI_BASE_URL:
+        process.env.SCHEDULING_AI_BASE_URL ??
+        `http://127.0.0.1:${process.env.AI_FIXTURE_PORT ?? "4319"}`,
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY ?? "sk-ant-e2e-fixture",
+    },
   },
 });

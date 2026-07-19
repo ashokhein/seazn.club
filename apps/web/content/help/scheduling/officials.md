@@ -18,7 +18,7 @@ On any roster row, **Edit roles** opens the same chip picker to change an existi
 
 ## Assigning on a division's schedule
 
-The schedule's **Officials tab** shows a compact roster strip (with a link back to the directory to manage it) plus the assignment tools: propose/apply an auto-assignment, phase officials in from results, or pick manually per fixture. Every official in the org-wide pool is available to every division — there's no separate roster per division. **Automatic officials assignment (propose/apply) is a Pro Plus feature** — picking officials manually, one per fixture, works on Community and Pro too.
+The schedule's **Officials tab** shows a compact roster strip (with a link back to the directory to manage it) plus the assignment tools: propose/apply an auto-assignment, phase officials in from results, or pick manually per fixture. Every official in the org-wide pool is available to every division — there's no separate roster per division. **Automatic officials assignment (propose/apply) is a Pro Plus feature** — picking officials manually, one per fixture, works on Community and Pro too. To staff a whole timetable from one instruction, see [AI Officials](/help/scheduling/ai-officials).
 
 ## What the official sees
 

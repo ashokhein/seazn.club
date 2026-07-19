@@ -8,8 +8,9 @@ import { dayKey } from "@/lib/schedule-board";
 import type { FeedLabelPair } from "@/lib/schedule-board";
 import { FixtureBlock } from "./fixture-block";
 import { timeLabel } from "@/lib/day-label";
-import { UNASSIGNED, type BoardConflict, type BoardFixture } from "./types";
+import { UNASSIGNED, type BoardConflict, type BoardFixture, type GhostBlock } from "./types";
 import { useMsg } from "@/components/i18n/dict-provider";
+import type { MessageKey } from "@/lib/messages";
 
 const MIN = 60_000;
 
@@ -32,6 +33,7 @@ export function BoardGrid({
   onTogglePin,
   venueCap,
   highlightId,
+  ghosts,
 }: {
   day: string;
   slots: number[];
@@ -53,9 +55,13 @@ export function BoardGrid({
   onTogglePin: (f: BoardFixture) => void;
   venueCap: string;
   highlightId: string | null;
+  /** When set, an AI proposal is on screen: the grid swaps its live fixtures for
+   *  the proposed layout as read-only ghost blocks (design §3). */
+  ghosts?: GhostBlock[] | null;
 }) {
   const msg = useMsg();
   const columns: (string | null)[] = courts.length > 0 ? courts : [null];
+  const showGhosts = ghosts != null;
 
   return (
     <div className="scroll-x scroll-x-fade rounded-lg border border-slate-200 bg-white">
@@ -82,19 +88,22 @@ export function BoardGrid({
                 {timeLabel(t)}
               </td>
               {columns.map((court) => {
-                const cell = fixtures.filter((f) => {
-                  const at = new Date(f.scheduled_at as string).getTime();
-                  const sameCourt = court === null ? f.court_label === null : f.court_label === court;
-                  return sameCourt && at >= t && at < t + slotMinutes * MIN;
-                });
+                const inSlot = (at: number) => at >= t && at < t + slotMinutes * MIN;
+                const sameCol = (c: string | null) => (court === null ? c === null : c === court);
+                const cell = fixtures.filter(
+                  (f) => sameCol(f.court_label) && inSlot(new Date(f.scheduled_at as string).getTime()),
+                );
+                const cellGhosts = showGhosts
+                  ? ghosts!.filter((g) => sameCol(g.court) && inSlot(g.at))
+                  : [];
                 const iso = new Date(t).toISOString();
                 return (
                   <td
                     key={court ?? UNASSIGNED}
                     className="h-10 border-b border-l border-slate-100 px-1 py-0.5 align-top"
-                    onDragOver={canEdit ? (e) => e.preventDefault() : undefined}
+                    onDragOver={canEdit && !showGhosts ? (e) => e.preventDefault() : undefined}
                     onDrop={
-                      canEdit
+                      canEdit && !showGhosts
                         ? (e) => {
                             e.preventDefault();
                             const fid = e.dataTransfer.getData("text/fixture");
@@ -103,23 +112,26 @@ export function BoardGrid({
                         : undefined
                     }
                   >
-                    {cell.map((f) => (
-                      <div key={f.id} className={highlightId === f.id ? "animate-pulse" : undefined}>
-                        <FixtureBlock
-                          fixture={f}
-                          divisionName={divisionNames[f.division_id] ?? ""}
-                          showDivision={multi}
-                          entrantNames={entrantNames}
-                          feedLabels={feedLabels}
-                          conflicts={conflictsByFixture[f.id] ?? []}
-                          canEdit={canEdit}
-                          picked={pickedId === f.id}
-                          onPick={() => onPick(f.id)}
-                          onTogglePin={() => onTogglePin(f)}
-                        />
-                      </div>
-                    ))}
-                    {canEdit && cell.length === 0 && (
+                    {/* AI proposal on screen: read-only ghost preview (§3). */}
+                    {showGhosts
+                      ? cellGhosts.map((g) => <GhostBlockView key={g.id} ghost={g} msg={msg} />)
+                      : cell.map((f) => (
+                          <div key={f.id} className={highlightId === f.id ? "animate-pulse" : undefined}>
+                            <FixtureBlock
+                              fixture={f}
+                              divisionName={divisionNames[f.division_id] ?? ""}
+                              showDivision={multi}
+                              entrantNames={entrantNames}
+                              feedLabels={feedLabels}
+                              conflicts={conflictsByFixture[f.id] ?? []}
+                              canEdit={canEdit}
+                              picked={pickedId === f.id}
+                              onPick={() => onPick(f.id)}
+                              onTogglePin={() => onTogglePin(f)}
+                            />
+                          </div>
+                        ))}
+                    {!showGhosts && canEdit && cell.length === 0 && (
                       <button
                         type="button"
                         onClick={() => onPlace(iso, court)}
@@ -154,5 +166,44 @@ export function BoardGrid({
 export function fixturesOn(fixtures: BoardFixture[], day: string): BoardFixture[] {
   return fixtures.filter(
     (f) => f.scheduled_at !== null && dayKey(f.scheduled_at as string) === day,
+  );
+}
+
+// The state-palette styling for each ghost tone (design §1). Translucent + dashed
+// throughout so a proposal never reads as committed placement.
+const GHOST_TONE: Record<GhostBlock["tone"], string> = {
+  moved: "border-amber-400 bg-amber-50/70 text-amber-900",
+  placed: "border-teal-400 bg-teal-50/70 text-teal-900",
+  blocking: "border-red-400 bg-red-50/80 text-red-900",
+  unchanged: "border-slate-300 bg-slate-50/60 text-slate-500 opacity-70",
+};
+
+/** One proposal ghost: dashed + translucent, tone-coloured, ≥40px, code + JR/Final
+ *  marker + matchup + time only. Provenance stays in the diff list (§3). */
+function GhostBlockView({ ghost, msg }: { ghost: GhostBlock; msg: (k: MessageKey, v?: Record<string, string | number>) => string }) {
+  const marker = ghost.isFinal ? "FINAL" : ghost.isJunior ? "JR" : null;
+  return (
+    <div
+      data-ghost-id={ghost.id}
+      aria-label={msg("board.ai.ghost.aria", { code: ghost.code, matchup: ghost.matchup, time: timeLabel(ghost.at) })}
+      className={`mb-0.5 min-h-10 rounded border border-dashed px-1.5 py-1 text-[11px] leading-tight ${GHOST_TONE[ghost.tone]} ${
+        ghost.pulse ? "animate-pulse ring-2 ring-red-400" : ""
+      }`}
+    >
+      <div className="flex items-center gap-1">
+        <span className="font-mono text-[10px] font-semibold">{ghost.code}</span>
+        {marker && (
+          <span
+            className={`shrink-0 rounded px-1 text-[8px] font-bold leading-tight ${
+              ghost.isFinal ? "bg-purple-200/70 text-purple-800" : "bg-sky-200/70 text-sky-800"
+            }`}
+          >
+            {marker}
+          </span>
+        )}
+        <span className="ml-auto shrink-0 tabular-nums text-[9px] opacity-80">{timeLabel(ghost.at)}</span>
+      </div>
+      <p className="mt-0.5 truncate font-medium">{ghost.matchup}</p>
+    </div>
   );
 }

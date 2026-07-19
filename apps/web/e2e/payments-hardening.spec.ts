@@ -928,12 +928,12 @@ test.describe("T12 · Connect health banner surfaces payout trouble", () => {
 });
 
 // ===========================================================================
-// T15 — Pro AI generation cap (5 per division; V291)
+// T15 — Pro AI generation cap (20 per division; V302, supersedes V291's 5)
 // ===========================================================================
 
 test.describe("T15 · Pro AI scheduling is capped per division", () => {
-  test("the 6th generation on a division 402s with the cap key", async ({ page }) => {
-    const org = await activeOrg(page); // shared Pro org (scheduling.ai + cap=5)
+  test("the 21st generation on a division 402s with the cap key", async ({ page }) => {
+    const org = await activeOrg(page); // shared Pro org (scheduling.ai + cap=20)
     const comp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
       name: `T15 ${TAG} ${randomBytes(3).toString("hex")}`,
       visibility: "private",
@@ -945,9 +945,9 @@ test.describe("T15 · Pro AI scheduling is capped per division", () => {
       { name: "Open", sport_key: "generic", variant_key: "score", config: GENERIC_CONFIG, eligibility: [] },
     );
 
-    // Seed the 5 prior AI runs the cap counts from the audit ledger.
+    // Seed the 20 prior AI runs the cap counts from the audit ledger.
     await withDb(async (sql) => {
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 20; i++) {
         await sql`
           insert into competition_events (competition_id, org_id, type, payload, actor_id)
           values (${comp.data!.id}, ${org.id}, 'schedule.ai_generated',
@@ -955,12 +955,12 @@ test.describe("T15 · Pro AI scheduling is capped per division", () => {
       }
     });
 
-    // The 6th generation is refused BEFORE the LLM with the per-division cap key.
+    // The 21st generation is refused BEFORE the LLM with the per-division cap key.
     const res = await page.request.post(
-      `/api/v1/divisions/${div.data!.id}/schedule/ai-constraints`,
+      `/api/v1/divisions/${div.data!.id}/schedule/ai-plan`,
       {
         headers: { "content-type": "application/json" },
-        data: JSON.stringify({ prose: "no back-to-back games for anyone" }),
+        data: JSON.stringify({ instruction: "no back-to-back games for anyone" }),
       },
     );
     expect(res.status()).toBe(402);

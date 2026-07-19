@@ -1,6 +1,6 @@
 # v4 — AI Schedule Architect
 
-> **Status (2026-07-12):** not started. PROMPT-41 ⏳ · PROMPT-42 ⏳ · PROMPT-43 ⏳.
+> **Status (2026-07-19):** built. PROMPT-85 ✅ · PROMPT-86 ✅ · PROMPT-87 ✅ — two-phase architect (schedule + officials), guided intake, repair nudges, ledger audit, graded run quotas (free 5 / Event Pass 10 / Pro 20 / Pro Plus 50, officials unmetered), e2e + smoke coverage. Competition-level multi-division still deferred.
 > Branch (planned): `feat/v4-ai-schedule`. Migrations: V-next (schedule_source `ai`).
 > **2026-07-14:** interactive board-UX prototype built (mocked LLM) → design + findings in
 > `02-board-ux.md`; PROMPT-43 gains a pixel/motion reference before coding.

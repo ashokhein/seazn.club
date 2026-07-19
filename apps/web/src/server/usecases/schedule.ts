@@ -11,6 +11,7 @@ import { requireFeature } from "@/lib/entitlements";
 import { cacheDelPattern } from "@/lib/cache";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
+import { REASON_CODE } from "@/lib/schedule-board";
 import { EngineError } from "@seazn/engine/core";
 import {
   slotFixtures,
@@ -32,6 +33,7 @@ import {
 import { sendOfficialAssignmentChangedEmail } from "@/lib/email";
 import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { generateStageFixtures } from "./stages";
+import { schedulingAiModel } from "./schedule-ai";
 
 type Tx = postgres.TransactionSql;
 
@@ -54,7 +56,7 @@ function afterScheduleWrite(
 // A fixture the auto pass / board may still move; everything else on the
 // timetable is a fixed obstacle (doc 12 §6: decided fixtures are immutable —
 // rain-rescheduling touches remaining fixtures only).
-const MOVABLE_STATUS = "scheduled";
+export const MOVABLE_STATUS = "scheduled";
 // Statuses that still occupy a court (cancelled/abandoned ones do not).
 const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
 
@@ -118,7 +120,7 @@ export async function getScheduleSettings(
 
 // Settings row or the parsed defaults — the board and quick-start work
 // without an explicit PUT (single court, no constraints).
-async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSettingsOut> {
+export async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSettingsOut> {
   const [row] = await tx<{ division_id: string; config: unknown; tz: string; updated_at: string }[]>`
     select division_id, config, tz, updated_at from schedule_settings
     where division_id = ${divisionId}`;
@@ -135,12 +137,14 @@ async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSetting
 // Engine input assembly
 // ---------------------------------------------------------------------------
 
-interface FixtureLite {
+export interface FixtureLite {
   id: string;
   stage_id: string;
   division_id: string;
   pool_id: string | null;
   round_no: number;
+  seq_in_round: number;
+  ext_key: string | null;
   home_entrant_id: string | null;
   away_entrant_id: string | null;
   scheduled_at: string | Date | null;
@@ -182,12 +186,13 @@ async function divisionLockState(
 }
 
 const FIXTURE_LITE_COLS = [
-  "id", "stage_id", "division_id", "pool_id", "round_no", "home_entrant_id", "away_entrant_id",
+  "id", "stage_id", "division_id", "pool_id", "round_no", "seq_in_round", "ext_key",
+  "home_entrant_id", "away_entrant_id",
   "scheduled_at", "court_label", "venue", "status", "schedule_locked",
   "winner_to_fixture", "loser_to_fixture",
 ] as const;
 
-async function divisionFixtures(tx: Tx, divisionId: string): Promise<FixtureLite[]> {
+export async function divisionFixtures(tx: Tx, divisionId: string): Promise<FixtureLite[]> {
   return tx<FixtureLite[]>`
     select ${tx(FIXTURE_LITE_COLS)} from fixtures
     where division_id = ${divisionId} and status in ${tx(OCCUPYING)}
@@ -195,7 +200,7 @@ async function divisionFixtures(tx: Tx, divisionId: string): Promise<FixtureLite
 }
 
 // person ids per entrant, for cross-division overlap warnings (doc 06 §4.3).
-async function peopleByEntrant(tx: Tx, entrantIds: string[]): Promise<Map<string, string[]>> {
+export async function peopleByEntrant(tx: Tx, entrantIds: string[]): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>();
   if (entrantIds.length === 0) return map;
   const rows = await tx<{ entrant_id: string; person_id: string }[]>`
@@ -213,7 +218,7 @@ function peopleOf(f: FixtureLite, people: Map<string, string[]>): string[] {
   ];
 }
 
-function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, string[]>): Assignment {
+export function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, string[]>): Assignment {
   const start = ms(f.scheduled_at as string | Date);
   return {
     fixtureId: f.id,
@@ -227,7 +232,7 @@ function toAssignment(f: FixtureLite, matchMinutes: number, people: Map<string, 
 
 // Direct-feed dependencies (doc 12 §2 warn.order): the source fixture's
 // winner/loser feeds the target, so the target must not start earlier.
-function feedDependencies(fixtures: readonly FixtureLite[]): OrderDependency[] {
+export function feedDependencies(fixtures: readonly FixtureLite[]): OrderDependency[] {
   const ids = new Set(fixtures.map((f) => f.id));
   const deps: OrderDependency[] = [];
   for (const f of fixtures) {
@@ -243,7 +248,7 @@ function feedDependencies(fixtures: readonly FixtureLite[]): OrderDependency[] {
 // Sibling divisions' timetables (doc 06 §4.3): fixed court occupancy for the
 // pass, and the source of cross-division person-overlap warnings. Durations
 // use each sibling's own matchMinutes when it has settings.
-async function siblingAssignments(
+export async function siblingAssignments(
   tx: Tx,
   divisionId: string,
   competitionId: string,
@@ -271,7 +276,7 @@ async function siblingAssignments(
   );
 }
 
-function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
+export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
   const c = settings.config;
   return {
     startAt: c.startAt ? ms(c.startAt) : now,
@@ -309,19 +314,10 @@ function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotConfig {
 }
 
 // ---------------------------------------------------------------------------
-// Conflict taxonomy (doc 12 §2) — engine reasons → API codes
+// Conflict taxonomy (doc 12 §2) — engine reasons → API codes. REASON_CODE is
+// the single shared table in lib/schedule-board (isomorphic), so the AI diff
+// panel maps blocking-row reasons through the exact same map client-side.
 // ---------------------------------------------------------------------------
-
-const REASON_CODE: Record<Conflict["reason"], ScheduleConflict["code"]> = {
-  court: "conflict.court",
-  rest: "warn.rest",
-  person_overlap: "warn.person_overlap",
-  order: "warn.order",
-  blackout: "warn.blackout",
-  no_slot: "warn.no_slot",
-  // Jul3/04 §3: an unsatisfiable start window is a hard bound, not a warning
-  start_window: "conflict.start_window",
-};
 
 function mapConflicts(conflicts: readonly Conflict[]): ScheduleConflict[] {
   return conflicts.map((c) => ({
@@ -542,12 +538,46 @@ export async function applySchedule(
       stageId,
       source: input.source,
       moves,
+      // Stamp the runtime model, not the client's constant: SCHEDULING_AI_MODEL
+      // can override the model that actually ran, and the run ledger records the
+      // truth — so trusting the client's `model` here would misrecord the audit.
+      // The client field is still accepted (schema unchanged); it's just ignored.
+      ...(input.ai
+        ? { ai: { ...input.ai, instruction: input.ai.instruction.trim(), model: schedulingAiModel() } }
+        : {}),
     });
     await tx`update divisions set seq = ${seq} where id = ${stage.division_id}`;
     return { divisionId: stage.division_id, competitionId: stage.competition_id, applied: input.assignments.length, conflicts };
   });
   afterScheduleWrite(out.divisionId, out.competitionId, "schedule");
   return { applied: out.applied, conflicts: out.conflicts };
+}
+
+/** GET /divisions/{id}/schedule/ai-last — recall the most recent AI-sourced
+ *  schedule apply from the division ledger (v4/03 §10). Returns the trimmed
+ *  instruction + human summary + apply timestamp, or null when the division has
+ *  never been scheduled by the AI Architect. Read-gated at the route. */
+export async function lastAiApply(
+  auth: AuthCtx,
+  divisionId: string,
+): Promise<{ at: string; instruction: string; summary: string } | null> {
+  return withTenant(auth.orgId, async (tx) => {
+    const rows = await tx<
+      { created_at: Date; payload: { ai?: { instruction?: string; summary?: string } } }[]
+    >`
+      select created_at, payload from division_events
+      where division_id = ${divisionId}
+        and type = 'schedule_applied'
+        and payload->>'source' = 'ai'
+      order by seq desc limit 1`;
+    if (rows.length === 0) return null;
+    const ai = rows[0]!.payload.ai ?? {};
+    return {
+      at: iso(ms(rows[0]!.created_at)),
+      instruction: ai.instruction ?? "",
+      summary: ai.summary ?? "",
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------

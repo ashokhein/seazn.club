@@ -12,6 +12,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { Tip } from "@/components/ui/tip";
 import { apiV1 } from "@/lib/client-v1";
+import { track, EVENTS } from "@/lib/analytics";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { dayKey, daySlots, type FeedLabelPair } from "@/lib/schedule-board";
@@ -21,6 +22,11 @@ import { BoardGrid } from "./board/board-grid";
 import { BoardLanes } from "./board/board-lanes";
 import { BoardLegend } from "./board/board-legend";
 import { BoardTray } from "./board/board-tray";
+import { AiConsole, useAiSchedulingEnabled, type AiBriefContext } from "./board/ai-console";
+import { AiRepairBanner } from "./board/ai-repair-banner";
+import { useDisruptionSignals } from "./board/use-disruption-signals";
+import type { AiScope } from "./board/ai-console-state";
+import { computeAiDiff, ghostToneFor, type AiConsoleFixture } from "./board/ai-diff";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
 import { SettingsPanel } from "./board/settings-panel";
@@ -32,7 +38,9 @@ import {
   type BoardFixture,
   type BoardStage,
   type Density,
+  type GhostBlock,
 } from "./board/types";
+import type { AiPlanResponse } from "@/server/api-v1/schemas";
 import { useBoardActions } from "./board/use-board-actions";
 
 export type { BoardConfig, BoardConflict, BoardDivision, BoardFixture, BoardStage } from "./board/types";
@@ -55,6 +63,14 @@ interface Props {
   settings: { division_id: string; config: BoardConfig; tz: string };
   canEdit: boolean;
   constraintsAllowed: boolean;
+  /** Organiser can manage this division (role + not frozen), independent of the
+   *  paid board-edit entitlement. Drives the AI console entry point so a free
+   *  org still reaches the in-dock paywall (canEdit folds in scheduling.board,
+   *  which a Community org lacks). Defaults to canEdit. */
+  canManage?: boolean;
+  /** Client-side entitlement read for the AI console (scheduling.ai). When
+   *  false the docked console renders the paywall instead of the wizard. */
+  aiAllowed?: boolean;
   /** Competition run dates — drive the week view's day span. */
   competitionStart?: string | null;
   competitionEnd?: string | null;
@@ -63,6 +79,10 @@ interface Props {
   /** Render the inline settings card. The division schedule page turns this
    *  off and hosts the settings on its constraints tab instead. */
   showSettings?: boolean;
+  /** Officials with at least one blackout date (page-loaded official
+   *  availability), for the AI console pre-flight's "N officials, M with
+   *  blackout dates" row. Optional so non-schedule-page callers can omit it. */
+  officialsWithBlackout?: number;
 }
 
 /** Advance a YYYY-MM-DD key by n days (noon anchor dodges DST/midnight edges). */
@@ -81,10 +101,13 @@ export function ScheduleBoard({
   settings,
   canEdit,
   constraintsAllowed,
+  canManage,
+  aiAllowed = false,
   competitionStart,
   competitionEnd,
   venueCap = "Court",
   showSettings = true,
+  officialsWithBlackout = 0,
 }: Props) {
   const msg = useMsg();
   const locale = useLocale();
@@ -94,6 +117,53 @@ export function ScheduleBoard({
   const single = divisions.length === 1 ? divisions[0] : null;
   const cfg = settings.config;
   const multi = divisions.length > 1;
+
+  // AI schedule console (v4): single-division boards only for now — a plan is
+  // per division. The PostHog "ai-scheduling" kill switch hides the entry point
+  // entirely when flipped off; it is fail-open (see the hook).
+  const aiFlagOn = useAiSchedulingEnabled();
+  const [aiOpen, setAiOpen] = useState(false);
+  // Set by the repair nudge (Task 16) just before it opens the console, so the
+  // console mounts pre-armed in repair mode + this scope; null on a plain open.
+  const [aiRepairScope, setAiRepairScope] = useState<AiScope | null>(null);
+  // The verified proposal the console is showing (null = none) — drives the grid
+  // ghost overlay. The console notifies us on each RUN_DONE and on close.
+  const [aiProposal, setAiProposal] = useState<AiPlanResponse | null>(null);
+  // Fixtures the referee just flagged — pulse red on the grid for ~1.5s (§0.3).
+  const [pulseIds, setPulseIds] = useState<string[]>([]);
+  const pulseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pulse = useCallback((ids: string[]) => {
+    if (ids.length === 0) return;
+    setPulseIds(ids);
+    if (pulseTimer.current) clearTimeout(pulseTimer.current);
+    pulseTimer.current = setTimeout(() => setPulseIds([]), 1500);
+  }, []);
+  // Entry point is role-gated (not entitlement-gated) so a free org reaches the
+  // in-dock paywall; the plan check happens inside the console via aiAllowed.
+  const aiAvailable = (canManage ?? canEdit) && single !== null && aiFlagOn;
+
+  // Live brief inputs for the AI console (pre-flight card + chip pickers),
+  // derived from data the board already holds — config, this division's
+  // fixtures, entrant names. Officials come from a fetch-on-open in the console;
+  // only their blackout count is threaded (page-loaded, no client route).
+  const aiBrief = useMemo<AiBriefContext>(() => {
+    const divFixtures = single ? fixtures.filter((f) => f.division_id === single.id) : fixtures;
+    return {
+      courts: cfg.courts,
+      windows: cfg.sessionWindows.length,
+      blackouts: cfg.blackouts.length,
+      constraintsSet:
+        cfg.perEntrantMinRest > 0 ||
+        (cfg.roundMinutes ?? 0) > 0 ||
+        Boolean((cfg as { constraints?: unknown }).constraints),
+      movable: divFixtures.filter((f) => f.status === "scheduled").length,
+      pinned: divFixtures.filter((f) => f.schedule_locked).length,
+      entrants: Object.entries(entrantNames)
+        .map(([id, name]) => ({ id, name }))
+        .sort((a, b) => a.name.localeCompare(b.name)),
+      officialsWithBlackout,
+    };
+  }, [cfg, fixtures, entrantNames, single, officialsWithBlackout]);
 
   // ------------------------------------------------- division filter (?d=)
   const selectedSlugs = useMemo(() => {
@@ -179,6 +249,88 @@ export function ScheduleBoard({
   const scheduled = board.filter((f) => f.scheduled_at !== null);
   const unscheduled = board.filter((f) => f.scheduled_at === null && f.status === "scheduled");
 
+  // ------------------------------------------------------- AI proposal ghosts
+  // The single division's current fixtures, enriched with the label bits a ghost
+  // block and diff row show (§3). Built from the live board so the diff compares
+  // against what is actually on screen. "Final" is a light heuristic (the sole
+  // fixture in the last round); there is no junior signal in the board data.
+  const aiFixtures = useMemo<AiConsoleFixture[]>(() => {
+    if (!single) return [];
+    const divFx = actions.board.filter((f) => f.division_id === single.id);
+    const maxRound = divFx.reduce((m, f) => Math.max(m, f.round_no), 0);
+    const atMaxRound = divFx.filter((f) => f.round_no === maxRound).length;
+    return divFx.map((f) => ({
+      id: f.id,
+      stage_id: f.stage_id,
+      scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
+      court_label: f.court_label,
+      code: `R${f.round_no}·${f.seq_in_round}`,
+      matchup: cardTitle(f, entrantNames, feedLabels),
+      isFinal: maxRound > 0 && f.round_no === maxRound && atMaxRound === 1,
+      isJunior: false,
+    }));
+  }, [single, actions.board, entrantNames, feedLabels]);
+
+  // ------------------------------------------------------- repair nudge (T16)
+  // Client-derived disruptions over the LIVE board + config — a blackout a slot
+  // now sits in, a court removed from settings, a match outside the play windows,
+  // a postponed match still holding a slot. Zero server calls; the amber banner
+  // and the console's repair scope both read this.
+  const divBoardFixtures = useMemo(
+    () => (single ? actions.board.filter((f) => f.division_id === single.id) : []),
+    [single, actions.board],
+  );
+  const disruptions = useDisruptionSignals(divBoardFixtures, cfg);
+  // Same gates as the launch button (role + single + flag) AND the paid read
+  // (aiAllowed) — the nudge only shows when the console it opens is usable. It
+  // also hides while the console is open and when nothing is disrupted.
+  const showRepairBanner =
+    aiAvailable && aiAllowed && !aiOpen && disruptions.fixtureIds.length > 0;
+  // "Shown" fires once per board load the first time the banner is visible; the
+  // ref lives on the board (which persists across console open/close) so toggling
+  // the console never re-fires it.
+  const repairShownRef = useRef(false);
+  useEffect(() => {
+    if (showRepairBanner && !repairShownRef.current) {
+      repairShownRef.current = true;
+      track(EVENTS.AI_REPAIR_NUDGE_SHOWN, {
+        division_id: single?.id,
+        count: disruptions.fixtureIds.length,
+      });
+    }
+  }, [showRepairBanner, single, disruptions.fixtureIds.length]);
+  // The nudge's CTA: arm the scope, then open the console (batched → it mounts
+  // already carrying prefillRepair). The click event fires inside the banner.
+  const openRepair = useCallback(() => {
+    setAiRepairScope(disruptions.scope);
+    setAiOpen(true);
+  }, [disruptions.scope]);
+
+  // Ghost blocks for the whole proposal, positioned by the PROPOSED slot and
+  // toned by diff bucket (blocking wins). Unscheduled (dropped) fixtures are not
+  // in the proposal, so they simply leave the grid — they live in the diff list.
+  const ghosts = useMemo<GhostBlock[] | null>(() => {
+    if (!aiProposal) return null;
+    const meta = new Map(aiFixtures.map((f) => [f.id, f]));
+    const diff = computeAiDiff(aiProposal, aiFixtures);
+    const blocking = new Set(aiProposal.blocking.map((b) => b.fixtureId));
+    const pulsing = new Set(pulseIds);
+    return aiProposal.proposal.map((p) => {
+      const m = meta.get(p.fixture_id);
+      return {
+        id: p.fixture_id,
+        code: m?.code ?? p.fixture_id.slice(0, 6),
+        matchup: m?.matchup ?? "—",
+        isFinal: m?.isFinal ?? false,
+        isJunior: m?.isJunior ?? false,
+        at: new Date(p.scheduled_at).getTime(),
+        court: p.court_label ?? null,
+        tone: ghostToneFor(p.fixture_id, diff, blocking),
+        pulse: pulsing.has(p.fixture_id),
+      };
+    });
+  }, [aiProposal, aiFixtures, pulseIds]);
+
   // ------------------------------------------------------- density modes
   const [density, setDensity] = useState<Density>("board");
   const [view, setView] = useState<"day" | "week">("day");
@@ -199,10 +351,12 @@ export function ScheduleBoard({
   // ------------------------------------------------------------ day tabs
   const days = useMemo(() => {
     const set = new Set(scheduled.map((f) => dayKey(f.scheduled_at as string)));
+    // A proposal may place fixtures on days the board has none yet.
+    for (const g of ghosts ?? []) set.add(dayKey(new Date(g.at).toISOString()));
     if (set.size === 0 && cfg.startAt) set.add(dayKey(cfg.startAt));
     if (set.size === 0) set.add(dayKey(new Date()));
     return [...set].sort();
-  }, [scheduled, cfg.startAt]);
+  }, [scheduled, ghosts, cfg.startAt]);
   const [day, setDay] = useState<string>(days[0] as string);
   if (!day) setDay(days[0] as string);
 
@@ -228,14 +382,18 @@ export function ScheduleBoard({
     return out;
   }, [scheduled, competitionStart, competitionEnd, cfg.startAt, cfg.endAt]);
 
-  // Courts: configured list plus anything already used on the board.
+  // Courts: configured list plus anything already used on the board or proposed
+  // by a ghost, so a proposal's court always has a column.
   const courts = useMemo(() => {
     const list = [...cfg.courts];
     for (const f of scheduled) {
       if (f.court_label && !list.includes(f.court_label)) list.push(f.court_label);
     }
+    for (const g of ghosts ?? []) {
+      if (g.court && !list.includes(g.court)) list.push(g.court);
+    }
     return list;
-  }, [cfg.courts, scheduled]);
+  }, [cfg.courts, scheduled, ghosts]);
 
   // ------------------------------------------- pick-then-place (gap 11)
   const [pickedId, setPickedId] = useState<string | null>(null);
@@ -320,9 +478,13 @@ export function ScheduleBoard({
   // ------------------------------------------------------------ grid math
   const slotMinutes = cfg.matchMinutes + cfg.gapMinutes;
   const dayFixtures = scheduled.filter((f) => dayKey(f.scheduled_at as string) === day);
+  // Ghosts on this day drive the grid layout while a proposal is on screen.
+  const dayGhosts = ghosts ? ghosts.filter((g) => dayKey(new Date(g.at).toISOString()) === day) : null;
   const dayStartDefault = new Date(`${day}T08:00`).getTime();
   const dayEndDefault = new Date(`${day}T22:00`).getTime();
-  const times = dayFixtures.map((f) => new Date(f.scheduled_at as string).getTime());
+  const times = dayGhosts
+    ? dayGhosts.map((g) => g.at)
+    : dayFixtures.map((f) => new Date(f.scheduled_at as string).getTime());
   const gridFrom = times.length > 0 ? Math.min(...times, dayStartDefault) : dayStartDefault;
   const gridTo =
     times.length > 0
@@ -374,6 +536,29 @@ export function ScheduleBoard({
             ))}
         {/* Pin semantics live next to the buttons they modify (v3/03 §4). */}
         {canEdit && <Tip id="schedule.locking" />}
+        {/* AI schedule architect (v4) — the console dock's entry point. Free
+            orgs still see it; the paywall lives inside the dock. */}
+        {aiAvailable && (
+          <button
+            type="button"
+            onClick={() => {
+              setAiRepairScope(null);
+              setAiOpen(true);
+            }}
+            title={msg("board.ai.buttonTitle")}
+            aria-haspopup="dialog"
+            aria-expanded={aiOpen}
+            className="btn inline-flex items-center gap-1.5 border border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:from-violet-100 hover:to-indigo-100"
+          >
+            <span aria-hidden>✦</span>
+            {msg("board.ai.button")}
+            {!aiAllowed && (
+              <svg aria-hidden viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3 shrink-0 text-violet-500">
+                <path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1Zm2 5H6V4.5a2 2 0 1 1 4 0V6Z" />
+              </svg>
+            )}
+          </button>
+        )}
         <div className="flex-1" />
         {/* Whole-division freeze (Jul3/03 §4), surfaced on the board itself —
             single-division boards only; the competition board freezes per
@@ -548,6 +733,16 @@ export function ScheduleBoard({
         />
       )}
 
+      {/* Repair nudge (Task 16) — amber banner above the grid; its CTA opens the
+          console in repair mode pre-scoped to the disruptions. */}
+      {showRepairBanner && single && (
+        <AiRepairBanner
+          count={disruptions.fixtureIds.length}
+          divisionId={single.id}
+          onFix={openRepair}
+        />
+      )}
+
       {/* Board + tray share the row on desktop; tray is a sheet on mobile. */}
       <div className="flex items-start gap-4">
         <div className="min-w-0 flex-1">
@@ -571,6 +766,7 @@ export function ScheduleBoard({
               onTogglePin={(f) => void actions.togglePin(f)}
               venueCap={venueCap}
               highlightId={highlightId}
+              ghosts={dayGhosts}
             />
           )}
 
@@ -645,6 +841,34 @@ export function ScheduleBoard({
           divisionNames={divisionNames}
           onJump={jumpTo}
           onClose={() => setPanelOpen(false)}
+        />
+      )}
+
+      {aiOpen && single && (
+        <AiConsole
+          key={single.id}
+          divisionId={single.id}
+          expectedSeq={single.seq}
+          aiAllowed={aiAllowed}
+          brief={aiBrief}
+          fixtures={aiFixtures}
+          prefillRepair={aiRepairScope}
+          onClose={() => {
+            setAiOpen(false);
+            setAiProposal(null);
+            setAiRepairScope(null);
+          }}
+          onApplied={() => router.refresh()}
+          onRefetch={() => router.refresh()}
+          onProposalChange={(plan) => {
+            setAiProposal(plan);
+            // Jump to the earliest day the proposal touches so the ghosts show.
+            if (plan && plan.proposal.length > 0) {
+              const earliest = Math.min(...plan.proposal.map((p) => new Date(p.scheduled_at).getTime()));
+              setDay(dayKey(new Date(earliest).toISOString()));
+            }
+          }}
+          onPulse={pulse}
         />
       )}
 

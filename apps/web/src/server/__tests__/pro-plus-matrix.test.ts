@@ -25,20 +25,22 @@ describe.skipIf(!process.env.DATABASE_URL)("V290 pro_plus matrix", () => {
     }
   });
 
-  // Owner 2026-07-18 (amends pro-plus D4): Pro keeps AI scheduling, capped at
-  // 5 generations per division; Pro Plus is unlimited (null); community has no
-  // scheduling.ai row of its own beyond the bool deny.
-  it("keeps scheduling.ai on Pro, capped 5/division; Pro Plus unlimited; community denied", async () => {
+  // Owner 2026-07-19 (V302, supersedes the V291 amendment): AI scheduling is
+  // granted on every plan with a graded per-division run cap — community 5 /
+  // event pass 10 / pro 20 / pro plus 50.
+  it("grants scheduling.ai on every plan with the V302 graded run caps", async () => {
     const rows = await sql<{ feature_key: string; plan_key: string; bool_value: boolean | null; int_value: number | null }[]>`
       select feature_key, plan_key, bool_value, int_value from plan_entitlements
       where feature_key in ('scheduling.ai','scheduling.ai.runs_per_division.max')`;
     const get = (k: string, p: string) => rows.find((r) => r.feature_key === k && r.plan_key === p);
     expect(get("scheduling.ai", "pro")?.bool_value).toBe(true);
     expect(get("scheduling.ai", "pro_plus")?.bool_value).toBe(true);
-    expect(get("scheduling.ai", "community")?.bool_value).toBe(false);
-    expect(get("scheduling.ai.runs_per_division.max", "pro")?.int_value).toBe(5);
-    // null int_value = unlimited.
-    expect(get("scheduling.ai.runs_per_division.max", "pro_plus")?.int_value).toBeNull();
+    expect(get("scheduling.ai", "community")?.bool_value).toBe(true);
+    expect(get("scheduling.ai", "event_pass")?.bool_value).toBe(true);
+    expect(get("scheduling.ai.runs_per_division.max", "community")?.int_value).toBe(5);
+    expect(get("scheduling.ai.runs_per_division.max", "event_pass")?.int_value).toBe(10);
+    expect(get("scheduling.ai.runs_per_division.max", "pro")?.int_value).toBe(20);
+    expect(get("scheduling.ai.runs_per_division.max", "pro_plus")?.int_value).toBe(50);
   });
 
   it("seeds the new quota keys with the approved ladder", async () => {

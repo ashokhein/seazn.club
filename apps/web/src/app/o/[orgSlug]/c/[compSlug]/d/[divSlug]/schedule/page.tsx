@@ -53,6 +53,7 @@ export default async function DivisionSchedulePage({
     settings,
     boardEditable,
     constraints,
+    aiAllowed,
     officials,
     blackouts,
     busy,
@@ -65,6 +66,7 @@ export default async function DivisionSchedulePage({
     getScheduleSettings(auth, id),
     hasFeature(auth.orgId, "scheduling.board"),
     hasFeature(auth.orgId, "scheduling.constraints"),
+    hasFeature(auth.orgId, "scheduling.ai"),
     listOfficialsForConsole(auth),
     listOfficialBlackouts(auth),
     listOfficialBusyElsewhere(auth),
@@ -211,10 +213,13 @@ export default async function DivisionSchedulePage({
               settings={{ division_id: id, config: settings.config, tz: settings.tz }}
               canEdit={editable}
               constraintsAllowed={constraints}
+              canManage={canEdit && !frozen}
+              aiAllowed={aiAllowed}
               competitionStart={competition.starts_on}
               competitionEnd={competition.ends_on}
               venueCap={venueLabel(division.sport_key)}
               showSettings={false}
+              officialsWithBlackout={new Set(blackouts.map((b) => b.official_id)).size}
             />
           </>
         )}

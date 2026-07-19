@@ -537,7 +537,7 @@ export const Fixture = z.object({
   officials: z.array(z.unknown()),
   status: z.enum(["scheduled", "in_play", "decided", "finalized", "abandoned", "forfeited", "cancelled"]),
   outcome: z.unknown().nullable(),
-  schedule_source: z.enum(["none", "auto", "manual"]),
+  schedule_source: z.enum(["none", "auto", "manual", "ai"]),
   schedule_locked: z.boolean(),
   created_at: z.string(),
 });
@@ -774,6 +774,21 @@ export const AutoScheduleResult = z.object({
 });
 
 /** POST /stages/{id}/schedule/apply — persist an assignment set. */
+/** Optional AI provenance stamped into the apply/assign ledger events (v4/03 §10).
+ *  Present only when the apply originated from the AI Schedule/Officials Architect;
+ *  the instruction is trimmed server-side and recalled by
+ *  GET /divisions/{id}/schedule/ai-last. Shared by ApplyScheduleRequest and the
+ *  officials ApplyAssignmentsInput. */
+export const AiApplyMeta = z.object({
+  /** Trimmed server-side at the apply seam (schedule.ts / officials.ts), so it
+   *  stays a plain string here — a zod transform would break openapi:gen. */
+  instruction: z.string().max(500),
+  summary: z.string().max(600),
+  model: z.string(),
+  repair_rounds: z.number().int().nonnegative(),
+});
+export type AiApplyMeta = z.infer<typeof AiApplyMeta>;
+
 export const ApplyScheduleRequest = z.object({
   assignments: z
     .array(
@@ -787,11 +802,20 @@ export const ApplyScheduleRequest = z.object({
     )
     .min(1)
     .max(500),
-  source: z.enum(["auto", "manual"]).default("auto"),
+  source: z.enum(["auto", "manual", "ai"]).default("auto"),
   /** Optimistic token (v3/11 gap 10) — see PatchFixture.expected_seq. */
   expected_seq: z.number().int().nonnegative().optional(),
+  /** Audit provenance when source === "ai" (v4/03 §10). */
+  ai: AiApplyMeta.optional(),
 });
 export type ApplyScheduleRequest = z.infer<typeof ApplyScheduleRequest>;
+
+/** GET /divisions/{id}/schedule/ai-last — the most recent AI-sourced apply, or
+ *  null when the division has never been scheduled by the AI Architect. */
+export const AiLastResult = z
+  .object({ at: z.string(), instruction: z.string(), summary: z.string() })
+  .nullable();
+export type AiLastResult = z.infer<typeof AiLastResult>;
 
 export const ApplyScheduleResult = z.object({
   applied: z.number().int(),
@@ -1409,6 +1433,9 @@ export const ApplyOfficials = z.object({
       locked: z.boolean().default(false),
     }),
   ),
+  /** Audit provenance when the set came from the AI Officials Architect (v4/03
+   *  §10) — shared with ApplyScheduleRequest; merged into officials_assigned. */
+  ai: AiApplyMeta.optional(),
 });
 
 export const PatchFixtureOfficials = z.object({
@@ -1498,7 +1525,174 @@ export const ScheduleShift = z.object({
   delta_minutes: z.number().int().min(-1440).max(1440),
 });
 
-export const AiConstraintsRequest = z.object({ prose: z.string().min(3).max(4000) });
+// v4 AI Schedule Architect (design/v4/00-03) — Phase A propose-only endpoint.
+// The model proposes times+courts; the engine verifier is authoritative. This
+// contract carries the request instruction, an optional repair scope, an
+// optional prior proposal (refine), and an optional officials policy for a dry
+// coverage preview (no LLM). `officials_policy` reuses the officials-auto body.
+export const AiPlanRequest = z.object({
+  instruction: z.string().min(3).max(4000),
+  mode: z.enum(["generate", "refine", "repair"]).default("generate"),
+  scope: z
+    .object({
+      from: IsoDateTime.optional(),
+      courts: z.array(z.string()).optional(),
+      pool_ids: z.array(Uuid).optional(),
+    })
+    .optional(),
+  prior: z
+    .object({
+      instruction: z.string(),
+      assignments: z.array(
+        z.object({ fixture_id: Uuid, scheduled_at: z.string(), court_label: z.string() }),
+      ),
+    })
+    .optional(),
+  officials_policy: AssignPolicyBody.optional(),
+});
+export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
+
+const AiPlanAssignment = z.object({
+  fixture_id: Uuid,
+  scheduled_at: z.string(),
+  court_label: z.string(),
+  schedule_locked: z.boolean().optional(),
+});
+
+// Engine verifier conflict (camelCase, @seazn/engine/scheduling Conflict).
+const AiPlanConflict = z.object({
+  fixtureId: z.string(),
+  reason: z.string(),
+  detail: z.string().optional(),
+  direct: z.boolean().optional(),
+});
+
+// A durable constraints delta the architect inferred from the instruction —
+// the ENGINE constraints family, but with startWindow bounds converted from
+// epoch ms to ISO-with-offset in the division timezone (the shape clients + the
+// schedule-settings PUT speak). Mirrors ScheduleConfig.constraints, all fields
+// optional (it is a suggestion delta).
+const AiConstraintSuggestions = z.object({
+  restMin: z.number().int().min(0).max(24 * 60).optional(),
+  restByGroup: z.record(z.string(), z.number().int().min(0).max(24 * 60)).optional(),
+  noBackToBack: z.boolean().optional(),
+  startWindows: z
+    .array(
+      z.object({
+        target: z.object({ kind: z.enum(["entrant", "pool", "division"]), id: z.string() }),
+        notBefore: IsoDateTime.optional(),
+        notAfter: IsoDateTime.optional(),
+      }),
+    )
+    .optional(),
+  fieldFairness: z.enum(["off", "balance", "rotate"]).optional(),
+  parallelism: z.enum(["block", "mixed"]).optional(),
+  crossPersonClash: z.enum(["warn", "hard"]).optional(),
+});
+
+export const AiPlanResponse = z.object({
+  proposal: z.array(AiPlanAssignment),
+  unschedulable: z.array(z.object({ fixture_id: Uuid, reason: z.string() })),
+  warnings: z.array(AiPlanConflict),
+  blocking: z.array(AiPlanConflict),
+  diff: z.object({
+    moved: z.array(z.string()),
+    placed: z.array(z.string()),
+    unscheduled: z.array(z.string()),
+    unchanged: z.array(z.string()),
+  }),
+  explanations: z.array(z.object({ fixture_id: Uuid, note: z.string() })),
+  constraint_suggestions: AiConstraintSuggestions.optional(),
+  summary: z.string(),
+  usage: z.object({
+    input_tokens: z.number().int(),
+    output_tokens: z.number().int(),
+    repair_rounds: z.number().int(),
+  }),
+  /** Dry officials coverage preview (present only when officials_policy sent). */
+  officials_coverage: z
+    .object({
+      fillable: z.number().int(),
+      total: z.number().int(),
+      unfilled: z.array(z.object({ fixture_id: z.string(), role_key: z.string() })),
+    })
+    .nullable(),
+});
+export type AiPlanResponse = z.infer<typeof AiPlanResponse>;
+
+// v4 AI Schedule Architect — Phase B (officials architect, design/v4/03 §2). The
+// model assigns officials to a dry-run (or the current) schedule; the engine
+// referee is authoritative and nothing is written. `instruction` may be empty —
+// then the deterministic solver draft is returned with no LLM call. `policy`
+// reuses the officials-auto body; `prior.assignments` mirror the response
+// `assignments` (engine FixtureOfficial, camelCase) so a refine turn round-trips.
+export const AiOfficialsPlanRequest = z.object({
+  instruction: z.string().max(2000).default(""),
+  schedule: z
+    .array(z.object({ fixture_id: Uuid, scheduled_at: IsoDateTime, court_label: z.string() }))
+    .optional(),
+  policy: AssignPolicyBody,
+  prior: z
+    .object({
+      instruction: z.string(),
+      assignments: z.array(
+        z.object({
+          fixtureId: Uuid,
+          officialId: Uuid,
+          roleKey: z.string().min(1),
+          locked: z.boolean().optional(),
+        }),
+      ),
+    })
+    .optional(),
+});
+export type AiOfficialsPlanRequest = z.infer<typeof AiOfficialsPlanRequest>;
+
+// Engine-taxonomy conflict (camelCase, @seazn/engine/officials OfficialConflict)
+// plus the server-side "ineligible" verdict; `severity` flags the blocking ones.
+const AiOfficialsConflict = z.object({
+  kind: z.string(),
+  severity: z.enum(["block", "warn"]),
+  fixtureId: z.string().optional(),
+  officialId: z.string().optional(),
+  roleKey: z.string().optional(),
+  detail: z.string().optional(),
+});
+
+export const AiOfficialsPlanResponse = z.object({
+  // Proposed assignments (engine FixtureOfficial). Locked rows are echoed with
+  // locked:true; the empty-instruction path returns the solver draft verbatim.
+  assignments: z.array(
+    z.object({
+      fixtureId: z.string(),
+      officialId: z.string(),
+      roleKey: z.string(),
+      locked: z.boolean().optional(),
+    }),
+  ),
+  conflicts: z.array(AiOfficialsConflict),
+  diff: z.object({
+    // Fixture ids whose assignment set differs from / matches the baseline
+    // (the prior proposal when given, else the locked assignments).
+    changed: z.array(z.string()),
+    unchanged: z.array(z.string()),
+    // Slots the plan could not fill, each with the model's short reason.
+    unfilled: z.array(z.object({ fixture_id: z.string(), role_key: z.string(), reason: z.string() })),
+  }),
+  // Declared-unfilled slots the referee's solver CAN fill, with a candidate — a
+  // suggestion the organiser may accept (design/v4/03 §7 decision 8).
+  lazy_unfilled: z.array(
+    z.object({ fixture_id: z.string(), role_key: z.string(), candidate_official_id: z.string() }),
+  ),
+  explanations: z.array(z.object({ fixture_id: z.string(), note: z.string() })),
+  summary: z.string(),
+  usage: z.object({
+    input_tokens: z.number().int(),
+    output_tokens: z.number().int(),
+    repair_rounds: z.number().int(),
+  }),
+});
+export type AiOfficialsPlanResponse = z.infer<typeof AiOfficialsPlanResponse>;
 
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 

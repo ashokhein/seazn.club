@@ -5,6 +5,7 @@
 // run's own test users + their orgs are purged afterwards (see cleanup). The DB
 // must be the same one the target server uses.
 import postgres from "postgres";
+import { startAiFixtureServer, type AiFixtureServer } from "../apps/web/e2e/ai-fixture-server.ts";
 
 const BASE = process.env.SMOKE_BASE ?? "http://localhost:3000";
 
@@ -307,6 +308,14 @@ async function main() {
   // knockout draw guard, bracket poster, signed audit (pro 200 / free 402),
   // public presentation mode.
   await v13Suite(admin, org2.id, renamed.slug);
+
+  // --- v4 AI Schedule Architect (Task 18): two-phase happy path on a fresh Pro
+  // Plus org (schedule ai-plan → apply+ledger → ai-last → officials draft) plus
+  // the graded run-cap 402 and an admin-override lift on a fresh community org.
+  // The T17 fixture server stands in for the model (needs the server booted with
+  // SCHEDULING_AI_BASE_URL); the cap 402 is keyless-safe and always runs.
+  await v4AiSuite(admin, org2.id, renamed.slug);
+
   await pagePlayoffSuite(admin);
 
   // --- v16 SPEC-1 discipline: 5-yellow auto ban → confirm → public strip on
@@ -795,9 +804,15 @@ async function smokePlanMatrix(): Promise<void> {
     "matrix/community: exports.branded denies",
     commEnt.entitlements["exports.branded"]?.enabled === false,
   );
+  // V302: the AI Schedule Architect is granted on EVERY plan; only the
+  // per-division generation quota is graded (community 5).
   check(
-    "matrix/community: scheduling.ai denies",
-    commEnt.entitlements["scheduling.ai"]?.enabled === false,
+    "matrix/community: scheduling.ai is granted on every plan (V302)",
+    commEnt.entitlements["scheduling.ai"]?.enabled === true,
+  );
+  check(
+    "matrix/community: scheduling.ai.runs_per_division.max resolves 5",
+    commEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 5,
   );
 
   // A scored-through division so a real export renders.
@@ -829,19 +844,21 @@ async function smokePlanMatrix(): Promise<void> {
     plainExport.status === 200 && plainBytes.subarray(0, 5).toString() === "%PDF-",
   );
 
-  // A Pro-gated surface 402s — and the 402 carries the contextual upgrade prompt
-  // (the paywall reason the UpgradeGate renders). Keyless: requireFeature fires
-  // before any LLM call.
-  const commAi = await v1(comm, `/api/v1/divisions/${cDiv.id}/schedule/ai-constraints`, "POST", {
-    prose: "two courts, weekday evenings only",
+  // The graded run cap is the paid boundary now (not the feature itself): seed
+  // 5 prior runs on this division → the 6th ai-plan 402s at the cap BEFORE any
+  // model call (keyless-safe), and the 402 carries the contextual upgrade prompt
+  // the UpgradeGate renders.
+  await seedAiRuns(commOrg, cComp.id, cDiv.id, 5);
+  const commAi = await v1(comm, `/api/v1/divisions/${cDiv.id}/schedule/ai-plan`, "POST", {
+    instruction: "two courts, weekday evenings only",
   });
   const commAiErr = featureKey(commAi);
   check(
-    "matrix/community: AI schedule is Pro-gated (402 scheduling.ai)",
-    commAi.status === 402 && commAiErr.feature_key === "scheduling.ai",
+    "matrix/community: the 6th AI run/division 402s at the graded cap (scheduling.ai.runs_per_division.max)",
+    commAi.status === 402 && commAiErr.feature_key === "scheduling.ai.runs_per_division.max",
   );
   check(
-    "matrix/community: the 402 carries the upgrade prompt (reason)",
+    "matrix/community: the cap 402 carries the upgrade prompt (reason)",
     typeof commAiErr.reason === "string" && commAiErr.reason.length > 0,
   );
 
@@ -860,15 +877,15 @@ async function smokePlanMatrix(): Promise<void> {
     proEnt.entitlements["scheduling.ai"]?.enabled === true,
   );
   check(
-    "matrix/pro: scheduling.ai.runs_per_division.max resolves 5",
-    proEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 5,
+    "matrix/pro: scheduling.ai.runs_per_division.max resolves 20 (V302)",
+    proEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 20,
   );
   check(
     "matrix/pro: officials.per_fixture.max is unlimited (null)",
     proEnt.entitlements["officials.per_fixture.max"]?.limit === null,
   );
 
-  // Behavioural proof of the cap: seed 5 prior AI runs on a division, the 6th
+  // Behavioural proof of the cap: seed 20 prior AI runs on a division, the 21st
   // 402s at the cap (fires before the LLM → keyless-safe).
   const proComp = v1data<{ id: string }>(
     await v1(pro, "/api/v1/competitions", "POST", { name: `Matrix Pro ${tag}` }),
@@ -876,12 +893,12 @@ async function smokePlanMatrix(): Promise<void> {
   const proDiv = v1data<{ id: string }>(
     await v1(pro, `/api/v1/competitions/${proComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
   );
-  await seedAiRuns(proOrg, proComp.id, proDiv.id, 5);
-  const proCapped = await v1(pro, `/api/v1/divisions/${proDiv.id}/schedule/ai-constraints`, "POST", {
-    prose: "spread evenly across both courts",
+  await seedAiRuns(proOrg, proComp.id, proDiv.id, 20);
+  const proCapped = await v1(pro, `/api/v1/divisions/${proDiv.id}/schedule/ai-plan`, "POST", {
+    instruction: "spread evenly across both courts",
   });
   check(
-    "matrix/pro: the 6th AI run/division 402s at the cap (scheduling.ai.runs_per_division.max)",
+    "matrix/pro: the 21st AI run/division 402s at the cap (scheduling.ai.runs_per_division.max)",
     proCapped.status === 402 && featureKey(proCapped).feature_key === "scheduling.ai.runs_per_division.max",
   );
 
@@ -892,8 +909,8 @@ async function smokePlanMatrix(): Promise<void> {
   const plusEnt = await readEnt(plus, plusOrg);
   check("matrix/pro_plus: org resolves the pro_plus plan", plusEnt.plan_key === "pro_plus");
   check(
-    "matrix/pro_plus: scheduling.ai.runs_per_division.max is unlimited (null)",
-    plusEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === null,
+    "matrix/pro_plus: scheduling.ai.runs_per_division.max resolves 50 (V302)",
+    plusEnt.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 50,
   );
   check(
     "matrix/pro_plus: registration.fee_percent resolves 1",
@@ -2348,6 +2365,231 @@ async function seedAiRuns(
     }
   } finally {
     await sql.end();
+  }
+}
+
+/** A configured smoke postgres client (search_path seazn_club, local/remote SSL,
+ *  pooler-aware prepare). Caller owns the connection and must `.end()` it. */
+function smokeDb() {
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("DATABASE_URL is required for this smoke step");
+  const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+  return postgres(url, {
+    connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+    ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+    prepare: !url.includes(":6543"),
+    max: 1,
+  });
+}
+
+/** Raise (or grant) an org-wide entitlement override to `intValue` — the same
+ *  row /admin/entitlements writes. Relies on the fail-open entitlement cache
+ *  (no REDIS_URL locally → reads hit Postgres fresh), mirroring v1Suite's
+ *  api.access override. */
+async function insertEntitlementOverride(orgId: string, featureKey: string, intValue: number): Promise<void> {
+  const sql = smokeDb();
+  try {
+    await sql`
+      insert into org_entitlement_overrides (org_id, feature_key, bool_value, int_value)
+      values (${orgId}, ${featureKey}, null, ${intValue})
+      on conflict (org_id, feature_key) do update
+        set bool_value = null, int_value = ${intValue}, expires_at = null`;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** The most recent competition_events payload of a given type, or null. */
+async function latestCompetitionEvent(
+  competitionId: string,
+  type: string,
+): Promise<{ model?: string; cost_usd?: number; usage?: { input_tokens: number; output_tokens: number; repair_rounds: number } } | null> {
+  const sql = smokeDb();
+  try {
+    const [row] = await sql<{ payload: { model?: string; cost_usd?: number; usage?: { input_tokens: number; output_tokens: number; repair_rounds: number } } }[]>`
+      select payload from competition_events
+      where competition_id = ${competitionId} and type = ${type}
+      order by created_at desc limit 1`;
+    return row?.payload ?? null;
+  } finally {
+    await sql.end();
+  }
+}
+
+/** A plannable division for the AI architect: 4 individual entrants, one league
+ *  stage, two-court schedule settings, fixtures generated. Returns its ids. */
+async function seedPlannableAiDivision(
+  s: Session,
+  label: string,
+): Promise<{ compId: string; divId: string; stageId: string }> {
+  const comp = v1data<{ id: string }>(
+    await v1(s, "/api/v1/competitions", "POST", { name: `${label} ${tag}` }),
+  );
+  const div = v1data<{ id: string }>(
+    await v1(s, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  await v1(s, `/api/v1/divisions/${div.id}/entrants`, "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: `${n}${tag}`, seed: i + 1 })));
+  const stage = v1data<{ id: string }>(
+    await v1(s, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  );
+  await v1(s, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
+    config: {
+      startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
+      courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+    },
+    tz: "UTC",
+  });
+  await v1(s, `/api/v1/stages/${stage.id}/generate`, "POST");
+  return { compId: comp.id, divId: div.id, stageId: stage.id };
+}
+
+interface AiPlanResponseLite {
+  proposal: { fixture_id: string; scheduled_at: string; court_label: string }[];
+  diff: unknown;
+  summary: string;
+  usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
+  officials_coverage: unknown;
+}
+
+/** design/v4 (Task 18): the AI Schedule Architect end-to-end over HTTP.
+ *
+ *  A fresh Pro Plus org walks the two-phase happy path — schedule ai-plan
+ *  (proposal shape + a schedule.ai_generated ledger row stamping model/usage/
+ *  cost_usd) → apply with the `ai` provenance block → ai-last recall → officials
+ *  ai-plan with an EMPTY instruction (zero-token solver draft →
+ *  schedule.ai_officials_generated stamped model "solver-draft"). A fresh
+ *  community org proves the graded per-division run cap (seed 5 → the 6th 402s at
+ *  scheduling.ai.runs_per_division.max, before any model spend) and that an admin
+ *  entitlement override lifts it (→ 200).
+ *
+ *  The model is never real: the Task 17 fixture server echoes the pack's own
+ *  deterministic draft, so a run is CLEAN by construction. Model-dependent steps
+ *  run only when SCHEDULING_AI_BASE_URL is set — the server under test must be
+ *  booted pointing at our fixture server (recipe in the Task 18 report). The cap
+ *  402 is keyless-safe and always runs. officials.auto is Pro Plus (V290), so the
+ *  happy path uses its own fresh pro_plus org rather than the passed pro org. */
+async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  void admin; void proOrgId; void proOrgSlug;
+  const aiConfigured = !!process.env.SCHEDULING_AI_BASE_URL;
+  let fixture: AiFixtureServer | null = null;
+  if (aiConfigured) {
+    try {
+      fixture = await startAiFixtureServer();
+    } catch (e) {
+      console.log(`v4 AI: fixture server failed to start (${(e as Error).message}); model paths skipped`);
+    }
+  } else {
+    console.log("v4 AI: SCHEDULING_AI_BASE_URL unset — model-dependent AI checks skipped (the cap 402 still runs)");
+  }
+
+  try {
+    // ---- Free path: the graded run cap (keyless — 402 fires before any model) ----
+    const free = newSession();
+    const freeOrg = (await signIn(free, `smoke-ai-free-${tag}@example.com`)).org_id;
+    const freeDivIds = await seedPlannableAiDivision(free, "AI Free");
+    await seedAiRuns(freeOrg, freeDivIds.compId, freeDivIds.divId, 5);
+    const capped = await v1(free, `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`, "POST", {
+      instruction: "spread the fixtures across both courts",
+    });
+    check(
+      "v4 AI/free: the 6th run/division 402s at the graded cap (scheduling.ai.runs_per_division.max)",
+      capped.status === 402 &&
+        (capped.json.error as { feature_key?: string } | undefined)?.feature_key ===
+          "scheduling.ai.runs_per_division.max",
+    );
+
+    // ---- Admin override lifts the cap → the next run is admitted (needs model) ----
+    await insertEntitlementOverride(freeOrg, "scheduling.ai.runs_per_division.max", 6);
+    if (fixture) {
+      const lifted = await v1(free, `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`, "POST", {
+        instruction: "spread the fixtures across both courts",
+      });
+      check(
+        "v4 AI/override: an entitlement override lifts the cap → the next run is admitted (200 + proposal)",
+        lifted.status === 200 && Array.isArray(v1data<AiPlanResponseLite>(lifted).proposal),
+      );
+    }
+
+    // ---- Pro Plus two-phase happy path (schedule + officials) — needs the model ----
+    if (fixture) {
+      const plus = newSession();
+      const plusOrg = (await signIn(plus, `smoke-ai-plus-${tag}@example.com`)).org_id;
+      await setPlan(plusOrg, "pro_plus");
+      const { compId, divId, stageId } = await seedPlannableAiDivision(plus, "AI Plus");
+      await v1(plus, "/api/v1/officials", "POST", { display_name: `AI Ref ${tag}`, role_keys: ["referee"] });
+
+      const instruction = "finish by 6pm, keep both courts busy";
+      const planRes = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-plan`, "POST", {
+        instruction, mode: "generate", officials_policy: { roles: ["referee"] },
+      });
+      const plan = v1data<AiPlanResponseLite>(planRes);
+      check(
+        "v4 AI/plus: schedule ai-plan returns a verified proposal (proposal + diff + usage + coverage)",
+        planRes.status === 200 &&
+          Array.isArray(plan.proposal) && plan.proposal.length > 0 &&
+          !!plan.diff && typeof plan.summary === "string" &&
+          !!plan.usage && plan.officials_coverage !== undefined,
+      );
+      check(
+        "v4 AI/plus: the fixture model served the schedule phase",
+        fixture.calls.some((c) => c.phase === "schedule"),
+      );
+
+      const genEvent = await latestCompetitionEvent(compId, "schedule.ai_generated");
+      check(
+        "v4 AI/plus: schedule.ai_generated ledger row stamps model + usage + cost_usd",
+        !!genEvent && typeof genEvent.model === "string" && !!genEvent.usage && typeof genEvent.cost_usd === "number",
+      );
+
+      const applied = await v1(plus, `/api/v1/stages/${stageId}/schedule/apply`, "POST", {
+        assignments: plan.proposal.map((a) => ({
+          fixture_id: a.fixture_id, scheduled_at: a.scheduled_at, court_label: a.court_label,
+        })),
+        source: "ai",
+        ai: { instruction, summary: plan.summary, model: "claude-sonnet-5", repair_rounds: plan.usage.repair_rounds },
+      });
+      check(
+        "v4 AI/plus: applying the AI proposal writes the schedule (source ai)",
+        applied.status === 200 && v1data<{ applied: number }>(applied).applied > 0,
+      );
+
+      const last = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-last`);
+      check(
+        "v4 AI/plus: ai-last recalls the applied instruction",
+        last.status === 200 && v1data<{ instruction?: string } | null>(last)?.instruction === instruction,
+      );
+
+      const offRes = await v1(plus, `/api/v1/divisions/${divId}/officials/ai-plan`, "POST", {
+        instruction: "",
+        policy: { roles: ["referee"] },
+        schedule: plan.proposal.map((a) => ({
+          fixture_id: a.fixture_id, scheduled_at: a.scheduled_at, court_label: a.court_label,
+        })),
+      });
+      const off = v1data<{ usage: { input_tokens: number; output_tokens: number; repair_rounds: number }; assignments: unknown[] }>(offRes);
+      check(
+        "v4 AI/plus: officials ai-plan (empty instruction) returns a zero-token solver draft",
+        offRes.status === 200 &&
+          off.usage.input_tokens === 0 && off.usage.output_tokens === 0 && off.usage.repair_rounds === 0,
+      );
+      check(
+        "v4 AI/plus: the empty-instruction officials run made NO model call",
+        !fixture.calls.some((c) => c.phase === "officials"),
+      );
+      const offEvent = await latestCompetitionEvent(compId, "schedule.ai_officials_generated");
+      check(
+        'v4 AI/plus: schedule.ai_officials_generated ledger row stamps model "solver-draft"',
+        !!offEvent && offEvent.model === "solver-draft",
+      );
+    }
+  } finally {
+    await fixture?.close();
   }
 }
 

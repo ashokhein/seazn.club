@@ -1,8 +1,7 @@
 "use client";
 
 // Constraints v2 console (Jul3/04 §6): constraint editor, bulk time shift,
-// and the pre-publish wait-time report. The AI prose box ("Describe your
-// constraints") is parked — endpoint intact, UI withdrawn for now.
+// and the pre-publish wait-time report.
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
@@ -158,10 +157,6 @@ export function ConstraintsPanel({
             </p>
           )}
         </div>
-
-        {/* "Describe your constraints" (AI prose → constraints, Jul3/04 §5)
-            is parked for a later release — the endpoint stays, the UI is
-            withdrawn until the feature earns its place. */}
 
         {/* bulk shift */}
         {canEdit && (

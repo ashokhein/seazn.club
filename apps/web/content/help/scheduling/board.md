@@ -21,4 +21,4 @@ If a colleague moves a match while you're looking at the board, your next change
 
 Every division can export its schedule as a PDF or spreadsheet for pinning up courtside or sharing with officials. On a Pro organisation, the export carries your masthead, logo and sponsor line; on a community plan you get the same clean, print-ready tables without that branding — the schedule data itself is identical either way.
 
-Related: [pinned slots and freezing](/help/scheduling/locks), [undo and save points](/help/scheduling/undo), [constraints](/help/scheduling/constraints).
+Related: [pinned slots and freezing](/help/scheduling/locks), [undo and save points](/help/scheduling/undo), [constraints](/help/scheduling/constraints), [plan it with AI Schedule](/help/scheduling/ai-scheduling).

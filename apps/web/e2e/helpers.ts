@@ -194,6 +194,61 @@ export async function setOrgConnectSql(
   });
 }
 
+/**
+ * Seed N prior AI-generation ledger rows for a division (v4 Task 17 quota path).
+ * Mirrors the exact shape schedule-ai.ts counts against the per-division run cap:
+ * competition_events of type 'schedule.ai_generated' whose payload.division_id
+ * matches. Inserted as the superuser (RLS-bypassing) with an explicit org_id.
+ */
+export async function seedAiGeneratedRuns(
+  competitionId: string,
+  orgId: string,
+  divisionId: string,
+  count: number,
+): Promise<void> {
+  await withDb(async (sql) => {
+    for (let i = 0; i < count; i++) {
+      await sql`
+        insert into competition_events (competition_id, org_id, type, payload)
+        values (${competitionId}, ${orgId}, 'schedule.ai_generated', ${sql.json({ division_id: divisionId })})`;
+    }
+  });
+}
+
+/** The most recent AI-sourced schedule apply audit for a division (v4 Task 17):
+ *  the division_events 'schedule_applied' row with payload.source = 'ai'. */
+export async function getAiScheduleApply(
+  divisionId: string,
+): Promise<{ source: string; instruction: string | null } | null> {
+  return withDb(async (sql) => {
+    const rows = await sql<
+      { payload: { source?: string; ai?: { instruction?: string } } }[]
+    >`
+      select payload from division_events
+      where division_id = ${divisionId}
+        and type = 'schedule_applied'
+        and payload->>'source' = 'ai'
+      order by seq desc limit 1`;
+    if (!rows[0]) return null;
+    return { source: rows[0].payload.source ?? "", instruction: rows[0].payload.ai?.instruction ?? null };
+  });
+}
+
+/** Each fixture's persisted schedule provenance + slot for a division (v4 Task
+ *  17 asserts applied fixtures carry schedule_source = 'ai'). */
+export async function getFixtureScheduleSources(
+  divisionId: string,
+): Promise<{ schedule_source: string | null; scheduled_at: string | null }[]> {
+  return withDb(async (sql) => {
+    const rows = await sql<{ schedule_source: string | null; scheduled_at: Date | null }[]>`
+      select schedule_source, scheduled_at from fixtures where division_id = ${divisionId}`;
+    return rows.map((r) => ({
+      schedule_source: r.schedule_source,
+      scheduled_at: r.scheduled_at ? new Date(r.scheduled_at).toISOString() : null,
+    }));
+  });
+}
+
 /** Force a fixture's status directly (SPEC-3 marks/reports e2e). The mark +
  *  report windows only read `fixtures.status`; a SQL flip to 'decided' skips
  *  the sport-specific full-time scoring dance and keeps the setup terse. */

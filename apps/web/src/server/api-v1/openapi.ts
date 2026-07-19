@@ -205,6 +205,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/officials/import", method: "post", summary: "Bulk CSV/XLSX import (multipart `file`: Name, Roles, MaxPerDay)", tag: "officials", status: 201, errors: [422] },
   { path: "/officials/{id}/invite", method: "post", summary: "Invite the official to claim their profile through the shared person-claim rail (session editors only; claim_url embeds the one-time secret)", tag: "officials", request: S.CreateClaimInvite, response: S.CreatedPersonClaim, status: 201, errors: [409] },
   { path: "/divisions/{id}/officials/auto", method: "post", summary: "Propose assignments — pure engine pass with locked rows as obstacles; writes nothing (Pro `officials.auto`)", tag: "officials", request: S.AutoAssignOfficials, response: S.OfficialsProposal, errors: [402] },
+  { path: "/divisions/{id}/officials/ai-plan", method: "post", summary: "AI Officials Architect: assign officials to a dry-run/current schedule, engine-refereed; propose-only, empty instruction = solver draft (Pro Plus `officials.auto`)", tag: "officials", request: S.AiOfficialsPlanRequest, response: S.AiOfficialsPlanResponse, errors: [402, 403, 422, 429] },
   { path: "/divisions/{id}/officials/apply", method: "post", summary: "Persist a proposal transactionally; emits `officials_assigned` (Pro `officials.auto`)", tag: "officials", request: S.ApplyOfficials, errors: [402, 422] },
   { path: "/fixtures/{id}/officials", method: "patch", summary: "Manual set/move/lock — single-role manual assignment free on every plan", tag: "officials", request: S.PatchFixtureOfficials, errors: [402] },
   { path: "/stages/{id}/officials/source", method: "post", summary: "Resolve rank/result sourcing → officiating entrants; pending until the source decides (Pro `officials.auto`)", tag: "officials", request: S.SourceOfficials, errors: [402] },
@@ -221,7 +222,8 @@ export const ROUTES: RouteSpec[] = [
   // Scheduling constraints v2 & AI (Jul3/04, PROMPT-24)
   { path: "/schedule/shift", method: "post", summary: "Bulk time shift: push everything in scope by ±N minutes (schedule_shifted event; undoable; all plans)", tag: "scheduling", request: S.ScheduleShift, errors: [422] },
   { path: "/divisions/{id}/schedule/report", method: "get", summary: "Wait-time diagnostics: min/max gap per entrant + worst waits (16 Sep; all plans)", tag: "scheduling" },
-  { path: "/divisions/{id}/schedule/ai-constraints", method: "post", summary: "Prose → Zod-validated SchedulingConstraints; propose-only, human applies (Pro `scheduling.ai`)", tag: "scheduling", request: S.AiConstraintsRequest, errors: [402, 422] },
+  { path: "/divisions/{id}/schedule/ai-plan", method: "post", summary: "AI Schedule Architect: propose times+courts (generate/refine/repair), engine-verified; propose-only (Pro Plus `scheduling.ai`)", tag: "scheduling", request: S.AiPlanRequest, response: S.AiPlanResponse, errors: [400, 402, 403, 409, 422, 429] },
+  { path: "/divisions/{id}/schedule/ai-last", method: "get", summary: "Recall the division's most recent AI-sourced schedule apply (instruction + summary + timestamp), or null; all plans", tag: "scheduling", response: S.AiLastResult },
   // Custom points & rank control (Jul3/05, PROMPT-25)
   { path: "/stages/{id}/standings/override", method: "post", summary: "Pin final ranks (placement games decide 3rd/4th); cascade orders the unlocked remainder; audited rank_overridden (Pro `tiebreakers.custom`)", tag: "stages", request: S.OverrideStandings, errors: [402, 422] },
   // Rich exports & print templates (Jul3/06, PROMPT-26)

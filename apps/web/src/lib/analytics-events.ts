@@ -48,6 +48,23 @@ export const EVENTS = {
   POST_PUBLISHED: "post_published",
   POST_SHARED: "post_shared",
   POST_CARD_DOWNLOADED: "post_card_downloaded",
+  /** v4 AI Schedule Architect (design/v4/00 §5): one metered architect run —
+   *  fired on success AND on a 422 AI_PLAN_FAILED so refused spend is visible. */
+  AI_PLAN_RUN: "ai_plan_run",
+  /** v4 brief step (design/v4/03 §5): organiser tapped a pre-flight warn row's
+   *  deep link to go fix a data gap (no windows, no officials, …) before running. */
+  AI_PREFLIGHT_GAP_FIXED: "ai_preflight_gap_fixed",
+  /** v4 apply step (design/v4/02 §6): organiser discarded a verified proposal
+   *  from the apply step instead of applying it — the abandon signal for the run. */
+  AI_PLAN_DISCARDED: "ai_plan_discarded",
+  /** v4 Task 16 repair nudges: the board's client-derived amber banner became
+   *  visible over the grid — fired ONCE per board load when it first shows, so a
+   *  disrupted schedule (a blackout, a removed court, a postponed match holding a
+   *  slot) is a visible re-entry signal into the architect. */
+  AI_REPAIR_NUDGE_SHOWN: "ai_repair_nudge_shown",
+  /** v4 Task 16: organiser tapped the nudge's "Fix with AI" CTA, deep-linking
+   *  into the console pre-armed in repair mode + the disrupted scope. */
+  AI_REPAIR_NUDGE_CLICKED: "ai_repair_nudge_clicked",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];
