@@ -666,21 +666,40 @@ function draftAsPlan(pack: OfficialsPack): AiOfficialsPlan {
   };
 }
 
-/** Assignment diff vs the prior proposal (refine mode). Each element is a
- *  `fixtureId:roleKey` slot: `unchanged` kept the same official, `changed` did
- *  not (or is new). With no prior every assignment is `changed`. */
+/** Assignment diff vs the baseline (schemas.ts AiOfficialsPlanResponse.diff):
+ *  the prior proposal when given, else the locked assignments. Each element is
+ *  a bare fixture id — `unchanged` when that fixture's (role, official) set in
+ *  the plan exactly matches its set in the baseline, `changed` otherwise
+ *  (including a fixture the baseline never mentioned). */
 function officialsDiff(pack: OfficialsPack, plan: AiOfficialsPlan): AiOfficialsPlanResponse["diff"] {
-  const dslot = (f: string, r: string): string => `${f}:${r}`;
-  const priorBySlot = new Map<string, string>();
-  if (pack.prior) {
-    for (const a of pack.prior.assignments) priorBySlot.set(dslot(a.fixtureId, a.roleKey), a.officialId);
-  }
+  const baseline = pack.prior ? pack.prior.assignments : pack.locked;
+
+  const setByFixture = (
+    rows: { fixtureId: string; roleKey: string; officialId: string }[],
+  ): Map<string, Set<string>> => {
+    const m = new Map<string, Set<string>>();
+    for (const r of rows) {
+      const set = m.get(r.fixtureId) ?? new Set<string>();
+      set.add(`${r.roleKey}${SEP}${r.officialId}`);
+      m.set(r.fixtureId, set);
+    }
+    return m;
+  };
+  const sameSet = (a: Set<string>, b: Set<string>): boolean =>
+    a.size === b.size && [...a].every((v) => b.has(v));
+
+  const baselineByFixture = setByFixture(baseline);
+  const planByFixture = setByFixture(
+    plan.assignments.map((a) => ({ fixtureId: a.fixture_id, roleKey: a.role_key, officialId: a.official_id })),
+  );
+
   const changed: string[] = [];
   const unchanged: string[] = [];
-  for (const a of plan.assignments) {
-    const key = dslot(a.fixture_id, a.role_key);
-    if (priorBySlot.get(key) === a.official_id) unchanged.push(key);
-    else changed.push(key);
+  for (const f of pack.fixtures) {
+    const base = baselineByFixture.get(f.id) ?? new Set<string>();
+    const now = planByFixture.get(f.id) ?? new Set<string>();
+    if (base.size === 0 && now.size === 0) continue; // untouched, unmentioned fixture — not in scope
+    (sameSet(base, now) ? unchanged : changed).push(f.id);
   }
   changed.sort(cmp);
   unchanged.sort(cmp);

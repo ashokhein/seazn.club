@@ -240,6 +240,111 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     expect(out.diff.unfilled).toEqual([{ fixture_id: f1, role_key: "referee", reason: "Ref A already on f0" }]);
   });
 
+  it("a locked row survives an actual repair round (overlap + lock combined)", async () => {
+    // Review follow-up (T9 minor): the locked-echo test never went through a
+    // repair round, and the overlap-repair test never had a locked row —
+    // this drives both through the SAME repair loop: f0 is locked to Ref A,
+    // f0/f1 overlap (both proposed to Ref A round 1), round 2 must drop f1
+    // without ever touching (or being allowed to touch) the locked f0 row.
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    const refA = officialIds[0]!;
+    const [f0, f1, f2] = fixtureIds as [string, string, string];
+    await patchFixtureOfficials(auth, f0, {
+      set: [{ official_id: refA, role_key: "referee", locked: true }],
+    });
+    const schedule = [
+      { fixture_id: f0, scheduled_at: new Date(BASE).toISOString(), court_label: "Court 1" },
+      { fixture_id: f1, scheduled_at: new Date(BASE + 15 * MIN).toISOString(), court_label: "Court 1" },
+      { fixture_id: f2, scheduled_at: new Date(BASE + 180 * MIN).toISOString(), court_label: "Court 1" },
+    ];
+    parse
+      .mockResolvedValueOnce(resp(assignAll(fixtureIds, refA)))
+      .mockResolvedValueOnce(
+        resp({
+          assignments: [
+            { fixture_id: f0, official_id: refA, role_key: "referee" },
+            { fixture_id: f2, official_id: refA, role_key: "referee" },
+          ],
+          unfilled: [{ fixture_id: f1, role_key: "referee", reason: "Ref A already locked on f0" }],
+          explanations: [], summary: "dropped the non-locked overlap",
+        }),
+      );
+
+    const out = await officialsAiPlanForDivision(auth, divisionId, {
+      instruction: "Cover everything with Ref A.", policy: POLICY, schedule,
+    });
+
+    expect(parse).toHaveBeenCalledTimes(2);
+    expect(out.usage.repair_rounds).toBe(1);
+    expect(out.conflicts.some((c) => c.kind === "official_overlap")).toBe(false);
+    const lockedRow = out.assignments.find((a) => a.fixtureId === f0 && a.officialId === refA);
+    expect(lockedRow).toMatchObject({ roleKey: "referee", locked: true });
+  });
+
+  it("diff baseline falls back to locked when there is no prior — locked fixture is unchanged, not changed", async () => {
+    // Review follow-up (T9 M-diff): schemas.ts documents diff.changed/unchanged
+    // as bare fixture ids vs a baseline of "the prior proposal when given, else
+    // the locked assignments". With no prior, a from-scratch proposal that only
+    // echoes the lock must report that fixture as unchanged.
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+    });
+    const refA = officialIds[0]!;
+    const [f0, f1, f2] = fixtureIds as [string, string, string];
+    await patchFixtureOfficials(auth, f0, {
+      set: [{ official_id: refA, role_key: "referee", locked: true }],
+    });
+
+    parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, refA)));
+    const out = await officialsAiPlanForDivision(auth, divisionId, {
+      instruction: "Ref A everywhere.", policy: POLICY, schedule: spread(fixtureIds),
+    });
+
+    expect(out.diff.unchanged).toEqual([f0]);
+    expect([...out.diff.changed].sort()).toEqual([f1, f2].sort());
+  });
+
+  it("diff.changed/unchanged in refine mode: only genuinely re-assigned fixtures are changed", async () => {
+    // Second half of the same contract: with a prior, diff entries are bare
+    // fixture ids and a fixture is `changed` only when its assignment set
+    // actually differs from the prior — not the whole plan.
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
+      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }, { name: "Ref B", roles: ["referee"] }],
+    });
+    const [refA, refB] = officialIds as [string, string];
+    const [f0, f1, f2] = fixtureIds as [string, string, string];
+
+    parse.mockResolvedValueOnce(
+      resp({
+        assignments: [
+          { fixture_id: f0, official_id: refA, role_key: "referee" }, // same as prior
+          { fixture_id: f1, official_id: refB, role_key: "referee" }, // re-assigned (was refA)
+          { fixture_id: f2, official_id: refB, role_key: "referee" }, // same as prior
+        ],
+        unfilled: [], explanations: [], summary: "refine",
+      }),
+    );
+    const out = await officialsAiPlanForDivision(auth, divisionId, {
+      instruction: "Refine.", policy: POLICY, schedule: spread(fixtureIds),
+      prior: {
+        instruction: "assign",
+        assignments: [
+          { fixtureId: f0, officialId: refA, roleKey: "referee" },
+          { fixtureId: f1, officialId: refA, roleKey: "referee" },
+          { fixtureId: f2, officialId: refB, roleKey: "referee" },
+        ],
+      },
+    });
+
+    expect(out.diff.changed).toEqual([f1]);
+    expect([...out.diff.unchanged].sort()).toEqual([f0, f2].sort());
+  });
+
   it("empty roster → 422 NO_OFFICIALS before any LLM call", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedOfficials(auth, { entrants: 3, officials: [] });
