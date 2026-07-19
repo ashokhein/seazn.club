@@ -15,6 +15,7 @@ describe("feature-copy V290", () => {
   it("has reasons for the new keys and none for the dead one", () => {
     expect(featureReason("officials.per_fixture.max")).toMatch(/one official per fixture/i);
     expect(featureReason("schedule.checkpoints.max")).toMatch(/save.point/i);
+    expect(featureReason("scheduling.ai")).toMatch(/architect/i);
     expect(featureReason("domains.custom")).toMatch(/domain/i);
     expect(featureReason("support.priority")).toMatch(/priority/i);
     // V291: AI scheduling is now a Pro feature; its cap breach points at Pro Plus.

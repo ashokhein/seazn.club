@@ -319,6 +319,10 @@ export async function buildSchedulePack(
         for (const r of nameRows) nameByEntrant.set(r.id, r.display_name);
       }
       const nameOf = (e: string | null): string => (e !== null ? nameByEntrant.get(e) ?? "" : "");
+      // INVARIANT: this comparator must remain a total order on
+      // (round_no, seq_in_round, ext_key, home name, away name) with NO UUID
+      // fallback — reintroducing id-based tie-breaks re-breaks cross-reseed
+      // determinism (see the double-seed test).
       const orderedMovable = [...movable].sort(
         (a, b) =>
           a.round_no - b.round_no ||
