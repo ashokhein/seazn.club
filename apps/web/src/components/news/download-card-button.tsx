@@ -20,7 +20,7 @@ export function DownloadCardButton({
       download
       data-testid="news-download-card"
       onClick={() => track(EVENTS.POST_CARD_DOWNLOADED, { kind })}
-      className="btn btn-ghost text-xs"
+      className="btn btn-ghost min-h-11 text-xs"
     >
       {label}
     </a>

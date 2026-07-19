@@ -87,7 +87,7 @@ export function NewsTab({
           <button
             type="button"
             onClick={() => setMode({ kind: "new" })}
-            className="btn btn-primary text-sm"
+            className="btn btn-primary min-h-11 text-sm"
             data-testid="news-new"
           >
             <Plus className="h-4 w-4" /> {msg("news.new")}
@@ -151,7 +151,7 @@ export function NewsTab({
                     <button
                       type="button"
                       onClick={() => setMode({ kind: "edit", post: p })}
-                      className="btn btn-ghost px-2 py-1 text-xs"
+                      className="btn btn-ghost h-11 w-11 shrink-0 p-0"
                       aria-label={msg("news.edit")}
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -160,7 +160,7 @@ export function NewsTab({
                       type="button"
                       disabled={busyId === p.id}
                       onClick={() => publish(p)}
-                      className="btn btn-primary px-2.5 py-1 text-xs"
+                      className="btn btn-primary min-h-11 text-xs"
                       data-testid="draft-publish"
                     >
                       <Send className="h-3.5 w-3.5" /> {msg("news.publish")}
@@ -169,7 +169,7 @@ export function NewsTab({
                       type="button"
                       disabled={busyId === p.id}
                       onClick={() => remove(p)}
-                      className="btn btn-ghost px-2 py-1 text-xs text-red-500"
+                      className="btn btn-ghost h-11 w-11 shrink-0 p-0 text-red-500"
                       aria-label={msg("news.delete")}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
@@ -218,7 +218,7 @@ export function NewsTab({
                     <button
                       type="button"
                       onClick={() => setMode({ kind: "edit", post: p })}
-                      className="btn btn-ghost px-2 py-1 text-xs"
+                      className="btn btn-ghost h-11 w-11 shrink-0 p-0"
                       aria-label={msg("news.edit")}
                     >
                       <Pencil className="h-3.5 w-3.5" />
@@ -227,7 +227,7 @@ export function NewsTab({
                       type="button"
                       disabled={busyId === p.id}
                       onClick={() => archive(p)}
-                      className="btn btn-ghost px-2 py-1 text-xs"
+                      className="btn btn-ghost h-11 w-11 shrink-0 p-0"
                       aria-label={msg("news.archive")}
                     >
                       <Archive className="h-3.5 w-3.5" />
@@ -236,7 +236,7 @@ export function NewsTab({
                       type="button"
                       disabled={busyId === p.id}
                       onClick={() => remove(p)}
-                      className="btn btn-ghost px-2 py-1 text-xs text-red-500"
+                      className="btn btn-ghost h-11 w-11 shrink-0 p-0 text-red-500"
                       aria-label={msg("news.delete")}
                     >
                       <Trash2 className="h-3.5 w-3.5" />

@@ -163,7 +163,7 @@ export function Composer({
           // eslint-disable-next-line @next/next/no-img-element -- org-prefix upload just made
           <img src={heroImagePath} alt="" className="h-12 w-20 rounded-md object-cover" />
         ) : null}
-        <label className="btn btn-ghost cursor-pointer text-xs">
+        <label className="btn btn-ghost min-h-11 cursor-pointer text-xs">
           {heroImagePath ? msg("news.composer.heroReplace") : msg("news.composer.heroUpload")}
           <input
             type="file"
@@ -191,12 +191,12 @@ export function Composer({
           type="button"
           disabled={busy || title.trim() === ""}
           onClick={save}
-          className="btn btn-primary text-sm"
+          className="btn btn-primary min-h-11 text-sm"
           data-testid="composer-save"
         >
           {editing ? msg("news.composer.save") : msg("news.composer.create")}
         </button>
-        <button type="button" onClick={() => onDone(false)} className="btn btn-ghost text-sm">
+        <button type="button" onClick={() => onDone(false)} className="btn btn-ghost min-h-11 text-sm">
           {msg("news.composer.cancel")}
         </button>
       </div>
