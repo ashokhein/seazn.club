@@ -298,7 +298,6 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
   test("two clients: the stale one 409s, toasts, and refreshes (gap 10)", async ({
     page,
     context,
-    request,
   }) => {
     const d0 = rig.divisions[0]!;
     const filtered = `${boardUrl}?d=${d0.slug}`;
@@ -312,40 +311,35 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
     await page.goto(filtered);
     await pageB.goto(filtered);
 
-    // Client A moves a fixture through the pick → MovePanel path.
+    // Client A moves a fixture through the pick → MovePanel path. Each move is
+    // gated on its own PATCH landing: on a slow runner an ungated A could still
+    // be in flight when B writes — B's seq would then be VALID, no 409, no
+    // toast, and the test times out (the CI-only failure this replaces).
     const move = async (p: Page, when: string) => {
       await p.locator("[data-fixture-id] button[aria-pressed]").first().click();
       const dialog = p.getByRole("dialog", { name: /^Move / });
       await dialog.locator("input[type=datetime-local]").fill(when);
       await dialog.getByRole("button", { name: "Move", exact: true }).click();
     };
-    // Both clients pick the same first fixture; note its pre-move instant so
-    // we can observe A's write LANDING (value change is timezone-proof).
-    const fxId = await page
-      .locator("[data-fixture-id]:has(button[aria-pressed])")
-      .first()
-      .getAttribute("data-fixture-id");
-    const before = (
-      await apiJson<{ scheduled_at: string | null }>(request, `/api/v1/fixtures/${fxId}`)
-    ).data!.scheduled_at;
+    const moveAndAwait = (p: Page, when: string, wantStatus: (s: number) => boolean) =>
+      Promise.all([
+        p.waitForResponse(
+          (r) =>
+            /\/api\/v1\/fixtures\/[0-9a-f-]+$/.test(r.url()) &&
+            r.request().method() === "PATCH" &&
+            wantStatus(r.status()),
+          { timeout: 20_000 },
+        ),
+        move(p, when),
+      ]);
 
-    await move(page, "2026-09-16T18:00");
-    // A's write must be durably applied BEFORE B fires: on a slow runner B's
-    // POST can win the race, in which case B succeeds and the 409 toast lands
-    // on A — the exact CI failure this ordering prevents.
-    await expect
-      .poll(
-        async () =>
-          (await apiJson<{ scheduled_at: string | null }>(request, `/api/v1/fixtures/${fxId}`))
-            .data!.scheduled_at,
-        { timeout: 15_000 },
-      )
-      .not.toBe(before);
+    // A's move must COMMIT (2xx) before B writes, so B is provably stale.
+    await moveAndAwait(page, "2026-09-16T18:00", (s) => s >= 200 && s < 300);
     // A's own board refreshes without complaint.
     await expect(page.getByText("Schedule changed by someone else")).toHaveCount(0);
 
     // Client B still holds the pre-move seq: its write must 409 → toast.
-    await move(pageB, "2026-09-16T19:00");
+    await moveAndAwait(pageB, "2026-09-16T19:00", (s) => s === 409);
     await expect(pageB.getByText("Schedule changed by someone else — board refreshed.")).toBeVisible(
       { timeout: 15_000 },
     );
