@@ -32,6 +32,8 @@ export const HELP_ARTICLE_SLUGS = [
   "scheduling/locks",
   "scheduling/undo",
   "scheduling/constraints",
+  "scheduling/ai-scheduling",
+  "scheduling/ai-officials",
   "scheduling/timezones",
   "scheduling/officials",
   "scheduling/official-marks",

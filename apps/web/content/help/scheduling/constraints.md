@@ -19,6 +19,8 @@ Constraints are the rules the auto-scheduler plays by. They live in the division
 - **Court preferences** — finals on Court 1, wheelchairs on the accessible court.
 - **Describe it in words** — type "45 players, 2 courts, done by 6pm, nobody plays twice in a row" and the assistant proposes constraints; you review and apply, nothing is set silently.
 
+To go further and have the same plain-language instruction lay out the whole timetable, see [AI Schedule](/help/scheduling/ai-scheduling).
+
 ## Diagnosing a day
 
 The **schedule report** shows each entrant's shortest and longest waits — the fastest way to spot the poor team sitting idle for three hours before you print anything.
