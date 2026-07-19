@@ -142,6 +142,48 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     expect(ev).toMatchObject({ type: "officials_assigned", broken: null });
   });
 
+  // Task 10 (v4/03 §10): an AI-sourced apply stamps its provenance (trimmed
+  // instruction) into the officials_assigned event; a plain apply carries none.
+  it("stamps the ai block into officials_assigned when present, omits it otherwise", async () => {
+    const { auth } = await seedOrg("pro_plus");
+    const { division, fixtures } = await seedScheduledDivision(auth);
+    await createOfficial(auth, { display_name: "Ref One", role_keys: ["referee"] });
+    await createOfficial(auth, { display_name: "Ref Two", role_keys: ["referee"] });
+    const proposal = await autoAssignOfficials(auth, division.id, {
+      policy: {
+        roles: ["referee"], poolLock: false, blockStay: true, fairness: "tournament",
+        teamRefKeepDivision: false, restMinMinutes: 0, blockGapMinutes: 30,
+      },
+      rng_seed: "t",
+    });
+    const assignments = proposal.assignments.map((a) => ({
+      fixture_id: a.fixtureId, official_id: a.officialId, role_key: a.roleKey, locked: false,
+    }));
+
+    // With an ai block → trimmed instruction lands in the latest event payload.
+    await applyOfficialAssignments(auth, division.id, {
+      assignments,
+      ai: { instruction: "  cover every fixture  ", summary: "assigned refs", model: "claude-o", repair_rounds: 1 },
+    });
+    const [withAi] = await sql<{ payload: { applied: number; ai?: { instruction: string; summary: string; model: string; repair_rounds: number } } }[]>`
+      select payload from division_events
+      where division_id = ${division.id} and type = 'officials_assigned'
+      order by seq desc limit 1`;
+    expect(withAi.payload.ai?.instruction).toBe("cover every fixture");
+    expect(withAi.payload.ai?.summary).toBe("assigned refs");
+    expect(withAi.payload.ai?.model).toBe("claude-o");
+    expect(withAi.payload.ai?.repair_rounds).toBe(1);
+    expect(fixtures.length).toBeGreaterThan(0);
+
+    // Without an ai block → the event payload has no ai key at all.
+    await applyOfficialAssignments(auth, division.id, { assignments });
+    const [noAi] = await sql<{ payload: Record<string, unknown> }[]>`
+      select payload from division_events
+      where division_id = ${division.id} and type = 'officials_assigned'
+      order by seq desc limit 1`;
+    expect("ai" in noAi.payload).toBe(false);
+  });
+
   it("team-as-referee is never assigned to its own fixture", async () => {
     const { auth } = await seedOrg("pro_plus");
     const { division, fixtures, entrants } = await seedScheduledDivision(auth);

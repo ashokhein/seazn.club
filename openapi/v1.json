@@ -49921,6 +49921,34 @@
                       ],
                       "additionalProperties": false
                     }
+                  },
+                  "ai": {
+                    "type": "object",
+                    "properties": {
+                      "instruction": {
+                        "type": "string",
+                        "maxLength": 500
+                      },
+                      "summary": {
+                        "type": "string",
+                        "maxLength": 600
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "repair_rounds": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "instruction",
+                      "summary",
+                      "model",
+                      "repair_rounds"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -49936,7 +49964,13 @@
                     "role_key": "example",
                     "locked": true
                   }
-                ]
+                ],
+                "ai": {
+                  "instruction": "example",
+                  "summary": "example",
+                  "model": "example",
+                  "repair_rounds": 0
+                }
               }
             }
           }

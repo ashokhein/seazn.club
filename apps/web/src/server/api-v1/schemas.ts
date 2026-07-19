@@ -1433,6 +1433,9 @@ export const ApplyOfficials = z.object({
       locked: z.boolean().default(false),
     }),
   ),
+  /** Audit provenance when the set came from the AI Officials Architect (v4/03
+   *  §10) — shared with ApplyScheduleRequest; merged into officials_assigned. */
+  ai: AiApplyMeta.optional(),
 });
 
 export const PatchFixtureOfficials = z.object({
