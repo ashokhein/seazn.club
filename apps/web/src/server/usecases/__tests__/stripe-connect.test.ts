@@ -139,6 +139,41 @@ describe.skipIf(!HAS_DB)("Express dashboard login link", () => {
       status: 403,
     });
   });
+
+  it("restricted key (login links fenced) falls back to Stripe's Express login page", async () => {
+    const { owner, orgId } = await seedProOrg();
+    await sql`update organizations set stripe_account_id = ${"acct_rk_" + orgId.slice(0, 8)}
+              where id = ${orgId}`;
+    // Stripe rejects createLoginLink for rk_ keys with a PermissionError —
+    // not a grantable scope, the endpoint requires a full secret key.
+    stripeMock.loginLinkCreate.mockRejectedValue(
+      Object.assign(new Error("This is a restricted API key"), {
+        type: "StripePermissionError",
+        statusCode: 403,
+      }),
+    );
+    const { url } = await createConnectDashboardLink(owner, orgId);
+    expect(url).toBe("https://connect.stripe.com/express_login");
+  });
+
+  it("other Stripe failures become a clean 502 — no key material in the message", async () => {
+    const { owner, orgId } = await seedProOrg();
+    await sql`update organizations set stripe_account_id = ${"acct_bad_" + orgId.slice(0, 8)}
+              where id = ${orgId}`;
+    stripeMock.loginLinkCreate.mockRejectedValue(
+      Object.assign(
+        new Error(
+          "The provided key 'rk_test_abc123' does not have access to account 'acct_nope'",
+        ),
+        { type: "StripeInvalidRequestError", statusCode: 400 },
+      ),
+    );
+    const err = (await createConnectDashboardLink(owner, orgId).catch((e) => e)) as Error & {
+      status?: number;
+    };
+    expect(err.status).toBe(502);
+    expect(String(err.message)).not.toMatch(/rk_test|acct_/);
+  });
 });
 
 describe.skipIf(!HAS_DB)("Connect health mirror (P1-8)", () => {

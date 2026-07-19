@@ -147,6 +147,10 @@ export async function createConnectOnboardingLink(
  * and Stripe's own "more information needed" prompts live there). Fresh per
  * click — the URLs are single-use and short-lived.
  */
+/** Stripe's own Express login page (email/OTP) — works for every Express
+ *  account with no API call; the fallback when login links can't be minted. */
+const EXPRESS_LOGIN_URL = "https://connect.stripe.com/express_login";
+
 export async function createConnectDashboardLink(
   auth: AuthCtx,
   orgId: string,
@@ -157,8 +161,23 @@ export async function createConnectDashboardLink(
   if (!accountId) {
     throw new HttpError(409, "Connect Stripe first — this organization has no Stripe account");
   }
-  const link = await getStripe().accounts.createLoginLink(accountId);
-  return { url: link.url };
+  try {
+    const link = await getStripe().accounts.createLoginLink(accountId);
+    return { url: link.url };
+  } catch (err) {
+    // Restricted (rk_) keys cannot mint login links at all — Stripe fences
+    // the endpoint to full secret keys, it's not a grantable scope. Send the
+    // owner to Stripe's own Express login page instead of failing.
+    const type = (err as { type?: string }).type;
+    const status = (err as { statusCode?: number }).statusCode;
+    if (type === "StripePermissionError" || status === 403) {
+      return { url: EXPRESS_LOGIN_URL };
+    }
+    // Anything else: log the detail, answer clean — Stripe's raw message
+    // names the platform key and account id and must never reach a client.
+    console.error("createConnectDashboardLink failed", err);
+    throw new HttpError(502, "Stripe couldn't create a dashboard link for this account");
+  }
 }
 
 /** Mirror Stripe's account flags (account.updated webhook + refresh path). */
