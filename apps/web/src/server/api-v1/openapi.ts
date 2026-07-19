@@ -242,6 +242,14 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/suspensions", method: "get", summary: "List suspensions in the division, optional ?status= filter", tag: "discipline", response: z.array(S.Suspension), errors: [402], query: { status: { schema: { type: "string", enum: ["pending", "active", "served", "waived"] } } } },
   { path: "/divisions/{id}/suspensions", method: "post", summary: "Record a manual suspension (pending until confirmed)", tag: "discipline", request: S.CreateSuspension, response: S.Suspension, status: 201, errors: [402] },
   { path: "/suspensions/{id}", method: "patch", summary: "Confirm (→ active), waive or adjust a suspension", tag: "discipline", request: S.DecideSuspension, response: S.Suspension, errors: [402] },
+  // Official marks & match reports (SPEC-3, PROMPT-80)
+  { path: "/fixture-officials/{id}/mark", method: "put", summary: "Rate an accepted, decided assignment 1..5 with an optional comment (console, Pro `officials.marks`); upsert, one per assignment; 403 outside the window", tag: "officials", request: S.PutMarkBody, status: 204, errors: [402, 403] },
+  { path: "/fixture-officials/{id}/mark", method: "delete", summary: "Clear the mark on an assignment (idempotent; Pro `officials.marks`)", tag: "officials", status: 204, errors: [402] },
+  { path: "/officials/{id}/marks-summary", method: "get", summary: "Org-scoped mark average, count and last 5 comments for an official (console, Pro `officials.marks`)", tag: "officials", response: S.MarkSummary, errors: [402] },
+  { path: "/me/officiating/{fixtureOfficialId}/report", method: "get", summary: "The caller's match report draft/submitted for one of their accepted assignments (session only, cross-org rail); null when none filed yet", tag: "officials", response: S.MatchReport.nullable(), errors: [403] },
+  { path: "/me/officiating/{fixtureOfficialId}/report", method: "put", summary: "Save the match report draft body + incident rows (session only; free); draft only — a submitted report is immutable (409); 403 outside the window", tag: "officials", request: S.PutReportBody, response: S.MatchReport, errors: [403, 409] },
+  { path: "/me/officiating/{fixtureOfficialId}/report/submit", method: "post", summary: "Submit the draft (immutable thereafter, 409 on resubmit); misconduct incidents suggest pending suspensions when the org enforces discipline (session only)", tag: "officials", response: S.MatchReport, errors: [403, 409] },
+  { path: "/fixtures/{id}/reports", method: "get", summary: "Submitted match reports for a fixture with the official's name (console; free)", tag: "officials", response: z.array(S.FixtureReport) },
 ];
 
 // ---------------------------------------------------------------------------

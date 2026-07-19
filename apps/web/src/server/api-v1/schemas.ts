@@ -1580,3 +1580,48 @@ export const Suspension = z.object({
   decidedAt: z.string().nullable(),
   triggerVoided: z.boolean(),
 });
+
+// Official marks & match reports (SPEC-3 / PROMPT-80) --------------------------
+
+export const PutMarkBody = z.object({
+  mark: z.number().int().min(1).max(5),
+  comment: z.string().max(2000).optional(),
+});
+
+export const MarkSummary = z.object({
+  average: z.number().nullable(),
+  count: z.number().int(),
+  recent: z.array(
+    z.object({
+      mark: z.number().int(),
+      comment: z.string().nullable(),
+      fixtureLabel: z.string(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+
+export const IncidentKind = z.enum(["red_card", "misconduct", "injury", "other"]);
+
+export const ReportIncident = z.object({
+  kind: IncidentKind,
+  person_id: Uuid.optional(),
+  entrant_id: Uuid.optional(),
+  note: z.string().min(1).max(2000),
+});
+
+export const PutReportBody = z.object({
+  body: z.string().max(5000),
+  incidents: z.array(ReportIncident).max(50),
+});
+
+export const MatchReport = z.object({
+  id: Uuid,
+  fixtureOfficialId: Uuid,
+  status: z.enum(["draft", "submitted"]),
+  body: z.string(),
+  incidents: z.array(ReportIncident),
+  submittedAt: z.string().nullable(),
+});
+
+export const FixtureReport = MatchReport.extend({ officialName: z.string() });

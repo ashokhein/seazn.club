@@ -310,6 +310,7 @@ const ORG_TABLES = {
   team: "teams",
   import: "imports",
   official: "officials",
+  fixture_official: "fixture_officials",
   suspension: "suspensions",
 } as const;
 export type ResourceKind = keyof typeof ORG_TABLES;

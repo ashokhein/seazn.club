@@ -266,7 +266,16 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "GET /divisions/:id/suspensions",
   "POST /divisions/:id/suspensions",
   "PATCH /suspensions/:id",
->>>>>>> 5272656 (feat(discipline): model, card fold, detection, API (V292))
+  // Official marks & match reports (SPEC-3 / PROMPT-80): marks are a console
+  // CRM surface (like discipline); the report routes are session-personal /me
+  // surfaces (like every other officiating /me lane). None key-accessible.
+  "PUT /fixture-officials/:id/mark",
+  "DELETE /fixture-officials/:id/mark",
+  "GET /officials/:id/marks-summary",
+  "GET /me/officiating/:fixtureOfficialId/report",
+  "PUT /me/officiating/:fixtureOfficialId/report",
+  "POST /me/officiating/:fixtureOfficialId/report/submit",
+  "GET /fixtures/:id/reports",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.
