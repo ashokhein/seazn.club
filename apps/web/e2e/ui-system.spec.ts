@@ -41,16 +41,19 @@ test("destructive action uses ConfirmDialog — a native confirm() fails the tes
   expect(club.status).toBeLessThan(300);
 
   failOnNativeDialog(page); // any window.confirm/alert = instant failure
-  await page.goto("/directory?tab=clubs");
-  const row = page.getByRole("row", { name: new RegExp(`Doomed Club ${TAG}`) });
-  await row.getByRole("button", { name: "Delete" }).click();
+  // Delete moved to the club hub's danger zone (the directory list is read/create only).
+  await page.goto(`/clubs/${club.data!.id}`);
+  await page.getByRole("button", { name: "Delete", exact: true }).click();
 
   // The app-owned dialog, not the browser's.
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toBeVisible();
   await expect(dialog.getByText(/its teams stay/i)).toBeVisible();
   await dialog.getByRole("button", { name: "Delete club" }).click();
-  await expect(row).toHaveCount(0);
+
+  // Confirming lands back on the directory, with the club gone from the list.
+  await page.waitForURL(/\/directory\?tab=clubs/);
+  await expect(page.getByRole("link", { name: new RegExp(`Doomed Club ${TAG}`) })).toHaveCount(0);
 });
 
 test("visibility picker: Link only surfaces a copyable URL; public page stays noindex", async ({
