@@ -20,6 +20,7 @@ import {
   sendSponsorRefundEmail,
   sendSponsorDisputeAlertEmail,
   sendSponsorDisputeLostEmail,
+  sendSponsorDisputeWonEmail,
 } from "@/lib/email";
 import { deferred } from "@/lib/deferred";
 import { fireOrgRevalidate } from "@/server/public-site/revalidate";
@@ -44,6 +45,9 @@ export interface SponsorRow {
   /** The paid order that activated this placement, when it was bought
    *  through a package (list reads only — write paths return it unset). */
   paid_order_id?: string | null;
+  /** Terminal outcome: a lost dispute wrote the paid order off — the
+   *  placement stayed down and the row explains why (list reads only). */
+  dispute_lost?: boolean;
   /** True while that order carries an OPEN dispute (paid + disputed_at):
    *  the placement was parked by the dispute handler, not by the manager.
    *  Cleared when the dispute is won; a lost dispute flips the order off
@@ -108,7 +112,10 @@ export async function listSponsorRows(orgId: string): Promise<SponsorRow[]> {
             limit 1) as paid_order_id,
            exists(select 1 from sponsor_orders o
                   where o.sponsor_id = sponsors.id and o.status = 'paid'
-                    and o.disputed_at is not null) as dispute_parked
+                    and o.disputed_at is not null) as dispute_parked,
+           exists(select 1 from sponsor_orders o
+                  where o.sponsor_id = sponsors.id and o.status = 'refunded'
+                    and o.dispute_id is not null) as dispute_lost
     from sponsors
     order by array_position(array['title','gold','silver','partner'], tier),
              display_order, created_at, id`);
@@ -378,12 +385,13 @@ export interface SponsorOrderRow {
   created_at: string;
   paid_at: string | null;
   disputed_at: string | null;
+  dispute_id: string | null;
 }
 
 const ORDER_COLS = [
   "id", "package_id", "sponsor_name", "sponsor_email", "payment_intent_id",
   "amount_cents", "currency", "status", "sponsor_id", "created_at", "paid_at",
-  "disputed_at",
+  "disputed_at", "dispute_id",
 ] as const;
 
 export async function listSponsorOrders(auth: AuthCtx): Promise<SponsorOrderRow[]> {
@@ -797,9 +805,24 @@ export async function handleSponsorDispute(
   }
 
   if (dispute.status === "won") {
+    // First transition only (replay-safe): the row still carried the flag.
+    const firstClear = order.disputed_at !== null;
     await sql`update sponsor_orders set disputed_at = null where id = ${order.id}`;
     if (order.sponsor_id) {
       await sql`update sponsors set status = 'active' where id = ${order.sponsor_id}`;
+    }
+    if (firstClear) {
+      const owner = await currentOrgOwnerEmail(order.org_id);
+      if (owner) {
+        void sendSponsorDisputeWonEmail({
+          to: owner,
+          orgName: (await resolveOrgName(order.org_id)) ?? "your organisation",
+          packageName: await resolvePackageName(order.package_id),
+          sponsorName: order.sponsor_name,
+          amountCents: dispute.amount,
+          currency: order.currency,
+        }).catch(() => {});
+      }
     }
     bustPublicSponsors(order.org_id);
     return true;

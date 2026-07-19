@@ -1256,6 +1256,9 @@ export const Sponsor = z.object({
   /** List reads: true while that order carries an open payment dispute — the
    *  placement was parked by the dispute handler and can't be re-activated. */
   dispute_parked: z.boolean().optional(),
+  /** List reads: a lost dispute wrote the activating order off — the
+   *  placement stays down and this explains why. */
+  dispute_lost: z.boolean().optional(),
 });
 
 export const CreateSponsor = z.object({
@@ -1305,6 +1308,7 @@ export const SponsorOrder = z.object({
   created_at: z.string(),
   paid_at: z.string().nullable(),
   disputed_at: z.string().nullable(),
+  dispute_id: z.string().nullable(),
 });
 
 export const StartSponsorCheckout = z.object({

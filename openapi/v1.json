@@ -26651,6 +26651,9 @@
                           },
                           "dispute_parked": {
                             "type": "boolean"
+                          },
+                          "dispute_lost": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -27034,6 +27037,9 @@
                           ]
                         },
                         "dispute_parked": {
+                          "type": "boolean"
+                        },
+                        "dispute_lost": {
                           "type": "boolean"
                         }
                       },
@@ -27464,6 +27470,9 @@
                           ]
                         },
                         "dispute_parked": {
+                          "type": "boolean"
+                        },
+                        "dispute_lost": {
                           "type": "boolean"
                         }
                       },
@@ -29201,6 +29210,16 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "dispute_id": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -29215,7 +29234,8 @@
                           "sponsor_id",
                           "created_at",
                           "paid_at",
-                          "disputed_at"
+                          "disputed_at",
+                          "dispute_id"
                         ],
                         "additionalProperties": false
                       }
@@ -29241,7 +29261,8 @@
                       "sponsor_id": "example",
                       "created_at": "example",
                       "paid_at": "example",
-                      "disputed_at": "example"
+                      "disputed_at": "example",
+                      "dispute_id": "example"
                     }
                   ],
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -29540,6 +29561,16 @@
                                   "type": "null"
                                 }
                               ]
+                            },
+                            "dispute_id": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -29554,7 +29585,8 @@
                             "sponsor_id",
                             "created_at",
                             "paid_at",
-                            "disputed_at"
+                            "disputed_at",
+                            "dispute_id"
                           ],
                           "additionalProperties": false
                         },
@@ -29589,7 +29621,8 @@
                       "sponsor_id": "example",
                       "created_at": "example",
                       "paid_at": "example",
-                      "disputed_at": "example"
+                      "disputed_at": "example",
+                      "dispute_id": "example"
                     },
                     "checkout_url": "example"
                   },
@@ -29990,6 +30023,16 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "dispute_id": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -30004,7 +30047,8 @@
                         "sponsor_id",
                         "created_at",
                         "paid_at",
-                        "disputed_at"
+                        "disputed_at",
+                        "dispute_id"
                       ],
                       "additionalProperties": false
                     },
@@ -30028,7 +30072,8 @@
                     "sponsor_id": "example",
                     "created_at": "example",
                     "paid_at": "example",
-                    "disputed_at": "example"
+                    "disputed_at": "example",
+                    "dispute_id": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }

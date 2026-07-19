@@ -139,6 +139,22 @@ describe.skipIf(!HAS_DB)("sponsor order delete protection (V299)", () => {
     });
   });
 
+  it("a lost dispute reads dispute_lost on the placement row", async () => {
+    const { orgId, compId } = await seedOrgWithComp();
+    const pkg = await seedPackage(orgId, compId);
+    const [{ id: sponsorId }] = await sql<{ id: string }[]>`
+      insert into sponsors (org_id, competition_id, name, tier, status)
+      values (${orgId}, ${compId}, 'Lost Co', 'gold', 'inactive') returning id`;
+    const orderId = await seedOrder(orgId, pkg, { status: "refunded", disputedAt: new Date() });
+    await sql`update sponsor_orders set sponsor_id = ${sponsorId}, dispute_id = 'dp_lost_test'
+              where id = ${orderId}`;
+    const rows = await listSponsorRows(orgId);
+    expect(rows.find((r) => r.id === sponsorId)).toMatchObject({
+      dispute_lost: true,
+      dispute_parked: false,
+    });
+  });
+
   it("evidence pack carries order, receipt, placement proof and dispute id", async () => {
     const { auth, orgId, compId } = await seedOrgWithComp();
     const pkg = await seedPackage(orgId, compId);

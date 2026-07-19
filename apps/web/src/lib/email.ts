@@ -36,7 +36,9 @@ import {
   sponsorDisputeAlertTemplate,
   type SponsorDisputeAlertArgs,
   sponsorDisputeLostTemplate,
+  sponsorDisputeWonTemplate,
   type SponsorDisputeLostArgs,
+  type SponsorDisputeWonArgs,
   passRevokedTemplate,
   type PassRevokedArgs,
   staffDisputeAlertTemplate,
@@ -488,6 +490,21 @@ export async function sendSponsorDisputeLostEmail(
   const { to, locale = "en", ...args } = opts;
   const dict = await getDictionary(locale, "emails");
   return send({ to, ...sponsorDisputeLostTemplate(args, dict) });
+}
+
+export interface SponsorDisputeWonEmail extends SponsorDisputeWonArgs {
+  to: string;
+  locale?: Locale;
+}
+
+/** Organiser outcome mail: a sponsorship chargeback closed WON — the money
+ *  stays and the placement is restored (the lost mail's happy twin). */
+export async function sendSponsorDisputeWonEmail(
+  opts: SponsorDisputeWonEmail,
+): Promise<boolean> {
+  const { to, locale = "en", ...args } = opts;
+  const dict = await getDictionary(locale, "emails");
+  return send({ to, ...sponsorDisputeWonTemplate(args, dict) });
 }
 
 export interface PassRevokedEmail extends PassRevokedArgs {

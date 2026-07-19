@@ -19,11 +19,13 @@ import type Stripe from "stripe";
 const emailMock = vi.hoisted(() => ({
   alert: vi.fn().mockResolvedValue(true),
   lost: vi.fn().mockResolvedValue(true),
+  won: vi.fn().mockResolvedValue(true),
 }));
 vi.mock("@/lib/email", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email")>()),
   sendSponsorDisputeAlertEmail: emailMock.alert,
   sendSponsorDisputeLostEmail: emailMock.lost,
+  sendSponsorDisputeWonEmail: emailMock.won,
 }));
 
 import { sql } from "@/lib/db";
@@ -84,6 +86,7 @@ const disputeFor = (intent: string, id: string, status = "needs_response") =>
 beforeEach(() => {
   emailMock.alert.mockClear();
   emailMock.lost.mockClear();
+  emailMock.won.mockClear();
 });
 
 afterAll(async () => {
@@ -163,7 +166,7 @@ describe.skipIf(!HAS_DB)("handleSponsorDispute", () => {
   });
 
   it("closed won: flag cleared, placement re-activated (idempotent on replay)", async () => {
-    const { intent, orderId, sponsorId } = await seedPaidSponsorOrder();
+    const { intent, orderId, sponsorId, ownerEmail } = await seedPaidSponsorOrder();
     const did = "dp_" + uniq();
     await handleSponsorDispute(disputeFor(intent, did), "created");
     const won = disputeFor(intent, did, "won");
@@ -174,6 +177,10 @@ describe.skipIf(!HAS_DB)("handleSponsorDispute", () => {
     const [s] = await sql`select status from sponsors where id = ${sponsorId}`;
     expect(s.status).toBe("active");
     expect(emailMock.lost).not.toHaveBeenCalled(); // a win is not a loss
+    // The organiser hears about the win exactly once — the replay above must
+    // not re-notify (the flag was already clear on the second pass).
+    expect(emailMock.won).toHaveBeenCalledTimes(1);
+    expect(emailMock.won.mock.calls[0]![0]).toMatchObject({ to: ownerEmail });
   });
 
   it("ignores non-sponsor intents (reports no match)", async () => {

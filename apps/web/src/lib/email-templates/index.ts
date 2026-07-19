@@ -29,6 +29,10 @@ export {
   sponsorDisputeLostTemplate,
   type SponsorDisputeLostArgs,
 } from "./sponsor-dispute-lost";
+export {
+  sponsorDisputeWonTemplate,
+  type SponsorDisputeWonArgs,
+} from "./sponsor-dispute-won";
 export { passRevokedTemplate, type PassRevokedArgs } from "./pass-revoked";
 export {
   staffDisputeAlertTemplate,
