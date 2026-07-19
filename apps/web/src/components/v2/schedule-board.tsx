@@ -21,6 +21,7 @@ import { BoardGrid } from "./board/board-grid";
 import { BoardLanes } from "./board/board-lanes";
 import { BoardLegend } from "./board/board-legend";
 import { BoardTray } from "./board/board-tray";
+import { AiConsole, useAiSchedulingEnabled } from "./board/ai-console";
 import { ConflictsBadge, ConflictsPanel } from "./board/conflicts-panel";
 import { MovePanel } from "./board/move-panel";
 import { SettingsPanel } from "./board/settings-panel";
@@ -55,6 +56,14 @@ interface Props {
   settings: { division_id: string; config: BoardConfig; tz: string };
   canEdit: boolean;
   constraintsAllowed: boolean;
+  /** Organiser can manage this division (role + not frozen), independent of the
+   *  paid board-edit entitlement. Drives the AI console entry point so a free
+   *  org still reaches the in-dock paywall (canEdit folds in scheduling.board,
+   *  which a Community org lacks). Defaults to canEdit. */
+  canManage?: boolean;
+  /** Client-side entitlement read for the AI console (scheduling.ai). When
+   *  false the docked console renders the paywall instead of the wizard. */
+  aiAllowed?: boolean;
   /** Competition run dates — drive the week view's day span. */
   competitionStart?: string | null;
   competitionEnd?: string | null;
@@ -81,6 +90,8 @@ export function ScheduleBoard({
   settings,
   canEdit,
   constraintsAllowed,
+  canManage,
+  aiAllowed = false,
   competitionStart,
   competitionEnd,
   venueCap = "Court",
@@ -94,6 +105,15 @@ export function ScheduleBoard({
   const single = divisions.length === 1 ? divisions[0] : null;
   const cfg = settings.config;
   const multi = divisions.length > 1;
+
+  // AI schedule console (v4): single-division boards only for now — a plan is
+  // per division. The PostHog "ai-scheduling" kill switch hides the entry point
+  // entirely when flipped off; it is fail-open (see the hook).
+  const aiFlagOn = useAiSchedulingEnabled();
+  const [aiOpen, setAiOpen] = useState(false);
+  // Entry point is role-gated (not entitlement-gated) so a free org reaches the
+  // in-dock paywall; the plan check happens inside the console via aiAllowed.
+  const aiAvailable = (canManage ?? canEdit) && single !== null && aiFlagOn;
 
   // ------------------------------------------------- division filter (?d=)
   const selectedSlugs = useMemo(() => {
@@ -374,6 +394,26 @@ export function ScheduleBoard({
             ))}
         {/* Pin semantics live next to the buttons they modify (v3/03 §4). */}
         {canEdit && <Tip id="schedule.locking" />}
+        {/* AI schedule architect (v4) — the console dock's entry point. Free
+            orgs still see it; the paywall lives inside the dock. */}
+        {aiAvailable && (
+          <button
+            type="button"
+            onClick={() => setAiOpen(true)}
+            title={msg("board.ai.buttonTitle")}
+            aria-haspopup="dialog"
+            aria-expanded={aiOpen}
+            className="btn inline-flex items-center gap-1.5 border border-violet-200 bg-gradient-to-br from-violet-50 to-indigo-50 px-3 py-1.5 text-xs font-semibold text-violet-700 hover:from-violet-100 hover:to-indigo-100"
+          >
+            <span aria-hidden>✦</span>
+            {msg("board.ai.button")}
+            {!aiAllowed && (
+              <svg aria-hidden viewBox="0 0 16 16" fill="currentColor" className="h-3 w-3 shrink-0 text-violet-500">
+                <path d="M8 1a3.5 3.5 0 0 0-3.5 3.5V6H4a1.5 1.5 0 0 0-1.5 1.5v5A1.5 1.5 0 0 0 4 14h8a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 12 6h-.5V4.5A3.5 3.5 0 0 0 8 1Zm2 5H6V4.5a2 2 0 1 1 4 0V6Z" />
+              </svg>
+            )}
+          </button>
+        )}
         <div className="flex-1" />
         {/* Whole-division freeze (Jul3/03 §4), surfaced on the board itself —
             single-division boards only; the competition board freezes per
@@ -645,6 +685,15 @@ export function ScheduleBoard({
           divisionNames={divisionNames}
           onJump={jumpTo}
           onClose={() => setPanelOpen(false)}
+        />
+      )}
+
+      {aiOpen && single && (
+        <AiConsole
+          divisionId={single.id}
+          aiAllowed={aiAllowed}
+          onClose={() => setAiOpen(false)}
+          onApplied={() => router.refresh()}
         />
       )}
 
