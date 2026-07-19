@@ -2,7 +2,7 @@
 
 // Club hub → Teams tab (W1 §5.2): the club's teams with add-a-team, the crest
 // grid, per-team badge + squad, and detach. The squad editor + bulk logo grid
-// are lifted out of the legacy clubs-panel.tsx (deleted in Task 11); each
+// are lifted out of the legacy clubs directory panel (retired in Task 11); each
 // expanded team row drives the self-fetching squad panel.
 import { useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";

@@ -21,6 +21,7 @@ export const HELP_ARTICLE_SLUGS = [
   "players/claim-your-profile",
   "players/invite-to-claim",
   "players/player-stats-and-photo",
+  "directory/clubs-and-teams",
   "registration/open-registration",
   "registration/card-payments",
   "registration/reference-numbers",

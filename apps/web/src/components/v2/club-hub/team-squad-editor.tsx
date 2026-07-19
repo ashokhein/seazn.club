@@ -1,7 +1,8 @@
 "use client";
 
-// Shared squad editor for the club hub (W1 §5.2). Lifted out of clubs-panel.tsx
-// so the hub Teams tab and Task 7's directory team list can both drive it.
+// Shared squad editor for the club hub (W1 §5.2). Lifted out of the legacy
+// clubs directory panel so the hub Teams tab and Task 7's directory team list
+// can both drive it.
 // Adds player quick-add — you no longer have to create the person under Players
 // first — plus a self-fetching `TeamSquadPanel` wrapper for the thin list.
 import { useEffect, useState } from "react";
