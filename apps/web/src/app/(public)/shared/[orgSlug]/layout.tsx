@@ -11,6 +11,7 @@ import { notFound, permanentRedirect } from "next/navigation";
 import Image from "next/image";
 import { Barlow_Condensed } from "next/font/google";
 import { AttributionLink } from "@/components/attribution-link";
+import { StripeBadge } from "@/components/stripe-badge";
 import { isReservedSlug } from "@/lib/public-site";
 import { publicThemeStyle } from "@/lib/public-theme";
 import { getPublicOrg } from "@/server/public-site/data";
@@ -104,7 +105,7 @@ export default async function PublicOrgLayout({
         <div aria-hidden className="h-0.5 bg-accent" />
       </header>
       <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-6">{children}</main>
-      <footer className="mt-8 py-6 text-center text-xs text-ink-muted">
+      <footer className="mt-8 space-y-1.5 py-6 text-center text-xs text-ink-muted">
         {/* Doc 09 §4: fixed platform footer for Community; removable for Pro
             (branding entitlement, resolved server-side). */}
         {org.branded ? null : (
@@ -113,6 +114,13 @@ export default async function PublicOrgLayout({
             <AttributionLink surface="badge" />
           </p>
         )}
+        {/* Trust line only where it's true: the org actually takes card entry
+            fees through Stripe. All tiers — payment trust, not platform chrome. */}
+        {org.card_payments ? (
+          <p>
+            <StripeBadge label="Payments secured by" className="hover:text-ink" />
+          </p>
+        ) : null}
       </footer>
     </div>
   );
