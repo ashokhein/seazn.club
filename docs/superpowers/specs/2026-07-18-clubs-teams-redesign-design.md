@@ -241,7 +241,7 @@ Each wave = own branch/PR wave, own plan, help-page pass every wave
 - Wizard: partial success is per-row reported; already-entered = locked cell,
   never an error; roster seed failures roll back only that row's entrant.
 - Public club page for unknown slug or org without `clubs.public_page` → 404.
-- Contact email invalid → 422.
+- Contact email invalid → 400 (repo-wide zod convention; spec originally said 422).
 
 ## 8. Testing
 

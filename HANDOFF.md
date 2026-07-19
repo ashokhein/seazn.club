@@ -1,64 +1,61 @@
 # HANDOFF
 
 ## Status
-DONE — v13 wave (PROMPT-59..66) fully built on branch `worktree-v13` (worktree
-.claude/worktrees/v13, base 42267fe). All local gates green; PR not yet opened.
+Clubs W1 foundation COMPLETE on `feat/clubs-w1` (worktree .claude/worktrees/clubs-w1,
+rebased onto origin/main, merge-base 8bcd80f). All 13 tasks reviewed+approved.
+Final whole-branch review in flight; then battery → PR → CI → merge (pre-authorized).
 
 ## Current task
-Open the PR, then post-merge follow-ups below.
+Final review findings fix pass → full battery → PR → watch CI → merge → walkthrough artifact.
 
 ## Done
-61 draw-guard (supportsDraws enforced at finalize + stage-scoped shootout/extraTime
-overlay in append-event/fold) · 59 CombinedQualification + slotOrder + pool-key
-hardening + typed qualification zod · 66 addFixture (league/group/swiss, console
-Add-match) · 60 entrants.badge_url (V288) + resolver + console/public/embed/PDF
-render + V289 public view + inline new_person members + badge upload route ·
-62 twoSidedBracket engine geometry + console BracketPanel + public tree +
-landscape poster PDF (Documents menu) · 63 signed audit (JSON+PDF on
-/fixtures/{id}/audit, Ed25519, /.well-known/seazn-audit-keys, console verified
-strip, Pro scoring.audit_export in V288, runbook
-docs/superpowers/runbooks/audit-signing.md) · 64 bracket slide + in-play pinned
-rotation on the EXISTING /slideshow + public no-login /present (comp+div,
-noindex) · 65 public profile stats (free) + leaderboard links + /me self photo ·
-closing: 8 new help articles + slideshow article, i18n ×4 (2480 keys), smoke
-v13Suite, README status table, this file.
+V291 clubs profile (slug/home_ground/website/notes, colors flat home_/away_ keys) +
+club_contacts w/ tenant RLS · caps clubs.max 2/2/20/∞, teams.max 2/2/40/∞,
+teams.squad_max 20/20/∞/∞ via withinLimit→402 feature_key→UpgradeGate; clubs.hierarchy
+all plans · club/team create + contacts CRUD APIs (key-scopes+openapi gated) · import
+cap guards · /admin/entitlements numeric editor (DENY-aware, dual-value) · thin
+Clubs & Teams directory list (clubs-teams-list.tsx, partitionDirectory) · club hub
+/clubs/[id] tabs overview/teams/entries, kit stripe+chips, squad editor moved to
+club-hub/team-squad-editor.tsx, crest upload pinned to hub club (pinFilesToClub/
+finalizeMapping) · legacy clubs-panel.tsx DELETED · help content/help/directory/
+clubs-and-teams.md · pricing matrix cap rows + orgs.max_owned relabel · smoke 371/0
+(clubsSuite pro+free 402) · e2e clubs 12/0 incl 375px ≥44px gates.
 
 ## In progress
-(none)
+Final whole-branch review (opus, package .superpowers/sdd/review-8bcd80f..a1f9f7e.diff);
+minors triage list .superpowers/sdd/final-review-minors.md; ledger MAIN repo
+.superpowers/sdd/progress.md.
 
 ## Next steps
-1. Open the PR: `gh pr create` from worktree-v13 (base main), title
-   "v13: real-competition fidelity — draw guard, combined qualification,
-   brackets, badges, signed audit, presentation (PROMPT-59..66)".
-2. Deploy backlog AFTER merge: stg+prod `npm run db:apply` (V284→V289; note
-   dev DB has a foreign V286 "pro plus plan" from the payments branch —
-   Flyway on stg/prod needs BOTH branches merged or ignoreMissing), then
-   `fly secrets set AUDIT_SIGNING_KEY=… AUDIT_SIGNING_KEY_ID=k1` per app
-   (runbook), plus the still-pending v10 webhook events + V284/V285.
-3. FIFA capstone on stg (plan Task 22): re-record 4 stuck R32 fixtures,
-   re-seed with combine+slotOrder+badge flags, export the real bracket poster.
+1. Apply final-review MUST-FIX findings via ONE fix subagent, re-verify, then:
+   cd apps/web && npx tsc --noEmit && npx vitest run; smoke + e2e; push; gh pr create
+   (base main); watch CI; MERGE (user pre-authorized on green).
+2. Playwright visual walkthrough artifact (desktop+375px: directory, hub tabs,
+   quick-add, 402 gate, admin editor) → claude.ai artifact.
+3. Post-merge deploy backlog: stg/prod db:apply (V285..V291 pending), stripe:sync,
+   smoke; V291 renumber note: main's v4 docs branch owns V292.
 
 ## Key decisions
-- 2026-07-16: free = public flat chip strip; board/tiers/monetize = Pro (v10).
-- 2026-07-18: PROMPT-61 built in-wave (no separate hotfix); wave = ONE branch.
-- 2026-07-18: profile stat block FREE for consented players; leaderboard stays Pro.
-- 2026-07-18: badge = URL string + upload reuse (assets bucket, svg allowed).
-- 2026-07-18: PROMPT-64 re-scoped onto the existing v3 /slideshow (corpus had
-  missed it) + public /present wrappers; audit PDF on the per-fixture route.
-- 2026-07-18: migrations renumbered V286/V287→V288/V289 (payments session's
-  "pro plus plan" V286 already applied to shared dev DB).
+- (v13 era, see git history: draw-guard in-wave; badge=URL+upload; V288/V289 renumber.)
+- 2026-07-18: clubs = ladder model — entrant-only → standalone team (club_id null) →
+  club hierarchy; nothing forced. Caps int rows, admin-overridable; hierarchy free.
+- 2026-07-18: colors = FLAT record keys home_primary/…/away_secondary (no nesting).
+- 2026-07-19: zod errors are 400 repo-wide (spec's 422 wording corrected in spec).
+- 2026-07-19: division chips in hub tabs are plain (id-hrefs lint-banned, no slugs
+  in payload); wire routes.division() when payload carries slugs (W3/W4).
+- 2026-07-19: rebase onto origin/main at every task boundary (user standing order);
+  merge on green CI pre-authorized.
 
 ## Gotchas
-- vitest from apps/web cwd only (@/ aliases); rtk tee log is stale when output
-  is redirected — trust the visible tail line.
-- FootballCfg is NOT schema-defaulted by engine-db folds: seed COMPLETE config.
-- generate returns {fixtures}; divisions need /start before scoring over HTTP.
-- ConsentCard must stay router-free (markup tests); photo state flips from the
-  API response.
-- publicStorageUrl returns "" without NEXT_PUBLIC_SUPABASE_URL (stub in tests).
+- vitest from apps/web cwd only (@/ aliases); i18n parity spans 8 namespaces —
+  per-script counts differ, both must pass ×4 (ui now ~2635-scope).
+- team_display_v does NOT inherit RLS — always filter org_id explicitly.
+- bulkAssignLogos: truthy manual mapping overrides stem-match; "" is falsy → stem-match
+  (why hub pins + finalizeMapping coerce).
+- e2e vs prod build (:3200) + ephemeral PG :54329 db seazn_clubs_w1, DATABASE_SSL=disable;
+  shared-DB poison → namespace names per run.
+- .superpowers/ is gitignored — reports/briefs are local artifacts only.
 
 ## Verify
-cd apps/web && npx tsc --noEmit && npx vitest run   # 1135 pass / 0 fail
-cd packages/engine && npx vitest run                 # 880 pass
-DB suites: DATABASE_URL=postgresql://postgres@127.0.0.1:54329/seazn_v13 DATABASE_SSL=disable
-Full smoke (last run): 343 passed, 0 failed (ephemeral seazn_smoke13 + next dev :3013)
+cd apps/web && npx tsc --noEmit && npx vitest run   # last: 1248 pass / 0 fail
+smoke: 371 passed / 0 failed · clubs e2e: 12/0 · i18n parity ×4 OK · openapi:gen no drift
