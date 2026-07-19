@@ -86,7 +86,7 @@ export default async function DivisionPage({
   // Badge chips on standings rows (v3/03 §5) — resolved once per render.
   // PROMPT-62: the bracket panel on the fixtures tab shows them too.
   const entrantLogos =
-    tab === "standings" || (tab === "fixtures" && hasKnockout)
+    tab === "standings" || tab === "entrants" || (tab === "fixtures" && hasKnockout)
       ? await listEntrantLogoUrls(auth, id)
       : undefined;
   // PROMPT-62: score headlines for bracket nodes (match_states join).
@@ -216,6 +216,7 @@ export default async function DivisionPage({
           <EntrantsPanel
             divisionId={id}
             entrants={entrants}
+            logoUrls={entrantLogos}
             canEdit={editable}
             positionGroups={sportModule.positions.groups}
             roles={sportModule.positions.roles ?? []}
