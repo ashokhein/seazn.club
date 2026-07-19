@@ -602,7 +602,11 @@ export async function buildSchedulePack(
 // loop (design/v4/00 §3-4, 01 §1,§5). Pure over the pack: no DB, no wall clock.
 // ===========================================================================
 
-const ROUND_TIMEOUT_MS = 120_000;
+// 300s: live runs with adaptive thinking + effort:high regularly exceed 120s
+// per round even at ~17 movable fixtures (measured 2026-07-19: opus round 1
+// >120s, sonnet ~4 rounds ≈ 480s). The abort must outlast a real round or
+// every sizable live run dies as AI_PLAN_TIMEOUT.
+const ROUND_TIMEOUT_MS = 300_000;
 const MAX_REPAIR_ROUNDS = 2;
 
 /**

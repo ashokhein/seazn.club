@@ -591,7 +591,10 @@ export function refereeOfficialsPlan(
 // (503 when unconfigured, SCHEDULING_AI_BASE_URL escape hatch).
 // ===========================================================================
 
-const OFFICIALS_ROUND_TIMEOUT_MS = 120_000;
+// 300s to match schedule-ai's ROUND_TIMEOUT_MS — live rounds with adaptive
+// thinking exceed 120s well before the 500-fixture cap (see 2026-07-19 note
+// there).
+const OFFICIALS_ROUND_TIMEOUT_MS = 300_000;
 const OFFICIALS_MAX_REPAIR_ROUNDS = 2;
 
 /** A conflict the LLM can plausibly repair by re-choosing officials. `role_unfilled`
