@@ -563,6 +563,8 @@
   "clubs.list.create": "Create",
   "clubs.list.cancel": "Cancel",
   "clubs.list.standalone": "standalone",
+  "clubs.list.addToClub": "Add to club…",
+  "clubs.list.addToClubAria": "Add {name} to a club",
   "clubs.list.col.teams": "Teams",
   "clubs.list.col.contact": "Contact",
   "clubs.list.noMatch": "No clubs or teams match your search.",

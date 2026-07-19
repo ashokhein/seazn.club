@@ -563,6 +563,8 @@
   "clubs.list.create": "Créer",
   "clubs.list.cancel": "Annuler",
   "clubs.list.standalone": "indépendante",
+  "clubs.list.addToClub": "Ajouter à un club…",
+  "clubs.list.addToClubAria": "Ajouter {name} à un club",
   "clubs.list.col.teams": "Équipes",
   "clubs.list.col.contact": "Contact",
   "clubs.list.noMatch": "Aucun club ni équipe ne correspond à votre recherche.",

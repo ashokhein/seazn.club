@@ -472,25 +472,35 @@ function CrestCard({
     <section className="card space-y-3 p-4" aria-label={msg("clubs.crest.title")}>
       <h2 className="text-sm font-semibold text-slate-900">{msg("clubs.crest.title")}</h2>
       <div className="flex flex-wrap items-center gap-4">
-        {logoPath ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={`${storageBase}/${logoPath}`}
-            alt={msg("clubs.crest.title")}
-            className="h-16 w-16 rounded-lg border border-slate-200 object-contain"
-          />
-        ) : (
-          <div className="flex h-16 w-16 items-center justify-center rounded-lg border border-dashed border-slate-300 text-[10px] uppercase tracking-wide text-slate-400">
-            {msg("clubs.crest.emptyTile")}
-          </div>
-        )}
+        {/* The tile itself is the primary upload target — click to pick a file. */}
+        <button
+          type="button"
+          disabled={!canEdit || busy}
+          onClick={() => inputRef.current?.click()}
+          aria-label={logoPath ? msg("clubs.crest.replace") : msg("clubs.crest.upload")}
+          className="group relative rounded-lg focus-visible:ring-2 focus-visible:ring-purple-400 disabled:cursor-default"
+        >
+          {logoPath ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`${storageBase}/${logoPath}`}
+              alt={msg("clubs.crest.title")}
+              className="h-16 w-16 rounded-lg border border-slate-200 object-contain"
+            />
+          ) : (
+            <span className="flex h-16 w-16 flex-col items-center justify-center gap-0.5 rounded-lg border border-dashed border-slate-300 text-slate-400 group-hover:border-purple-400 group-hover:text-purple-500">
+              <span aria-hidden className="text-lg leading-none">+</span>
+              <span className="text-[9px] uppercase tracking-wide">{msg("clubs.crest.emptyTile")}</span>
+            </span>
+          )}
+        </button>
         <div className="min-w-0 flex-1 space-y-2">
           <p className="text-sm text-slate-500">{msg("clubs.crest.hint")}</p>
           {canEdit && (
             <div className="flex flex-wrap items-center gap-3">
               <button
                 type="button"
-                className="btn btn-primary min-h-[44px] text-sm"
+                className="btn btn-primary min-h-[44px] text-sm sm:min-h-0"
                 disabled={busy}
                 onClick={() => inputRef.current?.click()}
               >
@@ -513,7 +523,7 @@ function CrestCard({
               {logoPath && (
                 <button
                   type="button"
-                  className="btn min-h-[44px] text-sm"
+                  className="btn min-h-[44px] text-sm sm:min-h-0"
                   disabled={busy}
                   onClick={() => void remove()}
                 >

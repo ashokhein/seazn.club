@@ -417,6 +417,8 @@ export type DictionaryKey =
   | "clubs.hub.tab.entries"
   | "clubs.hub.tab.overview"
   | "clubs.hub.tab.teams"
+  | "clubs.list.addToClub"
+  | "clubs.list.addToClubAria"
   | "clubs.list.cancel"
   | "clubs.list.col.contact"
   | "clubs.list.col.teams"
