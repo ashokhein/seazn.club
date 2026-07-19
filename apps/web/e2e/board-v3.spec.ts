@@ -343,12 +343,16 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
     };
 
     // A's move must COMMIT (2xx) before B writes, so B is provably stale.
-    await moveAndAwait(page, "2026-09-16T18:00", "committed");
+    // datetime-local is the RUNNER's timezone. 16th 18:00 was free on a BST
+    // laptop (17:00Z) but collided with the seeded 18:00Z/P0A fixture on the
+    // UTC runner — the chronic "CI-only" red was a court clash, not a race.
+    // The 18th sits outside the seeded 15th–17th grid in any timezone.
+    await moveAndAwait(page, "2026-09-18T09:00", "committed");
     // A's own board refreshes without complaint.
     await expect(page.getByText("Schedule changed by someone else")).toHaveCount(0);
 
     // Client B still holds the pre-move seq: its write must 409 → toast.
-    await moveAndAwait(pageB, "2026-09-16T19:00", "seq-conflict");
+    await moveAndAwait(pageB, "2026-09-18T10:00", "seq-conflict");
     await expect(pageB.getByText("Schedule changed by someone else — board refreshed.")).toBeVisible(
       { timeout: 15_000 },
     );
