@@ -17,8 +17,18 @@ export function shareLinks(
 }
 
 /** Fan-facing share row (PLG L3): native share on mobile, WhatsApp + copy
- *  everywhere. Grassroots sport runs on WhatsApp. */
-export function ShareBar({ path, title }: { path: string; title: string }) {
+ *  everywhere. Grassroots sport runs on WhatsApp. An optional `postShare` adds
+ *  news-post context (SPEC-2): each share ALSO fires POST_SHARED{kind,channel}
+ *  alongside the generic SHARE_FIRED — the component is reused, not forked. */
+export function ShareBar({
+  path,
+  title,
+  postShare,
+}: {
+  path: string;
+  title: string;
+  postShare?: { kind: string };
+}) {
   const [origin, setOrigin] = useState("");
   const [copied, setCopied] = useState(false);
   const [canShare, setCanShare] = useState(false);
@@ -28,8 +38,13 @@ export function ShareBar({ path, title }: { path: string; title: string }) {
   }, []);
   const { url, wa } = shareLinks(origin, path, title);
 
+  function fire(channel: string) {
+    track(EVENTS.SHARE_FIRED, { channel });
+    if (postShare) track(EVENTS.POST_SHARED, { channel, kind: postShare.kind });
+  }
+
   async function native() {
-    track(EVENTS.SHARE_FIRED, { channel: "native" });
+    fire("native");
     try {
       await navigator.share?.({ title, url });
     } catch {
@@ -37,7 +52,7 @@ export function ShareBar({ path, title }: { path: string; title: string }) {
     }
   }
   async function copy() {
-    track(EVENTS.SHARE_FIRED, { channel: "copy" });
+    fire("copy");
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
@@ -63,7 +78,7 @@ export function ShareBar({ path, title }: { path: string; title: string }) {
         href={wa}
         target="_blank"
         rel="noreferrer"
-        onClick={() => track(EVENTS.SHARE_FIRED, { channel: "whatsapp" })}
+        onClick={() => fire("whatsapp")}
         className="btn btn-ghost"
         aria-label="Share on WhatsApp"
       >
