@@ -298,6 +298,7 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
   test("two clients: the stale one 409s, toasts, and refreshes (gap 10)", async ({
     page,
     context,
+    request,
   }) => {
     const d0 = rig.divisions[0]!;
     const filtered = `${boardUrl}?d=${d0.slug}`;
@@ -318,7 +319,28 @@ test.describe.serial("board v3 (PROMPT-33)", () => {
       await dialog.locator("input[type=datetime-local]").fill(when);
       await dialog.getByRole("button", { name: "Move", exact: true }).click();
     };
+    // Both clients pick the same first fixture; note its pre-move instant so
+    // we can observe A's write LANDING (value change is timezone-proof).
+    const fxId = await page
+      .locator("[data-fixture-id]:has(button[aria-pressed])")
+      .first()
+      .getAttribute("data-fixture-id");
+    const before = (
+      await apiJson<{ scheduled_at: string | null }>(request, `/api/v1/fixtures/${fxId}`)
+    ).data!.scheduled_at;
+
     await move(page, "2026-09-16T18:00");
+    // A's write must be durably applied BEFORE B fires: on a slow runner B's
+    // POST can win the race, in which case B succeeds and the 409 toast lands
+    // on A — the exact CI failure this ordering prevents.
+    await expect
+      .poll(
+        async () =>
+          (await apiJson<{ scheduled_at: string | null }>(request, `/api/v1/fixtures/${fxId}`))
+            .data!.scheduled_at,
+        { timeout: 15_000 },
+      )
+      .not.toBe(before);
     // A's own board refreshes without complaint.
     await expect(page.getByText("Schedule changed by someone else")).toHaveCount(0);
 
