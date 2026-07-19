@@ -47,6 +47,7 @@ interface TeamOption {
   club_short_name: string | null;
   logo_path: string | null;
   latest_entrant_id: string | null;
+  squad_count: number;
 }
 interface Member {
   person_id: string;
@@ -394,6 +395,25 @@ export function EntrantsPanel({
                   );
                 }}
                 onBadge={(file) => void run(() => badgeRequest(e.id, file))}
+                onSyncSquad={
+                  e.team_id
+                    ? async () => {
+                        // Replaces the whole entry roster — spell that out.
+                        const ok = await confirmDialog({
+                          title: msg("confirm.syncSquad.title", { name: e.display_name }),
+                          body: msg("confirm.syncSquad.body"),
+                          confirmLabel: msg("confirm.syncSquad.label"),
+                        });
+                        if (!ok) return undefined;
+                        return run(() =>
+                          apiV1<{ members: Member[] }>(
+                            `/api/v1/entrants/${e.id}/roster/sync`,
+                            { method: "POST", json: {} },
+                          ),
+                        );
+                      }
+                    : undefined
+                }
               />
             ))}
           </tbody>
@@ -621,6 +641,23 @@ function ExistingTeamFields({
         Copy roster from this team&apos;s most recent entrant
         {!canCopy && selected && <span className="text-slate-400">(no earlier roster)</span>}
       </label>
+
+      {/* Roster preview: enrollment seeds from the squad exactly once, so an
+          empty squad silently produces an empty entry roster — say so BEFORE
+          the organiser enrolls, not after they expand the row and wonder. */}
+      {selected && !(copyRoster && canCopy) && (
+        selected.squad_count > 0 ? (
+          <p className="text-xs text-slate-500" data-testid="squad-preview">
+            Team squad: {selected.squad_count} player{selected.squad_count > 1 ? "s" : ""} will be
+            copied to this entry.
+          </p>
+        ) : (
+          <p className="text-xs text-amber-600" data-testid="squad-preview">
+            Team squad is empty — the entry will start with no roster. Add players on the club
+            page, or enroll now and use &ldquo;Sync from team squad&rdquo; later.
+          </p>
+        )
+      )}
 
       {note && <p className="text-xs text-emerald-600">{note}</p>}
 
@@ -1049,6 +1086,7 @@ function EntrantTableRow({
   onPatch,
   onWithdraw,
   onBadge,
+  onSyncSquad,
 }: {
   entrant: EntrantRow;
   logoUrl: string | null;
@@ -1064,9 +1102,16 @@ function EntrantTableRow({
   /** Withdraw with fixture surgery (spec 05 §5) — confirm handled upstream. */
   onWithdraw: () => void;
   onBadge: (file: File | null) => void;
+  /** Replace the roster with the team's current squad (team entrants only —
+   *  confirm handled upstream; returns the fresh members on success). */
+  onSyncSquad?: () => Promise<{ members: Member[] } | undefined>;
 }) {
   const [open, setOpen] = useState(false);
   const [members, setMembers] = useState<Member[] | null>(null);
+  // RosterEditor seeds its own state from `members` once (useState(initial)) —
+  // bump this key when a squad sync replaces the roster so the editor remounts
+  // on the fresh list instead of showing the pre-sync one.
+  const [rosterVersion, setRosterVersion] = useState(0);
 
   async function toggle() {
     const next = !open;
@@ -1156,7 +1201,7 @@ function EntrantTableRow({
       {open && (
         <tr>
           <td colSpan={canEdit ? 5 : 4} className="bg-slate-50 px-4 py-3">
-            <div className="mb-3">
+            <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
               <EntrantBadgeControl
                 entrant={entrant}
                 logoUrl={logoUrl}
@@ -1164,11 +1209,29 @@ function EntrantTableRow({
                 busy={busy}
                 onBadge={onBadge}
               />
+              {canEdit && onSyncSquad && (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={async () => {
+                    const res = await onSyncSquad();
+                    if (res) {
+                      setMembers(res.members);
+                      setRosterVersion((v) => v + 1);
+                    }
+                  }}
+                  className="btn min-h-[44px] text-xs sm:min-h-0"
+                  title="Replace this entry's roster with the team's current squad"
+                >
+                  Sync from team squad
+                </button>
+              )}
             </div>
             {members === null ? (
               <p className="text-xs text-slate-400">Loading roster…</p>
             ) : (
               <RosterEditor
+                key={rosterVersion}
                 kind={entrant.kind}
                 members={members}
                 persons={persons}

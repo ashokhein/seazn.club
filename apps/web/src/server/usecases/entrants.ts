@@ -389,6 +389,39 @@ export async function patchEntrant(
   });
 }
 
+/** Replace an entrant's roster with its team's CURRENT squad. Enrollment
+ *  snapshots the squad once (createEntrants) and never syncs after — deliberate,
+ *  since discipline/lineups hang off entrant_members. This is the explicit
+ *  organiser action for "the squad changed since we enrolled". Same sport
+ *  filter and kind-cap rules as the enrollment seed. */
+export async function syncEntrantRosterFromSquad(
+  auth: AuthCtx,
+  id: string,
+): Promise<CreatedEntrant & { members: unknown[] }> {
+  return withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<EntrantRow[]>`select ${tx(COLS)} from entrants where id = ${id}`;
+    if (!row) throw new HttpError(404, "entrant not found");
+    if (!row.team_id) {
+      throw new HttpError(422, "This entrant has no linked team — there is no squad to sync from.");
+    }
+    const [division] = await tx<{ sport_key: string; module_version: string }[]>`
+      select sport_key, module_version from divisions where id = ${row.division_id}`;
+    if (!division) throw new HttpError(404, "division not found");
+    const squad = await loadTeamSquad(tx, row.team_id);
+    const { members, dropped } = filterRosterForSport(
+      squad,
+      division.sport_key,
+      division.module_version,
+    );
+    const eff = await loadEntrantShape(tx, row.division_id);
+    assertRosterFits(eff, row.kind, members.length);
+    await tx`delete from entrant_members where entrant_id = ${id}`;
+    await insertMembers(tx, id, members);
+    const out = await withMembers(tx, row);
+    return dropped > 0 ? { ...out, roster_keys_dropped: dropped } : out;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Entrant badge upload (PROMPT-60): multipart bytes → assets bucket →
 // entrants.badge_url stores the storage path (content-hash name, mirroring

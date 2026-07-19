@@ -1073,6 +1073,61 @@ async function clubsSuite(): Promise<void> {
       members[0]!.squad_number === 7,
   );
 
+  // Enroll the team → the entrant roster is a ONE-TIME snapshot of the squad;
+  // later squad edits stay off the entry until the explicit roster/sync.
+  const syncComp = await v1(pro, "/api/v1/competitions", "POST", {
+    name: `Sync Cup ${tag}`,
+    visibility: "private",
+  });
+  const syncDiv = await v1(pro, `/api/v1/competitions/${v1data<{ id: string }>(syncComp).id}/divisions`, "POST", {
+    name: "Sync Div",
+    sport_key: "generic",
+    variant_key: "score",
+    config: { resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    eligibility: [],
+  });
+  const syncDivId = v1data<{ id: string }>(syncDiv).id;
+  const enrolled = await v1(pro, `/api/v1/divisions/${syncDivId}/entrants`, "POST", [
+    { kind: "team", team_id: teamId, members: [] },
+  ]);
+  const entrantId = v1data<{ id: string }[]>(enrolled)[0]!.id;
+  const seeded = await v1(pro, `/api/v1/entrants/${entrantId}`);
+  check(
+    "clubs pro: enrollment seeded the roster from the squad (snapshot of 1)",
+    enrolled.status === 201 &&
+      (v1data<{ members: unknown[] }>(seeded).members ?? []).length === 1,
+  );
+
+  const late = await v1(pro, "/api/v1/persons", "POST", { full_name: `Lena Late ${tag}` });
+  const lateId = v1data<{ id: string }>(late).id;
+  await v1(pro, `/api/v1/teams/${teamId}/squad`, "PUT", {
+    members: [
+      { person_id: personId, squad_number: 7, is_captain: true },
+      { person_id: lateId, squad_number: 9 },
+    ],
+  });
+  const stale = await v1(pro, `/api/v1/entrants/${entrantId}`);
+  check(
+    "clubs pro: squad edit does NOT touch the enrolled roster (still 1)",
+    (v1data<{ members: unknown[] }>(stale).members ?? []).length === 1,
+  );
+  const synced = await v1(pro, `/api/v1/entrants/${entrantId}/roster/sync`, "POST", {});
+  check(
+    "clubs pro: roster/sync replaces the entry roster with the current squad (2)",
+    synced.status === 200 &&
+      (v1data<{ members: unknown[] }>(synced).members ?? []).length === 2,
+  );
+  const solo = await v1(pro, `/api/v1/divisions/${syncDivId}/entrants`, "POST", [
+    { kind: "individual", display_name: `Solo ${tag}`, members: [] },
+  ]);
+  const soloSync = await v1(
+    pro,
+    `/api/v1/entrants/${v1data<{ id: string }[]>(solo)[0]!.id}/roster/sync`,
+    "POST",
+    {},
+  );
+  check("clubs pro: roster/sync on a team-less entrant 422s", soloSync.status === 422);
+
   // --- Free path: the tunable community clubs.max = 2 (V292). Two clubs land,
   // the third 402s with the feature key that drives the paywall.
   const free = newSession();

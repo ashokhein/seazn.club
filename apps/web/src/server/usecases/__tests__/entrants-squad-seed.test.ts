@@ -11,7 +11,7 @@ import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
-import { createEntrants } from "../entrants";
+import { createEntrants, syncEntrantRosterFromSquad } from "../entrants";
 import { listEntrantLogoUrls, setTeamSquad } from "../teams";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -134,6 +134,79 @@ describe.skipIf(!HAS_DB)("enroll-existing-team seeding (clubs W1)", () => {
 
     const map = await listEntrantLogoUrls(auth, division.id);
     expect(map[entrant!.id]).toContain("orgs/x/teams/own.png");
+  });
+
+  // ---- sync-from-squad: the explicit re-sync after the one-time enroll seed ----
+
+  it("sync replaces an empty enroll-time roster with the squad added afterwards", async () => {
+    const { auth } = await seedOrg();
+    const division = await seedDivision(auth);
+    // Team with NO squad yet — the enrollment seed has nothing to copy.
+    const [{ id: teamId }] = await sql<{ id: string }[]>`
+      insert into teams (org_id, name) values (${auth.orgId}, ${"Late " + randomUUID().slice(0, 6)})
+      returning id`;
+    const [entrant] = await createEntrants(auth, division.id, [
+      { kind: "team", team_id: teamId, members: [] },
+    ]);
+    const before = await sql<{ n: number }[]>`
+      select count(*)::int as n from entrant_members where entrant_id = ${entrant!.id}`;
+    expect(before[0]!.n).toBe(0);
+
+    // Squad filled AFTER enrollment — the snapshot must not have moved…
+    const [{ id: personId }] = await sql<{ id: string }[]>`
+      insert into persons (org_id, full_name, consent)
+      values (${auth.orgId}, 'Late Joiner', '{}') returning id`;
+    await setTeamSquad(auth, teamId, [
+      { person_id: personId, squad_number: 9, default_position_key: null, is_captain: true, roles: [] },
+    ]);
+    const still = await sql<{ n: number }[]>`
+      select count(*)::int as n from entrant_members where entrant_id = ${entrant!.id}`;
+    expect(still[0]!.n).toBe(0);
+
+    // …until the organiser syncs explicitly.
+    const synced = await syncEntrantRosterFromSquad(auth, entrant!.id);
+    expect(synced.members).toHaveLength(1);
+    const rows = await sql<{ person_id: string; is_captain: boolean }[]>`
+      select person_id, is_captain from entrant_members where entrant_id = ${entrant!.id}`;
+    expect(rows).toEqual([{ person_id: personId, is_captain: true }]);
+  });
+
+  it("sync is a full replacement and applies the sport filter", async () => {
+    const { auth } = await seedOrg();
+    const division = await seedDivision(auth);
+    const { teamId, persons } = await seedClubTeamSquad(auth);
+    const [entrant] = await createEntrants(auth, division.id, [
+      { kind: "team", team_id: teamId, members: [] },
+    ]);
+
+    // Shrink the squad to one person with a ghost position; sync must drop the
+    // other member (replacement, not merge) and strip the unknown key.
+    await setTeamSquad(auth, teamId, [
+      {
+        person_id: persons[1]!,
+        squad_number: 4,
+        default_position_key: "ghost_position",
+        is_captain: false,
+        roles: [],
+      },
+    ]);
+    const synced = await syncEntrantRosterFromSquad(auth, entrant!.id);
+    expect(synced.roster_keys_dropped).toBe(1);
+    const rows = await sql<{ person_id: string; default_position_key: string | null }[]>`
+      select person_id, default_position_key from entrant_members
+      where entrant_id = ${entrant!.id}`;
+    expect(rows).toEqual([{ person_id: persons[1]!, default_position_key: null }]);
+  });
+
+  it("sync 422s for an entrant with no linked team", async () => {
+    const { auth } = await seedOrg();
+    const division = await seedDivision(auth);
+    const [entrant] = await createEntrants(auth, division.id, [
+      { kind: "individual", display_name: "Solo", members: [] },
+    ]);
+    await expect(syncEntrantRosterFromSquad(auth, entrant!.id)).rejects.toMatchObject({
+      status: 422,
+    });
   });
 });
 

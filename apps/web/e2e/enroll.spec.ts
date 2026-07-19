@@ -57,3 +57,61 @@ test("enroll an existing team into a division via the UI", async ({ page }) => {
   await cell.getByRole("button", { name: new RegExp(`Riverside U12 ${TAG}`) }).click();
   await expect(page.getByText(`Ada ${TAG}`)).toBeVisible();
 });
+
+// Enrollment snapshots the squad ONCE; players added to the squad afterwards
+// don't appear on the entry until the organiser syncs explicitly. This covers
+// the empty-squad warning in the enroll form and the "Sync from team squad"
+// action on the entrant row.
+test("empty-squad enroll warns, then Sync from team squad pulls late players", async ({ page }) => {
+  const teamName = `Latecomers ${TAG}`;
+  const team = (await apiJson<{ id: string }>(page.request, "/api/v1/teams", "POST", {
+    name: teamName,
+  })).data!;
+
+  const comp = (await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+    name: `Sync ${TAG}`,
+    visibility: "private",
+  })).data!;
+  const div = (await apiJson<{ id: string }>(
+    page.request,
+    `/api/v1/competitions/${comp.id}/divisions`,
+    "POST",
+    {
+      name: "Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false },
+      eligibility: [],
+    },
+  )).data!;
+
+  // Enroll form: picking the squad-less team surfaces the empty-squad warning.
+  await page.goto(`/divisions/${div.id}?tab=entrants`);
+  await page.getByRole("button", { name: "Existing team" }).click();
+  await page.getByRole("textbox", { name: "Search teams" }).fill(teamName);
+  await page.getByText(teamName, { exact: true }).first().click();
+  await expect(page.getByTestId("squad-preview")).toContainText("Team squad is empty");
+  await page.getByRole("button", { name: /Enroll team/ }).click();
+  const cell = page.getByRole("cell", { name: teamName });
+  await expect(cell).toBeVisible();
+
+  // Squad filled AFTER enrollment; the entry roster is still the empty snapshot.
+  const person = (await apiJson<{ id: string }>(page.request, "/api/v1/persons", "POST", {
+    full_name: `Late Joiner ${TAG}`,
+    consent: {},
+    dob: null,
+    gender: null,
+    external_ref: null,
+  })).data!;
+  await apiJson(page.request, `/api/v1/teams/${team.id}/squad`, "PUT", {
+    members: [
+      { person_id: person.id, squad_number: 9, default_position_key: null, is_captain: false, roles: [] },
+    ],
+  });
+
+  // Expand the row → Sync from team squad → confirm → the late player appears.
+  await cell.getByRole("button", { name: new RegExp(teamName) }).click();
+  await page.getByRole("button", { name: "Sync from team squad" }).click();
+  await page.getByRole("button", { name: "Sync roster" }).click();
+  await expect(page.getByText(`Late Joiner ${TAG}`)).toBeVisible();
+});

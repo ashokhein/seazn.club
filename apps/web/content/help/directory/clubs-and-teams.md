@@ -28,6 +28,12 @@ Each club has its own page with three tabs:
 - **Teams** — the club's teams, with add-a-team, a per-team badge that overrides the club crest (**Use club crest** puts a team back on it), and the squad editor. Type a player's name and, if they aren't in your People directory yet, **add them as a brand-new player without leaving the page** — no need to switch to People first. You can also detach a team from the club here.
 - **Entries** — a read-only grid showing where every team is entered, so you can see at a glance which divisions a club is competing in.
 
+## Squads and entry rosters
+
+A team's **squad** lives in the directory; each competition entry keeps its own **roster**. When you enrol a team into a division, the entry roster is copied from the squad **once, at that moment** — the enroll form tells you how many players will be copied, and warns you when the squad is still empty. After that the two are independent on purpose: suspensions, lineups and team sheets hang off the entry roster, so editing the squad mid-season never silently rewrites a competition entry.
+
+If the squad has changed since you enrolled — late signings, departures — open the entrant row and use **Sync from team squad**. It replaces the whole entry roster with the team's current squad (position or role settings the division's sport doesn't define are dropped, and roster edits made only on that entry are lost — the confirmation spells this out). The badge is different: crests resolve live (entry badge, then team badge, then club crest), so a crest change shows up everywhere immediately without any sync.
+
 ## Limits per plan
 
 Your plan sets how many clubs and teams you can create, and how large a single squad can be:
