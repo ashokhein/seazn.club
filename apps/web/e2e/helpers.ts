@@ -194,6 +194,15 @@ export async function setOrgConnectSql(
   });
 }
 
+/** Force a fixture's status directly (SPEC-3 marks/reports e2e). The mark +
+ *  report windows only read `fixtures.status`; a SQL flip to 'decided' skips
+ *  the sport-specific full-time scoring dance and keeps the setup terse. */
+export async function setFixtureStatusSql(fixtureId: string, status: string): Promise<void> {
+  await withDb(async (sql) => {
+    await sql`update fixtures set status = ${status} where id = ${fixtureId}`;
+  });
+}
+
 /**
  * Drop an org's server-side entitlement cache (`ent:{org}:*`). SQL-flip
  * helpers mutate entitlement state behind the app's back; on a Redis-backed

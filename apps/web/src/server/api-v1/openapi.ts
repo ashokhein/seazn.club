@@ -50,7 +50,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/competitions/{id}/divisions", method: "get", summary: "List divisions", tag: "divisions", response: z.array(S.Division) },
   { path: "/competitions/{id}/divisions", method: "post", summary: "Create a division (pins sport module version)", tag: "divisions", request: S.CreateDivision, response: S.Division, status: 201, errors: [409, 422] },
   { path: "/divisions/{id}", method: "get", summary: "Get a division", tag: "divisions", response: S.Division },
-  { path: "/divisions/{id}", method: "patch", summary: "Update a division (format edits 409 FORMAT_LOCKED once fixtures exist)", tag: "divisions", request: S.PatchDivision, response: S.Division, errors: [409, 422] },
+  { path: "/divisions/{id}", method: "patch", summary: "Update a division (format edits 409 FORMAT_LOCKED once fixtures exist)", tag: "divisions", request: S.PatchDivision, response: S.Division, errors: [402, 409, 422] },
   { path: "/divisions/{id}/logo-upload-url", method: "post", summary: "Signed upload URL for the division card logo (session-only; not key-accessible)", tag: "divisions" },
   { path: "/divisions/{id}", method: "delete", summary: "Delete a setup division (204) or purge a 30-day archive; started/resulted → 409 DIVISION_HAS_RESULTS {archive: true}", tag: "divisions", status: 204, errors: [409] },
   { path: "/divisions/{id}/archive", method: "post", summary: "Archive: hidden from console/public/quota, restorable", tag: "divisions", response: S.Division, errors: [409] },
@@ -236,6 +236,28 @@ export const ROUTES: RouteSpec[] = [
   { path: "/stages/{id}/challenges", method: "post", summary: "Ladder challenge: creates the fixture on demand; result reorders the ladder (Pro `formats.advanced`)", tag: "stages", request: S.LadderChallenge, status: 201, errors: [402, 422] },
   { path: "/stages/{id}/fixtures", method: "post", summary: "Ad-hoc single fixture (replay / friendly / tie-breaker) on a league, group or swiss stage; the match folds into the standings. Bracket kinds 422.", tag: "stages", request: S.AddFixture, status: 201, errors: [422] },
   { path: "/stages/{id}/americano", method: "get", summary: "Americano rotation grid + personal-points leaderboard (Jul3/08 §3)", tag: "stages", errors: [422] },
+  // Discipline & suspensions (SPEC-1, PROMPT-78)
+  { path: "/divisions/{id}/discipline-rules", method: "get", summary: "Discipline rules + enabled flag (null when the sport has no card model); Pro `discipline.enforced`", tag: "discipline", response: S.DisciplineRulesResponse, errors: [402] },
+  { path: "/divisions/{id}/discipline-rules", method: "put", summary: "Upsert discipline rules; colours validated against the sport module", tag: "discipline", request: S.PutDisciplineRules, response: S.DisciplineRulesResponse, errors: [402, 422] },
+  { path: "/divisions/{id}/suspensions", method: "get", summary: "List suspensions in the division, optional ?status= filter", tag: "discipline", response: z.array(S.Suspension), errors: [402], query: { status: { schema: { type: "string", enum: ["pending", "active", "served", "waived"] } } } },
+  { path: "/divisions/{id}/suspensions", method: "post", summary: "Record a manual suspension (pending until confirmed)", tag: "discipline", request: S.CreateSuspension, response: S.Suspension, status: 201, errors: [402] },
+  { path: "/suspensions/{id}", method: "patch", summary: "Confirm (→ active), waive or adjust a suspension", tag: "discipline", request: S.DecideSuspension, response: S.Suspension, errors: [402] },
+  // Official marks & match reports (SPEC-3, PROMPT-80)
+  { path: "/fixture-officials/{id}/mark", method: "put", summary: "Rate an accepted, decided assignment 1..5 with an optional comment (console, Pro `officials.marks`); upsert, one per assignment; 403 outside the window", tag: "officials", request: S.PutMarkBody, status: 204, errors: [402, 403] },
+  { path: "/fixture-officials/{id}/mark", method: "delete", summary: "Clear the mark on an assignment (idempotent; Pro `officials.marks`)", tag: "officials", status: 204, errors: [402] },
+  { path: "/officials/{id}/marks-summary", method: "get", summary: "Org-scoped mark average, count and last 5 comments for an official (console, Pro `officials.marks`)", tag: "officials", response: S.MarkSummary, errors: [402] },
+  { path: "/me/officiating/{fixtureOfficialId}/report", method: "get", summary: "The caller's match report draft/submitted for one of their accepted assignments (session only, cross-org rail); null when none filed yet", tag: "officials", response: S.MatchReport.nullable(), errors: [403] },
+  { path: "/me/officiating/{fixtureOfficialId}/report", method: "put", summary: "Save the match report draft body + incident rows (session only; free); draft only — a submitted report is immutable (409); 403 outside the window", tag: "officials", request: S.PutReportBody, response: S.MatchReport, errors: [403, 409] },
+  { path: "/me/officiating/{fixtureOfficialId}/report/submit", method: "post", summary: "Submit the draft (immutable thereafter, 409 on resubmit); misconduct incidents suggest pending suspensions when the org enforces discipline (session only)", tag: "officials", response: S.MatchReport, errors: [403, 409] },
+  { path: "/fixtures/{id}/reports", method: "get", summary: "Submitted match reports for a fixture with the official's name (console; free)", tag: "officials", response: z.array(S.FixtureReport) },
+  { path: "/me/officiating/{fixtureOfficialId}/squad", method: "get", summary: "Both entrants' squads behind the caller's assignment — the match report's optional person picker (session only, cross-org rail; free)", tag: "officials", response: z.array(S.FixtureSquadMember), errors: [404] },
+  // Org news (SPEC-2, PROMPT-82) — manual posts free on every plan; auto-drafts
+  // (news.auto) land on the decided seam, not through the API.
+  { path: "/orgs/{id}/posts", method: "get", summary: "Org news feed (console; free), optional ?status= filter", tag: "news", response: z.array(S.OrgPost), query: { status: { schema: { type: "string", enum: ["draft", "published", "archived"] } } } },
+  { path: "/orgs/{id}/posts", method: "post", summary: "Compose a post (draft; free on every plan)", tag: "news", request: S.CreatePost, response: S.OrgPost, status: 201, errors: [404] },
+  { path: "/posts/{id}", method: "get", summary: "Get a post (console; free)", tag: "news", response: S.OrgPost, errors: [404] },
+  { path: "/posts/{id}", method: "patch", summary: "Edit a post and/or publish|archive; publish stamps published_at and freezes the slug", tag: "news", request: S.PatchPost, response: S.OrgPost, errors: [404] },
+  { path: "/posts/{id}", method: "delete", summary: "Delete a post", tag: "news", status: 204, errors: [404] },
 ];
 
 // ---------------------------------------------------------------------------
@@ -436,7 +458,8 @@ export function buildOpenApiDocument(
     { name: "scoring" }, { name: "scheduling" }, { name: "scorers" },
     { name: "device-links" }, { name: "api-keys" }, { name: "registration" },
     { name: "clubs" }, { name: "officials" }, { name: "sponsors" }, { name: "history" },
-    { name: "exports" }, { name: "stats" }, { name: "public" },
+    { name: "exports" }, { name: "stats" }, { name: "discipline" }, { name: "news" },
+    { name: "public" },
   ].filter((t) => usedTags.has(t.name));
   return {
     openapi: "3.1.0",

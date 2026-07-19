@@ -258,6 +258,34 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   "POST /clubs/:id/contacts",
   "PATCH /clubs/:id/contacts/:contactId",
   "DELETE /clubs/:id/contacts/:contactId",
+  // Discipline (SPEC-1 / PROMPT-78): the rules editor + suspensions queue are a
+  // console workflow (PROMPT-79 UI); public bans surface via /public/** instead.
+  // Session-only, like the other organiser CRM surfaces.
+  "GET /divisions/:id/discipline-rules",
+  "PUT /divisions/:id/discipline-rules",
+  "GET /divisions/:id/suspensions",
+  "POST /divisions/:id/suspensions",
+  "PATCH /suspensions/:id",
+  // Official marks & match reports (SPEC-3 / PROMPT-80): marks are a console
+  // CRM surface (like discipline); the report routes are session-personal /me
+  // surfaces (like every other officiating /me lane). None key-accessible.
+  "PUT /fixture-officials/:id/mark",
+  "DELETE /fixture-officials/:id/mark",
+  "GET /officials/:id/marks-summary",
+  "GET /me/officiating/:fixtureOfficialId/report",
+  "PUT /me/officiating/:fixtureOfficialId/report",
+  "POST /me/officiating/:fixtureOfficialId/report/submit",
+  "GET /me/officiating/:fixtureOfficialId/squad",
+  "GET /fixtures/:id/reports",
+  // Org news (SPEC-2 / PROMPT-82): the composer + drafts queue are an organiser
+  // console CRM surface (like sponsors/discipline). Public reads flow through
+  // page-level server components (no public JSON API), not keys. Auto-drafts
+  // land on the decided seam, never via the API. None key-accessible.
+  "GET /orgs/:id/posts",
+  "POST /orgs/:id/posts",
+  "GET /posts/:id",
+  "PATCH /posts/:id",
+  "DELETE /posts/:id",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.

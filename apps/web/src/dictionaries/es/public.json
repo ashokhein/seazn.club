@@ -7,5 +7,20 @@
   "hero.subhead": "Sigue marcadores en vivo, calendarios de partidos y clasificaciones de cada competición — sin necesidad de cuenta.",
   "section.about": "Acerca de",
   "section.competitions": "Competiciones",
-  "empty": "No hay competiciones públicas en este momento — vuelve pronto."
+  "empty": "No hay competiciones públicas en este momento — vuelve pronto.",
+  "news.title": "Noticias",
+  "news.eyebrow": "Programa del partido",
+  "news.empty": "Aún no hay noticias — vuelve tras la próxima jornada.",
+  "news.older": "Entradas anteriores",
+  "news.newer": "Entradas recientes",
+  "news.pagination": "Paginación de noticias",
+  "news.feedIntro": "Últimas noticias y resultados de {org}.",
+  "news.download": "Descargar tarjeta de imagen",
+  "news.related": "Competición relacionada",
+  "news.latest": "Últimas noticias",
+  "news.viewAll": "Ver todas las noticias",
+  "news.kind.result": "Resultado",
+  "news.kind.recap": "Resumen",
+  "news.kind.announcement": "Anuncio",
+  "news.kind.news": "Noticia del club"
 }

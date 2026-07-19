@@ -19,6 +19,10 @@ export type OfficiatingResponse = "pending" | "accepted" | "declined";
 export interface MyOfficiatingAssignment {
   fixture_id: string;
   fixture_no: number;
+  /** Surrogate id of the fixture_officials assignment row (V294). The match
+   *  report endpoints key on this single uuid — the lane's report CTA needs it
+   *  per completed assignment (a fixture can carry several officials). */
+  fixture_official_id: string;
   official_id: string;
   org_name: string;
   org_slug: string;
@@ -40,6 +44,9 @@ export interface MyOfficiatingAssignment {
   response: OfficiatingResponse;
   decline_reason: string | null;
   responded_at: string | null;
+  /** Match-report state for this assignment (SPEC-3), for the lane's report CTA
+   *  chip. Null when nothing filed / not reportable. */
+  report_status: "draft" | "submitted" | null;
 }
 
 export interface MyBlackout {
@@ -71,7 +78,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
   if (!linked?.has) return { is_official: false, assignments: [], completed: [], blackouts: [] };
 
   const assignments = await sql<MyOfficiatingAssignment[]>`
-    select fo.fixture_id, f.fixture_no, o.id as official_id,
+    select fo.fixture_id, fo.id as fixture_official_id, f.fixture_no, o.id as official_id,
            org.name as org_name, org.slug as org_slug,
            c.name as competition_name, c.slug as competition_slug,
            c.visibility as competition_visibility,
@@ -79,11 +86,13 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
            h.display_name as home_name, a.display_name as away_name,
            f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label,
            f.status as fixture_status,
-           fo.role_key, fo.response, fo.decline_reason, fo.responded_at
+           fo.role_key, fo.response, fo.decline_reason, fo.responded_at,
+           mr.status as report_status
     from persons p
     join officials o on o.person_id = p.id
     join fixture_officials fo on fo.official_id = o.id
     join fixtures f on f.id = fo.fixture_id
+    left join match_reports mr on mr.fixture_official_id = fo.id
     join divisions d on d.id = f.division_id
     join competitions c on c.id = d.competition_id
     join organizations org on org.id = f.org_id
@@ -102,7 +111,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
 
   // Finished matches — most recent first — for the collapsed "completed" panel.
   const completed = await sql<MyOfficiatingAssignment[]>`
-    select fo.fixture_id, f.fixture_no, o.id as official_id,
+    select fo.fixture_id, fo.id as fixture_official_id, f.fixture_no, o.id as official_id,
            org.name as org_name, org.slug as org_slug,
            c.name as competition_name, c.slug as competition_slug,
            c.visibility as competition_visibility,
@@ -110,11 +119,13 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
            h.display_name as home_name, a.display_name as away_name,
            f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label,
            f.status as fixture_status,
-           fo.role_key, fo.response, fo.decline_reason, fo.responded_at
+           fo.role_key, fo.response, fo.decline_reason, fo.responded_at,
+           mr.status as report_status
     from persons p
     join officials o on o.person_id = p.id
     join fixture_officials fo on fo.official_id = o.id
     join fixtures f on f.id = fo.fixture_id
+    left join match_reports mr on mr.fixture_official_id = fo.id
     join divisions d on d.id = f.division_id
     join competitions c on c.id = d.competition_id
     join organizations org on org.id = f.org_id

@@ -27,6 +27,7 @@ import { CheckinQr } from "@/components/v2/checkin-qr";
 import { FixtureOfficialsStrip } from "@/components/v2/fixture-officials-strip";
 import { AuditStrip } from "@/components/v2/audit-strip";
 import { hasFeature } from "@/lib/entitlements";
+import { suspensionsForFixture } from "@/server/usecases/discipline";
 import { sql } from "@/lib/db";
 
 export default async function FixturePage({
@@ -87,6 +88,12 @@ export default async function FixturePage({
   const [home, away] = await Promise.all([
     side(fixture.home_entrant_id),
     side(fixture.away_entrant_id),
+  ]);
+  // SPEC-1: active suspensions among this fixture's entrants, joined into the
+  // pad bootstrap (no client fetch). Returns [] when the org isn't entitled.
+  const activeSuspensions = await suspensionsForFixture(auth, fixture.division_id, [
+    fixture.home_entrant_id,
+    fixture.away_entrant_id,
   ]);
 
   return (
@@ -162,6 +169,7 @@ export default async function FixturePage({
           canEdit={canScore && !(competition.frozen ?? false)}
           recorderNames={recorderNames}
           availability={availability}
+          activeSuspensions={activeSuspensions}
           publicPath={
             // Share needs a page strangers can open (v3/10 #2) — private
             // competitions have none.

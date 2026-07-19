@@ -12,6 +12,7 @@ import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
+import { SuspensionChip } from "@/components/discipline/suspension-chip";
 
 // Shared entrant-kind labels — reuse the same catalog keys the Settings tab
 // uses so "Individual / Pair / Team" read identically across the console.
@@ -78,6 +79,9 @@ interface Props {
    *  override) — decides which kinds the add form offers and whether the
    *  roster editor shows squad numbers / captain. */
   entrantModel: EffectiveEntrantModel;
+  /** Active suspensions per entrant id (SPEC-1) — red chip on the entrant row.
+   *  Empty/absent for non-entitled orgs or non-card sports. */
+  suspensions?: Record<string, { personName: string; remaining: number }[]>;
 }
 
 // Load the whole org persons directory once (cursor-paged) — org rosters are
@@ -105,6 +109,7 @@ export function EntrantsPanel({
   roles,
   eligibility,
   entrantModel,
+  suspensions = {},
 }: Props) {
   const msg = useMsg();
   const router = useRouter();
@@ -360,6 +365,7 @@ export function EntrantsPanel({
                 positionGroups={positionGroups}
                 roles={roles}
                 entrantModel={entrantModel}
+                suspensions={suspensions[e.id]}
                 otherTeamsFor={otherTeamsFor}
                 onPatch={(patch) =>
                   run(() =>
@@ -1025,6 +1031,7 @@ function EntrantTableRow({
   positionGroups,
   roles,
   entrantModel,
+  suspensions,
   otherTeamsFor,
   onPatch,
   onWithdraw,
@@ -1037,6 +1044,7 @@ function EntrantTableRow({
   positionGroups: PositionGroup[];
   roles: RoleSpec[];
   entrantModel: EffectiveEntrantModel;
+  suspensions?: { personName: string; remaining: number }[];
   otherTeamsFor: (personId: string, exceptEntrantId: string) => DivisionRosterRow[];
   onPatch: (patch: Record<string, unknown>) => void;
   /** Withdraw with fixture surgery (spec 05 §5) — confirm handled upstream. */
@@ -1080,6 +1088,11 @@ function EntrantTableRow({
             {entrant.display_name}
             <span className="ml-1.5 text-xs text-slate-400">{open ? "▾" : "▸"}</span>
           </button>
+          {suspensions && suspensions.length > 0 && (
+            <span className="ml-2 align-middle">
+              <SuspensionChip suspensions={suspensions} />
+            </span>
+          )}
         </td>
         <td className="px-4 py-2 text-sm text-slate-500">{entrant.kind}</td>
         <td className="px-4 py-2 text-sm text-slate-500">

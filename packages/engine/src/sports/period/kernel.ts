@@ -11,10 +11,12 @@
 // scorer decides (coincidentals, delayed penalties → core.note for context).
 import { z } from "zod";
 import { EngineError } from "../../core/errors.ts";
-import type { CoreEv, EventEnvelope } from "../../core/events.ts";
+import { resolveVoids, type CoreEv, type EventEnvelope } from "../../core/events.ts";
 import type { Rng } from "../../core/rng.ts";
 import {
   EntrantId,
+  type DisciplineCard,
+  type DisciplineModel,
   type LineupPair,
   type MatchOutcome,
   type MetricSpec,
@@ -526,6 +528,10 @@ export interface PeriodPreset {
   timelineEntitlement: string; // FeatureKey for tier-2/3 attributed scoring
   playerStats?: PlayerStatsModel;
   entrantModel?: EntrantModel;
+  // SPEC-1 — the card/penalty classes the discipline rules editor may offer
+  // (a superset/relabel of the suspension classes). Omitted → derived from the
+  // suspension class keys; absent suspensions → no discipline descriptor.
+  disciplineColors?: { key: string; label: string }[];
 }
 
 export function makePeriodModule(
@@ -552,6 +558,37 @@ export function makePeriodModule(
       entitlement: preset.timelineEntitlement,
     },
   ];
+
+  // SPEC-1 — read-only card projection over the suspension.start events (voids
+  // un-count). Colours come from disciplineColors, else the suspension class
+  // keys humanised. Sports without a suspension track get no descriptor.
+  const discipline: DisciplineModel | undefined =
+    preset.defaults.suspensions === null
+      ? undefined
+      : {
+          colors:
+            preset.disciplineColors ??
+            Object.keys(preset.defaults.suspensions.classes).map((key) => ({
+              key,
+              label: key.replace(/_/g, " ").replace(/^./, (ch) => ch.toUpperCase()),
+            })),
+          extractCards(ledger): DisciplineCard[] {
+            const cards: DisciplineCard[] = [];
+            for (const ev of resolveVoids(ledger)) {
+              if (ev.type !== suspStartType) continue;
+              const parsed = PeriodSuspensionStart.safeParse(ev.payload);
+              if (!parsed.success) continue;
+              const card = parsed.data;
+              cards.push({
+                ...(card.person === undefined ? {} : { personId: card.person }),
+                entrantSide: card.by,
+                color: card.class,
+                eventId: ev.id,
+              });
+            }
+            return cards;
+          },
+        };
 
   const sideMetrics = (state: PeriodState, side: Side, zero: boolean): Record<string, number> => {
     const opp = opponent(side);
@@ -760,6 +797,7 @@ export function makePeriodModule(
     officialLabel: preset.officialLabel,
     ...(preset.playerStats === undefined ? {} : { playerStats: preset.playerStats }),
     ...(preset.entrantModel === undefined ? {} : { entrantModel: preset.entrantModel }),
+    ...(discipline === undefined ? {} : { discipline }),
 
     // spec 03 §6 — deterministic valid-event generator.
     arbitraryEvent(state, rng: Rng): ModuleEvent<PeriodEv> | null {

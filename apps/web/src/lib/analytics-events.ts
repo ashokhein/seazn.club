@@ -41,6 +41,13 @@ export const EVENTS = {
   EMBED_RENDERED: "embed_rendered",
   /** Pricing page: visitor opened the hidden Pro Plus offer. */
   PRICING_PLUS_REVEALED: "pricing_plus_revealed",
+  // Org news (SPEC-2) — composer + publish (server-side) and the public share
+  // loop (client-side). post_published carries { kind, auto } so the funnel can
+  // split organiser-authored from one-tap auto-draft publishes.
+  POST_CREATED: "post_created",
+  POST_PUBLISHED: "post_published",
+  POST_SHARED: "post_shared",
+  POST_CARD_DOWNLOADED: "post_card_downloaded",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];

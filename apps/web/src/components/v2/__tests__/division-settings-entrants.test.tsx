@@ -49,6 +49,8 @@ function renderSettings(
       danger={<div />}
       entrantModel={overrides.entrantModel ?? INDIVIDUAL_ONLY}
       entrantModelSource={overrides.entrantModelSource ?? "sport"}
+      autoPosts={false}
+      canAutoPost={false}
     />,
   );
 }

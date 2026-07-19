@@ -20,7 +20,9 @@ test("wizard → claim link → inside the created competition", async ({ browse
     await page.goto("/start?sport=Badminton&entrants=8");
     const wizard = page.locator("[data-start-wizard]");
     await expect(wizard).toBeVisible();
-    await expect(page.locator("select")).toHaveValue("Badminton");
+    // Scope to the wizard — the marketing footer carries a second <select>
+    // (locale switcher), which trips strict mode on a bare page.locator.
+    await expect(wizard.locator("select")).toHaveValue("Badminton");
 
     await page.getByLabel("Competition name").fill(name);
     await page.getByRole("button", { name: /recommend a format/i }).click();

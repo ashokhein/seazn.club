@@ -117,4 +117,15 @@ export const icehockey = makePeriodModule({
   shootoutLabel: "GWS",
   timelineEntitlement: "scoring.match_timeline",
   playerStats,
+  // SPEC-1 — IIHF penalty classes the discipline rules editor may ban on
+  // (default policy is dismissal-only: match/game misconduct → 1 match).
+  disciplineColors: [
+    { key: "minor", label: "Minor" },
+    { key: "bench_minor", label: "Bench minor" },
+    { key: "double_minor", label: "Double minor" },
+    { key: "major", label: "Major" },
+    { key: "misconduct", label: "Misconduct" },
+    { key: "game_misconduct", label: "Game misconduct" },
+    { key: "match", label: "Match penalty" },
+  ],
 });

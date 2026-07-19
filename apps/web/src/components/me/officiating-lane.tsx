@@ -11,6 +11,8 @@ import { apiV1 } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { Zoned } from "@/components/client-time";
 import { routes } from "@/lib/routes";
+import { MarkBadge } from "@/components/officials/mark-badge";
+import { ReportForm } from "@/components/officials/report-form";
 import type {
   MyBlackout,
   MyOfficiatingAssignment,
@@ -37,20 +39,32 @@ export function OfficiatingLane({
   completed,
   blackouts,
   pendingClaims,
+  myAverage = null,
 }: {
   isOfficial: boolean;
   assignments: MyOfficiatingAssignment[];
   completed: MyOfficiatingAssignment[];
   blackouts: MyBlackout[];
   pendingClaims: PendingOfficiatingClaim[];
+  /** The official's own GLOBAL average — cross-org, ≥3 marks only (D4). Null
+   *  below the threshold; the "collecting marks" note stands in. */
+  myAverage?: { average: number; count: number } | null;
 }) {
   const msg = useMsg();
   return (
     <section className="mb-8" aria-label={msg("me.off.title")}>
-      <h2 className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-        {msg("me.off.title")}
-        {isOfficial ? ` · ${msg("me.off.assignments")}` : ""}
-      </h2>
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <h2 className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          {msg("me.off.title")}
+          {isOfficial ? ` · ${msg("me.off.assignments")}` : ""}
+        </h2>
+        {isOfficial &&
+          (myAverage ? (
+            <MarkBadge average={myAverage.average} count={myAverage.count} className="ml-auto" />
+          ) : completed.length > 0 ? (
+            <span className="ml-auto text-[11px] text-slate-400">{msg("marks.collecting")}</span>
+          ) : null)}
+      </div>
 
       {pendingClaims.length > 0 && <PendingInvites claims={pendingClaims} />}
 
@@ -93,10 +107,24 @@ export function OfficiatingLane({
   );
 }
 
+// A finished match is reportable when it ended (decided/finalized/abandoned)
+// and the official accepted it. Report state keys off the completed union, not
+// a date window (#122 lesson).
+const REPORTABLE = new Set(["decided", "finalized", "abandoned"]);
+
 /** Read-only row for a finished match (no accept/decline/score) — shown inside
- *  the collapsed "completed" disclosure. */
+ *  the collapsed "completed" disclosure. Reportable rows carry the match-report
+ *  CTA (draft/submitted state chip) that opens the report form inline. */
 function CompletedCard({ a }: { a: MyOfficiatingAssignment }) {
   const msg = useMsg();
+  const [open, setOpen] = useState(false);
+  const canReport = a.response === "accepted" && REPORTABLE.has(a.fixture_status);
+  const ctaLabel =
+    a.report_status === "submitted"
+      ? msg("report.cta.filed")
+      : a.report_status === "draft"
+        ? msg("report.cta.draft")
+        : msg("report.cta.file");
   return (
     <li className="card space-y-1 border-l-4 border-l-slate-200 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -117,6 +145,30 @@ function CompletedCard({ a }: { a: MyOfficiatingAssignment }) {
         <p className="text-xs text-slate-400">
           <Zoned value={a.scheduled_at} tz={a.venue_tz ?? "UTC"} mode="datetime" showZone you="subtitle" />
         </p>
+      )}
+      {canReport && (
+        <>
+          <button
+            type="button"
+            onClick={() => setOpen((v) => !v)}
+            aria-expanded={open}
+            className={`inline-flex min-h-[44px] items-center gap-1 text-xs font-medium hover:underline ${
+              a.report_status === "submitted" ? "text-lime-700" : "text-purple-600"
+            }`}
+          >
+            {a.report_status === "submitted" ? "✓ " : ""}
+            {ctaLabel}
+          </button>
+          {open && (
+            <div className="pt-1">
+              <ReportForm
+                fixtureOfficialId={a.fixture_official_id}
+                venueTz={a.venue_tz ?? "UTC"}
+                onClose={() => setOpen(false)}
+              />
+            </div>
+          )}
+        </>
       )}
     </li>
   );

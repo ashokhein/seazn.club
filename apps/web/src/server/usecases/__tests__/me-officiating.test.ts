@@ -174,6 +174,12 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     expect(ids).toContain(pastInPlay); // in_play → always shows
     expect(ids).not.toContain(done); // finished → out of outstanding
     expect(completedIds).toContain(done); // finished → in the completed panel
+
+    // SPEC-3: completed rows carry the fixture_officials surrogate id (the
+    // report CTA keys on it) and a report_status (null until one is filed).
+    const doneRow = mine.completed.find((a) => a.fixture_id === done)!;
+    expect(doneRow.fixture_official_id).toBeTruthy();
+    expect(doneRow.report_status).toBeNull();
   });
 
   it("guards response transitions and scopes writes to the assigned official", async () => {

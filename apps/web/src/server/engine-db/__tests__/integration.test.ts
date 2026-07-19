@@ -163,8 +163,12 @@ describe.skipIf(!HAS_DB)("engine-db persistence adapter", () => {
     expect(rebuilt?.lastSeq).toBe(stored.last_seq);
     expect(rebuilt?.state).toEqual(stored.state);
 
+    // Scope the drift assertion to THIS test's fixture: the checker scans the
+    // last N fixtures globally, and sibling suites (running in parallel on the
+    // same DB) legitimately stage fixtures via raw SQL status flips with no
+    // ledger — those are theirs, not adapter drift.
     const report = await verifyStateConsistency(50);
-    expect(report.mismatches).toHaveLength(0);
+    expect(report.mismatches.filter((m) => m.fixtureId === s.fixtureId)).toHaveLength(0);
   });
 
   it("hash chain verifies clean, then flags a tampered row", async () => {

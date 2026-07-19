@@ -15,6 +15,10 @@ import { UpgradeGate } from "@/components/upgrade-gate";
 import { useMsg, useLocale } from "@/components/i18n/dict-provider";
 import { OfficialAvatar } from "@/components/v2/officials-shared";
 import { fmtTime, fmtZoneAbbrev } from "@/lib/format";
+import { MarkControl } from "@/components/officials/mark-tiles";
+import { ReportDrawer, type MatchReport } from "@/components/officials/report-drawer";
+
+type FixtureReportLite = MatchReport & { officialName: string };
 
 interface Official {
   id: string;
@@ -86,6 +90,10 @@ export function OfficialsPanel({
   blackouts = [],
   busyElsewhere = [],
   venueTz = "UTC",
+  marksEnabled = false,
+  foIdByAssignment = {},
+  marksByFoId = {},
+  reportsByFixture = {},
 }: {
   divisionId: string;
   officials: Official[];
@@ -100,6 +108,16 @@ export function OfficialsPanel({
   busyElsewhere?: { official_id: string; scheduled_at: string }[];
   /** Venue zone for matching a fixture's date against blackout dates. */
   venueTz?: string;
+  /** SPEC-3: Pro `officials.marks` — gates the mark tiles (community sees the
+   *  upgrade gate instead). */
+  marksEnabled?: boolean;
+  /** `${fixture_id}:${official_id}:${role_key}` → fixture_officials surrogate id
+   *  (the cache jsonb doesn't carry it). */
+  foIdByAssignment?: Record<string, string>;
+  /** fixture_official_id → existing mark (prefill the tiles). */
+  marksByFoId?: Record<string, number>;
+  /** fixture_id → submitted reports (drawer). */
+  reportsByFixture?: Record<string, FixtureReportLite[]>;
 }) {
   const msg = useMsg();
   const locale = useLocale();
@@ -549,6 +567,105 @@ export function OfficialsPanel({
           </tbody>
         </table>
       </div>
+
+      {/* SPEC-3: rate accepted officials once a fixture is decided; view any
+          submitted match report. A dedicated section (not table cells) so the
+          scoreboard-digit tiles breathe on mobile. */}
+      <RateOfficials
+        fixtures={fixtures}
+        marksEnabled={marksEnabled}
+        foIdByAssignment={foIdByAssignment}
+        marksByFoId={marksByFoId}
+        reportsByFixture={reportsByFixture}
+        venueTz={venueTz}
+      />
     </section>
+  );
+}
+
+const RATEABLE_STATUS = new Set(["decided", "finalized"]);
+
+/** The "Rate officials" section: for every decided fixture with an accepted
+ *  official, the five-digit mark tiles (Pro) or the upgrade gate (community),
+ *  plus a chip opening the read-only drawer for any submitted report. */
+function RateOfficials({
+  fixtures,
+  marksEnabled,
+  foIdByAssignment,
+  marksByFoId,
+  reportsByFixture,
+  venueTz,
+}: {
+  fixtures: FixtureLite[];
+  marksEnabled: boolean;
+  foIdByAssignment: Record<string, string>;
+  marksByFoId: Record<string, number>;
+  reportsByFixture: Record<string, FixtureReportLite[]>;
+  venueTz: string;
+}) {
+  const msg = useMsg();
+  const rateable = fixtures.filter(
+    (f) => RATEABLE_STATUS.has(f.status) && f.officials.some((o) => o.response === "accepted"),
+  );
+  if (rateable.length === 0) return null;
+  return (
+    <div className="card space-y-4 p-4" data-testid="rate-officials">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-slate-900">{msg("officials.rate.heading")}</h3>
+        {!marksEnabled && <UpgradeGate feature="officials.marks" compact />}
+      </div>
+      <ul className="space-y-4">
+        {rateable.map((f) => (
+          <li key={f.id} className="space-y-2 border-t border-slate-100 pt-3 first:border-0 first:pt-0">
+            <p className="text-sm font-medium text-slate-700">{f.label}</p>
+            <ul className="space-y-3">
+              {f.officials
+                .filter((o) => o.response === "accepted")
+                .map((o, i) => {
+                  const foId = foIdByAssignment[`${f.id}:${o.official_id}:${o.role}`];
+                  return (
+                    <li key={i} className="flex flex-col gap-1.5">
+                      <span className="text-xs text-slate-500">
+                        {o.name} <span className="text-slate-400">{o.role}</span>
+                      </span>
+                      {foId && marksEnabled ? (
+                        <MarkControl fixtureOfficialId={foId} initialMark={marksByFoId[foId] ?? null} />
+                      ) : !marksEnabled ? (
+                        <span className="text-xs text-slate-400">{msg("officials.rate.locked")}</span>
+                      ) : null}
+                    </li>
+                  );
+                })}
+            </ul>
+            {(reportsByFixture[f.id] ?? []).map((r) => (
+              <ReportChip key={r.id} report={r} venueTz={venueTz} />
+            ))}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** A submitted-report chip that toggles the read-only console drawer. */
+function ReportChip({ report, venueTz }: { report: FixtureReportLite; venueTz: string }) {
+  const msg = useMsg();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full bg-slate-100 px-3 text-xs font-medium text-slate-700 hover:bg-slate-200"
+      >
+        {msg("officials.rate.viewReport", { name: report.officialName })}
+      </button>
+      {open && (
+        <div className="rounded-lg border border-slate-200 p-3">
+          <ReportDrawer report={report} officialName={report.officialName} venueTz={venueTz} />
+        </div>
+      )}
+    </div>
   );
 }

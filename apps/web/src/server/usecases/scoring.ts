@@ -25,6 +25,8 @@ import { assertCompetitionNotFrozen } from "./entitlement-freeze";
 import { requiredFeatureForEvent } from "./fidelity";
 import { scoresViaAssignment } from "./scorers";
 import { fillSlot } from "./stages";
+import { detectSuspensions } from "./discipline";
+import { draftPostsForDecidedFixture } from "./org-posts";
 
 export interface ScoreOutcome {
   seq: number;
@@ -84,6 +86,8 @@ export async function scoreEvent(
   // A decision (or a void that may have erased one) moves brackets/standings.
   if (result.outcome !== null || input.type === "core.void") {
     await onDecided(auth, fixtureId, result.outcome);
+    await refreshDiscipline(auth, fixtureId);
+    await refreshNews(auth, fixtureId);
   }
 
   if (cacheKey) await cacheSet(cacheKey, out, IDEM_TTL_SECONDS);
@@ -222,6 +226,41 @@ async function assertEntitledToScore(
     const dlsEnabled =
       (ctx.config as { dls?: { enabled?: boolean } } | null)?.dls?.enabled === true;
     if (dlsEnabled && !manualTarget) await requireFeature(auth.orgId, "cricket.dls");
+  }
+}
+
+// Discipline (SPEC-1): a decided/void write re-folds the division's card ledger
+// into suspensions (recompute-on-read's write-side twin) and advances the
+// serving counter — but only when the division has enabled rules. A one-query
+// probe keeps the hot scoring path free for every division without discipline.
+async function refreshDiscipline(auth: AuthCtx, fixtureId: string): Promise<void> {
+  await withTenant(auth.orgId, async (tx) => {
+    const [row] = await tx<{ division_id: string }[]>`
+      select division_id from fixtures where id = ${fixtureId}`;
+    if (!row) return;
+    const [enabled] = await tx`
+      select 1 from discipline_rules where division_id = ${row.division_id} and enabled`;
+    if (!enabled) return;
+    await detectSuspensions(tx, row.division_id);
+  });
+}
+
+// News auto-drafts (SPEC-2): a decided/void write may draft a result/round_recap
+// post when the division opted in AND the org has news.auto. A one-query probe
+// (auto_posts) keeps the hot path free for divisions without news; the whole
+// hook is swallowed — a draft/template hiccup must NEVER fail the score write
+// (same isolation principle as the discipline/email fire-and-forget sends).
+async function refreshNews(auth: AuthCtx, fixtureId: string): Promise<void> {
+  try {
+    await withTenant(auth.orgId, async (tx) => {
+      const [row] = await tx<{ auto_posts: boolean }[]>`
+        select d.auto_posts from fixtures f join divisions d on d.id = f.division_id
+        where f.id = ${fixtureId}`;
+      if (!row?.auto_posts) return;
+      await draftPostsForDecidedFixture(tx, fixtureId);
+    });
+  } catch (err) {
+    console.error("news auto-draft failed (score write unaffected)", err);
   }
 }
 

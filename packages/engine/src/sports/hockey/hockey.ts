@@ -87,4 +87,10 @@ export const hockey = makePeriodModule({
   shootoutLabel: "SO",
   timelineEntitlement: "scoring.match_timeline",
   playerStats,
+  // SPEC-1 — FIH card grades the discipline rules editor may accumulate/ban on.
+  disciplineColors: [
+    { key: "green", label: "Green card" },
+    { key: "yellow", label: "Yellow card" },
+    { key: "red", label: "Red card" },
+  ],
 });

@@ -3,10 +3,35 @@
 // Zod schemas first, inferred types second (conventions PROMPT-00 §3).
 import { z } from "zod";
 
+import type { EventEnvelope } from "./events.ts";
+
 // spec 02 §2 — the competition engine pairs/ranks entrants and never cares
 // what's inside them (team | individual | pair).
 export const EntrantId = z.string().min(1);
 export type EntrantId = z.infer<typeof EntrantId>;
+
+// SPEC-1 (discipline) — an entrant identifier: the fixture side a card was
+// shown to (a card event's `by`). Named for how it reads on a card record.
+export type Side = EntrantId;
+
+// SPEC-1 — a card projected from a fixture ledger, the read-only input to the
+// discipline fold (usecases/discipline.ts). Additive projection, same layer as
+// playerStats: zero reducer/replay/golden impact (D2). Anonymous cards
+// (personId undefined) are returned but never accumulate downstream.
+export interface DisciplineCard {
+  personId?: string;
+  entrantSide: Side;
+  color: string; // module-declared key, e.g. "yellow" | "red"
+  eventId: string;
+}
+
+// SPEC-1 — the optional sport-module discipline descriptor: which colours the
+// rules editor may offer, and how to extract cards from a ledger (voids
+// respected inside extractCards).
+export interface DisciplineModel {
+  colors: { key: string; label: string }[];
+  extractCards(ledger: EventEnvelope[]): DisciplineCard[];
+}
 
 // spec 02 §5 — a division's format is an ordered list of stages.
 export const StageKind = z.enum([

@@ -14,6 +14,7 @@ import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { OfficialAvatar, OfficialInviteForm, RoleChipPicker } from "@/components/v2/officials-shared";
 import { ALL_OFFICIAL_ROLES } from "@/lib/official-roles";
+import { MarksSummaryBlock } from "@/components/officials/marks-summary-block";
 
 export interface DirectoryOfficial {
   id: string;
@@ -45,8 +46,11 @@ export function OfficialsDirectoryPanel({
   const [name, setName] = useState("");
   const [roles, setRoles] = useState<string[]>(["referee"]);
   const [bulkDone, setBulkDone] = useState<number | null>(null);
-  /** One expandable per row: the invite form or the roles editor. */
-  const [openRow, setOpenRow] = useState<{ id: string; mode: "invite" | "roles" } | null>(null);
+  /** One expandable per row: the invite form, the roles editor, or the SPEC-3
+   *  marks summary. */
+  const [openRow, setOpenRow] = useState<{ id: string; mode: "invite" | "roles" | "marks" } | null>(
+    null,
+  );
   const confirm = useConfirm();
 
   const bulkTargets = officials.filter((o) => o.email && !o.claimed && !o.invite_pending);
@@ -180,6 +184,16 @@ export function OfficialsDirectoryPanel({
                         {msg("officials.editRoles")}
                       </button>
                     )}
+                    {!(openRow?.id === o.id && openRow.mode === "marks") && (
+                      <button
+                        type="button"
+                        className="btn btn-ghost py-1 text-xs"
+                        disabled={busy}
+                        onClick={() => setOpenRow({ id: o.id, mode: "marks" })}
+                      >
+                        {msg("marks.summary.view")}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="btn btn-ghost ml-auto py-1 text-xs text-red-600 hover:bg-red-50 hover:text-red-700"
@@ -203,7 +217,9 @@ export function OfficialsDirectoryPanel({
                 )}
                 {openRow?.id === o.id && (
                   <div className="mt-3 border-t border-slate-100 pt-3">
-                    {openRow.mode === "invite" ? (
+                    {openRow.mode === "marks" ? (
+                      <MarksSummaryBlock officialId={o.id} />
+                    ) : openRow.mode === "invite" ? (
                       <OfficialInviteForm
                         officialId={o.id}
                         initialEmail={o.email}

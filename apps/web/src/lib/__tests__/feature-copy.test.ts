@@ -23,4 +23,14 @@ describe("feature-copy V290", () => {
     // officials.assignment was deleted (D5) — falls back to the generic line.
     expect(featureReason("officials.assignment")).toBe("This feature needs a plan upgrade.");
   });
+  it("has copy for the v16 league-ops entitlements (V293/V294/V295, T84)", () => {
+    expect(featureReason("discipline.enforced")).toBe(
+      "Automatic suspension tracking is a Pro feature.",
+    );
+    expect(featureReason("officials.marks")).toBe("Rating your match officials is a Pro feature.");
+    expect(featureReason("news.auto")).toBe("Auto-drafted result posts are a Pro feature.");
+    expect(featurePlan("discipline.enforced")).toBe("pro");
+    expect(featurePlan("officials.marks")).toBe("pro");
+    expect(featurePlan("news.auto")).toBe("pro");
+  });
 });

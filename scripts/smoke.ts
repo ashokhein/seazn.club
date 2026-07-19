@@ -308,6 +308,21 @@ async function main() {
   // public presentation mode.
   await v13Suite(admin, org2.id, renamed.slug);
 
+  // --- v16 SPEC-1 discipline: 5-yellow auto ban → confirm → public strip on
+  // the Pro org; 402 + PlusReveal on a fresh community owner.
+  await disciplineSuite(admin, org2.id, renamed.slug);
+
+  // --- v16 SPEC-3 marks & reports: rate an accepted, decided official (Pro
+  // 204 + summary avg) and file/submit a report (free) on org2; mark PUT 402
+  // on a fresh community org while the report still files. Runs while org2 is
+  // still Pro (the destructive downgrade is gapSuite, last).
+  await marksReportsSuite(admin, org2.id, renamed.slug);
+
+  // --- v16 SPEC-2 news: opt-in division auto-drafts a result on the decided
+  // seam → publish → public feed/post/story.png on the Pro org; manual post
+  // publishes free on a fresh community org, whose auto toggle is gated 402.
+  await newsSuite(admin, org2.id, renamed.slug);
+
   // --- v3 content + API wave (PROMPT-35/37/39): markdown editor render,
   // /help + /developers, scoped keys, OG/poster/embed/sponsors — pro + free.
   await v3ContentApiSuite(admin, org2.id, renamed.slug);
@@ -1427,6 +1442,213 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   );
 }
 
+/** v16 SPEC-3 marks & reports over real HTTP. Pro path (org2): create a
+ *  decided fixture with an accepted official → rate it 1..5 (204) → the org
+ *  profile summary reflects the average → the official files + submits a
+ *  report (free portal) → the organiser console reads it. Free path (fresh
+ *  community owner): the same decided-fixture setup, then the mark PUT is
+ *  gated 402 while the report still files. Seeds the assignment + decided
+ *  fixture BEFORE asserting (empty-data false-green lesson). */
+async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  // The fixture_officials surrogate id is never exposed by the API (the
+  // console reads it server-side); the smoke reads it over its own connection,
+  // same ad-hoc convention as checkOfficialClaimed.
+  async function foId(fixtureId: string, officialId: string): Promise<string | null> {
+    const url = process.env.DATABASE_URL;
+    if (!url) return null;
+    const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
+    const sql = postgres(url, {
+      connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
+      ssl: process.env.DATABASE_SSL === "disable" ? false : isLocal ? false : "require",
+      prepare: !url.includes(":6543"),
+      max: 1,
+    });
+    try {
+      const [r] = await sql<{ id: string }[]>`
+        select id from fixture_officials
+        where fixture_id = ${fixtureId} and official_id = ${officialId} limit 1`;
+      return r?.id ?? null;
+    } finally {
+      await sql.end();
+    }
+  }
+
+  // Build a decided fixture whose official has ACCEPTED (the mark + report
+  // window). Returns the fixture id + official id + the ref's session.
+  async function decidedFixtureWithOfficial(
+    owner: Session,
+    ownerOrgId: string,
+    label: string,
+  ): Promise<{ fx: string; offId: string; ref: Session }> {
+    owner.cookies["seazn_org"] = ownerOrgId;
+    const comp = v1data<{ id: string; slug: string }>(
+      await v1(owner, "/api/v1/competitions", "POST", { name: `Marks ${label} ${tag}`, visibility: "public" }),
+    );
+    const div = v1data<{ id: string; slug: string }>(
+      await v1(owner, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+        name: "Open", sport_key: "generic", variant_key: "score",
+        config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+      }),
+    );
+    await v1(owner, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+      { kind: "individual", display_name: `MA ${label} ${tag}`, seed: 1, members: [] },
+      { kind: "individual", display_name: `MB ${label} ${tag}`, seed: 2, members: [] },
+    ]);
+    const stage = v1data<{ id: string }>(
+      await v1(owner, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    );
+    const fx = v1data<{ fixtures: { id: string }[] }>(
+      await v1(owner, `/api/v1/stages/${stage.id}/generate`, "POST"),
+    ).fixtures[0]!.id;
+    await v1(owner, `/api/v1/divisions/${div.id}/start`, "POST");
+    const offId = v1data<{ id: string }>(
+      await v1(owner, "/api/v1/officials", "POST", { display_name: `Mark Ref ${label} ${tag}`, role_keys: ["referee"] }),
+    ).id;
+    await v1(owner, `/api/v1/fixtures/${fx}/officials`, "PATCH", {
+      set: [{ official_id: offId, role_key: "referee", locked: false }],
+    });
+    const refEmail = `marksref_${label}_${tag}@example.com`;
+    const ref = newSession();
+    await signIn(ref, refEmail);
+    const inv = await v1(owner, `/api/v1/officials/${offId}/invite`, "POST", { email: refEmail });
+    const token = (v1data<{ claim_url: string }>(inv).claim_url ?? "").split("/claim/")[1]!;
+    await call(ref, `/api/claims/${token}/accept`, "POST");
+    await v1(ref, `/api/v1/me/assigned-fixtures/${fx}/response`, "PATCH", { response: "accepted" });
+    // The accepted official scores a generic result → the fixture decides
+    // (engine-db integration: generic.result → status 'decided').
+    const st = v1data<{ last_seq: number }>(await v1(ref, `/api/v1/fixtures/${fx}/state`));
+    await v1(ref, `/api/v1/fixtures/${fx}/events`, "POST", {
+      expected_seq: st.last_seq, type: "generic.result", payload: { p1Score: 2, p2Score: 1 },
+    });
+    return { fx, offId, ref };
+  }
+
+  // ---- Pro path (org2 is Pro here) ----
+  const pro = await decidedFixtureWithOfficial(admin, proOrgId, "Pro");
+  const proFoId = await foId(pro.fx, pro.offId);
+  check("marks: surrogate assignment id resolvable", !!proFoId);
+  admin.cookies["seazn_org"] = proOrgId;
+  const putMark = await v1(admin, `/api/v1/fixture-officials/${proFoId}/mark`, "PUT", { mark: 4 });
+  check("marks pro: rate an accepted, decided official (204)", putMark.status === 204);
+  const summary = v1data<{ average: number | null; count: number }>(
+    await v1(admin, `/api/v1/officials/${pro.offId}/marks-summary`),
+  );
+  check("marks pro: profile summary average reflects the mark", summary.count === 1 && summary.average === 4);
+
+  // Report (free portal, ungated even on a Pro org): the official files + submits.
+  const draft = await v1(pro.ref, `/api/v1/me/officiating/${proFoId}/report`, "PUT", {
+    body: "tidy game", incidents: [{ kind: "other", note: "smoke note" }],
+  });
+  check("report: draft saves (free portal)", draft.status === 200 && v1data<{ status: string }>(draft).status === "draft");
+  const submitted = await v1(pro.ref, `/api/v1/me/officiating/${proFoId}/report/submit`, "POST");
+  check("report: submit is final", submitted.status === 200 && v1data<{ status: string }>(submitted).status === "submitted");
+  const fixReports = v1data<{ status: string }[]>(await v1(admin, `/api/v1/fixtures/${pro.fx}/reports`));
+  check("report: organiser console reads the submitted report", Array.isArray(fixReports) && fixReports.length === 1);
+
+  // ---- Free path (fresh community owner) ----
+  const commOwner = newSession();
+  await signIn(commOwner, `markscomm_${tag}@example.com`);
+  const commOrgId = ((await call(commOwner, "/api/orgs")) as { id: string }[])[0]!.id;
+  const free = await decidedFixtureWithOfficial(commOwner, commOrgId, "Free");
+  const freeFoId = await foId(free.fx, free.offId);
+  commOwner.cookies["seazn_org"] = commOrgId;
+  const freeMark = await v1(commOwner, `/api/v1/fixture-officials/${freeFoId}/mark`, "PUT", { mark: 3 });
+  check("marks free: rating is gated 402 (Pro officials.marks)", freeMark.status === 402);
+  const freeDraft = await v1(free.ref, `/api/v1/me/officiating/${freeFoId}/report`, "PUT", { body: "community game", incidents: [] });
+  const freeSubmit = await v1(free.ref, `/api/v1/me/officiating/${freeFoId}/report/submit`, "POST");
+  check(
+    "report free: files + submits on a community org (portal is free)",
+    freeDraft.status === 200 && freeSubmit.status === 200 && v1data<{ status: string }>(freeSubmit).status === "submitted",
+  );
+}
+
+/** v16 SPEC-2 org news over real HTTP. Pro path (org2 is Pro): an opted-in
+ *  division auto-drafts a result post on the decided seam → the organiser lists
+ *  it, publishes it, and the public feed / post page / story.png all serve.
+ *  Free path (fresh community owner): a MANUAL post creates + publishes (free on
+ *  every plan) and serves publicly, while the auto_posts toggle is gated 402
+ *  (Pro news.auto). Seeds the decided fixture BEFORE asserting (empty-data
+ *  false-green lesson). */
+async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  admin.cookies["seazn_org"] = proOrgId;
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", { name: `News ${tag}`, visibility: "public" }),
+  );
+  const div = v1data<{ id: string; slug: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "News Prem", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  const toggle = await v1(admin, `/api/v1/divisions/${div.id}`, "PATCH", { auto_posts: true });
+  check("news pro: auto_posts toggle allowed (news.auto)", toggle.status === 200);
+
+  await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+    { kind: "individual", display_name: `NHome ${tag}`, seed: 1, members: [] },
+    { kind: "individual", display_name: `NAway ${tag}`, seed: 2, members: [] },
+  ]);
+  const stage = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+  );
+  const fx = v1data<{ fixtures: { id: string }[] }>(
+    await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST"),
+  ).fixtures[0]!.id;
+  await v1(admin, `/api/v1/divisions/${div.id}/start`, "POST");
+  const st = v1data<{ last_seq: number }>(await v1(admin, `/api/v1/fixtures/${fx}/state`));
+  await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
+    expected_seq: st.last_seq, type: "generic.result", payload: { p1Score: 3, p2Score: 1 },
+  });
+
+  const drafts = v1data<{ id: string; kind: string; auto_source: unknown | null }[]>(
+    await v1(admin, `/api/v1/orgs/${proOrgId}/posts?status=draft`),
+  );
+  const auto = drafts.find((d) => d.kind === "result" && d.auto_source);
+  check("news pro: a result post auto-drafted on the decided seam", !!auto);
+
+  const pub = await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", { action: "publish" });
+  const pubData = v1data<{ status: string; slug: string }>(pub);
+  check("news pro: draft publishes", pub.status === 200 && pubData.status === "published");
+
+  const feed = await html(newSession(), `/shared/${proOrgSlug}/news`);
+  check("news pro: public feed 200 + shows a post card", feed.status === 200 && feed.body.includes("news-card"));
+  const postPage = await html(newSession(), `/shared/${proOrgSlug}/news/${pubData.slug}`);
+  check("news pro: public post page 200", postPage.status === 200);
+  const story = await fetch(`${BASE}/shared/${proOrgSlug}/news/${pubData.slug}/story.png`);
+  check(
+    "news pro: story PNG 200 image/png",
+    story.status === 200 && (story.headers.get("content-type") ?? "").includes("image/png"),
+  );
+
+  // ---- Free path (fresh community owner) ----
+  const commOwner = newSession();
+  await signIn(commOwner, `newscomm_${tag}@example.com`);
+  const commOrg = ((await call(commOwner, "/api/orgs")) as { id: string; slug: string }[])[0]!;
+  commOwner.cookies["seazn_org"] = commOrg.id;
+
+  const manual = await v1(commOwner, `/api/v1/orgs/${commOrg.id}/posts`, "POST", {
+    title: `Free news ${tag}`, body_md: "Hello **world**.", kind: "announcement",
+  });
+  check("news free: manual post create (free on every plan)", manual.status === 201);
+  const manualPub = v1data<{ slug: string; status: string }>(
+    await v1(commOwner, `/api/v1/posts/${v1data<{ id: string }>(manual).id}`, "PATCH", { action: "publish" }),
+  );
+  check("news free: manual post publishes", manualPub.status === "published");
+  const freePost = await html(newSession(), `/shared/${commOrg.slug}/news/${manualPub.slug}`);
+  check("news free: manual post public page 200", freePost.status === 200);
+
+  const freeComp = v1data<{ id: string }>(
+    await v1(commOwner, "/api/v1/competitions", "POST", { name: `Free news comp ${tag}`, visibility: "public" }),
+  );
+  const freeDiv = v1data<{ id: string }>(
+    await v1(commOwner, `/api/v1/competitions/${freeComp.id}/divisions`, "POST", {
+      name: "Div", sport_key: "generic", variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    }),
+  );
+  const freeToggle = await v1(commOwner, `/api/v1/divisions/${freeDiv.id}`, "PATCH", { auto_posts: true });
+  check("news free: auto_posts toggle gated 402 (Pro news.auto)", freeToggle.status === 402);
+}
+
 /** PLG growth loops (design/plg): the free-tier "Powered by Seazn Club"
  *  footer is an acquisition CTA (attribution-link.tsx) and every public
  *  competition page carries a fan-facing share bar (share-bar.tsx) — pro
@@ -2169,6 +2391,13 @@ async function proPlusSuite(): Promise<void> {
     pricing.status === 200 &&
       pricing.body.includes("data-pricing-matrix") &&
       pricing.body.includes("Pro Plus"),
+  );
+  // T84: the three v16 league-ops entitlements (discipline, marks, auto
+  // news) are surfaced on the Pro card + comparison matrix, not just gated.
+  check(
+    "pp: /pricing surfaces the v16 league-ops entitlements",
+    pricing.body.includes("Suspensions &amp; discipline tracking") &&
+      pricing.body.includes("Automatic suspension tracking"),
   );
 
   // Restore: this org is never touched by another suite in main(), but leave
@@ -4014,6 +4243,139 @@ async function v3ContentApiSuite(
   );
 }
 
+/** SPEC-1 discipline (PROMPT-79): Pro org auto-accumulates a 5-yellow ban the
+ *  organiser confirms (→ active + public strip); a free org gets 402 on the
+ *  rules PUT and a PlusReveal on the Discipline tab. Cards must be seeded
+ *  BEFORE checking (empty-doc false-green lesson). */
+async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+  admin.cookies["seazn_org"] = proOrgId;
+
+  const comp = v1data<{ id: string; slug: string }>(
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `Discipline Cup ${tag}`,
+      visibility: "public",
+    }),
+  );
+  const div = v1data<{ id: string; slug: string }>(
+    await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
+      name: "Prem",
+      sport_key: "football",
+      variant_key: "11-a-side",
+    }),
+  );
+  check("disc: football division created", !!div.id);
+
+  const player = v1data<{ id: string }>(
+    await v1(admin, "/api/v1/persons", "POST", {
+      full_name: `Card Magnet ${tag}`,
+      consent: { public_name: true },
+    }),
+  );
+  const ents = v1data<{ id: string }[]>(
+    await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+      { kind: "team", display_name: `Rovers ${tag}`, seed: 1, members: [{ person_id: player.id }] },
+      { kind: "team", display_name: `City ${tag}`, seed: 2 },
+    ]),
+  );
+  const rovers = ents[0]!.id;
+
+  // Enable rules (FA default shape) — 5 yellows → 1 match.
+  const put = await v1(admin, `/api/v1/divisions/${div.id}/discipline-rules`, "PUT", {
+    enabled: true,
+    rules: {
+      accumulation: [
+        { key: "yellow_5", color: "yellow", count: 5, ban_matches: 1 },
+        { key: "yellow_10", color: "yellow", count: 10, ban_matches: 2 },
+      ],
+      dismissal: [
+        { key: "second_yellow", color: "second_yellow", ban_matches: 1 },
+        { key: "red", color: "red", ban_matches: 1 },
+      ],
+    },
+  });
+  check("disc: pro enables rules", put.status === 200 && v1data<{ enabled: boolean }>(put).enabled === true);
+
+  // League with 5 legs → 5 Rovers-vs-City fixtures.
+  const stageId = v1data<{ id: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1,
+      kind: "league",
+      name: "League",
+      config: { legs: 5 },
+    }),
+  ).id;
+  const fixtures = v1data<{ fixtures: { id: string }[] }>(
+    await v1(admin, `/api/v1/stages/${stageId}/generate`, "POST"),
+  ).fixtures;
+  check("disc: 5 fixtures generated (legs:5)", fixtures.length === 5);
+  await v1(admin, `/api/v1/divisions/${div.id}/start`, "POST");
+
+  // Seed one yellow per fixture — lineup must carry the player for the card.
+  for (const fx of fixtures) {
+    await v1(admin, `/api/v1/fixtures/${fx.id}/lineups/${rovers}`, "PUT", {
+      slots: [{ person_id: player.id, slot: "starting", position_key: "FW", order_no: 1, roles: [] }],
+    });
+    const started = await v1(admin, `/api/v1/fixtures/${fx.id}/events`, "POST", {
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
+    const seq = v1data<{ seq: number }>(started).seq;
+    await v1(admin, `/api/v1/fixtures/${fx.id}/events`, "POST", {
+      expected_seq: seq,
+      type: "football.card",
+      payload: { by: rovers, person: player.id, color: "yellow" },
+    });
+  }
+
+  const pending = v1data<{ id: string; status: string; source: string }[]>(
+    await v1(admin, `/api/v1/divisions/${div.id}/suspensions?status=pending`),
+  );
+  const auto = pending.find((s) => s.source === "auto_accumulation");
+  check("disc: 5 yellows raise a pending accumulation ban", !!auto);
+
+  if (auto) {
+    const confirmed = await v1(admin, `/api/v1/suspensions/${auto.id}`, "PATCH", { kind: "confirm" });
+    check("disc: confirm activates the ban", v1data<{ status: string }>(confirmed).status === "active");
+  }
+  const active = v1data<{ status: string }[]>(
+    await v1(admin, `/api/v1/divisions/${div.id}/suspensions?status=active`),
+  );
+  check("disc: ban listed active after confirm", active.length >= 1);
+
+  const pub = await html(newSession(), `/shared/${proOrgSlug}/${comp.slug}/${div.slug}`);
+  check(
+    "disc: public suspensions strip shows the ban",
+    pub.status === 200 && pub.body.includes("Suspensions") && pub.body.includes("to serve"),
+  );
+
+  // --- Free path: 402 on the rules PUT + PlusReveal on the Discipline tab ---
+  const free = newSession();
+  await signIn(free, `disc_free_${tag}@example.com`);
+  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrg = freeOrgs[0]!;
+  const freeComp = v1data<{ id: string; slug: string }>(
+    await v1(free, "/api/v1/competitions", "POST", { name: `Free Disc ${tag}`, visibility: "public" }),
+  );
+  const freeDiv = v1data<{ id: string; slug: string }>(
+    await v1(free, `/api/v1/competitions/${freeComp.id}/divisions`, "POST", {
+      name: "Sunday",
+      sport_key: "football",
+      variant_key: "11-a-side",
+    }),
+  );
+  const freePut = await v1(free, `/api/v1/divisions/${freeDiv.id}/discipline-rules`, "PUT", {
+    enabled: true,
+    rules: { accumulation: [], dismissal: [] },
+  });
+  check("disc: free rules PUT → 402", freePut.status === 402);
+  const freeTab = await html(free, `/o/${freeOrg.slug}/c/${freeComp.slug}/d/${freeDiv.slug}?tab=discipline`);
+  check(
+    "disc: free Discipline tab shows the PlusReveal",
+    freeTab.status === 200 && freeTab.body.includes("discipline.enforced"),
+  );
+}
+
 /** Flip an org's plan directly in the DB — smoke targets a disposable DB and
  *  the billing checkout path can't run without Stripe. */
 async function setPlan(orgId: string, plan: string): Promise<void> {
@@ -4052,6 +4414,7 @@ async function cleanup(tag: string): Promise<void> {
     `free_${tag}@example.com`,
     `walkin_${tag}@example.com`,
     `ui_free_${tag}@example.com`,
+    `disc_free_${tag}@example.com`,
     `pass_${tag}@example.com`,
     `proplus_${tag}@example.com`,
     `funnel_${tag}@example.com`,

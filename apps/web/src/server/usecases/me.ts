@@ -325,6 +325,32 @@ export interface MyPerson {
 }
 
 /** My claimed persons across all orgs, with consent state. dob stays server-side. */
+export interface MySuspension {
+  id: string;
+  reason: string;
+  matches_total: number;
+  matches_served: number;
+  division_name: string;
+  competition_name: string;
+  org_name: string;
+}
+
+/** Active suspensions across every org for the signed-in player's claimed
+ *  persons (SPEC-1). Superuser read of the stored snapshot — a claimed player is
+ *  usually not an org member, so the tenant door never opens for them. */
+export async function getMySuspensions(userId: string): Promise<MySuspension[]> {
+  return sql<MySuspension[]>`
+    select s.id, s.reason, s.matches_total, s.matches_served,
+           d.name as division_name, c.name as competition_name, o.name as org_name
+    from suspensions s
+    join persons p on p.id = s.person_id
+    join divisions d on d.id = s.division_id
+    join competitions c on c.id = d.competition_id
+    join organizations o on o.id = s.org_id
+    where p.user_id = ${userId} and s.status = 'active'
+    order by o.name, d.name, s.created_at`;
+}
+
 export async function listMyPersons(userId: string): Promise<MyPerson[]> {
   const rows = await sql<
     (Omit<MyPerson, "consent_locked" | "hasPhotoFeature" | "photo"> & {

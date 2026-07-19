@@ -5,7 +5,9 @@ import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ChevronRight } from "lucide-react";
 import { getPublicOrg } from "@/server/public-site/data";
+import { publicPosts } from "@/server/usecases/org-posts";
 import { competitionChip, chipLabelKey } from "@/lib/public-site";
+import { kindEyebrow } from "@/lib/news-presentation";
 import { renderProse } from "@/lib/prose";
 import { CompetitionProse } from "@/components/public-site/competition-prose";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
@@ -76,7 +78,19 @@ export default async function OrgLandingPage({ params }: Props) {
   const data = await getPublicOrg(orgSlug);
   if (!data) notFound();
   const { org, competitions } = data;
-  const dict = await getDictionary(orgLocale(org.default_locale), "public");
+  const locale = orgLocale(org.default_locale);
+  const dict = await getDictionary(locale, "public");
+  // Latest-news strip (SPEC-2): newest 3 published posts, three compact rows —
+  // the landing hero stays the org's identity, news stays quiet.
+  const { posts } = await publicPosts(orgSlug, 0);
+  const latestNews = posts.slice(0, 3);
+
+  const TONE_TEXT = {
+    lime: "text-[#65a30d]",
+    white: "text-ink",
+    red: "text-[#dc2626]",
+    muted: "text-ink-muted",
+  } as const;
 
   return (
     <div>
@@ -109,6 +123,47 @@ export default async function OrgLandingPage({ params }: Props) {
             {t(dict, "section.about")}
           </h2>
           <CompetitionProse html={await renderProse(org.about)} />
+        </section>
+      ) : null}
+
+      {latestNews.length > 0 ? (
+        <section className="mb-8" data-testid="latest-news-strip">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h2 className="font-display text-2xl font-semibold uppercase tracking-wide text-ink">
+              {t(dict, "news.latest")}
+            </h2>
+            <Link
+              href={`/shared/${org.slug}/news`}
+              className="text-xs font-medium uppercase tracking-wide text-accent-strong hover:underline"
+            >
+              {t(dict, "news.viewAll")}
+            </Link>
+          </div>
+          <ul className="divide-y divide-zinc-200/70 overflow-hidden rounded-xl border border-zinc-200/80 bg-surface">
+            {latestNews.map((p) => {
+              const tone = kindEyebrow(p.kind).tone;
+              return (
+                <li key={p.id}>
+                  <Link
+                    href={`/shared/${org.slug}/news/${p.slug}`}
+                    className="group flex items-center gap-3 px-4 py-3 transition hover:bg-accent-soft"
+                  >
+                    <span
+                      className={`shrink-0 text-[10px] font-semibold uppercase tracking-[0.18em] ${TONE_TEXT[tone]}`}
+                    >
+                      {t(dict, kindEyebrow(p.kind).labelKey)}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-medium text-ink group-hover:text-accent-strong">
+                      {p.title}
+                    </span>
+                    {p.publishedAt ? (
+                      <span className="shrink-0 text-xs text-ink-muted">{fmtDate(p.publishedAt)}</span>
+                    ) : null}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
         </section>
       ) : null}
 

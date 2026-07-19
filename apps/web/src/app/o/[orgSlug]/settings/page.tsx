@@ -4,7 +4,7 @@ import {
   Building2, Users, CreditCard, UserCircle,
   Pencil, Image as ImageIcon, Palette,
   User, Mail, Download, ShieldOff, KeyRound, Compass, Banknote, BookOpen, Cookie, Handshake,
-  Clock,
+  Clock, Newspaper,
   type LucideIcon,
 } from "lucide-react";
 import { getUserOrgs } from "@/lib/auth";
@@ -22,6 +22,8 @@ import { OrgAbout } from "@/components/org-about";
 import { OrgSponsors } from "@/components/org-sponsors";
 import { SponsorPackages } from "@/components/sponsor-packages";
 import { listSponsorRows } from "@/server/usecases/sponsors";
+import { listPosts, type OrgPost } from "@/server/usecases/org-posts";
+import { NewsTab } from "@/components/news/news-tab";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, type Dict } from "@/lib/i18n";
 import {
@@ -74,7 +76,7 @@ function roleLabel(dict: Dict, role: string): string {
   return t(dict, `role.${role}`);
 }
 
-type Tab = "organization" | "sponsors" | "team" | "api" | "account";
+type Tab = "organization" | "news" | "sponsors" | "team" | "api" | "account";
 
 // Plan & billing lives at its own route (/settings/billing) — it owns the
 // Stripe checkout-return reconciliation and portal flows — so it links out of
@@ -82,6 +84,7 @@ type Tab = "organization" | "sponsors" | "team" | "api" | "account";
 // is a ui-catalog key resolved per-request (t) so the nav localizes.
 const NAV_ITEMS: { tab: Tab; labelKey: string; icon: LucideIcon; href?: string }[] = [
   { tab: "organization",  labelKey: "settings.nav.organization", icon: Building2  },
+  { tab: "news",          labelKey: "news.tab",                  icon: Newspaper  },
   { tab: "sponsors",      labelKey: "sponsors.title",            icon: Handshake  },
   { tab: "team",          labelKey: "settings.nav.team",         icon: Users      },
   { tab: "api",           labelKey: "settings.nav.api",          icon: KeyRound   },
@@ -99,7 +102,8 @@ export default async function SettingsPage({
   searchParams: Promise<{ tab?: string; email_change?: string }>;
 }) {
   const { orgSlug } = await params;
-  const { user, org: active, canEdit } = await requireOrgPage(orgSlug, { tail: "/settings" });
+  const page = await requireOrgPage(orgSlug, { tail: "/settings" });
+  const { user, org: active, canEdit, auth } = page;
   const orgs = await getUserOrgs(user.id);
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
@@ -128,6 +132,18 @@ export default async function SettingsPage({
     hasSponsorTiers = await hasFeature(active.id, "sponsors.tiers");
     hasSponsorMonetize = await hasFeature(active.id, "sponsors.monetize");
     sponsorCompetitions = await sql<{ id: string; name: string }[]>`
+      select id, name from competitions
+      where org_id = ${active.id}
+      order by created_at desc limit 100`;
+  }
+
+  // News tab (SPEC-2): the org's posts (drafts + published) + the competition
+  // list for the composer's scope picker. Manual posts are free on every plan.
+  let newsPosts: OrgPost[] = [];
+  let newsCompetitions: { id: string; name: string }[] = [];
+  if (tab === "news") {
+    newsPosts = await listPosts(auth, active.id);
+    newsCompetitions = await sql<{ id: string; name: string }[]>`
       select id, name from competitions
       where org_id = ${active.id}
       order by created_at desc limit 100`;
@@ -315,7 +331,21 @@ export default async function SettingsPage({
               </section>
             )}
 
-            {/* ── TEAM ── */}
+            {/* ── NEWS ── */}
+            {tab === "news" && (
+              <section className="card p-6">
+                <SectionHeader icon={Newspaper}>{t(dict, "news.tab")}</SectionHeader>
+                <NewsTab
+                  orgId={active.id}
+                  orgSlug={active.slug}
+                  posts={newsPosts}
+                  competitions={newsCompetitions}
+                  canEdit={canEdit}
+                />
+              </section>
+            )}
+
+            {/* ── SPONSORS ── */}
             {tab === "sponsors" && (
               <section className="card p-6">
                 <SectionHeader icon={Handshake}>{t(dict, "sponsors.title")}</SectionHeader>

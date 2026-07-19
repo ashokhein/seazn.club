@@ -27,6 +27,11 @@ export const PRO_FEATURES = [
   "Ball-by-ball & rally scoring, player stats",
   "Officials, exports, API keys, device links",
   "Remove the “Powered by Seazn” badge",
+  // v16 league-ops (T84): suspensions/discipline, official ratings and
+  // auto-drafted news posts all seed true on Pro (V293/V294/V295).
+  "Suspensions & discipline tracking",
+  "Rate your match officials",
+  "Auto-drafted result posts",
 ];
 
 // Pro Plus is progressively disclosed on /pricing (spec §4) — same five

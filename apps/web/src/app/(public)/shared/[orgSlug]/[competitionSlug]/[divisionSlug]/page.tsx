@@ -19,6 +19,8 @@ import { Schedule } from "@/components/public-site/schedule";
 import { StandingsTable } from "@/components/public-site/standings-table";
 import { Bracket } from "@/components/public-site/bracket";
 import { ResultsMatrix } from "@/components/public-site/results-matrix";
+import { SuspensionsStrip } from "@/components/public-site/suspensions-strip";
+import { publicSuspensions } from "@/server/usecases/discipline";
 import type { MetricSpecLike } from "@/lib/public-site";
 
 export const revalidate = 30;
@@ -84,6 +86,10 @@ export default async function DivisionHomePage({ params }: Props) {
   const basePath = `/shared/${org.slug}/${competition.slug}/${division.slug}`;
   const poolName = new Map(pools.map((p) => [p.id, p.name]));
   const stageById = new Map(stages.map((s) => [s.id, s]));
+
+  // SPEC-1: active suspensions under the standings (consent-gated names). Public
+  // read; a published ban is public information. Never throws the page down.
+  const suspensions = await publicSuspensions(orgSlug, competitionSlug, divisionSlug).catch(() => []);
 
   // Live stage first: the knockout that's underway reads before the finished
   // league table it qualified from.
@@ -215,6 +221,7 @@ export default async function DivisionHomePage({ params }: Props) {
           Standings appear after the first results.
         </p>
       ) : null}
+      <SuspensionsStrip suspensions={suspensions} />
     </div>
   );
 

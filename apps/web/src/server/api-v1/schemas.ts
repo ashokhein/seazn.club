@@ -133,6 +133,8 @@ export const PatchDivision = z
     scheduling_mode: z.enum(["timed", "flexible"]),
     /** Jul3/08 §5: progression fires without a button (Pro formats.advanced). */
     auto_progress: z.boolean(),
+    /** SPEC-2: draft a news post when results land (Pro `news.auto` on write). */
+    auto_posts: z.boolean(),
     /** Youth flag (v3/11 gap 8): auto-set from U-age eligibility, this is
      *  the organiser override. */
     youth: z.boolean(),
@@ -165,6 +167,7 @@ export const Division = z.object({
   officials_hide_names: z.boolean(),
   scheduling_mode: z.enum(["timed", "flexible"]),
   auto_progress: z.boolean(),
+  auto_posts: z.boolean(),
   archived_at: z.string().nullable(), // v3/09 §4 — set = archived (hidden, restorable)
   created_at: z.string(),
 });
@@ -1510,4 +1513,175 @@ export type OverrideStandings = z.infer<typeof OverrideStandings>;
 export const LadderChallenge = z.object({
   challenger_id: Uuid,
   opponent_id: Uuid,
+});
+
+// Discipline & suspensions (SPEC-1 / PROMPT-78) -------------------------------
+// Colours are validated against the sport module's declared keys at the
+// usecase (SPEC-1), not here — zod only enforces shape.
+
+export const SuspensionStatus = z.enum(["pending", "active", "served", "waived"]);
+
+const AccumulationRule = z.object({
+  key: z.string().min(1),
+  color: z.string().min(1),
+  count: z.number().int().positive(),
+  ban_matches: z.number().int().positive(),
+});
+const DismissalRule = z.object({
+  key: z.string().min(1),
+  color: z.string().min(1),
+  ban_matches: z.number().int().positive(),
+});
+export const DisciplineRulesDoc = z.object({
+  accumulation: z.array(AccumulationRule),
+  dismissal: z.array(DismissalRule),
+});
+
+export const PutDisciplineRules = z.object({
+  enabled: z.boolean(),
+  rules: DisciplineRulesDoc,
+});
+
+export const DisciplineRulesResponse = z
+  .object({
+    enabled: z.boolean(),
+    rules: DisciplineRulesDoc,
+    sportColors: z.array(z.object({ key: z.string(), label: z.string() })),
+  })
+  .nullable();
+
+export const CreateSuspension = z.object({
+  person_id: Uuid,
+  matches_total: z.number().int().min(1),
+  reason: z.string().min(1).max(300),
+});
+
+export const DecideSuspension = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("confirm") }),
+  z.object({ kind: z.literal("waive") }),
+  z.object({
+    kind: z.literal("adjust"),
+    matches_total: z.number().int().min(1).optional(),
+    reason: z.string().min(1).max(300).optional(),
+  }),
+]);
+
+export const Suspension = z.object({
+  id: Uuid,
+  divisionId: Uuid,
+  personId: Uuid,
+  personName: z.string(),
+  entrantId: Uuid.nullable(),
+  entrantName: z.string().nullable(),
+  status: SuspensionStatus,
+  source: z.enum(["auto_accumulation", "auto_dismissal", "manual", "report"]),
+  reason: z.string(),
+  matchesTotal: z.number().int(),
+  matchesServed: z.number().int(),
+  fixtureId: Uuid.nullable(),
+  createdAt: z.string(),
+  decidedAt: z.string().nullable(),
+  triggerVoided: z.boolean(),
+});
+
+// Official marks & match reports (SPEC-3 / PROMPT-80) --------------------------
+
+export const PutMarkBody = z.object({
+  mark: z.number().int().min(1).max(5),
+  comment: z.string().max(2000).optional(),
+});
+
+export const MarkSummary = z.object({
+  average: z.number().nullable(),
+  count: z.number().int(),
+  recent: z.array(
+    z.object({
+      mark: z.number().int(),
+      comment: z.string().nullable(),
+      fixtureLabel: z.string(),
+      createdAt: z.string(),
+    }),
+  ),
+});
+
+export const IncidentKind = z.enum(["red_card", "misconduct", "injury", "other"]);
+
+export const ReportIncident = z.object({
+  kind: IncidentKind,
+  person_id: Uuid.optional(),
+  entrant_id: Uuid.optional(),
+  note: z.string().min(1).max(2000),
+});
+
+export const PutReportBody = z.object({
+  body: z.string().max(5000),
+  incidents: z.array(ReportIncident).max(50),
+});
+
+export const MatchReport = z.object({
+  id: Uuid,
+  fixtureOfficialId: Uuid,
+  status: z.enum(["draft", "submitted"]),
+  body: z.string(),
+  incidents: z.array(ReportIncident),
+  submittedAt: z.string().nullable(),
+});
+
+export const FixtureReport = MatchReport.extend({ officialName: z.string() });
+
+export const FixtureSquadMember = z.object({
+  person_id: Uuid,
+  full_name: z.string(),
+  entrant_id: Uuid,
+  entrant_name: z.string(),
+});
+
+// Org news (SPEC-2 / PROMPT-82) -----------------------------------------------
+
+export const PostKind = z.enum(["news", "result", "round_recap", "announcement"]);
+export const PostStatus = z.enum(["draft", "published", "archived"]);
+
+export const CreatePost = z.object({
+  title: z.string().min(1).max(300),
+  body_md: z.string().max(50_000).optional(),
+  kind: PostKind.optional(),
+  competition_id: Uuid.optional(),
+  division_id: Uuid.optional(),
+  hero_image_path: z.string().max(500).optional(),
+});
+export type CreatePost = z.infer<typeof CreatePost>;
+
+export const PatchPost = z
+  .object({
+    title: z.string().min(1).max(300),
+    body_md: z.string().max(50_000),
+    hero_image_path: z.string().max(500).nullable(),
+    competition_id: Uuid.nullable(),
+    division_id: Uuid.nullable(),
+    /** Lifecycle: publish stamps published_at + freezes the slug; archive hides. */
+    action: z.enum(["publish", "archive"]),
+  })
+  .partial()
+  .refine((p) => Object.keys(p).length > 0, "empty patch");
+export type PatchPost = z.infer<typeof PatchPost>;
+
+// House convention: every /api/v1 response is snake_case (see auto_posts on
+// Division, org_id on Competition, module_version on Fixture). The usecase
+// layer (org-posts.ts) stays camelCase for server components — routes
+// translate at the boundary via toApiPost() in posts.ts.
+export const OrgPost = z.object({
+  id: Uuid,
+  org_id: Uuid,
+  competition_id: Uuid.nullable(),
+  division_id: Uuid.nullable(),
+  kind: PostKind,
+  status: PostStatus,
+  slug: z.string(),
+  title: z.string(),
+  body_md: z.string(),
+  hero_image_path: z.string().nullable(),
+  auto_source: z.record(z.string(), z.unknown()).nullable(),
+  published_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
 });

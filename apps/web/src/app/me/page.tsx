@@ -8,6 +8,7 @@ import { redirect } from "next/navigation";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
 import { routes } from "@/lib/routes";
 import {
+  getMySuspensions,
   listMyFixtures,
   listMyPersons,
   listMyPlayerStats,
@@ -15,8 +16,10 @@ import {
   type MyResult,
 } from "@/server/usecases/me";
 import { getMyOfficiating, listPendingOfficiatingClaims } from "@/server/usecases/me-officiating";
+import { myMarksAverage } from "@/server/usecases/official-marks";
 import { RsvpControl } from "@/components/me/rsvp-control";
 import { OfficiatingLane } from "@/components/me/officiating-lane";
+import { SuspensionsLane } from "@/components/me/suspensions-lane";
 import { ConsentCard } from "@/components/me/consent-card";
 import { LogoutButton } from "@/components/logout-button";
 import { RunYourOwnCta } from "@/components/run-your-own-cta";
@@ -37,8 +40,17 @@ export default async function MePage({
     getDictionary(locale, "console"),
     getDictionary(locale, "ui"),
   ]);
-  const [{ upcoming, results, teams }, officiating, pendingOfficiatingClaims, persons, stats, orgs, activeOrgId] =
-    await Promise.all([
+  const [
+    { upcoming, results, teams },
+    officiating,
+    pendingOfficiatingClaims,
+    persons,
+    stats,
+    orgs,
+    activeOrgId,
+    mySuspensions,
+    myAverage,
+  ] = await Promise.all([
       listMyFixtures(user.id),
       getMyOfficiating(user.id),
       // Pending invites run regardless of is_official (PROMPT-57 v11.1) — a
@@ -52,6 +64,9 @@ export default async function MePage({
       // Server Component render is not allowed to do.
       getUserOrgs(user.id),
       getActiveOrgId(),
+      getMySuspensions(user.id),
+      // The official's own cross-org average (D4) — null below 3 marks.
+      myMarksAverage(user.id),
     ]);
   const activeOrg = orgs.find((o) => o.id === activeOrgId) ?? orgs[0] ?? null;
   const { claimed } = await searchParams;
@@ -215,8 +230,12 @@ export default async function MePage({
             completed={officiating.completed}
             blackouts={officiating.blackouts}
             pendingClaims={pendingOfficiatingClaims}
+            myAverage={myAverage}
           />
         )}
+
+        {/* Own active suspensions (SPEC-1) — any org the player is banned in. */}
+        <SuspensionsLane suspensions={mySuspensions} />
 
         {results.length > 0 && (
           <section className="mb-8">

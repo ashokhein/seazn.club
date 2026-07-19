@@ -159,13 +159,31 @@ body {
   animation: chip-pulse 2s ease-in-out infinite;
 }
 
+/* News post hero (SPEC-2): the ONE motion moment — score digits settle on
+   post-page load. Nothing else on the news surfaces animates. */
+@keyframes news-digit-settle {
+  from {
+    opacity: 0;
+    transform: translateY(0.35em);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.news-digit-settle {
+  display: inline-block;
+  animation: news-digit-settle 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-slide-in,
   .animate-trophy,
   .animate-slide-progress,
   .animate-blob,
   .animate-live-pulse,
-  .chip-pulse-dot {
+  .chip-pulse-dot,
+  .news-digit-settle {
     animation: none;
   }
 }
