@@ -1498,6 +1498,101 @@ export const ScheduleShift = z.object({
   delta_minutes: z.number().int().min(-1440).max(1440),
 });
 
+// v4 AI Schedule Architect (design/v4/00-03) — Phase A propose-only endpoint.
+// The model proposes times+courts; the engine verifier is authoritative. This
+// contract carries the request instruction, an optional repair scope, an
+// optional prior proposal (refine), and an optional officials policy for a dry
+// coverage preview (no LLM). `officials_policy` reuses the officials-auto body.
+export const AiPlanRequest = z.object({
+  instruction: z.string().min(3).max(4000),
+  mode: z.enum(["generate", "refine", "repair"]).default("generate"),
+  scope: z
+    .object({
+      from: IsoDateTime.optional(),
+      courts: z.array(z.string()).optional(),
+      pool_ids: z.array(Uuid).optional(),
+    })
+    .optional(),
+  prior: z
+    .object({
+      instruction: z.string(),
+      assignments: z.array(
+        z.object({ fixture_id: Uuid, scheduled_at: z.string(), court_label: z.string() }),
+      ),
+    })
+    .optional(),
+  officials_policy: AssignPolicyBody.optional(),
+});
+export type AiPlanRequest = z.infer<typeof AiPlanRequest>;
+
+const AiPlanAssignment = z.object({
+  fixture_id: Uuid,
+  scheduled_at: z.string(),
+  court_label: z.string(),
+  schedule_locked: z.boolean().optional(),
+});
+
+// Engine verifier conflict (camelCase, @seazn/engine/scheduling Conflict).
+const AiPlanConflict = z.object({
+  fixtureId: z.string(),
+  reason: z.string(),
+  detail: z.string().optional(),
+  direct: z.boolean().optional(),
+});
+
+// A durable constraints delta the architect inferred from the instruction —
+// the ENGINE constraints family, but with startWindow bounds converted from
+// epoch ms to ISO-with-offset in the division timezone (the shape clients + the
+// schedule-settings PUT speak). Mirrors ScheduleConfig.constraints, all fields
+// optional (it is a suggestion delta).
+const AiConstraintSuggestions = z.object({
+  restMin: z.number().int().min(0).max(24 * 60).optional(),
+  restByGroup: z.record(z.string(), z.number().int().min(0).max(24 * 60)).optional(),
+  noBackToBack: z.boolean().optional(),
+  startWindows: z
+    .array(
+      z.object({
+        target: z.object({ kind: z.enum(["entrant", "pool", "division"]), id: z.string() }),
+        notBefore: IsoDateTime.optional(),
+        notAfter: IsoDateTime.optional(),
+      }),
+    )
+    .optional(),
+  fieldFairness: z.enum(["off", "balance", "rotate"]).optional(),
+  parallelism: z.enum(["block", "mixed"]).optional(),
+  crossPersonClash: z.enum(["warn", "hard"]).optional(),
+});
+
+export const AiPlanResponse = z.object({
+  proposal: z.array(AiPlanAssignment),
+  unschedulable: z.array(z.object({ fixture_id: Uuid, reason: z.string() })),
+  warnings: z.array(AiPlanConflict),
+  blocking: z.array(AiPlanConflict),
+  diff: z.object({
+    moved: z.array(z.string()),
+    placed: z.array(z.string()),
+    unscheduled: z.array(z.string()),
+    unchanged: z.array(z.string()),
+  }),
+  explanations: z.array(z.object({ fixture_id: Uuid, note: z.string() })),
+  constraint_suggestions: AiConstraintSuggestions.optional(),
+  summary: z.string(),
+  usage: z.object({
+    input_tokens: z.number().int(),
+    output_tokens: z.number().int(),
+    repair_rounds: z.number().int(),
+  }),
+  /** Dry officials coverage preview (present only when officials_policy sent). */
+  officials_coverage: z
+    .object({
+      fillable: z.number().int(),
+      total: z.number().int(),
+      unfilled: z.array(z.object({ fixture_id: z.string(), role_key: z.string() })),
+    })
+    .nullable(),
+});
+export type AiPlanResponse = z.infer<typeof AiPlanResponse>;
+
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
 export const OverrideStandings = z.object({

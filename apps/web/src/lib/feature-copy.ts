@@ -51,7 +51,7 @@ const FEATURE_REASONS: Record<string, string> = {
   "officials.roles_multi": "Multiple official roles per fixture (judge + referee) are a Pro feature.",
   "officials.per_fixture.max": "Community includes one official per fixture — more need Pro.",
   "officials.marks": "Rating your match officials is a Pro feature.",
-  "scheduling.ai": "AI-assisted planning (describe constraints in plain language) is a Pro feature.",
+  "scheduling.ai": "The AI Schedule Architect (plan, refine and repair your schedule from plain-language instructions) is a Pro feature.",
   "scheduling.ai.runs_per_division.max":
     "You've used all your AI schedule generations for this division — Pro includes five, Pro Plus is unlimited.",
   "schedule.versioning": "Multi-site scope locks are a Pro feature — undo/redo always works.",

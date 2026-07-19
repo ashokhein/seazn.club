@@ -48,6 +48,9 @@ export const EVENTS = {
   POST_PUBLISHED: "post_published",
   POST_SHARED: "post_shared",
   POST_CARD_DOWNLOADED: "post_card_downloaded",
+  /** v4 AI Schedule Architect (design/v4/00 §5): one metered architect run —
+   *  fired on success AND on a 422 AI_PLAN_FAILED so refused spend is visible. */
+  AI_PLAN_RUN: "ai_plan_run",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];

@@ -14,6 +14,9 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
+import { requireFeature } from "@/lib/entitlements";
+import { rateLimit } from "@/lib/rate-limit";
+import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import {
   slotFixtures,
   validateAssignments,
@@ -24,7 +27,14 @@ import {
   type SchedulingConstraints,
   type SlotConfig,
 } from "@seazn/engine/scheduling";
+import {
+  assignOfficials,
+  type AssignPolicy,
+  type OfficialFixture,
+  type OfficialSpec,
+} from "@seazn/engine/officials";
 import type { AuthCtx } from "@/server/api-v1/auth";
+import type { AiPlanRequest, AiPlanResponse } from "@/server/api-v1/schemas";
 import { AiSchedulePlan, SYSTEM_PROMPT } from "./schedule-ai-prompt";
 import {
   MOVABLE_STATUS,
@@ -851,4 +861,175 @@ export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Pr
       }),
     });
   }
+}
+
+// ===========================================================================
+// Phase A endpoint orchestrator (design/v4/00 §5, 03 §2). Gates → pack → run →
+// dry officials coverage → telemetry. This is the single place the schedule
+// architect meets the DB, the entitlement matrix, and the kill switch.
+// ===========================================================================
+
+type OfficialsCoverage = NonNullable<AiPlanResponse["officials_coverage"]>;
+
+/** Dry officials coverage over the proposal — the same pure engine pass the
+ *  officials-auto endpoint uses, run here with `locked: []` and no LLM. Maps the
+ *  proposal to engine fixtures (epoch ms via matchMinutes) and the pack's
+ *  officials to specs; `role_unfilled` conflicts are the coverage gaps. */
+function coveragePreview(
+  pack: SchedulePack,
+  proposal: AiPlanResult["proposal"],
+  policy: AssignPolicy,
+): OfficialsCoverage {
+  const fixtureById = new Map(pack.fixtures.movable.map((f) => [f.id, f]));
+  const durMs = pack.settings.matchMinutes * MS_PER_MIN;
+  const fixtures: OfficialFixture[] = proposal.map((a) => {
+    const f = fixtureById.get(a.fixture_id);
+    const startAt = toMs(a.scheduled_at);
+    return {
+      id: a.fixture_id,
+      startAt,
+      endAt: startAt + durMs,
+      court: a.court_label,
+      divisionId: pack.division.id,
+      entrants: f ? [f.home, f.away].filter((e): e is string => e !== null) : [],
+    };
+  });
+  const officials: OfficialSpec[] = pack.officials.map((o) => ({
+    id: o.id,
+    roleKeys: o.role_keys,
+    ...(o.max_per_day !== null ? { maxPerDay: o.max_per_day } : {}),
+    ...(o.entrant_ids.length > 0 ? { entrantIds: o.entrant_ids } : {}),
+    homeDivisionId: pack.division.id,
+  }));
+  const { conflicts } = assignOfficials({ fixtures, officials, locked: [], policy, rngSeed: "coverage" });
+  const unfilled = conflicts
+    .filter((c) => c.kind === "role_unfilled")
+    .map((c) => ({ fixture_id: c.fixtureId ?? "", role_key: c.roleKey ?? "" }));
+  const total = proposal.length * policy.roles.length;
+  return { total, unfilled, fillable: total - unfilled.length };
+}
+
+/** Convert the engine constraint delta (epoch-ms startWindows) into the API
+ *  shape (ISO-with-offset in the division tz) that clients + the
+ *  schedule-settings PUT speak. Non-startWindow fields pass through. */
+function isoConstraintSuggestions(
+  s: Partial<SchedulingConstraints>,
+  tz: string,
+): AiPlanResponse["constraint_suggestions"] {
+  return {
+    ...(s.restMin !== undefined ? { restMin: s.restMin } : {}),
+    ...(s.restByGroup !== undefined ? { restByGroup: s.restByGroup } : {}),
+    ...(s.noBackToBack !== undefined ? { noBackToBack: s.noBackToBack } : {}),
+    ...(s.startWindows !== undefined
+      ? {
+          startWindows: s.startWindows.map((w) => ({
+            target: w.target,
+            ...(w.notBefore !== undefined ? { notBefore: zonedIso(w.notBefore, tz) } : {}),
+            ...(w.notAfter !== undefined ? { notAfter: zonedIso(w.notAfter, tz) } : {}),
+          })),
+        }
+      : {}),
+    ...(s.fieldFairness !== undefined ? { fieldFairness: s.fieldFairness } : {}),
+    ...(s.parallelism !== undefined ? { parallelism: s.parallelism } : {}),
+    ...(s.crossPersonClash !== undefined ? { crossPersonClash: s.crossPersonClash } : {}),
+  };
+}
+
+/**
+ * POST /divisions/{id}/schedule/ai-plan orchestrator. Gate order is deliberate
+ * (design/v4/00 §5): the staged-rollout kill switch (fail-open) → the paid gate
+ * (Pro Plus `scheduling.ai`, 402) → the spend limiter (5/division/hour, 429) →
+ * build the deterministic pack → run the architect → optional dry officials
+ * coverage. Telemetry fires on success AND on a 422 AI_PLAN_FAILED (usage rides
+ * on the error's extra) so refused spend is still metered.
+ *
+ * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (paid gate),
+ *   429 (rate limit), plus everything buildSchedulePack/runAiPlan raise
+ *   (409/422/400/503).
+ */
+export async function aiPlanForDivision(
+  auth: AuthCtx,
+  divisionId: string,
+  input: AiPlanRequest,
+): Promise<AiPlanResponse> {
+  // Stable analytics id: the user, or an org: synthetic when a key drives the
+  // call (auth.userId is null for API-key auth — CaptureArgs convention).
+  const distinctId = auth.userId ?? `org:${auth.orgId}`;
+  // Kill switch (feature-flag rollout, not billing): fail-open so an unconfigured
+  // or unreachable PostHog never blocks a paying customer.
+  if (
+    !(await isServerFeatureEnabled("ai-scheduling", distinctId, { orgId: auth.orgId, fallback: true }))
+  ) {
+    throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
+  }
+  await requireFeature(auth.orgId, "scheduling.ai");
+  await rateLimit(`ai-plan:${divisionId}`, { max: 5, windowSeconds: 3600 });
+
+  const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
+
+  let result: AiPlanResult;
+  try {
+    result = await runAiPlan(pack, movableIds);
+  } catch (err) {
+    // Meter a refused / un-correctable run's token spend too — usage rides on
+    // the 422 extra so a failed architect call is not invisible in analytics.
+    if (err instanceof HttpError && err.code === "AI_PLAN_FAILED") {
+      const usage = (err.extra?.usage ?? {}) as {
+        input_tokens?: number;
+        output_tokens?: number;
+        repair_rounds?: number;
+      };
+      await captureServer({
+        event: "ai_plan_run",
+        distinctId,
+        orgId: auth.orgId,
+        properties: {
+          phase: "schedule",
+          mode: input.mode,
+          fixtures: movableIds.size,
+          repair_rounds: usage.repair_rounds ?? 0,
+          input_tokens: usage.input_tokens ?? 0,
+          output_tokens: usage.output_tokens ?? 0,
+          blocking: 0,
+          outcome: "failed",
+        },
+      });
+    }
+    throw err;
+  }
+
+  const officials_coverage = input.officials_policy
+    ? coveragePreview(pack, result.proposal, input.officials_policy)
+    : null;
+
+  await captureServer({
+    event: "ai_plan_run",
+    distinctId,
+    orgId: auth.orgId,
+    properties: {
+      phase: "schedule",
+      mode: input.mode,
+      fixtures: movableIds.size,
+      repair_rounds: result.usage.repair_rounds,
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      blocking: result.blocking.length,
+      outcome: "ok",
+    },
+  });
+
+  return {
+    proposal: result.proposal,
+    unschedulable: result.unschedulable,
+    warnings: result.warnings,
+    blocking: result.blocking,
+    diff: result.diff,
+    explanations: result.explanations,
+    ...(result.constraint_suggestions !== undefined
+      ? { constraint_suggestions: isoConstraintSuggestions(result.constraint_suggestions, pack.division.tz) }
+      : {}),
+    summary: result.summary,
+    usage: result.usage,
+    officials_coverage,
+  };
 }
