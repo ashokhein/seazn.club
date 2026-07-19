@@ -368,6 +368,33 @@ export function generateDoubleElim(opts: DoubleElimOptions): GeneratedBracket {
 // Stepladder — spec 05 §2.5
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Page-system playoffs (IPL style) — spec 2026-07-19. Fixed 4-team shape:
+// Qualifier 1 (1v2, winner straight to the Final), Eliminator (3v4, loser
+// out), Qualifier 2 (Q1 loser vs Eliminator winner), Final. The top two get
+// a second life; feeds reuse the winnerOf/loserOf infra.
+// ---------------------------------------------------------------------------
+
+export interface PagePlayoffOptions {
+  entrants: readonly EntrantId[];
+  seeds?: ReadonlyMap<EntrantId, number>;
+}
+
+export function generatePagePlayoff(opts: PagePlayoffOptions): GeneratedBracket {
+  const ordered = seedOrder(opts.entrants, opts.seeds);
+  if (ordered.length !== 4) {
+    throw new EngineError("CONFIG_INVALID", `page playoffs need exactly 4 entrants, got ${ordered.length}`, {});
+  }
+  const [s1, s2, s3, s4] = ordered as [EntrantId, EntrantId, EntrantId, EntrantId];
+  const fixtures: BracketFixtureGen[] = [
+    { id: "pp-q1", round: 0, home: s1, away: s2 },
+    { id: "pp-elim", round: 0, home: s3, away: s4 },
+    { id: "pp-q2", round: 1, homeFrom: loserOf("pp-q1"), awayFrom: winnerOf("pp-elim") },
+    { id: "pp-final", round: 2, isFinal: true, homeFrom: winnerOf("pp-q1"), awayFrom: winnerOf("pp-q2") },
+  ];
+  return { fixtures, rounds: 3 };
+}
+
 export interface StepladderOptions {
   entrants: readonly EntrantId[];
   seeds?: ReadonlyMap<EntrantId, number>;

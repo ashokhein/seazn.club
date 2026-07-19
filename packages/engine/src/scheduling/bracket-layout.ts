@@ -263,3 +263,56 @@ export function twoSidedBracket(fixtures: readonly BracketFixtureRef[]): Bracket
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// Page-system playoffs (IPL style, spec 2026-07-19): fixed 4-match shape —
+// Qualifier 1 + Eliminator (round 0), Qualifier 2 (round 1), Final (round 2).
+// Structural like the others: anything else returns { ok: false }.
+// ---------------------------------------------------------------------------
+
+export type PagePlayoffSlot = "q1" | "eliminator" | "q2" | "final";
+
+export interface PagePlayoffNode {
+  fixtureId: string;
+  slot: PagePlayoffSlot;
+}
+
+export interface PagePlayoffLayout {
+  nodes: PagePlayoffNode[]; // exactly four, in q1/eliminator/q2/final order
+}
+
+export type PagePlayoffLayoutResult =
+  | { ok: true; layout: PagePlayoffLayout }
+  | { ok: false; reason: string };
+
+export function pagePlayoffBracket(
+  fixtures: readonly BracketFixtureRef[],
+): PagePlayoffLayoutResult {
+  if (fixtures.length !== 4) return { ok: false, reason: `expected 4 fixtures, got ${fixtures.length}` };
+  const minRound = Math.min(...fixtures.map((f) => f.round_no));
+  const byRound = new Map<number, BracketFixtureRef[]>();
+  for (const f of fixtures) {
+    const r = f.round_no - minRound;
+    const list = byRound.get(r) ?? [];
+    list.push(f);
+    byRound.set(r, list);
+  }
+  for (const list of byRound.values()) list.sort((a, b) => a.seq_in_round - b.seq_in_round);
+  const r0 = byRound.get(0) ?? [];
+  const r1 = byRound.get(1) ?? [];
+  const r2 = byRound.get(2) ?? [];
+  if (r0.length !== 2 || r1.length !== 1 || r2.length !== 1 || byRound.size !== 3) {
+    return { ok: false, reason: `not the Q1/Eliminator → Q2 → Final shape (rounds ${[...byRound.keys()].sort().join(",")})` };
+  }
+  return {
+    ok: true,
+    layout: {
+      nodes: [
+        { fixtureId: r0[0]!.id, slot: "q1" },
+        { fixtureId: r0[1]!.id, slot: "eliminator" },
+        { fixtureId: r1[0]!.id, slot: "q2" },
+        { fixtureId: r2[0]!.id, slot: "final" },
+      ],
+    },
+  };
+}

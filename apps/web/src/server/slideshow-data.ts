@@ -66,7 +66,7 @@ export type Slide =
       division: string;
       title: string;
       /** Which geometry the client draws — absent means knockout (old payloads). */
-      stageKind?: "knockout" | "double_elim" | "stepladder";
+      stageKind?: "knockout" | "double_elim" | "stepladder" | "page_playoff";
       fixtures: BracketSlideFixture[];
     };
 
@@ -208,7 +208,7 @@ export async function buildDivisionSlides(
         kind: "bracket",
         division: divisionName,
         title: stage.name,
-        stageKind: stage.kind as "knockout" | "double_elim" | "stepladder",
+        stageKind: stage.kind as "knockout" | "double_elim" | "stepladder" | "page_playoff",
         fixtures: stageFixtures.map((f) => ({
           id: f.id,
           round_no: f.round_no,
@@ -311,7 +311,7 @@ export function buildPublicDivisionSlides(data: PublicSlideInput): Slide[] {
         kind: "bracket",
         division: data.division.name,
         title: stage.name,
-        stageKind: stage.kind as "knockout" | "double_elim" | "stepladder",
+        stageKind: stage.kind as "knockout" | "double_elim" | "stepladder" | "page_playoff",
         fixtures: stageFixtures.map((f) => ({
           id: f.id, round_no: f.round_no, seq_in_round: f.seq_in_round,
           home: f.home_entrant_id ? (names[f.home_entrant_id] ?? null) : null,

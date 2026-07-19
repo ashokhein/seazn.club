@@ -326,7 +326,7 @@ export function StagesPanel({ divisionId, competitionId, orgSlug, compSlug, divS
               <h3 className="text-sm font-semibold text-slate-800">
                 {stage.seq}. {stage.name}
               </h3>
-              <span className="chip">{stage.kind}</span>
+              <span className="chip">{stage.kind.replace(/_/g, " ")}</span>
               <span className={`badge ${stageStatusStyle(stage.status)}`}>{stageStatusLabel(msg, stage.status)}</span>
               <div className="flex-1" />
               {canEdit && stage.status !== "complete" && (
@@ -652,7 +652,7 @@ function AddStageForm({
   );
 }
 
-const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
+const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder", "page_playoff"]);
 
 /**
  * "Générer les matchs" precondition failure (design/fix-ui/03 §"misleading
@@ -695,6 +695,11 @@ const VOID_STATUSES = new Set(["cancelled", "abandoned", "forfeited"]);
 // Named bracket rounds, by distance from the last round. Double-elim round
 // numbers encode WB/LB/GF lanes, so plain "Round N" stays honest there.
 function bracketRoundLabel(msg: Msg, kind: string, roundNo: number, maxRound: number): string {
+  if (kind === "page_playoff") {
+    if (roundNo === 1) return msg("bracket.qualifiers");
+    if (roundNo === 2) return msg("bracket.qualifier2");
+    return msg("bracket.final");
+  }
   if (kind === "stepladder") return msg("schedule.bracket.rung", { n: roundNo });
   if (kind === "knockout") {
     const fromEnd = maxRound - roundNo;

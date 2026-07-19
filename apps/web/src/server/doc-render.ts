@@ -10,6 +10,7 @@ import {
   bracketDePageGeometry,
   bracketPageGeometry,
   ladderPageGeometry,
+  pagePlayoffPageGeometry,
 } from "./doc-bracket-geometry";
 
 const MARGIN = 40;
@@ -112,7 +113,9 @@ function drawBracket(doc: PDFKit.PDFDocument, model: DocModel): void {
       ? bracketDePageGeometry(model.bracketDe, box)
       : model.ladder
         ? ladderPageGeometry(model.ladder, box)
-        : null;
+        : model.pagePlayoff
+          ? pagePlayoffPageGeometry(model.pagePlayoff, box)
+          : null;
   if (!g) return;
   for (const label of g.labels) {
     doc.font(FONT.display).fontSize(8).fillColor(PALETTE.mute)
@@ -132,7 +135,7 @@ function drawBracket(doc: PDFKit.PDFDocument, model: DocModel): void {
     if (r.decided) {
       doc.rect(r.x, r.y, 2, r.h).fill(PALETTE.night);
     }
-    const textW = r.w - 10 - (r.headline !== null ? 34 : 0);
+    const textW = r.w - 10 - (r.headline !== null ? 52 : 0);
     // F6: hard one-line clamp — pdfkit still wraps some long names with
     // lineBreak:false, overlapping the second side; bound height too.
     const oneLine = { width: textW, height: 10, lineBreak: false, ellipsis: true } as const;
@@ -142,7 +145,7 @@ function drawBracket(doc: PDFKit.PDFDocument, model: DocModel): void {
       .text(r.away, r.x + 6, r.y + r.h / 2 + 2, oneLine);
     if (r.headline !== null) {
       doc.font(FONT.bodyMed).fontSize(8).fillColor(PALETTE.ink)
-        .text(r.headline, r.x + r.w - 36, r.y + r.h / 2 - 4, { width: 32, align: "right", lineBreak: false });
+        .text(r.headline, r.x + r.w - 52, r.y + r.h / 2 - 4, { width: 48, align: "right", height: 10, lineBreak: false, ellipsis: true });
     }
   }
   doc.fillColor(PALETTE.ink);
@@ -391,7 +394,7 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
   }
 
   // PROMPT-62 §4: the bracket poster draws its own body (sections are empty).
-  if (model.bracket !== undefined || model.bracketDe !== undefined || model.ladder !== undefined) drawBracket(doc, model);
+  if (model.bracket !== undefined || model.bracketDe !== undefined || model.ladder !== undefined || model.pagePlayoff !== undefined) drawBracket(doc, model);
 
   // columnsHint 2 (12 Jun "two per A4"): pair sections onto one page by
   // separating with a rule instead of a page break.

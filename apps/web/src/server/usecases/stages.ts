@@ -16,6 +16,7 @@ import {
   generateRoundRobin,
   generateSingleElim,
   generateDoubleElim,
+  generatePagePlayoff,
   generateStepladder,
   pairRound,
   pairKey,
@@ -108,7 +109,7 @@ export async function createStages(
   const [divComp] = await sql<{ competition_id: string }[]>`
     select competition_id from divisions where id = ${divisionId}`;
   // Doc 10 §1: `formats.double_elim` is Pro — gate before any insert.
-  if (inputs.some((s) => s.kind === "double_elim")) {
+  if (inputs.some((s) => s.kind === "double_elim" || s.kind === "page_playoff")) {
     await requireFeature(auth.orgId, "formats.double_elim", divComp?.competition_id);
   }
   // Jul3/08 §8: new kinds + custom byes + cross-stage feeds + placements are
@@ -618,6 +619,10 @@ function generate(
       });
       return bracketToGen(bracket, bracket.rounds);
     }
+    case "page_playoff": {
+      const bracket = generatePagePlayoff({ entrants: ids, seeds });
+      return bracketToGen(bracket, bracket.rounds);
+    }
     case "double_elim": {
       const bracket = generateDoubleElim({ entrants: ids, seeds, bracketReset: cfg.bracketReset === true });
       return bracketToGen(bracket, bracket.rounds);
@@ -679,7 +684,7 @@ function qualifierCount(qualification: unknown): number {
 
 // Bracket-round title from the number of matches in that round.
 function roundTitle(kind: string, roundNo: number, matchCount: number): string {
-  const bracketish = kind === "knockout" || kind === "double_elim" || kind === "stepladder";
+  const bracketish = kind === "knockout" || kind === "double_elim" || kind === "stepladder" || kind === "page_playoff";
   if (!bracketish) return `Round ${roundNo}`;
   if (matchCount === 1) return "Final";
   if (matchCount === 2) return "Semi-finals";

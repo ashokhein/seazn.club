@@ -23,7 +23,7 @@ export async function generateStaticParams() {
 }
 
 const WIDGETS = new Set(["standings", "schedule", "bracket"]);
-const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder"]);
+const BRACKET_KINDS = new Set(["knockout", "double_elim", "stepladder", "page_playoff"]);
 
 type Props = { params: Promise<{ id: string; widget: string }> };
 
@@ -68,7 +68,7 @@ export default async function EmbedWidgetPage({ params }: Props) {
     const stage = stages.find((s) => BRACKET_KINDS.has(s.kind));
     body = stage ? (
       <Bracket
-        kind={stage.kind as "knockout" | "double_elim" | "stepladder"}
+        kind={stage.kind as "knockout" | "double_elim" | "stepladder" | "page_playoff"}
         fixtures={fixtures.filter((f) => f.stage_id === stage.id)}
         entrantNames={entrantNames}
         entrantLogos={entrantLogos}

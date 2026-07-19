@@ -13,6 +13,7 @@ import {
   buildBracket,
   buildBracketDe,
   buildLadderPoster,
+  buildPagePoster,
   buildStandings,
   buildTimetable,
   DocModel,
@@ -354,7 +355,7 @@ export async function buildDivisionDocModel(
         // stepladder rungs.
         const [stage] = await tx<{ id: string; kind: string }[]>`
           select id, kind from stages
-          where division_id = ${divisionId} and kind in ('knockout', 'double_elim', 'stepladder')
+          where division_id = ${divisionId} and kind in ('knockout', 'double_elim', 'stepladder', 'page_playoff')
           order by seq limit 1`;
         if (!stage) throw new HttpError(422, "this division has no bracket stage to poster", "BRACKET_NOT_AVAILABLE");
         const fixtures = await tx<
@@ -391,6 +392,11 @@ export async function buildDivisionDocModel(
             winners: "Winners bracket", losers: "Losers bracket",
             grandFinal: "Grand final", reset: "Reset",
           }, buildOpts);
+        }
+        if (stage.kind === "page_playoff") {
+          return buildPagePoster(title, exportFixtures, {
+            q1: "Qualifier 1", eliminator: "Eliminator", q2: "Qualifier 2", final: "Final",
+          }, { ...buildOpts, description: "The Page playoffs — the top two get a second chance." });
         }
         if (stage.kind === "stepladder") {
           return buildLadderPoster(title, exportFixtures, (i) => (i === exportFixtures.length - 1 ? "Final" : `Rung ${i + 1}`), buildOpts);

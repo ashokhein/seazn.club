@@ -9,15 +9,17 @@ import type { PublicFixture } from "@/server/public-site/data";
 import {
   doubleElimBracket,
   lbRowUnit,
+  pagePlayoffBracket,
   rowCenter,
   twoSidedBracket,
   type BracketLayout,
   type BracketNode,
   type DoubleElimLayout,
+  type PagePlayoffLayout,
 } from "@seazn/engine/scheduling";
 
 interface Props {
-  kind: "knockout" | "double_elim" | "stepladder";
+  kind: "knockout" | "double_elim" | "stepladder" | "page_playoff";
   fixtures: PublicFixture[];
   entrantNames: Record<string, string>;
   /** Resolved badge/crest URLs (entrant badge → team logo) — same map the
@@ -307,6 +309,21 @@ export function Bracket({ kind, fixtures, entrantNames, entrantLogos, fixtureHre
       );
     }
   }
+  // Page playoffs (IPL, spec 2026-07-19): the fixed 4-match card.
+  if (kind === "page_playoff") {
+    const result = pagePlayoffBracket(fixtures);
+    if (result.ok) {
+      return (
+        <PagePlayoff
+          layout={result.layout}
+          fixtures={fixtures}
+          entrantNames={entrantNames}
+          entrantLogos={entrantLogos}
+          fixtureHref={fixtureHref}
+        />
+      );
+    }
+  }
   // G1: the two-lane double-elim geometry, when the shape allows it.
   if (kind === "double_elim") {
     const result = doubleElimBracket(fixtures);
@@ -370,6 +387,67 @@ export function Bracket({ kind, fixtures, entrantNames, entrantLogos, fixtureHre
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+// Page playoffs (IPL): Qualifier 1 and the Eliminator on the left, Qualifier 2
+// centre (Q1's loser drops in, the Eliminator's winner advances), the Final on
+// the right fed by both winners. Positions are the classic playoff card.
+const PP_LABEL = { q1: "Qualifier 1", eliminator: "Eliminator", q2: "Qualifier 2", final: "Final" } as const;
+
+function PagePlayoff({
+  layout,
+  fixtures,
+  entrantNames,
+  entrantLogos,
+  fixtureHref,
+}: {
+  layout: PagePlayoffLayout;
+  fixtures: PublicFixture[];
+  entrantNames: Record<string, string>;
+  entrantLogos?: Record<string, string | null>;
+  fixtureHref: (fixtureId: string) => string;
+}) {
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const LABEL_H = 22;
+  const pos: Record<string, { x: number; y: number }> = {
+    q1: { x: 0, y: LABEL_H },
+    eliminator: { x: 0, y: LABEL_H + 190 },
+    q2: { x: COL_W, y: LABEL_H + 120 },
+    final: { x: 2 * COL_W, y: LABEL_H + 55 },
+  };
+  const totalW = 2 * COL_W + NODE_W;
+  // Each node renders its caption above the card, so the card itself sits
+  // LABEL_H below pos.y — size the canvas and centre the connectors on that.
+  const totalH = LABEL_H + 190 + LABEL_H + NODE_H + 8;
+  const cy = (slot: string) => pos[slot]!.y + LABEL_H + NODE_H / 2;
+  const rx = (slot: string) => pos[slot]!.x + NODE_W;
+  return (
+    <div className="overflow-x-auto" data-bracket="page-playoff">
+      <div className="relative" style={{ width: totalW, height: totalH }}>
+        <svg aria-hidden className="absolute inset-0" width={totalW} height={totalH} viewBox={`0 0 ${totalW} ${totalH}`}>
+          {/* Q1 loser drops into Q2; Eliminator winner advances into Q2. */}
+          <path d={`M ${rx("q1")} ${cy("q1")} H ${(rx("q1") + pos.q2!.x) / 2} V ${cy("q2")} H ${pos.q2!.x}`} fill="none" className="stroke-zinc-300" strokeWidth="1.5" strokeDasharray="4 3" />
+          <path d={`M ${rx("eliminator")} ${cy("eliminator")} H ${(rx("eliminator") + pos.q2!.x) / 2} V ${cy("q2")} H ${pos.q2!.x}`} fill="none" className="stroke-zinc-300" strokeWidth="1.5" />
+          {/* Winners into the Final. */}
+          <path d={`M ${rx("q1")} ${cy("q1")} H ${(rx("q1") + pos.final!.x) / 2 + 40} V ${cy("final")} H ${pos.final!.x}`} fill="none" className="stroke-zinc-300" strokeWidth="1.5" />
+          <path d={`M ${rx("q2")} ${cy("q2")} H ${(rx("q2") + pos.final!.x) / 2} V ${cy("final")} H ${pos.final!.x}`} fill="none" className="stroke-zinc-300" strokeWidth="1.5" />
+        </svg>
+        {layout.nodes.map((n) => {
+          const f = byId.get(n.fixtureId);
+          if (!f) return null;
+          const p = pos[n.slot]!;
+          return (
+            <div key={n.fixtureId} data-slot={n.slot} className="absolute" style={{ left: p.x, top: p.y, width: NODE_W }}>
+              <p className="mb-1 font-display text-[11px] font-semibold uppercase tracking-[0.14em] text-ink-muted">
+                {PP_LABEL[n.slot]}
+              </p>
+              <FixtureCard fixture={f} entrantNames={entrantNames} entrantLogos={entrantLogos} href={fixtureHref(f.id)} />
+            </div>
+          );
+        })}
       </div>
     </div>
   );

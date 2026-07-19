@@ -11,11 +11,13 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import {
   doubleElimBracket,
   lbRowUnit,
+  pagePlayoffBracket,
   rowCenter,
   twoSidedBracket,
   type BracketLayout,
   type BracketNode,
   type DoubleElimLayout,
+  type PagePlayoffLayout,
 } from "@seazn/engine/scheduling";
 
 interface FixtureLike {
@@ -68,6 +70,22 @@ export function BracketPanel({
   divSlug,
 }: Props) {
   const msg = useMsg();
+  if (kind === "page_playoff") {
+    const pp = pagePlayoffBracket(fixtures);
+    if (!pp.ok) return null;
+    return (
+      <PagePlayoffPanel
+        layout={pp.layout}
+        fixtures={fixtures}
+        entrantNames={entrantNames}
+        {...(entrantBadges === undefined ? {} : { entrantBadges })}
+        {...(headlines === undefined ? {} : { headlines })}
+        orgSlug={orgSlug}
+        compSlug={compSlug}
+        divSlug={divSlug}
+      />
+    );
+  }
   if (kind === "stepladder") {
     return (
       <StepladderPanel
@@ -468,6 +486,121 @@ function StepladderPanel({
             </Link>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+/** Page playoffs (IPL): Q1 + Eliminator left, Q2 centre (Q1 loser drops in,
+ *  dashed), Final right — night-styled like the other bracket panels. */
+function PagePlayoffPanel({
+  layout,
+  fixtures,
+  entrantNames,
+  entrantBadges,
+  headlines,
+  orgSlug,
+  compSlug,
+  divSlug,
+}: {
+  layout: PagePlayoffLayout;
+  fixtures: FixtureLike[];
+  entrantNames: Record<string, string>;
+  entrantBadges?: Record<string, string | null>;
+  headlines?: Record<string, string>;
+  orgSlug: string;
+  compSlug: string;
+  divSlug: string;
+}) {
+  const msg = useMsg();
+  const byId = new Map(fixtures.map((f) => [f.id, f]));
+  const LABEL_H = 20;
+  const pos: Record<string, { x: number; y: number }> = {
+    q1: { x: 0, y: LABEL_H },
+    eliminator: { x: 0, y: LABEL_H + 168 },
+    q2: { x: COL_W, y: LABEL_H + 106 },
+    final: { x: 2 * COL_W, y: LABEL_H + 48 },
+  };
+  const totalW = 2 * COL_W + NODE_W;
+  const totalH = LABEL_H + 168 + NODE_H + 8;
+  const cy = (slot: string) => pos[slot]!.y + NODE_H / 2;
+  const rxx = (slot: string) => pos[slot]!.x + NODE_W;
+  const LABELS: Record<string, string> = {
+    q1: msg("bracket.qualifier1"),
+    eliminator: msg("bracket.eliminator"),
+    q2: msg("bracket.qualifier2"),
+    final: msg("bracket.final"),
+  };
+  const row = (f: FixtureLike, entrantId: string | null) => {
+    const winner = (f.outcome as { winner?: string } | null)?.winner ?? null;
+    const name = entrantId ? (entrantNames[entrantId] ?? entrantId) : null;
+    const badge = entrantId ? entrantBadges?.[entrantId] : null;
+    const isWinner = winner !== null && winner === entrantId;
+    const mutedRow = winner !== null && winner !== entrantId;
+    return (
+      <span className="flex min-w-0 items-center gap-1.5">
+        {badge ? (
+          // eslint-disable-next-line @next/next/no-img-element -- tenant crest
+          <img src={badge} alt="" className="h-3.5 w-3.5 shrink-0 rounded-[3px] object-cover" />
+        ) : null}
+        <span
+          className={`truncate text-xs ${
+            name === null
+              ? "italic text-[color:var(--app-fg-muted,#94a3b8)]"
+              : isWinner
+                ? "font-semibold text-[color:var(--app-fg,#e2e8f0)]"
+                : mutedRow
+                  ? "text-[color:var(--app-fg-muted,#94a3b8)]"
+                  : "text-[color:var(--app-fg,#e2e8f0)]"
+          }`}
+        >
+          {name ?? msg("bracket.tbd")}
+        </span>
+        {f.status === "in_play" && <span className="animate-live-pulse h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-400" />}
+      </span>
+    );
+  };
+  return (
+    <section className="card overflow-hidden" data-testid="bracket-panel-page">
+      <header className="border-b border-slate-100 px-4 py-3">
+        <h3 className="text-sm font-semibold text-slate-800">{msg("bracket.title")}</h3>
+      </header>
+      <div className="overflow-x-auto bg-[color:var(--app-surface,#0f172a)] p-4">
+        <div className="relative" style={{ width: totalW, height: totalH }}>
+          <svg aria-hidden className="absolute inset-0" width={totalW} height={totalH} viewBox={`0 0 ${totalW} ${totalH}`}>
+            <path d={`M ${rxx("q1")} ${cy("q1")} H ${(rxx("q1") + pos.q2!.x) / 2} V ${cy("q2")} H ${pos.q2!.x}`} fill="none" stroke="var(--app-hairline, #334155)" strokeWidth="1.5" strokeDasharray="4 3" />
+            <path d={`M ${rxx("eliminator")} ${cy("eliminator")} H ${(rxx("eliminator") + pos.q2!.x) / 2} V ${cy("q2")} H ${pos.q2!.x}`} fill="none" stroke="var(--app-hairline, #334155)" strokeWidth="1.5" />
+            <path d={`M ${rxx("q1")} ${cy("q1")} H ${(rxx("q1") + pos.final!.x) / 2 + 40} V ${cy("final")} H ${pos.final!.x}`} fill="none" stroke="var(--app-hairline, #334155)" strokeWidth="1.5" />
+            <path d={`M ${rxx("q2")} ${cy("q2")} H ${(rxx("q2") + pos.final!.x) / 2} V ${cy("final")} H ${pos.final!.x}`} fill="none" stroke="var(--app-hairline, #334155)" strokeWidth="1.5" />
+          </svg>
+          {layout.nodes.map((n) => {
+            const f = byId.get(n.fixtureId);
+            if (!f) return null;
+            const p = pos[n.slot]!;
+            return (
+              <span key={n.fixtureId} data-slot={n.slot} className="contents">
+                <span className="absolute font-display text-[10px] font-semibold uppercase tracking-[0.14em] text-[color:var(--app-fg-muted,#94a3b8)]" style={{ left: p.x, top: p.y - LABEL_H + 4 }}>
+                  {LABELS[n.slot]}
+                </span>
+                <Link
+                  href={routes.fixture(orgSlug, compSlug, divSlug, f.fixture_no)}
+                  className="absolute block rounded-lg border border-[color:var(--app-hairline,#334155)] bg-[color:var(--app-card,#1e293b)] px-2.5 py-1.5 shadow-sm transition hover:-translate-y-0.5 hover:shadow"
+                  style={{ left: p.x, top: p.y, width: NODE_W, height: NODE_H }}
+                >
+                  <span className={`flex h-full flex-col justify-center gap-0.5 ${headlines?.[f.id] !== undefined ? "pr-12" : ""}`}>
+                    {row(f, f.home_entrant_id)}
+                    {row(f, f.away_entrant_id)}
+                  </span>
+                  {headlines?.[f.id] !== undefined && (
+                    <span className="absolute right-2 top-1/2 -translate-y-1/2 font-display text-[11px] tabular-nums text-[color:var(--app-fg-muted,#94a3b8)]">
+                      {headlines[f.id]}
+                    </span>
+                  )}
+                </Link>
+              </span>
+            );
+          })}
+        </div>
       </div>
     </section>
   );
