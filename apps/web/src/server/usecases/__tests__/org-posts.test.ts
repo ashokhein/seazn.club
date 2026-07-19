@@ -385,6 +385,14 @@ describe.skipIf(!HAS_DB)("org-posts auto-drafts", () => {
     expect(new Set(recap.map((r) => r.autoSource?.stage_id))).toEqual(
       new Set([div.stageId, stageB]),
     );
+
+    // Voiding a stage A result stales stage A's recap draft only — stage B's
+    // same-numbered round is a different competition phase.
+    await sql`update fixtures set status = 'scheduled', outcome = null where id = ${a1}`;
+    await draft(ctx, a1);
+    recap = (await listPosts(ctx.auth, ctx.orgId)).filter((p) => p.kind === "round_recap");
+    expect(recap.find((r) => r.autoSource?.stage_id === div.stageId)?.autoSource?.stale).toBe(true);
+    expect(recap.find((r) => r.autoSource?.stage_id === stageB)?.autoSource?.stale).toBeFalsy();
   });
 
   it("drafts nothing when the division has not opted in", async () => {

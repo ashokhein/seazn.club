@@ -385,6 +385,7 @@ async function staleDrafts(tx: Tx, fx: FixtureCtx): Promise<void> {
       where org_id = ${fx.org_id} and status = 'draft'
         and auto_source->>'trigger' = ${TRIGGER_RECAP}
         and auto_source->>'division_id' = ${fx.division_id}
+        and auto_source->>'stage_id' = ${fx.stage_id}
         and auto_source->>'round_no' = ${String(fx.round_no)}`;
   }
 }
