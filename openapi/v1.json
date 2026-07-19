@@ -28865,6 +28865,16 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "disputed_at": {
+                            "anyOf": [
+                              {
+                                "type": "string"
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
                           }
                         },
                         "required": [
@@ -28878,7 +28888,8 @@
                           "status",
                           "sponsor_id",
                           "created_at",
-                          "paid_at"
+                          "paid_at",
+                          "disputed_at"
                         ],
                         "additionalProperties": false
                       }
@@ -28903,7 +28914,8 @@
                       "status": "pending",
                       "sponsor_id": "example",
                       "created_at": "example",
-                      "paid_at": "example"
+                      "paid_at": "example",
+                      "disputed_at": "example"
                     }
                   ],
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -29192,6 +29204,16 @@
                                   "type": "null"
                                 }
                               ]
+                            },
+                            "disputed_at": {
+                              "anyOf": [
+                                {
+                                  "type": "string"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
@@ -29205,7 +29227,8 @@
                             "status",
                             "sponsor_id",
                             "created_at",
-                            "paid_at"
+                            "paid_at",
+                            "disputed_at"
                           ],
                           "additionalProperties": false
                         },
@@ -29239,7 +29262,8 @@
                       "status": "pending",
                       "sponsor_id": "example",
                       "created_at": "example",
-                      "paid_at": "example"
+                      "paid_at": "example",
+                      "disputed_at": "example"
                     },
                     "checkout_url": "example"
                   },
@@ -29630,6 +29654,16 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "disputed_at": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
                         }
                       },
                       "required": [
@@ -29643,7 +29677,8 @@
                         "status",
                         "sponsor_id",
                         "created_at",
-                        "paid_at"
+                        "paid_at",
+                        "disputed_at"
                       ],
                       "additionalProperties": false
                     },
@@ -29666,7 +29701,8 @@
                     "status": "pending",
                     "sponsor_id": "example",
                     "created_at": "example",
-                    "paid_at": "example"
+                    "paid_at": "example",
+                    "disputed_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }

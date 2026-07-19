@@ -176,6 +176,7 @@
   "sponsors.order.status.pending": "Pendiente",
   "sponsors.order.status.paid": "Pagado",
   "sponsors.order.status.failed": "Fallido",
+  "sponsors.order.status.disputed": "En disputa",
   "sponsors.order.status.refunded": "Reembolsado",
   "sponsors.paidBadge": "Pagado",
   "sponsors.deletePaid.title": "¿Eliminar un espacio pagado?",

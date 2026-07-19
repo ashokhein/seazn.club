@@ -176,6 +176,7 @@
   "sponsors.order.status.pending": "Pending",
   "sponsors.order.status.paid": "Paid",
   "sponsors.order.status.failed": "Failed",
+  "sponsors.order.status.disputed": "Disputed",
   "sponsors.order.status.refunded": "Refunded",
   "sponsors.paidBadge": "Paid",
   "sponsors.deletePaid.title": "Delete a paid placement?",

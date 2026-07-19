@@ -354,11 +354,13 @@ export interface SponsorOrderRow {
   sponsor_id: string | null;
   created_at: string;
   paid_at: string | null;
+  disputed_at: string | null;
 }
 
 const ORDER_COLS = [
   "id", "package_id", "sponsor_name", "sponsor_email", "payment_intent_id",
   "amount_cents", "currency", "status", "sponsor_id", "created_at", "paid_at",
+  "disputed_at",
 ] as const;
 
 export async function listSponsorOrders(auth: AuthCtx): Promise<SponsorOrderRow[]> {
@@ -518,7 +520,7 @@ export async function handleSponsorPaymentSucceeded(
     sponsorName: activated.order.sponsor_name,
     amountCents: activated.order.amount_cents,
     currency: activated.order.currency,
-    publicUrl: org ? `${process.env.NEXT_PUBLIC_APP_URL ?? ""}/shared/${org.slug}` : null,
+    publicUrl: org ? `${sponsorEmailOrigin()}/shared/${org.slug}` : null,
   });
 }
 
@@ -554,6 +556,14 @@ export async function refundSponsorOrder(
   });
   if (order.status !== "paid" || !order.payment_intent_id) {
     throw new HttpError(422, "Only a paid order can be refunded");
+  }
+  // Stripe refuses refunds on charged-back charges; surface the state in our
+  // own words before ever calling out (raw Stripe text leaked to the console).
+  if (order.disputed_at) {
+    throw new HttpError(
+      409,
+      "This payment has been charged back — a disputed payment can't be refunded. Respond to the dispute instead.",
+    );
   }
   // Stripe OUTSIDE any sql transaction (house rule).
   await getStripe().refunds.create(
@@ -631,6 +641,18 @@ export async function handleSponsorChargeRefunded(charge: Stripe.Charge): Promis
 // ---------------------------------------------------------------------------
 // Dispute lifecycle (payments-hardening Task 6, P0-2)
 // ---------------------------------------------------------------------------
+
+/** Origin for sponsor emails fired from webhook (request-less) paths — the
+ *  same override order as registrations' fallbackOrigin. NEXT_PUBLIC_APP_URL
+ *  (the previous source) is not set in any environment, so receipts went out
+ *  with relative "/shared/…" links no mail client could open. */
+function sponsorEmailOrigin(): string {
+  return (
+    process.env.OAUTH_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
+}
 
 /** Current owner via org_members, NOT organizations.created_by — an ownership
  *  transfer flips the role but leaves created_by on the original creator. Local

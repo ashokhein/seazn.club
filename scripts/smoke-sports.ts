@@ -145,6 +145,11 @@ async function cleanup(): Promise<void> {
   const emails = [`sports_${tag}@example.com`, `community_${tag}@example.com`];
   const sql = db();
   try {
+    // sponsor_orders are RESTRICT (V299): money rows must go before their org.
+    await sql`
+      delete from sponsor_orders
+      where org_id in (select id from organizations
+                       where created_by in (select id from users where email = any(${emails})))`;
     const orgs = await sql`
       delete from organizations
       where created_by in (select id from users where email = any(${emails}))`;

@@ -176,6 +176,7 @@
   "sponsors.order.status.pending": "In afwachting",
   "sponsors.order.status.paid": "Betaald",
   "sponsors.order.status.failed": "Mislukt",
+  "sponsors.order.status.disputed": "Betwist",
   "sponsors.order.status.refunded": "Terugbetaald",
   "sponsors.paidBadge": "Betaald",
   "sponsors.deletePaid.title": "Betaalde plek verwijderen?",

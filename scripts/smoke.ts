@@ -486,8 +486,8 @@ async function p72Suite(): Promise<void> {
   await seedPaidSponsorOrder(orgId, sponComp.id);
   const delSpon = await v1(owner, `/api/v1/competitions/${sponComp.id}`, "DELETE");
   check(
-    "p72: delete blocked by a paid sponsorship (409, 'paid sponsorship')",
-    delSpon.status === 409 && delMsg(delSpon).includes("paid sponsorship"),
+    "p72: delete blocked by a paid sponsorship (409, 'sponsorship payment records')",
+    delSpon.status === 409 && delMsg(delSpon).includes("sponsorship payment records"),
   );
 
   // === KEY AUTH: DELETE /competitions/:id is never key-accessible → 403 for
@@ -4445,6 +4445,11 @@ async function cleanup(tag: string): Promise<void> {
     max: 1,
   });
   try {
+    // sponsor_orders are RESTRICT (V299): money rows must go before their org.
+    await sql`
+      delete from sponsor_orders
+      where org_id in (select id from organizations
+                       where created_by in (select id from users where email = any(${emails})))`;
     const orgs = await sql`
       delete from organizations
       where created_by in (select id from users where email = any(${emails}))`;
