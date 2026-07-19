@@ -158,6 +158,14 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
+  it("defaults to claude-sonnet-5 when SCHEDULING_AI_MODEL is unset (opus cannot finish a live round — 2026-07-19 measurement)", async () => {
+    delete process.env.SCHEDULING_AI_MODEL;
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    const body = parse.mock.calls[0][0] as { model: string };
+    expect(body.model).toBe("claude-sonnet-5");
+  });
+
   it("client is constructed with an explicit timeout — without one the SDK refuses non-streaming max_tokens:32000 calls", async () => {
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);

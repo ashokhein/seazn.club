@@ -802,7 +802,10 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
   }
 
   const client = anthropicClient(); // 503 before any network if unconfigured
-  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-opus-4-8";
+  // Same default as schedule-ai.ts (measured 2026-07-19: opus-4-8 cannot
+  // finish a live round inside 300s; sonnet-5 verified clean, cheaper). The
+  // referee re-checks every assignment, so model choice never bypasses safety.
+  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
 
   const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
   let inputTokens = 0;

@@ -831,7 +831,12 @@ async function callModel(
  */
 export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Promise<AiPlanResult> {
   const client = anthropicClient(); // 503 before any network if unconfigured
-  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-opus-4-8";
+  // Default measured live 2026-07-19 (17-fixture pack, adaptive thinking,
+  // effort:high): opus-4-8 could not finish round 1 inside 300s; sonnet-5
+  // returned an engine-verified CLEAN plan in one 249s round at $0.42. The
+  // deterministic referee catches blocking conflicts regardless of model, so
+  // the faster model is the safe default; SCHEDULING_AI_MODEL still overrides.
+  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
 
   const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
   const config = verifyConfig(pack);
