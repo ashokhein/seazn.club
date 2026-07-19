@@ -303,9 +303,14 @@ export function FixtureConsole({
   const started = live.status !== "scheduled";
 
   const sides = { home, away };
+  // Feed name map: entrant ids AND every rostered person, so person-carrying
+  // events (core.award MOTM, cards, subs) render names instead of "Unknown".
   const entrantNames: Record<string, string> = {};
   if (home) entrantNames[home.id] = home.name;
   if (away) entrantNames[away.id] = away.name;
+  for (const side of [home, away]) {
+    for (const m of side?.members ?? []) entrantNames[m.person_id] = m.full_name;
+  }
   const lastVoidable = [...events]
     .reverse()
     .find((e) => e.type !== "core.void" && !events.some((v) => v.voids_event_id === e.id));
