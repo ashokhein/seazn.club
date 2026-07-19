@@ -116,12 +116,14 @@ export async function putMyReport(
   input: { body: string; incidents: ReportIncident[] },
 ): Promise<MatchReport> {
   const a = await myAssignment(userId, fixtureOfficialId);
-  assertReportWindow(a);
+  // Immutability (409) precedes the window check (403): an already-submitted
+  // report can't be edited even if the fixture window has since lapsed.
   const [existing] = await superuser<{ status: string }[]>`
     select status from match_reports where fixture_official_id = ${fixtureOfficialId}`;
   if (existing?.status === "submitted") {
     throw new HttpError(409, "This report is already submitted and can't be edited", "REPORT_SUBMITTED");
   }
+  assertReportWindow(a);
   const [row] = await superuser<ReportRow[]>`
     insert into match_reports
       (org_id, fixture_official_id, official_id, fixture_id, status, body, incidents)
@@ -137,13 +139,15 @@ export async function putMyReport(
  *  SPEC-1 bridge. 404 when there is no draft to submit. */
 export async function submitMyReport(userId: string, fixtureOfficialId: string): Promise<MatchReport> {
   const a = await myAssignment(userId, fixtureOfficialId);
-  assertReportWindow(a);
   const [existing] = await superuser<{ status: string }[]>`
     select status from match_reports where fixture_official_id = ${fixtureOfficialId}`;
-  if (!existing) throw new HttpError(404, "There's no draft report to submit", "NO_REPORT");
-  if (existing.status === "submitted") {
+  // Immutability (409) precedes the window check (403); "no draft" (404) only
+  // makes sense once the window is a valid concept, so it stays after.
+  if (existing?.status === "submitted") {
     throw new HttpError(409, "This report is already submitted", "REPORT_SUBMITTED");
   }
+  assertReportWindow(a);
+  if (!existing) throw new HttpError(404, "There's no draft report to submit", "NO_REPORT");
   const [row] = await superuser<ReportRow[]>`
     update match_reports set status = 'submitted', submitted_at = now(), updated_at = now()
     where fixture_official_id = ${fixtureOfficialId} and status = 'draft'
@@ -151,6 +155,22 @@ export async function submitMyReport(userId: string, fixtureOfficialId: string):
   const report = mapReport(row!);
   await bridgeReportSuspensions(a, report.incidents);
   return report;
+}
+
+// Test seam — the suspensions-table existence probe, overridable so tests can
+// simulate the pre-V292 dark path without renaming the shared table (a rename
+// would flake thread-parallel discipline runs against the one local DB).
+type BridgeProbe = () => Promise<boolean>;
+const realBridgeProbe: BridgeProbe = async () => {
+  const [{ reg }] = await superuser<{ reg: string | null }[]>`select to_regclass('suspensions') as reg`;
+  return reg !== null;
+};
+let bridgeProbe: BridgeProbe = realBridgeProbe;
+
+/** Test-only: override the suspensions-table probe (pass null to restore the
+ *  real to_regclass query). Keeps the public putMyReport/submit API unchanged. */
+export function __setBridgeProbeForTests(fn: BridgeProbe | null): void {
+  bridgeProbe = fn ?? realBridgeProbe;
 }
 
 /**
@@ -167,8 +187,7 @@ async function bridgeReportSuspensions(a: ReportAssignment, incidents: ReportInc
     .filter(({ inc }) => SUSPENDABLE.includes(inc.kind) && !!inc.person_id);
   if (targets.length === 0) return;
   if (!(await hasFeature(a.org_id, "discipline.enforced"))) return;
-  const [{ reg }] = await superuser<{ reg: string | null }[]>`select to_regclass('suspensions') as reg`;
-  if (!reg) return;
+  if (!(await bridgeProbe())) return;
   // Only real persons in this org — a stale picker id must not FK-fail submit.
   const personIds = [...new Set(targets.map((t) => t.inc.person_id!))];
   const valid = new Set(

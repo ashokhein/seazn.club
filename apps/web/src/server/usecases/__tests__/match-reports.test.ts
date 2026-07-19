@@ -11,6 +11,7 @@ import { sql, withTenant } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import {
+  __setBridgeProbeForTests,
   fixtureReports,
   getMyReport,
   putMyReport,
@@ -264,14 +265,19 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
       incidents: [{ kind: "red_card", person_id: player, note: "sent off" }],
     });
 
-    // Hide the SPEC-1 table so the bridge's to_regclass probe returns null —
-    // the exact condition before V292 deploys. Restore unconditionally.
-    await sql`alter table suspensions rename to suspensions_hidden_v293`;
+    // Simulate the pre-V292 world where the SPEC-1 table doesn't exist yet: the
+    // bridge's existence probe reports absent. Injected via the module seam so
+    // we never rename the shared `suspensions` table — a rename would flake a
+    // thread-parallel discipline.test.ts run against the one local DB. Restore
+    // the real probe unconditionally.
+    __setBridgeProbeForTests(async () => false);
     try {
       const submitted = await submitMyReport(ref.userId, fixtureOfficialId);
       expect(submitted.status).toBe("submitted");
+      // Dark: despite a named red card + discipline.enforced, no suspension row.
+      expect(await pendingReportSuspensions(ctx.divisionId)).toHaveLength(0);
     } finally {
-      await sql`alter table suspensions_hidden_v293 rename to suspensions`;
+      __setBridgeProbeForTests(null);
     }
   });
 });
