@@ -3853,6 +3853,31 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   });
   const dlSecret = v1data<{ secret: string }>(dl).secret ?? "";
   check("gap device link minted (dl_)", dl.status === 201 && dlSecret.startsWith("dl_"));
+
+  // Saved lineups must reach the account-less pad: /score/[token] once
+  // rendered `lineup: []`, so fixture-console saves never showed courtside.
+  // Runs before the scoring event below — lineups lock once in_play. The
+  // name lands in the pad payload twice (roster prop + lineup prop); the
+  // roster alone would make a bare includes() pass even without the fix.
+  const fx0 = v1data<{ home_entrant_id: string }>(
+    await v1(admin, `/api/v1/fixtures/${fixtureId}`, "GET"),
+  );
+  const padPerson = v1data<{ id: string }>(
+    await v1(admin, "/api/v1/persons", "POST", { full_name: `Pad Lineup ${tag}` }),
+  );
+  await v1(admin, `/api/v1/entrants/${fx0.home_entrant_id}`, "PATCH", {
+    members: [{ person_id: padPerson.id }],
+  });
+  const luPut = await v1(
+    admin,
+    `/api/v1/fixtures/${fixtureId}/lineups/${fx0.home_entrant_id}`,
+    "PUT",
+    { slots: [{ person_id: padPerson.id, slot: "starting", order_no: 1 }] },
+  );
+  check("gap lineup saved while scheduled", luPut.status === 200);
+  const luPadHtml = await (await fetch(`${BASE}/score/${dlSecret}`)).text();
+  const luHits = luPadHtml.split(`Pad Lineup ${tag}`).length - 1;
+  check("gap device pad carries the saved lineup (roster + lineup props)", luHits >= 2);
   const bare = newSession(); // no cookies — the token is the credential
   const dlState = await v1(bare, `/api/v1/fixtures/${fixtureId}/state`, "GET", undefined, {
     Authorization: `Bearer ${dlSecret}`,
