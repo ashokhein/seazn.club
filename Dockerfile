@@ -6,7 +6,9 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/engine/package.json packages/engine/
-RUN npm ci
+# BuildKit cache mount: the npm cache persists on the Fly builder disk between
+# deploys, so a lockfile change re-downloads only what actually changed.
+RUN --mount=type=cache,id=npm,target=/root/.npm npm ci --prefer-offline
 
 COPY . .
 
@@ -34,7 +36,9 @@ ENV SENTRY_ORG=$SENTRY_ORG
 ENV SENTRY_PROJECT=$SENTRY_PROJECT
 ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
 
-RUN npm run build --workspace apps/web
+# tsc gates types in CI; the in-build checker (the 6 GB-heap worker that
+# SIGKILLed on builder VMs) is skipped here.
+RUN SKIP_TYPECHECK=1 npm run build --workspace apps/web
 
 # ── Stage 2: minimal production image ────────────────────────────────────────
 FROM node:22-alpine AS runner

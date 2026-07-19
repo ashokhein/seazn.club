@@ -22,8 +22,23 @@ jobs:
     name: Unit + typecheck
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    # paths-filter reads the PR's changed files via the API; the repo's
+    # default GITHUB_TOKEN is restricted and 403s without this.
+    permissions:
+      contents: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@v5
+      # Engine coverage + sim matrix only run when the engine (or the
+      # dependency graph) changed — most PRs touch apps/web only.
+      - uses: dorny/paths-filter@v3
+        id: engine-changes
+        with:
+          filters: |
+            engine:
+              - 'packages/engine/**'
+              - 'package-lock.json'
+              - 'pnpm-lock.yaml'
       - uses: actions/setup-node@v5
         with:
           node-version: 22
@@ -45,10 +60,12 @@ jobs:
       # defaults to 200 divisions per sport×format when CI=true) and the
       # coverage gate (≥90% lines; 100% on core/ and tiebreakers.ts).
       - run: npm run test:coverage --workspace packages/engine
+        if: steps.engine-changes.outputs.engine == 'true'
       # Sim matrix (v3/09 §3): bounded profile — every module × format ×
       # SIM_SEEDS seeds + the permanent scenario suites; emits sim-report.json.
       # A failure line prints its reproducing seed token.
       - name: Sim matrix (bounded CI profile)
+        if: steps.engine-changes.outputs.engine == 'true'
         run: SIM_SEEDS=5 npm run sim:matrix --workspace packages/engine
       - name: Sim report artifact
         if: always()
@@ -86,8 +103,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
       - name: Dependency audit (high+)
         run: npm audit --audit-level=high
         continue-on-error: true
@@ -200,6 +215,9 @@ jobs:
 
       - name: Build (production)
         run: npm run build --workspace apps/web
+        env:
+          # tsc gate already ran in the test job — don't type-check twice.
+          SKIP_TYPECHECK: "1"
 
       - name: Start server
         run: |
@@ -260,7 +278,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-      - run: npm ci # stripe-sync.ts imports postgres + stripe
+      - run: npm ci --omit=dev # stripe-sync.ts imports postgres + stripe (prod deps — devDeps unused here)
 
       - name: Cache Flyway CLI
         uses: actions/cache@v4
