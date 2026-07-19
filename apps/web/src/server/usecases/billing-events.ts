@@ -300,7 +300,7 @@ async function notifyStaffDispute(
 async function handlePlatformDispute(
   dispute: Stripe.Dispute,
   phase: "created" | "closed",
-): Promise<void> {
+): Promise<boolean> {
   const intent =
     typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
 
@@ -314,16 +314,16 @@ async function handlePlatformDispute(
         await invalidateOrgEntitlements(pass.org_id);
       }
       await notifyStaffDispute("event_pass", pass.org_id, dispute, phase);
-      return;
+      return true;
     }
   }
 
   // Subscription charge? Matched by the Stripe customer on the charge.
   const customer = await disputeCustomerId(dispute);
-  if (!customer) return;
+  if (!customer) return false;
   const [sub] = await sql<{ org_id: string }[]>`
     select org_id from subscriptions where stripe_customer_id = ${customer}`;
-  if (!sub) return; // not a platform subscription charge
+  if (!sub) return false; // not a platform subscription charge
 
   if (phase === "created") {
     // coalesce keeps the FIRST flag time so a duplicate created (or a manual
@@ -345,6 +345,7 @@ async function handlePlatformDispute(
     await invalidateOrgEntitlements(sub.org_id);
   }
   await notifyStaffDispute("subscription", sub.org_id, dispute, phase);
+  return true;
 }
 
 /** The dispatch table (formerly inline in the webhook route). Unhandled
@@ -385,20 +386,33 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       await syncConnectAccount(event.data.object as Stripe.Account);
       break;
     case "charge.dispute.created":
+    case "charge.dispute.closed": {
       // Entry-fee, sponsor-order AND platform (subscription / Event Pass)
       // chargebacks (spec issue #5, P0-2, Task 7 P1-4): flag + alert. Each
       // handler no-ops on the others' charges, same pattern as charge.refunded;
       // the platform handler runs LAST (the destination-charge handlers write
       // nothing on a platform charge).
-      await handleRegistrationDispute(event.data.object as Stripe.Dispute, "created");
-      await handleSponsorDispute(event.data.object as Stripe.Dispute, "created");
-      await handlePlatformDispute(event.data.object as Stripe.Dispute, "created");
+      const dispute = event.data.object as Stripe.Dispute;
+      const phase = event.type === "charge.dispute.created" ? "created" : "closed";
+      const matched =
+        (await handleRegistrationDispute(dispute, phase)) ||
+        (await handleSponsorDispute(dispute, phase)) ||
+        (await handlePlatformDispute(dispute, phase));
+      // Dispute-before-activation race (stg 2026-07-19): Stripe can deliver
+      // the dispute BEFORE checkout.session.completed writes the money row's
+      // payment_intent_id. An unmatched CREATED must FAIL the event so the
+      // ledger keeps it unprocessed — the stuck-event sweeper (or an admin
+      // replay) re-runs it once the row knows its intent. CLOSED stays a
+      // silent no-op: it trails created by days (no race window), and a
+      // replayed closed-lost legitimately matches nothing once the pass row
+      // was deleted by the first run.
+      if (!matched && phase === "created") {
+        throw new Error(
+          `dispute ${dispute.id} matched no registration/sponsor/platform charge yet — retry via sweeper`,
+        );
+      }
       break;
-    case "charge.dispute.closed":
-      await handleRegistrationDispute(event.data.object as Stripe.Dispute, "closed");
-      await handleSponsorDispute(event.data.object as Stripe.Dispute, "closed");
-      await handlePlatformDispute(event.data.object as Stripe.Dispute, "closed");
-      break;
+    }
     case "charge.refunded":
       // Refunds made in the Stripe dashboard still show on the console.
       // Registration, sponsor and Event Pass charges share the event type; each

@@ -1115,16 +1115,16 @@ async function confirmPaidRegistration(
 export async function handleRegistrationDispute(
   dispute: Stripe.Dispute,
   phase: "created" | "closed",
-): Promise<void> {
+): Promise<boolean> {
   const intent =
     typeof dispute.payment_intent === "string"
       ? dispute.payment_intent
       : dispute.payment_intent?.id;
-  if (!intent) return;
+  if (!intent) return false;
   const [reg] = await sql<RegistrationRow[]>`
     select ${sql(REG_COLS as unknown as string[])} from registrations
     where payment_intent_id = ${intent}`;
-  if (!reg) return; // not an entry-fee charge
+  if (!reg) return false; // not an entry-fee charge (or intent not written yet)
   const ctx = await divisionCtx(sql, reg.division_id);
 
   if (phase === "created") {
@@ -1148,7 +1148,7 @@ export async function handleRegistrationDispute(
         refCode: reg.ref_code,
       }).catch(() => {});
     }
-    return;
+    return true;
   }
   if (dispute.status === "won") {
     await sql`update registrations set disputed_at = null, updated_at = now()
@@ -1190,6 +1190,7 @@ export async function handleRegistrationDispute(
       }
     }
   }
+  return true;
 }
 
 /** Current owner via org_members, NOT organizations.created_by — ownership

@@ -346,17 +346,28 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — Event Pass", () => {
 });
 
 describe.skipIf(!HAS_DB)("platform-charge disputes — routing", () => {
-  it("no-ops on a charge that is neither a subscription nor a pass", async () => {
-    // A customer matching no subscription + an intent matching no pass.
+  it("a created dispute matching neither a subscription nor a pass THROWS (kept for sweeper retry)", async () => {
+    // A customer matching no subscription + an intent matching no pass. Since
+    // the dispute-before-activation race fix, an unmatched CREATED must fail
+    // the event (ledger keeps it unprocessed; sweeper retries) instead of
+    // being silently ACKed. Nothing is written and no alert goes out.
     const ev = subDisputeEvent("created", `cus_nobody_${uniq()}`, "dp_" + uniq());
+    await expect(processStripeEvent(ev)).rejects.toThrow(/matched no/);
+    expect(emailMock.staff).not.toHaveBeenCalled();
+  });
+
+  it("an unmatched CLOSED stays a silent no-op (deleted-pass replays depend on it)", async () => {
+    const ev = subDisputeEvent("closed", `cus_nobody_${uniq()}`, "dp_" + uniq());
     await expect(processStripeEvent(ev)).resolves.toBeUndefined();
     expect(emailMock.staff).not.toHaveBeenCalled();
   });
 
-  it("keyless: a real webhook charge id string can't resolve a customer → sub no-op", async () => {
+  it("keyless: a real webhook charge id string can't resolve a customer → event kept for retry", async () => {
     // Seed a sub, but send the dispute with the charge as an opaque id string
     // (as Stripe really does). With no STRIPE_SECRET_KEY the charge can't be
-    // retrieved, so the subscription branch cannot identify the org and no-ops.
+    // retrieved, so the subscription branch cannot identify the org — the
+    // event now FAILS (retryable) rather than being silently ACKed, and the
+    // subscription row stays untouched.
     const { orgId, customer } = await seedSubOrg("pro");
     void customer;
     const ev = {
@@ -372,7 +383,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — routing", () => {
         },
       },
     } as unknown as Stripe.Event;
-    await expect(processStripeEvent(ev)).resolves.toBeUndefined();
+    await expect(processStripeEvent(ev)).rejects.toThrow(/matched no/);
     const [s] = await sql<{ disputed_at: Date | null; plan_key: string }[]>`
       select disputed_at, plan_key from subscriptions where org_id = ${orgId}`;
     expect(s.disputed_at).toBeNull(); // untouched — couldn't be identified
