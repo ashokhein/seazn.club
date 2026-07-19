@@ -11,12 +11,13 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import posthog from "posthog-js";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
-import { useMsg } from "@/components/i18n/dict-provider";
+import { useMsg, usePlural } from "@/components/i18n/dict-provider";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
 import type { AiPlanRequest, AiPlanResponse } from "@/server/api-v1/schemas";
 import {
   aiConsoleReducer,
+  aiErrorKey,
   initialAiConsoleState,
   type AiConsoleState,
   type AiMode,
@@ -78,11 +79,19 @@ export function AiConsole({
   // Instruction that produced the on-screen proposal — lets a refine turn send
   // the right `prior.instruction` when it round-trips the previous assignments.
   const priorInstruction = useRef("");
+  // Cancel any in-flight run on close/unmount (the board conditionally renders
+  // the dock, so unmount cleanup covers close too) — its rejection is ignored.
+  const abortRef = useRef<AbortController | null>(null);
+  useEffect(() => () => abortRef.current?.abort(), []);
+  const plural = usePlural();
   const busy = state.run === "running" || state.run === "flagged";
 
   const run = useCallback(async () => {
     const instruction = state.instruction.trim();
     if (instruction.length < 3 || busy) return;
+    abortRef.current?.abort(); // cancel a prior in-flight run
+    const ac = new AbortController();
+    abortRef.current = ac;
     dispatch({ type: "RUN_START" });
     const body: AiPlanRequest = {
       instruction,
@@ -104,19 +113,17 @@ export function AiConsole({
     try {
       const plan = await apiV1<AiPlanResponse>(
         `/api/v1/divisions/${divisionId}/schedule/ai-plan`,
-        { method: "POST", json: body },
+        { method: "POST", json: body, signal: ac.signal },
       );
       priorInstruction.current = instruction;
       dispatch({ type: "RUN_DONE", plan });
     } catch (err) {
+      // A cancelled run is not an error — the console is closing or superseded.
+      if (ac.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) return;
+      // Map the status (+ code) to a localized line; never render raw server text.
       const status = err instanceof ApiV1Error ? err.status : 0;
-      const raw = err instanceof Error ? err.message : "";
-      // Never surface raw codes/UUIDs; fall back to a friendly line.
-      const friendly = raw && !/[{}<>]|error:|\bundefined\b|[0-9a-f]{8}-[0-9a-f]{4}/i.test(raw);
-      dispatch({
-        type: "RUN_ERROR",
-        error: { status, message: friendly ? raw : msg("board.ai.errorGeneric") },
-      });
+      const code = err instanceof ApiV1Error ? err.code : undefined;
+      dispatch({ type: "RUN_ERROR", error: { status, message: msg(aiErrorKey(status, code)) } });
     }
   }, [busy, divisionId, msg, state.instruction, state.mode, state.scope, state.schedulePlan]);
 
@@ -127,7 +134,7 @@ export function AiConsole({
         <BriefStep state={state} dispatch={dispatch} run={run} busy={busy} msg={msg} />
       )}
       {state.step === "schedule" && (
-        <ScheduleStep state={state} dispatch={dispatch} msg={msg} />
+        <ScheduleStep state={state} dispatch={dispatch} msg={msg} plural={plural} />
       )}
       {state.step === "officials" && <OfficialsStep dispatch={dispatch} msg={msg} />}
       {state.step === "apply" && (
@@ -339,10 +346,12 @@ function ScheduleStep({
   state,
   dispatch,
   msg,
+  plural,
 }: {
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
   msg: ReturnType<typeof useMsg>;
+  plural: ReturnType<typeof usePlural>;
 }) {
   const plan = state.schedulePlan;
   if (!plan) return <Empty msg={msg} k="board.ai.schedule.empty" />;
@@ -374,7 +383,7 @@ function ScheduleStep({
         )}
         {plan.warnings.length > 0 && (
           <span className="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-800">
-            {msg("board.ai.warnings", { n: plan.warnings.length })}
+            {plural("board.ai.warnings", plan.warnings.length)}
           </span>
         )}
       </div>

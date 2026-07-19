@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { AiPlanResponse, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import {
   aiConsoleReducer,
+  aiErrorKey,
   initialAiConsoleState,
   type AiConsoleState,
 } from "../ai-console-state";
@@ -166,5 +167,26 @@ describe("aiConsoleReducer", () => {
     expect(s.schedulePlan).toBeNull();
     expect(s.officialsPlan).toBeNull();
     expect(s).toEqual(initialAiConsoleState);
+  });
+});
+
+describe("aiErrorKey (status → localized copy key)", () => {
+  it("maps each dedicated status to its own key", () => {
+    expect(aiErrorKey(402)).toBe("board.ai.error.upgrade");
+    expect(aiErrorKey(429)).toBe("board.ai.error.rateLimited");
+    expect(aiErrorKey(409)).toBe("board.ai.error.conflict");
+    expect(aiErrorKey(400)).toBe("board.ai.error.invalid");
+  });
+
+  it("splits 422 on the server code: TOO_LARGE vs everything else", () => {
+    expect(aiErrorKey(422, "AI_PLAN_TOO_LARGE")).toBe("board.ai.error.tooLarge");
+    expect(aiErrorKey(422, "AI_PLAN_FAILED")).toBe("board.ai.error.invalid");
+    expect(aiErrorKey(422)).toBe("board.ai.error.invalid");
+  });
+
+  it("falls back to the generic key for anything unmapped", () => {
+    expect(aiErrorKey(500)).toBe("board.ai.errorGeneric");
+    expect(aiErrorKey(0)).toBe("board.ai.errorGeneric");
+    expect(aiErrorKey(503)).toBe("board.ai.errorGeneric");
   });
 });

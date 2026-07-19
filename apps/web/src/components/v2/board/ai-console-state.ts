@@ -122,3 +122,36 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
     }
   }
 }
+
+/** ui-catalog copy keys for a failed run. */
+export type AiErrorKey =
+  | "board.ai.error.upgrade"
+  | "board.ai.error.rateLimited"
+  | "board.ai.error.conflict"
+  | "board.ai.error.tooLarge"
+  | "board.ai.error.invalid"
+  | "board.ai.errorGeneric";
+
+/**
+ * Map an HTTP status (+ the server error code where it sharpens the message) to
+ * a localized copy key. Pure — unit-tested without React. The console resolves
+ * the returned key through the ui catalog so a raw, untranslated server string
+ * never reaches the UI. 422 splits on the code: AI_PLAN_TOO_LARGE asks the user
+ * to narrow the scope; anything else is a plain "couldn't use that instruction".
+ */
+export function aiErrorKey(status: number, code?: string): AiErrorKey {
+  switch (status) {
+    case 402:
+      return "board.ai.error.upgrade";
+    case 429:
+      return "board.ai.error.rateLimited";
+    case 409:
+      return "board.ai.error.conflict";
+    case 400:
+      return "board.ai.error.invalid";
+    case 422:
+      return code === "AI_PLAN_TOO_LARGE" ? "board.ai.error.tooLarge" : "board.ai.error.invalid";
+    default:
+      return "board.ai.errorGeneric";
+  }
+}

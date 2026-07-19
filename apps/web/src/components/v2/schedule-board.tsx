@@ -690,6 +690,7 @@ export function ScheduleBoard({
 
       {aiOpen && single && (
         <AiConsole
+          key={single.id}
           divisionId={single.id}
           aiAllowed={aiAllowed}
           onClose={() => setAiOpen(false)}
