@@ -71,6 +71,11 @@ interface DivisionRosterRow {
 interface Props {
   divisionId: string;
   entrants: EntrantRow[];
+  /** entrant id → resolved badge URL (own badge → team logo → club crest),
+   *  from listEntrantLogoUrls. The rows fall back to this when the entrant
+   *  has no badge of its own — without it a squad-seeded team entrant showed
+   *  a bare monogram even though its club crest existed. */
+  logoUrls?: Record<string, string | null>;
   canEdit: boolean;
   positionGroups: PositionGroup[];
   roles: RoleSpec[];
@@ -104,6 +109,7 @@ async function loadAllPersons(): Promise<Person[]> {
 export function EntrantsPanel({
   divisionId,
   entrants,
+  logoUrls,
   canEdit,
   positionGroups,
   roles,
@@ -359,6 +365,7 @@ export function EntrantsPanel({
               <EntrantTableRow
                 key={e.id}
                 entrant={e}
+                logoUrl={logoUrls?.[e.id] ?? null}
                 canEdit={canEdit}
                 busy={busy}
                 persons={persons}
@@ -966,16 +973,21 @@ async function badgeRequest(entrantId: string, file: File | null): Promise<void>
  *  editable, upload/replace + remove controls. */
 export function EntrantBadgeControl({
   entrant,
+  logoUrl = null,
   canEdit,
   busy,
   onBadge,
 }: {
   entrant: Pick<EntrantRow, "id" | "display_name" | "badge_url">;
+  /** Resolved fallback (team logo / club crest) when no own badge is set. */
+  logoUrl?: string | null;
   canEdit: boolean;
   busy: boolean;
   onBadge: (file: File | null) => void;
 }) {
-  const src = resolveEntrantBadge({ badge_url: entrant.badge_url });
+  const src = entrant.badge_url
+    ? resolveEntrantBadge({ badge_url: entrant.badge_url })
+    : (logoUrl ?? null);
   return (
     <div className="flex items-center gap-3">
       {src ? (
@@ -1025,6 +1037,7 @@ export function EntrantBadgeControl({
 
 function EntrantTableRow({
   entrant,
+  logoUrl,
   canEdit,
   busy,
   persons,
@@ -1038,6 +1051,7 @@ function EntrantTableRow({
   onBadge,
 }: {
   entrant: EntrantRow;
+  logoUrl: string | null;
   canEdit: boolean;
   busy: boolean;
   persons: Person[];
@@ -1079,7 +1093,7 @@ function EntrantTableRow({
             className="flex items-center gap-2 text-left text-sm font-medium text-slate-800 hover:text-purple-700"
           >
             {(() => {
-              const src = resolveEntrantBadge({ badge_url: entrant.badge_url });
+              const src = logoUrl ?? resolveEntrantBadge({ badge_url: entrant.badge_url });
               return src ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={src} alt="" className="h-5 w-5 shrink-0 rounded object-cover" />
@@ -1145,6 +1159,7 @@ function EntrantTableRow({
             <div className="mb-3">
               <EntrantBadgeControl
                 entrant={entrant}
+                logoUrl={logoUrl}
                 canEdit={canEdit}
                 busy={busy}
                 onBadge={onBadge}

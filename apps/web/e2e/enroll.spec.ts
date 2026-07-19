@@ -30,6 +30,14 @@ test("enroll an existing team into a division via the UI", async ({ page }) => {
     },
   )).data!;
 
+  // Give the club a crest so the badge-fallback contract is observable: the
+  // team has no own logo, so its entrant row must wear the CLUB crest.
+  const clubs = (await apiJson<{ id: string; name: string }[]>(page.request, "/api/v1/clubs")).data!;
+  const club = clubs.find((c) => c.name === `Riverside ${TAG}`)!;
+  await apiJson(page.request, `/api/v1/clubs/${club.id}`, "PATCH", {
+    logo_path: "orgs/e2e/clubs/enroll-crest.png",
+  });
+
   await page.goto(`/divisions/${div.id}?tab=entrants`);
   await page.getByRole("button", { name: "Existing team" }).click();
   await page.getByRole("textbox", { name: "Search teams" }).fill(`Riverside U12 ${TAG}`);
@@ -37,5 +45,15 @@ test("enroll an existing team into a division via the UI", async ({ page }) => {
   await page.getByRole("button", { name: /Enroll team/ }).click();
 
   // The team now appears as an entrant in the division table.
-  await expect(page.getByRole("cell", { name: `Riverside U12 ${TAG}` })).toBeVisible();
+  const cell = page.getByRole("cell", { name: `Riverside U12 ${TAG}` });
+  await expect(cell).toBeVisible();
+
+  // Clubs W1 regression 1: the row wears the club crest (entrant has no own
+  // badge, team has no own logo — the resolved logo map must fall through).
+  await expect(cell.locator('img[src*="enroll-crest.png"]')).toBeVisible();
+
+  // Clubs W1 regression 2: first-time enrollment seeded the roster from the
+  // team's squad — the imported player is already on the entrant.
+  await cell.getByRole("button", { name: new RegExp(`Riverside U12 ${TAG}`) }).click();
+  await expect(page.getByText(`Ada ${TAG}`)).toBeVisible();
 });
