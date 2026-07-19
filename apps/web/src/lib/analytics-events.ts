@@ -54,6 +54,9 @@ export const EVENTS = {
   /** v4 brief step (design/v4/03 §5): organiser tapped a pre-flight warn row's
    *  deep link to go fix a data gap (no windows, no officials, …) before running. */
   AI_PREFLIGHT_GAP_FIXED: "ai_preflight_gap_fixed",
+  /** v4 apply step (design/v4/02 §6): organiser discarded a verified proposal
+   *  from the apply step instead of applying it — the abandon signal for the run. */
+  AI_PLAN_DISCARDED: "ai_plan_discarded",
 } as const;
 
 export type AnalyticsEvent = (typeof EVENTS)[keyof typeof EVENTS];

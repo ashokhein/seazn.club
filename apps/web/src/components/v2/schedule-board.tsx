@@ -254,6 +254,7 @@ export function ScheduleBoard({
     const atMaxRound = divFx.filter((f) => f.round_no === maxRound).length;
     return divFx.map((f) => ({
       id: f.id,
+      stage_id: f.stage_id,
       scheduled_at: f.scheduled_at ? new Date(f.scheduled_at).toISOString() : null,
       court_label: f.court_label,
       code: `R${f.round_no}·${f.seq_in_round}`,
@@ -792,6 +793,7 @@ export function ScheduleBoard({
         <AiConsole
           key={single.id}
           divisionId={single.id}
+          expectedSeq={single.seq}
           aiAllowed={aiAllowed}
           brief={aiBrief}
           fixtures={aiFixtures}
@@ -800,6 +802,7 @@ export function ScheduleBoard({
             setAiProposal(null);
           }}
           onApplied={() => router.refresh()}
+          onRefetch={() => router.refresh()}
           onProposalChange={(plan) => {
             setAiProposal(plan);
             // Jump to the earliest day the proposal touches so the ghosts show.

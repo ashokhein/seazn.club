@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { usePathname } from "next/navigation";
 import posthog from "posthog-js";
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
+import { track, EVENTS } from "@/lib/analytics";
 import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
@@ -22,7 +23,16 @@ import type {
   AiOfficialsPlanRequest,
   AiOfficialsPlanResponse,
   AiLastResult,
+  ScheduleConfig,
 } from "@/server/api-v1/schemas";
+import {
+  applyAiPlans,
+  AI_APPLY_MODEL,
+  mergeConstraintSuggestions,
+  suggestionKeysOf,
+  type ApplyOutcome,
+  type SuggestionKey,
+} from "./ai-apply";
 import { AiWishChips } from "./ai-wish-chips";
 import { AiPreflight, AiLastRun, type PreflightInput } from "./ai-preflight";
 import { compileWishes, deriveFreeText, joinNonEmpty, type Wish } from "./wish-compile";
@@ -118,16 +128,21 @@ export type { AiConsoleFixture } from "./ai-diff";
 
 export function AiConsole({
   divisionId,
+  expectedSeq,
   aiAllowed,
   brief,
   fixtures,
   officialsPolicy,
   onClose,
   onApplied,
+  onRefetch,
   onProposalChange,
   onPulse,
 }: {
   divisionId: string;
+  /** The division seq the board rendered at — the optimistic-concurrency token
+   *  the AI apply carries (409 SEQ_CONFLICT on a stale board → re-run as refine). */
+  expectedSeq: number;
   /** Client-side entitlement read (server prop) — false renders the paywall
    *  inside the dock with no network call. */
   aiAllowed: boolean;
@@ -143,9 +158,12 @@ export function AiConsole({
    *  when a policy is persisted. */
   officialsPolicy?: NonNullable<AiPlanRequest["officials_policy"]>;
   onClose: () => void;
-  /** Called after a successful apply so the board can refresh. Wired in a later
-   *  task; accepted here so the seam is stable. */
+  /** Called after a successful apply (and after an Undo) so the board refetches
+   *  and the ghosts resolve to the applied — or reverted — state. */
   onApplied?: () => void;
+  /** Called after a SEQ_CONFLICT so the board refetches the fresh schedule + seq
+   *  behind the "re-run as refine" affordance. */
+  onRefetch?: () => void;
   /** Notifies the board of the current proposal (or null) so it can paint the
    *  grid ghosts; fired on each RUN_DONE and cleared on unmount. */
   onProposalChange?: (plan: AiPlanResponse | null) => void;
@@ -169,6 +187,11 @@ export function AiConsole({
   // out of the board's initial payload; fetched once on open (gap 15).
   const [roster, setRoster] = useState<OfficialsRosterEntry[] | null>(null);
   const [lastRun, setLastRun] = useState<AiLastResult>(null);
+  // The division's current full scheduling config (incl. constraints, which the
+  // board's slimmer settings prop drops) — the apply step needs it to overlay the
+  // ticked rule suggestions and PUT the whole config back (§7). Fetched once here
+  // rather than widening the board payload.
+  const [settings, setSettings] = useState<{ config: ScheduleConfig; tz: string } | null>(null);
   useEffect(() => {
     let cancelled = false;
     apiV1<{ id: string; display_name: string; role_keys: string[] }[]>("/api/v1/officials")
@@ -177,11 +200,22 @@ export function AiConsole({
     apiV1<AiLastResult>(`/api/v1/divisions/${divisionId}/schedule/ai-last`)
       .then((r) => !cancelled && setLastRun(r))
       .catch(() => {});
+    apiV1<{ config: ScheduleConfig; tz: string }>(`/api/v1/divisions/${divisionId}/schedule-settings`)
+      .then((r) => !cancelled && setSettings({ config: r.config, tz: r.tz }))
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [divisionId]);
   const rosterCount = roster?.length ?? null;
+
+  // Apply step (Task 15): the in-flight flag drives the button spinner without
+  // touching the run state (so `busy`'s plan-run gating stays independent); the
+  // outcome carries the before-ai checkpoint id that powers Undo.
+  const [applying, setApplying] = useState(false);
+  const [applyResult, setApplyResult] = useState<ApplyOutcome | null>(null);
+  const [undoing, setUndoing] = useState(false);
+  const [undone, setUndone] = useState(false);
 
   // Chips ↔ instruction: re-derive the compiled prefix, keep the free text.
   const applyWishes = useCallback(
@@ -261,9 +295,13 @@ export function AiConsole({
   const [traceNonce, setTraceNonce] = useState(0);
   const [officialsTraceNonce, setOfficialsTraceNonce] = useState(0);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (opts?: { mode?: AiMode }) => {
     const instruction = state.instruction.trim();
     if (instruction.length < 3 || busy) return;
+    // The seq-conflict recovery re-runs Phase A as a refine over the current
+    // proposal regardless of the mode toggle's async state — an explicit override
+    // wins over state.mode for both the request mode and the prior round-trip.
+    const mode = opts?.mode ?? state.mode;
     abortRef.current?.abort(); // cancel a prior in-flight run
     const ac = new AbortController();
     abortRef.current = ac;
@@ -271,12 +309,12 @@ export function AiConsole({
     dispatch({ type: "RUN_START" });
     const body: AiPlanRequest = {
       instruction,
-      mode: state.mode,
+      mode,
       ...(state.scope ? { scope: state.scope } : {}),
       // A dry officials-coverage preview rides along only when the division has a
       // saved policy (none is persisted today, so this is omitted — see the prop).
       ...(officialsPolicy ? { officials_policy: officialsPolicy } : {}),
-      ...(state.mode === "refine" && state.schedulePlan && priorInstruction.current
+      ...(mode === "refine" && state.schedulePlan && priorInstruction.current
         ? {
             prior: {
               instruction: priorInstruction.current,
@@ -295,6 +333,10 @@ export function AiConsole({
         { method: "POST", json: body, signal: ac.signal },
       );
       priorInstruction.current = instruction;
+      // A new schedule invalidates the officials draft (reducer clears the plan);
+      // reset the auto-run latch so the officials step re-solves over the new
+      // times on next entry rather than showing stale assignments.
+      officialsAutoStarted.current = false;
       dispatch({ type: "RUN_DONE", plan });
     } catch (err) {
       // A cancelled run is not an error — the console is closing or superseded.
@@ -369,6 +411,135 @@ export function AiConsole({
     }
   }, [state.step, state.officialsPlan, state.schedulePlan, busy, runOfficials]);
 
+  // ---------------------------------------------------- apply orchestration (T15)
+  // Chain the existing apply rails: a before-ai checkpoint, the schedule apply(s)
+  // (stage-grouped, source "ai" + audit), the officials apply, then the ticked
+  // rule PUT — all in ai-apply's pure `applyAiPlans`. Excluded (unticked) blockers
+  // drop out of BOTH payloads there. This handler builds the payloads from the
+  // console state and maps the outcome onto the reducer + board refetch.
+  const doApply = useCallback(
+    async (includeOfficials: boolean, tickedSuggestions: SuggestionKey[]) => {
+      const plan = state.schedulePlan;
+      if (!plan || applying) return;
+      dispatch({ type: "APPLY_START" });
+      setApplying(true);
+      setUndone(false);
+      const stageOf = new Map(fixtures.map((f) => [f.id, f.stage_id]));
+      const scheduleAudit = {
+        instruction: (priorInstruction.current || state.instruction).slice(0, 500),
+        summary: plan.summary.slice(0, 600),
+        model: AI_APPLY_MODEL,
+        repair_rounds: plan.usage.repair_rounds,
+      };
+      const officials =
+        includeOfficials && state.officialsPlan
+          ? {
+              assignments: state.officialsPlan.assignments.map((a) => ({
+                fixture_id: a.fixtureId,
+                official_id: a.officialId,
+                role_key: a.roleKey,
+                locked: a.locked ?? false,
+              })),
+              audit: {
+                instruction: priorOfficialsInstruction.current.slice(0, 500),
+                summary: state.officialsPlan.summary.slice(0, 600),
+                model: AI_APPLY_MODEL,
+                repair_rounds: state.officialsPlan.usage.repair_rounds,
+              },
+            }
+          : null;
+      const suggestions =
+        tickedSuggestions.length > 0 && settings && plan.constraint_suggestions
+          ? {
+              config: mergeConstraintSuggestions(settings.config, plan.constraint_suggestions, tickedSuggestions),
+              tz: settings.tz,
+            }
+          : null;
+      let result: ApplyOutcome;
+      try {
+        result = await applyAiPlans({
+          divisionId,
+          expectedSeq,
+          scheduleAssignments: plan.proposal.map((p) => ({
+            fixture_id: p.fixture_id,
+            scheduled_at: p.scheduled_at,
+            court_label: p.court_label,
+            stage_id: stageOf.get(p.fixture_id) ?? "",
+          })),
+          scheduleAudit,
+          officials,
+          excludedFixtureIds: state.excludedFixtures,
+          suggestions,
+        });
+      } catch {
+        result = { schedule: "error", officials: "skipped", checkpointId: null };
+      }
+      setApplying(false);
+      setApplyResult(result);
+      if (result.schedule === "applied") {
+        dispatch({ type: "APPLIED" });
+        onApplied?.(); // board refetch → ghosts resolve to the applied state
+      } else if (result.schedule === "seq_conflict") {
+        dispatch({ type: "APPLY_SEQ_CONFLICT" });
+        onRefetch?.(); // pull the fresh board behind the re-run affordance
+      } else {
+        dispatch({ type: "APPLY_ERROR", error: { status: 0, message: msg("board.ai.apply.error") } });
+      }
+    },
+    [
+      applying,
+      divisionId,
+      expectedSeq,
+      fixtures,
+      msg,
+      onApplied,
+      onRefetch,
+      settings,
+      state.excludedFixtures,
+      state.instruction,
+      state.officialsPlan,
+      state.schedulePlan,
+    ],
+  );
+
+  // Discard: abandon the verified proposal from the apply step (the run's abandon
+  // signal) and close the dock — the board clears the ghosts on unmount.
+  const discard = useCallback(() => {
+    track(EVENTS.AI_PLAN_DISCARDED, { division_id: divisionId });
+    onClose();
+  }, [divisionId, onClose]);
+
+  // Undo: one tap restores the before-ai checkpoint the apply created, then
+  // refetches so the board shows the reverted schedule.
+  const undo = useCallback(async () => {
+    const checkpointId = applyResult?.checkpointId;
+    if (!checkpointId || undoing) return;
+    setUndoing(true);
+    try {
+      await apiV1(`/api/v1/divisions/${divisionId}/restore`, {
+        method: "POST",
+        json: { checkpoint_id: checkpointId, confirm: true },
+      });
+      setUndone(true);
+      onApplied?.();
+    } catch (err) {
+      const status = err instanceof ApiV1Error ? err.status : 0;
+      const code = err instanceof ApiV1Error ? err.code : undefined;
+      dispatch({ type: "APPLY_ERROR", error: { status, message: msg(aiErrorKey(status, code)) } });
+    } finally {
+      setUndoing(false);
+    }
+  }, [applyResult, divisionId, msg, onApplied, undoing]);
+
+  // Re-run as refine: fold the organiser's proposal into a fresh Phase A pass over
+  // the just-refetched board (prior = the current proposal). The mode override
+  // wins over the toggle's async state so this is a single tap.
+  const reRunAsRefine = useCallback(() => {
+    setApplyResult(null);
+    dispatch({ type: "SET_MODE", mode: "refine" });
+    void run({ mode: "refine" });
+  }, [run]);
+
   const body = aiAllowed ? (
     <div className="space-y-4">
       <Stepper state={state} onGoto={(step) => dispatch({ type: "GOTO_STEP", step })} msg={msg} />
@@ -429,7 +600,21 @@ export function AiConsole({
         />
       )}
       {state.step === "apply" && (
-        <ApplyStep state={state} dispatch={dispatch} onApplied={onApplied} msg={msg} />
+        <ApplyStep
+          state={state}
+          plan={state.schedulePlan}
+          fixtures={fixtures}
+          settingsReady={settings !== null}
+          applying={applying}
+          applyResult={applyResult}
+          undoing={undoing}
+          undone={undone}
+          onApply={doApply}
+          onDiscard={discard}
+          onUndo={undo}
+          onReRunRefine={reRunAsRefine}
+          msg={msg}
+        />
       )}
     </div>
   ) : (
@@ -871,68 +1056,299 @@ function OfficialsStep({
 }
 
 // -------------------------------------------------------------- apply step
-// Shell placeholder — review-and-apply is a later task. The confirm control is
-// intentionally disabled here.
+// The chained accept (Task 15): a "what applies" recap, the checked-by-default
+// rule-suggestions checklist, then the three commit paths — apply schedule +
+// officials, apply schedule only, or discard. The orchestration + outcome live
+// in the parent (doApply / applyAiPlans); this step renders the pre-apply, the
+// stale-board recovery (re-run as refine), the error, and the applied states.
 function ApplyStep({
   state,
-  dispatch,
-  onApplied,
+  plan,
+  fixtures,
+  settingsReady,
+  applying,
+  applyResult,
+  undoing,
+  undone,
+  onApply,
+  onDiscard,
+  onUndo,
+  onReRunRefine,
   msg,
 }: {
   state: AiConsoleState;
-  dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
-  onApplied?: () => void;
+  plan: AiPlanResponse | null;
+  fixtures: AiConsoleFixture[];
+  settingsReady: boolean;
+  applying: boolean;
+  applyResult: ApplyOutcome | null;
+  undoing: boolean;
+  undone: boolean;
+  onApply: (includeOfficials: boolean, ticked: SuggestionKey[]) => void;
+  onDiscard: () => void;
+  onUndo: () => void;
+  onReRunRefine: () => void;
   msg: ReturnType<typeof useMsg>;
 }) {
+  const excluded = useMemo(() => new Set(state.excludedFixtures), [state.excludedFixtures]);
+  const suggestKeys = useMemo(() => suggestionKeysOf(plan?.constraint_suggestions), [plan]);
+  const [ticked, setTicked] = useState<Set<SuggestionKey>>(() => new Set(suggestKeys));
+
+  if (!plan) return <Empty msg={msg} k="board.ai.schedule.empty" />;
+
+  // Applied — the success toast + checkpoint banner, or the reverted state.
   if (state.run === "applied") {
+    if (undone) {
+      return (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
+          <p className="flex items-center gap-1.5 text-sm font-medium text-slate-700">
+            <span aria-hidden>⟲</span>
+            {msg("board.ai.apply.reverted")}
+          </p>
+        </div>
+      );
+    }
+    return <AppliedState outcome={applyResult} onUndo={onUndo} undoing={undoing} msg={msg} />;
+  }
+
+  const scheduleCount = plan.proposal.filter((p) => !excluded.has(p.fixture_id)).length;
+  const officialsCount = state.officialsPlan
+    ? state.officialsPlan.assignments.filter((a) => !excluded.has(a.fixtureId)).length
+    : 0;
+  const stale = state.run === "seq_conflict";
+
+  // Stale board — the only path forward is a refine over the refetched schedule.
+  if (stale) {
     return (
       <div className="space-y-3">
-        <p className="rounded-md border border-teal-200 bg-teal-50 px-3 py-2 text-sm text-teal-800">
-          {msg("board.ai.applied")}
-        </p>
+        <div role="alert" className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-800">
+          <p className="flex items-center gap-1.5 font-semibold">
+            <span aria-hidden>⚠</span>
+            {msg("board.ai.apply.staleTitle")}
+          </p>
+          <p className="mt-0.5 text-amber-700">{msg("board.ai.apply.stale")}</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={onReRunRefine}
+            className="ai-run inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
+          >
+            <span aria-hidden>✦</span>
+            {msg("board.ai.apply.reRunRefine")}
+          </button>
+          <button type="button" onClick={onDiscard} className="btn btn-ghost px-3 py-1.5 text-xs text-slate-500">
+            {msg("board.ai.apply.discard")}
+          </button>
+        </div>
       </div>
     );
   }
+
   return (
     <div className="space-y-3">
       <p className="text-sm text-slate-700">{msg("board.ai.apply.lead")}</p>
-      <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-3 py-6 text-center text-xs text-slate-500">
-        {msg("board.ai.apply.hint")}
+
+      {/* What will apply — the recap before the commit. */}
+      <div className="space-y-1 rounded-lg border border-slate-200 bg-slate-50/70 p-3">
+        <p className="flex items-center gap-1.5 text-xs text-slate-700">
+          <span aria-hidden className="h-2 w-2 rounded-full bg-teal-500" />
+          {msg("board.ai.apply.willSchedule", { n: scheduleCount })}
+        </p>
+        <p className="flex items-center gap-1.5 text-xs text-slate-700">
+          <span aria-hidden className={`h-2 w-2 rounded-full ${officialsCount > 0 ? "bg-teal-500" : "bg-slate-300"}`} />
+          {officialsCount > 0
+            ? msg("board.ai.apply.willOfficials", { n: officialsCount })
+            : msg("board.ai.apply.noOfficials")}
+        </p>
+        <p className="pt-0.5 text-[11px] text-slate-500">{msg("board.ai.apply.hint")}</p>
       </div>
-      <div className="flex items-center gap-2">
+
+      {/* Rule changes the architect inferred — checked by default, each optional. */}
+      {suggestKeys.length > 0 && settingsReady && (
+        <SuggestChecklist
+          plan={plan}
+          keys={suggestKeys}
+          ticked={ticked}
+          onToggle={(k) =>
+            setTicked((prev) => {
+              const next = new Set(prev);
+              if (next.has(k)) next.delete(k);
+              else next.add(k);
+              return next;
+            })
+          }
+          msg={msg}
+        />
+      )}
+
+      {state.run === "error" && state.error && (
+        <p role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+          <span className="font-semibold">{msg("board.ai.errorLabel")}</span> {state.error.message}
+        </p>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
         <button
           type="button"
-          disabled
-          onClick={() => {
-            dispatch({ type: "APPLIED" });
-            onApplied?.();
-          }}
-          className="btn btn-primary px-3 py-1.5 text-xs disabled:opacity-50"
+          disabled={applying || scheduleCount === 0}
+          onClick={() => onApply(true, [...ticked])}
+          className="ai-run inline-flex items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          {msg("board.ai.apply.cta")}
+          {applying ? (
+            <>
+              <Spinner />
+              {msg("board.ai.apply.applying")}
+            </>
+          ) : (
+            <>
+              <span aria-hidden>✦</span>
+              {msg("board.ai.apply.both")}
+            </>
+          )}
         </button>
-        <BackToSchedule dispatch={dispatch} msg={msg} />
+        <button
+          type="button"
+          disabled={applying || scheduleCount === 0}
+          onClick={() => onApply(false, [...ticked])}
+          className="btn btn-ghost px-3 py-1.5 text-xs disabled:opacity-50"
+        >
+          {msg("board.ai.apply.scheduleOnly")}
+        </button>
+        <button
+          type="button"
+          disabled={applying}
+          onClick={onDiscard}
+          className="btn btn-ghost ml-auto px-3 py-1.5 text-xs text-slate-500 disabled:opacity-50"
+        >
+          {msg("board.ai.apply.discard")}
+        </button>
       </div>
     </div>
   );
 }
 
-// ------------------------------------------------------------------ shared
-function BackToSchedule({
-  dispatch,
+// The applied success state: a teal confirmation with the officials outcome, then
+// the save-point banner whose Undo restores the before-ai checkpoint in one tap.
+function AppliedState({
+  outcome,
+  onUndo,
+  undoing,
   msg,
 }: {
-  dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
+  outcome: ApplyOutcome | null;
+  onUndo: () => void;
+  undoing: boolean;
   msg: ReturnType<typeof useMsg>;
 }) {
+  const officialsNote: MessageKey =
+    outcome?.officials === "applied"
+      ? "board.ai.apply.officialsApplied"
+      : outcome?.officials === "error"
+        ? "board.ai.apply.officialsError"
+        : "board.ai.apply.officialsSkipped";
   return (
-    <button
-      type="button"
-      onClick={() => dispatch({ type: "GOTO_STEP", step: "schedule" })}
-      className="btn btn-ghost px-3 py-1.5 text-xs"
-    >
-      {msg("board.ai.back")}
-    </button>
+    <div className="space-y-3">
+      <div className="rounded-lg border border-teal-200 bg-teal-50 px-3 py-2.5">
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-teal-800">
+          <span aria-hidden>✓</span>
+          {msg("board.ai.applied")}
+        </p>
+        <p className="mt-0.5 text-xs text-teal-700">{msg(officialsNote)}</p>
+      </div>
+      {outcome?.checkpointId && (
+        <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/70 px-3 py-2">
+          <span aria-hidden className="text-slate-400">⟲</span>
+          <p className="min-w-0 flex-1 text-[11px] text-slate-600">{msg("board.ai.apply.savepoint")}</p>
+          <button
+            type="button"
+            disabled={undoing}
+            onClick={onUndo}
+            className="btn btn-ghost shrink-0 px-3 py-1.5 text-xs font-semibold text-violet-700 disabled:opacity-50"
+          >
+            {undoing ? msg("board.ai.apply.undoing") : msg("board.ai.apply.undo")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// The rule-suggestions checklist (§7). One row per constraint field the architect
+// inferred, checked by default; the ticked set overlays the current config on the
+// schedule-settings PUT. Enum/count values ride in a mono chip.
+function SuggestChecklist({
+  plan,
+  keys,
+  ticked,
+  onToggle,
+  msg,
+}: {
+  plan: AiPlanResponse;
+  keys: SuggestionKey[];
+  ticked: Set<SuggestionKey>;
+  onToggle: (k: SuggestionKey) => void;
+  msg: ReturnType<typeof useMsg>;
+}) {
+  const cs = plan.constraint_suggestions;
+  if (!cs) return null;
+  const valueOf = (k: SuggestionKey): string | null => {
+    switch (k) {
+      case "restMin":
+        return msg("board.ai.suggest.mins", { n: cs.restMin ?? 0 });
+      case "restByGroup":
+        return String(Object.keys(cs.restByGroup ?? {}).length);
+      case "startWindows":
+        return String((cs.startWindows ?? []).length);
+      case "fieldFairness":
+        return cs.fieldFairness ?? null;
+      case "parallelism":
+        return cs.parallelism ?? null;
+      case "crossPersonClash":
+        return cs.crossPersonClash ?? null;
+      case "noBackToBack":
+        return null;
+    }
+  };
+  return (
+    <div className="rounded-lg border border-violet-200 bg-violet-50/50 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">
+        {msg("board.ai.suggest.title")}
+      </p>
+      <p className="mt-0.5 text-[11px] text-violet-700/80">{msg("board.ai.suggest.hint")}</p>
+      <ul className="mt-2 space-y-1.5">
+        {keys.map((k) => {
+          const value = valueOf(k);
+          const on = ticked.has(k);
+          const rowLabel = msg(`board.ai.suggest.${k}` as MessageKey);
+          return (
+            <li key={k} className="flex items-center gap-2 rounded-md border border-violet-100 bg-white px-2 py-1.5">
+              <label className="inline-flex cursor-pointer items-center">
+                <input
+                  type="checkbox"
+                  className="peer sr-only"
+                  checked={on}
+                  onChange={() => onToggle(k)}
+                  aria-label={rowLabel}
+                />
+                <span
+                  aria-hidden
+                  className="grid h-4 w-4 place-items-center rounded border border-violet-300 text-[10px] text-white transition peer-checked:border-violet-500 peer-checked:bg-violet-500 peer-focus-visible:ring-2 peer-focus-visible:ring-violet-300"
+                >
+                  ✓
+                </span>
+              </label>
+              <span className="min-w-0 flex-1 text-xs text-slate-700">{rowLabel}</span>
+              {value !== null && (
+                <span className="shrink-0 rounded bg-violet-100 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-violet-700">
+                  {value}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 

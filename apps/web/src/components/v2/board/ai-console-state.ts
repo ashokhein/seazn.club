@@ -9,7 +9,14 @@
 import type { AiPlanResponse, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 
 export type AiStep = "brief" | "schedule" | "officials" | "apply";
-export type AiRunState = "idle" | "running" | "flagged" | "proposal" | "applied" | "error";
+export type AiRunState =
+  | "idle"
+  | "running"
+  | "flagged"
+  | "proposal"
+  | "applied"
+  | "seq_conflict"
+  | "error";
 export type AiMode = "generate" | "refine" | "repair";
 
 /** Optional narrowing for a run — a repair window, a court subset, or pools. */
@@ -50,6 +57,9 @@ export type AiConsoleAction =
   | { type: "GOTO_STEP"; step: AiStep }
   | { type: "OFFICIALS_DONE"; plan: AiOfficialsPlanResponse }
   | { type: "TOGGLE_EXCLUDE"; fixtureId: string }
+  | { type: "APPLY_START" }
+  | { type: "APPLY_SEQ_CONFLICT" }
+  | { type: "APPLY_ERROR"; error: { status: number; message: string } }
   | { type: "APPLIED" }
   | { type: "RESET" }
   | { type: "PREFILL_REPAIR"; scope?: AiScope };
@@ -92,10 +102,15 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
     case "RUN_DONE":
       // Phase A landed: store it, show it, and move to the schedule step. A new
       // proposal has its own (possibly empty) set of blockers, so any prior
-      // untick choices are dropped.
+      // untick choices are dropped. It also invalidates the officials draft —
+      // those assignments were assigned over the OLD times, so clear them; the
+      // officials step re-runs its solver over the new schedule on next entry
+      // (T14-reviewer staleness fix; the console resets officialsAutoStarted to
+      // match). RESET stays the only action that clears schedulePlan.
       return {
         ...s,
         schedulePlan: a.plan,
+        officialsPlan: null,
         run: "proposal",
         step: "schedule",
         excludedFixtures: [],
@@ -126,6 +141,19 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
       return s.excludedFixtures.includes(a.fixtureId)
         ? { ...s, excludedFixtures: s.excludedFixtures.filter((id) => id !== a.fixtureId) }
         : { ...s, excludedFixtures: [...s.excludedFixtures, a.fixtureId] };
+
+    case "APPLY_START":
+      // Clear any error from a prior apply attempt; the in-flight spinner is a
+      // local console flag, so the run state is untouched until it resolves.
+      return { ...s, error: null };
+
+    case "APPLY_SEQ_CONFLICT":
+      // The board moved under us (another organiser edited it). Keep the proposal
+      // on screen; the apply step offers "re-run as refine" over the fresh board.
+      return { ...s, run: "seq_conflict" };
+
+    case "APPLY_ERROR":
+      return { ...s, run: "error", error: a.error };
 
     case "APPLIED":
       return { ...s, run: "applied", step: "apply" };

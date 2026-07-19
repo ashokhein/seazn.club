@@ -24,6 +24,9 @@ export interface AiConsoleFixture extends AiFixtureRef {
   matchup: string;
   isFinal: boolean;
   isJunior: boolean;
+  /** Owning stage — the schedule apply route is stage-scoped, so Task 15 groups
+   *  the accept payload by this before persisting (rejects cross-stage sets). */
+  stage_id: string;
 }
 
 /** One court/time slot — the shared shape of a from/to/at position. */

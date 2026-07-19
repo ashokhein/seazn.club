@@ -163,6 +163,29 @@ describe("aiConsoleReducer", () => {
     expect(rerun.excludedFixtures).toEqual([]);
   });
 
+  it("a fresh RUN_DONE drops a stale officials draft (assigned over the old times)", () => {
+    const withOfficials = aiConsoleReducer(withProposal(), { type: "OFFICIALS_DONE", plan: officialsPlan });
+    expect(withOfficials.officialsPlan).toBe(officialsPlan);
+    const rerun = aiConsoleReducer(withOfficials, { type: "RUN_DONE", plan: schedulePlan });
+    expect(rerun.officialsPlan).toBeNull();
+  });
+
+  it("APPLY_SEQ_CONFLICT keeps the proposal on screen and flags the stale board", () => {
+    const s = aiConsoleReducer(withProposal(), { type: "APPLY_SEQ_CONFLICT" });
+    expect(s.run).toBe("seq_conflict");
+    expect(s.schedulePlan).toBe(schedulePlan);
+  });
+
+  it("APPLY_ERROR surfaces the error without discarding the proposal", () => {
+    const s = aiConsoleReducer(withProposal(), {
+      type: "APPLY_ERROR",
+      error: { status: 422, message: "nope" },
+    });
+    expect(s.run).toBe("error");
+    expect(s.error).toEqual({ status: 422, message: "nope" });
+    expect(s.schedulePlan).toBe(schedulePlan);
+  });
+
   it("PREFILL_REPAIR sets repair mode, the scope, and returns to the brief step", () => {
     const scope = { from: "2026-08-01T09:00:00+01:00", courts: ["Court 2"] };
     const s = aiConsoleReducer(withProposal(), { type: "PREFILL_REPAIR", scope });

@@ -60,7 +60,7 @@ const plan: AiPlanResponse = {
   officials_coverage: null,
 };
 const fixtures: AiConsoleFixture[] = [
-  { id: FIX, scheduled_at: null, court_label: null, code: "SF1", matchup: "A vs B", isFinal: false, isJunior: false },
+  { id: FIX, stage_id: "st-1", scheduled_at: null, court_label: null, code: "SF1", matchup: "A vs B", isFinal: false, isJunior: false },
 ];
 
 function renderPanel(dict: Record<string, string>, locale: Locale): string {
