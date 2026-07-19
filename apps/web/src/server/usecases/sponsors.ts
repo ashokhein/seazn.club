@@ -44,6 +44,11 @@ export interface SponsorRow {
   /** The paid order that activated this placement, when it was bought
    *  through a package (list reads only — write paths return it unset). */
   paid_order_id?: string | null;
+  /** True while that order carries an OPEN dispute (paid + disputed_at):
+   *  the placement was parked by the dispute handler, not by the manager.
+   *  Cleared when the dispute is won; a lost dispute flips the order off
+   *  'paid' so this goes false with it (list reads only). */
+  dispute_parked?: boolean;
 }
 
 const COLS = [
@@ -100,7 +105,10 @@ export async function listSponsorRows(orgId: string): Promise<SponsorRow[]> {
     select ${tx(COLS)},
            (select o.id from sponsor_orders o
             where o.sponsor_id = sponsors.id and o.status = 'paid'
-            limit 1) as paid_order_id
+            limit 1) as paid_order_id,
+           exists(select 1 from sponsor_orders o
+                  where o.sponsor_id = sponsors.id and o.status = 'paid'
+                    and o.disputed_at is not null) as dispute_parked
     from sponsors
     order by array_position(array['title','gold','silver','partner'], tier),
              display_order, created_at, id`);
@@ -149,6 +157,21 @@ export async function patchSponsor(
   // existing tiered sponsor stays allowed after a downgrade.
   await assertTierAllowed(auth.orgId, patch.tier, patch.competition_id);
   return withTenant(auth.orgId, async (tx) => {
+    // A placement parked by an open dispute stays down until the dispute
+    // closes — reactivating it by hand would put a charged-back sponsor
+    // back on boards and public pages.
+    if (patch.status === "active") {
+      const [open] = await tx`
+        select 1 from sponsor_orders o
+        where o.sponsor_id = ${id} and o.status = 'paid'
+          and o.disputed_at is not null limit 1`;
+      if (open) {
+        throw new HttpError(
+          409,
+          "this placement is parked by an open payment dispute — it comes back automatically if the dispute is won",
+        );
+      }
+    }
     const [row] = await tx<SponsorRow[]>`
       update sponsors set ${tx(patch as never, ...(cols as never[]))}
       where id = ${id} returning ${tx(COLS)}`;

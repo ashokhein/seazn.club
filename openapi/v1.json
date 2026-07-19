@@ -26331,6 +26331,9 @@
                                 "type": "null"
                               }
                             ]
+                          },
+                          "dispute_parked": {
+                            "type": "boolean"
                           }
                         },
                         "required": [
@@ -26712,6 +26715,9 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "dispute_parked": {
+                          "type": "boolean"
                         }
                       },
                       "required": [
@@ -27139,6 +27145,9 @@
                               "type": "null"
                             }
                           ]
+                        },
+                        "dispute_parked": {
+                          "type": "boolean"
                         }
                       },
                       "required": [

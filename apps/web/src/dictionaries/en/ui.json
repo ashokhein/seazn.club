@@ -179,6 +179,7 @@
   "sponsors.order.status.disputed": "Disputed",
   "sponsors.order.status.refunded": "Refunded",
   "sponsors.paidBadge": "Paid",
+  "sponsors.parkedBadge": "Disputed — parked",
   "sponsors.deletePaid.title": "Delete a paid placement?",
   "sponsors.deletePaid.body": "{name} paid for this placement through a package. Deleting removes it from your public pages — the payment is NOT refunded automatically.",
   "sponsors.deletePaid.label": "Delete placement",
