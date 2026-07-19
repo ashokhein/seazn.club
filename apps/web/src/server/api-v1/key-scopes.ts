@@ -94,6 +94,7 @@ const RULES: RouteRule[] = [
   { method: "GET", path: "/divisions/:id/exports/:kind", scope: "read", pin: "division" },
   { method: "GET", path: "/divisions/:id/history", scope: "read", pin: "division" },
   { method: "PATCH", path: "/divisions/:id/locks", scope: "manage", pin: "division" },
+  { method: "POST", path: "/divisions/:id/officials/ai-plan", scope: "manage", pin: "division" },
   { method: "POST", path: "/divisions/:id/officials/apply", scope: "manage", pin: "division" },
   { method: "POST", path: "/divisions/:id/officials/auto", scope: "manage", pin: "division" },
   { method: "POST", path: "/divisions/:id/publish-schedule", scope: "manage", pin: "division" },

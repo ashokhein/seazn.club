@@ -1593,6 +1593,80 @@ export const AiPlanResponse = z.object({
 });
 export type AiPlanResponse = z.infer<typeof AiPlanResponse>;
 
+// v4 AI Schedule Architect — Phase B (officials architect, design/v4/03 §2). The
+// model assigns officials to a dry-run (or the current) schedule; the engine
+// referee is authoritative and nothing is written. `instruction` may be empty —
+// then the deterministic solver draft is returned with no LLM call. `policy`
+// reuses the officials-auto body; `prior.assignments` mirror the response
+// `assignments` (engine FixtureOfficial, camelCase) so a refine turn round-trips.
+export const AiOfficialsPlanRequest = z.object({
+  instruction: z.string().max(2000).default(""),
+  schedule: z
+    .array(z.object({ fixture_id: Uuid, scheduled_at: IsoDateTime, court_label: z.string() }))
+    .optional(),
+  policy: AssignPolicyBody,
+  prior: z
+    .object({
+      instruction: z.string(),
+      assignments: z.array(
+        z.object({
+          fixtureId: Uuid,
+          officialId: Uuid,
+          roleKey: z.string().min(1),
+          locked: z.boolean().optional(),
+        }),
+      ),
+    })
+    .optional(),
+});
+export type AiOfficialsPlanRequest = z.infer<typeof AiOfficialsPlanRequest>;
+
+// Engine-taxonomy conflict (camelCase, @seazn/engine/officials OfficialConflict)
+// plus the server-side "ineligible" verdict; `severity` flags the blocking ones.
+const AiOfficialsConflict = z.object({
+  kind: z.string(),
+  severity: z.enum(["block", "warn"]),
+  fixtureId: z.string().optional(),
+  officialId: z.string().optional(),
+  roleKey: z.string().optional(),
+  detail: z.string().optional(),
+});
+
+export const AiOfficialsPlanResponse = z.object({
+  // Proposed assignments (engine FixtureOfficial). Locked rows are echoed with
+  // locked:true; the empty-instruction path returns the solver draft verbatim.
+  assignments: z.array(
+    z.object({
+      fixtureId: z.string(),
+      officialId: z.string(),
+      roleKey: z.string(),
+      locked: z.boolean().optional(),
+    }),
+  ),
+  conflicts: z.array(AiOfficialsConflict),
+  diff: z.object({
+    // Fixture ids whose assignment set differs from / matches the baseline
+    // (the prior proposal when given, else the locked assignments).
+    changed: z.array(z.string()),
+    unchanged: z.array(z.string()),
+    // Slots the plan could not fill, each with the model's short reason.
+    unfilled: z.array(z.object({ fixture_id: z.string(), role_key: z.string(), reason: z.string() })),
+  }),
+  // Declared-unfilled slots the referee's solver CAN fill, with a candidate — a
+  // suggestion the organiser may accept (design/v4/03 §7 decision 8).
+  lazy_unfilled: z.array(
+    z.object({ fixture_id: z.string(), role_key: z.string(), candidate_official_id: z.string() }),
+  ),
+  explanations: z.array(z.object({ fixture_id: z.string(), note: z.string() })),
+  summary: z.string(),
+  usage: z.object({
+    input_tokens: z.number().int(),
+    output_tokens: z.number().int(),
+    repair_rounds: z.number().int(),
+  }),
+});
+export type AiOfficialsPlanResponse = z.infer<typeof AiOfficialsPlanResponse>;
+
 // Custom points & rank control (Jul3/05, PROMPT-25) ---------------------------
 
 export const OverrideStandings = z.object({

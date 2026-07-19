@@ -18,6 +18,8 @@ import "server-only";
 // offset, and the solver draft is produced through domain-ranked stand-in ids so
 // the engine's per-(official, fixture) UUID tiebreak can never leak into it. DB
 // reads reuse the officials.ts / schedule.ts loaders — no SQL is re-derived here.
+import Anthropic from "@anthropic-ai/sdk";
+import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import {
   assignOfficials,
   type AssignPolicy,
@@ -28,9 +30,13 @@ import {
 } from "@seazn/engine/officials";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
+import { requireFeature } from "@/lib/entitlements";
+import { rateLimit } from "@/lib/rate-limit";
+import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import type { AiOfficialsPlan } from "./officials-ai-prompt";
-import { zonedIso } from "./schedule-ai";
+import type { AiOfficialsPlanRequest, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
+import { AiOfficialsPlan, OFFICIALS_SYSTEM_PROMPT } from "./officials-ai-prompt";
+import { anthropicClient, zonedIso } from "./schedule-ai";
 import { divisionFixtures, loadSettings } from "./schedule";
 import {
   listOfficialBusyElsewhere,
@@ -237,24 +243,12 @@ export async function buildOfficialsPack(
         r.date,
       );
     }
-    // Assignment ordering keys off DOMAIN values (fixture start, role, official
-    // name) — never a bare UUID — so a reseeded board yields the same order.
-    const sortAssignments = (list: FixtureOfficial[]): FixtureOfficial[] =>
-      [...list].sort(
-        (a, b) =>
-          (startById.get(a.fixtureId) ?? 0) - (startById.get(b.fixtureId) ?? 0) ||
-          cmp(a.roleKey, b.roleKey) ||
-          cmp(officialNameById.get(a.officialId) ?? "", officialNameById.get(b.officialId) ?? "") ||
-          cmp(a.fixtureId, b.fixtureId) ||
-          cmp(a.officialId, b.officialId),
-      );
-
-    // Solver draft (design/v4/03 §2 "a draft assignment from a deterministic
-    // solver"). The engine breaks candidate ties on mulberry32(rngSeed | officialId
-    // | fixtureId) — both raw UUIDs — so on an identical reseeded board the draft
-    // would diverge. Feed the solver domain-RANKED stand-in ids (fixtures by
-    // start/court/entrant-names, officials by name — no UUID fallback) and map its
-    // result back to real ids afterwards. The engine stays untouched.
+    // Domain-RANKED stand-in ids (fixtures by start/court/entrant-names, officials
+    // by domain identity — no UUID fallback) drive BOTH the solver draft below and
+    // the assignment ordering. Computed here, above sortAssignments, so that its
+    // final tiebreak keys off these reseed-stable ranks rather than raw UUIDs (a
+    // Task-8 review residual: two assignments that tied on start/role/official-name
+    // fell back to fixture/official UUID, flipping order across reseeds).
     const rankedFixtures = [...engineFixtures].sort(
       (a, b) =>
         a.startAt - b.startAt ||
@@ -271,6 +265,27 @@ export async function buildOfficialsPack(
     const oRank = new Map(rankedOfficials.map((o, i) => [o.id, `o${String(i).padStart(6, "0")}`]));
     const realFByRank = new Map([...fRank].map(([real, rk]) => [rk, real]));
     const realOByRank = new Map([...oRank].map(([real, rk]) => [rk, real]));
+
+    // Assignment ordering keys off DOMAIN values (fixture start, role, official
+    // name) — never a bare UUID. The final tiebreak (needed when two assignments
+    // share start/role/official-name, e.g. two same-named officials on two
+    // simultaneous fixtures) uses the domain RANKS, so a reseeded board yields the
+    // same order; only a genuine clone-vs-clone tie falls through to the raw id.
+    const sortAssignments = (list: FixtureOfficial[]): FixtureOfficial[] =>
+      [...list].sort(
+        (a, b) =>
+          (startById.get(a.fixtureId) ?? 0) - (startById.get(b.fixtureId) ?? 0) ||
+          cmp(a.roleKey, b.roleKey) ||
+          cmp(officialNameById.get(a.officialId) ?? "", officialNameById.get(b.officialId) ?? "") ||
+          cmp(fRank.get(a.fixtureId) ?? a.fixtureId, fRank.get(b.fixtureId) ?? b.fixtureId) ||
+          cmp(oRank.get(a.officialId) ?? a.officialId, oRank.get(b.officialId) ?? b.officialId),
+      );
+
+    // Solver draft (design/v4/03 §2 "a draft assignment from a deterministic
+    // solver"). The engine breaks candidate ties on mulberry32(rngSeed | officialId
+    // | fixtureId) — both raw UUIDs — so on an identical reseeded board the draft
+    // would diverge. Feed the solver the domain-RANKED stand-in ids built above and
+    // map its result back to real ids afterwards. The engine stays untouched.
     const solved = assignOfficials({
       fixtures: engineFixtures.map((f) => ({ ...f, id: fRank.get(f.id)! })),
       officials: engineOfficials.map((o) => ({ ...o, id: oRank.get(o.id)! })),
@@ -567,4 +582,369 @@ export function refereeOfficialsPlan(
   lazyUnfilled.sort((a, b) => cmp(a.fixture_id, b.fixture_id) || cmp(a.role_key, b.role_key));
 
   return { conflicts, lazyUnfilled };
+}
+
+// ===========================================================================
+// Phase B runner — the Anthropic structured-output call + referee verify/repair
+// loop (design/v4/03 §2, mirrors the Phase A runner in schedule-ai.ts). Pure
+// over the pack: no DB, no wall clock. Reuses schedule-ai.ts's anthropicClient
+// (503 when unconfigured, SCHEDULING_AI_BASE_URL escape hatch).
+// ===========================================================================
+
+const OFFICIALS_ROUND_TIMEOUT_MS = 120_000;
+const OFFICIALS_MAX_REPAIR_ROUNDS = 2;
+
+/** A conflict the LLM can plausibly repair by re-choosing officials. `role_unfilled`
+ *  is excluded: the greedy solver already proved no eligible official exists, so a
+ *  repair round would only burn tokens — it surfaces to the organiser as a coverage
+ *  gap instead. Warnings (pool_leak / fairness / travel) never trigger a repair. */
+function isRepairBlocking(c: WebOfficialConflict): boolean {
+  return c.severity === "block" && c.kind !== "role_unfilled";
+}
+
+const planRowKey = (a: { fixture_id: string; role_key: string; official_id: string }): string =>
+  `${a.fixture_id}${SEP}${a.role_key}${SEP}${a.official_id}`;
+
+/** Structural gate run before the referee (design/v4/01 §1 hard rule 1/6, ported
+ *  to officials): every required (fixture × policy role) slot appears exactly once
+ *  across assignments + unfilled, every id is drawn from the pack, every role is a
+ *  policy role, and every locked row is echoed unchanged. Returns a human note on
+ *  the first violation, or null when well-formed. Binding decision (project
+ *  ledger): unknown fixture/official ids must FAIL here — the referee silently
+ *  skips them, so a hallucinated id would otherwise vanish instead of failing. */
+function officialsStructuralCheck(plan: AiOfficialsPlan, pack: OfficialsPack): string | null {
+  const fixtureIds = new Set(pack.fixtures.map((f) => f.id));
+  const officialIds = new Set(pack.officials.map((o) => o.id));
+  const roles = new Set(pack.policy.roles);
+  const seen = new Set<string>();
+  for (const a of plan.assignments) {
+    if (!fixtureIds.has(a.fixture_id)) return `assignment references a fixture not in the pack: ${a.fixture_id}`;
+    if (!officialIds.has(a.official_id)) return `assignment references an official not in the pack: ${a.official_id}`;
+    if (!roles.has(a.role_key)) return `assignment uses a role not in policy.roles: ${a.role_key}`;
+    const slot = slotKey(a.fixture_id, a.role_key);
+    if (seen.has(slot)) return `slot ${slot} appears more than once`;
+    seen.add(slot);
+  }
+  for (const u of plan.unfilled) {
+    if (!fixtureIds.has(u.fixture_id)) return `unfilled references a fixture not in the pack: ${u.fixture_id}`;
+    if (!roles.has(u.role_key)) return `unfilled uses a role not in policy.roles: ${u.role_key}`;
+    const slot = slotKey(u.fixture_id, u.role_key);
+    if (seen.has(slot)) return `slot ${slot} appears more than once`;
+    seen.add(slot);
+  }
+  for (const f of pack.fixtures) {
+    for (const r of pack.policy.roles) {
+      if (!seen.has(slotKey(f.id, r))) return `required slot ${slotKey(f.id, r)} is missing from the plan`;
+    }
+  }
+  // Hard rule 6: every locked row must reappear in assignments exactly.
+  const planKeys = new Set(plan.assignments.map(planRowKey));
+  for (const l of pack.locked) {
+    if (!planKeys.has(rowKey(l))) return `locked assignment for fixture ${l.fixtureId} must be echoed unchanged`;
+  }
+  return null;
+}
+
+/** The deterministic solver draft, expressed as an AiOfficialsPlan — the proposal
+ *  returned for an empty instruction (no LLM call). Slots the draft could not fill
+ *  are declared unfilled so coverage still surfaces. */
+function draftAsPlan(pack: OfficialsPack): AiOfficialsPlan {
+  const covered = new Set(pack.draft.map((a) => slotKey(a.fixtureId, a.roleKey)));
+  const unfilled: AiOfficialsPlan["unfilled"] = [];
+  for (const f of pack.fixtures) {
+    for (const r of pack.policy.roles) {
+      if (!covered.has(slotKey(f.id, r))) {
+        unfilled.push({ fixture_id: f.id, role_key: r, reason: "no eligible official available" });
+      }
+    }
+  }
+  return {
+    assignments: pack.draft.map((a) => ({ fixture_id: a.fixtureId, official_id: a.officialId, role_key: a.roleKey })),
+    unfilled,
+    explanations: [],
+    summary: "Default duty spread from the deterministic solver (no instruction given).",
+  };
+}
+
+/** Assignment diff vs the prior proposal (refine mode). Each element is a
+ *  `fixtureId:roleKey` slot: `unchanged` kept the same official, `changed` did
+ *  not (or is new). With no prior every assignment is `changed`. */
+function officialsDiff(pack: OfficialsPack, plan: AiOfficialsPlan): AiOfficialsPlanResponse["diff"] {
+  const dslot = (f: string, r: string): string => `${f}:${r}`;
+  const priorBySlot = new Map<string, string>();
+  if (pack.prior) {
+    for (const a of pack.prior.assignments) priorBySlot.set(dslot(a.fixtureId, a.roleKey), a.officialId);
+  }
+  const changed: string[] = [];
+  const unchanged: string[] = [];
+  for (const a of plan.assignments) {
+    const key = dslot(a.fixture_id, a.role_key);
+    if (priorBySlot.get(key) === a.official_id) unchanged.push(key);
+    else changed.push(key);
+  }
+  changed.sort(cmp);
+  unchanged.sort(cmp);
+  return {
+    changed,
+    unchanged,
+    unfilled: plan.unfilled.map((u) => ({ fixture_id: u.fixture_id, role_key: u.role_key, reason: u.reason })),
+  };
+}
+
+/** Shape a verified plan into the API response: assignments (locked rows flagged),
+ *  the referee's conflicts + lazy-unfilled, the prior diff, and usage. */
+function finalizeOfficials(
+  pack: OfficialsPack,
+  plan: AiOfficialsPlan,
+  usage: AiOfficialsPlanResponse["usage"],
+): AiOfficialsPlanResponse {
+  const { conflicts, lazyUnfilled } = refereeOfficialsPlan(pack, plan);
+  const lockedKeys = new Set(pack.locked.map(rowKey));
+  const assignments = plan.assignments.map((a) => ({
+    fixtureId: a.fixture_id,
+    officialId: a.official_id,
+    roleKey: a.role_key,
+    ...(lockedKeys.has(planRowKey(a)) ? { locked: true } : {}),
+  }));
+  return {
+    assignments,
+    conflicts,
+    diff: officialsDiff(pack, plan),
+    lazy_unfilled: lazyUnfilled,
+    explanations: plan.explanations,
+    summary: plan.summary,
+    usage,
+  };
+}
+
+/** Echo an assistant turn back into the conversation unchanged (thinking blocks
+ *  included). Response ContentBlocks are valid input blocks at runtime. */
+function officialsAssistantTurn(response: { content?: unknown } | null | undefined): Anthropic.MessageParam {
+  return { role: "assistant", content: (response?.content ?? []) as Anthropic.ContentBlockParam[] };
+}
+
+async function callOfficialsModel(
+  client: Anthropic,
+  model: string,
+  messages: Anthropic.MessageParam[],
+) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OFFICIALS_ROUND_TIMEOUT_MS);
+  try {
+    return await client.messages.parse(
+      {
+        model,
+        max_tokens: 32_000,
+        thinking: { type: "adaptive" },
+        output_config: { effort: "high", format: zodOutputFormat(AiOfficialsPlan) },
+        system: [{ type: "text", text: OFFICIALS_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
+        messages: [...messages],
+      },
+      { signal: controller.signal },
+    );
+  } catch (err) {
+    if (controller.signal.aborted) {
+      throw new HttpError(422, "AI officials assignment timed out; please retry", "AI_PLAN_TIMEOUT");
+    }
+    // Genuine transport/API failures propagate (→ 5xx). The SDK throws on
+    // schema-invalid structured output instead of returning parsed_output: null —
+    // fold that into the null-parsed path so the corrective retry runs.
+    if (err instanceof HttpError || (Anthropic.APIError && err instanceof Anthropic.APIError)) {
+      throw err;
+    }
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Run the officials architect over a pre-built pack: call the model, referee the
+ * proposal, and repair blocking conflicts up to twice before returning best-so-far.
+ * Pure over the pack — never touches the DB.
+ *
+ * An empty instruction short-circuits: the deterministic solver draft is returned
+ * as the proposal with zero LLM calls and all-zero usage (design/v4/03 §2 — the
+ * "sensible spread" costs nothing).
+ *
+ * @throws HttpError 503 (no ANTHROPIC_API_KEY), 422 AI_PLAN_FAILED (model refusal
+ *   or an un-correctable structural violation), 422 AI_PLAN_TIMEOUT.
+ */
+export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficialsPlanResponse> {
+  if (pack.instruction.trim() === "") {
+    return finalizeOfficials(pack, draftAsPlan(pack), { input_tokens: 0, output_tokens: 0, repair_rounds: 0 });
+  }
+
+  const client = anthropicClient(); // 503 before any network if unconfigured
+  const model = process.env.SCHEDULING_AI_MODEL ?? "claude-opus-4-8";
+
+  const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let repairRounds = 0;
+  let correctiveUsed = false; // one non-repair retry for a malformed plan
+
+  // Best-so-far across repair rounds: round 2 can leave MORE blocking conflicts
+  // than round 1, so keep the fewest-blocking plan (ties resolve to the later
+  // round) rather than blindly the last round.
+  let best: { plan: AiOfficialsPlan; blocking: number } | null = null;
+  const usageNow = (): AiOfficialsPlanResponse["usage"] => ({
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    repair_rounds: repairRounds,
+  });
+
+  for (;;) {
+    const response = await callOfficialsModel(client, model, conversation);
+    inputTokens += response?.usage?.input_tokens ?? 0;
+    outputTokens += response?.usage?.output_tokens ?? 0;
+
+    // Refusal: bail before reading content.
+    if (response?.stop_reason === "refusal") {
+      throw new HttpError(
+        422,
+        "AI officials assignment could not produce a usable plan; please retry",
+        "AI_PLAN_FAILED",
+        { usage: usageNow() },
+      );
+    }
+
+    const plan = response?.parsed_output ?? null;
+    const structuralError =
+      plan === null ? "the model returned no parseable plan" : officialsStructuralCheck(plan, pack);
+    if (structuralError !== null) {
+      if (correctiveUsed) {
+        throw new HttpError(
+          422,
+          "AI officials assignment could not produce a usable plan; please retry",
+          "AI_PLAN_FAILED",
+          { usage: usageNow() },
+        );
+      }
+      correctiveUsed = true;
+      conversation.push(officialsAssistantTurn(response));
+      conversation.push({
+        role: "user",
+        content: JSON.stringify({
+          structural_error: structuralError,
+          note: "Your previous output was rejected before verification. Resend the full plan: every required role slot (each fixture x each role in policy.roles) exactly once across assignments and unfilled, only fixture and official ids from the pack, and echo every locked row unchanged.",
+        }),
+      });
+      continue;
+    }
+
+    const { conflicts } = refereeOfficialsPlan(pack, plan!);
+    const blocking = conflicts.filter(isRepairBlocking);
+
+    // Keep the fewest-blocking plan; `<=` lets a later round win an exact tie.
+    if (best === null || blocking.length <= best.blocking) {
+      best = { plan: plan!, blocking: blocking.length };
+    }
+
+    if (blocking.length === 0 || repairRounds >= OFFICIALS_MAX_REPAIR_ROUNDS) {
+      return finalizeOfficials(pack, best.plan, usageNow());
+    }
+
+    // Blocking conflicts remain and rounds are left — send the report back and
+    // ask for minimal fixes.
+    repairRounds++;
+    conversation.push(officialsAssistantTurn(response));
+    conversation.push({
+      role: "user",
+      content: JSON.stringify({
+        verifier_conflicts: blocking,
+        note: "Fix only these conflicts. Change as few assignments as possible, never move a locked row, and do not reintroduce earlier conflicts.",
+      }),
+    });
+  }
+}
+
+// ===========================================================================
+// Phase B endpoint orchestrator (design/v4/03 §2). Gates → pack → run →
+// telemetry. NO run cap (the V291 scheduling.ai.runs_per_division.max cap is
+// Phase A only). Gate order per corpus 00 §6: kill-switch → officials.auto →
+// officials.roles_multi (only when >1 role) → rate limit.
+// ===========================================================================
+
+/**
+ * POST /divisions/{id}/officials/ai-plan orchestrator. Telemetry `ai_plan_run`
+ * (phase "officials") fires on success AND on a 422 AI_PLAN_FAILED (usage rides
+ * on the error's extra) so refused spend is still metered.
+ *
+ * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (officials.auto /
+ *   officials.roles_multi), 429 (rate limit), plus everything
+ *   buildOfficialsPack/runOfficialsAiPlan raise (404/422/503).
+ */
+export async function officialsAiPlanForDivision(
+  auth: AuthCtx,
+  divisionId: string,
+  input: AiOfficialsPlanRequest,
+): Promise<AiOfficialsPlanResponse> {
+  const distinctId = auth.userId ?? `org:${auth.orgId}`;
+  // Kill switch (feature-flag rollout, not billing): fail-open so an unconfigured
+  // or unreachable PostHog never blocks a paying customer.
+  if (!(await isServerFeatureEnabled("ai-scheduling", distinctId, { orgId: auth.orgId, fallback: true }))) {
+    throw new HttpError(403, "AI scheduling is currently turned off", "FEATURE_DISABLED");
+  }
+  await requireFeature(auth.orgId, "officials.auto");
+  if (input.policy.roles.length > 1) {
+    await requireFeature(auth.orgId, "officials.roles_multi");
+  }
+  await rateLimit(`ai-officials:${divisionId}`, { max: 5, windowSeconds: 3600 });
+
+  const pack = await buildOfficialsPack(auth, divisionId, {
+    instruction: input.instruction,
+    policy: input.policy,
+    ...(input.schedule ? { schedule: input.schedule } : {}),
+    ...(input.prior
+      ? { prior: { instruction: input.prior.instruction, assignments: input.prior.assignments } }
+      : {}),
+  });
+
+  let result: AiOfficialsPlanResponse;
+  try {
+    result = await runOfficialsAiPlan(pack);
+  } catch (err) {
+    // Meter a refused / un-correctable run's token spend too — usage rides on the
+    // 422 extra so a failed architect call is not invisible in analytics.
+    if (err instanceof HttpError && err.code === "AI_PLAN_FAILED") {
+      const usage = (err.extra?.usage ?? {}) as {
+        input_tokens?: number;
+        output_tokens?: number;
+        repair_rounds?: number;
+      };
+      await captureServer({
+        event: "ai_plan_run",
+        distinctId,
+        orgId: auth.orgId,
+        properties: {
+          phase: "officials",
+          fixtures: pack.fixtures.length,
+          repair_rounds: usage.repair_rounds ?? 0,
+          input_tokens: usage.input_tokens ?? 0,
+          output_tokens: usage.output_tokens ?? 0,
+          blocking: 0,
+          outcome: "failed",
+        },
+      });
+    }
+    throw err;
+  }
+
+  await captureServer({
+    event: "ai_plan_run",
+    distinctId,
+    orgId: auth.orgId,
+    properties: {
+      phase: "officials",
+      fixtures: pack.fixtures.length,
+      repair_rounds: result.usage.repair_rounds,
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      blocking: result.conflicts.filter((c) => c.severity === "block").length,
+      outcome: "ok",
+    },
+  });
+
+  return result;
 }
