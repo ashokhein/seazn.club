@@ -99,16 +99,31 @@ export function LineupEditor({
   availability = {},
 }: Props) {
   const msg = useMsg();
-  const [slots, setSlots] = useState<SlotDraft[]>(() =>
-    side.lineup.map((s: LineupSlotIn, i) => ({
-      person_id: s.person_id,
-      full_name: s.full_name,
-      slot: s.slot,
-      position_key: s.position_key,
-      order_no: s.order_no ?? i + 1,
-      roles: s.roles ?? [],
-    })),
-  );
+  const [slots, setSlots] = useState<SlotDraft[]>(() => {
+    if (side.lineup.length > 0) {
+      return side.lineup.map((s: LineupSlotIn, i) => ({
+        person_id: s.person_id,
+        full_name: s.full_name,
+        slot: s.slot,
+        position_key: s.position_key,
+        order_no: s.order_no ?? i + 1,
+        roles: s.roles ?? [],
+      }));
+    }
+    // Nothing saved yet → auto-populate a DRAFT from the roster (first
+    // `lineupSize` start, rest bench) so matchday is one Save, not N taps.
+    // Draft only: nothing persists (and the engine reads nothing) until
+    // Save. Read-only viewers keep the honest empty state instead.
+    if (!canEdit) return [];
+    return side.members.map((m, i) => ({
+      person_id: m.person_id,
+      full_name: m.full_name,
+      slot: i < lineupSize ? ("starting" as const) : ("bench" as const),
+      position_key: m.default_position_key,
+      order_no: i + 1,
+      roles: m.roles ?? [],
+    }));
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);

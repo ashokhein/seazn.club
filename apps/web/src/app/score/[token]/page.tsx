@@ -5,7 +5,7 @@ export const dynamic = "force-dynamic";
 // `Authorization: Bearer dl_…`. The token lives in this tab only — never
 // localStorage.
 import { resolveDeviceLinkToken } from "@/server/usecases/device-links";
-import { getFixtureState, listEvents } from "@/server/usecases/fixtures";
+import { getFixtureState, getLineup, listEvents } from "@/server/usecases/fixtures";
 import { getEntrant } from "@/server/usecases/entrants";
 import { withTenant } from "@/lib/db";
 import { resolveModule } from "@/server/engine-db";
@@ -95,12 +95,18 @@ export default async function ScorePadPage({
 
   async function side(entrantId: string | null): Promise<PadSideInfo | null> {
     if (!entrantId) return null;
-    const entrant = await getEntrant(read, entrantId);
+    // Same pair the fixture console loads — a lineup saved there must reach
+    // the pad's picker (this read is the trusted server ctx, not the
+    // device-link API surface getLineup's rejectDeviceLink guards).
+    const [entrant, lineup] = await Promise.all([
+      getEntrant(read, entrantId),
+      getLineup(read, fixture.id, entrantId),
+    ]);
     return {
       id: entrant.id,
       name: entrant.display_name,
       members: entrant.members as PadSideInfo["members"],
-      lineup: [],
+      lineup: lineup.slots as PadSideInfo["lineup"],
     };
   }
   const [home, away] = await Promise.all([
