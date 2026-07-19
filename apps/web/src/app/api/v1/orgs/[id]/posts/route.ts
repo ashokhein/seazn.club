@@ -1,6 +1,7 @@
 import { v1, reply, parseBody } from "@/server/api-v1/http";
 import { requireOrgAuth, assertUuid } from "@/server/api-v1/auth";
 import { CreatePost } from "@/server/api-v1/schemas";
+import { toApiPost } from "@/server/api-v1/posts";
 import { listPosts, createPost, type PostStatus } from "@/server/usecases/org-posts";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -16,7 +17,7 @@ export async function GET(req: Request, { params }: Ctx) {
     const auth = await requireOrgAuth(req, id, "read");
     const raw = new URL(req.url).searchParams.get("status");
     const status = raw && STATUSES.has(raw) ? (raw as PostStatus) : undefined;
-    return listPosts(auth, id, status);
+    return (await listPosts(auth, id, status)).map(toApiPost);
   });
 }
 
@@ -29,14 +30,16 @@ export async function POST(req: Request, { params }: Ctx) {
     const auth = await requireOrgAuth(req, id, "write");
     return reply(
       201,
-      await createPost(auth, id, {
-        title: body.title,
-        ...(body.body_md !== undefined ? { bodyMd: body.body_md } : {}),
-        ...(body.kind !== undefined ? { kind: body.kind } : {}),
-        ...(body.competition_id !== undefined ? { competitionId: body.competition_id } : {}),
-        ...(body.division_id !== undefined ? { divisionId: body.division_id } : {}),
-        ...(body.hero_image_path !== undefined ? { heroImagePath: body.hero_image_path } : {}),
-      }),
+      toApiPost(
+        await createPost(auth, id, {
+          title: body.title,
+          ...(body.body_md !== undefined ? { bodyMd: body.body_md } : {}),
+          ...(body.kind !== undefined ? { kind: body.kind } : {}),
+          ...(body.competition_id !== undefined ? { competitionId: body.competition_id } : {}),
+          ...(body.division_id !== undefined ? { divisionId: body.division_id } : {}),
+          ...(body.hero_image_path !== undefined ? { heroImagePath: body.hero_image_path } : {}),
+        }),
+      ),
     );
   });
 }

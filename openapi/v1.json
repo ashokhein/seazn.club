@@ -60071,12 +60071,12 @@
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                           },
-                          "orgId": {
+                          "org_id": {
                             "type": "string",
                             "format": "uuid",
                             "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                           },
-                          "competitionId": {
+                          "competition_id": {
                             "anyOf": [
                               {
                                 "type": "string",
@@ -60088,7 +60088,7 @@
                               }
                             ]
                           },
-                          "divisionId": {
+                          "division_id": {
                             "anyOf": [
                               {
                                 "type": "string",
@@ -60123,10 +60123,10 @@
                           "title": {
                             "type": "string"
                           },
-                          "bodyMd": {
+                          "body_md": {
                             "type": "string"
                           },
-                          "heroImagePath": {
+                          "hero_image_path": {
                             "anyOf": [
                               {
                                 "type": "string"
@@ -60136,7 +60136,7 @@
                               }
                             ]
                           },
-                          "autoSource": {
+                          "auto_source": {
                             "anyOf": [
                               {
                                 "type": "object",
@@ -60150,7 +60150,7 @@
                               }
                             ]
                           },
-                          "publishedAt": {
+                          "published_at": {
                             "anyOf": [
                               {
                                 "type": "string"
@@ -60160,28 +60160,28 @@
                               }
                             ]
                           },
-                          "createdAt": {
+                          "created_at": {
                             "type": "string"
                           },
-                          "updatedAt": {
+                          "updated_at": {
                             "type": "string"
                           }
                         },
                         "required": [
                           "id",
-                          "orgId",
-                          "competitionId",
-                          "divisionId",
+                          "org_id",
+                          "competition_id",
+                          "division_id",
                           "kind",
                           "status",
                           "slug",
                           "title",
-                          "bodyMd",
-                          "heroImagePath",
-                          "autoSource",
-                          "publishedAt",
-                          "createdAt",
-                          "updatedAt"
+                          "body_md",
+                          "hero_image_path",
+                          "auto_source",
+                          "published_at",
+                          "created_at",
+                          "updated_at"
                         ],
                         "additionalProperties": false
                       }
@@ -60197,19 +60197,19 @@
                   "data": [
                     {
                       "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                      "orgId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                      "competitionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                      "divisionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                      "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                       "kind": "news",
                       "status": "draft",
                       "slug": "example",
                       "title": "example",
-                      "bodyMd": "example",
-                      "heroImagePath": "example",
-                      "autoSource": {},
-                      "publishedAt": "example",
-                      "createdAt": "example",
-                      "updatedAt": "example"
+                      "body_md": "example",
+                      "hero_image_path": "example",
+                      "auto_source": {},
+                      "published_at": "example",
+                      "created_at": "example",
+                      "updated_at": "example"
                     }
                   ],
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
@@ -60454,12 +60454,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
-                        "orgId": {
+                        "org_id": {
                           "type": "string",
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
-                        "competitionId": {
+                        "competition_id": {
                           "anyOf": [
                             {
                               "type": "string",
@@ -60471,7 +60471,7 @@
                             }
                           ]
                         },
-                        "divisionId": {
+                        "division_id": {
                           "anyOf": [
                             {
                               "type": "string",
@@ -60506,10 +60506,10 @@
                         "title": {
                           "type": "string"
                         },
-                        "bodyMd": {
+                        "body_md": {
                           "type": "string"
                         },
-                        "heroImagePath": {
+                        "hero_image_path": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -60519,7 +60519,7 @@
                             }
                           ]
                         },
-                        "autoSource": {
+                        "auto_source": {
                           "anyOf": [
                             {
                               "type": "object",
@@ -60533,7 +60533,7 @@
                             }
                           ]
                         },
-                        "publishedAt": {
+                        "published_at": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -60543,28 +60543,28 @@
                             }
                           ]
                         },
-                        "createdAt": {
+                        "created_at": {
                           "type": "string"
                         },
-                        "updatedAt": {
+                        "updated_at": {
                           "type": "string"
                         }
                       },
                       "required": [
                         "id",
-                        "orgId",
-                        "competitionId",
-                        "divisionId",
+                        "org_id",
+                        "competition_id",
+                        "division_id",
                         "kind",
                         "status",
                         "slug",
                         "title",
-                        "bodyMd",
-                        "heroImagePath",
-                        "autoSource",
-                        "publishedAt",
-                        "createdAt",
-                        "updatedAt"
+                        "body_md",
+                        "hero_image_path",
+                        "auto_source",
+                        "published_at",
+                        "created_at",
+                        "updated_at"
                       ],
                       "additionalProperties": false
                     },
@@ -60578,19 +60578,19 @@
                   "ok": true,
                   "data": {
                     "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "orgId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "competitionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "divisionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "kind": "news",
                     "status": "draft",
                     "slug": "example",
                     "title": "example",
-                    "bodyMd": "example",
-                    "heroImagePath": "example",
-                    "autoSource": {},
-                    "publishedAt": "example",
-                    "createdAt": "example",
-                    "updatedAt": "example"
+                    "body_md": "example",
+                    "hero_image_path": "example",
+                    "auto_source": {},
+                    "published_at": "example",
+                    "created_at": "example",
+                    "updated_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
@@ -60782,12 +60782,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
-                        "orgId": {
+                        "org_id": {
                           "type": "string",
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
-                        "competitionId": {
+                        "competition_id": {
                           "anyOf": [
                             {
                               "type": "string",
@@ -60799,7 +60799,7 @@
                             }
                           ]
                         },
-                        "divisionId": {
+                        "division_id": {
                           "anyOf": [
                             {
                               "type": "string",
@@ -60834,10 +60834,10 @@
                         "title": {
                           "type": "string"
                         },
-                        "bodyMd": {
+                        "body_md": {
                           "type": "string"
                         },
-                        "heroImagePath": {
+                        "hero_image_path": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -60847,7 +60847,7 @@
                             }
                           ]
                         },
-                        "autoSource": {
+                        "auto_source": {
                           "anyOf": [
                             {
                               "type": "object",
@@ -60861,7 +60861,7 @@
                             }
                           ]
                         },
-                        "publishedAt": {
+                        "published_at": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -60871,28 +60871,28 @@
                             }
                           ]
                         },
-                        "createdAt": {
+                        "created_at": {
                           "type": "string"
                         },
-                        "updatedAt": {
+                        "updated_at": {
                           "type": "string"
                         }
                       },
                       "required": [
                         "id",
-                        "orgId",
-                        "competitionId",
-                        "divisionId",
+                        "org_id",
+                        "competition_id",
+                        "division_id",
                         "kind",
                         "status",
                         "slug",
                         "title",
-                        "bodyMd",
-                        "heroImagePath",
-                        "autoSource",
-                        "publishedAt",
-                        "createdAt",
-                        "updatedAt"
+                        "body_md",
+                        "hero_image_path",
+                        "auto_source",
+                        "published_at",
+                        "created_at",
+                        "updated_at"
                       ],
                       "additionalProperties": false
                     },
@@ -60906,19 +60906,19 @@
                   "ok": true,
                   "data": {
                     "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "orgId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "competitionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "divisionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "kind": "news",
                     "status": "draft",
                     "slug": "example",
                     "title": "example",
-                    "bodyMd": "example",
-                    "heroImagePath": "example",
-                    "autoSource": {},
-                    "publishedAt": "example",
-                    "createdAt": "example",
-                    "updatedAt": "example"
+                    "body_md": "example",
+                    "hero_image_path": "example",
+                    "auto_source": {},
+                    "published_at": "example",
+                    "created_at": "example",
+                    "updated_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }
@@ -61178,12 +61178,12 @@
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
-                        "orgId": {
+                        "org_id": {
                           "type": "string",
                           "format": "uuid",
                           "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|ffffffff-ffff-ffff-ffff-ffffffffffff)$"
                         },
-                        "competitionId": {
+                        "competition_id": {
                           "anyOf": [
                             {
                               "type": "string",
@@ -61195,7 +61195,7 @@
                             }
                           ]
                         },
-                        "divisionId": {
+                        "division_id": {
                           "anyOf": [
                             {
                               "type": "string",
@@ -61230,10 +61230,10 @@
                         "title": {
                           "type": "string"
                         },
-                        "bodyMd": {
+                        "body_md": {
                           "type": "string"
                         },
-                        "heroImagePath": {
+                        "hero_image_path": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -61243,7 +61243,7 @@
                             }
                           ]
                         },
-                        "autoSource": {
+                        "auto_source": {
                           "anyOf": [
                             {
                               "type": "object",
@@ -61257,7 +61257,7 @@
                             }
                           ]
                         },
-                        "publishedAt": {
+                        "published_at": {
                           "anyOf": [
                             {
                               "type": "string"
@@ -61267,28 +61267,28 @@
                             }
                           ]
                         },
-                        "createdAt": {
+                        "created_at": {
                           "type": "string"
                         },
-                        "updatedAt": {
+                        "updated_at": {
                           "type": "string"
                         }
                       },
                       "required": [
                         "id",
-                        "orgId",
-                        "competitionId",
-                        "divisionId",
+                        "org_id",
+                        "competition_id",
+                        "division_id",
                         "kind",
                         "status",
                         "slug",
                         "title",
-                        "bodyMd",
-                        "heroImagePath",
-                        "autoSource",
-                        "publishedAt",
-                        "createdAt",
-                        "updatedAt"
+                        "body_md",
+                        "hero_image_path",
+                        "auto_source",
+                        "published_at",
+                        "created_at",
+                        "updated_at"
                       ],
                       "additionalProperties": false
                     },
@@ -61302,19 +61302,19 @@
                   "ok": true,
                   "data": {
                     "id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "orgId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "competitionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
-                    "divisionId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "org_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "competition_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
+                    "division_id": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b",
                     "kind": "news",
                     "status": "draft",
                     "slug": "example",
                     "title": "example",
-                    "bodyMd": "example",
-                    "heroImagePath": "example",
-                    "autoSource": {},
-                    "publishedAt": "example",
-                    "createdAt": "example",
-                    "updatedAt": "example"
+                    "body_md": "example",
+                    "hero_image_path": "example",
+                    "auto_source": {},
+                    "published_at": "example",
+                    "created_at": "example",
+                    "updated_at": "example"
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }

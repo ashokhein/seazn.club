@@ -1665,19 +1665,23 @@ export const PatchPost = z
   .refine((p) => Object.keys(p).length > 0, "empty patch");
 export type PatchPost = z.infer<typeof PatchPost>;
 
+// House convention: every /api/v1 response is snake_case (see auto_posts on
+// Division, org_id on Competition, module_version on Fixture). The usecase
+// layer (org-posts.ts) stays camelCase for server components — routes
+// translate at the boundary via toApiPost() in posts.ts.
 export const OrgPost = z.object({
   id: Uuid,
-  orgId: Uuid,
-  competitionId: Uuid.nullable(),
-  divisionId: Uuid.nullable(),
+  org_id: Uuid,
+  competition_id: Uuid.nullable(),
+  division_id: Uuid.nullable(),
   kind: PostKind,
   status: PostStatus,
   slug: z.string(),
   title: z.string(),
-  bodyMd: z.string(),
-  heroImagePath: z.string().nullable(),
-  autoSource: z.record(z.string(), z.unknown()).nullable(),
-  publishedAt: z.string().nullable(),
-  createdAt: z.string(),
-  updatedAt: z.string(),
+  body_md: z.string(),
+  hero_image_path: z.string().nullable(),
+  auto_source: z.record(z.string(), z.unknown()).nullable(),
+  published_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
 });

@@ -1,6 +1,7 @@
 import { v1, reply, parseBody } from "@/server/api-v1/http";
 import { requireResourceAuth } from "@/server/api-v1/auth";
 import { PatchPost } from "@/server/api-v1/schemas";
+import { toApiPost } from "@/server/api-v1/posts";
 import { getPost, updatePost, deletePost } from "@/server/usecases/org-posts";
 
 type Ctx = { params: Promise<{ id: string }> };
@@ -10,7 +11,7 @@ export async function GET(req: Request, { params }: Ctx) {
   return v1(async () => {
     const { id } = await params;
     const auth = await requireResourceAuth(req, "org_post", id, "read");
-    return getPost(auth, id);
+    return toApiPost(await getPost(auth, id));
   });
 }
 
@@ -21,14 +22,16 @@ export async function PATCH(req: Request, { params }: Ctx) {
     const { id } = await params;
     const auth = await requireResourceAuth(req, "org_post", id, "write");
     const body = await parseBody(req, PatchPost);
-    return updatePost(auth, id, {
-      ...(body.title !== undefined ? { title: body.title } : {}),
-      ...(body.body_md !== undefined ? { bodyMd: body.body_md } : {}),
-      ...(body.hero_image_path !== undefined ? { heroImagePath: body.hero_image_path } : {}),
-      ...(body.competition_id !== undefined ? { competitionId: body.competition_id } : {}),
-      ...(body.division_id !== undefined ? { divisionId: body.division_id } : {}),
-      ...(body.action !== undefined ? { action: body.action } : {}),
-    });
+    return toApiPost(
+      await updatePost(auth, id, {
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.body_md !== undefined ? { bodyMd: body.body_md } : {}),
+        ...(body.hero_image_path !== undefined ? { heroImagePath: body.hero_image_path } : {}),
+        ...(body.competition_id !== undefined ? { competitionId: body.competition_id } : {}),
+        ...(body.division_id !== undefined ? { divisionId: body.division_id } : {}),
+        ...(body.action !== undefined ? { action: body.action } : {}),
+      }),
+    );
   });
 }
 
