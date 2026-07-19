@@ -154,12 +154,24 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
     expect(event.payload.ai?.model).toBe(schedulingAiModel());
     expect(event.payload.ai?.repair_rounds).toBe(2);
 
-    // ai-last recalls the trimmed instruction + summary + a timestamp.
-    const last = await lastAiApply(auth, division.id);
+    // ai-last recalls the trimmed instruction + summary + a timestamp, plus the
+    // generation budget. `used` counts schedule.ai_generated rows (written by
+    // the ai-plan orchestrator, not by apply) — this flow applied directly, so
+    // the budget shows 0 used of the community cap.
+    const { last, runs } = await lastAiApply(auth, division.id);
     expect(last).not.toBeNull();
     expect(last!.instruction).toBe("keep courts balanced");
     expect(last!.summary).toBe("scheduled 6 fixtures across 1 court");
     expect(new Date(last!.at).toString()).not.toBe("Invalid Date");
+    expect(runs).toEqual({ used: 0, max: 5 }); // V302 community cap; no generation ran here
+
+    // A generation row (what the ai-plan orchestrator writes) moves the count.
+    await sql`
+      insert into competition_events (competition_id, org_id, type, payload)
+      select competition_id, ${auth.orgId}, 'schedule.ai_generated',
+             ${sql.json({ division_id: division.id })}
+      from divisions where id = ${division.id}`;
+    expect((await lastAiApply(auth, division.id)).runs).toEqual({ used: 1, max: 5 });
 
     // Binding #1 (integration): the persisted fixtures read back through the
     // Fixture response schema with schedule_source "ai".
@@ -188,6 +200,8 @@ describe.skipIf(!HAS_DB)("AI audit trail in the ledger (v4/03 §10)", () => {
       })),
       source: "auto",
     });
-    expect(await lastAiApply(auth, division.id)).toBeNull();
+    const recall = await lastAiApply(auth, division.id);
+    expect(recall.last).toBeNull();
+    expect(recall.runs).toEqual({ used: 0, max: 5 });
   });
 });

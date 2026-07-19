@@ -7,7 +7,7 @@ import "server-only";
 import type postgres from "postgres";
 import { withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { requireFeature } from "@/lib/entitlements";
+import { requireFeature, getLimit } from "@/lib/entitlements";
 import { cacheDelPattern } from "@/lib/cache";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
@@ -554,14 +554,21 @@ export async function applySchedule(
 }
 
 /** GET /divisions/{id}/schedule/ai-last — recall the most recent AI-sourced
- *  schedule apply from the division ledger (v4/03 §10). Returns the trimmed
- *  instruction + human summary + apply timestamp, or null when the division has
- *  never been scheduled by the AI Architect. Read-gated at the route. */
+ *  schedule apply from the division ledger (v4/03 §10) plus the division's
+ *  generation budget. `last` is the trimmed instruction + human summary +
+ *  apply timestamp, or null when the division has never been AI-scheduled.
+ *  `runs.used` counts the same 'schedule.ai_generated' rows the ai-plan quota
+ *  gate counts (failures never appear there); `runs.max` is the plan's
+ *  per-division cap resolved with the same overlay chain as the gate
+ *  (event-pass lift, admin override), null = unlimited. Read-gated at route. */
 export async function lastAiApply(
   auth: AuthCtx,
   divisionId: string,
-): Promise<{ at: string; instruction: string; summary: string } | null> {
-  return withTenant(auth.orgId, async (tx) => {
+): Promise<{
+  last: { at: string; instruction: string; summary: string } | null;
+  runs: { used: number; max: number | null };
+}> {
+  const { rows, competitionId, used } = await withTenant(auth.orgId, async (tx) => {
     const rows = await tx<
       { created_at: Date; payload: { ai?: { instruction?: string; summary?: string } } }[]
     >`
@@ -570,14 +577,29 @@ export async function lastAiApply(
         and type = 'schedule_applied'
         and payload->>'source' = 'ai'
       order by seq desc limit 1`;
-    if (rows.length === 0) return null;
-    const ai = rows[0]!.payload.ai ?? {};
-    return {
-      at: iso(ms(rows[0]!.created_at)),
-      instruction: ai.instruction ?? "",
-      summary: ai.summary ?? "",
-    };
+    const [division] = await tx<{ competition_id: string }[]>`
+      select competition_id from divisions where id = ${divisionId}`;
+    if (!division) throw new HttpError(404, "division not found");
+    const [count] = await tx<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where competition_id = ${division.competition_id}
+        and type = 'schedule.ai_generated'
+        and payload->>'division_id' = ${divisionId}`;
+    return { rows, competitionId: division.competition_id, used: count?.n ?? 0 };
   });
+  const max = await getLimit(auth.orgId, "scheduling.ai.runs_per_division.max", competitionId);
+  const ai = rows[0]?.payload.ai ?? {};
+  return {
+    last:
+      rows.length === 0
+        ? null
+        : {
+            at: iso(ms(rows[0]!.created_at)),
+            instruction: ai.instruction ?? "",
+            summary: ai.summary ?? "",
+          },
+    runs: { used, max },
+  };
 }
 
 // ---------------------------------------------------------------------------

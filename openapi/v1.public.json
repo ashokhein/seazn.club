@@ -40591,31 +40591,68 @@
                       "const": true
                     },
                     "data": {
-                      "anyOf": [
-                        {
+                      "type": "object",
+                      "properties": {
+                        "last": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "at": {
+                                  "type": "string"
+                                },
+                                "instruction": {
+                                  "type": "string"
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "at",
+                                "instruction",
+                                "summary"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "runs": {
                           "type": "object",
                           "properties": {
-                            "at": {
-                              "type": "string"
+                            "used": {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
                             },
-                            "instruction": {
-                              "type": "string"
-                            },
-                            "summary": {
-                              "type": "string"
+                            "max": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
                             }
                           },
                           "required": [
-                            "at",
-                            "instruction",
-                            "summary"
+                            "used",
+                            "max"
                           ],
                           "additionalProperties": false
-                        },
-                        {
-                          "type": "null"
                         }
-                      ]
+                      },
+                      "required": [
+                        "last",
+                        "runs"
+                      ],
+                      "additionalProperties": false
                     },
                     "requestId": {
                       "type": "string",
@@ -40626,9 +40663,15 @@
                 "example": {
                   "ok": true,
                   "data": {
-                    "at": "example",
-                    "instruction": "example",
-                    "summary": "example"
+                    "last": {
+                      "at": "example",
+                      "instruction": "example",
+                      "summary": "example"
+                    },
+                    "runs": {
+                      "used": -9007199254740991,
+                      "max": -9007199254740991
+                    }
                   },
                   "requestId": "3f1a2b04-8c1d-4e5f-9a6b-7c8d9e0f1a2b"
                 }

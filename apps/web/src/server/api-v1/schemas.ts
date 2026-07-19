@@ -810,11 +810,14 @@ export const ApplyScheduleRequest = z.object({
 });
 export type ApplyScheduleRequest = z.infer<typeof ApplyScheduleRequest>;
 
-/** GET /divisions/{id}/schedule/ai-last — the most recent AI-sourced apply, or
- *  null when the division has never been scheduled by the AI Architect. */
-export const AiLastResult = z
-  .object({ at: z.string(), instruction: z.string(), summary: z.string() })
-  .nullable();
+/** GET /divisions/{id}/schedule/ai-last — the most recent AI-sourced apply
+ *  (null when the division has never been AI-scheduled) plus the division's
+ *  generation budget: `used` counts successful schedule generations from the
+ *  run ledger, `max` is the plan's per-division cap (null = unlimited). */
+export const AiLastResult = z.object({
+  last: z.object({ at: z.string(), instruction: z.string(), summary: z.string() }).nullable(),
+  runs: z.object({ used: z.number().int(), max: z.number().int().nullable() }),
+});
 export type AiLastResult = z.infer<typeof AiLastResult>;
 
 export const ApplyScheduleResult = z.object({

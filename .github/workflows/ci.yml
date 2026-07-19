@@ -152,6 +152,13 @@ jobs:
       AUTH_SECRET: ci-only-insecure-secret-please-change-in-prod-0123456789
       NEXT_PUBLIC_SUPABASE_URL: ""
       NEXT_TELEMETRY_DISABLED: "1"
+      # v4 AI smoke (scripts/smoke.ts v4AiSuite): point the server's
+      # anthropicClient() at the smoke-started model fixture on 4319 with a
+      # non-empty dummy key, so the fixture-gated AI checks actually run in CI
+      # instead of silently skipping. Mirrors e2e.yml. No real Anthropic call.
+      SCHEDULING_AI_BASE_URL: "http://127.0.0.1:4319"
+      AI_FIXTURE_PORT: "4319"
+      ANTHROPIC_API_KEY: sk-ant-ci-smoke-fixture
 
     steps:
       - uses: actions/checkout@v5
