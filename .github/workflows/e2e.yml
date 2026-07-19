@@ -67,7 +67,9 @@ jobs:
       DATABASE_SSL: disable
       # Session signing secret (jose HS256) — CI-only dummy.
       AUTH_SECRET: ci-only-insecure-secret-please-change-in-prod-0123456789
-      NEXT_PUBLIC_SUPABASE_URL: ""
+      # Stub, not empty: publicStorageUrl("") hides every badge/crest, making
+      # logo assertions untestable. No real Supabase call rides on it in e2e.
+      NEXT_PUBLIC_SUPABASE_URL: "https://stub.supabase.co"
       NEXT_TELEMETRY_DISABLED: "1"
       # Production build → no dev-exposed `login_url`, so the auth helpers mint
       # login tokens straight in the Postgres service above and skip the specs
