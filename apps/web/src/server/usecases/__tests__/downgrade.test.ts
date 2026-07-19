@@ -30,13 +30,15 @@ afterAll(async () => {
 describe.skipIf(!HAS_DB)("downgradeToCommunity", () => {
   it("downgrades a comped Pro org and revokes Pro entitlements", async () => {
     const orgId = await seedProOrg();
-    expect(await hasFeature(orgId, "clubs.hierarchy")).toBe(true); // Pro feature on
+    // clubs.hierarchy went free-for-all-plans in the clubs W1 wave, so probe a
+    // feature that stays Pro-only to prove the downgrade actually revokes.
+    expect(await hasFeature(orgId, "exports.branded")).toBe(true); // Pro feature on
 
     await downgradeToCommunity(orgId);
 
     const [row] = await sql<{ plan_key: string }[]>`select plan_key from subscriptions where org_id = ${orgId}`;
     expect(row.plan_key).toBe("community");
-    expect(await hasFeature(orgId, "clubs.hierarchy")).toBe(false); // revoked
+    expect(await hasFeature(orgId, "exports.branded")).toBe(false); // revoked
   });
 
   it("refuses when the org is billed through Stripe (must use the portal)", async () => {

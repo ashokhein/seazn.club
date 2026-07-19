@@ -199,6 +199,22 @@ export async function commitImport(
     if (plan.ops.some((op) => op.kind.startsWith("club."))) {
       await requireFeature(auth.orgId, "clubs.hierarchy");
     }
+    // Clubs/teams redesign §4.4: the plan's structural creates count against
+    // the org's clubs.max / teams.max caps. Counted inside the tenant tx (RLS
+    // scopes to the org) so the check never races the live row count; any
+    // breach rejects the whole commit before a single row is written.
+    const plannedClubs = plan.ops.filter((op) => op.kind === "club.create").length;
+    const plannedTeams = plan.ops.filter((op) => op.kind === "team.create").length;
+    if (plannedClubs > 0) {
+      const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from clubs`;
+      const cap = await withinLimit(auth.orgId, "clubs.max", n + plannedClubs);
+      if (!cap.ok) throw new PaymentRequiredError("clubs.max");
+    }
+    if (plannedTeams > 0) {
+      const [{ n }] = await tx<{ n: number }[]>`select count(*)::int as n from teams`;
+      const cap = await withinLimit(auth.orgId, "teams.max", n + plannedTeams);
+      if (!cap.ok) throw new PaymentRequiredError("teams.max");
+    }
 
     const divisionIds = await executePlan(tx, auth, plan.ops);
 

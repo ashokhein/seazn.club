@@ -59,6 +59,44 @@ describe("groupForAdmin", () => {
     expect(membersMax.cells.event_pass).toBe("—");
   });
 
+  it("exposes raw stored values per plan for the cell editor", () => {
+    // W1 Task 6: the admin cell editor seeds its input from raw truth
+    // (∞ = int_value null; a missing cell = both null), not the rendered string.
+    const sections = groupForAdmin(rows);
+    const scale = sections.find((s) => s.slug === "scale")!;
+    const membersMax = scale.features.find((f) => f.feature_key === "members.max")!;
+    expect(membersMax.raw.community).toEqual({ present: true, bool_value: true, int_value: 20 });
+    expect(membersMax.raw.pro).toEqual({ present: true, bool_value: true, int_value: null });
+    // event_pass has no row -> present:false (renders "—" DENY, not ∞) and edits
+    // as a fresh cell whose save CREATES the row.
+    expect(membersMax.raw.event_pass).toEqual({
+      present: false,
+      bool_value: null,
+      int_value: null,
+    });
+  });
+
+  it("flags present vs absent so absent renders DENY (—), not unlimited (∞)", () => {
+    // W1 Task 6 fix 2: getLimit returns 0 (DENY) for a MISSING row; only a present
+    // row with int_value null is unlimited. `present` is what lets the editor tell
+    // the two apart.
+    const sections = groupForAdmin(rows);
+    const scale = sections.find((s) => s.slug === "scale")!;
+    const membersMax = scale.features.find((f) => f.feature_key === "members.max")!;
+    expect(membersMax.raw.community.present).toBe(true);
+    expect(membersMax.raw.event_pass.present).toBe(false);
+  });
+
+  it("sets hasInt for a dual bool+int feature and clears it for a pure bool", () => {
+    // W1 Task 6 fix 3: members.max carries a cap (20) on community, so the editor
+    // must render the int input beside the toggle for every plan of that feature.
+    // import.bulk is bool-only here (no int on any plan) -> hasInt false.
+    const sections = groupForAdmin(rows);
+    const scale = sections.find((s) => s.slug === "scale")!;
+    expect(scale.features.find((f) => f.feature_key === "members.max")!.hasInt).toBe(true);
+    expect(scale.features.find((f) => f.feature_key === "import.bulk")!.hasInt).toBe(false);
+  });
+
   it("renders a pure-int feature's null int_value as ∞", () => {
     const rowsInt: AdminEntRow[] = [
       { feature_key: "competitions.max_active", plan_key: "pro", bool_value: null, int_value: null },

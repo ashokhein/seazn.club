@@ -1,6 +1,9 @@
 import { sql } from "@/lib/db";
 import { featureReason } from "@/lib/feature-copy";
 import { groupForAdmin, type AdminEntRow } from "@/lib/entitlement-admin";
+import { EntCellEditor } from "@/components/admin/ent-cell-editor";
+
+const PLAN_KEYS = ["community", "event_pass", "pro", "pro_plus"] as const;
 
 export default async function AdminEntitlementsPage() {
   const rows = await sql<AdminEntRow[]>`
@@ -46,10 +49,19 @@ export default async function AdminEntitlementsPage() {
                   <tr key={f.feature_key} className="hover:bg-slate-800/50">
                     <td className="px-3 py-2 font-mono text-xs text-purple-300">{f.feature_key}</td>
                     <td className="px-3 py-2 text-xs text-slate-500">{f.type}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{f.cells.community}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{f.cells.event_pass}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{f.cells.pro}</td>
-                    <td className="px-3 py-2 text-center text-slate-300">{f.cells.pro_plus}</td>
+                    {PLAN_KEYS.map((p) => (
+                      <td key={p} className="px-3 py-2 text-center text-slate-300">
+                        <EntCellEditor
+                          planKey={p}
+                          featureKey={f.feature_key}
+                          type={f.type}
+                          hasInt={f.hasInt}
+                          present={f.raw[p].present}
+                          boolValue={f.raw[p].bool_value}
+                          intValue={f.raw[p].int_value}
+                        />
+                      </td>
+                    ))}
                     <td className="px-3 py-2 text-xs text-slate-400">{featureReason(f.feature_key)}</td>
                     <td className="px-3 py-2 text-right text-xs text-slate-500">{ovByKey.get(f.feature_key) ?? 0}</td>
                   </tr>

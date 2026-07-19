@@ -372,6 +372,12 @@ await i18nSuite();
 
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
   await platformRevenueSuite(admin, `admin_${tag}@example.com`);
+
+  // --- clubs-w1 (W1): parent clubs group teams — the hub lifecycle (create →
+  // profile → contact → standalone team → move under the club → squad with a
+  // quick-created person) on Pro, and the tunable clubs.max=2 community cap.
+  // Own fresh orgs so it's independent of the destructive downgrades above.
+  await clubsSuite();
 }
 
 /** design/v9 PROMPT-55: the chargeback-liability copy is live on the public
@@ -974,6 +980,96 @@ async function smokePlanMatrix(): Promise<void> {
   await seedFeedAndAssert(pro, proOrg, proComp.id, "pro", true);
   await seedFeedAndAssert(plus, plusOrg, plusComp.id, "proplus", true);
   await seedFeedAndAssert(passer, passOrg, passedComp.id, "pass", false);
+}
+
+/** clubs-w1 (W1 §5): parent clubs group teams across divisions. The Pro path
+ *  walks the whole /clubs/[id] hub lifecycle over HTTP — create a club, PATCH
+ *  its profile (home ground), add a committee contact, create a *standalone*
+ *  team, move it under the club, then replace its squad with a person created
+ *  inline (the squad editor's quick-add). The free path proves the V292
+ *  community cap: clubs.max = 2, so two clubs succeed and the third 402s with
+ *  the `feature_key` the contextual <UpgradeGate> reads. Both run on their own
+ *  fresh orgs (Pro flipped via setPlan, free stays community) so the suite is
+ *  order-independent — the earlier suites downgrade the shared org2. */
+async function clubsSuite(): Promise<void> {
+  // --- Pro path: the full club-hub lifecycle.
+  const pro = newSession();
+  const proVer = await signIn(pro, `clubpro_${tag}@example.com`);
+  await setPlan(proVer.org_id, "pro");
+
+  const club = await v1(pro, "/api/v1/clubs", "POST", { name: `Riverside SC ${tag}` });
+  check("clubs pro: club created (201)", club.status === 201);
+  const clubId = v1data<{ id: string }>(club).id;
+
+  const patched = await v1(pro, `/api/v1/clubs/${clubId}`, "PATCH", {
+    home_ground: "Riverside Park",
+    website: "https://riverside.example",
+  });
+  check(
+    "clubs pro: profile PATCH persists the home ground",
+    patched.status === 200 &&
+      v1data<{ home_ground: string | null }>(patched).home_ground === "Riverside Park",
+  );
+
+  const contact = await v1(pro, `/api/v1/clubs/${clubId}/contacts`, "POST", {
+    role_key: "secretary",
+    full_name: `Sam Secretary ${tag}`,
+    email: `sam_${tag}@example.com`,
+    is_primary: true,
+  });
+  check("clubs pro: committee contact added (201)", contact.status === 201);
+  // The contact surfaces on the hub read (getClub feeds the Overview tab).
+  const detail = await v1(pro, `/api/v1/clubs/${clubId}`);
+  const contacts = v1data<{ contacts: { full_name: string; is_primary: boolean }[] }>(detail).contacts ?? [];
+  check(
+    "clubs pro: contact is primary on the hub read",
+    contacts.some((c) => c.full_name === `Sam Secretary ${tag}` && c.is_primary),
+  );
+
+  // Standalone team (club_id omitted) — the directory ladder step 2 — then move
+  // it under the club, exactly as the hub Teams-tab detach/attach does.
+  const team = await v1(pro, "/api/v1/teams", "POST", { name: `Riverside U12 ${tag}` });
+  check(
+    "clubs pro: standalone team created (no club)",
+    team.status === 201 && v1data<{ club_id: string | null }>(team).club_id === null,
+  );
+  const teamId = v1data<{ id: string }>(team).id;
+  const moved = await v1(pro, `/api/v1/teams/${teamId}`, "PATCH", { club_id: clubId });
+  check(
+    "clubs pro: team moved under the club",
+    moved.status === 200 && v1data<{ club_id: string | null }>(moved).club_id === clubId,
+  );
+
+  // Quick-add a person (squad editor inline create), then full-replace the squad.
+  const person = await v1(pro, "/api/v1/persons", "POST", { full_name: `Quinn Quickadd ${tag}` });
+  check("clubs pro: quick-add person created (201)", person.status === 201);
+  const personId = v1data<{ id: string }>(person).id;
+  const squad = await v1(pro, `/api/v1/teams/${teamId}/squad`, "PUT", {
+    members: [{ person_id: personId, squad_number: 7, is_captain: true }],
+  });
+  const members = v1data<{ members: { person_id: string; is_captain: boolean; squad_number: number | null }[] }>(squad).members ?? [];
+  check(
+    "clubs pro: squad saved with the quick-added captain (#7)",
+    squad.status === 200 &&
+      members.length === 1 &&
+      members[0]!.person_id === personId &&
+      members[0]!.is_captain === true &&
+      members[0]!.squad_number === 7,
+  );
+
+  // --- Free path: the tunable community clubs.max = 2 (V292). Two clubs land,
+  // the third 402s with the feature key that drives the paywall.
+  const free = newSession();
+  await signIn(free, `clubfree_${tag}@example.com`);
+  const c1 = await v1(free, "/api/v1/clubs", "POST", { name: `Free Club One ${tag}` });
+  const c2 = await v1(free, "/api/v1/clubs", "POST", { name: `Free Club Two ${tag}` });
+  check("clubs free: first two clubs allowed on community", c1.status === 201 && c2.status === 201);
+  const c3 = await v1(free, "/api/v1/clubs", "POST", { name: `Free Club Three ${tag}` });
+  check(
+    "clubs free: third club 402s with the clubs.max feature key",
+    c3.status === 402 &&
+      (c3.json.error as { feature_key?: string } | undefined)?.feature_key === "clubs.max",
+  );
 }
 
 /** PROMPT-53 player accounts over real HTTP: invite → claim → RSVP →
@@ -3974,6 +4070,8 @@ async function cleanup(tag: string): Promise<void> {
       `official_${k}_${tag}@example.com`,
       `player_${k}_${tag}@example.com`,
     ]),
+    `clubpro_${tag}@example.com`,
+    `clubfree_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {

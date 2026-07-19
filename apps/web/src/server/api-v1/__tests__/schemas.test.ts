@@ -1,7 +1,15 @@
 // Schema-level regression tests (no DB) for the entrant/team contract added
 // with the unified Add-Entrant + team-squad work.
 import { describe, expect, it } from "vitest";
-import { CreateDivision, CreateEntrant, CreateStage, CreateTeam, PatchEntrant, SetTeamSquad } from "../schemas";
+import {
+  CreateClubContact,
+  CreateDivision,
+  CreateEntrant,
+  CreateStage,
+  CreateTeam,
+  PatchEntrant,
+  SetTeamSquad,
+} from "../schemas";
 
 const UUID = "11111111-1111-4111-8111-111111111111";
 
@@ -30,6 +38,27 @@ describe("CreateTeam", () => {
     expect(CreateTeam.safeParse({ name: "Riverside U12" }).success).toBe(true);
     expect(CreateTeam.safeParse({ name: "" }).success).toBe(false);
     expect(CreateTeam.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("CreateClubContact", () => {
+  it("accepts a valid contact with a well-formed email", () => {
+    expect(
+      CreateClubContact.safeParse({ role_key: "secretary", full_name: "X", email: "sec@club.test" })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects a malformed email at the edge (400, not a DB round-trip)", () => {
+    const r = CreateClubContact.safeParse({
+      role_key: "secretary",
+      full_name: "X",
+      email: "not-an-email",
+    });
+    expect(r.success).toBe(false);
+    if (!r.success) {
+      expect(r.error.issues.some((i) => i.path.join(".") === "email")).toBe(true);
+    }
   });
 });
 

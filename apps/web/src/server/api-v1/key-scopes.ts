@@ -62,6 +62,8 @@ const RULES: RouteRule[] = [
   { method: "POST", path: "/clubs/:id/teams", scope: "manage" },
   { method: "POST", path: "/clubs/logos", scope: "manage" },
   { method: "GET", path: "/teams", scope: "read" },
+  { method: "POST", path: "/teams", scope: "manage" },
+  { method: "PATCH", path: "/teams/:id", scope: "manage" },
   { method: "POST", path: "/teams/:id/logo", scope: "manage" },
   { method: "DELETE", path: "/teams/:id/logo", scope: "manage" },
   { method: "GET", path: "/teams/:id/squad", scope: "read" },
@@ -249,6 +251,12 @@ export const NEVER_KEY_ROUTES: readonly string[] = [
   // Matchday documents (v12/Task 14): the caller's own cross-org rota — same
   // session-personal rule as every other /me surface.
   "GET /me/rota.pdf",
+  // Club contacts (clubs-w1/Task 4): committee PII (email/phone) editable only
+  // from the console — a session/editor surface, never key-accessible.
+  "GET /clubs/:id/contacts",
+  "POST /clubs/:id/contacts",
+  "PATCH /clubs/:id/contacts/:contactId",
+  "DELETE /clubs/:id/contacts/:contactId",
 ];
 
 // /api/v1/public/** and openapi.json take no auth at all — out of key scope.

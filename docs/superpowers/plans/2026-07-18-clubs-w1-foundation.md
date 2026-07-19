@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship wave W1 of the clubs & teams redesign: V291 schema + admin-tunable caps, thin "Clubs & Teams" directory list, the club hub page at `/clubs/[id]` (Overview/Teams/Entries), standalone teams, inline player quick-add, and inline plan editing in `/admin/entitlements`.
+**Goal:** Ship wave W1 of the clubs & teams redesign: V292 schema + admin-tunable caps, thin "Clubs & Teams" directory list, the club hub page at `/clubs/[id]` (Overview/Teams/Entries), standalone teams, inline player quick-add, and inline plan editing in `/admin/entitlements`.
 
-**Architecture:** Additive V291 migration (club profile columns + `club_contacts`), caps resolved through the existing `plan_entitlements` → `withinLimit()` rail (no code constants), new console route `/clubs/[id]` server page with tab components, and the existing Directory tab reduced to a thin list. All API surface stays in the v1 envelope (`v1()` + zod schemas + `requireResourceAuth`).
+**Architecture:** Additive V292 migration (club profile columns + `club_contacts`), caps resolved through the existing `plan_entitlements` → `withinLimit()` rail (no code constants), new console route `/clubs/[id]` server page with tab components, and the existing Directory tab reduced to a thin list. All API surface stays in the v1 envelope (`v1()` + zod schemas + `requireResourceAuth`).
 
 **Tech Stack:** Next.js (this repo's fork — read `node_modules/next/dist/docs/` before writing route/page code), postgres.js `withTenant`, zod, Supabase Storage, vitest, Playwright.
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-- Migration number is **V291** (`db/migration/deltas/V291__clubs_teams_redesign.sql`). Do not renumber; do not touch V285–V290.
+- Migration number is **V292** (`db/migration/deltas/V292__clubs_teams_redesign.sql`). Do not renumber; do not touch V285–V290.
 - Caps (defaults, all tunable in admin): `clubs.max` community 2 / event_pass 2 / pro 20 / pro_plus ∞(null); `teams.max` 2 / 2 / 40 / ∞; `teams.squad_max` 20 / 20 / ∞ / ∞. `clubs.hierarchy` becomes bool TRUE for all four plans.
 - Cap violation → `PaymentRequiredError(featureKey)` → 402 envelope → existing `UpgradeGate`.
 - **Colors deviation from spec §4.1 (intentional):** keep the deployed `z.record(z.string(), z.string())` wire shape; the UI writes flat keys `home_primary`, `home_secondary`, `away_primary`, `away_secondary`. No nested object, no data migration.
@@ -28,7 +28,7 @@
 ## File Structure
 
 ```
-db/migration/deltas/V291__clubs_teams_redesign.sql        (new) schema + entitlements
+db/migration/deltas/V292__clubs_teams_redesign.sql        (new) schema + entitlements
 apps/web/src/lib/feature-copy.ts                          (mod) reasons for new keys
 apps/web/src/server/usecases/clubs.ts                     (mod) slug, caps, contacts, profile cols
 apps/web/src/server/usecases/teams.ts                     (mod) standalone create, move/detach, squad cap
@@ -58,10 +58,10 @@ Task order: 1→2 backend base, 3–5 backend features, 6 admin, 7–10 UI, 11 h
 
 ---
 
-### Task 1: V291 migration + feature copy
+### Task 1: V292 migration + feature copy
 
 **Files:**
-- Create: `db/migration/deltas/V291__clubs_teams_redesign.sql`
+- Create: `db/migration/deltas/V292__clubs_teams_redesign.sql`
 - Modify: `apps/web/src/lib/feature-copy.ts` (add 4 keys)
 - Test: applied migration verified via psql; feature-copy covered by existing admin-grid render (no blank "What it gates" cells)
 
@@ -137,7 +137,7 @@ on conflict (plan_key, feature_key) do nothing;
 - [ ] **Step 2: Apply locally**
 
 Run from repo root: `npm run db:apply`
-Expected: Flyway reports `Successfully applied 1 migration` (V291).
+Expected: Flyway reports `Successfully applied 1 migration` (V292).
 
 - [ ] **Step 3: Verify**
 
@@ -159,8 +159,8 @@ In `apps/web/src/lib/feature-copy.ts`, next to the existing `"clubs.hierarchy"` 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add db/migration/deltas/V291__clubs_teams_redesign.sql apps/web/src/lib/feature-copy.ts
-git commit -m "feat(clubs): V291 profile columns, club_contacts, admin-tunable caps"
+git add db/migration/deltas/V292__clubs_teams_redesign.sql apps/web/src/lib/feature-copy.ts
+git commit -m "feat(clubs): V292 profile columns, club_contacts, admin-tunable caps"
 ```
 
 ---

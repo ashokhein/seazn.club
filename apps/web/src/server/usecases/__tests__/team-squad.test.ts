@@ -59,23 +59,25 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("team squad", () => {
-  it("gates team creation behind clubs.hierarchy (Pro)", async () => {
+  it("creates a team under a club (Pro) and standalone (community, spec 3/7)", async () => {
     const pro = await seedOrg("pro");
     const club = await createClub(pro, { name: "Riverside FC" });
-    const team = await createTeam(pro, club.id, { name: "Riverside U12" });
+    const team = await createTeam(pro, { name: "Riverside U12", club_id: club.id });
     expect(team.name).toBe("Riverside U12");
     expect(team.club_id).toBe(club.id);
 
-    // A community org cannot create teams (it also can't make the club, so seed
-    // the club under pro then downgrade to prove the team gate specifically).
+    // V291 (spec decision 3/7) opens clubs.hierarchy to every plan — a community
+    // org can now create teams too; the teams.max cap is the brake, not a Pro
+    // gate (that cap is covered in club-caps.test.ts).
     const comm = await seedOrg("community");
-    await expect(createTeam(comm, club.id, { name: "X" })).rejects.toMatchObject({ status: 402 });
+    const commTeam = await createTeam(comm, { name: "Comm Standalone" });
+    expect(commTeam.club_id).toBeNull();
   });
 
   it("stores and replaces the squad", async () => {
     const auth = await seedOrg("pro");
     const club = await createClub(auth, { name: "Harbour FC" });
-    const team = await createTeam(auth, club.id, { name: "Harbour U16" });
+    const team = await createTeam(auth, { name: "Harbour U16", club_id: club.id });
     const p1 = await createPerson(auth, { full_name: "Ada", consent: {}, dob: null, gender: null, external_ref: null });
     const p2 = await createPerson(auth, { full_name: "Bea", consent: {}, dob: null, gender: null, external_ref: null });
 
@@ -97,7 +99,7 @@ describe.skipIf(!HAS_DB)("team squad", () => {
   it("auto-seeds an entrant roster from the squad on enrollment, filtered per sport", async () => {
     const auth = await seedOrg("pro");
     const club = await createClub(auth, { name: "Seed FC" });
-    const team = await createTeam(auth, club.id, { name: "Seed U18" });
+    const team = await createTeam(auth, { name: "Seed U18", club_id: club.id });
     const p1 = await createPerson(auth, { full_name: "Keeper", consent: {}, dob: null, gender: null, external_ref: null });
     const p2 = await createPerson(auth, { full_name: "Back", consent: {}, dob: null, gender: null, external_ref: null });
     await setTeamSquad(auth, team.id, [
