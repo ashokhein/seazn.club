@@ -3,14 +3,16 @@ import { featurePlan, featureReason } from "@/lib/feature-copy";
 
 describe("feature-copy V290", () => {
   it("maps Plus features to pro_plus", () => {
-    for (const k of ["api.write", "scorers.max", "scheduling.ai.runs_per_division.max", "officials.auto", "domains.custom", "support.priority"]) {
+    for (const k of ["api.write", "scorers.max", "officials.auto", "domains.custom", "support.priority"]) {
       expect(featurePlan(k)).toBe("pro_plus");
     }
     expect(featurePlan("scheduling.board")).toBe("pro");
     expect(featurePlan("officials.roles_multi")).toBe("pro");
-    // V291 (owner 2026-07-18): AI scheduling unlocks on Pro; only lifting its
-    // per-division cap needs Pro Plus.
+    // V294 (owner 2026-07-19): AI scheduling exists on every tier as a graded
+    // per-division quota (free 5 / pass 10 / pro 20 / plus 50); both keys
+    // advertise Pro as the next step up, the reason copy names the ladder.
     expect(featurePlan("scheduling.ai")).toBe("pro");
+    expect(featurePlan("scheduling.ai.runs_per_division.max")).toBe("pro");
   });
   it("has reasons for the new keys and none for the dead one", () => {
     expect(featureReason("officials.per_fixture.max")).toMatch(/one official per fixture/i);
@@ -18,9 +20,9 @@ describe("feature-copy V290", () => {
     expect(featureReason("scheduling.ai")).toMatch(/architect/i);
     expect(featureReason("domains.custom")).toMatch(/domain/i);
     expect(featureReason("support.priority")).toMatch(/priority/i);
-    // V291: AI scheduling is now a Pro feature; its cap breach points at Pro Plus.
-    expect(featureReason("scheduling.ai")).toMatch(/pro feature/i);
-    expect(featureReason("scheduling.ai.runs_per_division.max")).toMatch(/unlimited/i);
+    // V294: the cap breach copy names the full quota ladder.
+    const cap = featureReason("scheduling.ai.runs_per_division.max");
+    for (const part of ["5", "10", "20", "50"]) expect(cap).toContain(part);
     // officials.assignment was deleted (D5) — falls back to the generic line.
     expect(featureReason("officials.assignment")).toBe("This feature needs a plan upgrade.");
   });
