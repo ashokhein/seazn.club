@@ -68,6 +68,8 @@ export async function compToPro(
     update subscriptions set
       plan_key = 'pro', status = 'active',
       comped_until = ${until ? until.toISOString() : null},
+      status_changed_at = case when status is distinct from 'active'
+                               then now() else status_changed_at end,
       updated_at = now()
     where org_id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);
@@ -157,7 +159,10 @@ export async function extendTrial(
   }
   await sql`
     update subscriptions set
-      status = 'trialing', trial_end = ${trialEnd.toISOString()}, updated_at = now()
+      status = 'trialing', trial_end = ${trialEnd.toISOString()},
+      status_changed_at = case when status is distinct from 'trialing'
+                               then now() else status_changed_at end,
+      updated_at = now()
     where org_id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);
   await logStaffAction(actorId, "extend_trial", "org", orgId, {

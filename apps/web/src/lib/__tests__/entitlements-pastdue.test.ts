@@ -28,11 +28,15 @@ const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
 /** Seed an org + a subscription with an explicit status and updated_at age
- *  (days before DB now(), computed server-side to avoid JS/DB clock skew). */
+ *  (days before DB now(), computed server-side to avoid JS/DB clock skew).
+ *  `statusChangedDaysAgo` sets the grace anchor independently; omitted =
+ *  same as updated_at (the V291 backfill shape); null = column left NULL
+ *  (a row the backfill never saw). */
 async function seedSubOrg(over: {
   plan: string;
   status: string;
   daysAgo: number;
+  statusChangedDaysAgo?: number | null;
 }): Promise<string> {
   const suffix = uniq();
   const [{ id: ownerId }] = await sql<{ id: string }[]>`
@@ -41,10 +45,14 @@ async function seedSubOrg(over: {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug, created_by)
     values (${"PastDue Org " + suffix}, ${"pastdue-org-" + suffix}, ${ownerId}) returning id`;
+  const changedDays =
+    over.statusChangedDaysAgo === undefined ? over.daysAgo : over.statusChangedDaysAgo;
   await sql`
-    insert into subscriptions (org_id, plan_key, status, stripe_subscription_id, updated_at)
+    insert into subscriptions
+      (org_id, plan_key, status, stripe_subscription_id, updated_at, status_changed_at)
     values (${orgId}, ${over.plan}, ${over.status}, ${"sub_" + suffix},
-            now() - (${over.daysAgo} * interval '1 day'))`;
+            now() - (${over.daysAgo} * interval '1 day'),
+            ${changedDays === null ? null : sql`now() - (${changedDays} * interval '1 day')`})`;
   return orgId;
 }
 
@@ -88,5 +96,39 @@ describe.skipIf(!HAS_DB)("past_due read-time grace (P1-6)", () => {
   it("an old but ACTIVE sub is untouched — only past_due degrades", async () => {
     const orgId = await seedSubOrg({ plan: "pro", status: "active", daysAgo: 60 });
     expect(await hasFeature(orgId, "exports.branded")).toBe(true);
+  });
+
+  // Grace anchor (follow-up to Task 9): the clock runs from the past_due
+  // TRANSITION (status_changed_at), not from updated_at — every dunning retry
+  // touches updated_at and would otherwise re-arm the 14 days forever.
+  it("anchors on status_changed_at — a dunning retry touching updated_at does not reset the clock", async () => {
+    const orgId = await seedSubOrg({
+      plan: "pro",
+      status: "past_due",
+      daysAgo: 1, // updated_at: touched yesterday by a retry
+      statusChangedDaysAgo: 20, // went past_due 20 days ago
+    });
+    expect(await hasFeature(orgId, "exports.branded")).toBe(false);
+    expect(await hasFeature(orgId, "exports")).toBe(true); // community matrix, not a deny
+  });
+
+  it("a fresh transition keeps grace even when updated_at is ancient", async () => {
+    const orgId = await seedSubOrg({
+      plan: "pro",
+      status: "past_due",
+      daysAgo: 40,
+      statusChangedDaysAgo: 2,
+    });
+    expect(await hasFeature(orgId, "exports.branded")).toBe(true);
+  });
+
+  it("NULL status_changed_at falls back to updated_at (pre-backfill rows stay safe)", async () => {
+    const orgId = await seedSubOrg({
+      plan: "pro",
+      status: "past_due",
+      daysAgo: 20,
+      statusChangedDaysAgo: null,
+    });
+    expect(await hasFeature(orgId, "exports.branded")).toBe(false);
   });
 });

@@ -123,7 +123,9 @@ export async function downgradeToCommunity(orgId: string): Promise<void> {
   }
   await sql`
     update subscriptions
-    set plan_key = 'community', status = 'active', cancel_at_period_end = false
+    set plan_key = 'community', status = 'active', cancel_at_period_end = false,
+        status_changed_at = case when status is distinct from 'active'
+                                 then now() else status_changed_at end
     where org_id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);
 }
@@ -179,7 +181,8 @@ export async function syncSubscription(
   await sql`
     insert into subscriptions
       (org_id, plan_key, status, stripe_subscription_id,
-       current_period_end, trial_end, trial_used_at, cancel_at_period_end, currency, updated_at)
+       current_period_end, trial_end, trial_used_at, cancel_at_period_end, currency,
+       updated_at, status_changed_at)
     values
       (${orgId}, ${knownPlanKey ?? "community"}, ${status},
        ${stripeSub.id},
@@ -188,7 +191,7 @@ export async function syncSubscription(
        ${stripeSub.trial_end ? new Date().toISOString() : null},
        ${stripeSub.cancel_at_period_end},
        ${stripeSub.currency ?? null},
-       now())
+       now(), now())
     on conflict (org_id) do update set
       -- Unknown price keeps the org's current plan (never mass-downgrade on drift).
       plan_key               = coalesce(${knownPlanKey}, subscriptions.plan_key, 'community'),
@@ -209,6 +212,10 @@ export async function syncSubscription(
       dispute_id             = case when subscriptions.stripe_subscription_id
                                       is distinct from excluded.stripe_subscription_id
                                     then null else subscriptions.dispute_id end,
+      -- Grace anchor: stamp only on a real status TRANSITION — a same-status
+      -- re-sync (webhook replay, dunning retry) must not move it.
+      status_changed_at      = case when subscriptions.status is distinct from excluded.status
+                                    then now() else subscriptions.status_changed_at end,
       updated_at             = now()`;
 }
 

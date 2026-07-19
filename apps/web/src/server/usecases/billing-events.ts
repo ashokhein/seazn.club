@@ -123,7 +123,9 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
   if (current?.stripe_subscription_id && current.stripe_subscription_id !== stripeSub.id) return;
   await sql`
     update subscriptions
-    set plan_key = 'community', status = 'canceled', updated_at = now()
+    set plan_key = 'community', status = 'canceled', updated_at = now(),
+        status_changed_at = case when status is distinct from 'canceled'
+                                 then now() else status_changed_at end
     where org_id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);
   await captureServer({
@@ -144,7 +146,12 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   const subId = invoiceSubId(invoice);
   if (!subId) return;
   const [row] = await sql<{ org_id: string }[]>`
-    update subscriptions set status = 'past_due', updated_at = now()
+    update subscriptions
+    set status = 'past_due', updated_at = now(),
+        -- Grace anchor: only the FIRST failure starts the 14-day clock;
+        -- every dunning retry lands here again and must not re-arm it.
+        status_changed_at = case when status is distinct from 'past_due'
+                                 then now() else status_changed_at end
     where stripe_subscription_id = ${subId}
     returning org_id`;
   if (row) {
