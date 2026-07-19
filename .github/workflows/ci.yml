@@ -98,8 +98,6 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
       - name: Dependency audit (high+)
         run: npm audit --audit-level=high
         continue-on-error: true
