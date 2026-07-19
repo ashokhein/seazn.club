@@ -428,7 +428,8 @@ test.describe("Pro Plus · disclosure + admin matrix", () => {
     const apiWriteRow = page
       .locator("tbody tr")
       .filter({ has: page.getByRole("cell", { name: "api.write", exact: true }) });
-    await expect(apiWriteRow.locator("td").nth(4)).toHaveText("false"); // Pro
-    await expect(apiWriteRow.locator("td").nth(5)).toHaveText("true"); // Pro Plus
+    // DENY-aware admin cells (clubs W1): absent row renders "—", present-true "✓".
+    await expect(apiWriteRow.locator("td").nth(4)).toHaveText("—"); // Pro (no row = DENY)
+    await expect(apiWriteRow.locator("td").nth(5)).toHaveText("✓"); // Pro Plus
   });
 });
