@@ -8,11 +8,13 @@ import { randomUUID } from "node:crypto";
 const stripeMock = vi.hoisted(() => {
   const accountCreate = vi.fn();
   const accountLinkCreate = vi.fn();
+  const loginLinkCreate = vi.fn();
   return {
     accountCreate,
     accountLinkCreate,
+    loginLinkCreate,
     stripe: {
-      accounts: { create: accountCreate },
+      accounts: { create: accountCreate, createLoginLink: loginLinkCreate },
       accountLinks: { create: accountLinkCreate },
     },
   };
@@ -23,7 +25,12 @@ vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { connectStatus, createConnectOnboardingLink, syncConnectAccount } from "../stripe-connect";
+import {
+  connectStatus,
+  createConnectDashboardLink,
+  createConnectOnboardingLink,
+  syncConnectAccount,
+} from "../stripe-connect";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -49,6 +56,9 @@ beforeEach(() => {
   stripeMock.accountLinkCreate
     .mockReset()
     .mockResolvedValue({ url: "https://connect.stripe.test/onboard" });
+  stripeMock.loginLinkCreate
+    .mockReset()
+    .mockResolvedValue({ url: "https://connect.stripe.test/express-dash" });
 });
 
 afterAll(async () => {
@@ -97,6 +107,37 @@ describe.skipIf(!HAS_DB)("Connect onboarding ToS gate (PROMPT-55)", () => {
     );
     expect(url).toBe("https://connect.stripe.test/onboard");
     expect(stripeMock.accountCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe.skipIf(!HAS_DB)("Express dashboard login link", () => {
+  it("connected org gets a fresh login link for its account", async () => {
+    const { owner, orgId } = await seedProOrg();
+    const acctId = "acct_dash_" + orgId.slice(0, 8);
+    await sql`update organizations set stripe_account_id = ${acctId} where id = ${orgId}`;
+    const { url } = await createConnectDashboardLink(owner, orgId);
+    expect(url).toBe("https://connect.stripe.test/express-dash");
+    expect(stripeMock.loginLinkCreate).toHaveBeenCalledWith(acctId);
+  });
+
+  it("no Connect account → 409 before Stripe is touched", async () => {
+    const { owner, orgId } = await seedProOrg();
+    await expect(createConnectDashboardLink(owner, orgId)).rejects.toMatchObject({
+      status: 409,
+    });
+    expect(stripeMock.loginLinkCreate).not.toHaveBeenCalled();
+  });
+
+  it("non-owner → 403", async () => {
+    const { orgId } = await seedProOrg();
+    await sql`update organizations set stripe_account_id = ${"acct_x_" + orgId.slice(0, 8)}
+              where id = ${orgId}`;
+    const scorer: AuthCtx = {
+      orgId, via: "session", userId: randomUUID(), role: "scorer", keyId: null,
+    };
+    await expect(createConnectDashboardLink(scorer, orgId)).rejects.toMatchObject({
+      status: 403,
+    });
   });
 });
 

@@ -1815,6 +1815,8 @@
   "pay.tosTerms": "Conditions d'utilisation",
   "pay.opening": "Ouverture de Stripe…",
   "pay.resume": "Reprendre la configuration Stripe",
+  "pay.finishVerification": "Terminer la vérification Stripe",
+  "pay.openDashboard": "Ouvrir le tableau de bord Stripe",
   "pay.connect": "Connecter Stripe",
   "pay.needPro": "Les paiements par carte nécessitent Pro ou un Event Pass.",
   "pay.onboardErr": "Impossible de démarrer la configuration Stripe",

@@ -142,6 +142,25 @@ export async function createConnectOnboardingLink(
   return { url: link.url };
 }
 
+/**
+ * Mint a one-time Express Dashboard login link (payouts, charge history,
+ * and Stripe's own "more information needed" prompts live there). Fresh per
+ * click — the URLs are single-use and short-lived.
+ */
+export async function createConnectDashboardLink(
+  auth: AuthCtx,
+  orgId: string,
+): Promise<{ url: string }> {
+  requireOwnerSession(auth, orgId);
+  const { stripe_account_id: accountId } = await orgConnect(orgId);
+  // Checked before getStripe() so the 409 answers even keyless.
+  if (!accountId) {
+    throw new HttpError(409, "Connect Stripe first — this organization has no Stripe account");
+  }
+  const link = await getStripe().accounts.createLoginLink(accountId);
+  return { url: link.url };
+}
+
 /** Mirror Stripe's account flags (account.updated webhook + refresh path). */
 export async function syncConnectAccount(account: Stripe.Account): Promise<void> {
   await sql`

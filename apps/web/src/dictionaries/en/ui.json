@@ -1815,6 +1815,8 @@
   "pay.tosTerms": "Terms of Service",
   "pay.opening": "Opening Stripe…",
   "pay.resume": "Resume Stripe onboarding",
+  "pay.finishVerification": "Finish Stripe verification",
+  "pay.openDashboard": "Open Stripe dashboard",
   "pay.connect": "Connect Stripe",
   "pay.needPro": "Card payments need Pro or an Event Pass.",
   "pay.onboardErr": "Could not start Stripe onboarding",

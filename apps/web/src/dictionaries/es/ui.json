@@ -1815,6 +1815,8 @@
   "pay.tosTerms": "Términos del servicio",
   "pay.opening": "Abriendo Stripe…",
   "pay.resume": "Reanudar la incorporación de Stripe",
+  "pay.finishVerification": "Completar la verificación de Stripe",
+  "pay.openDashboard": "Abrir el panel de Stripe",
   "pay.connect": "Conectar Stripe",
   "pay.needPro": "Los pagos con tarjeta requieren Pro o un Event Pass.",
   "pay.onboardErr": "No se pudo iniciar la incorporación de Stripe",

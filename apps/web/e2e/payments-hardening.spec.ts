@@ -892,6 +892,11 @@ test.describe("T12 · Connect health banner surfaces payout trouble", () => {
       (r) => r.url().includes(`/orgs/${org.orgId}/connect`) && r.status() === 200,
     );
     await expect(page.getByTestId("connect-attention")).toHaveCount(0);
+    // Healthy + live: dashboard link available, no verification CTA.
+    await expect(page.getByTestId("connect-dashboard")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Finish Stripe verification" }),
+    ).toHaveCount(0);
 
     // Payouts lapse (verification requirement) → the health mirror lights up.
     await withDb((sql) =>
@@ -903,6 +908,13 @@ test.describe("T12 · Connect health banner surfaces payout trouble", () => {
       (r) => r.url().includes(`/orgs/${org.orgId}/connect`) && r.status() === 200,
     );
     await expect(page.getByTestId("connect-attention")).toBeVisible({ timeout: 20_000 });
+    // A LIVE account with requirements due gets a way back into Stripe:
+    // finish-verification (account_onboarding collects currently_due) and the
+    // Express dashboard link stay side by side.
+    await expect(
+      page.getByRole("button", { name: "Finish Stripe verification" }),
+    ).toBeVisible();
+    await expect(page.getByTestId("connect-dashboard")).toBeVisible();
   });
 });
 
