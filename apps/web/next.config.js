@@ -29,6 +29,12 @@ const nextConfig = {
   output: "standalone",
   // Don't advertise the framework (removes the `X-Powered-By: Next.js` header).
   poweredByHeader: false,
+  // CI/Docker set SKIP_TYPECHECK=1: `tsc --noEmit` in the CI test job is the
+  // sole type gate, so the in-build checker (a 6 GB-heap worker on Fly
+  // builders) is duplicate work there. Local `next build` still checks.
+  typescript: {
+    ignoreBuildErrors: process.env.SKIP_TYPECHECK === "1",
+  },
   // Monorepo: trace from the workspace root so hoisted node_modules land in
   // .next/standalone (Next docs: config/output caveats).
   outputFileTracingRoot: path.join(import.meta.dirname, "../.."),

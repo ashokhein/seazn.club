@@ -34,7 +34,9 @@ ENV SENTRY_ORG=$SENTRY_ORG
 ENV SENTRY_PROJECT=$SENTRY_PROJECT
 ENV SENTRY_AUTH_TOKEN=$SENTRY_AUTH_TOKEN
 
-RUN npm run build --workspace apps/web
+# tsc gates types in CI; the in-build checker (the 6 GB-heap worker that
+# SIGKILLed on builder VMs) is skipped here.
+RUN SKIP_TYPECHECK=1 npm run build --workspace apps/web
 
 # ── Stage 2: minimal production image ────────────────────────────────────────
 FROM node:22-alpine AS runner

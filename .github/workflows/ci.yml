@@ -200,6 +200,9 @@ jobs:
 
       - name: Build (production)
         run: npm run build --workspace apps/web
+        env:
+          # tsc gate already ran in the test job — don't type-check twice.
+          SKIP_TYPECHECK: "1"
 
       - name: Start server
         run: |
