@@ -1816,6 +1816,7 @@
   "pay.opening": "Opening Stripe…",
   "pay.resume": "Resume Stripe onboarding",
   "pay.finishVerification": "Finish Stripe verification",
+  "pay.dashErr": "Couldn’t open the Stripe dashboard — please try again in a moment.",
   "pay.openDashboard": "Open Stripe dashboard",
   "pay.connect": "Connect Stripe",
   "pay.needPro": "Card payments need Pro or an Event Pass.",

@@ -1816,6 +1816,7 @@
   "pay.opening": "Stripe openen…",
   "pay.resume": "Stripe-onboarding hervatten",
   "pay.finishVerification": "Stripe-verificatie afronden",
+  "pay.dashErr": "Kan het Stripe-dashboard niet openen — probeer het zo opnieuw.",
   "pay.openDashboard": "Stripe-dashboard openen",
   "pay.connect": "Stripe verbinden",
   "pay.needPro": "Kaartbetalingen vereisen Pro of een Event Pass.",

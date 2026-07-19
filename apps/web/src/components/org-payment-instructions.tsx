@@ -121,7 +121,10 @@ export function OrgPaymentInstructions({
       );
       window.location.assign(url);
     } catch (err) {
-      setConnectError(err instanceof Error ? err.message : msg("pay.onboardErr"));
+      // Never surface Stripe's raw error (it names the platform key and
+      // account id) — human copy only; the detail stays in the console.
+      console.error("connect dashboard link failed", err);
+      setConnectError(msg("pay.dashErr"));
       setDashBusy(false);
     }
   }

@@ -1816,6 +1816,7 @@
   "pay.opening": "Abriendo Stripe…",
   "pay.resume": "Reanudar la incorporación de Stripe",
   "pay.finishVerification": "Completar la verificación de Stripe",
+  "pay.dashErr": "No se pudo abrir el panel de Stripe — inténtalo de nuevo en un momento.",
   "pay.openDashboard": "Abrir el panel de Stripe",
   "pay.connect": "Conectar Stripe",
   "pay.needPro": "Los pagos con tarjeta requieren Pro o un Event Pass.",

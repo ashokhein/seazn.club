@@ -915,6 +915,15 @@ test.describe("T12 · Connect health banner surfaces payout trouble", () => {
       page.getByRole("button", { name: "Finish Stripe verification" }),
     ).toBeVisible();
     await expect(page.getByTestId("connect-dashboard")).toBeVisible();
+
+    // Dashboard mint fails here (dummy Stripe key, fake acct id) — the org
+    // must see human copy, never Stripe's raw error (which carries the
+    // platform key prefix and account id).
+    await page.getByTestId("connect-dashboard").click();
+    await expect(page.getByText("Couldn’t open the Stripe dashboard")).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(page.getByText(/rk_test|sk_test|provided key|acct_/)).toHaveCount(0);
   });
 });
 

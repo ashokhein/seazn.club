@@ -1559,6 +1559,7 @@ export type DictionaryKey =
   | "pay.methodLegend"
   | "pay.methodOffline"
   | "pay.methodStripe"
+  | "pay.dashErr"
   | "pay.finishVerification"
   | "pay.needPro"
   | "pay.onboardErr"
