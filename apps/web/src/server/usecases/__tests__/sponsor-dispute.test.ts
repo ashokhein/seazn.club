@@ -176,10 +176,10 @@ describe.skipIf(!HAS_DB)("handleSponsorDispute", () => {
     expect(emailMock.lost).not.toHaveBeenCalled(); // a win is not a loss
   });
 
-  it("ignores non-sponsor intents", async () => {
+  it("ignores non-sponsor intents (reports no match)", async () => {
     await expect(
       handleSponsorDispute(disputeFor("pi_not_sponsor_" + uniq(), "dp_" + uniq()), "created"),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
     expect(emailMock.alert).not.toHaveBeenCalled();
   });
 

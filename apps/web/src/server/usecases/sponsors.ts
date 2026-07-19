@@ -706,10 +706,10 @@ async function recoverSponsorDispute(
 export async function handleSponsorDispute(
   dispute: Stripe.Dispute,
   phase: "created" | "closed",
-): Promise<void> {
+): Promise<boolean> {
   const intent =
     typeof dispute.payment_intent === "string" ? dispute.payment_intent : dispute.payment_intent?.id;
-  if (!intent) return;
+  if (!intent) return false;
   const [order] = await sql<
     (SponsorOrderRow & {
       org_id: string;
@@ -722,7 +722,7 @@ export async function handleSponsorDispute(
            (select competition_id from sponsor_packages p where p.id = sponsor_orders.package_id)
              as competition_id
     from sponsor_orders where payment_intent_id = ${intent}`;
-  if (!order) return; // not a sponsor charge
+  if (!order) return false; // not a sponsor charge (or it doesn't know its intent YET)
 
   if (phase === "created") {
     // A replayed created event re-stamps nothing new: coalesce keeps the first
@@ -748,7 +748,7 @@ export async function handleSponsorDispute(
       }
     }
     bustPublicSponsors(order.org_id);
-    return;
+    return true;
   }
 
   if (dispute.status === "won") {
@@ -757,7 +757,7 @@ export async function handleSponsorDispute(
       await sql`update sponsors set status = 'active' where id = ${order.sponsor_id}`;
     }
     bustPublicSponsors(order.org_id);
-    return;
+    return true;
   }
 
   if (dispute.status === "lost") {
@@ -786,4 +786,5 @@ export async function handleSponsorDispute(
     }
     bustPublicSponsors(order.org_id);
   }
+  return true;
 }
