@@ -2106,6 +2106,8 @@
   "news.edit": "Modifier",
   "news.delete": "Supprimer",
   "news.archive": "Archiver",
+  "news.archived": "Archivés ({count})",
+  "news.republish": "Republier",
   "news.viewPublic": "Voir la page publique",
   "news.actionFailed": "Une erreur est survenue. Réessayez.",
   "news.kind.news": "Actualité du club",

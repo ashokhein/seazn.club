@@ -14,6 +14,7 @@ import { aggregatePlayerStats } from "@seazn/engine/stats";
 import type { EventEnvelope } from "@seazn/engine/core";
 import { sql, withTenant } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
+import { firePostRevalidate } from "@/server/public-site/revalidate";
 import { hasFeature } from "@/lib/entitlements";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
@@ -246,6 +247,13 @@ export async function updatePost(
       where id = ${id}
       returning ${COLS(tx)}`;
     const post = mapPost(row!);
+    if (input.action) {
+      // Status flipped — purge the ISR'd public page so archive/republish
+      // takes effect on the next request, not after the 30s window.
+      const [org] = await tx<{ slug: string }[]>`
+        select slug from organizations where id = ${auth.orgId}`;
+      if (org) firePostRevalidate(org.slug, post.slug);
+    }
     if (shouldFirePostPublished(existing.status, input.action)) {
       await captureServer({
         event: EVENTS.POST_PUBLISHED,
@@ -270,8 +278,12 @@ export async function getPost(auth: AuthCtx, id: string): Promise<OrgPost> {
 
 export async function deletePost(auth: AuthCtx, id: string): Promise<void> {
   await withTenant(auth.orgId, async (tx) => {
-    const [row] = await tx`delete from org_posts where id = ${id} returning id`;
+    const [row] = await tx<{ slug: string }[]>`
+      delete from org_posts where id = ${id} returning slug`;
     if (!row) throw new HttpError(404, "post not found");
+    const [org] = await tx<{ slug: string }[]>`
+      select slug from organizations where id = ${auth.orgId}`;
+    if (org) firePostRevalidate(org.slug, row.slug);
   });
 }
 

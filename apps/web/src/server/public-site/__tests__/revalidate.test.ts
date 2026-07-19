@@ -7,7 +7,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const revalidateTag = vi.hoisted(() => vi.fn());
-vi.mock("next/cache", () => ({ revalidateTag }));
+const revalidatePath = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidateTag, revalidatePath }));
 vi.mock("@/lib/cache", () => ({ cacheDelPattern: vi.fn() }));
 vi.mock("@/server/public-site/data", () => ({
   divisionTag: (id: string) => `division:${id}`,
@@ -27,10 +28,12 @@ import {
   fireDivisionRevalidate,
   fireOrgRevalidate,
   fireDiscoveryRevalidate,
+  firePostRevalidate,
 } from "../revalidate";
 
 beforeEach(() => {
   revalidateTag.mockClear();
+  revalidatePath.mockClear();
   broadcastRevalidate.mockClear();
   purgeCdn.mockClear();
 });
@@ -93,6 +96,26 @@ describe("CDN purge fires alongside peer broadcast (Task 7)", () => {
 
   it("fireDiscoveryRevalidate calls purgeCdn", () => {
     fireDiscoveryRevalidate();
+    expect(purgeCdn).toHaveBeenCalledTimes(1);
+  });
+});
+
+// News post pages are route-level ISR with no fetch tags — status flips purge
+// by PATH (post page + feed) so archive/republish takes effect immediately on
+// the serving instance (the CI smoke "archived post page 404s publicly" check
+// fails without this).
+describe("firePostRevalidate (news post status flips)", () => {
+  it("purges the post page and the feed by path", () => {
+    firePostRevalidate("riverside", "summer-schedule");
+    expect(revalidatePath).toHaveBeenCalledWith("/shared/riverside/news/summer-schedule");
+    expect(revalidatePath).toHaveBeenCalledWith("/shared/riverside/news");
+  });
+
+  it("swallows revalidatePath throwing outside a request scope, still purges CDN", () => {
+    revalidatePath.mockImplementationOnce(() => {
+      throw new Error("static generation store missing");
+    });
+    expect(() => firePostRevalidate("riverside", "old-notice")).not.toThrow();
     expect(purgeCdn).toHaveBeenCalledTimes(1);
   });
 });

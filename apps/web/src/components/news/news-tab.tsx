@@ -7,7 +7,7 @@
 // drift. Manual posts are free on every plan; nothing here gates.
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Zap, Pencil, Trash2, Send, Archive, ExternalLink } from "lucide-react";
+import { Plus, Zap, Pencil, Trash2, Send, Archive, ExternalLink, RotateCcw } from "lucide-react";
 import { apiV1 } from "@/lib/client-v1";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { kindEyebrow } from "@/lib/news-presentation";
@@ -54,6 +54,7 @@ export function NewsTab({
 
   const drafts = posts.filter((p) => p.status === "draft");
   const published = posts.filter((p) => p.status === "published");
+  const archived = posts.filter((p) => p.status === "archived");
 
   async function act(id: string, fn: () => Promise<unknown>) {
     setBusyId(id);
@@ -248,6 +249,46 @@ export function NewsTab({
           </ul>
         )}
       </section>
+
+      {/* Archived — off the public feed and page; folded away so the tab stays
+          about live work. Republish restores the same (frozen) URL. */}
+      {archived.length > 0 && (
+        <details data-testid="news-archived">
+          <summary className="cursor-pointer list-none text-xs font-semibold uppercase tracking-wide text-slate-400 hover:text-slate-600">
+            {msg("news.archived", { count: archived.length })}
+          </summary>
+          <ul className="mt-2 divide-y divide-slate-100 overflow-hidden rounded-lg border border-slate-200">
+            {archived.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-2 px-4 py-3" data-testid="archived-row">
+                <KindChip kind={p.kind} label={kindLabel(p.kind)} />
+                <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-500">{p.title}</span>
+                {canEdit && (
+                  <span className="flex shrink-0 items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={busyId === p.id}
+                      onClick={() => publish(p)}
+                      className="btn btn-ghost min-h-11 text-xs"
+                      data-testid="archived-republish"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" /> {msg("news.republish")}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={busyId === p.id}
+                      onClick={() => remove(p)}
+                      className="btn btn-ghost h-11 w-11 shrink-0 p-0 text-red-500"
+                      aria-label={msg("news.delete")}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </div>
   );
 }
