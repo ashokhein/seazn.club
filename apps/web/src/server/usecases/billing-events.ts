@@ -169,7 +169,8 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
 async function orgOwnerEmail(orgId: string): Promise<string | null> {
   const [owner] = await sql<{ email: string }[]>`
     select u.email from org_members m join users u on u.id = m.user_id
-    where m.org_id = ${orgId} and m.role = 'owner' limit 1`;
+    where m.org_id = ${orgId} and m.role = 'owner'
+    order by m.created_at, m.user_id limit 1`;
   return owner?.email ?? null;
 }
 
@@ -371,8 +372,9 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       await handleInvoicePaymentSucceeded(event.data.object as Stripe.Invoice);
       break;
     case "account.updated":
-      // Connect Express onboarding progress (PROMPT-20a): mirror the
-      // charges_enabled flag that gates entry-fee checkout.
+      // Connect Express onboarding progress (PROMPT-20a): mirror the four
+      // Connect-health flags (charges_enabled, payouts_enabled, disabled_reason,
+      // requirements_due) that gate entry-fee checkout and drive the payout banner.
       await syncConnectAccount(event.data.object as Stripe.Account);
       break;
     case "charge.dispute.created":

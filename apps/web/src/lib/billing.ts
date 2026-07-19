@@ -344,6 +344,10 @@ export async function reconcileCheckout(
     const subObj = session.subscription;
     if (subObj && typeof subObj !== "string") {
       await syncSubscription(orgId, subObj);
+      // The plan just changed in `subscriptions`; drop the cached entitlement
+      // resolver so a missed-webhook reconcile takes effect immediately instead
+      // of waiting out the TTL (mirrors recordPassPurchase on the pass path).
+      await invalidateOrgEntitlements(orgId);
       return true;
     }
     return false;
