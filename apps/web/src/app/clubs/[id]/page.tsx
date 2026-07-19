@@ -71,7 +71,7 @@ export default async function ClubHubPage({
             <Link
               key={k}
               href={`/clubs/${id}?tab=${k}`}
-              className={`shrink-0 border-b-2 px-4 py-2 text-sm font-medium transition ${
+              className={`inline-flex min-h-[44px] shrink-0 items-center border-b-2 px-4 py-2 text-sm font-medium transition ${
                 tab === k
                   ? "border-purple-600 text-purple-700"
                   : "border-transparent text-slate-500 hover:text-slate-800"

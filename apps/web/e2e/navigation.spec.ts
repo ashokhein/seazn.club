@@ -17,7 +17,7 @@ test.describe("navigation shell", () => {
     // Nav collapses People + Clubs into a single Directory item.
     await expect(page.getByRole("link", { name: "Directory" })).toBeVisible();
     // Clubs & Teams tab exposes the New club affordance (clubs-teams-list).
-    await page.getByRole("link", { name: "Clubs", exact: true }).click();
+    await page.getByRole("link", { name: "Clubs & Teams", exact: true }).click();
     await expect(page.getByRole("button", { name: "New club" })).toBeVisible();
   });
 
