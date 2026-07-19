@@ -7,6 +7,7 @@
 // straight from schedule; an error never discards the proposal you're looking
 // at) is unit-testable in isolation. Tasks 12–16 consume these types verbatim.
 import type { AiPlanResponse, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
+import type { ApplyOutcome } from "./ai-apply";
 
 export type AiStep = "brief" | "schedule" | "officials" | "apply";
 export type AiRunState =
@@ -206,4 +207,17 @@ export function aiErrorKey(status: number, code?: string): AiErrorKey {
     default:
       return "board.ai.errorGeneric";
   }
+}
+
+/**
+ * Map a failed apply outcome to a localized copy key. Reuses aiErrorKey over the
+ * outcome's errorStatus/errorCode (a checkpoint 402 save-point cap, a schedule
+ * 422 frozen/too-large, …) so an actionable server failure reaches the organiser
+ * instead of the flat "couldn't apply, try again". When aiErrorKey can't sharpen
+ * the status (its catch-all run-generic), fall back to the apply-specific generic
+ * so the copy still reads as an apply failure. Pure — unit-tested without React.
+ */
+export function applyErrorKey(outcome: ApplyOutcome): AiErrorKey | "board.ai.apply.error" {
+  const key = aiErrorKey(outcome.errorStatus ?? 0, outcome.errorCode);
+  return key === "board.ai.errorGeneric" ? "board.ai.apply.error" : key;
 }

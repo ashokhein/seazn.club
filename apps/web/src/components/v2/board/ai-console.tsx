@@ -44,6 +44,7 @@ import type { AiConsoleFixture } from "./ai-diff";
 import {
   aiConsoleReducer,
   aiErrorKey,
+  applyErrorKey,
   initialAiConsoleState,
   type AiConsoleState,
   type AiMode,
@@ -483,7 +484,13 @@ export function AiConsole({
         dispatch({ type: "APPLY_SEQ_CONFLICT" });
         onRefetch?.(); // pull the fresh board behind the re-run affordance
       } else {
-        dispatch({ type: "APPLY_ERROR", error: { status: 0, message: msg("board.ai.apply.error") } });
+        // Map the real failure (checkpoint 402 save-point cap, schedule 422/409,
+        // …) through aiErrorKey instead of the flat generic; the outcome now
+        // carries the status+code applyErrorKey needs.
+        dispatch({
+          type: "APPLY_ERROR",
+          error: { status: result.errorStatus ?? 0, message: msg(applyErrorKey(result)) },
+        });
       }
     },
     [

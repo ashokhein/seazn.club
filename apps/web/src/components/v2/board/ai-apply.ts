@@ -68,12 +68,17 @@ export interface ApplyOutcome {
   /** The raw server code when schedule/officials errored, for the caller to map
    *  to a localized line (never rendered raw). */
   errorCode?: string;
+  /** The HTTP status paired with errorCode — the caller resolves the exact copy
+   *  via aiErrorKey(errorStatus, errorCode) (a checkpoint 402 save-point cap, a
+   *  422 frozen/too-large, …). Set alongside errorCode; absent on a clean apply. */
+  errorStatus?: number;
 }
 
 /** The injected fetch seam — matches apiV1's shape (envelope-unwrapped). */
 export type ApplyApi = <T>(url: string, options?: { method?: string; json?: unknown }) => Promise<T>;
 
 const codeOf = (err: unknown): string => (err instanceof ApiV1Error ? err.code : "UNKNOWN");
+const statusOf = (err: unknown): number => (err instanceof ApiV1Error ? err.status : 0);
 
 // -------------------------------------------------------- constraint suggestions
 /** The architect's inferred durable rule changes (a delta over config.constraints). */
@@ -148,7 +153,7 @@ export async function applyAiPlans(input: ApplyAiInput, api: ApplyApi = apiV1): 
     });
     checkpointId = cp.id;
   } catch (err) {
-    return { schedule: "error", officials: "skipped", checkpointId: null, errorCode: codeOf(err) };
+    return { schedule: "error", officials: "skipped", checkpointId: null, errorCode: codeOf(err), errorStatus: statusOf(err) };
   }
 
   // 2. Schedule apply, grouped by stage (the route rejects cross-stage sets).
@@ -185,6 +190,7 @@ export async function applyAiPlans(input: ApplyAiInput, api: ApplyApi = apiV1): 
         officials: "skipped",
         checkpointId,
         errorCode: code,
+        errorStatus: statusOf(err),
       };
     }
   }
@@ -193,6 +199,7 @@ export async function applyAiPlans(input: ApplyAiInput, api: ApplyApi = apiV1): 
   //    route replaces the division's unlocked assignments, so an empty set would
   //    wipe rather than no-op: skip the call when nothing survives filtering.
   let officials: ApplyOutcome["officials"] = "skipped";
+  let officialsError: { code: string; status: number } | null = null;
   if (input.officials) {
     const rows = input.officials.assignments.filter((a) => !excluded.has(a.fixture_id));
     if (rows.length > 0) {
@@ -202,8 +209,9 @@ export async function applyAiPlans(input: ApplyAiInput, api: ApplyApi = apiV1): 
           json: { assignments: rows, ai: input.officials.audit },
         });
         officials = "applied";
-      } catch {
+      } catch (err) {
         officials = "error";
+        officialsError = { code: codeOf(err), status: statusOf(err) };
       }
     }
   }
@@ -220,5 +228,10 @@ export async function applyAiPlans(input: ApplyAiInput, api: ApplyApi = apiV1): 
     }
   }
 
-  return { schedule: "applied", officials, checkpointId };
+  // The schedule is live; officials may still have failed — carry its code+status
+  // so the caller can sharpen the note. errorCode/errorStatus stay absent on a
+  // clean apply, so a success `toEqual` over the outcome keeps holding.
+  return officialsError
+    ? { schedule: "applied", officials, checkpointId, errorCode: officialsError.code, errorStatus: officialsError.status }
+    : { schedule: "applied", officials, checkpointId };
 }

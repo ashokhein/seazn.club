@@ -134,7 +134,13 @@ describe("applyAiPlans — chained accept", () => {
       baseInput({ suggestions: { config: {} as ScheduleConfig, tz: "UTC" } }),
       api,
     );
-    expect(out).toMatchObject({ schedule: "seq_conflict", officials: "skipped", checkpointId: "cp-1" });
+    expect(out).toMatchObject({
+      schedule: "seq_conflict",
+      officials: "skipped",
+      checkpointId: "cp-1",
+      errorCode: "SEQ_CONFLICT",
+      errorStatus: 409,
+    });
     expect(calls.some((c) => c.url.includes("/officials/apply"))).toBe(false);
     expect(calls.some((c) => c.url.includes("schedule-settings"))).toBe(false);
   });
@@ -147,10 +153,17 @@ describe("applyAiPlans — chained accept", () => {
       },
     });
     const out = await applyAiPlans(baseInput(), api);
-    expect(out).toMatchObject({ schedule: "error", officials: "skipped", errorCode: "SCHEDULE_CONFLICT" });
+    // The status rides alongside the code so the console can map it via
+    // aiErrorKey (409 → "the board changed" rather than the flat generic).
+    expect(out).toMatchObject({
+      schedule: "error",
+      officials: "skipped",
+      errorCode: "SCHEDULE_CONFLICT",
+      errorStatus: 409,
+    });
   });
 
-  it("officials failure leaves the schedule applied", async () => {
+  it("officials failure leaves the schedule applied and carries its code + status", async () => {
     const { api } = recorder({
       ...okHandlers,
       "officials/apply": () => {
@@ -158,7 +171,12 @@ describe("applyAiPlans — chained accept", () => {
       },
     });
     const out = await applyAiPlans(baseInput(), api);
-    expect(out).toMatchObject({ schedule: "applied", officials: "error" });
+    expect(out).toMatchObject({
+      schedule: "applied",
+      officials: "error",
+      errorCode: "INVALID",
+      errorStatus: 422,
+    });
   });
 
   it("checkpoint failure stops the chain before any apply", async () => {
@@ -168,7 +186,15 @@ describe("applyAiPlans — chained accept", () => {
       },
     });
     const out = await applyAiPlans(baseInput(), api);
-    expect(out).toEqual({ schedule: "error", officials: "skipped", checkpointId: null, errorCode: "PAYMENT_REQUIRED" });
+    // The 402 (save-point quota) status is carried so the console maps it to the
+    // upgrade line instead of the flat "couldn't apply, try again".
+    expect(out).toEqual({
+      schedule: "error",
+      officials: "skipped",
+      checkpointId: null,
+      errorCode: "PAYMENT_REQUIRED",
+      errorStatus: 402,
+    });
     expect(calls.map((c) => c.url)).toEqual(["/api/v1/divisions/div-1/checkpoints"]);
   });
 

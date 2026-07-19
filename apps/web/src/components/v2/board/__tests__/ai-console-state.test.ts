@@ -5,9 +5,11 @@ import type { AiPlanResponse, AiOfficialsPlanResponse } from "@/server/api-v1/sc
 import {
   aiConsoleReducer,
   aiErrorKey,
+  applyErrorKey,
   initialAiConsoleState,
   type AiConsoleState,
 } from "../ai-console-state";
+import type { ApplyOutcome } from "../ai-apply";
 
 // Minimal valid plans — the reducer never inspects their internals, only moves
 // them between slots, so empty arrays are enough.
@@ -225,5 +227,40 @@ describe("aiErrorKey (status → localized copy key)", () => {
     expect(aiErrorKey(500)).toBe("board.ai.errorGeneric");
     expect(aiErrorKey(0)).toBe("board.ai.errorGeneric");
     expect(aiErrorKey(503)).toBe("board.ai.errorGeneric");
+  });
+});
+
+describe("applyErrorKey (apply outcome → localized copy key)", () => {
+  const outcome = (over: Partial<ApplyOutcome> = {}): ApplyOutcome => ({
+    schedule: "error",
+    officials: "skipped",
+    checkpointId: null,
+    ...over,
+  });
+
+  it("sharpens an actionable failure through the outcome's status + code", () => {
+    // Checkpoint 402 (save-point quota) → the upgrade line, not the flat generic.
+    expect(applyErrorKey(outcome({ errorCode: "PAYMENT_REQUIRED", errorStatus: 402 }))).toBe("board.ai.error.upgrade");
+    // Schedule 422 frozen-competition (code doesn't split) → the invalid line.
+    expect(applyErrorKey(outcome({ errorCode: "COMPETITION_FROZEN", errorStatus: 422 }))).toBe("board.ai.error.invalid");
+    // Schedule 422 too-large → narrow-scope line (the code sharpens 422).
+    expect(applyErrorKey(outcome({ errorCode: "AI_PLAN_TOO_LARGE", errorStatus: 422 }))).toBe("board.ai.error.tooLarge");
+    // A blocking SCHEDULE_CONFLICT (409) → the conflict line.
+    expect(applyErrorKey(outcome({ errorCode: "SCHEDULE_CONFLICT", errorStatus: 409 }))).toBe("board.ai.error.conflict");
+    // 429 on any leg → the rate-limited line.
+    expect(applyErrorKey(outcome({ errorCode: "RATE_LIMITED", errorStatus: 429 }))).toBe("board.ai.error.rateLimited");
+    // Officials-leg 422 (schedule already applied) → the invalid line.
+    expect(
+      applyErrorKey(outcome({ schedule: "applied", officials: "error", errorCode: "INVALID", errorStatus: 422 })),
+    ).toBe("board.ai.error.invalid");
+  });
+
+  it("falls back to the apply-specific generic when the status has no dedicated key", () => {
+    expect(applyErrorKey(outcome({ errorCode: "BOOM", errorStatus: 500 }))).toBe("board.ai.apply.error");
+  });
+
+  it("falls back to the apply-specific generic when no status was captured (unexpected throw)", () => {
+    // doApply's own catch builds an outcome with no errorStatus/errorCode.
+    expect(applyErrorKey(outcome())).toBe("board.ai.apply.error");
   });
 });
