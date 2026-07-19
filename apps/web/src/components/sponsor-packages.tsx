@@ -33,6 +33,7 @@ interface OrderItem {
   currency: string;
   status: "pending" | "paid" | "failed" | "refunded";
   disputed_at: string | null;
+  dispute_id: string | null;
   created_at: string;
 }
 
@@ -448,10 +449,20 @@ export function SponsorPackages({
                 </span>
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
-                    order.disputed_at ? "bg-rose-100 text-rose-700" : STATUS_BADGE[order.status]
+                    order.disputed_at
+                      ? "bg-rose-100 text-rose-700"
+                      : order.status === "refunded" && order.dispute_id
+                        ? "bg-rose-200 text-rose-900"
+                        : STATUS_BADGE[order.status]
                   }`}
                 >
-                  {msg(order.disputed_at ? "sponsors.order.status.disputed" : STATUS_MSG[order.status])}
+                  {msg(
+                    order.disputed_at
+                      ? "sponsors.order.status.disputed"
+                      : order.status === "refunded" && order.dispute_id
+                        ? "sponsors.order.status.disputeLost"
+                        : STATUS_MSG[order.status],
+                  )}
                 </span>
                 {order.status === "paid" && !order.disputed_at ? (
                   <button
@@ -464,7 +475,7 @@ export function SponsorPackages({
                     {msg("sponsors.order.refund")}
                   </button>
                 ) : null}
-                {order.disputed_at ? (
+                {order.disputed_at || order.dispute_id ? (
                   // Same rail as registrations: one document, mapped to
                   // Stripe's evidence fields, downloaded from the flagged row.
                   <a

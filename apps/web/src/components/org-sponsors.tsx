@@ -38,6 +38,7 @@ export interface SponsorItem {
   display_order: number;
   status: string;
   dispute_parked?: boolean;
+  dispute_lost?: boolean;
   click_count: number;
   /** The paid package order that activated this placement, if any. */
   paid_order_id?: string | null;
@@ -506,7 +507,13 @@ export function OrgSponsors({
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-slate-800">
                         {s.name}
-                        {s.dispute_parked ? (
+                        {s.dispute_lost ? (
+                          // The activating order was written off by a lost
+                          // dispute — the placement stays down; say why.
+                          <span className="ml-2 rounded-full bg-rose-200 px-2 py-0.5 text-[10px] font-semibold uppercase text-rose-900">
+                            {msg("sponsors.lostBadge")}
+                          </span>
+                        ) : s.dispute_parked ? (
                           // Parked by an open payment dispute — the handler
                           // took it down; it returns if the dispute is won.
                           <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold uppercase text-rose-700">
