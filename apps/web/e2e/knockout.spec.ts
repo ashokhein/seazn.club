@@ -102,3 +102,34 @@ test("scoring rejects a stale expected_seq with 409 SEQ_CONFLICT", async ({ requ
   expect(stale.status).toBe(409);
   expect(stale.error?.code).toBe("SEQ_CONFLICT");
 });
+
+test("double-elim division renders the two-lane bracket on the fixtures tab (console gate)", async ({
+  page,
+  request,
+}) => {
+  // Same rig as the knockout seed, but a double_elim stage — the page gate
+  // regressed once by only admitting kind === "knockout".
+  const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
+    name: `DE ${TAG}-${Math.random().toString(36).slice(2, 6)}`,
+    visibility: "private",
+  });
+  const div = await apiJson<{ id: string }>(
+    request,
+    `/api/v1/competitions/${comp.data!.id}/divisions`,
+    "POST",
+    {
+      name: "DE Cup",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
+  const divisionId = div.data!.id;
+  await addEntrantsViaApi(request, divisionId, ["A", "B", "C", "D"]);
+  await createStageAndGenerate(request, divisionId, { kind: "double_elim", name: "DE" });
+
+  await page.goto(`/divisions/${divisionId}?tab=fixtures`);
+  await expect(page.getByTestId("bracket-panel-de")).toBeVisible({ timeout: 20_000 });
+  await expect(page.getByText("Winners bracket")).toBeVisible();
+  await expect(page.getByText("Losers bracket")).toBeVisible();
+});
