@@ -71,6 +71,14 @@ export default async function NewsFeedPage({ params, searchParams }: Props) {
 
   return (
     <div>
+      <Link
+        href={`/shared/${orgSlug}`}
+        data-testid="news-back"
+        className="mb-4 inline-flex items-center gap-1 text-xs font-medium uppercase tracking-wide text-ink-muted hover:text-accent-strong"
+      >
+        <ChevronRight aria-hidden className="h-3.5 w-3.5 rotate-180" />
+        {org.name}
+      </Link>
       <section className="mb-6">
         <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-accent-strong">
           {t(dict, "news.eyebrow")}

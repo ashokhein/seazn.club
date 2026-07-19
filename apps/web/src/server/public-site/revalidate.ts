@@ -3,7 +3,7 @@ import "server-only";
 // layer writes that publish realtime fire these tags. Fire-and-forget — a
 // failed revalidation must never roll back a scoring write, and unit tests
 // call use-cases outside a request scope where revalidateTag would throw.
-import { revalidateTag } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { cacheDelPattern } from "@/lib/cache";
 import { broadcastRevalidate } from "@/lib/peer-revalidate";
 import { purgeCdn } from "@/lib/cdn-purge";
@@ -51,6 +51,22 @@ export function fireDiscoveryRevalidate(): void {
     // outside a Next request scope (tests, scripts) — nothing to invalidate
   }
   void broadcastRevalidate([DISCOVERY_TAG], "swr");
+  void purgeCdn();
+}
+
+/** News post status flips (publish/archive/republish/delete): the post page
+ *  is route-level ISR (revalidate 30) with no fetch tags, so purge by PATH.
+ *  Archive must read-your-own-writes — the organiser (and the smoke test)
+ *  checks the public page right after clicking; a 30s stale 200 on a post
+ *  they just pulled reads as a bug. Peers aren't broadcast (tag-based rail
+ *  only) — cross-instance staleness stays bounded by the 30s ISR window. */
+export function firePostRevalidate(orgSlug: string, postSlug: string): void {
+  try {
+    revalidatePath(`/shared/${orgSlug}/news/${postSlug}`);
+    revalidatePath(`/shared/${orgSlug}/news`);
+  } catch {
+    // outside a Next request scope (tests, scripts) — nothing to invalidate
+  }
   void purgeCdn();
 }
 

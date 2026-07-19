@@ -1667,6 +1667,7 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
 
   const feed = await html(newSession(), `/shared/${proOrgSlug}/news`);
   check("news pro: public feed 200 + shows a post card", feed.status === 200 && feed.body.includes("news-card"));
+  check("news pro: feed carries the back-to-org link", feed.body.includes('data-testid="news-back"'));
   const postPage = await html(newSession(), `/shared/${proOrgSlug}/news/${pubData.slug}`);
   check("news pro: public post page 200", postPage.status === 200);
   const story = await fetch(`${BASE}/shared/${proOrgSlug}/news/${pubData.slug}/story.png`);
