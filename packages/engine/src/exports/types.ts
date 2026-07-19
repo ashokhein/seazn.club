@@ -101,6 +101,53 @@ export const DocBracket = z.object({
 });
 export type DocBracket = z.infer<typeof DocBracket>;
 
+// G-audit follow-up — the double-elim poster payload: the doubleElimBracket
+// two-lane layout with names/headlines resolved. Landscape like the
+// single-elim poster; renderer scales both lanes onto one sheet.
+export const DocBracketDeNode = z.object({
+  fixtureId: z.string(),
+  lane: z.enum(["WB", "LB", "GF"]),
+  col: z.number().int(),
+  row: z.number().int(),
+  home: z.string(),
+  away: z.string(),
+  headline: z.string().nullable(),
+  decided: z.boolean(),
+});
+export type DocBracketDeNode = z.infer<typeof DocBracketDeNode>;
+
+export const DocBracketDe = z.object({
+  nodes: z.array(DocBracketDeNode),
+  connectors: z.array(
+    z.object({
+      lane: z.enum(["WB", "LB"]),
+      col: z.number().int(),
+      fromRow: z.number().int(),
+      toRow: z.number().int(),
+    }),
+  ),
+  k: z.number().int(), // winners-lane depth
+  wbRows: z.number().int(),
+  lbRows: z.number().int(),
+  lbCols: z.number().int(),
+  laneLabels: z.object({ winners: z.string(), losers: z.string(), grandFinal: z.string(), reset: z.string() }),
+  resetId: z.string().optional(),
+});
+export type DocBracketDe = z.infer<typeof DocBracketDe>;
+
+// Stepladder poster: bottom-up rungs, winner climbs. Portrait-friendly list.
+export const DocLadderRung = z.object({
+  fixtureId: z.string(),
+  label: z.string(), // "Rung 1", …
+  home: z.string(),
+  away: z.string(),
+  headline: z.string().nullable(),
+  decided: z.boolean(),
+});
+export type DocLadderRung = z.infer<typeof DocLadderRung>;
+export const DocLadder = z.object({ rungs: z.array(DocLadderRung) });
+export type DocLadder = z.infer<typeof DocLadder>;
+
 export const PageBreaks = z.enum(["auto", "per_pitch", "per_team", "per_division"]);
 export type PageBreaks = z.infer<typeof PageBreaks>;
 
@@ -118,6 +165,11 @@ export const DocModel = z.object({
   pageBreaks: PageBreaks.default("auto"),
   /** PROMPT-62 §4 — set only for kind:"bracket" (sections stay empty). */
   bracket: DocBracket.optional(),
+  /** Double-elim edition of the bracket poster — exactly one of the three
+   *  bracket payloads is set for kind:"bracket". */
+  bracketDe: DocBracketDe.optional(),
+  /** Stepladder edition. */
+  ladder: DocLadder.optional(),
 });
 export type DocModel = z.infer<typeof DocModel>;
 

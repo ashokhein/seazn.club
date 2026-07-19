@@ -62,3 +62,87 @@ describe("bracketPageGeometry — one-sheet bounds", () => {
     expect(tp.y + tp.h).toBeLessThanOrEqual(BOX.y + BOX.h + 0.01);
   });
 });
+
+// ── Double-elim + stepladder editions (G-audit follow-up) ────────────────────
+import { buildBracketDe, buildLadderPoster, type DocBracketDe, type DocLadder } from "@seazn/engine/exports";
+import { generateDoubleElim } from "@seazn/engine/scheduling";
+import { bracketDePageGeometry, ladderPageGeometry } from "../doc-bracket-geometry";
+
+const LANES = { winners: "Winners bracket", losers: "Losers bracket", grandFinal: "Grand final", reset: "Reset" };
+
+function deFieldOf(n: number, reset = false): DocBracketDe {
+  const entrants = Array.from({ length: n }, (_, i) => `T${i + 1}`);
+  const gen = generateDoubleElim({ entrants, bracketReset: reset });
+  const k = gen.rounds;
+  const counters = new Map<string, number>();
+  const fixtures = gen.fixtures.map((f) => {
+    const lane = f.bracket ?? "WB";
+    const offset = lane === "LB" ? k : lane === "GF" ? 2 * k : 0;
+    const round_no = offset + f.round + 1;
+    const seq = (counters.get(`${lane}:${round_no}`) ?? 0) + 1;
+    counters.set(`${lane}:${round_no}`, seq);
+    return {
+      id: f.id, round_no, seq_in_round: seq,
+      home: f.home ?? null, away: f.away ?? null,
+      headline: null, decided: false,
+    };
+  });
+  return buildBracketDe("DE Cup", fixtures, LANES, { printedAt: "2026-07-19T00:00:00Z" }).bracketDe!;
+}
+
+function inBox(x: number, y: number) {
+  expect(x).toBeGreaterThanOrEqual(BOX.x - 0.01);
+  expect(x).toBeLessThanOrEqual(BOX.x + BOX.w + 0.01);
+  expect(y).toBeGreaterThanOrEqual(BOX.y - 0.01);
+  expect(y).toBeLessThanOrEqual(BOX.y + BOX.h + 0.01);
+}
+
+describe("bracketDePageGeometry — one-sheet bounds", () => {
+  for (const [n, reset] of [[8, false], [8, true], [16, false]] as const) {
+    it(`${n}-team double elim${reset ? " + reset" : ""} stays inside the box`, () => {
+      const g = bracketDePageGeometry(deFieldOf(n, reset), BOX);
+      expect(g.rects.length).toBeGreaterThan(0);
+      for (const r of g.rects) {
+        inBox(r.x, r.y);
+        inBox(r.x + r.w, r.y + r.h);
+      }
+      for (const line of g.lines) for (const [x, y] of line.points) inBox(x, y);
+      for (const l of g.labels) inBox(l.x, l.y);
+    });
+  }
+
+  it("lane labels present (winners, losers, grand final; reset only when configured)", () => {
+    const withReset = bracketDePageGeometry(deFieldOf(8, true), BOX);
+    const texts = withReset.labels.map((l) => l.text);
+    expect(texts).toContain("Winners bracket");
+    expect(texts).toContain("Losers bracket");
+    expect(texts).toContain("Grand final");
+    expect(texts).toContain("Reset");
+    const without = bracketDePageGeometry(deFieldOf(8, false), BOX);
+    expect(without.labels.map((l) => l.text)).not.toContain("Reset");
+  });
+});
+
+describe("ladderPageGeometry — one-sheet bounds", () => {
+  function ladderOf(n: number): DocLadder {
+    const fixtures = Array.from({ length: n }, (_, i) => ({
+      id: `r${i + 1}`, round_no: i + 1, seq_in_round: 1,
+      home: i === 0 ? "Challenger A" : null, away: `Seed ${n + 1 - i}`,
+      headline: i === 0 ? "2–1" : null, decided: i === 0,
+    }));
+    return buildLadderPoster("Ladder", fixtures, (i) => `Rung ${i + 1}`, { printedAt: "2026-07-19T00:00:00Z" }).ladder!;
+  }
+
+  it("7 rungs stay inside the box, summit drawn first (top)", () => {
+    const g = ladderPageGeometry(ladderOf(7), BOX);
+    expect(g.rects).toHaveLength(7);
+    for (const r of g.rects) {
+      inBox(r.x, r.y);
+      inBox(r.x + r.w, r.y + r.h);
+    }
+    for (const line of g.lines) for (const [x, y] of line.points) inBox(x, y);
+    // Top rect is the last rung (the summit), bottom rect is rung 1.
+    expect(g.labels[0]!.text).toBe("Rung 7");
+    expect(g.labels[g.labels.length - 1]!.text).toBe("Rung 1");
+  });
+});

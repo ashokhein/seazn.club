@@ -6,7 +6,11 @@ import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
 import type { DocModel, DocSection, DocTable } from "@seazn/engine/exports";
 import { PALETTE, FONT, registerFonts, eyebrowFor, qrBuffer } from "./doc-theme";
-import { bracketPageGeometry } from "./doc-bracket-geometry";
+import {
+  bracketDePageGeometry,
+  bracketPageGeometry,
+  ladderPageGeometry,
+} from "./doc-bracket-geometry";
 
 const MARGIN = 40;
 
@@ -94,15 +98,22 @@ function isLandscape(model: DocModel): boolean {
 /** Bracket poster (PROMPT-62 §4): one landscape sheet, scale-to-fit — the
  *  geometry (and its in-box guarantee) lives in doc-bracket-geometry.ts. */
 function drawBracket(doc: PDFKit.PDFDocument, model: DocModel): void {
-  const b = model.bracket;
-  if (!b) return;
+  // One painter, three geometries — single-elim two-sided, double-elim
+  // two-lane, stepladder rungs all emit the same rect/line/label shape.
   const box = {
     x: MARGIN,
     y: doc.y + 6,
     w: doc.page.width - MARGIN * 2,
     h: doc.page.height - MARGIN - 24 - (doc.y + 6),
   };
-  const g = bracketPageGeometry(b, box);
+  const g = model.bracket
+    ? bracketPageGeometry(model.bracket, box)
+    : model.bracketDe
+      ? bracketDePageGeometry(model.bracketDe, box)
+      : model.ladder
+        ? ladderPageGeometry(model.ladder, box)
+        : null;
+  if (!g) return;
   for (const label of g.labels) {
     doc.font(FONT.display).fontSize(8).fillColor(PALETTE.mute)
       .text(label.text.toUpperCase(), label.x, label.y, {
@@ -380,7 +391,7 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
   }
 
   // PROMPT-62 §4: the bracket poster draws its own body (sections are empty).
-  if (model.bracket !== undefined) drawBracket(doc, model);
+  if (model.bracket !== undefined || model.bracketDe !== undefined || model.ladder !== undefined) drawBracket(doc, model);
 
   // columnsHint 2 (12 Jun "two per A4"): pair sections onto one page by
   // separating with a rule instead of a page break.
