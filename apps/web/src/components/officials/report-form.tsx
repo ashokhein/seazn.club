@@ -32,14 +32,37 @@ interface DraftIncident {
 function toDrafts(incidents: ReportIncident[]): DraftIncident[] {
   return incidents.map((i) => ({ kind: i.kind, person_id: i.person_id ?? "", note: i.note }));
 }
-function toIncidents(drafts: DraftIncident[]): ReportIncident[] {
-  return drafts
-    .filter((d) => d.note.trim())
-    .map((d) => ({
-      kind: d.kind,
-      note: d.note.trim(),
-      ...(d.person_id ? { person_id: d.person_id } : {}),
-    }));
+
+/** A blank-note draft that nonetheless carries a signal — a non-default kind or a
+ *  chosen player — is an *incomplete* incident the ref started but didn't finish.
+ *  A blank-note draft with the default kind and no player is just an empty row. */
+function isIncompleteDraft(d: DraftIncident): boolean {
+  return !d.note.trim() && (d.kind !== "other" || d.person_id !== "");
+}
+
+/**
+ * Split the drafts into what we can persist and what blocks the write. Valid
+ * incidents (a note present) are trimmed; empty rows are pruned silently; but
+ * incomplete rows (kind/player chosen, note blank) are *counted*, never dropped —
+ * silently dropping one loses the incident with no feedback, and a lost red_card
+ * means the report→suspension bridge never fires for it. save()/submit() refuse
+ * to write while `incompleteCount > 0` and show the inline note-required error.
+ */
+export function partitionDrafts(drafts: DraftIncident[]): {
+  incidents: ReportIncident[];
+  incompleteCount: number;
+} {
+  let incompleteCount = 0;
+  const incidents: ReportIncident[] = [];
+  for (const d of drafts) {
+    const note = d.note.trim();
+    if (!note) {
+      if (isIncompleteDraft(d)) incompleteCount += 1; // else a prunable empty row
+      continue;
+    }
+    incidents.push({ kind: d.kind, note, ...(d.person_id ? { person_id: d.person_id } : {}) });
+  }
+  return { incidents, incompleteCount };
 }
 
 export function ReportForm({
@@ -93,12 +116,18 @@ export function ReportForm({
 
   async function save(nextBody = body, nextDrafts = drafts): Promise<void> {
     if (submitted) return;
+    const { incidents, incompleteCount } = partitionDrafts(nextDrafts);
+    if (incompleteCount > 0) {
+      // Don't silently drop the started incident — tell the ref to finish it.
+      setError(msg("report.incidentNoteRequired"));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       const saved = await apiV1<MatchReport>(`/api/v1/me/officiating/${fixtureOfficialId}/report`, {
         method: "PUT",
-        json: { body: nextBody, incidents: toIncidents(nextDrafts) },
+        json: { body: nextBody, incidents },
       });
       setReport(saved);
     } catch (err) {
@@ -114,13 +143,20 @@ export function ReportForm({
   }
 
   async function submit(): Promise<void> {
+    const { incidents, incompleteCount } = partitionDrafts(drafts);
+    if (incompleteCount > 0) {
+      // Block the immutable submit before an incomplete incident is lost for good.
+      setConfirming(false);
+      setError(msg("report.incidentNoteRequired"));
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
       // Persist the latest edits first, then submit.
       await apiV1<MatchReport>(`/api/v1/me/officiating/${fixtureOfficialId}/report`, {
         method: "PUT",
-        json: { body, incidents: toIncidents(drafts) },
+        json: { body, incidents },
       });
       const done = await apiV1<MatchReport>(
         `/api/v1/me/officiating/${fixtureOfficialId}/report/submit`,

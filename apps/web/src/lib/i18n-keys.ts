@@ -2062,6 +2062,7 @@ export type DictionaryKey =
   | "report.draftSaved"
   | "report.failed"
   | "report.hint"
+  | "report.incidentNoteRequired"
   | "report.incidents"
   | "report.kind"
   | "report.kind.injury"

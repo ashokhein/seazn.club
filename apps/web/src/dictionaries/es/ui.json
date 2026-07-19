@@ -2081,6 +2081,7 @@
   "report.cta.file": "Presentar informe del partido",
   "report.cta.draft": "Terminar el informe del partido",
   "report.cta.filed": "Informe del partido presentado",
+  "report.incidentNoteRequired": "Añade una nota a cada incidencia o elimínala.",
   "officials.rate.heading": "Calificar oficiales",
   "officials.rate.locked": "Calificar oficiales es una función Pro.",
   "officials.rate.viewReport": "Informe de {name}",

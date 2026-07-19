@@ -2081,6 +2081,7 @@
   "report.cta.file": "Déposer un rapport de match",
   "report.cta.draft": "Terminer le rapport de match",
   "report.cta.filed": "Rapport de match déposé",
+  "report.incidentNoteRequired": "Ajoutez une note à chaque incident, ou supprimez-le.",
   "officials.rate.heading": "Noter les officiels",
   "officials.rate.locked": "La notation des officiels est une fonctionnalité Pro.",
   "officials.rate.viewReport": "Rapport de {name}",

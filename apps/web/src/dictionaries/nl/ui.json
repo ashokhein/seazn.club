@@ -2081,6 +2081,7 @@
   "report.cta.file": "Wedstrijdrapport indienen",
   "report.cta.draft": "Wedstrijdrapport afmaken",
   "report.cta.filed": "Wedstrijdrapport ingediend",
+  "report.incidentNoteRequired": "Voeg aan elk incident een notitie toe, of verwijder het.",
   "officials.rate.heading": "Officials beoordelen",
   "officials.rate.locked": "Officials beoordelen is een Pro-functie.",
   "officials.rate.viewReport": "Rapport van {name}",

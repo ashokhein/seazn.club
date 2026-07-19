@@ -2081,6 +2081,7 @@
   "report.cta.file": "File match report",
   "report.cta.draft": "Finish match report",
   "report.cta.filed": "Match report filed",
+  "report.incidentNoteRequired": "Add a note to each incident, or remove it.",
   "officials.rate.heading": "Rate officials",
   "officials.rate.locked": "Rating officials is a Pro feature.",
   "officials.rate.viewReport": "{name}'s report",
