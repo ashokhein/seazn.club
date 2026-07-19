@@ -1,4 +1,4 @@
-import { v1, parseBody } from "@/server/api-v1/http";
+import { v1, reply, parseBody } from "@/server/api-v1/http";
 import { requireResourceAuth } from "@/server/api-v1/auth";
 import { CreateClubContact } from "@/server/api-v1/schemas";
 import { listClubContacts, createClubContact } from "@/server/usecases/clubs";
@@ -20,6 +20,6 @@ export async function POST(req: Request, { params }: Ctx) {
     const { id } = await params;
     const body = await parseBody(req, CreateClubContact);
     const auth = await requireResourceAuth(req, "club", id, "write");
-    return createClubContact(auth, id, body);
+    return reply(201, await createClubContact(auth, id, body));
   });
 }

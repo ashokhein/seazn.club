@@ -1017,9 +1017,7 @@ async function clubsSuite(): Promise<void> {
     email: `sam_${tag}@example.com`,
     is_primary: true,
   });
-  // The route returns the contact row through the default success path (200),
-  // not reply(201) — the openapi tags it 201, a benign doc/impl skew.
-  check("clubs pro: committee contact added (200)", contact.status === 200);
+  check("clubs pro: committee contact added (201)", contact.status === 201);
   // The contact surfaces on the hub read (getClub feeds the Overview tab).
   const detail = await v1(pro, `/api/v1/clubs/${clubId}`);
   const contacts = v1data<{ contacts: { full_name: string; is_primary: boolean }[] }>(detail).contacts ?? [];
