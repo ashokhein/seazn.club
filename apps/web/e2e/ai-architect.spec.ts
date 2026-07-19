@@ -131,7 +131,7 @@ async function seedAiDivision(
 /** Open the docked console from the board's launch button. */
 async function openConsole(page: Page): Promise<void> {
   await page.getByRole("button", { name: "AI schedule", exact: true }).click();
-  await expect(page.getByRole("region", { name: "AI schedule architect" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "AI schedule" })).toBeVisible();
 }
 
 /** Add the "Finish by 18:00" wish chip and confirm it compiled into the brief. */
@@ -281,7 +281,7 @@ test("blackout injected over a scheduled fixture surfaces the repair nudge", asy
 
   // Its CTA opens the console pre-armed in a scoped repair.
   await page.getByRole("button", { name: /Fix with AI/i }).click();
-  await expect(page.getByRole("region", { name: "AI schedule architect" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "AI schedule" })).toBeVisible();
   await expect(page.getByText("Scoped run")).toBeVisible();
   await shot(page, "06-repair-scoped");
 });
@@ -336,7 +336,7 @@ test.describe("mobile viewport", () => {
     // The diff panel groups the placements as an agenda list: the "Why it did
     // that" provenance section renders with all six seeded fixtures in the
     // "placed" group (they were unscheduled before the run).
-    const region = page.getByRole("region", { name: "AI schedule architect" });
+    const region = page.getByRole("region", { name: "AI schedule" });
     await expect(region).toBeVisible();
     await expect(region.getByText("Why it did that")).toBeVisible();
     await expect(region.getByText("6 placed")).toBeVisible();

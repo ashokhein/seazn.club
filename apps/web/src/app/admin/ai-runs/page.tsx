@@ -59,7 +59,7 @@ export default async function AdminAiRunsPage() {
             {rows.length === 0 && (
               <tr>
                 <td colSpan={11} className="px-3 py-6 text-center text-slate-500">
-                  No architect runs recorded yet.
+                  No AI runs recorded yet.
                 </td>
               </tr>
             )}
