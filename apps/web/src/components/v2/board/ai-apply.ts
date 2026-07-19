@@ -79,6 +79,12 @@ export type ApplyApi = <T>(url: string, options?: { method?: string; json?: unkn
 
 const codeOf = (err: unknown): string => (err instanceof ApiV1Error ? err.code : "UNKNOWN");
 const statusOf = (err: unknown): number => (err instanceof ApiV1Error ? err.status : 0);
+/** The paywall feature key rides in the 402 envelope's extra (feature_key). A
+ *  checkpoint POST that trips the save-point quota answers PAYMENT_REQUIRED with
+ *  feature_key = "schedule.checkpoints.max"; surface that so the console shows the
+ *  save-point-specific line, not the misleading "upgrade to use AI". */
+const featureKeyOf = (err: unknown): string | undefined =>
+  err instanceof ApiV1Error && typeof err.extra.feature_key === "string" ? err.extra.feature_key : undefined;
 
 // -------------------------------------------------------- constraint suggestions
 /** The architect's inferred durable rule changes (a delta over config.constraints). */
@@ -143,17 +149,39 @@ export async function applyAiPlans(input: ApplyAiInput, api: ApplyApi = apiV1): 
   const excluded = new Set(input.excludedFixtureIds);
   const label = input.checkpointLabel ?? AI_CHECKPOINT_LABEL;
 
-  // 1. Checkpoint first — the save point the success toast's Undo restores. If
-  //    this fails nothing has changed yet, so surface it and stop.
+  // 1. Checkpoint first — the save point the success toast's Undo restores. AI
+  //    scheduling is now graded onto every tier, but the save-point quota isn't
+  //    (community caps at 1), so a fresh POST per apply would 402 on the second
+  //    AI apply — or the first, if any save point already exists. Reuse a prior
+  //    "before-ai" save point instead of stacking a new one, so AI applies
+  //    consume at most one save point per division, ever. (No DELETE endpoint
+  //    exists, so this stays client-only — list, then create only when absent —
+  //    with no API-surface churn.) If the checkpoint step fails nothing has
+  //    changed yet, so surface it and stop.
   let checkpointId: string | null = null;
   try {
-    const cp = await api<{ id: string }>(`/api/v1/divisions/${input.divisionId}/checkpoints`, {
-      method: "POST",
-      json: { label },
-    });
-    checkpointId = cp.id;
+    const existing = await api<{ id: string; label: string }[]>(
+      `/api/v1/divisions/${input.divisionId}/checkpoints`,
+      { method: "GET" },
+    );
+    const prior = existing.find((c) => c.label === label);
+    if (prior) {
+      checkpointId = prior.id;
+    } else {
+      const cp = await api<{ id: string }>(`/api/v1/divisions/${input.divisionId}/checkpoints`, {
+        method: "POST",
+        json: { label },
+      });
+      checkpointId = cp.id;
+    }
   } catch (err) {
-    return { schedule: "error", officials: "skipped", checkpointId: null, errorCode: codeOf(err), errorStatus: statusOf(err) };
+    return {
+      schedule: "error",
+      officials: "skipped",
+      checkpointId: null,
+      errorCode: featureKeyOf(err) ?? codeOf(err),
+      errorStatus: statusOf(err),
+    };
   }
 
   // 2. Schedule apply, grouped by stage (the route rejects cross-stage sets).

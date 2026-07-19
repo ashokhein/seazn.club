@@ -19,13 +19,17 @@ import type { AiApplyMeta, ScheduleConfig } from "@/server/api-v1/schemas";
 const audit: AiApplyMeta = { instruction: "spread it out", summary: "moved 3", model: "m", repair_rounds: 1 };
 const offAudit: AiApplyMeta = { instruction: "cover it", summary: "assigned 2", model: "m", repair_rounds: 0 };
 
-/** A recording fetch seam: logs every call in order, answers by url substring. */
-function recorder(handlers: Record<string, (call: { url: string; json: unknown }) => unknown> = {}) {
+/** A recording fetch seam: logs every call in order, answers by url substring.
+ *  Handlers get the method too, so the checkpoints list (GET) and create (POST)
+ *  — which share a url — can answer differently. */
+function recorder(
+  handlers: Record<string, (call: { url: string; json: unknown; method?: string }) => unknown> = {},
+) {
   const calls: { url: string; method?: string; json: any }[] = [];
   const api: ApplyApi = (async (url: string, options?: { method?: string; json?: unknown }) => {
     calls.push({ url, method: options?.method, json: options?.json });
     for (const [pat, fn] of Object.entries(handlers)) {
-      if (url.includes(pat)) return fn({ url, json: options?.json });
+      if (url.includes(pat)) return fn({ url, json: options?.json, method: options?.method });
     }
     return {};
   }) as ApplyApi;
@@ -54,7 +58,10 @@ function baseInput(over: Partial<ApplyAiInput> = {}): ApplyAiInput {
   };
 }
 
-const okHandlers = { checkpoints: () => ({ id: "cp-1" }) };
+// GET (list) → no prior "before-ai" save point; POST (create) → the new id.
+const okHandlers = {
+  checkpoints: ({ method }: { method?: string }) => (method === "POST" ? { id: "cp-1" } : []),
+};
 
 describe("applyAiPlans — chained accept", () => {
   it("runs checkpoint → schedule apply → officials apply → suggestion PUT in order", async () => {
@@ -67,6 +74,7 @@ describe("applyAiPlans — chained accept", () => {
     expect(out).toEqual({ schedule: "applied", officials: "applied", checkpointId: "cp-1" });
     const seam = calls.map((c) => `${c.method} ${c.url}`);
     expect(seam).toEqual([
+      "GET /api/v1/divisions/div-1/checkpoints",
       "POST /api/v1/divisions/div-1/checkpoints",
       "POST /api/v1/stages/st-1/schedule/apply",
       "POST /api/v1/divisions/div-1/officials/apply",
@@ -78,21 +86,23 @@ describe("applyAiPlans — chained accept", () => {
     const { api, calls } = recorder(okHandlers);
     await applyAiPlans(baseInput(), api);
 
-    expect(calls[0].json).toEqual({ label: "before-ai" });
-    expect(calls[1].json).toMatchObject({ source: "ai", expected_seq: 7, ai: audit });
-    expect(calls[1].json.assignments).toEqual([
+    // [0] GET list, [1] POST create, [2] schedule apply, [3] officials apply.
+    expect(calls[1].json).toEqual({ label: "before-ai" });
+    expect(calls[2].json).toMatchObject({ source: "ai", expected_seq: 7, ai: audit });
+    expect(calls[2].json.assignments).toEqual([
       { fixture_id: "fa", scheduled_at: "2026-08-01T10:00:00Z", court_label: "Court 1" },
       { fixture_id: "fb", scheduled_at: "2026-08-01T11:00:00Z", court_label: "Court 1" },
     ]);
-    expect(calls[2].json).toMatchObject({ ai: offAudit });
+    expect(calls[3].json).toMatchObject({ ai: offAudit });
   });
 
   it("excludes unticked fixtures from BOTH the schedule and officials payloads", async () => {
     const { api, calls } = recorder(okHandlers);
     await applyAiPlans(baseInput({ excludedFixtureIds: ["fb"] }), api);
 
-    expect(calls[1].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
+    // [2] schedule apply, [3] officials apply (after the GET list + POST create).
     expect(calls[2].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
+    expect(calls[3].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
   });
 
   it("applies each stage separately with a forward-walking expected_seq", async () => {
@@ -179,23 +189,53 @@ describe("applyAiPlans — chained accept", () => {
     });
   });
 
-  it("checkpoint failure stops the chain before any apply", async () => {
+  it("reuses an existing before-ai save point instead of stacking a new one (at most one per division)", async () => {
     const { api, calls } = recorder({
-      checkpoints: () => {
-        throw new ApiV1Error("quota", 402, "PAYMENT_REQUIRED");
+      checkpoints: ({ method }) =>
+        method === "POST" ? { id: "cp-new" } : [{ id: "cp-old", label: "before-ai" }],
+    });
+    const out = await applyAiPlans(baseInput({ officials: null }), api);
+    expect(out.checkpointId).toBe("cp-old");
+    // No POST create — the prior before-ai save point is reused, so a capped free
+    // org never trips schedule.checkpoints.max on a repeat AI apply.
+    expect(calls.some((c) => c.url.includes("/checkpoints") && c.method === "POST")).toBe(false);
+  });
+
+  it("creates a new save point when only a non-before-ai checkpoint exists (leaves the user's own save point alone)", async () => {
+    const { api, calls } = recorder({
+      checkpoints: ({ method }) =>
+        method === "POST" ? { id: "cp-new" } : [{ id: "cp-manual", label: "Quarterfinals" }],
+    });
+    const out = await applyAiPlans(baseInput({ officials: null }), api);
+    expect(out.checkpointId).toBe("cp-new");
+    const cp = calls.filter((c) => c.url.includes("/checkpoints"));
+    expect(cp.map((c) => c.method)).toEqual(["GET", "POST"]);
+  });
+
+  it("checkpoint save-point-quota 402 stops the chain and carries the feature key", async () => {
+    const { api, calls } = recorder({
+      checkpoints: ({ method }) => {
+        if (method === "POST") {
+          throw new ApiV1Error("quota", 402, "PAYMENT_REQUIRED", { feature_key: "schedule.checkpoints.max" });
+        }
+        return []; // list: no prior before-ai save point
       },
     });
     const out = await applyAiPlans(baseInput(), api);
-    // The 402 (save-point quota) status is carried so the console maps it to the
-    // upgrade line instead of the flat "couldn't apply, try again".
+    // The feature key rides in errorCode so the console maps it to the save-point
+    // line (board.ai.apply.checkpointQuota), not the flat "upgrade to use AI".
     expect(out).toEqual({
       schedule: "error",
       officials: "skipped",
       checkpointId: null,
-      errorCode: "PAYMENT_REQUIRED",
+      errorCode: "schedule.checkpoints.max",
       errorStatus: 402,
     });
-    expect(calls.map((c) => c.url)).toEqual(["/api/v1/divisions/div-1/checkpoints"]);
+    // GET list then the failing POST create — nothing applied.
+    expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
+      "GET /api/v1/divisions/div-1/checkpoints",
+      "POST /api/v1/divisions/div-1/checkpoints",
+    ]);
   });
 
   it("skips the officials call when every proposed official is excluded (no destructive empty replace)", async () => {
@@ -213,17 +253,22 @@ describe("applyAiPlans — chained accept", () => {
 
   // ------------------------------------------------------- default wiring (apiV1)
   it("drives apiV1 over a mocked global fetch (envelope unwrap + method/body)", async () => {
-    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
-      const id = url.includes("checkpoints") ? "cp-9" : undefined;
-      return new Response(JSON.stringify({ ok: true, data: id ? { id } : { applied: 1 } }), { status: 200 });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.includes("checkpoints")) {
+        // GET list → no prior save point; POST create → the new id.
+        const data = init?.method === "POST" ? { id: "cp-9" } : [];
+        return new Response(JSON.stringify({ ok: true, data }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ ok: true, data: { applied: 1 } }), { status: 200 });
     });
     vi.stubGlobal("fetch", fetchMock);
     const out = await applyAiPlans(baseInput({ officials: null }));
     expect(out).toMatchObject({ schedule: "applied", checkpointId: "cp-9" });
-    const [cpUrl, cpInit] = fetchMock.mock.calls[0]!;
-    expect(cpUrl).toContain("/checkpoints");
-    expect(cpInit?.method).toBe("POST");
-    expect(JSON.parse(String(cpInit?.body))).toEqual({ label: "before-ai" });
+    const cpPost = fetchMock.mock.calls.find(
+      ([u, init]) => String(u).includes("checkpoints") && init?.method === "POST",
+    );
+    expect(cpPost).toBeTruthy();
+    expect(JSON.parse(String(cpPost![1]?.body))).toEqual({ label: "before-ai" });
   });
 });
 

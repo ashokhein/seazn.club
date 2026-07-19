@@ -223,10 +223,13 @@ describe("aiErrorKey (status → localized copy key)", () => {
     expect(aiErrorKey(422)).toBe("board.ai.error.invalid");
   });
 
+  it("maps 503 (AI not configured on this server) to its own line", () => {
+    expect(aiErrorKey(503)).toBe("board.ai.error.unavailable");
+  });
+
   it("falls back to the generic key for anything unmapped", () => {
     expect(aiErrorKey(500)).toBe("board.ai.errorGeneric");
     expect(aiErrorKey(0)).toBe("board.ai.errorGeneric");
-    expect(aiErrorKey(503)).toBe("board.ai.errorGeneric");
   });
 });
 
@@ -238,8 +241,17 @@ describe("applyErrorKey (apply outcome → localized copy key)", () => {
     ...over,
   });
 
+  it("routes a checkpoint save-point-quota 402 to the save-point line, not the AI-upgrade line", () => {
+    // AI is graded onto every tier now; a 402 at the checkpoint step is the
+    // save-point quota (feature_key schedule.checkpoints.max), so the copy must
+    // point at deleting/upgrading save points — not "upgrade to use AI".
+    expect(applyErrorKey(outcome({ errorCode: "schedule.checkpoints.max", errorStatus: 402 }))).toBe(
+      "board.ai.apply.checkpointQuota",
+    );
+  });
+
   it("sharpens an actionable failure through the outcome's status + code", () => {
-    // Checkpoint 402 (save-point quota) → the upgrade line, not the flat generic.
+    // A non-checkpoint 402 (e.g. api.write feature gate) still → the upgrade line.
     expect(applyErrorKey(outcome({ errorCode: "PAYMENT_REQUIRED", errorStatus: 402 }))).toBe("board.ai.error.upgrade");
     // Schedule 422 frozen-competition (code doesn't split) → the invalid line.
     expect(applyErrorKey(outcome({ errorCode: "COMPETITION_FROZEN", errorStatus: 422 }))).toBe("board.ai.error.invalid");

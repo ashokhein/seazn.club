@@ -179,6 +179,7 @@ export function aiConsoleReducer(s: AiConsoleState, a: AiConsoleAction): AiConso
 /** ui-catalog copy keys for a failed run. */
 export type AiErrorKey =
   | "board.ai.error.upgrade"
+  | "board.ai.error.unavailable"
   | "board.ai.error.rateLimited"
   | "board.ai.error.conflict"
   | "board.ai.error.tooLarge"
@@ -196,6 +197,10 @@ export function aiErrorKey(status: number, code?: string): AiErrorKey {
   switch (status) {
     case 402:
       return "board.ai.error.upgrade";
+    case 503:
+      // AI isn't configured on this server (no key / disabled) — a distinct line
+      // from the run failures so the organiser isn't told to just try again.
+      return "board.ai.error.unavailable";
     case 429:
       return "board.ai.error.rateLimited";
     case 409:
@@ -217,7 +222,16 @@ export function aiErrorKey(status: number, code?: string): AiErrorKey {
  * the status (its catch-all run-generic), fall back to the apply-specific generic
  * so the copy still reads as an apply failure. Pure — unit-tested without React.
  */
-export function applyErrorKey(outcome: ApplyOutcome): AiErrorKey | "board.ai.apply.error" {
+export function applyErrorKey(
+  outcome: ApplyOutcome,
+): AiErrorKey | "board.ai.apply.error" | "board.ai.apply.checkpointQuota" {
+  // A 402 at the checkpoint step is the save-point quota (schedule.checkpoints.max),
+  // not the AI grade — AI is already granted on this tier, so route it to the
+  // save-point line ("delete a save point or upgrade") instead of the generic
+  // "upgrade to use AI" the plain 402 → error.upgrade mapping would give.
+  if (outcome.errorStatus === 402 && outcome.errorCode === "schedule.checkpoints.max") {
+    return "board.ai.apply.checkpointQuota";
+  }
   const key = aiErrorKey(outcome.errorStatus ?? 0, outcome.errorCode);
   return key === "board.ai.errorGeneric" ? "board.ai.apply.error" : key;
 }
