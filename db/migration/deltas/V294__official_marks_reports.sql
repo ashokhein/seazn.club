@@ -1,5 +1,5 @@
 -- =============================================================================
--- V293 — Official marks & match reports (SPEC-3 / PROMPT-80).
+-- V294 — Official marks & match reports (SPEC-3 / PROMPT-80).
 -- Two adjacent features on the fixture_officials assignment row: organiser
 -- marks (Pro, org-private) and official-filed match reports (free, cross-org).
 -- Submitted reports feed SPEC-1 (V293) as *suggested* pending suspensions via a

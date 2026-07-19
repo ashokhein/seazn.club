@@ -229,6 +229,31 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     expect(reports[0]).toMatchObject({ status: "submitted", body: "ref one", officialName: "The Ref" });
   });
 
+  it("org B's fixtureReports never sees org A's submitted report (RLS)", async () => {
+    const a = await seedOrg();
+    const b = await seedOrg();
+    const ref = await makeClaimedOfficial(a);
+    const { fixtureOfficialId, fixtureId } = await makeAssignment(a, ref.officialId);
+    await putMyReport(ref.userId, fixtureOfficialId, { body: "org a only", incidents: [] });
+    await submitMyReport(ref.userId, fixtureOfficialId);
+
+    // Sanity: the raw superuser connection DOES see org A's row, so the tenant
+    // assertion below is meaningful (not vacuously zero).
+    const [{ raw }] = await sql<{ raw: number }[]>`
+      select count(*)::int as raw from match_reports where fixture_official_id = ${fixtureOfficialId}`;
+    expect(raw).toBe(1);
+
+    // Through org B's tenant rail, RLS hides org A's row entirely.
+    const seen = await withTenant(b.orgId, async (tx) => {
+      const [r] = await tx<{ c: number }[]>`
+        select count(*)::int as c from match_reports where fixture_official_id = ${fixtureOfficialId}`;
+      return r!.c;
+    });
+    expect(seen).toBe(0);
+    // And org B's fixtureReports for org A's fixture reports empty.
+    expect(await fixtureReports(b.auth, fixtureId)).toEqual([]);
+  });
+
   it("bridges a named red card into a pending report-suspension (SPEC-1)", async () => {
     const ctx = await seedOrg("pro"); // pro → discipline.enforced true (V293)
     const ref = await makeClaimedOfficial(ctx);
