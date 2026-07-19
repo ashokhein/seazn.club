@@ -12,3 +12,4 @@ development/
 engine/
 *.md
 !README.md
+.claude/
