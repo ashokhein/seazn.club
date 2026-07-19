@@ -24,8 +24,8 @@ The tab shows every club and standalone team with its crest, short name, team co
 
 Each club has its own page with three tabs:
 
-- **Overview** — edit the profile (name, short name, public slug, home ground, website, notes), set kit colours and upload a badge, and manage contacts (secretary, chairman, treasurer, welfare officer, manager). One contact can be marked primary. The danger zone deletes the club.
-- **Teams** — the club's teams, with add-a-team, a per-team badge, and the squad editor. Type a player's name and, if they aren't in your People directory yet, **add them as a brand-new player without leaving the page** — no need to switch to People first. You can also detach a team from the club here.
+- **Overview** — edit the profile (name, short name, public slug, home ground, website, notes), set kit colours and upload the club crest — every team without its own badge wears it — and manage contacts (secretary, chairman, treasurer, welfare officer, manager). One contact can be marked primary. The danger zone deletes the club.
+- **Teams** — the club's teams, with add-a-team, a per-team badge that overrides the club crest (**Use club crest** puts a team back on it), and the squad editor. Type a player's name and, if they aren't in your People directory yet, **add them as a brand-new player without leaving the page** — no need to switch to People first. You can also detach a team from the club here.
 - **Entries** — a read-only grid showing where every team is entered, so you can see at a glance which divisions a club is competing in.
 
 ## Limits per plan

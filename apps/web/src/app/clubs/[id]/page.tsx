@@ -98,6 +98,7 @@ export default async function ClubHubPage({
               contacts: club.contacts,
             }}
             canEdit={canEdit}
+            storageBase={storageBase}
           />
         )}
 
