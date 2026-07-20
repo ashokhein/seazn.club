@@ -42,6 +42,22 @@ describe("buildCrumbs", () => {
     expect(crumbs[1]!.label).toBe("Spring open");
   });
 
+  // Regression: /settings/connect produced ["Acme Sports", "Settings"], so the
+  // trail marked "Settings" as the current page while you were on Connect, and
+  // the back chevron (which targets crumbs[-2]) pointed at org home — skipping
+  // Settings entirely. #190 had removed the page's own "← Settings" link on
+  // the grounds the trail already carried one.
+  it("gives every settings child its own crumb, so the back chevron lands on Settings", () => {
+    expect(buildCrumbs({ ...base, pathname: "/o/acme/settings/connect" })).toEqual([
+      { label: "Acme Sports", href: "/o/acme" },
+      { label: "Settings", href: "/o/acme/settings" },
+      { label: "Connect", href: "/o/acme/settings/connect" },
+    ]);
+    // An unlisted child still gets a crumb rather than costing the trail one.
+    expect(buildCrumbs({ ...base, pathname: "/o/acme/settings/api-keys" }).map((c) => c.label))
+      .toEqual(["Acme Sports", "Settings", "Api keys"]);
+  });
+
   it("covers settings, billing and create pages", () => {
     expect(buildCrumbs({ ...base, pathname: "/o/acme/settings/billing" }).map((c) => c.label))
       .toEqual(["Acme Sports", "Settings", "Plan & Billing"]);
