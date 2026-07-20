@@ -1756,6 +1756,7 @@
   "wizard.schedulingHint": "Courts, match length and a start time for the timetable. You can change these later on the schedule board.",
   "wizard.matchLengthHint": "Pre-filled for the selected sport & variant — adjust if needed.",
   "wizard.endDateHint": "Sets how many days the schedule's week view spans.",
+  "wizard.venuesProHint": "One {venue} to start with — Pro unlocks parallel {venue}s.",
   "wizard.venueCount": "{n} {venue}",
   "wizard.cancel": "Cancel",
   "wizard.back": "Back",

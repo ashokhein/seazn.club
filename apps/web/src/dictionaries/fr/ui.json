@@ -1756,6 +1756,7 @@
   "wizard.schedulingHint": "Terrains, durée des matchs et heure de début pour le calendrier. Vous pourrez modifier ces éléments plus tard sur le tableau de programmation.",
   "wizard.matchLengthHint": "Pré-rempli selon le sport et la variante sélectionnés — à ajuster si nécessaire.",
   "wizard.endDateHint": "Définit le nombre de jours couverts par la vue hebdomadaire du calendrier.",
+  "wizard.venuesProHint": "Un seul {venue} pour commencer — Pro débloque plusieurs {venue}s en parallèle.",
   "wizard.venueCount": "{n} {venue}",
   "wizard.cancel": "Annuler",
   "wizard.back": "Retour",

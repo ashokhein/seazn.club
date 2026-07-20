@@ -3137,4 +3137,5 @@ export type DictionaryKey =
   | "wizard.tab.format"
   | "wizard.tab.scheduling"
   | "wizard.variant"
-  | "wizard.venueCount";
+  | "wizard.venueCount"
+  | "wizard.venuesProHint";

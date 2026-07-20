@@ -1711,6 +1711,7 @@
   "wizard.schedulingHint": "Velden, wedstrijdduur en een starttijd voor het schema. Je kunt deze later aanpassen op het schemabord.",
   "wizard.matchLengthHint": "Vooraf ingevuld voor de geselecteerde sport & variant — pas aan indien nodig.",
   "wizard.endDateHint": "Bepaalt over hoeveel dagen de weekweergave van het schema loopt.",
+  "wizard.venuesProHint": "Begin met één {venue} — Pro ontgrendelt meerdere {venue}s parallel.",
   "wizard.venueCount": "{n} {venue}",
   "wizard.cancel": "Annuleren",
   "wizard.back": "Terug",

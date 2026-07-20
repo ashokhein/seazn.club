@@ -84,17 +84,46 @@ const GENDERS: { key: string; labelKey: "wizard.gender.m" | "wizard.gender.f" | 
   { key: "x", labelKey: "wizard.gender.x" },
 ];
 
+/** The schedule-settings body the wizard seeds right after create (doc 12 §3).
+ *  `singleVenue` collapses the list to the first venue: more than one court
+ *  trips `usesConstraints()` server-side, which 402s the WHOLE PUT — dates and
+ *  match length included — for orgs without `scheduling.constraints`. */
+export function buildScheduleSeed(
+  input: {
+    courts: string[];
+    matchMinutes: number;
+    /** datetime-local value ("" = not set). */
+    startAt: string;
+    /** date value ("" = not set). */
+    endAt: string;
+    venueCap: string;
+  },
+  opts: { singleVenue?: boolean } = {},
+): { courts: string[]; matchMinutes: number; startAt: string | null; endAt: string | null } {
+  const clean = input.courts.map((c) => c.trim()).filter(Boolean);
+  const courts = clean.length > 0 ? clean : [`${input.venueCap} 1`];
+  return {
+    courts: opts.singleVenue ? courts.slice(0, 1) : courts,
+    matchMinutes: input.matchMinutes,
+    startAt: input.startAt ? new Date(input.startAt).toISOString() : null,
+    endAt: input.endAt ? new Date(`${input.endAt}T23:59:00`).toISOString() : null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 export function DivisionBuilder({
   competitionId,
   orgSlug,
   compSlug,
   sports,
+  constraintsAllowed = true,
 }: {
   competitionId: string;
   orgSlug: string;
   compSlug: string;
   sports: SportOption[];
+  /** Pro `scheduling.constraints` — gates a multi-venue list (doc 12 §5). */
+  constraintsAllowed?: boolean;
 }) {
   const msg = useMsg();
   const locale = useLocale();
@@ -212,23 +241,31 @@ export function DivisionBuilder({
         json: stages,
       });
 
-      // Seed scheduling settings (courts / match length / start). Non-fatal:
+      // Seed scheduling settings (courts / match length / start+end). Non-fatal:
       // the board can set these later, so a failure here shouldn't block create.
-      const cleanCourts = courts.map((c) => c.trim()).filter(Boolean);
-      try {
-        await apiV1(`/api/v1/divisions/${division.id}/schedule-settings`, {
+      const seedInput = {
+        courts,
+        matchMinutes,
+        startAt: scheduleStart,
+        endAt: scheduleEnd,
+        venueCap: venueLabel(sportKey),
+      };
+      const putSeed = (config: ReturnType<typeof buildScheduleSeed>) =>
+        apiV1(`/api/v1/divisions/${division.id}/schedule-settings`, {
           method: "PUT",
-          json: {
-            config: {
-              courts: cleanCourts.length ? cleanCourts : ["Court 1"],
-              matchMinutes,
-              startAt: scheduleStart ? new Date(scheduleStart).toISOString() : null,
-              endAt: scheduleEnd ? new Date(`${scheduleEnd}T23:59:00`).toISOString() : null,
-            },
-          },
+          json: { config },
         });
+      try {
+        await putSeed(buildScheduleSeed(seedInput));
       } catch {
-        /* board settings are editable later — ignore */
+        // A multi-venue list needs Pro; without it the PUT 402s and the whole
+        // tab (dates + match length too) would vanish silently. Retry with a
+        // single venue so everything else still lands.
+        try {
+          await putSeed(buildScheduleSeed(seedInput, { singleVenue: true }));
+        } catch {
+          /* board settings are editable later — ignore */
+        }
       }
 
       router.push(routes.division(orgSlug, compSlug, division.slug));
@@ -752,15 +789,24 @@ export function DivisionBuilder({
               </li>
             ))}
           </ul>
-          <button
-            type="button"
-            onClick={() =>
-              setCourts((cs) => (cs.length < 50 ? [...cs, `${VenueCap} ${cs.length + 1}`] : cs))
-            }
-            className="btn btn-ghost mt-2 text-sm"
-          >
-            {msg("boardset.addVenue", { venue })}
-          </button>
+          {constraintsAllowed ? (
+            <button
+              type="button"
+              onClick={() =>
+                setCourts((cs) => (cs.length < 50 ? [...cs, `${VenueCap} ${cs.length + 1}`] : cs))
+              }
+              className="btn btn-ghost mt-2 text-sm"
+            >
+              {msg("boardset.addVenue", { venue })}
+            </button>
+          ) : (
+            // Pre-empt the 402: a >1 venue list is Pro (doc 12 §5), and the
+            // server refuses the whole settings PUT if the wizard sends one.
+            <div className="mt-2 space-y-1">
+              <p className="text-xs text-slate-400">{msg("wizard.venuesProHint", { venue })}</p>
+              <UpgradeGate feature="scheduling.constraints" compact />
+            </div>
+          )}
           <p className="mt-1 text-xs text-slate-400">
             {msg("wizard.venueCount", { n: courts.filter((c) => c.trim()).length || 1, venue })}
           </p>

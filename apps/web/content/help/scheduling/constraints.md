@@ -4,16 +4,17 @@ description: Play hours, rest gaps, court preferences — the rules Auto-schedul
 order: 4
 ---
 
-Constraints are the rules the auto-scheduler plays by. They live in the division's **schedule settings**.
+Constraints are the rules the auto-scheduler plays by. They live in the division's **schedule settings**. Courts, match length and the start/end dates are also asked once on the **Scheduling** step when you create the division — the settings panel is where you change them afterwards.
 
 ## The basics (all plans)
 
 - **Play hours** — when the venue is yours, per day.
-- **Courts** — how many, and what they're called.
+- **Courts** — what your court is called. More than one court in parallel is Pro.
 - **Match length** — how long a fixture blocks a court, derived from the sport but overridable.
 
 ## Finer control (Pro)
 
+- **Multiple courts** — run matches in parallel across a venue.
 - **Rest gaps** — minimum minutes between an entrant's matches.
 - **Unavailability** — "Rockets can't play before 10am Saturday".
 - **Court preferences** — finals on Court 1, wheelchairs on the accessible court.
