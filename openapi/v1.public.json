@@ -3213,13 +3213,6 @@
                   "officials_hide_names": {
                     "type": "boolean"
                   },
-                  "scheduling_mode": {
-                    "type": "string",
-                    "enum": [
-                      "timed",
-                      "flexible"
-                    ]
-                  },
                   "auto_progress": {
                     "type": "boolean"
                   },
@@ -37716,6 +37709,13 @@
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 120
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "manual",
+                      "ai"
+                    ]
                   }
                 },
                 "required": [
@@ -37724,7 +37724,8 @@
                 "additionalProperties": false
               },
               "example": {
-                "label": "example"
+                "label": "example",
+                "kind": "manual"
               }
             }
           }

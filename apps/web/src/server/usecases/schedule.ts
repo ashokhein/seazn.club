@@ -359,13 +359,6 @@ export async function autoSchedule(
       from stages s join divisions d on d.id = s.division_id
       where s.id = ${stageId}`;
     if (!stage) throw new HttpError(404, "stage not found");
-    const [divMode] = await tx<{ scheduling_mode: string }[]>`
-      select scheduling_mode from divisions where id = ${stage.division_id}`;
-    if (divMode?.scheduling_mode === "flexible") {
-      // Jul3/04 §4: flexible divisions are ordered, never clock-slotted
-      throw new HttpError(422, "this division uses flexible scheduling — no timetable to solve");
-    }
-
     const settings = await loadSettings(tx, stage.division_id);
     const all = await divisionFixtures(tx, stage.division_id);
     const { scopes } = await divisionLockState(tx, stage.division_id);
