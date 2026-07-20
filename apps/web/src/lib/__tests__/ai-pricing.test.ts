@@ -1,38 +1,43 @@
 import { describe, expect, it } from "vitest";
 import { aiRate, aiRunCostUsd } from "../ai-pricing";
 
-// Dates are pinned explicitly: these assertions must not change meaning when
-// the sonnet-5 introductory window lapses on 2026-09-01.
-const DURING_INTRO = new Date("2026-07-20T12:00:00Z");
-const AFTER_INTRO = new Date("2026-09-01T00:00:00Z");
+// Dates are pinned so these assertions cannot drift with the clock.
+const JULY = new Date("2026-07-20T12:00:00Z");
+const SEPTEMBER = new Date("2026-09-01T00:00:00Z");
 
 describe("aiRunCostUsd", () => {
   // 5,212 in + 26,917 out — the measured live run from 2026-07-19.
-  it("prices sonnet-5 at the $2/$10 introductory rate during the window", () => {
-    expect(aiRunCostUsd("claude-sonnet-5", 5212, 26917, DURING_INTRO)).toBe(0.2796);
+  //
+  // Billed at LIST. An introductory $2/$10 rate was briefly applied here and
+  // reverted on 2026-07-20: reconciling the real account balance against 28
+  // benched runs showed list-rate billing, so the intro rate had made the
+  // ledger understate by 33%. The date argument stays because the mechanism
+  // still supports a window — it is just not in use.
+  it("prices sonnet-5 at list, and does not vary with the date", () => {
+    expect(aiRunCostUsd("claude-sonnet-5", 5212, 26917, JULY)).toBe(0.4194);
+    expect(aiRunCostUsd("claude-sonnet-5", 5212, 26917, SEPTEMBER)).toBe(0.4194);
   });
 
-  it("prices sonnet-5 at the $3/$15 list rate once the window lapses", () => {
-    expect(aiRunCostUsd("claude-sonnet-5", 5212, 26917, AFTER_INTRO)).toBe(0.4194);
+  it("prices haiku-4-5 at $1/$5 — the cheap-model escalation target", () => {
+    // The 2026-07-20 sparse-pack measurement: 8,511 in + 4,629 out.
+    expect(aiRunCostUsd("claude-haiku-4-5", 8511, 4629, JULY)).toBe(0.0317);
   });
 
-  it("intro window is inclusive of its final day", () => {
-    const lastMoment = new Date("2026-08-31T23:59:59Z");
-    expect(aiRate("claude-sonnet-5", lastMoment)).toEqual({ input: 2, output: 10 });
-    expect(aiRate("claude-sonnet-5", AFTER_INTRO)).toEqual({ input: 3, output: 15 });
+  it("prices opus-4-8 at $5/$25 per 1M", () => {
+    expect(aiRunCostUsd("claude-opus-4-8", 1_000_000, 1_000_000, JULY)).toBe(30);
   });
 
-  it("models without an intro window are date-independent", () => {
-    expect(aiRunCostUsd("claude-opus-4-8", 1_000_000, 1_000_000, DURING_INTRO)).toBe(30);
-    expect(aiRunCostUsd("claude-opus-4-8", 1_000_000, 1_000_000, AFTER_INTRO)).toBe(30);
+  it("aiRate reports the rate a cost was stamped at", () => {
+    expect(aiRate("claude-sonnet-5", JULY)).toEqual({ input: 3, output: 15 });
+    expect(aiRate("claude-haiku-4-5", JULY)).toEqual({ input: 1, output: 5 });
   });
 
   it("zero tokens cost zero (solver draft)", () => {
-    expect(aiRunCostUsd("claude-sonnet-5", 0, 0, DURING_INTRO)).toBe(0);
+    expect(aiRunCostUsd("claude-sonnet-5", 0, 0, JULY)).toBe(0);
   });
 
   it("unknown model → null, never a guessed price", () => {
-    expect(aiRunCostUsd("some-custom-model", 1000, 1000, DURING_INTRO)).toBeNull();
-    expect(aiRate("some-custom-model", DURING_INTRO)).toBeNull();
+    expect(aiRunCostUsd("some-custom-model", 1000, 1000, JULY)).toBeNull();
+    expect(aiRate("some-custom-model", JULY)).toBeNull();
   });
 });

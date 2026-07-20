@@ -36,7 +36,7 @@ import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiOfficialsPlanRequest, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { AiOfficialsPlan, OFFICIALS_SYSTEM_PROMPT } from "./officials-ai-prompt";
-import { anthropicClient, schedulingAiModel, zonedIso } from "./schedule-ai";
+import { anthropicClient, parseAiEffort, schedulingAiModel, zonedIso, type AiEffort } from "./schedule-ai";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
 import { divisionFixtures, loadSettings } from "./schedule";
 import {
@@ -598,6 +598,16 @@ export function refereeOfficialsPlan(
 // benched, so it keeps effort:high below and inherits the safer timeout rather
 // than an unmeasured cost change.
 const OFFICIALS_ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
+
+/** Effort for the officials (Phase B) call. Deliberately still "high" while
+ *  Phase A moved to "medium" on 2026-07-20: that move was justified by a live
+ *  2x2 over schedule packs, and Phase B has never been benched. A separate env
+ *  var (rather than reusing SCHEDULING_AI_EFFORT) is the point — it lets Phase
+ *  B be measured on its own before its default changes, instead of inheriting
+ *  a conclusion drawn from a different workload. */
+export function officialsAiEffort(): AiEffort {
+  return parseAiEffort(process.env.OFFICIALS_AI_EFFORT, "high");
+}
 const OFFICIALS_MAX_REPAIR_ROUNDS = 2;
 
 /** A conflict the LLM can plausibly repair by re-choosing officials. `role_unfilled`
@@ -761,7 +771,7 @@ async function callOfficialsModel(
         model,
         max_tokens: 32_000,
         thinking: { type: "adaptive" },
-        output_config: { effort: "high", format: zodOutputFormat(AiOfficialsPlan) },
+        output_config: { effort: officialsAiEffort(), format: zodOutputFormat(AiOfficialsPlan) },
         system: [{ type: "text", text: OFFICIALS_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [...messages],
       },

@@ -30,6 +30,8 @@
   "board.ai.run.repair": "Corregir calendario",
   "board.ai.running": "Trabajando en tu calendario…",
   "board.ai.flagged": "El motor marcó el borrador: corrigiendo…",
+  "board.ai.elapsed": "{elapsed} · normalmente entre 1 y 5 minutos",
+  "board.ai.frozen": "Este calendario está congelado. Descongélalo para planificar con IA.",
   "board.ai.errorLabel": "No se pudo completar.",
   "board.ai.errorGeneric": "Algo salió mal. Inténtalo de nuevo.",
   "board.ai.error.upgrade": "La programación con IA necesita un plan Pro.",
