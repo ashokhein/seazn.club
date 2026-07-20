@@ -1,8 +1,9 @@
 # 04 — Architect benchmarks: what the defaults are, and why
 
-> **Status (2026-07-20):** first live measurements. `SCHEDULING_AI_EFFORT` default moved
-> `high` → `medium`; `ROUND_TIMEOUT_MS` 300s → 600s. Repeats run partially complete —
-> **the cost delta is not yet quotable** (see §5). Phase B (officials) unmeasured.
+> **Status (2026-07-20, final):** 28 live runs across 6 arms. `ROUND_TIMEOUT_MS` 300s → 600s
+> (kept). `SCHEDULING_AI_EFFORT` briefly moved to `medium` and was **reverted to `high`** —
+> the repeats concluded against the change they were run to justify (§4a). Phase B
+> (officials) still unmeasured.
 
 The v4 README says *"Token spend is acceptable: a couple of runs per division, quality over
 cost."* That was the right call with no data. This document is the data, and it changes the
@@ -110,6 +111,53 @@ Two results that invert the original read:
 
 ---
 
+## 4a. Final aggregates (n=3) — and the reversal
+
+| pack | effort | secs mean [min–max] | out mean | warnings | $ list |
+|---|---|---|---|---|---|
+| teams-15 | high | 276.8 [268.5–282.9] | 29,858 | 0 | $0.465 |
+| teams-15 | medium | 616.1 [291.4–808.3] | 20,411 | 0 | $0.330 |
+| individuals-50 | high | 97.6 [73.4–142.7] | 11,510 | 0 | $0.195 |
+| individuals-50 | medium | 80.0 [55.8–98.0] | 9,460 | 0 | $0.165 |
+
+**All 12 runs: zero blocking, zero warnings, zero repair rounds.** Quality is not a
+variable between effort levels — which removes the argument the change was made on.
+
+With quality equal, only latency and money remain. On the dense pack `medium` is **2.2×
+slower to save $0.135**; on the sparse pack the two overlap on both axes. Against a
+lifetime quota of 20–50 runs per division, the saving is a few dollars ever, traded for
+~5.6 extra minutes of an organiser watching a spinner. **Reverted to `high`.**
+
+The n=1 pass had claimed the opposite — "medium is 5.1× faster" — from a single `high` run
+of 1094.9s. With n=3, `high` never exceeded 282.9s on that pack. That outlier drove a
+default change that shipped for a day. It is the clearest argument in this document for
+n>1 before acting on a measurement.
+
+**Effort escalation is not viable**, for the same reason the revert happened: `medium`
+never produced a degraded plan, so the referee has nothing to escalate on. A gate would
+never fire, making it equivalent to setting `medium` always. Cheap-*model* escalation is a
+different case — §4b.
+
+## 4b. Cheap models (n=3)
+
+| pack | arm | rounds | blocking | warnings | $ list |
+|---|---|---|---|---|---|
+| teams-15 | haiku-4-5 + budget 8k | 0,0,0 | 0,0,0 | 43,100,20 | $0.050 |
+| teams-15 | sonnet no-think | 2,0,2 | 8,0,2 | 56,57,59 | $0.205 |
+| individuals-50 | haiku-4-5 + budget 8k | 0,0,0 | 0,0,0 | 0,0,0 | $0.043 |
+| individuals-50 | sonnet no-think | 0,0,1 | 0,0,0 | 0,0,0 | $0.071 |
+
+**Haiku matches sonnet exactly on the sparse pack** — 4.5× cheaper, no measurable
+difference, no port (same SDK, same `zodOutputFormat`, same `parsed_output`). On the dense
+pack it stays *legal* but ignores soft constraints: 20–100 warnings where sonnet scored 0.
+
+**No-thinking sonnet fails on dense packs.** Two of three runs exhausted the repair loop
+and still left blocking conflicts. Input ballooned 7–12× as each repair re-sent the prior
+round's output, so the failures cost *more* than a clean `high` run.
+
+Note the caveat this creates for §2: "input is <4% of spend" holds **only at `rounds=0`**.
+On a repair-spiralling run input became 57% of cost.
+
 ## 5. What the evidence supports, and what it does not
 
 **Supported:**
@@ -124,12 +172,18 @@ Two results that invert the original read:
 
 **Not supported — do not quote these:**
 
-- **A specific cost percentage.** The 17–39% figure from the single-sample 2×2 sits inside
-  the within-cell spread now being measured. Sizing it needs the repeats to finish.
-- **"`medium` is 5.1× faster."** That compared one outlier `high` run against one fast
-  `medium` run. On repeats, `medium` is *not* reliably faster and was sometimes slower.
-  This was stated in an earlier commit message and is corrected here.
+- **A specific cost percentage — now settled (§4a).** medium is 32% cheaper on the dense
+  pack and 18% on the sparse one. Not worth taking: the saving only exists where medium is
+  also 2.2x slower.
+- **"medium is 5.1x faster" — false.** It compared one outlier `high` run (1094.9s) against
+  one fast `medium` run. At n=3 `medium` is the SLOWER arm on the dense pack, 616s vs 277s.
+  This shipped as a default for a day before the repeats caught it.
 - **Anything at all about Phase B.** `officials-ai.ts` has never been benched.
+- **A density metric.** The two packs differ simultaneously in structure, court ratio,
+  rest minutes, no-back-to-back, blackouts and cross-person links, so which factor
+  degrades a cheap model is unknown. That is why model selection escalates on referee
+  output rather than predicting from the pack, and why the escalation threshold is
+  uncalibrated. Isolating it needs one-factor-off variants of `teams-15` (~$0.30).
 
 ---
 
@@ -137,11 +191,11 @@ Two results that invert the original read:
 
 | default | value | basis |
 |---|---|---|
-| `SCHEDULING_AI_EFFORT` | `medium` | Fewer output tokens on every paired observation, with no quality cost across 4 cells. **Weaker than first claimed** — the latency argument did not survive repeats. One env var to revert. |
+| `SCHEDULING_AI_EFFORT` | `high` | Quality identical across all 12 runs, so only latency and money remain — and `medium` is 2.2x slower on dense packs to save $0.135 against a lifetime-capped quota. Briefly set to `medium` on an n=1 outlier; reverted (§4a). |
 | `SCHEDULING_AI_ROUND_TIMEOUT_MS` | 600s | A 1095s round exists. Raising it does not increase generation (the abort is client-side; it only decides whether we *receive* the round) but does make repair rounds 2–3 reachable, and each round re-sends the prior output as input. |
 | `OFFICIALS_AI_EFFORT` | `high` | Deliberately unchanged. Phase B is a different problem shape (role eligibility, per-day caps, blackouts, cross-org busy windows) and inheriting a schedule-pack conclusion would be unjustified. |
-| `SCHEDULING_AI_THINKING` | `adaptive` | The 90.5% lever, untested. Disabling it is only *safe to attempt* because the referee catches thin plans; whether it *wins* is open — fewer thinking tokens per round against possibly more rounds. Bench arms exist at `effort:low` + `thinking:disabled`. |
-| model | `claude-sonnet-5` | Unchanged from the 2026-07-19 measurement. |
+| `SCHEDULING_AI_THINKING` | `adaptive` | Tested and kept. Disabling it left blocking conflicts on 2 of 3 dense runs and cost MORE than a clean run, because repair rounds re-send the prior output as input (§4b). |
+| model | `claude-sonnet-5` | Unchanged. `SCHEDULING_AI_CHEAP_MODEL` enables runtime escalation to haiku-4-5 — opt-in and OFF, because its warning-ratio threshold is uncalibrated (§7). |
 
 ---
 

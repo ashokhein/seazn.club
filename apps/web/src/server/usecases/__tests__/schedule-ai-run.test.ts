@@ -183,16 +183,17 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(body.model).toBe("claude-sonnet-5");
   });
 
-  // 2026-07-20 live 2x2 (sonnet-5, 25- and 30-fixture packs): medium returned an
-  // engine-CLEAN plan in one round on every arm, 5.1x/1.9x faster than high
-  // (high needed 1095s on the 30-fixture pack — an unshippable wait). The
-  // referee checks every proposal regardless of effort.
-  it("defaults to effort:medium when SCHEDULING_AI_EFFORT is unset", async () => {
+  // Stays "high". The 2026-07-20 A/B (n=3 per cell) was run to justify lowering
+  // this and concluded against: quality was identical across all 12 runs (0
+  // blocking, 0 warnings, 0 repair rounds), so the only axes left were latency
+  // and money — and on the dense pack medium is 2.2x SLOWER to save $0.135.
+  // An n=1 pass had suggested medium was faster; that was an outlier.
+  it("defaults to effort:high when SCHEDULING_AI_EFFORT is unset", async () => {
     delete process.env.SCHEDULING_AI_EFFORT;
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);
     const body = parse.mock.calls[0][0] as { output_config: { effort: string } };
-    expect(body.output_config.effort).toBe("medium");
+    expect(body.output_config.effort).toBe("high");
   });
 
   // Thinking is ~90% of a run's output tokens (only 2,588 of 27,349 was the
@@ -221,7 +222,7 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     delete process.env.SCHEDULING_AI_THINKING;
   });
 
-  it("SCHEDULING_AI_EFFORT overrides the default; an unknown value falls back to medium", async () => {
+  it("SCHEDULING_AI_EFFORT overrides the default; an unknown value falls back to high", async () => {
     process.env.SCHEDULING_AI_EFFORT = "xhigh";
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);
@@ -231,7 +232,7 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     process.env.SCHEDULING_AI_EFFORT = "turbo";
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);
-    expect((parse.mock.calls[0][0] as { output_config: { effort: string } }).output_config.effort).toBe("medium");
+    expect((parse.mock.calls[0][0] as { output_config: { effort: string } }).output_config.effort).toBe("high");
     delete process.env.SCHEDULING_AI_EFFORT;
   });
 
@@ -257,7 +258,7 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     // Modern models keep the adaptive + effort shape.
     const sonnet = aiReasoningParams("claude-sonnet-5");
     expect(sonnet.thinking).toEqual({ type: "adaptive" });
-    expect(sonnet.effort).toBe("medium");
+    expect(sonnet.effort).toBe("high");
 
     process.env.SCHEDULING_AI_THINKING = "disabled";
     expect(aiReasoningParams("claude-sonnet-5").thinking).toEqual({ type: "disabled" });

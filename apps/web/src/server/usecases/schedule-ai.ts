@@ -638,29 +638,35 @@ export function schedulingAiModel(): string {
   return process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
 }
 
-/** Effort hint for the architect call. Output tokens are ~96% of a run's cost,
- *  and effort is the direct knob on thinking depth — so this is the cost lever,
- *  not prompt caching (input is <4% of spend).
+/** Effort hint for the architect call.
  *
- *  Default "medium" since 2026-07-20, on a live 2x2 (sonnet-5, two packs, both
- *  efforts). Every arm returned an engine-verified CLEAN plan in one round —
- *  medium cost no measurable quality:
+ *  Stays "high". A live A/B (2026-07-20, sonnet-5, two packs, n=3 per cell)
+ *  was run specifically to justify lowering it, and concluded against:
  *
- *    pack (fixtures)   high              medium
- *    teams-15 (30)     1095s / 27.3k out  213s / 22.5k out
- *    individuals-50    159s / 16.9k out    84s /  9.9k out
+ *    pack             effort   secs mean            out mean   warnings
+ *    teams-15 (30)    high     276.8 [268.5-282.9]   29,858       0
+ *    teams-15 (30)    medium   616.1 [291.4-808.3]   20,411       0
+ *    individuals-50   high      97.6 [ 73.4-142.7]   11,510       0
+ *    individuals-50   medium    80.0 [ 55.8- 98.0]    9,460       0
  *
- *  The decisive term is latency, not money: medium is 5.1x / 1.9x faster, and
- *  18 minutes is not a viable wait at any price. Treat the cost delta (17-39%)
- *  as directional only — a repeated cell varied 2.1x run-to-run, so a single
- *  sample cannot size it. SCHEDULING_AI_EFFORT overrides.
+ *  Quality is identical — all 12 runs returned an engine-verified plan with
+ *  zero blocking, zero warnings, zero repair rounds. So the only live axes are
+ *  latency and money, and on the dense pack medium is 2.2x SLOWER to save
+ *  $0.135. Against a lifetime quota of 20-50 runs per division that is a few
+ *  dollars, traded for ~5.6 extra minutes of an organiser watching a spinner.
+ *
+ *  An n=1 pass had briefly suggested the opposite (medium "5.1x faster") — that
+ *  was a 1095s outlier on the high side; with n=3 high never exceeded 283s on
+ *  that pack. Recorded here because the wrong conclusion shipped for a day.
+ *
+ *  Effort escalation is NOT viable for the same reason: medium never produced a
+ *  degraded plan, so the referee has nothing to escalate on. Cheap-MODEL
+ *  escalation is a different matter — see runAiPlanEscalating.
  *
  *  Phase B (officials-ai.ts) is deliberately still "high": it was not measured.
- *
- *  The deterministic referee verifies every proposal regardless, so a thinner
- *  plan surfaces as repair rounds, never as a silently bad schedule. */
+ *  Full write-up: design/v4/04-architect-benchmarks.md. */
 export function schedulingAiEffort(): AiEffort {
-  return parseAiEffort(process.env.SCHEDULING_AI_EFFORT, "medium");
+  return parseAiEffort(process.env.SCHEDULING_AI_EFFORT, "high");
 }
 
 export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
