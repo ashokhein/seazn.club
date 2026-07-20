@@ -34,6 +34,7 @@ import {
 } from "@/lib/currency";
 import { HttpError } from "@/lib/errors";
 import { checkoutSchema } from "@/lib/types";
+import seed from "@/config/stripe-plans.json";
 
 const base = {
   priceId: "price_123",
@@ -80,12 +81,55 @@ describe("buildEmbeddedCheckoutParams", () => {
     expect("customer" in withEmail).toBe(false);
   });
 
-  it("sets the session currency for non-usd, omits it for usd/default", () => {
-    const eur = buildEmbeddedCheckoutParams({ ...base, currency: "eur" });
-    expect(eur.currency).toBe("eur");
-    const usd = buildEmbeddedCheckoutParams({ ...base, currency: "usd" });
-    expect("currency" in usd).toBe(false);
-    expect("currency" in buildEmbeddedCheckoutParams(base)).toBe(false);
+  // The actual fix for the quoted-vs-charged mismatch. Adaptive Pricing is ON
+  // by default and converts at RENDER time from the customer's IP, so a session
+  // created as usd/15900 still displayed £125.00 in the iframe. Verified live
+  // 2026-07-20 that `currency` alone does NOT suppress it — only this flag.
+  it("disables Stripe Adaptive Pricing on both checkout flows", () => {
+    expect(buildEmbeddedCheckoutParams(base).adaptive_pricing).toEqual({ enabled: false });
+    expect(
+      buildPassCheckoutParams({
+        priceId: "price_pass",
+        orgId: "org-abc",
+        competitionId: "comp-1",
+        returnUrl: base.returnUrl,
+        customerEmail: "a@b.com",
+      }).adaptive_pricing,
+    ).toEqual({ enabled: false });
+  });
+
+  // Previously this asserted the opposite for usd — that the key was OMITTED.
+  // Explicitness is not what fixes the bug (see the Adaptive Pricing test
+  // above); it makes the session state the currency WE picked rather than
+  // leaving it implicit.
+  it("always sends an explicit currency, usd included", () => {
+    expect(buildEmbeddedCheckoutParams({ ...base, currency: "eur" }).currency).toBe("eur");
+    expect(buildEmbeddedCheckoutParams({ ...base, currency: "usd" }).currency).toBe("usd");
+    // No currency from the caller still means an explicit usd on the wire, not
+    // an absent key — an absent key is the bug.
+    expect(buildEmbeddedCheckoutParams(base).currency).toBe("usd");
+    expect("currency" in buildEmbeddedCheckoutParams(base)).toBe(true);
+  });
+
+  // Every currency the app can hand these builders must exist in the price's
+  // currency_options, or checkout 400s at runtime. This pins the two lists
+  // together so widening one without the other fails here rather than live.
+  it("only ever sends a currency the seed prices actually define", () => {
+    // Every price the builders can target, not just the first: a currency
+    // missing from ANY of them is a 400 on that specific checkout.
+    const priceOptionSets = [
+      ...seed.plans.flatMap((p) => [p.prices.monthly, p.prices.annual]),
+      ...seed.passes.map((p) => p.price),
+    ].map((p) => new Set([seed.currency, ...Object.keys(p.currency_options)]));
+
+    const missing: string[] = [];
+    for (const c of SUPPORTED_CURRENCIES) {
+      priceOptionSets.forEach((opts, i) => {
+        if (!opts.has(c)) missing.push(`${c} missing from price #${i}`);
+      });
+      expect(buildEmbeddedCheckoutParams({ ...base, currency: c }).currency).toBe(c);
+    }
+    expect(missing).toEqual([]);
   });
 });
 
@@ -142,9 +186,12 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
     expect("payment_method_collection" in p).toBe(false);
   });
 
-  it("honours the currency switch like the subscription flow", () => {
+  it("honours the currency switch like the subscription flow, usd included", () => {
     expect(buildPassCheckoutParams({ ...pass, currency: "inr" }).currency).toBe("inr");
-    expect("currency" in buildPassCheckoutParams({ ...pass, currency: "usd" })).toBe(false);
+    // Was asserted absent before; an absent currency is what let Stripe's
+    // adaptive pricing charge a currency the page never quoted.
+    expect(buildPassCheckoutParams({ ...pass, currency: "usd" }).currency).toBe("usd");
+    expect(buildPassCheckoutParams(pass).currency).toBe("usd");
   });
 });
 
