@@ -426,7 +426,34 @@ export function validateAssignments(
   const board = [...existing, ...assignments];
   const byId = new Map(board.map((a) => [a.fixtureId, a]));
 
+  // startWindows (Jul3/04 §3) are a hard bound the solver refuses to place
+  // outside — so the verifier has to know them too, or the same rule holds for
+  // Auto-schedule and evaporates the moment somebody drags a card.
+  const windowFor = (a: Assignment): { notBefore: number; notAfter: number } => {
+    let notBefore = -Infinity;
+    let notAfter = Infinity;
+    for (const w of config.constraints?.startWindows ?? []) {
+      const hits =
+        (w.target.kind === "entrant" && a.entrants.includes(w.target.id)) ||
+        (w.target.kind === "pool" && a.poolId === w.target.id) ||
+        (w.target.kind === "division" && a.divisionId === w.target.id);
+      if (!hits) continue;
+      if (w.notBefore !== undefined) notBefore = Math.max(notBefore, w.notBefore);
+      if (w.notAfter !== undefined) notAfter = Math.min(notAfter, w.notAfter);
+    }
+    return { notBefore, notAfter };
+  };
+
   for (const a of assignments) {
+    // Bounds the START, matching the solver's `start > window.notAfter`.
+    const window = windowFor(a);
+    if (a.startAt < window.notBefore || a.startAt > window.notAfter) {
+      conflicts.push({
+        fixtureId: a.fixtureId,
+        reason: "start_window",
+        detail: "outside the target's start window",
+      });
+    }
     // Court clash / blackout — check against everything else on the board.
     const others = board.filter((o) => o !== a);
     if (courtBlocked(a.court, a.startAt, a.endAt - a.startAt, gapMs, others, blackouts) === "court") {

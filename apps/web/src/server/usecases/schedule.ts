@@ -319,13 +319,25 @@ export function toSlotConfig(settings: ScheduleSettingsOut, now: number): SlotCo
 // panel maps blocking-row reasons through the exact same map client-side.
 // ---------------------------------------------------------------------------
 
-function mapConflicts(conflicts: readonly Conflict[]): ScheduleConflict[] {
+function mapConflicts(
+  conflicts: readonly Conflict[],
+  crossPersonClash?: "warn" | "hard",
+): ScheduleConflict[] {
+  // crossPersonClash="hard" (Jul3/04 §2) means the organiser asked for a person
+  // double-booking to be refused, not badged. The solver already refuses to
+  // place one — but the board accepted a hand-placed clash, because blocking
+  // was decided here without ever consulting the setting. Default stays "warn",
+  // so only organisations that opted in see the change.
+  const personBlocks = crossPersonClash === "hard";
   return conflicts.map((c) => ({
     fixture_id: c.fixtureId,
     code: REASON_CODE[c.reason],
     // conflict.court blocks (physically impossible); warn.order blocks for
     // direct feeds; everything else is a badge (doc 12 §2).
-    blocking: c.reason === "court" || (c.reason === "order" && c.direct === true),
+    blocking:
+      c.reason === "court" ||
+      (c.reason === "order" && c.direct === true) ||
+      (c.reason === "person_overlap" && personBlocks),
     ...(c.detail !== undefined ? { detail: c.detail } : {}),
   }));
 }
@@ -510,6 +522,7 @@ export async function applySchedule(
         [...untouched, ...siblings],
         feedDependencies(all),
       ),
+      settings.config.constraints?.crossPersonClash,
     );
     assertNoBlocking(conflicts);
 
@@ -714,6 +727,7 @@ export async function moveFixture(
           [...others, ...siblings],
           feedDependencies(all),
         ),
+        settings.config.constraints?.crossPersonClash,
       );
       assertNoBlocking(conflicts);
     }
