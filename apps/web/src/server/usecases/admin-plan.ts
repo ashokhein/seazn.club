@@ -68,6 +68,10 @@ export async function compToPro(
     update subscriptions set
       plan_key = 'pro', status = 'active',
       comped_until = ${until ? until.toISOString() : null},
+      -- A comp IS the free ride: the org has had Pro without paying, so a
+      -- later self-serve upgrade bills from day one. coalesce keeps the first
+      -- comp's date across re-comps. Reversible via Restore trial.
+      trial_used_at = coalesce(trial_used_at, now()),
       status_changed_at = case when status is distinct from 'active'
                                then now() else status_changed_at end,
       updated_at = now()

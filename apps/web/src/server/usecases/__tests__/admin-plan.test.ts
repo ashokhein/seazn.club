@@ -135,4 +135,27 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     await extendTrial(actorId, orgId, 7, "one more week");
     expect((await readSub()).trial_used_at).toEqual(stamped);
   });
+
+  // A comp is free Pro — the org has had its free ride, so a later self-serve
+  // upgrade bills from day one. This is the user-reported symptom: an org that
+  // was comped, then downgraded, was still offered the 14-day trial.
+  it("comp-to-Pro burns the trial, and a downgrade does not give it back", async () => {
+    const { orgId, actorId } = await seedOrg();
+    const readSub = async () =>
+      (
+        await sql<{ trial_used_at: string | null }[]>`
+          select trial_used_at from subscriptions where org_id = ${orgId}`
+      )[0];
+    expect(checkoutTrialDays(await readSub())).toBe(14);
+
+    await compToPro(actorId, orgId, null, "founder friend");
+    const stamped = (await readSub()).trial_used_at;
+    expect(stamped).not.toBeNull();
+
+    await compToPro(actorId, orgId, null, "extended the comp");
+    expect((await readSub()).trial_used_at).toEqual(stamped);
+
+    await adminDowngrade(actorId, orgId, "comp ended");
+    expect(checkoutTrialDays(await readSub())).toBe(0);
+  });
 });
