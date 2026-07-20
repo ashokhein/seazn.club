@@ -18,9 +18,7 @@ export async function GET(req: Request, { params }: Ctx) {
     const url = new URL(req.url);
     const format = url.searchParams.get("format") ?? "pdf";
     if (format !== "pdf") throw new HttpError(400, "format must be pdf");
-    const model = await buildAdmitTicketsDoc(
-      auth, id, { printedAt: new Date().toISOString() }, url.origin,
-    );
+    const model = await buildAdmitTicketsDoc(auth, id, { printedAt: new Date().toISOString() });
     const bytes = await docModelToPdf(model);
     return new NextResponse(new Uint8Array(bytes), {
       headers: {

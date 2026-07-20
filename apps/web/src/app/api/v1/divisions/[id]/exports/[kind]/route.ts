@@ -30,7 +30,6 @@ export async function GET(req: Request, { params }: Ctx) {
     }
     const opts = {
       printedAt: new Date().toISOString(),
-      origin: url.origin,
       ...(url.searchParams.get("pageBreaks")
         ? { pageBreaks: Breaks.parse(url.searchParams.get("pageBreaks")) }
         : {}),

@@ -448,10 +448,16 @@ export async function docModelToPdf(model: DocModel): Promise<Buffer> {
       MARGIN, fy, { width: doc.page.width - MARGIN * 2 - 90, lineBreak: false },
     );
     // platform attribution — every tier, every page (free tier otherwise
-    // carries no SEAZN identity at all since the masthead wordmark is Pro-only)
+    // carries no SEAZN identity at all since the masthead wordmark is Pro-only).
+    // Both this and the QR hang off the same right edge, and the QR's box
+    // (fy - 22, 28 wide) reaches past this baseline — so without giving way the
+    // code printed straight through the wordmark. An obscured finder pattern is
+    // also a QR that phones refuse to scan.
+    const qrGutter = qrPng ? 34 : 0; // 28pt code + 6pt breathing room
     doc.font(FONT.body).fontSize(7).fillColor(PALETTE.mute).text(
       "Powered by seazn.club",
-      MARGIN, fy, { width: doc.page.width - MARGIN * 2, align: "right", lineBreak: false },
+      MARGIN, fy,
+      { width: doc.page.width - MARGIN * 2 - qrGutter, align: "right", lineBreak: false },
     );
   }
   doc.end();

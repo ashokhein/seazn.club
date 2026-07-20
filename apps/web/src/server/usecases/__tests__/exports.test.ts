@@ -180,19 +180,18 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
       select slug from organizations where id = ${auth.orgId}`;
 
     // seedDivision creates the competition as visibility: "private" — its
-    // /shared/... page 404s, so no QR should be set even with an origin.
+    // /shared/... page 404s, so no QR belongs on it.
     const privateModel = await buildDivisionDocModel(auth, division.id, "timetable", {
-      printedAt: PRINTED, origin: "https://seazn.club",
+      printedAt: PRINTED,
     });
     expect(privateModel.meta.liveUrl).toBeUndefined();
 
-    // no origin at all (e.g. a test/caller that never threads one): still no QR.
+    // The origin is no longer threaded from the request: a QR is scanned by a
+    // phone that has to reach the public site, so it comes from siteOrigin()
+    // and visibility is the only thing that decides whether one is drawn.
     await sql`update competitions set visibility = 'public' where id = ${comp.id}`;
-    const noOrigin = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
-    expect(noOrigin.meta.liveUrl).toBeUndefined();
-
     const model = await buildDivisionDocModel(auth, division.id, "timetable", {
-      printedAt: PRINTED, origin: "https://seazn.club",
+      printedAt: PRINTED,
     });
     expect(model.meta.liveUrl).toBe(
       `https://seazn.club/shared/${orgSlug}/${comp.slug}/${division.slug}`,
@@ -230,9 +229,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
          ${randomUUID()}, ${"TIX-" + suffix})
       returning ref_code`;
 
-    const model = await buildAdmitTicketsDoc(
-      auth, comp.id, { printedAt: PRINTED }, "https://example.seazn.club",
-    );
+    const model = await buildAdmitTicketsDoc(auth, comp.id, { printedAt: PRINTED });
     expect(model.kind).toBe("admit_ticket");
     const ticket = model.sections[0]!.ticket!;
     expect(ticket.maskedName).toBeTruthy();
@@ -241,7 +238,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
   });
 
   it("buildMyRotaDoc: SEAZN-neutral — no org branding", async () => {
-    const model = await buildMyRotaDoc(randomUUID(), { printedAt: PRINTED }, "https://example.seazn.club");
+    const model = await buildMyRotaDoc(randomUUID(), { printedAt: PRINTED });
     expect(model.kind).toBe("officials_rota");
     expect(model.branding).toBeUndefined();
   });
@@ -251,7 +248,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     const { division: freeDiv, comp: freeComp } = await seedDivision(freeAuth);
     const freeRota = await buildOfficialsRotaDoc(freeAuth, freeDiv.id, { printedAt: PRINTED });
     expect(freeRota.branding).toBeUndefined();
-    const freeTickets = await buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED }, "https://example.seazn.club");
+    const freeTickets = await buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED });
     expect(freeTickets.branding).toBeUndefined();
 
     const { auth: proAuth } = await seedOrg("pro");
@@ -260,7 +257,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
       buildOfficialsRotaDoc(proAuth, proDiv.id, { printedAt: PRINTED }),
     ).resolves.toBeTruthy();
     await expect(
-      buildAdmitTicketsDoc(proAuth, proComp.id, { printedAt: PRINTED }, "https://example.seazn.club"),
+      buildAdmitTicketsDoc(proAuth, proComp.id, { printedAt: PRINTED }),
     ).resolves.toBeTruthy();
   });
 
@@ -295,7 +292,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     const a = await makeLinkedOfficial("Rota User A", fixtures[0]!.id); // Court 1
     await makeLinkedOfficial("Rota User B", fixtures[1]!.id); // Court 2
 
-    const model = await buildMyRotaDoc(a.userId, { printedAt: PRINTED }, "https://example.seazn.club");
+    const model = await buildMyRotaDoc(a.userId, { printedAt: PRINTED });
     const flat = JSON.stringify(model.sections);
     // A's own duty (Court 1) shows; B's fixture (Court 2) never leaks in.
     expect(flat).toContain("Court 1");
