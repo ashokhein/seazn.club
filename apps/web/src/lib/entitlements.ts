@@ -65,8 +65,13 @@ async function resolveFromDb(
   // no scheduler flips it, the resolution does (bounded by the 5-min cache).
   const [orgPlan] = await sql<{ plan_key: string }[]>`
     select case
+      -- A comp/grant past its end date resolves as community at read time — no
+      -- scheduler flips it, the resolution does. A CANCELLED subscription keeps
+      -- its id forever, so an is-null test alone would leave a win-back grant
+      -- running for ever; a live subscription still owns the plan, so exempt.
       when s.comped_until is not null and s.comped_until <= now()
-           and s.stripe_subscription_id is null then 'community'
+           and (s.stripe_subscription_id is null or s.status = 'canceled')
+           then 'community'
       -- past_due grace (spec P1-6): dunning gets 14 days, then reads degrade to
       -- community until an invoice succeeds (which flips status back to active).
       -- Anchored on the TRANSITION (status_changed_at): dunning retries touch

@@ -172,4 +172,141 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     await adminDowngrade(actorId, orgId, "comp ended");
     expect(checkoutTrialDays(await readSub())).toBe(0);
   });
+
+  it("a grant to a Community org conveys real Pro, then lapses on its own", async () => {
+    const { orgId, actorId } = await seedOrg();
+    expect(await hasFeature(orgId, "api.access")).toBe(false);
+
+    await extendTrial(actorId, orgId, 7, "sales call");
+    const [row] = await sql<
+      { plan_key: string; comped_until: string | null; trial_end: string | null }[]
+    >`select plan_key, comped_until, trial_end from subscriptions where org_id = ${orgId}`;
+    expect(row.plan_key).toBe("pro");
+    expect(row.comped_until).toEqual(row.trial_end);
+    expect(await hasFeature(orgId, "api.access")).toBe(true);
+
+    // Clock-controlled lapse — no job flips it, the resolver does.
+    await sql`update subscriptions set comped_until = now() - interval '1 minute',
+                                       trial_end    = now() - interval '1 minute'
+              where org_id = ${orgId}`;
+    const { invalidateOrgEntitlements } = await import("@/lib/entitlements");
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "api.access")).toBe(false);
+  });
+
+  it("stacked grants extend from the existing end and keep the first stamp", async () => {
+    const { orgId, actorId } = await seedOrg();
+    const first = await extendTrial(actorId, orgId, 7, "one");
+    const [{ trial_used_at: stamped }] = await sql<{ trial_used_at: string }[]>`
+      select trial_used_at from subscriptions where org_id = ${orgId}`;
+
+    const second = await extendTrial(actorId, orgId, 7, "two");
+    const days = (new Date(second).getTime() - Date.now()) / 86_400_000;
+    expect(days).toBeGreaterThan(13.9);
+    expect(days).toBeLessThan(14.1);
+    expect(new Date(second).getTime()).toBeGreaterThan(new Date(first).getTime());
+
+    const [after] = await sql<{ trial_used_at: string; comped_until: string }[]>`
+      select trial_used_at, comped_until from subscriptions where org_id = ${orgId}`;
+    expect(after.trial_used_at).toEqual(stamped);
+    expect(new Date(after.comped_until).toISOString()).toBe(second);
+  });
+
+  it("does not demote an org already comped above Pro", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions set plan_key = 'pro_plus' where org_id = ${orgId}`;
+    await extendTrial(actorId, orgId, 7, "keep the plus");
+    const [row] = await sql<{ plan_key: string }[]>`
+      select plan_key from subscriptions where org_id = ${orgId}`;
+    expect(row.plan_key).toBe("pro_plus");
+  });
+
+  // A cancelled subscription keeps its id. Without the liveness test this org
+  // would take the Stripe arm and we would call subscriptions.update on a dead
+  // subscription; without the resolver widening, its grant would never expire.
+  it("treats a cancelled subscription as no subscription, and the grant still lapses", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_dead', status = 'canceled'
+               where org_id = ${orgId}`;
+
+    await extendTrial(actorId, orgId, 7, "win-back");
+    expect(await hasFeature(orgId, "api.access")).toBe(true);
+
+    await sql`update subscriptions set comped_until = now() - interval '1 minute'
+              where org_id = ${orgId}`;
+    const { invalidateOrgEntitlements } = await import("@/lib/entitlements");
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "api.access")).toBe(false);
+  });
+
+  // A cancelled subscription is not a billing relationship: staff must still be
+  // able to comp a departed org back to Pro.
+  it("comps an org whose subscription was cancelled", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_gone', status = 'canceled'
+               where org_id = ${orgId}`;
+    await compToPro(actorId, orgId, null, "win-back comp");
+    const [row] = await sql<{ plan_key: string }[]>`
+      select plan_key from subscriptions where org_id = ${orgId}`;
+    expect(row.plan_key).toBe("pro");
+    expect(await hasFeature(orgId, "api.access")).toBe(true);
+  });
+
+  it("does not label a cancelled subscription as a Stripe-sourced plan", async () => {
+    const { orgId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_gone', status = 'canceled'
+               where org_id = ${orgId}`;
+    expect((await planPanel(orgId)).source).not.toBe("stripe");
+
+    await sql`update subscriptions set status = 'active' where org_id = ${orgId}`;
+    expect((await planPanel(orgId)).source).toBe("stripe");
+  });
+
+  it("refuses a live paying subscription and writes nothing", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_live', status = 'active',
+                     plan_key = 'pro'
+               where org_id = ${orgId}`;
+    const readRow = async () =>
+      (
+        await sql<Record<string, unknown>[]>`
+          select plan_key, status, trial_end, comped_until, trial_used_at,
+                 status_changed_at, updated_at
+          from subscriptions where org_id = ${orgId}`
+      )[0];
+    const before = await readRow();
+    expect(before.plan_key).toBe("pro");
+
+    await expect(extendTrial(actorId, orgId, 7, "gift")).rejects.toThrow(/Stripe/i);
+    expect(await readRow()).toEqual(before);
+  });
+
+  it("refuses a subscription in dunning for the same reason", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_dunning', status = 'past_due'
+               where org_id = ${orgId}`;
+    const readRow = async () =>
+      (
+        await sql<Record<string, unknown>[]>`
+          select plan_key, status, trial_end, comped_until, trial_used_at,
+                 status_changed_at, updated_at
+          from subscriptions where org_id = ${orgId}`
+      )[0];
+    const before = await readRow();
+    expect(before.status).toBe("past_due");
+
+    await expect(extendTrial(actorId, orgId, 7, "gift")).rejects.toThrow(/Stripe/i);
+    expect(await readRow()).toEqual(before);
+  });
+
+  it("still enforces the day bounds", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await expect(extendTrial(actorId, orgId, 0, "nope")).rejects.toThrow(/1–365/);
+    await expect(extendTrial(actorId, orgId, 366, "nope")).rejects.toThrow(/1–365/);
+  });
 });

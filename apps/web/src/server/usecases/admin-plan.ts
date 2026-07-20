@@ -6,7 +6,7 @@ import "server-only";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getLimit, invalidateOrgEntitlements } from "@/lib/entitlements";
-import { downgradeToCommunity } from "@/lib/billing";
+import { downgradeToCommunity, hasLiveSubscription } from "@/lib/billing";
 import { getStripe } from "@/lib/stripe";
 import { logStaffAction } from "@/lib/admin";
 import {
@@ -41,7 +41,9 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
       source: "none",
     };
   }
-  const source = sub.stripe_subscription_id
+  // Liveness, not mere presence: a cancelled subscription keeps its id for
+  // ever, and that org's plan is no longer sourced from Stripe.
+  const source = hasLiveSubscription(sub)
     ? "stripe"
     : sub.plan_key === "pro"
       ? "comped"
@@ -60,7 +62,9 @@ export async function compToPro(
   reason: string,
 ): Promise<void> {
   const before = await planPanel(orgId);
-  if (before.stripe_subscription_id) {
+  // A DEPARTED org keeps its cancelled subscription id, so presence alone would
+  // wrongly refuse it a win-back comp. Only a LIVE subscription owns the plan.
+  if (hasLiveSubscription(before)) {
     throw new HttpError(400, "This org is billed through Stripe — adjust the subscription there.");
   }
   if (until && until.getTime() <= Date.now()) {
@@ -154,34 +158,75 @@ export async function extendTrial(
     throw new HttpError(400, "Trial extension must be 1–365 days.");
   }
   const before = await planPanel(orgId);
+  const live = hasLiveSubscription(before);
+  // Verified against Stripe test mode 2026-07-20: pushing trial_end onto an
+  // ACTIVE subscription is accepted but TRUNCATES the paid period to the trial
+  // end and rewrites the next invoice (a $19/mo sub paid to 20 Aug came back
+  // with period_end 27 Jul and a 429 preview). Dunning is refused for the same
+  // reason — the subscription owns the billing timeline either way. Guarded
+  // before any write and before any Stripe call: this arm changes nothing.
+  if (live && before.status !== "trialing") {
+    throw new HttpError(
+      400,
+      "This organization is billed through Stripe — apply a coupon or credit in Stripe instead.",
+    );
+  }
+
   const base = before.trial_end && new Date(before.trial_end).getTime() > Date.now()
     ? new Date(before.trial_end)
     : new Date();
   const trialEnd = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
+  const iso = trialEnd.toISOString();
 
-  if (before.stripe_subscription_id) {
+  if (live) {
+    // Mid-trial on Stripe: push their trial_end so the first charge moves. The
+    // plan already came from the price, and comped_until stays out of it — the
+    // subscription owns this org's lifecycle.
     await getStripe().subscriptions.update(before.stripe_subscription_id, {
       trial_end: Math.floor(trialEnd.getTime() / 1000),
       proration_behavior: "none",
     });
+    await sql`
+      update subscriptions set
+        status = 'trialing', trial_end = ${iso},
+        -- One trial per org (V277) counts staff-granted trials too: without
+        -- this stamp the org could downgrade and take a fresh 14-day checkout
+        -- trial. coalesce keeps the FIRST grant's date across extensions, and
+        -- the syncSubscription upsert coalesces the same way, so Stripe agrees.
+        trial_used_at = coalesce(trial_used_at, now()),
+        status_changed_at = case when status is distinct from 'trialing'
+                                 then now() else status_changed_at end,
+        updated_at = now()
+      where org_id = ${orgId}`;
+  } else {
+    // No live subscription: the grant has to CONVEY Pro, because entitlements
+    // resolve on plan_key — status/trial_end grant nothing. comped_until is the
+    // expiry the resolver already honours, so nothing needs to sweep it. Only
+    // lift a community org; an org comped at pro_plus must not be demoted.
+    //
+    // status only moves to 'trialing' when there is NO subscription id at all.
+    // A departed org keeps its dead id, and writing a live-looking status onto
+    // that row would make the next call take the Stripe arm (updating a dead
+    // subscription), block checkout, and hide the grant from the resolver's
+    // comp-expiry branch — so its cancelled status stands.
+    await sql`
+      update subscriptions set
+        plan_key = case when plan_key = 'community' then 'pro' else plan_key end,
+        status = case when stripe_subscription_id is null then 'trialing' else status end,
+        trial_end = ${iso}, comped_until = ${iso},
+        trial_used_at = coalesce(trial_used_at, now()),
+        status_changed_at = case when stripe_subscription_id is null
+                                      and status is distinct from 'trialing'
+                                 then now() else status_changed_at end,
+        updated_at = now()
+      where org_id = ${orgId}`;
   }
-  await sql`
-    update subscriptions set
-      status = 'trialing', trial_end = ${trialEnd.toISOString()},
-      -- One trial per org (V277) counts staff-granted trials too: without this
-      -- stamp the org could downgrade and take a fresh 14-day checkout trial.
-      -- coalesce keeps the FIRST grant's date across extensions, and the
-      -- syncSubscription upsert coalesces the same way, so Stripe agrees.
-      trial_used_at = coalesce(trial_used_at, now()),
-      status_changed_at = case when status is distinct from 'trialing'
-                               then now() else status_changed_at end,
-      updated_at = now()
-    where org_id = ${orgId}`;
+
   await invalidateOrgEntitlements(orgId);
   await logStaffAction(actorId, "extend_trial", "org", orgId, {
     reason, days,
-    before: { trial_end: before.trial_end },
-    after: { trial_end: trialEnd.toISOString() },
+    before: { trial_end: before.trial_end, plan_key: before.plan_key },
+    after: { trial_end: iso, granted_pro: !live },
   });
-  return trialEnd.toISOString();
+  return iso;
 }
