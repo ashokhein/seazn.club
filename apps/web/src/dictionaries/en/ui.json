@@ -2187,6 +2187,7 @@
   "billing.downgrade.genericError": "Something went wrong",
   "breadcrumb.settings": "Settings",
   "breadcrumb.billing": "Plan & Billing",
+  "breadcrumb.connect": "Connect",
   "breadcrumb.newCompetition": "New competition",
   "breadcrumb.schedule": "Schedule",
   "breadcrumb.newDivision": "New division",

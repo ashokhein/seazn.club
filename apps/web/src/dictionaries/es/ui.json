@@ -2142,6 +2142,7 @@
   "billing.downgrade.genericError": "Algo salió mal",
   "breadcrumb.settings": "Ajustes",
   "breadcrumb.billing": "Plan y facturación",
+  "breadcrumb.connect": "Connect",
   "breadcrumb.newCompetition": "Nueva competición",
   "breadcrumb.schedule": "Calendario",
   "breadcrumb.newDivision": "Nueva división",

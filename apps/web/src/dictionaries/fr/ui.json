@@ -2187,6 +2187,7 @@
   "billing.downgrade.genericError": "Une erreur s'est produite",
   "breadcrumb.settings": "Paramètres",
   "breadcrumb.billing": "Forfait et facturation",
+  "breadcrumb.connect": "Connect",
   "breadcrumb.newCompetition": "Nouvelle compétition",
   "breadcrumb.schedule": "Calendrier",
   "breadcrumb.newDivision": "Nouvelle division",

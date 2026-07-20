@@ -25,6 +25,14 @@ export interface BreadcrumbNameMap {
  *  this catalog. */
 export type BreadcrumbT = (key: MessageKey, vars?: Record<string, string | number>) => string;
 
+/** Pages under /o/[org]/settings, by path segment. Anything not listed still
+ *  gets a crumb via humanize() — a new settings page must never silently cost
+ *  its own trail entry (and with it the back chevron's target). */
+const SETTINGS_CHILDREN: Record<string, MessageKey> = {
+  billing: "breadcrumb.billing",
+  connect: "breadcrumb.connect",
+};
+
 /** Fallback when a slug is missing from the map (e.g. created after the
  *  layout rendered): "u16-boys" → "U16 boys". */
 function humanize(slug: string): string {
@@ -51,8 +59,19 @@ export function buildCrumbs(args: {
 
   if (rest[0] === "settings") {
     crumbs.push({ label: t("breadcrumb.settings"), href: routes.orgSettings(org) });
-    if (rest[1] === "billing") {
-      crumbs.push({ label: t("breadcrumb.billing"), href: routes.billing(org) });
+    // EVERY child, not just billing. A child the chain does not know still gets
+    // a crumb (humanized) — the alternative is what /settings/connect had: the
+    // "Settings" crumb marked aria-current on a page that is not Settings, and
+    // a back chevron aimed past it at org home. #190 removed these pages'
+    // hand-rolled "← Settings" links on the grounds that the trail already
+    // carried one; for connect it did not.
+    const child = rest[1];
+    if (child) {
+      const known = SETTINGS_CHILDREN[child];
+      crumbs.push({
+        label: known ? t(known) : humanize(child),
+        href: `${routes.orgSettings(org)}/${child}`,
+      });
     }
     return crumbs;
   }
