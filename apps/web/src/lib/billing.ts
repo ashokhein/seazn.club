@@ -218,8 +218,10 @@ export function billingCtaLabel(status: string, hasPaymentMethod: boolean): stri
  * Stripe card list and goes through syncPaymentMethodFlagFromCards below (zero
  * extra Stripe calls).
  *
- * Returns the value written, or null when nothing was written — no
- * subscriptions row, or Stripe was unreachable. A Stripe failure deliberately
+ * Returns the value written, or null when nothing was written. Null has THREE
+ * causes and the caller cannot tell them apart: no subscriptions row, Stripe
+ * was unreachable, or the DB write itself failed (swallowed by
+ * syncPaymentMethodFlagFromCards, which logs it). A Stripe failure deliberately
  * LEAVES THE MIRROR ALONE: a transient outage must not tell an org that just
  * added a card to add one again.
  */
@@ -270,9 +272,51 @@ export async function syncPaymentMethodFlagFromCards(
   const has = args.cardCount > 0 || args.hasCustomerDefault;
   try {
     return await writePaymentMethodFlag(orgId, has);
-  } catch {
+  } catch (err) {
+    // Swallowed on purpose (render path), but NOT silent: a persistently
+    // failing mirror write would otherwise be invisible — every caller just
+    // sees the same null it gets for "Stripe was unreachable".
+    console.error("syncPaymentMethodFlagFromCards: mirror write failed", orgId, err);
     return null;
   }
+}
+
+/**
+ * Point an org's subscriptions row at a Stripe customer, keeping the
+ * has_payment_method mirror honest.
+ *
+ * The flag mirrors "cards on customer X", so a checkout that lands the org on a
+ * DIFFERENT customer (cancel → re-buy mints a new one) makes the stored value a
+ * statement about somebody else's cards. Left alone it inverts the bug this
+ * branch fixes: the fresh no-card 14-day trial would inherit `true` and the
+ * banner would NEVER ask for a card — a silent trial expiry.
+ *
+ * Both moves, deliberately:
+ *  1. the same UPDATE clears the flag when the id actually changes, so there is
+ *     no window in which it describes the old customer, and a Stripe outage
+ *     fails SAFE (ask for a card) rather than silently confident;
+ *  2. then re-derive from the new customer, because a card-collecting checkout
+ *     (trialDays 0) really does leave a card on the new customer and a hard
+ *     false would ask an org that just paid to add the card it just added.
+ *
+ * A same-customer link (the common case: reconcile + webhook both firing)
+ * touches nothing, so a renewal never disturbs the mirror or updated_at.
+ */
+export async function linkStripeCustomer(orgId: string, customerId: string): Promise<void> {
+  const [before] = await sql<{ stripe_customer_id: string | null }[]>`
+    select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+  if (!before) return;
+  // The clear is decided in SQL from the row's own value, so it is correct even
+  // if another writer moved the id since the select above.
+  await sql`
+    update subscriptions
+    set has_payment_method = case when stripe_customer_id is distinct from ${customerId}
+                                  then false else has_payment_method end,
+        updated_at = case when stripe_customer_id is distinct from ${customerId}
+                          then now() else updated_at end,
+        stripe_customer_id = ${customerId}
+    where org_id = ${orgId}`;
+  if (before.stripe_customer_id !== customerId) await syncPaymentMethodFlag(orgId);
 }
 
 /** Persist the flag. Private on purpose — go through syncPaymentMethodFlag so
@@ -288,14 +332,19 @@ async function writePaymentMethodFlag(orgId: string, has: boolean): Promise<bool
 }
 
 /**
- * Does this Stripe subscription prove a card is on file? true / false / null
- * for "cannot tell from this object".
+ * Does this Stripe subscription prove a card is on file? `true` or `null` for
+ * "cannot tell from this object" — NEVER false.
  *
- * The null case is load-bearing. Under the 14-day no-card trial the card the
- * organiser adds lands on the CUSTOMER (invoice_settings.default_payment_method)
- * and the SUBSCRIPTION's default_payment_method stays null, so a webhook that
- * read absence as "no card" would clear the flag minutes after the user added
- * one — the reported bug, restored. Only an EXPANDED customer lets us say false.
+ * A subscription object can only ever be POSITIVE evidence. Under the 14-day
+ * no-card trial the card the organiser adds lands on the CUSTOMER
+ * (invoice_settings.default_payment_method) and the SUBSCRIPTION's
+ * default_payment_method stays null, so reading absence as "no card" would
+ * clear the flag minutes after the user added one — the reported bug, restored.
+ * An expanded customer is no better: it carries a default-payment-method
+ * pointer, not the card LIST, so a card that is attached but not yet default
+ * looks identical to no card at all. Absence is provable only from a card list
+ * (syncPaymentMethodFlag / syncPaymentMethodFlagFromCards), so this returns
+ * null and the caller's `coalesce` keeps the mirror.
  */
 export function paymentMethodFromStripeSubscription(
   stripeSub: Stripe.Subscription,
@@ -304,7 +353,7 @@ export function paymentMethodFromStripeSubscription(
   const customer = stripeSub.customer;
   if (!customer || typeof customer === "string") return null;
   if ("deleted" in customer && customer.deleted) return null;
-  return !!(customer as Stripe.Customer).invoice_settings?.default_payment_method;
+  return (customer as Stripe.Customer).invoice_settings?.default_payment_method ? true : null;
 }
 
 /** Look up our plan_key from a Stripe price ID. */
@@ -517,9 +566,9 @@ export async function reconcileCheckout(
     }
 
     if (session.customer) {
-      await sql`
-        update subscriptions set stripe_customer_id = ${session.customer as string}
-        where org_id = ${orgId}`;
+      // Not a bare UPDATE: a re-buy lands on a NEW customer and the
+      // has_payment_method mirror describes the OLD one. See linkStripeCustomer.
+      await linkStripeCustomer(orgId, session.customer as string);
     }
 
     const subObj = session.subscription;

@@ -186,7 +186,10 @@ export default async function BillingPage({
               status === "trialing" &&
               ((overview?.paymentMethods.length ?? 0) === 0 ? (
                 <a href="#payment-methods" className="btn btn-primary">
-                  {billingCtaLabel(status, (overview?.paymentMethods.length ?? 0) > 0)}
+                  {/* The MIRROR, not the list: this arm is also taken when the
+                      Stripe read failed (overview null), and the mirror still
+                      knows whether the org has a card. */}
+                  {billingCtaLabel(status, sub?.has_payment_method ?? false)}
                 </a>
               ) : (
                 <p className="text-sm text-emerald-600">

@@ -26,6 +26,7 @@ const stripeMock = vi.hoisted(() => ({
   listInvoices: vi.fn(),
   listTaxIds: vi.fn(),
   retrieveSubscription: vi.fn(),
+  retrieveCheckoutSession: vi.fn(),
 }));
 vi.mock("@/lib/stripe", () => ({
   getStripe: () => ({
@@ -42,6 +43,7 @@ vi.mock("@/lib/stripe", () => ({
     },
     invoices: { list: stripeMock.listInvoices },
     subscriptions: { retrieve: stripeMock.retrieveSubscription },
+    checkout: { sessions: { retrieve: stripeMock.retrieveCheckoutSession } },
   }),
 }));
 vi.mock("@/lib/auth", () => ({
@@ -53,7 +55,12 @@ vi.mock("@/lib/posthog-server", () => ({ captureServer: vi.fn() }));
 vi.mock("@/lib/entitlements", () => ({ invalidateOrgEntitlements: vi.fn() }));
 
 import { sql } from "@/lib/db";
-import { billingCtaLabel, syncPaymentMethodFlag, syncSubscription } from "@/lib/billing";
+import {
+  billingCtaLabel,
+  reconcileCheckout,
+  syncPaymentMethodFlag,
+  syncSubscription,
+} from "@/lib/billing";
 import {
   getBillingOverview,
   setDefaultPaymentMethod,
@@ -180,7 +187,9 @@ describe.skipIf(!HAS_DB)("trial banner vs a card already on file", () => {
     expect(html).toContain("4 days left in your Pro trial");
     // …but the org has already done what the CTA asks.
     expect(html).not.toContain("Add a payment method");
-    expect(html).not.toContain("Add a card to keep Pro");
+    // ("Add a card to keep Pro" is the >7-day arm's copy — asserting its
+    //  absence here would pass with or without the fix; the link check below is
+    //  the real guard. The >7-day case asserts it where it can appear.)
     expect(html).not.toContain("/settings/billing");
   });
 
@@ -484,7 +493,12 @@ describe.skipIf(!HAS_DB)("syncSubscription derives has_payment_method", () => {
     expect(await flagOf(orgId)).toBe(true);
   });
 
-  it("clears it when an expanded customer has no default either", async () => {
+  it("PRESERVES the flag when an expanded customer has no default either", async () => {
+    // An expanded customer carries a default-payment-method POINTER, not the
+    // card list: a card attached but not yet promoted to default is
+    // indistinguishable from no card at all. So this object cannot prove
+    // absence, and concluding false here would clear a true flag and re-arm the
+    // original bug. Only a card list (syncPaymentMethodFlag) may write false.
     const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
     await syncSubscription(
       orgId,
@@ -494,10 +508,24 @@ describe.skipIf(!HAS_DB)("syncSubscription derives has_payment_method", () => {
         customer: { id: "cus_x", invoice_settings: { default_payment_method: null } },
       }),
     );
+    expect(await flagOf(orgId)).toBe(true);
+  });
+
+  it("does not INVENT a card either — a false mirror stays false", async () => {
+    // The other half of "null": no-evidence must not flip a false flag to true.
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+    await syncSubscription(
+      orgId,
+      stripeSub({
+        id: "sub_pm3b",
+        defaultPaymentMethod: null,
+        customer: { id: "cus_x", invoice_settings: { default_payment_method: null } },
+      }),
+    );
     expect(await flagOf(orgId)).toBe(false);
   });
 
-  it("PRESERVES a true flag when the Stripe object cannot answer", async () => {
+  it("PRESERVES a true flag when the Stripe object cannot answer (unexpanded)", async () => {
     // The user's regression in waiting: the 14-day no-card trial leaves the
     // SUBSCRIPTION's default_payment_method null even after a card is added
     // (the card lands on the CUSTOMER). With the customer unexpanded, a
@@ -505,5 +533,124 @@ describe.skipIf(!HAS_DB)("syncSubscription derives has_payment_method", () => {
     const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
     await syncSubscription(orgId, stripeSub({ id: "sub_pm4", defaultPaymentMethod: null }));
     expect(await flagOf(orgId)).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The EIGHTH writer: linking a Stripe customer. The mirror means "cards on
+// customer X", so a cancel-then-rebuy that lands the org on a NEW customer must
+// not carry the old customer's `true` into a fresh no-card trial — that inverts
+// the reported bug into a banner that never asks and a silent trial expiry.
+// ---------------------------------------------------------------------------
+
+async function updatedAtOf(orgId: string): Promise<string> {
+  const [row] = await sql<{ updated_at: string }[]>`
+    select updated_at from subscriptions where org_id = ${orgId}`;
+  return new Date(row.updated_at).toISOString();
+}
+
+/** Cancel the org's subscription the way Stripe would, leaving the dead id. */
+async function cancelSubscription(orgId: string) {
+  await sql`
+    update subscriptions set status = 'canceled', trial_end = null
+    where org_id = ${orgId}`;
+}
+
+describe.skipIf(!HAS_DB)("cancel → re-buy lands on a NEW Stripe customer", () => {
+  it("clears the inherited flag on the checkout.session.completed webhook", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+    const customerA = await customerOf(orgId);
+    expect(await flagOf(orgId)).toBe(true);
+    await cancelSubscription(orgId);
+
+    // Re-buy: brand new customer, NO card on it (the 14-day no-card trial).
+    const customerB = `${customerA}_rebuy`;
+    stripeHasCards(customerB, 0);
+    await processStripeEvent({
+      type: "checkout.session.completed",
+      data: { object: { customer: customerB, metadata: { org_id: orgId } } },
+    } as unknown as Stripe.Event);
+
+    expect(await customerOf(orgId)).toBe(customerB);
+    // Customer B's cards, not customer A's.
+    expect(await flagOf(orgId)).toBe(false);
+
+    // …and the fresh trial's banner does ask for a card.
+    await syncSubscription(orgId, stripeSub({ id: "sub_rebuy", defaultPaymentMethod: null }));
+    const html = await renderBanner(orgId);
+    expect(html).toContain("4 days left in your Pro trial");
+    expect(html).toContain("Add a payment method");
+  });
+
+  it("clears it on the reconcile-on-return path too", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+    const customerB = `${await customerOf(orgId)}_reconcile`;
+    await cancelSubscription(orgId);
+    stripeHasCards(customerB, 0);
+    stripeMock.retrieveCheckoutSession.mockResolvedValue({
+      id: "cs_rebuy",
+      customer: customerB,
+      metadata: { org_id: orgId },
+      subscription: stripeSub({ id: "sub_reconcile", defaultPaymentMethod: null }),
+    });
+
+    expect(await reconcileCheckout(orgId, "cs_rebuy")).toBe(true);
+    expect(await customerOf(orgId)).toBe(customerB);
+    expect(await flagOf(orgId)).toBe(false);
+    expect(await renderBanner(orgId)).toContain("Add a payment method");
+  });
+
+  it("re-derives rather than blindly clearing: a card-collecting re-buy stays true", async () => {
+    // trialDays 0 checkout charges at once, so customer B really does have the
+    // card. A hard `false` would ask an org that just paid to add the card it
+    // just added.
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+    const customerB = `${await customerOf(orgId)}_paid`;
+    stripeHasCards(customerB, 1);
+    await processStripeEvent({
+      type: "checkout.session.completed",
+      data: { object: { customer: customerB, metadata: { org_id: orgId } } },
+    } as unknown as Stripe.Event);
+    expect(await flagOf(orgId)).toBe(true);
+  });
+
+  it("leaves the mirror and updated_at alone when the customer is UNCHANGED", async () => {
+    // The common case: reconcile and the webhook both link the same customer.
+    // A renewal must not disturb the flag or the sibling timestamp.
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+    const customerA = await customerOf(orgId);
+    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where org_id = ${orgId}`;
+    stripeHasCards(customerA, 0); // would clear the flag if we re-derived
+    await processStripeEvent({
+      type: "checkout.session.completed",
+      data: { object: { customer: customerA, metadata: { org_id: orgId } } },
+    } as unknown as Stripe.Event);
+    expect(stripeMock.retrieveCustomer).not.toHaveBeenCalled();
+    expect(await flagOf(orgId)).toBe(true);
+    expect(await updatedAtOf(orgId)).toBe("2020-01-01T00:00:00.000Z");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writePaymentMethodFlag bumps updated_at ONLY on a real change.
+// needsRenewalResync reads sibling columns off this row, so the cleverness is
+// pinned rather than left to be rediscovered.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("has_payment_method writes and updated_at", () => {
+  it("does NOT touch updated_at when the value is unchanged", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where org_id = ${orgId}`;
+    stripeHasCards(await customerOf(orgId), 0);
+    expect(await syncPaymentMethodFlag(orgId)).toBe(false);
+    expect(await updatedAtOf(orgId)).toBe("2020-01-01T00:00:00.000Z");
+  });
+
+  it("DOES bump updated_at when the value actually changes", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where org_id = ${orgId}`;
+    stripeHasCards(await customerOf(orgId), 1);
+    expect(await syncPaymentMethodFlag(orgId)).toBe(true);
+    expect(await updatedAtOf(orgId)).not.toBe("2020-01-01T00:00:00.000Z");
   });
 });

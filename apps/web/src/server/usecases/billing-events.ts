@@ -8,6 +8,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import {
+  linkStripeCustomer,
   recordPassPurchase,
   refundDuplicatePassPayment,
   revokePassForRefundedCharge,
@@ -102,11 +103,11 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  // Link the Stripe customer to this org
+  // Link the Stripe customer to this org. A re-buy after a cancel mints a NEW
+  // customer, and has_payment_method mirrors cards on the OLD one — so this
+  // goes through linkStripeCustomer, which re-derives the flag on a change.
   if (session.customer) {
-    await sql`
-      update subscriptions set stripe_customer_id = ${session.customer as string}
-      where org_id = ${orgId}`;
+    await linkStripeCustomer(orgId, session.customer as string);
   }
 
   // Subscription details arrive via subscription.created; nothing more to do here.
