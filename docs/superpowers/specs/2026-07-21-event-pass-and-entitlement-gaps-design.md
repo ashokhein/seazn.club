@@ -50,6 +50,7 @@ below, and it recurs at 27 call-site groups.
 | D8 | Resolver unification: fix `org_has_feature` via a new migration **and delete** the two app-side duplicate resolvers. |
 | D9 | The override-expiry and lapsed-comp leaks land **first** in the branch — the Event Pass work builds on a correct resolver. |
 | D10 | Spec + fix + E2E ship on one branch; the upgrade-page visual redesign needs screenshot sign-off before merge. |
+| D11 | The Event Pass checkout opens in the **same `Modal` and theme as the Pro checkout** on the billing page — one checkout presentation across the product. |
 
 ## What the pass actually sells (corrected)
 
@@ -252,7 +253,24 @@ added here must land in all four.
 Today `routes.competitionUpgrade` has exactly one inbound link in the whole app —
 `upgrade-gate.tsx:39` — reachable only after a gate has already bitten.
 
-## Workstream 6 — upgrade page redesign (D10)
+## Workstream 6 — checkout presentation and upgrade page (D10/D11)
+
+### Checkout parity (D11)
+
+The two checkouts diverged. Pro (`components/billing-actions.tsx:49`) mounts
+`<EmbeddedCheckout>` inside `<Modal title="Complete your upgrade" size="lg">` from
+`@/components/modal`, letting the Modal cap the sheet at 85vh. The pass
+(`components/pass-upgrade.tsx:36-51`) renders it **inline**, escapes its container
+with a `-mx-9 w-auto sm:mx-0` full-bleed hack, and offers a bare text "Cancel"
+link.
+
+Bring the pass onto the same `Modal`, same title treatment, same size, same close
+affordance, and drop the full-bleed hack — the Modal already solves phone widths.
+Both already share `CHECKOUT_BRANDING` (`lib/billing.ts:18`), so the Stripe iframe
+itself matches; only our chrome differs. After the change, a screenshot of the two
+checkouts side by side should be indistinguishable apart from the line item.
+
+### Upgrade page redesign (D10)
 
 `upgrade/page.tsx` is two flat cards plus a dead-end green box. Rework to a
 pass-vs-Pro comparison naming real limits, with states for: not owned (owner),
@@ -315,7 +333,11 @@ frontend-design skill. Build variants, screenshot desktop and mobile, get sign-o
   refund; refund revokes.
 - **E2E (Playwright, Stripe test mode):** U1, U6, U7, U12, U15 at desktop **and**
   mobile viewports, real 4242 purchase through embedded checkout, screenshots at
-  every state.
+  every state. The pass checkout modal is captured next to the Pro checkout modal
+  at both viewports to prove D11 parity.
+- **Visual:** the frontend-design skill drives every UI change in workstreams 3, 5
+  and 6 — not just the upgrade page. Each surface is screenshot-verified at desktop
+  and mobile before it is considered done.
 - **Smoke:** extend `scripts/smoke.ts` pass paths for the newly delivered grants.
 - **Help pages:** `apps/web/content/help/billing/event-pass.md` and `plans.md`
   updated to match the corrected offer.
