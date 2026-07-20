@@ -124,6 +124,11 @@ export interface PackConstraints {
 export interface PackSettings {
   matchMinutes: number;
   gapMinutes: number;
+  /** The Settings-tab rest. Absent from the pack until now, which is how the
+   *  referee came to enforce only `constraints.restMin` — a division whose rest
+   *  was set in Settings had it silently ignored by AI Schedule while
+   *  Auto-schedule honoured it. Both the model and the referee need it. */
+  perEntrantMinRest: number;
   courts: string[];
   sessionWindows: { from: string; to: string }[];
   blackouts: { court?: string; from: string; to: string }[];
@@ -532,6 +537,7 @@ export async function buildSchedulePack(
     const settingsOut: PackSettings = {
       matchMinutes,
       gapMinutes: config.gapMinutes,
+      perEntrantMinRest: config.perEntrantMinRest,
       // v15 venues: when venue_courts lands, this builder is the single
       // place court_label strings become venue-scoped (design/v15-venue).
       courts,
@@ -850,9 +856,36 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   }));
 }
 
-function verifyConfig(pack: SchedulePack): Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> {
+function verifyConfig(
+  pack: SchedulePack,
+): Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> &
+  Partial<Pick<SlotConfig, "matchMinutes" | "constraints">> {
   return {
-    perEntrantMinRest: pack.settings.constraints?.restMin ?? 0,
+    // Both rest sources, plus the match length noBackToBack needs: the engine's
+    // effectiveRestMinutes takes the strictest, exactly as the solver does.
+    perEntrantMinRest: pack.settings.perEntrantMinRest,
+    matchMinutes: pack.settings.matchMinutes,
+    // Only the rest-bearing fields: the pack's startWindows carry ISO strings
+    // (the model reads them), while the engine wants epoch ms. Window
+    // validation is a separate piece of work — carrying them across here would
+    // silently compare the wrong units.
+    ...(pack.settings.constraints !== null
+      ? {
+          constraints: {
+            ...(pack.settings.constraints.restMin !== undefined
+              ? { restMin: pack.settings.constraints.restMin }
+              : {}),
+            ...(pack.settings.constraints.restByGroup !== undefined
+              ? { restByGroup: pack.settings.constraints.restByGroup }
+              : {}),
+            noBackToBack: pack.settings.constraints.noBackToBack,
+            startWindows: [],
+            fieldFairness: "off" as const,
+            parallelism: "mixed" as const,
+            crossPersonClash: "warn" as const,
+          },
+        }
+      : {}),
     gapMinutes: pack.settings.gapMinutes,
     blackouts: pack.settings.blackouts.map((b) => ({
       ...(b.court !== undefined ? { court: b.court } : {}),

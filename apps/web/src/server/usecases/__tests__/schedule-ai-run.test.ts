@@ -38,6 +38,7 @@ function makePack(overrides: Partial<SchedulePack> = {}): SchedulePack {
     settings: {
       matchMinutes: 30,
       gapMinutes: 0,
+      perEntrantMinRest: 0,
       courts: ["Court 1", "Court 2"],
       sessionWindows: [{ from: "2026-08-01T09:00:00+01:00", to: "2026-08-01T18:00:00+01:00" }],
       blackouts: [],

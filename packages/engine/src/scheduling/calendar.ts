@@ -54,6 +54,40 @@ export interface Assignment {
   endAt: number;
   entrants: EntrantId[];
   people: string[];
+  poolId?: string; // restByGroup targeting when validating (Jul3/04 §3)
+  divisionId?: string;
+}
+
+/** The rest an entrant owes between two matches, in minutes — the strictest of
+ *  every source that can demand one:
+ *
+ *    perEntrantMinRest   the Settings tab ("the shape of the day")
+ *    constraints.restMin the Constraints tab ("a rule about entrants")
+ *    restByGroup         a per-pool / per-division override
+ *    noBackToBack        at least one whole fixture in between
+ *
+ *  Exported because the placer and the verifier must answer this question
+ *  identically. They used to disagree: `slotFixtures` took the max, the board's
+ *  validation read only `perEntrantMinRest`, and the AI referee read only
+ *  `constraints.restMin` — so whether a timetable was legal depended on which
+ *  code path asked. */
+export function effectiveRestMinutes(
+  config: Pick<SlotConfig, "perEntrantMinRest" | "matchMinutes" | "gapMinutes" | "constraints">,
+  group?: { poolId?: string; divisionId?: string },
+): number {
+  const c = config.constraints;
+  let minutes = config.perEntrantMinRest;
+  if (c?.restMin !== undefined) minutes = Math.max(minutes, c.restMin);
+  const byGroup =
+    (group?.poolId !== undefined ? c?.restByGroup?.[group.poolId] : undefined) ??
+    (group?.divisionId !== undefined ? c?.restByGroup?.[group.divisionId] : undefined);
+  if (byGroup !== undefined) minutes = Math.max(minutes, byGroup);
+  // "One fixture between" is only meaningful once we know how long a fixture
+  // is; callers that validate without a match length simply don't get it.
+  if (c?.noBackToBack && config.matchMinutes !== undefined) {
+    minutes = Math.max(minutes, config.matchMinutes + config.gapMinutes);
+  }
+  return minutes;
 }
 
 export type ConflictReason =
@@ -210,18 +244,9 @@ export function slotFixtures(input: SlotInput): SlotResult {
   const lastCourt = new Map<EntrantId, string>(); // fieldFairness=rotate
   const c = config.constraints;
 
-  // Jul3/04 §3: effective per-fixture rest — the strictest of the base rest,
-  // restMin, the fixture's group override, and the no-back-to-back gap.
-  const restForMs = (f: SchedulableFixture): number => {
-    let minutes = config.perEntrantMinRest;
-    if (c?.restMin !== undefined) minutes = Math.max(minutes, c.restMin);
-    const byGroup =
-      (f.poolId !== undefined ? c?.restByGroup?.[f.poolId] : undefined) ??
-      (f.divisionId !== undefined ? c?.restByGroup?.[f.divisionId] : undefined);
-    if (byGroup !== undefined) minutes = Math.max(minutes, byGroup);
-    if (c?.noBackToBack) minutes = Math.max(minutes, config.matchMinutes + config.gapMinutes);
-    return minutes * MS_PER_MIN;
-  };
+  // Jul3/04 §3 — shared with validateAssignments so the placer and the verifier
+  // can never drift apart on what "enough rest" means.
+  const restForMs = (f: SchedulableFixture): number => effectiveRestMinutes(config, f) * MS_PER_MIN;
 
   // startWindows (Jul3/04 §3): hard lower/upper bounds per entrant/pool/division.
   const windowFor = (f: SchedulableFixture): { notBefore: number; notAfter: number } => {
@@ -389,11 +414,11 @@ export function slotFixtures(input: SlotInput): SlotResult {
 // the same report.
 export function validateAssignments(
   assignments: readonly Assignment[],
-  config: Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows">,
+  config: Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> &
+    Partial<Pick<SlotConfig, "matchMinutes" | "constraints">>,
   existing: readonly Assignment[] = [],
   dependencies: readonly OrderDependency[] = [],
 ): Conflict[] {
-  const restMs = config.perEntrantMinRest * MS_PER_MIN;
   const gapMs = config.gapMinutes * MS_PER_MIN;
   const blackouts = config.blackouts ?? [];
   const windows = config.sessionWindows ?? [];
@@ -426,6 +451,8 @@ export function validateAssignments(
         if (overlaps(a.startAt, a.endAt, other.startAt, other.endAt)) {
           conflicts.push({ fixtureId: a.fixtureId, reason: "person_overlap", detail: `entrant ${e} overlap` });
         } else {
+          // Resolved per assignment: restByGroup can differ pool to pool.
+          const restMs = effectiveRestMinutes(config, a) * MS_PER_MIN;
           const gap = a.startAt >= other.endAt ? a.startAt - other.endAt : other.startAt - a.endAt;
           if (gap < restMs) {
             conflicts.push({ fixtureId: a.fixtureId, reason: "rest", detail: `entrant ${e} below rest` });
