@@ -234,16 +234,23 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
     ).rejects.toMatchObject({ status: 422, message: "AI_PLAN_EMPTY_SCOPE" });
   });
 
-  it("flexible division is 409 AI_PLAN_UNSUPPORTED", async () => {
+  // `scheduling_mode` used to gate this with a 409. The mode was never
+  // selectable — absent from the creation flow and from every screen, reachable
+  // only by hand-patching the API — so it shipped as three dead buttons for
+  // anyone who reached it. The column survives (dormant) until a later
+  // migration drops it; this proves nothing reads it any more.
+  it("packs a division regardless of the dormant scheduling_mode column", async () => {
     const comp = await createCompetition(auth, { name: "Flex", visibility: "public", branding: {} });
     const flex = await createDivision(auth, comp.id, {
       name: "Flexi", slug: "flexi", sport_key: "generic", variant_key: "score",
       config: GENERIC_CONFIG, eligibility: [],
     });
     await sql`update divisions set scheduling_mode = 'flexible' where id = ${flex.id}`;
+    // No fixtures, so the pack refuses on emptiness — not on the mode. Any
+    // outcome other than AI_PLAN_UNSUPPORTED proves the guard is gone.
     await expect(
       buildSchedulePack(auth, flex.id, { mode: "generate", instruction: "x" }),
-    ).rejects.toMatchObject({ status: 409, message: "AI_PLAN_UNSUPPORTED" });
+    ).rejects.not.toMatchObject({ message: "AI_PLAN_UNSUPPORTED" });
   });
 });
 

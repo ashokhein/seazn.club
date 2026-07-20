@@ -185,7 +185,7 @@ export interface PackAssignment {
 
 export interface SchedulePack {
   mode: "generate" | "refine" | "repair";
-  division: { id: string; name: string; sport: string; tz: string; scheduling_mode: string };
+  division: { id: string; name: string; sport: string; tz: string };
   settings: PackSettings;
   entrants: PackEntrant[];
   people: PackPerson[];
@@ -233,7 +233,6 @@ function byAssignment(a: PackAssignment, b: PackAssignment): number {
  *
  * @returns the pack plus the set of fixture ids the LLM may place — later tasks
  *   reject any assignment id outside `movableIds`.
- * @throws HttpError 409 AI_PLAN_UNSUPPORTED (flexible division — no timetable),
  *   422 AI_PLAN_TOO_LARGE (>500 movable), 422 AI_PLAN_EMPTY_SCOPE (repair scope
  *   matched nothing), 400 (scope names a court that is not in settings.courts).
  */
@@ -248,17 +247,11 @@ export async function buildSchedulePack(
 
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<
-      { id: string; name: string; sport_key: string; scheduling_mode: string; competition_id: string }[]
+      { id: string; name: string; sport_key: string; competition_id: string }[]
     >`
-      select id, name, sport_key, scheduling_mode, competition_id
+      select id, name, sport_key, competition_id
       from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    // Flexible divisions are ordered, never clock-slotted (Jul3/04 §4) — there
-    // is no timetable for the architect to solve.
-    if (division.scheduling_mode === "flexible") {
-      throw new HttpError(409, "AI_PLAN_UNSUPPORTED", "AI_PLAN_UNSUPPORTED");
-    }
-
     const settings = await loadSettings(tx, divisionId);
     const config = settings.config;
     const tz = settings.tz;
@@ -577,7 +570,6 @@ export async function buildSchedulePack(
         name: division.name,
         sport: division.sport_key,
         tz,
-        scheduling_mode: division.scheduling_mode,
       },
       settings: settingsOut,
       entrants: packEntrants,

@@ -3478,13 +3478,6 @@
                   "officials_hide_names": {
                     "type": "boolean"
                   },
-                  "scheduling_mode": {
-                    "type": "string",
-                    "enum": [
-                      "timed",
-                      "flexible"
-                    ]
-                  },
                   "auto_progress": {
                     "type": "boolean"
                   },
@@ -52120,7 +52113,7 @@
         "tags": [
           "history"
         ],
-        "x-required-scope": "manage",
+        "x-required-scope": "none",
         "parameters": [
           {
             "name": "id",

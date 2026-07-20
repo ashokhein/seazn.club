@@ -3213,13 +3213,6 @@
                   "officials_hide_names": {
                     "type": "boolean"
                   },
-                  "scheduling_mode": {
-                    "type": "string",
-                    "enum": [
-                      "timed",
-                      "flexible"
-                    ]
-                  },
                   "auto_progress": {
                     "type": "boolean"
                   },

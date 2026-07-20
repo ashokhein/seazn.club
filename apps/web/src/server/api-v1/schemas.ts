@@ -129,8 +129,6 @@ export const PatchDivision = z
     status: DivisionStatus,
     /** Hide official names on all public reads (Jul3/02, 25 Jun). */
     officials_hide_names: z.boolean(),
-    /** Jul3/04 §4: 'flexible' = ordered fixtures, no clock. */
-    scheduling_mode: z.enum(["timed", "flexible"]),
     /** Jul3/08 §5: progression fires without a button (Pro formats.advanced). */
     auto_progress: z.boolean(),
     /** SPEC-2: draft a news post when results land (Pro `news.auto` on write). */

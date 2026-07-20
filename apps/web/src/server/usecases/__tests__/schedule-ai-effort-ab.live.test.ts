@@ -81,7 +81,6 @@ function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
       name: "Saturday League",
       sport: "generic",
       tz: "Europe/London",
-      scheduling_mode: "timed",
     },
     settings: {
       matchMinutes: 30,
@@ -148,7 +147,6 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
       name: "Club Championship",
       sport: "generic",
       tz: "Europe/London",
-      scheduling_mode: "timed",
     },
     settings: {
       matchMinutes: 45,
