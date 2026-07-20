@@ -76,10 +76,13 @@ const LIVE_SUBSCRIPTION_STATUSES = ["trialing", "active", "past_due"];
  * branching on `stripe_subscription_id` would treat a long-departed customer as
  * Stripe-billed. Shared by the checkout guard and the staff trial grant so the
  * two can never drift apart.
+ *
+ * Type predicate: a true result means both columns are non-null, so callers can
+ * read `sub.stripe_subscription_id` / `sub.status` without a `!` assertion.
  */
 export function hasLiveSubscription(
   sub: { stripe_subscription_id: string | null; status: string | null } | undefined,
-): boolean {
+): sub is { stripe_subscription_id: string; status: string } {
   return (
     !!sub?.stripe_subscription_id &&
     LIVE_SUBSCRIPTION_STATUSES.includes(sub.status ?? "")
@@ -96,7 +99,7 @@ export function assertCheckoutAllowed(
   sub: { stripe_subscription_id: string | null; status: string | null } | undefined,
 ): void {
   if (!hasLiveSubscription(sub)) return;
-  if (sub!.status === "past_due") {
+  if (sub.status === "past_due") {
     throw new HttpError(
       409,
       "This organization's subscription needs a working payment method — update your card or retry the invoice from the billing page instead of starting a new subscription.",
