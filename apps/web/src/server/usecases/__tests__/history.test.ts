@@ -19,6 +19,7 @@ import {
   redoDivision,
   divisionHistory,
   createCheckpoint,
+  deleteCheckpoint,
   listCheckpoints,
   restoreCheckpoint,
   clearScheduleScoped,
@@ -281,6 +282,36 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     expect(ai[1]!.superseded).toBe(true);
     // A manual save point is never superseded, however many AI runs there were.
     expect(rows.find((r) => r.label === "manual one")!.superseded).toBeFalsy();
+  });
+
+  // The quota is per-division and nothing could reclaim a slot, so an organiser
+  // who made a save point they no longer wanted was stuck with it — on
+  // community that meant permanently holding their only one.
+  it("deleting a manual save point frees its quota slot", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+    const cp = await createCheckpoint(auth, division.id, "wrong moment");
+    await expect(createCheckpoint(auth, division.id, "the one I wanted")).rejects.toMatchObject({
+      featureKey: "schedule.checkpoints.max",
+    });
+
+    await deleteCheckpoint(auth, division.id, cp.id);
+    await expect(createCheckpoint(auth, division.id, "the one I wanted")).resolves.toBeTruthy();
+  });
+
+  it("deleting is scoped to the division, and a missing checkpoint is 404", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division: a } = await seedDivision(auth);
+    const { division: b } = await seedDivision(auth);
+    const cp = await createCheckpoint(auth, a.id, "belongs to A");
+
+    // Right id, wrong division — must not delete by guessing an id.
+    await expect(deleteCheckpoint(auth, b.id, cp.id)).rejects.toMatchObject({ status: 404 });
+    expect(await listCheckpoints(auth, a.id)).toHaveLength(1);
+
+    await expect(
+      deleteCheckpoint(auth, a.id, "00000000-0000-4000-8000-000000000000"),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("checkpoints quota ladder: pro allows 5 then 402; pro_plus unlimited", async () => {

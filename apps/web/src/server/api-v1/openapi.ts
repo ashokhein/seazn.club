@@ -215,6 +215,7 @@ export const ROUTES: RouteSpec[] = [
   { path: "/divisions/{id}/history", method: "get", summary: "Ledger slice: type, actor, time, undoable/undone", tag: "history" },
   { path: "/divisions/{id}/checkpoints", method: "get", summary: "Named save points", tag: "history" },
   { path: "/divisions/{id}/checkpoints", method: "post", summary: "Create a save point at the current watermark (quota `schedule.checkpoints.max`: 1 free / 5 Pro / unlimited Pro Plus)", tag: "history", request: S.CreateCheckpoint, status: 201, errors: [402] },
+  { path: "/divisions/{id}/checkpoints/{checkpointId}", method: "delete", summary: "Delete a save point — frees a quota slot when the save point is manual", tag: "history", errors: [404] },
   { path: "/divisions/{id}/restore", method: "post", summary: "Undo back to a checkpoint (confirm: true; results-guarded)", tag: "history", request: S.RestoreCheckpoint, errors: [422] },
   { path: "/divisions/{id}/locks", method: "patch", summary: "Whole-division freeze + multi-site scope locks (scopes are Pro)", tag: "history", request: S.DivisionLocks, errors: [402] },
   { path: "/schedule/clear", method: "post", summary: "Scoped clear (stage/pools/rounds/courts; confirm: true; locked + decided survive; undoable)", tag: "history", request: S.ClearSchedule, errors: [422] },

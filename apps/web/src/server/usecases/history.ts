@@ -349,6 +349,33 @@ export async function createCheckpoint(
   });
 }
 
+/** DELETE /divisions/{id}/checkpoints/{checkpointId} — drop a save point.
+ *
+ *  Deleting a MANUAL save point frees a quota slot, which is the point: the
+ *  quota is per-division and nothing could reclaim one, so an organiser who
+ *  made a save point they no longer wanted was stuck with it — on community,
+ *  that meant permanently holding their only slot.
+ *
+ *  AI anchors are deletable too. They cost no quota so there is no need to
+ *  remove one, but they are rows in the organiser's own division and hiding the
+ *  affordance would be stranger than allowing it. The next AI apply creates a
+ *  fresh anchor regardless. */
+export async function deleteCheckpoint(
+  auth: AuthCtx,
+  divisionId: string,
+  checkpointId: string,
+): Promise<void> {
+  await withTenant(auth.orgId, async (tx) => {
+    // Scoped by division as well as id, so a checkpoint id belonging to another
+    // division cannot be deleted by guessing it.
+    const [row] = await tx<{ id: string }[]>`
+      delete from division_checkpoints
+      where id = ${checkpointId} and division_id = ${divisionId}
+      returning id`;
+    if (!row) throw new HttpError(404, "checkpoint not found");
+  });
+}
+
 /** POST /divisions/{id}/restore — undo repeatedly to the checkpoint's
  *  watermark (guarded by the same results-guard as single undo). */
 export async function restoreCheckpoint(

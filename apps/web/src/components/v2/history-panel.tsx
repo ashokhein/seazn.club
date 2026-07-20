@@ -36,6 +36,13 @@ interface Checkpoint {
   created_at: string;
 }
 
+/** Render order is deliberate: the organiser's own save points first, since
+ *  those are the ones they created and pay for. */
+const CHECKPOINT_GROUPS = [
+  { kind: "manual", headingKey: "history.checkpoint.groupYours", noteKey: "history.checkpoint.usedCount" },
+  { kind: "ai", headingKey: "history.checkpoint.groupAi", noteKey: "history.checkpoint.notCounted" },
+] as const;
+
 const TYPE_LABELS: Record<string, string> = {
   schedule_applied: "Schedule applied",
   schedule_edited: "Fixture moved",
@@ -214,54 +221,127 @@ export function HistoryPanel({
               <button type="submit" className="btn btn-primary" disabled={busy}>Save point</button>
             </form>
           )}
+          {/* Grouped by kind, because the two obey different rules: a manual
+              save point spends the organiser's quota, an AI anchor does not.
+              Putting the counter on one group and "not counted" on the other
+              makes that legible without a paragraph of explanation.
+
+              Each group is a rewind rail — the node is the save point, the line
+              is the history between them. A filled node is the live AI anchor
+              (what Undo targets); hollow nodes are still restorable. */}
           {checkpoints.length === 0 ? (
-            <p className="text-sm text-slate-500">No save points yet.</p>
+            <p className="text-sm text-slate-500">{msg("history.checkpoint.empty")}</p>
           ) : (
-            <ul className="space-y-1 text-sm">
-              {checkpoints.map((cp) => (
-                <li
-                  key={cp.id}
-                  className={`flex items-center gap-2 ${cp.superseded ? "text-slate-400" : "text-slate-700"}`}
-                >
-                  {/* Superseded AI anchors are struck, not hidden or disabled:
-                      the ledger can rewind to any watermark, so jumping back
-                      two AI runs stays available — it is just no longer the
-                      one Undo targets. */}
-                  <span className={cp.superseded ? "line-through" : undefined}>{cp.label}</span>
-                  {cp.kind === "ai" && !cp.superseded && (
-                    <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-950 dark:text-purple-300">
-                      {msg("history.checkpoint.latestAi")}
-                    </span>
-                  )}
-                  <time className="text-xs text-slate-400">
-                    {new Date(cp.created_at).toLocaleString()}
-                  </time>
-                  {canEdit && (
-                    <button
-                      type="button"
-                      className="ml-auto text-xs text-purple-600 hover:underline"
-                      disabled={busy}
-                      onClick={async () => {
-                        const ok = await confirmDialog({
-                          title: msg("confirm.restoreCheckpoint.title"),
-                          body: msg("confirm.restoreCheckpoint.body", { name: cp.label }),
-                          confirmLabel: msg("confirm.restoreCheckpoint.label"),
-                        });
-                        if (!ok) return;
-                        void run(() =>
-                          apiV1(`/api/v1/divisions/${divisionId}/restore`, {
-                            method: "POST",
-                            json: { checkpoint_id: cp.id, confirm: true },
-                          }),
-                        );
-                      }}
-                    >
-                      Restore
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+            <div className="space-y-4">
+              {CHECKPOINT_GROUPS.map(({ kind, headingKey, noteKey }) => {
+                const rows = checkpoints.filter((c) => (c.kind ?? "manual") === kind);
+                if (rows.length === 0 && kind === "ai") return null;
+                return (
+                  <div key={kind}>
+                    <div className="mb-2 flex items-baseline justify-between">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                        {msg(headingKey)}
+                      </span>
+                      <span className="text-[10.5px] text-slate-400">
+                        {kind === "ai"
+                          ? msg(noteKey)
+                          : msg(noteKey, { count: String(rows.length) })}
+                      </span>
+                    </div>
+                    {rows.length === 0 ? (
+                      <p className="pl-[18px] text-xs italic text-slate-400">
+                        {msg("history.checkpoint.empty")}
+                      </p>
+                    ) : (
+                      <ul className="relative m-0 list-none p-0 pl-[18px] before:absolute before:bottom-[9px] before:left-[4px] before:top-[9px] before:w-px before:bg-slate-200 dark:before:bg-slate-700">
+                        {rows.map((cp) => {
+                          const live = cp.kind === "ai" && !cp.superseded;
+                          return (
+                            <li
+                              key={cp.id}
+                              className={`relative flex items-center gap-2 py-[5px] before:absolute before:left-[-18px] before:top-[11px] before:h-[9px] before:w-[9px] before:rounded-full before:border-[1.5px] before:content-[''] ${
+                                live
+                                  ? "before:border-purple-600 before:bg-purple-600"
+                                  : "before:border-slate-300 before:bg-white dark:before:border-slate-600 dark:before:bg-slate-800"
+                              }`}
+                            >
+                              <span
+                                className={
+                                  cp.superseded
+                                    ? "text-[12.5px] text-slate-400 line-through"
+                                    : "text-[12.5px] text-slate-700 dark:text-slate-200"
+                                }
+                              >
+                                {cp.label}
+                              </span>
+                              {live && (
+                                <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[9px] font-semibold text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                                  {msg("history.checkpoint.latestAi")}
+                                </span>
+                              )}
+                              <time className="ml-auto whitespace-nowrap text-[10.5px] text-slate-400">
+                                {new Date(cp.created_at).toLocaleString()}
+                              </time>
+                              {canEdit && (
+                                <button
+                                  type="button"
+                                  className={`text-[10.5px] hover:underline ${cp.superseded ? "text-slate-400" : "text-purple-600"}`}
+                                  disabled={busy}
+                                  onClick={async () => {
+                                    const ok = await confirmDialog({
+                                      title: msg("confirm.restoreCheckpoint.title"),
+                                      body: msg("confirm.restoreCheckpoint.body", { name: cp.label }),
+                                      confirmLabel: msg("confirm.restoreCheckpoint.label"),
+                                    });
+                                    if (!ok) return;
+                                    void run(() =>
+                                      apiV1(`/api/v1/divisions/${divisionId}/restore`, {
+                                        method: "POST",
+                                        json: { checkpoint_id: cp.id, confirm: true },
+                                      }),
+                                    );
+                                  }}
+                                >
+                                  {msg("history.checkpoint.restore")}
+                                </button>
+                              )}
+                              {/* Delete is offered on manual save points only.
+                                  An AI anchor costs no quota and the next apply
+                                  makes a new one, so removing it achieves
+                                  nothing the organiser wants. */}
+                              {canEdit && (cp.kind ?? "manual") === "manual" && (
+                                <button
+                                  type="button"
+                                  className="text-[11px] text-slate-300 hover:text-rose-600"
+                                  disabled={busy}
+                                  aria-label={msg("history.checkpoint.delete")}
+                                  title={msg("history.checkpoint.delete")}
+                                  onClick={async () => {
+                                    const ok = await confirmDialog({
+                                      title: msg("confirm.deleteCheckpoint.title"),
+                                      body: msg("confirm.deleteCheckpoint.body", { name: cp.label }),
+                                      confirmLabel: msg("confirm.deleteCheckpoint.label"),
+                                    });
+                                    if (!ok) return;
+                                    void run(() =>
+                                      apiV1(`/api/v1/divisions/${divisionId}/checkpoints/${cp.id}`, {
+                                        method: "DELETE",
+                                      }),
+                                    );
+                                  }}
+                                >
+                                  ✕
+                                </button>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
       </div>
