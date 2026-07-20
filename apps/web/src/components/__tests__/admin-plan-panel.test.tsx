@@ -156,7 +156,12 @@ describe("AdminPlanPanel — Comp/Extend/Downgrade gate on LIVENESS, not presenc
     // plan.plan_key === "pro" ? "Update comp" : "Comp to Pro" ternary).
     expect(isReallyDisabled(buttonHtmlFor(html, "Update comp"))).toBe(true); // no reason typed yet
     expect(isReallyDisabled(buttonHtmlFor(html, "Preview &amp; downgrade"))).toBe(true);
-    expect(html).toContain("Extend trial");
+    // The Extend-trial card's own <h3> heading always renders regardless of
+    // liveness, so asserting on it proves nothing — the third call site
+    // Task 6B actually gates is this hint paragraph, rendered only when
+    // stripeBilled. A departed org must NOT see it; the live-org test below
+    // must, or this pair proves nothing (see its comment there).
+    expect(html).not.toContain("Also updates trial_end in Stripe.");
   });
 
   it("a live org (non-null id, status active) still sees the Stripe-billed message and NOT the Comp-to-Pro/Downgrade forms", () => {
@@ -169,5 +174,10 @@ describe("AdminPlanPanel — Comp/Extend/Downgrade gate on LIVENESS, not presenc
     // so the comp button (if it rendered) would read "Update comp".
     expect(() => buttonHtmlFor(html, "Update comp")).toThrow();
     expect(() => buttonHtmlFor(html, "Preview &amp; downgrade")).toThrow();
+    // The Extend-trial hint must disagree with the departed-org case above —
+    // a genuinely Stripe-billed org DOES see it. Without this, deleting the
+    // hint's stripeBilled gate outright would still pass the departed-org
+    // "not present" assertion.
+    expect(html).toContain("Also updates trial_end in Stripe.");
   });
 });
