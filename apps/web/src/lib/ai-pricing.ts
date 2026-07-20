@@ -4,18 +4,21 @@
 // it. Cache reads/writes are not modelled — the runner's usage counters are
 // raw input/output tokens.
 //
-// Some models carry a time-boxed introductory rate. Cost is stamped at run
-// time, so the rate in force *at that moment* is the correct one and the
-// window expires on its own — no dated constant to remember to delete.
+// The mechanism supports a time-boxed introductory rate (cost is stamped at run
+// time, so the rate in force *at that moment* is the correct one and a window
+// expires on its own). No model currently uses one.
+//
+// 2026-07-20: sonnet-5 was briefly given Anthropic's published $2/$10
+// introductory rate. That was wrong for this account — reconciling the real
+// balance against 28 benched runs ($15 -> $9 observed, ~$5.6 predicted at list
+// vs $3.4 at intro) showed billing at LIST. Applying a published rate without
+// checking the account made the ledger understate by 33%, the same bug it was
+// meant to fix, in the opposite direction. Do not re-add an intro rate here
+// without confirming it against console.anthropic.com -> Plans & Billing.
 type Rate = { input: number; output: number };
 
 const PRICING: Record<string, { list: Rate; intro?: { untilIso: string; rate: Rate } }> = {
-  "claude-sonnet-5": {
-    list: { input: 3, output: 15 },
-    // Introductory pricing runs through 2026-08-31 inclusive; `untilIso` is the
-    // first instant the list rate applies again.
-    intro: { untilIso: "2026-09-01T00:00:00Z", rate: { input: 2, output: 10 } },
-  },
+  "claude-sonnet-5": { list: { input: 3, output: 15 } },
   "claude-sonnet-4-6": { list: { input: 3, output: 15 } },
   "claude-opus-4-8": { list: { input: 5, output: 25 } },
   "claude-opus-4-7": { list: { input: 5, output: 25 } },

@@ -30,7 +30,7 @@
   "board.ai.run.repair": "Schema herstellen",
   "board.ai.running": "Bezig met je schema…",
   "board.ai.flagged": "Motor markeerde het concept — herstellen…",
-  "board.ai.elapsed": "{elapsed} · meestal minder dan 4 min",
+  "board.ai.elapsed": "{elapsed} · meestal 1–5 minuten",
   "board.ai.frozen": "Dit schema is bevroren. Ontdooi het om met AI te plannen.",
   "board.ai.errorLabel": "Kon niet voltooien.",
   "board.ai.errorGeneric": "Er ging iets mis. Probeer opnieuw.",

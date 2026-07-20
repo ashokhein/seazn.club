@@ -30,7 +30,7 @@
   "board.ai.run.repair": "Repair schedule",
   "board.ai.running": "Working on your schedule…",
   "board.ai.flagged": "Engine flagged the draft — repairing…",
-  "board.ai.elapsed": "{elapsed} · usually under 4 min",
+  "board.ai.elapsed": "{elapsed} · usually 1–5 minutes",
   "board.ai.frozen": "This schedule is frozen. Unfreeze it to plan with AI.",
   "board.ai.errorLabel": "Couldn't finish.",
   "board.ai.errorGeneric": "Something went wrong. Try again.",
