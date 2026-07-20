@@ -86,6 +86,7 @@ function teamsPack(): { pack: SchedulePack; movable: Set<string> } {
     settings: {
       matchMinutes: 30,
       gapMinutes: 10,
+      perEntrantMinRest: 0,
       courts: ["Court 1", "Court 2", "Court 3"],
       sessionWindows: [{ from: "2026-08-01T09:00:00+01:00", to: "2026-08-01T21:00:00+01:00" }],
       blackouts: [{ court: "Court 3", from: "2026-08-01T12:00:00+01:00", to: "2026-08-01T13:30:00+01:00" }],
@@ -152,6 +153,7 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
     settings: {
       matchMinutes: 45,
       gapMinutes: 0,
+      perEntrantMinRest: 0,
       courts: ["Court 1", "Court 2", "Court 3", "Court 4"],
       sessionWindows: [{ from: "2026-08-01T09:00:00+01:00", to: "2026-08-01T18:00:00+01:00" }],
       blackouts: [],
