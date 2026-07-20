@@ -4,6 +4,7 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 
 /**
  * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
@@ -64,11 +65,9 @@ export function checkoutTrialDays(
   return sub?.trial_used_at ? 0 : 14;
 }
 
-/** Statuses in which a Stripe subscription still owns the org's billing. Our
- *  STATUS_MAP collapses incomplete/unpaid/paused into past_due, so this list
- *  is the whole non-terminal set. `canceled` is terminal — a departed customer
- *  must be able to come back. */
-const LIVE_SUBSCRIPTION_STATUSES = ["trialing", "active", "past_due"];
+/** Re-exported from its leaf module so the historical import site keeps working.
+ *  See lib/subscription-status.ts for why it does not live here. */
+export { LIVE_SUBSCRIPTION_STATUSES };
 
 /**
  * Is this org billed by a subscription right now? A cancelled subscription

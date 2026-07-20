@@ -1,6 +1,9 @@
 import { sql } from "@/lib/db";
 import { PaymentRequiredError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
+// Leaf module, NOT lib/billing.ts: billing imports invalidateOrgEntitlements
+// from here, so importing it back would close a cycle.
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 
 export { PaymentRequiredError } from "@/lib/errors";
 
@@ -69,14 +72,14 @@ async function resolveFromDb(
       -- scheduler flips it, the resolution does. A CANCELLED subscription keeps
       -- its id forever, so an is-null test alone would leave a win-back grant
       -- running for ever; a live subscription still owns the plan, so exempt.
-      -- The status list is LIVE_SUBSCRIPTION_STATUSES from lib/billing.ts (the
-      -- same set hasLiveSubscription uses) — negated rather than listing the
-      -- dead statuses, which would drift. coalesce is load-bearing: a bare NOT
-      -- IN over a null status yields NULL, not true, so the arm would silently
-      -- never fire for rows with no status.
+      -- The status list is INTERPOLATED from LIVE_SUBSCRIPTION_STATUSES (the
+      -- same set hasLiveSubscription uses), so the two can no longer drift —
+      -- negated rather than listing the dead statuses, which would drift.
+      -- coalesce is load-bearing: a bare NOT IN over a null status yields NULL,
+      -- not true, so the arm would silently never fire for rows with no status.
       when s.comped_until is not null and s.comped_until <= now()
            and (s.stripe_subscription_id is null
-                or coalesce(s.status, '') not in ('trialing', 'active', 'past_due'))
+                or coalesce(s.status, '') not in ${sql([...LIVE_SUBSCRIPTION_STATUSES])})
            then 'community'
       -- past_due grace (spec P1-6): dunning gets 14 days, then reads degrade to
       -- community until an invoice succeeds (which flips status back to active).
