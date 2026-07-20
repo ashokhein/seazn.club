@@ -240,10 +240,24 @@ export function AdminPlanPanel({
         </div>
       </div>
 
-      {/* Payment methods (Task 6C): staff-only removal, including the
-          default — customers never see this control (billing-manage.tsx
-          hides it and the server 400s). Only rendered when the org actually
-          has cards on file. */}
+      {/* Payment methods (Task 6C): staff-only removal of the DEFAULT card —
+          customers can remove a non-default card themselves, but only staff
+          may remove the default (billing-manage.tsx hides that control from
+          customers and the server 400s a customer attempt). A customer with
+          `stripe_customer_id` set but an empty card list is otherwise
+          invisible here: nothing renders, and staff working a fraud-cleanup
+          or erasure request can't tell "no cards" from "Stripe didn't
+          answer" — so that state gets its own explicit line below. */}
+      {plan.stripe_customer_id && plan.cards.length === 0 && (
+        <div className="rounded-lg bg-slate-800 p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Payment methods
+          </h3>
+          <p className="mt-2 text-xs text-slate-500">
+            No cards on file — or Stripe could not be reached.
+          </p>
+        </div>
+      )}
       {plan.cards.length > 0 && (
         <div className="rounded-lg bg-slate-800 p-4 space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">

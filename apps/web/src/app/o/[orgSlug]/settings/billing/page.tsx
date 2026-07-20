@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 import { sql } from "@/lib/db";
-import { reconcileCheckout, billingCtaLabel } from "@/lib/billing";
+import { reconcileCheckout, billingCtaLabel, hasLiveSubscription } from "@/lib/billing";
 import { requireOrgPage } from "@/server/page-auth";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, DowngradeButton } from "@/components/billing-actions";
@@ -86,9 +86,11 @@ export default async function BillingPage({
   // One trial per org (V277): the upgrade CTA must not promise a trial the
   // checkout won't grant.
   const trialAvailable = !sub?.trial_used_at;
-  // A comped/dev-granted Pro org has no Stripe subscription — it gets the
-  // in-app downgrade instead of the cancel-at-period-end flow.
-  const hasStripeSubscription = !!sub?.stripe_subscription_id;
+  // A comped/dev-granted Pro org — or a departed org whose cancelled row
+  // still carries a dead id — has no LIVE Stripe subscription; it gets the
+  // in-app downgrade instead of the cancel-at-period-end/manage flow, which
+  // would otherwise throw at Stripe against a dead subscription id.
+  const hasStripeSubscription = hasLiveSubscription(sub);
 
   // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
   // PROMPT-15 cutover; overrides are honoured via getLimit.

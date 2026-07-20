@@ -7,17 +7,6 @@ import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
 
 /**
- * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
- * Embedded Checkout, not a redirect). Pure — no Stripe/DB — so it's unit-tested.
- * `trialDays` 14 = the no-card trial (`payment_method_collection:
- * "if_required"` + cancel when no card is added by trial end); 0 = no trial
- * block at all, so Stripe charges at checkout and always collects a card —
- * one trial per org, decided by the caller via checkoutTrialDays().
- * `ui_mode: "embedded"` requires a `return_url` (not success/cancel urls);
- * Stripe redirects there on completion, where the billing page reconciles
- * from the session id.
- */
-/**
  * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
  * rather than the Stripe Dashboard so it is versioned and cannot drift between
  * test and live. This is a token set, not CSS — colours, radius, font, logo.
@@ -34,6 +23,17 @@ export const CHECKOUT_BRANDING = {
   display_name: "Seazn Club",
 } as const satisfies Stripe.Checkout.SessionCreateParams.BrandingSettings;
 
+/**
+ * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
+ * Embedded Checkout, not a redirect). Pure — no Stripe/DB — so it's unit-tested.
+ * `trialDays` 14 = the no-card trial (`payment_method_collection:
+ * "if_required"` + cancel when no card is added by trial end); 0 = no trial
+ * block at all, so Stripe charges at checkout and always collects a card —
+ * one trial per org, decided by the caller via checkoutTrialDays().
+ * `ui_mode: "embedded"` requires a `return_url` (not success/cancel urls);
+ * Stripe redirects there on completion, where the billing page reconciles
+ * from the session id.
+ */
 export function buildEmbeddedCheckoutParams(args: {
   priceId: string;
   orgId: string;
