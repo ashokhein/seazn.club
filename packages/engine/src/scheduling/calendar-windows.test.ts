@@ -14,6 +14,20 @@ const at = (startMin: number, extra: Partial<Assignment> = {}): Assignment[] => 
     ...extra,
   },
 ];
+
+/** The engine's SchedulingConstraints has required fields with zod defaults;
+ *  these tests only care about the rest-bearing ones, so fill the rest. */
+function cons(partial: Record<string, unknown>) {
+  return {
+    noBackToBack: false,
+    startWindows: [],
+    fieldFairness: "off" as const,
+    parallelism: "mixed" as const,
+    crossPersonClash: "warn" as const,
+    ...partial,
+  };
+}
+
 const windows = (cs: ReturnType<typeof validateAssignments>) =>
   cs.filter((c) => c.reason === "start_window");
 
@@ -23,12 +37,11 @@ const windows = (cs: ReturnType<typeof validateAssignments>) =>
 // match and ignored when someone dragged one, or when the AI referee checked a
 // plan the model produced.
 describe("validateAssignments — start windows", () => {
-  const constraints = {
-    noBackToBack: false,
+  const constraints = cons({
     startWindows: [
       { target: { kind: "entrant" as const, id: "A" }, notBefore: 60 * MIN, notAfter: 180 * MIN },
     ],
-  };
+  });
 
   it("flags a fixture starting before its entrant's window opens", () => {
     expect(windows(validateAssignments(at(30), { ...base, constraints }))).not.toHaveLength(0);
@@ -48,18 +61,16 @@ describe("validateAssignments — start windows", () => {
   });
 
   it("ignores windows aimed at somebody else", () => {
-    const other = {
-      noBackToBack: false,
+    const other = cons({
       startWindows: [{ target: { kind: "entrant" as const, id: "B" }, notBefore: 60 * MIN }],
-    };
+    });
     expect(windows(validateAssignments(at(0), { ...base, constraints: other }))).toHaveLength(0);
   });
 
   it("applies a pool-targeted window to assignments in that pool", () => {
-    const pooled = {
-      noBackToBack: false,
+    const pooled = cons({
       startWindows: [{ target: { kind: "pool" as const, id: "p1" }, notBefore: 60 * MIN }],
-    };
+    });
     expect(
       windows(validateAssignments(at(0, { poolId: "p1" }), { ...base, constraints: pooled })),
     ).not.toHaveLength(0);
@@ -69,20 +80,19 @@ describe("validateAssignments — start windows", () => {
   });
 
   it("takes the tightest bound when several windows target the same fixture", () => {
-    const stacked = {
-      noBackToBack: false,
+    const stacked = cons({
       startWindows: [
         { target: { kind: "entrant" as const, id: "A" }, notBefore: 60 * MIN },
         { target: { kind: "division" as const, id: "d1" }, notBefore: 120 * MIN },
       ],
-    };
+    });
     const a = at(90, { divisionId: "d1" });
     expect(windows(validateAssignments(a, { ...base, constraints: stacked }))).not.toHaveLength(0);
   });
 
   it("says nothing when no windows are configured", () => {
     expect(
-      windows(validateAssignments(at(0), { ...base, constraints: { noBackToBack: false, startWindows: [] } })),
+      windows(validateAssignments(at(0), { ...base, constraints: cons({}) })),
     ).toHaveLength(0);
   });
 });

@@ -72,7 +72,11 @@ export interface Assignment {
  *  `constraints.restMin` — so whether a timetable was legal depended on which
  *  code path asked. */
 export function effectiveRestMinutes(
-  config: Pick<SlotConfig, "perEntrantMinRest" | "matchMinutes" | "gapMinutes" | "constraints">,
+  // matchMinutes is optional: validateAssignments is called with configs that
+  // carry no match length (the board's own callers, and every pre-existing
+  // caller), and noBackToBack is the only rule that needs it.
+  config: Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "constraints"> &
+    Partial<Pick<SlotConfig, "matchMinutes">>,
   group?: { poolId?: string; divisionId?: string },
 ): number {
   const c = config.constraints;
