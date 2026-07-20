@@ -9,9 +9,21 @@ import { randomUUID } from "node:crypto";
 
 // Hoisted mock handles — referenced from vi.mock factories (which hoist above
 // imports), so they must be created with vi.hoisted.
-const { parse, isServerFeatureEnabled, captureServer, incrWindow, rlCounts } = vi.hoisted(() => {
+const { parse, isServerFeatureEnabled, captureServer, incrWindow, rlCounts, MockAPIError } = vi.hoisted(() => {
   const rlCounts = new Map<string, number>();
+  // The real SDK exposes `Anthropic.APIError`; schedule-ai.ts branches on it to
+  // tell a provider outage (billing/rate-limit/overload) from a planning
+  // failure. The mock must carry it or that branch is unreachable under test.
+  class MockAPIError extends Error {
+    status: number;
+    constructor(status: number, message: string) {
+      super(message);
+      this.name = "APIError";
+      this.status = status;
+    }
+  }
   return {
+    MockAPIError,
     parse: vi.fn(),
     isServerFeatureEnabled: vi.fn(),
     captureServer: vi.fn(),
@@ -25,9 +37,12 @@ const { parse, isServerFeatureEnabled, captureServer, incrWindow, rlCounts } = v
 });
 
 vi.mock("@anthropic-ai/sdk", () => ({
-  default: class Anthropic {
-    messages = { parse };
-  },
+  default: Object.assign(
+    class Anthropic {
+      messages = { parse };
+    },
+    { APIError: MockAPIError },
+  ),
 }));
 vi.mock("@/lib/posthog-server", () => ({ isServerFeatureEnabled, captureServer }));
 // Keep the real cache-aside helpers (entitlements resolution) but drive the
@@ -458,5 +473,42 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 
       select count(*)::int as n from competition_events
       where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
     expect(n).toBe(0);
+  });
+
+  // Regression (observed live 2026-07-20): an exhausted credit balance made the
+  // SDK throw a 400 APIError. It matched neither failure branch, propagated raw
+  // out of aiPlanForDivision as a 500, and left no ledger row — so a billing
+  // lapse took AI scheduling down silently. It must now be a 503 with its own
+  // outcome, and the provider's message must never reach the tenant.
+  it("a provider APIError → 503 AI_PROVIDER_UNAVAILABLE, metered, message not leaked", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId } = await seedPlannable(auth);
+    const providerMessage = "Your credit balance is too low to access the Anthropic API.";
+    parse.mockRejectedValueOnce(new MockAPIError(400, providerMessage));
+
+    const err = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }).catch(
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ status: 503, code: "AI_PROVIDER_UNAVAILABLE" });
+    // Billing state is ours, not the tenant's.
+    expect((err as Error).message).not.toContain("credit balance");
+
+    expect(captureServer).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: "ai_plan_run",
+        properties: expect.objectContaining({ outcome: "provider_error", provider_status: 400 }),
+      }),
+    );
+    // The outage is auditable, and it never consumes a generation.
+    const [failed] = await sql<{ payload: { outcome: string; provider_status: number } }[]>`
+      select payload from competition_events
+      where type = 'schedule.ai_failed' and payload->>'division_id' = ${divisionId}
+      order by created_at desc limit 1`;
+    expect(failed?.payload.outcome).toBe("provider_error");
+    expect(failed?.payload.provider_status).toBe(400);
+    const [{ n: generated }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
+    expect(generated).toBe(0);
   });
 });
