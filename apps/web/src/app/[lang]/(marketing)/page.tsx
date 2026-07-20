@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "@/components/ui/console-link";
-import { redirect, notFound } from "next/navigation";
+import { notFound } from "next/navigation";
 import { getCurrentUser } from "@/lib/auth";
 import { getDiscoveryLive, getDiscoveryThisWeek } from "@/server/public-site/discovery";
 import { ThisWeekSection } from "@/components/discovery-cards";
@@ -53,8 +53,14 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
   const { lang } = await params;
   if (!hasLocale(lang)) notFound();
 
+  // Signed-in visitors see the marketing home like anyone else. It used to
+  // redirect them to /dashboard, which made the page unreachable once you had
+  // an account — no way to re-read the pitch, check pricing copy, or send
+  // someone a link and see what they see. MarketingNav already swaps its
+  // sign-in pair for a "Dashboard →" button when there's a session, so the way
+  // back is on screen. Note /login still redirects: a signed-in user has no
+  // business on the login form, but every reason to visit the home page.
   const user = await getCurrentUser().catch(() => null);
-  if (user) redirect("/dashboard");
 
   const d = await getDictionary(lang, "marketing");
   const audiences = [
@@ -192,6 +198,10 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
             </h2>
             <p className="mb-10 text-sm text-[#b7aede]">{t(d, "home.finale.subhead")}</p>
             <TicketStubs currency={currency} />
+            {/* "Create free account" is the wrong ask of someone who already
+                has one, so the signed-in pair leads with the console instead.
+                Starting a tournament stays available — an existing organiser is
+                exactly who does that next. */}
             <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
               <Link
                 href="/start"
@@ -200,10 +210,10 @@ export default async function HomePage({ params }: { params: Promise<{ lang: str
                 {t(d, "home.cta.start")}
               </Link>
               <Link
-                href="/login?tab=signup"
+                href={user ? "/dashboard" : "/login?tab=signup"}
                 className="rounded-xl border border-[#4a3885] px-6 py-3 text-sm text-[var(--mk-cream)]"
               >
-                {t(d, "home.cta.signup")}
+                {user ? `${t(d, "nav.dashboard")} →` : t(d, "home.cta.signup")}
               </Link>
             </div>
           </div>
