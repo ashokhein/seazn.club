@@ -21,6 +21,7 @@ import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
 import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
+import { planLabel } from "@/lib/plan-label";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
 
@@ -137,7 +138,7 @@ export default async function BillingPage({
 
         {justCheckedOut && (
           <div className="mb-6 rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
-            {t(dict, "billing.checkoutComplete")} <span className="font-semibold capitalize">{planKey}</span>
+            {t(dict, "billing.checkoutComplete")} <span className="font-semibold">{planLabel(planKey)}</span>
             {status === "trialing" ? t(dict, "billing.trialSuffix") : ""}.
           </div>
         )}
@@ -150,8 +151,8 @@ export default async function BillingPage({
           <div className="flex items-center justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
-                <span className="text-xl font-bold text-slate-800 capitalize">
-                  {planKey}
+                <span className="text-xl font-bold text-slate-800">
+                  {planLabel(planKey)}
                 </span>
                 <span className={`badge ${STATUS_BADGE[status] ?? "bg-slate-100 text-slate-500"}`}>
                   {t(dict, `billing.status.${status}`)}
@@ -168,7 +169,10 @@ export default async function BillingPage({
               {sub?.current_period_end && status === "active" && (
                 <p className="mt-1 text-sm text-slate-500">
                   {sub.cancel_at_period_end
-                    ? t(dict, "billing.proUntil", { date: fmt(sub.current_period_end, locale) ?? "" })
+                    ? t(dict, "billing.proUntil", {
+                        plan: planLabel(planKey),
+                        date: fmt(sub.current_period_end, locale) ?? "",
+                      })
                     : `${t(dict, "billing.renews", { date: fmt(sub.current_period_end, locale) ?? "" })}${
                         overview?.interval
                           ? ` · ${overview.interval === "annual" ? t(dict, "billing.billedYearly") : t(dict, "billing.billedMonthly")}`
@@ -219,10 +223,10 @@ export default async function BillingPage({
                   <PlanIntervalSwitcher current={overview.interval} />
                 )}
                 {sub?.cancel_at_period_end ? (
-                  <ResumeSubscriptionButton />
+                  <ResumeSubscriptionButton planKey={planKey} />
                 ) : (
                   status !== "past_due" && (
-                    <CancelSubscriptionButton periodEnd={sub?.current_period_end ?? null} />
+                    <CancelSubscriptionButton periodEnd={sub?.current_period_end ?? null} planKey={planKey} />
                   )
                 )}
               </div>

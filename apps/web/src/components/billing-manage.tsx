@@ -13,6 +13,7 @@ import { stripeAppearance, stripePromise } from "@/lib/stripe-browser";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
 import { asCurrency, formatMinor } from "@/lib/currency";
+import { planLabel } from "@/lib/plan-label";
 import {
   TAX_ID_TYPES,
   type DiscountSummary,
@@ -490,21 +491,30 @@ const CANCEL_REASONS = [
   "Other",
 ] as const;
 
-export function CancelSubscriptionButton({ periodEnd }: { periodEnd: string | null }) {
+export function CancelSubscriptionButton({
+  periodEnd,
+  planKey,
+}: {
+  periodEnd: string | null;
+  /** Say the plan the org actually holds — a Pro Plus subscriber was being
+   *  asked to cancel "Pro". */
+  planKey: string;
+}) {
   const confirm = useConfirm();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const reasonRef = useRef<string>("");
+  const plan = planLabel(planKey);
 
   async function go() {
     reasonRef.current = "";
     const ok = await confirm({
-      title: "Cancel your Pro subscription?",
+      title: `Cancel your ${plan} subscription?`,
       body: (
         <div className="space-y-3">
           <p>
-            Pro stays active until{" "}
+            {plan} stays active until{" "}
             <span className="font-semibold">{fmtDate(periodEnd) ?? "the end of the period"}</span>,
             then the club moves to Community. Nothing is deleted.
           </p>
@@ -549,7 +559,7 @@ export function CancelSubscriptionButton({ periodEnd }: { periodEnd: string | nu
   );
 }
 
-export function ResumeSubscriptionButton() {
+export function ResumeSubscriptionButton({ planKey }: { planKey: string }) {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -565,8 +575,11 @@ export function ResumeSubscriptionButton() {
 
   return (
     <div>
+      {/* Resume un-cancels the subscription the org HOLDS. Labelled "Keep Pro"
+          for everyone, it promised Pro to a Pro Plus subscriber and then
+          restored Pro Plus — the button lied about its own effect. */}
       <button className="btn btn-primary" onClick={go} disabled={loading}>
-        {loading ? "Resuming…" : "Keep Pro"}
+        {loading ? "Resuming…" : `Keep ${planLabel(planKey)}`}
       </button>
       {error && <p className="mt-1 text-xs text-red-500">{error}</p>}
     </div>

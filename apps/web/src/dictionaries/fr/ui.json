@@ -522,7 +522,7 @@
   "billing.trialRemaining.one": "{count} jour restant dans l'essai",
   "billing.trialRemaining.other": "{count} jours restants dans l'essai",
   "billing.trialEnded": "Essai terminé",
-  "billing.proUntil": "Pro jusqu'au {date} — puis Community",
+  "billing.proUntil": "{plan} jusqu'au {date} — puis Community",
   "billing.renews": "Renouvellement le {date}",
   "billing.billedYearly": "facturé annuellement",
   "billing.billedMonthly": "facturé mensuellement",
