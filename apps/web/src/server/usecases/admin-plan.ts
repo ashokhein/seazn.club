@@ -31,16 +31,18 @@ interface SubRow {
 export interface PlanPanel extends SubRow {
   /** Where the plan comes from: a Stripe subscription or an admin comp. */
   source: "stripe" | "comped" | "none";
-  /** Cards on the org's Stripe customer (Task 6C) — lets the panel render
-   *  staff-only removal, including of the default. Empty for an org with no
-   *  Stripe customer at all (no extra round trip attempted). */
-  cards: PaymentMethodRow[];
 }
 
-/** Best-effort card list for the admin panel. Only reads Stripe when there is
- *  a customer to ask about; swallows its own failure (a Stripe hiccup must
- *  degrade to an empty list, never break the whole org page). */
-async function cardsForCustomer(customerId: string | null): Promise<PaymentMethodRow[]> {
+/** Best-effort card list for the admin org page (Task 6C). Only reads Stripe
+ *  when there is a customer to ask about; swallows its own failure (a Stripe
+ *  hiccup must degrade to an empty list, never break the whole org page).
+ *
+ *  Deliberately NOT called from planPanel: planPanel is also the shared
+ *  "before" snapshot read by compToPro, adminDowngrade and extendTrial, none
+ *  of which ever look at cards — folding this in there would have put a
+ *  Stripe round trip on every comp/downgrade/extend-trial call, forever.
+ *  The admin org page calls this directly, alongside planPanel. */
+export async function cardsForCustomer(customerId: string | null): Promise<PaymentMethodRow[]> {
   if (!customerId) return [];
   try {
     const stripe = getStripe();
@@ -68,7 +70,6 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
       current_period_end: null, stripe_customer_id: null, stripe_subscription_id: null,
       trial_used_at: null,
       source: "none",
-      cards: [],
     };
   }
   // Liveness, not mere presence: a cancelled subscription keeps its id for
@@ -80,8 +81,7 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
     : sub.plan_key === "pro" || sub.plan_key === "pro_plus"
       ? "comped"
       : "none";
-  const cards = await cardsForCustomer(sub.stripe_customer_id);
-  return { ...sub, source, cards };
+  return { ...sub, source };
 }
 
 /** Comp an org to Pro until a date (or forever). Refuses Stripe-billed orgs —

@@ -63,6 +63,19 @@ function buttonHtmlFor(html: string, label: string): string {
   return html.slice(tagStart, closeIdx + closeTag.length);
 }
 
+/** Isolate the Payment methods block, so a reason-input count can't
+ *  accidentally include the OTHER "Reason (required)" inputs the panel has
+ *  (comp/trial/restore/downgrade/override all use the identical placeholder
+ *  text). Bounded by the next section's own heading, which always renders
+ *  right after the card list. */
+function paymentMethodsSectionHtml(html: string): string {
+  const start = html.indexOf("Payment methods");
+  if (start === -1) throw new Error("Payment methods section not found");
+  const end = html.indexOf("Comp to Pro", start);
+  if (end === -1) throw new Error("Comp to Pro section (boundary) not found");
+  return html.slice(start, end);
+}
+
 /** True disabled-attribute check. React's static renderer emits a boolean
  *  `disabled` prop as the literal attribute `disabled=""` when true and
  *  omits it entirely when false — it never renders as `disabled:` (that's
@@ -211,5 +224,26 @@ describe("AdminPlanPanel — Payment methods (Task 6C staff-only card removal)",
     const html = render({ ...basePlan, cards: [cardMastercard] });
     expect(html).toContain("mastercard");
     expect(html).not.toContain("default");
+  });
+
+  // Finding 2 (Task 6C review): one shared reason input served the WHOLE card
+  // list, so a reason typed while looking at one card could ride along with a
+  // DIFFERENT card's Remove click. Scoped per row now — proven structurally,
+  // since renderToStaticMarkup can't fire onChange/click events to exercise
+  // the runtime cross-contamination directly. With the old shared-input
+  // design this count would be 1 regardless of how many cards are on file;
+  // it must scale with the card count for the reason to be provably scoped.
+  it("gives each card row its OWN reason input, not one shared input for the whole list", () => {
+    const html = render({ ...basePlan, cards: [cardVisa, cardMastercard] });
+    const section = paymentMethodsSectionHtml(html);
+    const reasonInputCount = (section.match(/placeholder="Reason \(required\)"/g) ?? []).length;
+    expect(reasonInputCount).toBe(2);
+  });
+
+  it("a single-card list still gets exactly one reason input — the pair the two-card case alone can't prove", () => {
+    const html = render({ ...basePlan, cards: [cardVisa] });
+    const section = paymentMethodsSectionHtml(html);
+    const reasonInputCount = (section.match(/placeholder="Reason \(required\)"/g) ?? []).length;
+    expect(reasonInputCount).toBe(1);
   });
 });

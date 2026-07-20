@@ -2,8 +2,30 @@
 // resolution time, override expiry lapses, downgrade preview names exactly the
 // competitions the freeze would catch, and every action lands in the audit
 // with its reason. Real Postgres; Stripe never touched (comped orgs only).
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+
+// Finding 1 (Task 6C review): planPanel is the shared "before" snapshot read
+// by compToPro, adminDowngrade and extendTrial — none of them ever read
+// .cards. This mock lets the test below prove planPanel makes NO Stripe call,
+// even for an org that HAS a stripe_customer_id (the one case that used to
+// reach Stripe at all). No test in this file ever drives extendTrial's live
+// Stripe-update arm to completion (every "live" scenario here is refused by
+// the 400 guard before any Stripe call), so a bare mock with no
+// `subscriptions` key is safe for the rest of the suite.
+const stripeMock = vi.hoisted(() => ({
+  retrieveCustomer: vi.fn(),
+  listPaymentMethods: vi.fn(),
+}));
+vi.mock("@/lib/stripe", () => ({
+  getStripe: () => ({
+    customers: {
+      retrieve: stripeMock.retrieveCustomer,
+      listPaymentMethods: stripeMock.listPaymentMethods,
+    },
+  }),
+}));
+
 import { sql } from "@/lib/db";
 import { checkoutTrialDays } from "@/lib/billing";
 import { hasFeature } from "@/lib/entitlements";
@@ -17,6 +39,10 @@ import {
 } from "@/server/usecases/admin-plan";
 
 const HAS_DB = !!process.env.DATABASE_URL;
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
 
 async function seedOrg(): Promise<{ orgId: string; actorId: string }> {
   const s = randomUUID().slice(0, 8);
@@ -467,6 +493,27 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(departed.status).toBe("canceled");
     expect(departed.plan_key).toBe("pro");
     expect(departed.trial_used_at).toEqual(stamped);
+  });
+
+  // planPanel is ALSO the shared "before" snapshot read by compToPro,
+  // adminDowngrade and extendTrial on every single invocation — none of them
+  // ever look at cards, so planPanel must stay a pure DB reader. Proven with
+  // a customer id actually on the row (the one case that would have reached
+  // Stripe before this fix); an org with no customer id was never the bug.
+  it("planPanel makes no Stripe calls, even for an org with a stripe_customer_id", async () => {
+    const { orgId } = await seedOrg();
+    await sql`update subscriptions set stripe_customer_id = 'cus_test123' where org_id = ${orgId}`;
+
+    await planPanel(orgId);
+
+    expect(stripeMock.retrieveCustomer).not.toHaveBeenCalled();
+    expect(stripeMock.listPaymentMethods).not.toHaveBeenCalled();
+
+    // Same call, exercised through one of planPanel's actual callers — proves
+    // this isn't just true of the direct call above.
+    await compToPro((await seedOrg()).actorId, orgId, null, "reason");
+    expect(stripeMock.retrieveCustomer).not.toHaveBeenCalled();
+    expect(stripeMock.listPaymentMethods).not.toHaveBeenCalled();
   });
 
   it("planPanel's no-subscription-row default reports trial_used_at: null (not undefined)", async () => {

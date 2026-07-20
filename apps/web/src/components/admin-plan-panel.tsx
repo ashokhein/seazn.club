@@ -66,7 +66,10 @@ export function AdminPlanPanel({
   const [trialReason, setTrialReason] = useState("");
   const [restoreReason, setRestoreReason] = useState("");
   const [downReason, setDownReason] = useState("");
-  const [cardReason, setCardReason] = useState("");
+  // Keyed by card id, NOT one shared string — a reason typed while looking at
+  // one card must never be able to ride along with a different card's Remove
+  // click (the two controls used to share a single input).
+  const [cardReasons, setCardReasons] = useState<Record<string, string>>({});
   const [ov, setOv] = useState({ key: "", value: "", expires: "", reason: "" });
 
   async function call(path: string, init: RequestInit, tag: string) {
@@ -131,14 +134,21 @@ export function AdminPlanPanel({
       tone: "danger",
     });
     if (!ok) return;
-    await call(
+    const done = await call(
       "remove-payment-method",
       {
         method: "POST",
-        body: JSON.stringify({ payment_method_id: card.id, reason: cardReason }),
+        body: JSON.stringify({ payment_method_id: card.id, reason: cardReasons[card.id] ?? "" }),
       },
       `pm-${card.id}`,
     );
+    if (done) {
+      setCardReasons((prev) => {
+        const next = { ...prev };
+        delete next[card.id];
+        return next;
+      });
+    }
   }
 
   async function saveOverride() {
@@ -234,31 +244,36 @@ export function AdminPlanPanel({
           </h3>
           <ul className="divide-y divide-slate-700/60">
             {plan.cards.map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-3 py-2 text-sm">
-                <span className="text-slate-300">
-                  {c.brand} •••• {c.last4} ({c.expMonth}/{c.expYear})
-                  {c.isDefault && (
-                    <span className="ml-2 rounded bg-purple-900/70 px-1.5 py-0.5 text-[11px] text-purple-200">
-                      default
-                    </span>
-                  )}
-                </span>
-                <button
-                  onClick={() => removeCard(c)}
-                  disabled={!cardReason || busy === `pm-${c.id}`}
-                  className="rounded bg-red-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
-                >
-                  {busy === `pm-${c.id}` ? "…" : "Remove card"}
-                </button>
+              <li key={c.id} className="space-y-1.5 py-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-300">
+                    {c.brand} •••• {c.last4} ({c.expMonth}/{c.expYear})
+                    {c.isDefault && (
+                      <span className="ml-2 rounded bg-purple-900/70 px-1.5 py-0.5 text-[11px] text-purple-200">
+                        default
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => removeCard(c)}
+                    disabled={!cardReasons[c.id] || busy === `pm-${c.id}`}
+                    className="rounded bg-red-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {busy === `pm-${c.id}` ? "…" : "Remove card"}
+                  </button>
+                </div>
+                {/* Per-card reason, scoped by id — see cardReasons above. */}
+                <input
+                  value={cardReasons[c.id] ?? ""}
+                  onChange={(e) =>
+                    setCardReasons((prev) => ({ ...prev, [c.id]: e.target.value }))
+                  }
+                  placeholder="Reason (required)"
+                  className={`${inputCls} w-full`}
+                />
               </li>
             ))}
           </ul>
-          <input
-            value={cardReason}
-            onChange={(e) => setCardReason(e.target.value)}
-            placeholder="Reason (required)"
-            className={`${inputCls} w-full`}
-          />
         </div>
       )}
 
