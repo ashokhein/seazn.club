@@ -37,6 +37,7 @@ import { participantRows } from "./clubs";
 import { resolveSponsors } from "./sponsors";
 import { getMyOfficiating } from "./me-officiating";
 import { eventRecorderNames, type AuditLedger } from "./fixtures";
+import { siteOrigin } from "@/lib/site-origin";
 
 type Tx = postgres.TransactionSql;
 
@@ -45,9 +46,6 @@ export interface ExportOpts {
   landscape?: boolean;
   blank?: boolean;
   printedAt: string; // request time — injected, never Date.now() in the engine
-  /** Request origin (Task 16) — used to build the `/shared/...` live-page
-   *  QR link on timetable/standings. Absent in tests that don't care. */
-  origin?: string;
 }
 
 interface DivisionMeta {
@@ -84,9 +82,9 @@ async function divisionMeta(tx: Tx, divisionId: string): Promise<DivisionMeta> {
 // v12/Task 16: the live-page QR only points somewhere reachable — a
 // `private` competition's `/shared/...` page 404s (V230 public_competitions_v
 // gate), so no QR when private. `public`/`unlisted` both resolve.
-function liveUrlFor(meta: DivisionMeta, origin: string | undefined): string | undefined {
-  if (origin === undefined || meta.visibility === "private") return undefined;
-  return `${origin}/shared/${meta.org_slug}/${meta.comp_slug}/${meta.div_slug}`;
+export function liveUrlFor(meta: Pick<DivisionMeta, "visibility" | "org_slug" | "comp_slug" | "div_slug">): string | undefined {
+  if (meta.visibility === "private") return undefined;
+  return `${siteOrigin()}/shared/${meta.org_slug}/${meta.comp_slug}/${meta.div_slug}`;
 }
 
 // Jul3/06 §6 / v12: branding (club colours, sponsor logos, tournament
@@ -211,7 +209,7 @@ export async function buildDivisionDocModel(
       ...(opts.landscape !== undefined ? { landscape: opts.landscape } : {}),
     };
 
-    const liveUrl = liveUrlFor(meta, opts.origin);
+    const liveUrl = liveUrlFor(meta);
 
     switch (kind) {
       case "timetable": {
@@ -561,7 +559,6 @@ export async function buildAdmitTicketsDoc(
   auth: AuthCtx,
   competitionId: string,
   opts: ExportOpts,
-  origin: string,
 ): Promise<DocModel> {
   await requireFeature(auth.orgId, "exports", competitionId);
   return withTenant(auth.orgId, async (tx) => {
@@ -575,7 +572,7 @@ export async function buildAdmitTicketsDoc(
       dates,
       ref: r.ref_code,
       status: r.status.toUpperCase(),
-      qrUrl: `${origin}/r/${r.ref_code}`,
+      qrUrl: `${siteOrigin()}/r/${r.ref_code}`,
       seq: i + 1,
     }));
     return buildAdmitTickets(meta.name, tickets, {
@@ -592,9 +589,7 @@ export async function buildAdmitTicketsDoc(
 export async function buildMyRotaDoc(
   userId: string,
   opts: ExportOpts,
-  origin: string,
 ): Promise<DocModel> {
-  void origin; // no per-fixture links in this doc yet — kept for signature parity
   const { assignments } = await getMyOfficiating(userId);
   const byOfficial = new Map<string, ExportOfficialSchedule>();
   for (const a of assignments) {
