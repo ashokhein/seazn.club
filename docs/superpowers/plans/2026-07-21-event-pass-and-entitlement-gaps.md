@@ -228,10 +228,18 @@ in full. You are recreating three of them.
 -- RLS-filtered if this is ever called from a withTenant transaction (the
 -- V226 hash-chain functions use the same shape).
 
+-- NO DEFAULT on p_competition_id, deliberately. A defaulted third parameter
+-- would make every surviving 2-arg call ambiguous ("function
+-- org_has_feature(uuid, text) is not unique"), and the 2-arg form cannot simply
+-- be dropped here: public_players_v still depends on it until Task 4, and
+-- server/public-site/data.ts:178-182,373 until Task 8. Instead the 2-arg form
+-- becomes a thin delegating wrapper (below), so both arities coexist
+-- unambiguously and callers migrate one task at a time. The wrapper is removed
+-- in Task 25 once nothing calls it.
 create or replace function org_has_feature(
   p_org_id uuid,
   p_feature_key text,
-  p_competition_id uuid default null
+  p_competition_id uuid
 ) returns boolean
   language sql stable security definer
   set search_path = ${flyway:defaultSchema} as $$
@@ -303,7 +311,15 @@ values ('event_pass', 'exports.branded', true, null)
 on conflict (plan_key, feature_key) do update
   set bool_value = excluded.bool_value, int_value = excluded.int_value;
 
-drop function if exists org_has_feature(uuid, text);
+-- The 2-arg form survives as a delegating wrapper so nothing breaks mid-branch.
+-- It is NOT a second resolver: it forwards to the one above with no competition
+-- in scope, which is exactly what an org-level question means.
+create or replace function org_has_feature(p_org_id uuid, p_feature_key text)
+  returns boolean
+  language sql stable security definer
+  set search_path = ${flyway:defaultSchema} as $$
+    select org_has_feature(p_org_id, p_feature_key, null::uuid)
+  $$;
 ```
 
 - [ ] **Step 2: Fix the TS null-bool fork**
@@ -1083,6 +1099,43 @@ cd apps/web && npx tsc --noEmit && npx vitest run
 - [ ] **Step 3:** Run E2E and smoke once more.
 - [ ] **Step 4:** Update `HANDOFF.md` per the session-end protocol.
 - [ ] **Step 5: Commit** — `docs(help): the Event Pass page matches the product`
+
+---
+
+---
+
+## Task 25: Retire the compatibility shim and make CI run these suites
+
+**Files:**
+- Create: `db/migration/deltas/V308__drop_org_has_feature_2arg.sql`
+- Modify: `.github/workflows/ci.yml:199`
+
+Two loose ends that can only close once everything else has landed.
+
+**The shim.** Task 2 kept `org_has_feature(uuid, text)` as a delegating wrapper so
+callers could migrate one task at a time. By now Task 4 has moved
+`public_players_v` and Task 8 has moved `server/public-site/data.ts:178-182,373`.
+Confirm nothing calls the 2-arg form, then drop it — otherwise a future caller
+silently gets pass-blind resolution, which is the exact bug class this branch exists
+to kill.
+
+**CI.** `.github/workflows/ci.yml:58` runs the unit job with no `DATABASE_URL`, so
+every DB-gated suite skips. The integration job (line 149) has a database but scopes
+vitest to `src/server` (line 192) plus one named file,
+`src/lib/__tests__/rate-limit.redis.test.ts` (line 199). Nothing under
+`src/lib/__tests__` that needs a database runs. That means the parity harness from
+Task 1 and the guard from Task 5 protect nothing after merge. Pre-existing —
+`entitlements-comp-liveness.test.ts` and `entitlements-pastdue.test.ts` have the same
+hole.
+
+- [ ] **Step 1:** Grep the whole tree for 2-arg `org_has_feature(` calls. Expect zero.
+- [ ] **Step 2:** Write V308 dropping the wrapper. Unqualified DDL.
+- [ ] **Step 3:** `npm run db:apply`, then full suite.
+- [ ] **Step 4:** Widen the integration job to run the `src/lib/__tests__` DB suites.
+- [ ] **Step 5:** Confirm the newly-included suites actually RUN — count them in the
+      output. A suite that silently skips in CI is worse than no suite, because it
+      reads as coverage.
+- [ ] **Step 6: Commit** — `ci: run the entitlement DB suites, drop the 2-arg shim`
 
 ---
 
