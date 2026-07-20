@@ -188,7 +188,7 @@ export async function syncSubscription(
        ${stripeSub.id},
        ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
        ${stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null},
-       ${stripeSub.trial_end ? new Date().toISOString() : null},
+       ${new Date().toISOString()},
        ${stripeSub.cancel_at_period_end},
        ${stripeSub.currency ?? null},
        now(), now())
@@ -199,8 +199,12 @@ export async function syncSubscription(
       stripe_subscription_id = excluded.stripe_subscription_id,
       current_period_end     = excluded.current_period_end,
       trial_end              = excluded.trial_end,
-      -- One trial per org: stamped the first time a trial appears, never cleared.
-      trial_used_at          = coalesce(subscriptions.trial_used_at, excluded.trial_used_at),
+      -- One trial per org — and "trial" means "has had Pro". Any subscription
+      -- reaching us counts, including a dashboard-created one that never
+      -- carried a trial_end (V277's backfill always assumed this; the code
+      -- did not). Never cleared except by the staff Restore trial action.
+      trial_used_at          = coalesce(subscriptions.trial_used_at,
+                                        excluded.trial_used_at, now()),
       cancel_at_period_end   = excluded.cancel_at_period_end,
       currency               = coalesce(excluded.currency, subscriptions.currency),
       -- Task 7 fold-in: a re-buy (new sub id) clears any stale dispute flags so an

@@ -1,6 +1,7 @@
 // trial_used_at lifecycle (product gap 2026-07-13): syncSubscription stamps
-// it the first time a Stripe sub carries a trial, and the stamp SURVIVES the
-// downgrade→upgrade loop — a second checkout must resolve trialDays 0.
+// it on the FIRST sync of any Stripe sub — trialing or not, since the column
+// means "this org has had Pro" — and the stamp SURVIVES the downgrade→upgrade
+// loop, so a second checkout must resolve trialDays 0.
 // Real Postgres required; skipped without DATABASE_URL.
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
@@ -89,11 +90,62 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     expect((await readSub()).trial_used_at).toEqual(stamped);
   });
 
-  it("a paid-from-day-one sub does not stamp a trial", async () => {
+  // A paid-from-day-one sub carries no trial_end — but it IS an org that has
+  // had Pro, so the stamp lands even though trial_end stays null.
+  it("a paid-from-day-one sub stamps the org without recording a trial_end", async () => {
     const orgId = await seedOrg();
     await syncSubscription(orgId, stripeSub({ id: "sub_paid", status: "active" }));
-    const [row] = await sql<{ trial_used_at: string | null }[]>`
-      select trial_used_at from subscriptions where org_id = ${orgId}`;
-    expect(row.trial_used_at).toBeNull();
+    const [row] = await sql<{ trial_end: string | null; trial_used_at: string | null }[]>`
+      select trial_end, trial_used_at from subscriptions where org_id = ${orgId}`;
+    expect(row.trial_end).toBeNull();
+    expect(row.trial_used_at).not.toBeNull();
+  });
+
+  // A subscription created in the Stripe dashboard (invoice-billed, no trial)
+  // is still an org that has HAD Pro — V277's own backfill counted it, the
+  // ongoing code did not.
+  it("stamps a subscription that never carried a trial", async () => {
+    const orgId = await seedOrg();
+    const readStamp = async () =>
+      (
+        await sql<{ trial_used_at: string | null }[]>`
+          select trial_used_at from subscriptions where org_id = ${orgId}`
+      )[0].trial_used_at;
+
+    await syncSubscription(orgId, stripeSub({ id: "sub_notrial", status: "active" }));
+    const stamped = await readStamp();
+    expect(stamped).not.toBeNull();
+    expect(checkoutTrialDays({ trial_used_at: stamped })).toBe(0);
+  });
+
+  it("a replay of the same event does not re-date the stamp", async () => {
+    const orgId = await seedOrg();
+    const readStamp = async () =>
+      (
+        await sql<{ trial_used_at: string | null }[]>`
+          select trial_used_at from subscriptions where org_id = ${orgId}`
+      )[0].trial_used_at;
+
+    await syncSubscription(orgId, stripeSub({ id: "sub_replay", status: "active" }));
+    const first = await readStamp();
+    await syncSubscription(orgId, stripeSub({ id: "sub_replay", status: "active" }));
+    expect(await readStamp()).toEqual(first);
+  });
+
+  // Task 7 of the payments wave clears dispute flags on a re-buy. That reset
+  // must not take trial_used_at with it — they share one upsert.
+  it("a re-buy under a NEW subscription id keeps the original stamp", async () => {
+    const orgId = await seedOrg();
+    const readStamp = async () =>
+      (
+        await sql<{ trial_used_at: string | null }[]>`
+          select trial_used_at from subscriptions where org_id = ${orgId}`
+      )[0].trial_used_at;
+
+    await syncSubscription(orgId, stripeSub({ id: "sub_first", status: "active" }));
+    const first = await readStamp();
+    await sql`update subscriptions set status = 'canceled' where org_id = ${orgId}`;
+    await syncSubscription(orgId, stripeSub({ id: "sub_second", status: "active" }));
+    expect(await readStamp()).toEqual(first);
   });
 });
