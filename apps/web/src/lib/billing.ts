@@ -213,7 +213,10 @@ export function billingCtaLabel(status: string, hasPaymentMethod: boolean): stri
  * wrong. (This branch has repeatedly shipped a fix to one writer and missed its
  * siblings.)
  *
- * Never called from a render path: the banner reads the mirrored column.
+ * Never called from a render path: the banner reads the mirrored column. The
+ * ONE render-path exception is getBillingOverview, which already holds a fresh
+ * Stripe card list and goes through syncPaymentMethodFlagFromCards below (zero
+ * extra Stripe calls).
  *
  * Returns the value written, or null when nothing was written — no
  * subscriptions row, or Stripe was unreachable. A Stripe failure deliberately
@@ -234,13 +237,39 @@ export async function syncPaymentMethodFlag(orgId: string): Promise<boolean | nu
       stripe.customers.retrieve(sub.stripe_customer_id),
       stripe.customers.listPaymentMethods(sub.stripe_customer_id, { type: "card", limit: 1 }),
     ]);
-    // An attached card counts even before it is made the customer default: the
-    // add-card flow promotes it a moment later, and the banner must not flap.
     const rawDefault = customer.deleted
       ? null
       : (customer.invoice_settings?.default_payment_method ?? null);
-    const has = pms.data.length > 0 || !!rawDefault;
-    return writePaymentMethodFlag(orgId, has);
+    return syncPaymentMethodFlagFromCards(orgId, {
+      cardCount: pms.data.length,
+      hasCustomerDefault: !!rawDefault,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Same write, for a caller that has ALREADY read the customer + card list from
+ * Stripe. getBillingOverview does exactly that on every billing-page render, so
+ * routing it through here makes an org's own visit to /settings/billing
+ * SELF-HEAL the mirror at zero extra Stripe cost — which is what covers every
+ * org that existed before V304 shipped with the column defaulted to false (no
+ * backfill script, no migration).
+ *
+ * Swallows its own failure and returns null. This runs on a page render path:
+ * a mirror write that fails must degrade to a stale flag, never to a billing
+ * page that cannot render. Same "leave the mirror alone" rule as above.
+ */
+export async function syncPaymentMethodFlagFromCards(
+  orgId: string,
+  args: { cardCount: number; hasCustomerDefault: boolean },
+): Promise<boolean | null> {
+  // An attached card counts even before it is made the customer default: the
+  // add-card flow promotes it a moment later, and the banner must not flap.
+  const has = args.cardCount > 0 || args.hasCustomerDefault;
+  try {
+    return await writePaymentMethodFlag(orgId, has);
   } catch {
     return null;
   }

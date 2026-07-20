@@ -4,7 +4,11 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getActiveOrgId, requireOrgRole, requireUser } from "@/lib/auth";
-import { syncPaymentMethodFlag, syncSubscription } from "@/lib/billing";
+import {
+  syncPaymentMethodFlag,
+  syncPaymentMethodFlagFromCards,
+  syncSubscription,
+} from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import {
   buildAddressUpdateParams,
@@ -147,6 +151,18 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
     if (customer.deleted) return null;
     const rawDefault = customer.invoice_settings?.default_payment_method;
     const defaultId = typeof rawDefault === "string" ? rawDefault : (rawDefault?.id ?? null);
+
+    // Self-heal the has_payment_method mirror from the card list we ALREADY
+    // hold — no extra Stripe call. Orgs that added a card before V304 shipped
+    // (the 2026-07-20 reporter included) have the column stuck at its `false`
+    // default until some writer touches Stripe for them; their own visit to
+    // /settings/billing is that writer, so no backfill is needed. The helper
+    // swallows its own write error, so a mirror hiccup can never collapse this
+    // whole try into `return null` and blank the billing page.
+    await syncPaymentMethodFlagFromCards(orgId, {
+      cardCount: pms.data.length,
+      hasCustomerDefault: !!defaultId,
+    });
 
     const [plan] = await sql<
       { stripe_price_id_monthly: string | null; stripe_price_id_annual: string | null }[]

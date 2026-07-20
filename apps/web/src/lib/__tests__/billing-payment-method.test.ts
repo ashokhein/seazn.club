@@ -23,6 +23,9 @@ const stripeMock = vi.hoisted(() => ({
   retrieveSetupIntent: vi.fn(),
   retrievePaymentMethod: vi.fn(),
   detachPaymentMethod: vi.fn(),
+  listInvoices: vi.fn(),
+  listTaxIds: vi.fn(),
+  retrieveSubscription: vi.fn(),
 }));
 vi.mock("@/lib/stripe", () => ({
   getStripe: () => ({
@@ -30,12 +33,15 @@ vi.mock("@/lib/stripe", () => ({
       retrieve: stripeMock.retrieveCustomer,
       listPaymentMethods: stripeMock.listPaymentMethods,
       update: stripeMock.updateCustomer,
+      listTaxIds: stripeMock.listTaxIds,
     },
     setupIntents: { retrieve: stripeMock.retrieveSetupIntent },
     paymentMethods: {
       retrieve: stripeMock.retrievePaymentMethod,
       detach: stripeMock.detachPaymentMethod,
     },
+    invoices: { list: stripeMock.listInvoices },
+    subscriptions: { retrieve: stripeMock.retrieveSubscription },
   }),
 }));
 vi.mock("@/lib/auth", () => ({
@@ -48,7 +54,11 @@ vi.mock("@/lib/entitlements", () => ({ invalidateOrgEntitlements: vi.fn() }));
 
 import { sql } from "@/lib/db";
 import { billingCtaLabel, syncPaymentMethodFlag, syncSubscription } from "@/lib/billing";
-import { setDefaultPaymentMethod, removePaymentMethod } from "@/server/usecases/billing-manage";
+import {
+  getBillingOverview,
+  setDefaultPaymentMethod,
+  removePaymentMethod,
+} from "@/server/usecases/billing-manage";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 import { BillingBanner } from "@/components/billing-banner";
 
@@ -101,6 +111,18 @@ function stripeHasCards(customerId: string, count: number, withDefault = true) {
   });
   stripeMock.listPaymentMethods.mockResolvedValue({
     data: Array.from({ length: count }, (_, i) => ({ id: `pm_${i}` })),
+  });
+}
+
+/** The rest of what getBillingOverview fetches — none of it touches the flag. */
+function stripeBillingPageRest() {
+  stripeMock.listInvoices.mockResolvedValue({ data: [] });
+  stripeMock.listTaxIds.mockResolvedValue({ data: [] });
+  stripeMock.retrieveSubscription.mockResolvedValue({
+    id: "sub_overview",
+    status: "trialing",
+    discounts: [],
+    items: { data: [{ price: { id: "price_unknown_pmflag" } }] },
   });
 }
 
@@ -269,10 +291,29 @@ const WRITERS: WriterCase[] = [
     cardsAfter: 1,
     expected: true,
     async run(orgId) {
+      // Gated on invoice_settings — see "customer.updated is chatty" below.
       await processStripeEvent({
         type: "customer.updated",
-        data: { object: { id: await customerOf(orgId) } },
+        data: {
+          object: { id: await customerOf(orgId) },
+          previous_attributes: { invoice_settings: { default_payment_method: null } },
+        },
       } as unknown as Stripe.Event);
+    },
+  },
+  {
+    // The self-heal that removes the need for a V304 backfill: every org that
+    // added a card BEFORE the column existed still reads false, and the org's
+    // own visit to /settings/billing is what fixes it. Costs no extra Stripe
+    // call — getBillingOverview already lists the cards to render them.
+    name: "getBillingOverview (billing page render self-heal)",
+    cardsAfter: 1,
+    expected: true,
+    async run(orgId) {
+      stripeBillingPageRest();
+      const overview = await getBillingOverview(orgId);
+      // Not a silent null: the page really rendered on the path under test.
+      expect(overview).not.toBeNull();
     },
   },
 ];
@@ -286,6 +327,106 @@ describe.skipIf(!HAS_DB)("has_payment_method — the writer set", () => {
     stripeHasCards(await customerOf(orgId), w.cardsAfter);
     await w.run(orgId);
     expect(await flagOf(orgId)).toBe(w.expected);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The reporter's exact situation: pre-V304 org, card in Stripe, flag stuck
+// false. No backfill script — visiting the billing page heals it.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("getBillingOverview self-heals the mirror", () => {
+  it("flips a stale false flag to true for an org that already has a card", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+    // Banner today: still asking for the card the org has already given.
+    expect(await renderBanner(orgId)).toContain("Add a payment method");
+
+    stripeHasCards(await customerOf(orgId), 1);
+    stripeBillingPageRest();
+    const overview = await getBillingOverview(orgId);
+
+    expect(overview).not.toBeNull();
+    expect(await flagOf(orgId)).toBe(true);
+    // …and the banner stops asking, without any Stripe call of its own.
+    const after = await renderBanner(orgId);
+    expect(after).toContain("4 days left in your Pro trial");
+    expect(after).not.toContain("Add a payment method");
+  });
+
+  it("clears the flag when the org's last card is gone", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+    stripeHasCards(await customerOf(orgId), 0);
+    stripeBillingPageRest();
+    expect(await getBillingOverview(orgId)).not.toBeNull();
+    expect(await flagOf(orgId)).toBe(false);
+  });
+
+  it("costs no extra Stripe read — it writes from the list it already had", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+    stripeHasCards(await customerOf(orgId), 1);
+    stripeBillingPageRest();
+    await getBillingOverview(orgId);
+    // One customer retrieve + one card list for the WHOLE render. A
+    // syncPaymentMethodFlag() bolted on top would double both.
+    expect(stripeMock.retrieveCustomer).toHaveBeenCalledTimes(1);
+    expect(stripeMock.listPaymentMethods).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// customer.updated is chatty: it fires on name/address/tax/balance edits too.
+// Only invoice_settings can move the default card, so everything else is a
+// cheap ACK rather than a Stripe round trip.
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!HAS_DB)("customer.updated is gated on invoice_settings", () => {
+  it("ignores an unrelated customer edit — no Stripe read, mirror untouched", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+    stripeHasCards(await customerOf(orgId), 0);
+    await processStripeEvent({
+      type: "customer.updated",
+      data: {
+        object: { id: await customerOf(orgId) },
+        previous_attributes: { name: "Old Name" },
+      },
+    } as unknown as Stripe.Event);
+    expect(stripeMock.retrieveCustomer).not.toHaveBeenCalled();
+    expect(await flagOf(orgId)).toBe(true);
+  });
+
+  it("ignores an event with no previous_attributes at all", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+    stripeHasCards(await customerOf(orgId), 0);
+    await processStripeEvent({
+      type: "customer.updated",
+      data: { object: { id: await customerOf(orgId) } },
+    } as unknown as Stripe.Event);
+    expect(stripeMock.retrieveCustomer).not.toHaveBeenCalled();
+    expect(await flagOf(orgId)).toBe(true);
+  });
+
+  it("still acts when invoice_settings changed", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+    stripeHasCards(await customerOf(orgId), 0);
+    await processStripeEvent({
+      type: "customer.updated",
+      data: {
+        object: { id: await customerOf(orgId) },
+        previous_attributes: { invoice_settings: { default_payment_method: "pm_old" } },
+      },
+    } as unknown as Stripe.Event);
+    expect(stripeMock.retrieveCustomer).toHaveBeenCalled();
+    expect(await flagOf(orgId)).toBe(false);
+  });
+
+  it("leaves payment_method.attached unconditional (no previous_attributes)", async () => {
+    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+    stripeHasCards(await customerOf(orgId), 1);
+    await processStripeEvent({
+      type: "payment_method.attached",
+      data: { object: { id: "pm_dash", customer: await customerOf(orgId) } },
+    } as unknown as Stripe.Event);
+    expect(await flagOf(orgId)).toBe(true);
   });
 });
 

@@ -127,11 +127,19 @@ async function orgForCustomer(customerId: string | null | undefined): Promise<st
  *
  * A DETACHED payment method carries a null customer (Stripe nulls the link as
  * part of the change), so the org has to come from previous_attributes.
+ *
+ * customer.updated is CHATTY — it fires for a name, an address, a tax id, a
+ * balance change — and only invoice_settings can move the default card, so
+ * that event is gated on previous_attributes.invoice_settings and everything
+ * else is a cheap ACK instead of a Stripe round trip. attached/detached stay
+ * unconditional: those events ARE the card change.
  */
 async function handlePaymentMethodChanged(event: Stripe.Event) {
   const object = event.data.object as { id?: string; customer?: string | { id: string } | null };
-  const previous = (event.data as { previous_attributes?: { customer?: string | null } })
-    .previous_attributes;
+  const previous = (event.data as {
+    previous_attributes?: { customer?: string | null; invoice_settings?: unknown };
+  }).previous_attributes;
+  if (event.type === "customer.updated" && !(previous && "invoice_settings" in previous)) return;
   const raw =
     event.type === "customer.updated"
       ? object.id
