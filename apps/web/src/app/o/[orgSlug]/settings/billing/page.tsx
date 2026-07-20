@@ -1,9 +1,7 @@
 export const dynamic = "force-dynamic";
-import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
 import { reconcileCheckout, billingCtaLabel } from "@/lib/billing";
 import { requireOrgPage } from "@/server/page-auth";
-import { routes } from "@/lib/routes";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, DowngradeButton } from "@/components/billing-actions";
 import {
@@ -122,13 +120,17 @@ export default async function BillingPage({
       />
       {orgId && <BillingBanner orgId={orgId} />}
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <div className="mb-6 flex items-center justify-between">
+        {/* No back link here: OrgLayout's breadcrumb already carries a
+            clickable "Settings" crumb — the hand-rolled one duplicated it. */}
+        <div className="mb-6">
           <h1 className="page-title">
             {t(dict, "billing.title")}
           </h1>
-          <Link href={routes.orgSettings(orgSlug)} className="btn btn-ghost">
-            ← {t(dict, "action.settings")}
-          </Link>
+          {/* Quiet trust signal, not a headline: card entry never touches our
+              servers (SAQ A), and saying so belongs above the plan card. */}
+          <p className="mt-1 text-xs text-slate-500">
+            {t(dict, "billing.poweredByStripe")}
+          </p>
         </div>
 
         {justCheckedOut && (

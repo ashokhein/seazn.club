@@ -506,6 +506,7 @@
   "role.viewer": "Observateur",
   "role.scorer": "Marqueur",
   "billing.title": "Forfait et facturation",
+  "billing.poweredByStripe": "Paiements propulsés par Stripe",
   "billing.checkoutComplete": "Paiement terminé — votre forfait est désormais",
   "billing.trialSuffix": " (essai)",
   "billing.currentPlan": "Forfait actuel",

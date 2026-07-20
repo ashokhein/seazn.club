@@ -31,14 +31,10 @@ export default async function ConnectSettingsPage({
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
+      {/* No back link here: OrgLayout's breadcrumb already carries a
+          clickable "Settings" crumb — the hand-rolled one duplicated it. */}
       <div className="mb-6">
-        <Link
-          href={routes.orgSettings(orgSlug)}
-          className="text-sm text-slate-500 hover:text-slate-700"
-        >
-          ← {t(dict, "action.settings")}
-        </Link>
-        <h1 className="mt-2 text-2xl font-bold text-slate-900">{t(dict, "payments.title")}</h1>
+        <h1 className="text-2xl font-bold text-slate-900">{t(dict, "payments.title")}</h1>
         <p className="mt-1 text-sm text-slate-500">
           {t(dict, "payments.desc")}
         </p>

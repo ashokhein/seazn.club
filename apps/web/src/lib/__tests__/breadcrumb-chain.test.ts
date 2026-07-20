@@ -44,7 +44,7 @@ describe("buildCrumbs", () => {
 
   it("covers settings, billing and create pages", () => {
     expect(buildCrumbs({ ...base, pathname: "/o/acme/settings/billing" }).map((c) => c.label))
-      .toEqual(["Acme Sports", "Settings", "Plan & billing"]);
+      .toEqual(["Acme Sports", "Settings", "Plan & Billing"]);
     expect(buildCrumbs({ ...base, pathname: "/o/acme/c/new" }).map((c) => c.label))
       .toEqual(["Acme Sports", "New competition"]);
     expect(
@@ -83,6 +83,6 @@ describe("buildCrumbs", () => {
   it("without a `t` translator falls back to the plain English catalog lookup — same values the untranslated tests above assert, so buildCrumbs stays pure/testable outside a DictProvider", () => {
     expect(
       buildCrumbs({ ...base, pathname: "/o/acme/settings/billing" }).map((c) => c.label),
-    ).toEqual(["Acme Sports", "Settings", "Plan & billing"]);
+    ).toEqual(["Acme Sports", "Settings", "Plan & Billing"]);
   });
 });

@@ -506,6 +506,7 @@
   "role.viewer": "Kijker",
   "role.scorer": "Scorer",
   "billing.title": "Abonnement & Facturering",
+  "billing.poweredByStripe": "Betalingen mogelijk gemaakt door Stripe",
   "billing.checkoutComplete": "Afrekenen voltooid — je abonnement is nu",
   "billing.trialSuffix": " (proefperiode)",
   "billing.currentPlan": "Huidig abonnement",
