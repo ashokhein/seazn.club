@@ -7,6 +7,7 @@ import { fetchCheckoutClientSecret } from "@/lib/billing-checkout-client";
 import { stripePromise } from "@/lib/stripe-browser";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { Modal } from "@/components/modal";
 
 /** In-page upgrade via Stripe Embedded Checkout — reveals the checkout inline
  *  (no redirect out) and only returns to the billing page on completion. We
@@ -45,23 +46,15 @@ export function UpgradeButton({
 
   if (clientSecret) {
     return (
-      <div className="mt-2">
-        {/* Full-bleed at phone widths (v3/02 §3.2 — the reported 375px break):
-            escape the card p-5 + main px-4 so the Stripe iframe gets the full
-            viewport; no fixed min-width parent. */}
-        <div className="-mx-9 w-auto sm:mx-0">
-          <EmbeddedCheckoutProvider stripe={stripePromise} options={{ clientSecret }}>
-            <EmbeddedCheckout />
-          </EmbeddedCheckoutProvider>
-        </div>
-        <button
-          type="button"
-          onClick={() => setClientSecret(null)}
-          className="mt-3 text-xs text-slate-500 hover:underline"
-        >
-          Cancel
-        </button>
-      </div>
+      <Modal title="Complete your upgrade" size="lg" onClose={() => setClientSecret(null)}>
+        {/* Stripe's iframe measures and resizes itself, so this container must
+            not impose a height — Modal already caps the sheet at 85vh and
+            scrolls. The provider is mounted only once we hold a secret;
+            remounting it would restart the checkout session. */}
+        <EmbeddedCheckoutProvider stripe={stripePromise} options={{ clientSecret }}>
+          <EmbeddedCheckout />
+        </EmbeddedCheckoutProvider>
+      </Modal>
     );
   }
 

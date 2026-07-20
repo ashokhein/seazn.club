@@ -209,4 +209,44 @@ test.describe.serial("billing", () => {
     await expect(page.getByRole("button", { name: /start free trial/i })).toHaveCount(0);
     await expect(page.getByText(/your free trial has already been used/)).toBeVisible();
   });
+
+  test("upgrade opens checkout in a modal that survives a dismiss", async ({ page }) => {
+    // Storage-state's default active org is the Pro setup org (no CTA to
+    // click), and activation doesn't carry across tests' fresh contexts — so
+    // reactivate orgA (still community, trial unused from earlier in this
+    // serial suite) the same way the "mounts the embedded Stripe checkout"
+    // test above does.
+    await activate(page, orgA);
+
+    // Same probe-and-skip pattern as "upgrade click mounts the embedded
+    // Stripe checkout" above — this exercises the ANNUAL Pro price, since
+    // that's the only button whose label matches "Start free trial".
+    const probe = await apiJson<{ client_secret?: string }>(
+      page.request,
+      "/api/billing/checkout",
+      "POST",
+      { plan_key: "pro", interval: "annual" },
+    );
+    test.skip(probe.status >= 500 || probe.status === 503, "Stripe not configured — skipping");
+
+    // NOTE: "/settings?tab=billing" redirects through routes.orgSettings() to
+    // the tabbed org-profile page, NOT the billing page — that's a different
+    // component with no UpgradeButton. The legacy "/settings/billing" redirect
+    // (routes.billing()) is what every other test in this file uses to reach
+    // the actual billing surface; matching that here.
+    await page.goto("/settings/billing");
+    await page.waitForURL(/\/o\/[^/]+\/settings\/billing/, { timeout: 20_000 });
+
+    await page.getByRole("button", { name: /Start free trial|Go Pro/ }).first().click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await expect(dialog.locator("iframe")).toBeVisible({ timeout: 30_000 });
+
+    // Dismiss and reopen: the provider must remount cleanly with a fresh secret,
+    // not a dead iframe from the previous session.
+    await dialog.getByRole("button", { name: "Close" }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.getByRole("button", { name: /Start free trial|Go Pro/ }).first().click();
+    await expect(page.getByRole("dialog").locator("iframe")).toBeVisible({ timeout: 30_000 });
+  });
 });
