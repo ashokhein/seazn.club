@@ -398,6 +398,11 @@ await i18nSuite();
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
   await platformRevenueSuite(admin, `admin_${tag}@example.com`);
 
+  // --- One trial per organisation, ever (V277): both staff stamping rails on
+  // the pro path, the comp rail + the upgrade CTA on the free path. Own fresh
+  // orgs; keyless-safe.
+  await oneTrialSuite();
+
   // --- clubs-w1 (W1): parent clubs group teams — the hub lifecycle (create →
   // profile → contact → standalone team → move under the club → squad with a
   // quick-created person) on Pro, and the tunable clubs.max=2 community cap.
@@ -2158,6 +2163,189 @@ async function platformRevenueSuite(admin: Session, staffEmail: string): Promise
     }
     const bad = await raw(admin, "/api/admin/revenue?from=notadate");
     check("revenue 400s on malformed range", bad.status === 400);
+  } finally {
+    await setStaff(staffEmail, null);
+  }
+}
+
+/** One Pro trial per organisation, ever (V277) over real HTTP. `trial_used_at`
+ *  means "this org has ALREADY had Pro"; once stamped it is never cleared, so
+ *  the downgrade→upgrade loop can't re-arm the 14-day checkout trial.
+ *
+ *  Pro path: the staff TRIAL-GRANT rail (extendTrial) — it lifts a community
+ *  org to Pro, burns the one trial, survives an extension, and is refused
+ *  outright once Stripe owns the billing timeline.
+ *  Free path: the staff COMP rail (compToPro) — the other stamping writer —
+ *  plus the surface an owner actually reads: the billing page's upgrade CTA,
+ *  which must stop promising a trial the checkout would not grant.
+ *
+ *  Runs on its own fresh orgs (never touches org/org2) and is keyless-safe:
+ *  no arm reaches Stripe — the comp rail has no subscription to update, and
+ *  the refusal arm answers BEFORE the Stripe call by design. */
+async function oneTrialSuite(): Promise<void> {
+  const staffEmail = `trial_staff_${tag}@example.com`;
+  const staff = newSession();
+  await signIn(staff, staffEmail);
+
+  interface TrialRow {
+    plan_key: string;
+    status: string;
+    trial_end: Date | null;
+    trial_used_at: Date | null;
+  }
+  /** The columns the one-trial contract is written in, read straight from the
+   *  row the usecases write (same ad-hoc client convention as
+   *  checkTermsStamp/setStaff). */
+  const readSub = async (orgId: string): Promise<TrialRow> => {
+    const db = smokeDb();
+    try {
+      const [row] = await db<TrialRow[]>`
+        select plan_key, status, trial_end, trial_used_at
+        from subscriptions where org_id = ${orgId}`;
+      return row!;
+    } finally {
+      await db.end();
+    }
+  };
+  const at = (d: Date | null) => (d ? new Date(d).toISOString() : null);
+  /** Age the burn so "the first burn survives" is a comparison against a date
+   *  no later write could coincidentally reproduce (an org that trialled a
+   *  month ago is the real-world state this pins). */
+  const backdateBurn = async (orgId: string): Promise<void> => {
+    const db = smokeDb();
+    try {
+      await db`
+        update subscriptions set trial_used_at = now() - interval '30 days'
+        where org_id = ${orgId}`;
+    } finally {
+      await db.end();
+    }
+  };
+  /** Hand the org to Stripe: an id AND a live status — the liveness rule is
+   *  both columns, never the id alone (a cancelled sub keeps its id forever). */
+  const seedStripeBilled = async (orgId: string): Promise<void> => {
+    const db = smokeDb();
+    try {
+      await db`
+        update subscriptions
+        set stripe_subscription_id = ${"sub_smoke_" + orgId.slice(0, 8)}, status = 'active'
+        where org_id = ${orgId}`;
+    } finally {
+      await db.end();
+    }
+  };
+
+  // === PRO PATH — the staff trial-grant rail ============================
+  const pro = newSession();
+  const proOrg = (await signIn(pro, `trial_pro_${tag}@example.com`)).org_id;
+
+  // === FREE PATH — a fresh community owner ==============================
+  const free = newSession();
+  const freeOrg = (await signIn(free, `trial_free_${tag}@example.com`)).org_id;
+  const freeSlug = ((await call(free, "/api/orgs")) as { id: string; slug: string }[])
+    .find((o) => o.id === freeOrg)!.slug;
+
+  // A community org's upgrade card composes its CTA label as
+  // `${startTrial|goPro} — <price>/mo billed yearly`. Match the label as the
+  // BUTTON renders it (leading '>'), never the bare dict string: the /o
+  // DictProvider serializes the whole `ui` dict into the page's flight payload,
+  // so both trial copies — and `upgrade.proCard.cta` = "Go Pro — 14-day free
+  // trial" — sit in the body whatever the org's state. Inside that JSON the
+  // label is preceded by an escaped quote, so only the rendered <button> text
+  // matches here. ("Go Pro Plus — …" never collides: '>Go Pro —' needs the
+  // dash next.)
+  const OFFERS_TRIAL = ">Start free trial —";
+  const OFFERS_NO_TRIAL = ">Go Pro —";
+
+  const freshBilling = await html(free, `/o/${freeSlug}/settings/billing`);
+  const freshSub = await readSub(freeOrg);
+  check(
+    "trial/free: a fresh community org is unburned and offered the 14-day trial",
+    freshSub.trial_used_at === null &&
+      freshBilling.status === 200 &&
+      freshBilling.body.includes(OFFERS_TRIAL) &&
+      !freshBilling.body.includes(OFFERS_NO_TRIAL),
+  );
+
+  await setStaff(staffEmail, "superadmin");
+  try {
+    // --- Pro path 1: the grant IS free Pro, so it burns the one trial.
+    const grant = await raw(staff, `/api/admin/orgs/${proOrg}/grant-trial`, "POST", {
+      days: 14,
+      reason: "smoke: one trial per org",
+    });
+    const granted = await readSub(proOrg);
+    check(
+      "trial/pro: a staff-granted trial lifts the org to Pro and burns its one trial",
+      grant.status === 200 &&
+        granted.plan_key === "pro" &&
+        granted.status === "trialing" &&
+        granted.trial_used_at !== null,
+    );
+
+    // --- Pro path 2: extensions move trial_end; the BURN is written once.
+    await backdateBurn(proOrg);
+    const burned = await readSub(proOrg);
+    const extend = await raw(staff, `/api/admin/orgs/${proOrg}/grant-trial`, "POST", {
+      days: 7,
+      reason: "smoke: extension must not re-burn",
+    });
+    const extended = await readSub(proOrg);
+    check(
+      "trial/pro: extending the trial moves trial_end but never re-burns trial_used_at",
+      extend.status === 200 &&
+        at(extended.trial_end) !== at(burned.trial_end) &&
+        at(extended.trial_used_at) === at(burned.trial_used_at),
+    );
+
+    // --- Pro path 3: once Stripe owns the timeline the grant is refused
+    // BEFORE any write and before any Stripe call — the guard arm changes
+    // nothing (asserted on the row, not just on the status code).
+    await seedStripeBilled(proOrg);
+    const beforeRefusal = await readSub(proOrg);
+    const refused = await raw(staff, `/api/admin/orgs/${proOrg}/grant-trial`, "POST", {
+      days: 30,
+      reason: "smoke: stripe-billed orgs are refused",
+    });
+    const afterRefusal = await readSub(proOrg);
+    check(
+      "trial/pro: a Stripe-billed org is refused a staff trial (400) and the row is untouched",
+      refused.status === 400 &&
+        afterRefusal.status === beforeRefusal.status &&
+        at(afterRefusal.trial_end) === at(beforeRefusal.trial_end) &&
+        at(afterRefusal.trial_used_at) === at(beforeRefusal.trial_used_at),
+    );
+
+    // --- Free path 2: the OTHER stamping writer. A comp is free Pro too.
+    const comp = await raw(staff, `/api/admin/orgs/${freeOrg}/comp-to-pro`, "POST", {
+      until: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10),
+      reason: "smoke: a comp burns the trial",
+    });
+    const comped = await readSub(freeOrg);
+    check(
+      "trial/free: a staff comp lifts the org to Pro and burns its one trial",
+      comp.status === 200 && comped.plan_key === "pro" && comped.trial_used_at !== null,
+    );
+
+    // --- Free path 3: back on Community, the burn stands and the upgrade CTA
+    // stops promising a second trial. This is the whole product rule, at the
+    // surface the owner reads before paying.
+    await backdateBurn(freeOrg);
+    const burnedFree = await readSub(freeOrg);
+    const down = await raw(staff, `/api/admin/orgs/${freeOrg}/downgrade`, "POST", {
+      reason: "smoke: downgrade must not re-arm the trial",
+    });
+    const downgraded = await readSub(freeOrg);
+    const returnBilling = await html(free, `/o/${freeSlug}/settings/billing`);
+    check(
+      "trial/free: downgrading to Community keeps the burn and the CTA offers no second trial",
+      down.status === 200 &&
+        downgraded.plan_key === "community" &&
+        at(downgraded.trial_used_at) === at(burnedFree.trial_used_at) &&
+        returnBilling.status === 200 &&
+        returnBilling.body.includes(OFFERS_NO_TRIAL) &&
+        !returnBilling.body.includes(OFFERS_TRIAL),
+    );
   } finally {
     await setStaff(staffEmail, null);
   }
@@ -4811,6 +4999,9 @@ async function cleanup(tag: string): Promise<void> {
     ]),
     `clubpro_${tag}@example.com`,
     `clubfree_${tag}@example.com`,
+    `trial_staff_${tag}@example.com`,
+    `trial_pro_${tag}@example.com`,
+    `trial_free_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
@@ -4828,6 +5019,13 @@ async function cleanup(tag: string): Promise<void> {
     const orgs = await sql`
       delete from organizations
       where created_by in (select id from users where email = any(${emails}))`;
+    // staff_audit_log.actor_id → users.id has no ON DELETE, so the run's own
+    // staff actions (the trial grant / comp / downgrade in oneTrialSuite) pin
+    // their actor. The audit trail is append-only for real staff; here the
+    // actor is a throwaway account that is about to stop existing.
+    await sql`
+      delete from staff_audit_log
+      where actor_id in (select id from users where email = any(${emails}))`;
     const users = await sql`delete from users where email = any(${emails})`;
     console.log(`cleanup: removed ${orgs.count} org(s), ${users.count} user(s)`);
   } catch (e) {
