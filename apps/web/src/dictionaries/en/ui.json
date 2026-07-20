@@ -32,6 +32,7 @@
   "board.ai.flagged": "Engine flagged the draft — repairing…",
   "board.ai.elapsed": "{elapsed} · usually 1–5 minutes",
   "board.ai.frozen": "This schedule is frozen. Unfreeze it to plan with AI.",
+  "history.checkpoint.latestAi": "Latest AI run",
   "board.ai.errorLabel": "Couldn't finish.",
   "board.ai.errorGeneric": "Something went wrong. Try again.",
   "board.ai.error.upgrade": "AI scheduling needs a Pro plan.",

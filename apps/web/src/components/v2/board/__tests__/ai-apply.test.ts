@@ -1,4 +1,4 @@
-// AI apply orchestration (v4 Task 15). The chain is the contract: a before-ai
+// AI apply orchestration (v4 Task 15). The chain is the contract: a timestamped
 // checkpoint, the schedule apply(s), the officials apply, then the ticked rule
 // PUT — in that order. These tests mock the injected fetch seam, assert the call
 // ORDER + payloads, and cover the three outcome branches from the brief. One
@@ -58,7 +58,8 @@ function baseInput(over: Partial<ApplyAiInput> = {}): ApplyAiInput {
   };
 }
 
-// GET (list) → no prior "before-ai" save point; POST (create) → the new id.
+// The chain no longer lists checkpoints: every apply creates its own kind:'ai'
+// anchor (V303), which is exempt from the save-point quota.
 const okHandlers = {
   checkpoints: ({ method }: { method?: string }) => (method === "POST" ? { id: "cp-1" } : []),
 };
@@ -74,7 +75,6 @@ describe("applyAiPlans — chained accept", () => {
     expect(out).toEqual({ schedule: "applied", officials: "applied", checkpointId: "cp-1" });
     const seam = calls.map((c) => `${c.method} ${c.url}`);
     expect(seam).toEqual([
-      "GET /api/v1/divisions/div-1/checkpoints",
       "POST /api/v1/divisions/div-1/checkpoints",
       "POST /api/v1/stages/st-1/schedule/apply",
       "POST /api/v1/divisions/div-1/officials/apply",
@@ -86,23 +86,26 @@ describe("applyAiPlans — chained accept", () => {
     const { api, calls } = recorder(okHandlers);
     await applyAiPlans(baseInput(), api);
 
-    // [0] GET list, [1] POST create, [2] schedule apply, [3] officials apply.
-    expect(calls[1].json).toEqual({ label: "before-ai" });
-    expect(calls[2].json).toMatchObject({ source: "ai", expected_seq: 7, ai: audit });
-    expect(calls[2].json.assignments).toEqual([
+    // [0] POST create anchor, [1] schedule apply, [2] officials apply.
+    // Label is timestamped so a restore point says WHICH run it precedes, and
+    // kind:"ai" keeps it off the organiser's save-point quota.
+    expect(calls[0].json).toMatchObject({ kind: "ai" });
+    expect((calls[0].json as { label: string }).label).toMatch(/^Before AI · /);
+    expect(calls[1].json).toMatchObject({ source: "ai", expected_seq: 7, ai: audit });
+    expect(calls[1].json.assignments).toEqual([
       { fixture_id: "fa", scheduled_at: "2026-08-01T10:00:00Z", court_label: "Court 1" },
       { fixture_id: "fb", scheduled_at: "2026-08-01T11:00:00Z", court_label: "Court 1" },
     ]);
-    expect(calls[3].json).toMatchObject({ ai: offAudit });
+    expect(calls[2].json).toMatchObject({ ai: offAudit });
   });
 
   it("excludes unticked fixtures from BOTH the schedule and officials payloads", async () => {
     const { api, calls } = recorder(okHandlers);
     await applyAiPlans(baseInput({ excludedFixtureIds: ["fb"] }), api);
 
-    // [2] schedule apply, [3] officials apply (after the GET list + POST create).
+    // [1] schedule apply, [2] officials apply (after the POST create).
+    expect(calls[1].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
     expect(calls[2].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
-    expect(calls[3].json.assignments.map((a: { fixture_id: string }) => a.fixture_id)).toEqual(["fa"]);
   });
 
   it("applies each stage separately with a forward-walking expected_seq", async () => {
@@ -189,27 +192,38 @@ describe("applyAiPlans — chained accept", () => {
     });
   });
 
-  it("reuses an existing before-ai save point instead of stacking a new one (at most one per division)", async () => {
-    const { api, calls } = recorder({
-      checkpoints: ({ method }) =>
-        method === "POST" ? { id: "cp-new" } : [{ id: "cp-old", label: "before-ai" }],
-    });
-    const out = await applyAiPlans(baseInput({ officials: null }), api);
-    expect(out.checkpointId).toBe("cp-old");
-    // No POST create — the prior before-ai save point is reused, so a capped free
-    // org never trips schedule.checkpoints.max on a repeat AI apply.
-    expect(calls.some((c) => c.url.includes("/checkpoints") && c.method === "POST")).toBe(false);
+  // V303 replaced a reuse-by-label hack. That hack existed because the anchor
+  // was billed against schedule.checkpoints.max, and it had two failures:
+  // restore rewound to the FIRST AI apply however many had happened since, and a
+  // community org already holding one ordinary save point could not apply an AI
+  // schedule at all. The anchor is now kind:"ai" and quota-exempt, so each apply
+  // gets its own and Restore targets the latest run.
+  it("creates its own anchor per apply — no list, no reuse", async () => {
+    const { api, calls } = recorder(okHandlers);
+    await applyAiPlans(baseInput(), api);
+    const cp = calls.filter((c) => c.url.includes("/checkpoints"));
+    expect(cp.map((c) => c.method)).toEqual(["POST"]);
+    expect(cp[0]!.json).toMatchObject({ kind: "ai" });
+    expect((cp[0]!.json as { label: string }).label).toMatch(/^Before AI · /);
   });
 
-  it("creates a new save point when only a non-before-ai checkpoint exists (leaves the user's own save point alone)", async () => {
-    const { api, calls } = recorder({
-      checkpoints: ({ method }) =>
-        method === "POST" ? { id: "cp-new" } : [{ id: "cp-manual", label: "Quarterfinals" }],
+  it("two applies produce two distinct anchors, so Restore targets the later run", async () => {
+    const first = recorder({
+      ...okHandlers,
+      checkpoints: ({ method }: { method?: string }) => (method === "POST" ? { id: "cp-1" } : []),
     });
-    const out = await applyAiPlans(baseInput({ officials: null }), api);
-    expect(out.checkpointId).toBe("cp-new");
-    const cp = calls.filter((c) => c.url.includes("/checkpoints"));
-    expect(cp.map((c) => c.method)).toEqual(["GET", "POST"]);
+    const a = await applyAiPlans(baseInput(), first.api);
+
+    const second = recorder({
+      ...okHandlers,
+      checkpoints: ({ method }: { method?: string }) => (method === "POST" ? { id: "cp-2" } : []),
+    });
+    const b = await applyAiPlans(baseInput(), second.api);
+
+    // Distinct anchors: the second apply's Undo rewinds to just before IT, not
+    // back past the first — the whole point of dropping the reuse hack.
+    expect(a.checkpointId).toBe("cp-1");
+    expect(b.checkpointId).toBe("cp-2");
   });
 
   it("checkpoint save-point-quota 402 stops the chain and carries the feature key", async () => {
@@ -218,7 +232,7 @@ describe("applyAiPlans — chained accept", () => {
         if (method === "POST") {
           throw new ApiV1Error("quota", 402, "PAYMENT_REQUIRED", { feature_key: "schedule.checkpoints.max" });
         }
-        return []; // list: no prior before-ai save point
+        return [];
       },
     });
     const out = await applyAiPlans(baseInput(), api);
@@ -231,9 +245,8 @@ describe("applyAiPlans — chained accept", () => {
       errorCode: "schedule.checkpoints.max",
       errorStatus: 402,
     });
-    // GET list then the failing POST create — nothing applied.
+    // Just the failing create — nothing applied.
     expect(calls.map((c) => `${c.method} ${c.url}`)).toEqual([
-      "GET /api/v1/divisions/div-1/checkpoints",
       "POST /api/v1/divisions/div-1/checkpoints",
     ]);
   });
@@ -268,7 +281,9 @@ describe("applyAiPlans — chained accept", () => {
       ([u, init]) => String(u).includes("checkpoints") && init?.method === "POST",
     );
     expect(cpPost).toBeTruthy();
-    expect(JSON.parse(String(cpPost![1]?.body))).toEqual({ label: "before-ai" });
+    const body = JSON.parse(String(cpPost![1]?.body)) as { label: string; kind: string };
+    expect(body.kind).toBe("ai");
+    expect(body.label).toMatch(/^Before AI · /);
   });
 });
 

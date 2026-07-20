@@ -1,11 +1,14 @@
-import { z } from "zod";
 import { v1, reply, parseBody } from "@/server/api-v1/http";
 import { requireResourceAuth } from "@/server/api-v1/auth";
 import { createCheckpoint, listCheckpoints } from "@/server/usecases/history";
+import { CreateCheckpoint } from "@/server/api-v1/schemas";
 
 type Ctx = { params: Promise<{ id: string }> };
 
-const Body = z.object({ label: z.string().min(1).max(120) });
+// The openapi ROUTES entry already declares S.CreateCheckpoint as this route's
+// request shape; reuse it rather than keeping a second local copy that has to
+// be remembered when the schema gains a field (it just did — `kind`).
+const Body = CreateCheckpoint;
 
 export async function GET(req: Request, { params }: Ctx) {
   return v1(async () => {
@@ -21,6 +24,6 @@ export async function POST(req: Request, { params }: Ctx) {
     const { id } = await params;
     const body = await parseBody(req, Body);
     const auth = await requireResourceAuth(req, "division", id, "write");
-    return reply(201, await createCheckpoint(auth, id, body.label));
+    return reply(201, await createCheckpoint(auth, id, body.label, body.kind));
   });
 }

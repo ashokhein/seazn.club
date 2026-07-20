@@ -28,6 +28,11 @@ interface Checkpoint {
   id: string;
   seq: number;
   label: string;
+  /** V303 — "ai" anchors are created by the AI accept flow and exempt from the
+   *  organiser's save-point quota. */
+  kind?: "manual" | "ai";
+  /** Every AI anchor except the newest. Struck through, still restorable. */
+  superseded?: boolean;
   created_at: string;
 }
 
@@ -214,8 +219,20 @@ export function HistoryPanel({
           ) : (
             <ul className="space-y-1 text-sm">
               {checkpoints.map((cp) => (
-                <li key={cp.id} className="flex items-center gap-2 text-slate-700">
-                  <span>{cp.label}</span>
+                <li
+                  key={cp.id}
+                  className={`flex items-center gap-2 ${cp.superseded ? "text-slate-400" : "text-slate-700"}`}
+                >
+                  {/* Superseded AI anchors are struck, not hidden or disabled:
+                      the ledger can rewind to any watermark, so jumping back
+                      two AI runs stays available — it is just no longer the
+                      one Undo targets. */}
+                  <span className={cp.superseded ? "line-through" : undefined}>{cp.label}</span>
+                  {cp.kind === "ai" && !cp.superseded && (
+                    <span className="rounded bg-purple-100 px-1.5 py-0.5 text-[10px] font-medium text-purple-700 dark:bg-purple-950 dark:text-purple-300">
+                      {msg("history.checkpoint.latestAi")}
+                    </span>
+                  )}
                   <time className="text-xs text-slate-400">
                     {new Date(cp.created_at).toLocaleString()}
                   </time>

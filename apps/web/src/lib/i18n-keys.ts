@@ -239,6 +239,7 @@ export type DictionaryKey =
   | "board.ai.elapsed"
   | "board.ai.flagged"
   | "board.ai.frozen"
+  | "history.checkpoint.latestAi"
   | "board.ai.ghost.aria"
   | "board.ai.instructionHint"
   | "board.ai.instructionLabel"
