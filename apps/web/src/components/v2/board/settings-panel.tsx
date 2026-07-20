@@ -23,7 +23,6 @@ import { useMsg } from "@/components/i18n/dict-provider";
 export function StandaloneScheduleSettings(props: {
   divisionId: string;
   config: BoardConfig;
-  tz: string;
   canEdit: boolean;
   constraintsAllowed: boolean;
   venueCap?: string;
@@ -56,7 +55,6 @@ export function StandaloneScheduleSettings(props: {
 export function SettingsPanel({
   divisionId,
   config,
-  tz,
   canEdit,
   constraintsAllowed,
   venueCap = "Court",
@@ -66,7 +64,6 @@ export function SettingsPanel({
 }: {
   divisionId: string;
   config: BoardConfig;
-  tz: string;
   canEdit: boolean;
   constraintsAllowed: boolean;
   venueCap?: string;
@@ -86,7 +83,6 @@ export function SettingsPanel({
   const [courts, setCourts] = useState<string[]>(
     config.courts.length > 0 ? [...config.courts] : [`${venueCap} 1`],
   );
-  const [zone, setZone] = useState(tz);
   const [saving, setSaving] = useState(false);
   const [hoursError, setHoursError] = useState<string | null>(null);
   // Prefill only when the stored windows are a uniform daily pattern —
@@ -131,6 +127,10 @@ export function SettingsPanel({
     setSaving(true);
     try {
       const cleanCourts = courts.map((c) => c.trim()).filter(Boolean);
+      // No `tz` key (V304): the venue timezone is an ORGANISATION setting now
+      // and is inherited. Omitting it is load-bearing — the PUT treats an
+      // absent tz as "leave the stored value alone", so divisions that already
+      // carry their own zone keep it instead of being silently reset.
       await apiV1(`/api/v1/divisions/${divisionId}/schedule-settings`, {
         method: "PUT",
         json: {
@@ -144,7 +144,6 @@ export function SettingsPanel({
             courts: cleanCourts.length > 0 ? cleanCourts : [`${venueCap} 1`],
             sessionWindows,
           },
-          tz: zone,
         },
       });
       // Board's inline card collapses back to its one-liner; the settings
@@ -223,11 +222,6 @@ export function SettingsPanel({
           <span className="mt-0.5 block text-xs text-slate-400">
             {msg("boardset.restHint")}{constrained ? msg("boardset.proSuffix") : ""}
           </span>
-        </label>
-        <label className="block">
-          <span className="label">{msg("boardset.timezone")}</span>
-          <input value={zone} onChange={(e) => setZone(e.target.value)} className="input w-full" disabled={!canEdit} />
-          <span className="mt-0.5 block text-xs text-slate-400">{msg("boardset.timezoneHint")}</span>
         </label>
       </div>
 

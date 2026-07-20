@@ -8,7 +8,9 @@ Seazn shows every time with its **timezone spelled out** — `19:00 IST`, `14:30
 
 ## Venue time (schedules)
 
-A match happens at the **venue's** wall clock. A final in Chennai is **19:00 IST** whether you open the schedule from London, New York, or courtside. So every schedule — the fixture board, the public league page, round headers — shows the **venue's** timezone, the same for every viewer. This is the competition's timezone, set per division under **Division → Schedule settings**.
+A match happens at the **venue's** wall clock. A final in Chennai is **19:00 IST** whether you open the schedule from London, New York, or courtside. So every schedule — the fixture board, the public league page, round headers — shows the **venue's** timezone, the same for every viewer.
+
+You set it **once for the whole organisation**, under **Settings → Organisation → Scheduling timezone**, and every division inherits it. There is no per-division timezone to remember — set it to where you play, not to where you are. A London-based organiser running an event in Malaga sets `Europe/Madrid` here; their own account timezone stays London.
 
 We never quietly convert a schedule to your device's zone: that's how people miss matches.
 
@@ -30,6 +32,14 @@ The second line only appears when your timezone differs from the venue's.
 - Leave it on **Use my browser's timezone** and we follow whatever device you're on.
 
 Your choice is saved to your account, so it follows you across devices. It only ever changes *your* times and the local-time hints — it never moves a venue's schedule.
+
+## Set the venue timezone
+
+**Settings → Organisation → Scheduling timezone** (owners and admins).
+
+- Applies to every competition and division in the organisation.
+- Leave it unset and schedules are shown in **UTC**.
+- Changing it re-labels existing fixtures: the stored instant does not move, but the wall-clock time you see does. Set it before you publish a timetable.
 
 ## Why does a time show an offset like GMT+5:30?
 

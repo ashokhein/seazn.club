@@ -454,7 +454,7 @@ interface OfficialDutyRow {
 async function officialDutyRows(tx: Tx, divisionId: string): Promise<OfficialDutyRow[]> {
   return tx<OfficialDutyRow[]>`
     select o.id as official_id, o.display_name as official_name,
-           f.scheduled_at::text as scheduled_at, ss.tz as venue_tz, f.court_label,
+           f.scheduled_at::text as scheduled_at, coalesce(ss.tz, vorg.timezone, 'UTC') as venue_tz, f.court_label,
            c.name as comp_name, d.name as div_name,
            fo.role_key, fo.response,
            h.display_name as home, a.display_name as away
@@ -464,6 +464,7 @@ async function officialDutyRows(tx: Tx, divisionId: string): Promise<OfficialDut
     join divisions d on d.id = f.division_id
     join competitions c on c.id = d.competition_id
     left join schedule_settings ss on ss.division_id = d.id
+    left join organizations vorg on vorg.id = d.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     where f.division_id = ${divisionId}

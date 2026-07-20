@@ -28,7 +28,7 @@ export interface EmbedPayload {
   entrants: PublicEntrant[];
   /** Sponsor rows (v10) — data only; embed RENDERING of sponsors is v12. */
   sponsors: ResolvedSponsor[];
-  /** Venue zone (schedule_settings.tz; UTC if unset) for schedule display. */
+  /** Venue zone (V304): division override → org timezone → UTC. */
   tz: string;
 }
 
@@ -91,8 +91,13 @@ export async function embedDivisionData(divisionId: string): Promise<EmbedResolu
       select id, division_id, kind, display_name, seed, status, members, team_display, badge_url
       from public_entrants_v where division_id = ${divisionId}
       order by seed nulls last, display_name`,
+    // Venue lane (V304): the division's override, else the org's timezone.
     sql<{ tz: string }[]>`
-      select tz from schedule_settings where division_id = ${divisionId}`,
+      select coalesce(ss.tz, o.timezone, 'UTC') as tz
+      from divisions d
+      left join schedule_settings ss on ss.division_id = d.id
+      left join organizations o on o.id = d.org_id
+      where d.id = ${divisionId}`,
   ]);
 
   return {

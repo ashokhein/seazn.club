@@ -376,7 +376,7 @@ export async function draftPostsForDecidedFixture(tx: Tx, fixtureId: string): Pr
            st.kind as stage_kind, f.round_no, f.status,
            f.home_entrant_id, f.away_entrant_id,
            h.display_name as home_name, a.display_name as away_name,
-           f.scheduled_at, f.venue, ss.tz as venue_tz,
+           f.scheduled_at, f.venue, coalesce(ss.tz, vorg.timezone, 'UTC') as venue_tz,
            d.name as division_name, c.name as competition_name,
            d.sport_key, d.module_version, d.auto_posts, o.default_locale
     from fixtures f
@@ -385,6 +385,7 @@ export async function draftPostsForDecidedFixture(tx: Tx, fixtureId: string): Pr
     join organizations o on o.id = f.org_id
     join stages st on st.id = f.stage_id
     left join schedule_settings ss on ss.division_id = d.id
+    left join organizations vorg on vorg.id = d.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     where f.id = ${fixtureId}`;

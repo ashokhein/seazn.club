@@ -12,6 +12,7 @@ import { cacheDelPattern } from "@/lib/cache";
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 import { publishDivisionUpdate } from "@/lib/realtime";
 import { REASON_CODE } from "@/lib/schedule-board";
+import { resolveVenueTz } from "@/lib/tz";
 import { EngineError } from "@seazn/engine/core";
 import {
   slotFixtures,
@@ -67,6 +68,7 @@ const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
 export interface ScheduleSettingsOut {
   division_id: string;
   config: ScheduleConfig;
+  /** RESOLVED venue zone (V304): stored division tz → org timezone → 'UTC'. */
   tz: string;
   updated_at: string;
 }
@@ -97,13 +99,18 @@ export async function putScheduleSettings(
       select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
-    const [row] = await tx<{ division_id: string; config: unknown; tz: string; updated_at: string }[]>`
+    // tz is tri-state (V304). An ABSENT key must not clobber the stored value:
+    // the division settings form no longer offers a timezone at all, so every
+    // console save omits it, and a save may never move a division's venue zone.
+    const tzTouched = input.tz !== undefined;
+    await tx`
       insert into schedule_settings (division_id, config, tz, updated_at)
-      values (${divisionId}, ${tx.json(input.config as never)}, ${input.tz}, now())
+      values (${divisionId}, ${tx.json(input.config as never)}, ${input.tz ?? null}, now())
       on conflict (division_id) do update
-        set config = excluded.config, tz = excluded.tz, updated_at = now()
-      returning division_id, config, tz, updated_at`;
-    return { ...row, config: ScheduleConfig.parse(row.config) };
+        set config = excluded.config,
+            tz = case when ${tzTouched} then excluded.tz else schedule_settings.tz end,
+            updated_at = now()`;
+    return loadSettings(tx, divisionId);
   });
 }
 
@@ -121,15 +128,28 @@ export async function getScheduleSettings(
 // Settings row or the parsed defaults — the board and quick-start work
 // without an explicit PUT (single court, no constraints).
 export async function loadSettings(tx: Tx, divisionId: string): Promise<ScheduleSettingsOut> {
-  const [row] = await tx<{ division_id: string; config: unknown; tz: string; updated_at: string }[]>`
-    select division_id, config, tz, updated_at from schedule_settings
-    where division_id = ${divisionId}`;
-  if (row) return { ...row, config: ScheduleConfig.parse(row.config) };
+  // Left-join from divisions so the org zone is available even when the
+  // division has no settings row yet (quick-start, board before first PUT).
+  const [row] = await tx<
+    {
+      config: unknown | null;
+      tz: string | null;
+      org_tz: string | null;
+      updated_at: string | null;
+    }[]
+  >`
+    select ss.config, ss.tz, o.timezone as org_tz, ss.updated_at
+    from divisions d
+    left join schedule_settings ss on ss.division_id = d.id
+    left join organizations o on o.id = d.org_id
+    where d.id = ${divisionId}`;
   return {
     division_id: divisionId,
-    config: ScheduleConfig.parse({}),
-    tz: "UTC",
-    updated_at: new Date(0).toISOString(),
+    config: ScheduleConfig.parse(row?.config ?? {}),
+    // A division that already holds its own tz keeps winning, silently and
+    // forever — the console can no longer set one, but it must never move.
+    tz: resolveVenueTz(row?.tz, row?.org_tz),
+    updated_at: row?.updated_at ?? new Date(0).toISOString(),
   };
 }
 
@@ -770,7 +790,8 @@ export async function moveFixture(
       changeNotices = await tx`
         select o.email, o.display_name, fo.role_key, org.name as org_name,
                h.display_name as home_name, a.display_name as away_name,
-               ss.tz as venue_tz
+               -- venue lane (V304): division override → org timezone → UTC
+               coalesce(ss.tz, org.timezone, 'UTC') as venue_tz
         from fixture_officials fo
         join officials o on o.id = fo.official_id
         join organizations org on org.id = o.org_id
@@ -849,11 +870,13 @@ export async function validateSchedule(
       join fixtures f on f.id = fo.fixture_id
       join officials o on o.id = fo.official_id
       join official_availability oa on oa.official_id = o.id
-      left join schedule_settings ss on ss.division_id = f.division_id
       where f.division_id = ${divisionId}
         and fo.response in ('accepted','pending')
         and f.scheduled_at is not null
-        and oa.date = (f.scheduled_at at time zone coalesce(ss.tz, 'UTC'))::date`;
+        -- venue lane (V304): settings already carries the RESOLVED zone
+        -- (division override → org timezone → UTC), and this whole query is
+        -- scoped to one division, so bind it rather than re-joining.
+        and oa.date = (f.scheduled_at at time zone ${settings.tz})::date`;
 
     return {
       conflicts: [

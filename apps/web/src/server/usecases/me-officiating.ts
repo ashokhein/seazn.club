@@ -35,7 +35,7 @@ export interface MyOfficiatingAssignment {
   home_name: string | null;
   away_name: string | null;
   scheduled_at: string | null;
-  /** Venue zone (schedule_settings.tz of the fixture's division); null → UTC. */
+  /** Venue zone (V304): division override → org timezone → UTC. */
   venue_tz: string | null;
   venue: string | null;
   court_label: string | null;
@@ -84,7 +84,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
            c.visibility as competition_visibility,
            d.name as division_name, d.slug as division_slug, d.sport_key,
            h.display_name as home_name, a.display_name as away_name,
-           f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label,
+           f.scheduled_at, coalesce(ss.tz, vorg.timezone, 'UTC') as venue_tz, f.venue, f.court_label,
            f.status as fixture_status,
            fo.role_key, fo.response, fo.decline_reason, fo.responded_at,
            mr.status as report_status
@@ -97,6 +97,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     join competitions c on c.id = d.competition_id
     join organizations org on org.id = f.org_id
     left join schedule_settings ss on ss.division_id = d.id
+    left join organizations vorg on vorg.id = d.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     where p.user_id = ${userId}
@@ -117,7 +118,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
            c.visibility as competition_visibility,
            d.name as division_name, d.slug as division_slug, d.sport_key,
            h.display_name as home_name, a.display_name as away_name,
-           f.scheduled_at, ss.tz as venue_tz, f.venue, f.court_label,
+           f.scheduled_at, coalesce(ss.tz, vorg.timezone, 'UTC') as venue_tz, f.venue, f.court_label,
            f.status as fixture_status,
            fo.role_key, fo.response, fo.decline_reason, fo.responded_at,
            mr.status as report_status
@@ -130,6 +131,7 @@ export async function getMyOfficiating(userId: string): Promise<MyOfficiating> {
     join competitions c on c.id = d.competition_id
     join organizations org on org.id = f.org_id
     left join schedule_settings ss on ss.division_id = d.id
+    left join organizations vorg on vorg.id = d.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     where p.user_id = ${userId}

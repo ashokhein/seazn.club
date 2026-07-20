@@ -33,6 +33,28 @@ export function pickTimezone(
 }
 
 /**
+ * VENUE-lane precedence (V304): the division's own `schedule_settings.tz`
+ * override, else the organisation's `organizations.timezone`, else UTC.
+ *
+ * Deliberately separate from `pickTimezone` (the PERSONAL lane): a
+ * London-based organiser can run an event in Malaga, so the venue zone must
+ * never fall back to `users.timezone` or the browser cookie. An existing
+ * per-division value always wins — inheritance only fills the gap.
+ */
+export function resolveVenueTz(
+  divisionTz: string | null | undefined,
+  orgTz: string | null | undefined,
+): string {
+  if (isValidIana(divisionTz)) return divisionTz;
+  if (isValidIana(orgTz)) return orgTz;
+  return DEFAULT_TZ;
+}
+
+// Queries that must bucket/format in-database mirror this precedence inline as
+// `coalesce(ss.tz, o.timezone, 'UTC')` (a raw string helper cannot be spliced
+// into postgres.js tagged templates — it would be sent as a bind parameter).
+
+/**
  * IANA zone list for the account picker. `Intl.supportedValuesOf` is the source
  * of truth on modern runtimes (~400+ zones); a small static fallback covers
  * older ones so the picker is never empty. Not for validation — that's

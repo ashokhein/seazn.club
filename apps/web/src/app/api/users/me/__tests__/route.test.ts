@@ -54,6 +54,7 @@ async function seedOrgWithPlan(plan: string): Promise<OrgMembership> {
     payment_instructions: null,
     branding: null,
     default_payment_method: "offline",
+    timezone: null,
     role: "owner",
   };
 }

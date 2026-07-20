@@ -35,7 +35,7 @@ const COLS = ["id", "fixture_id", "label", "issued_by", "expires_at", "revoked_a
 
 /**
  * End of the CURRENT day in the fixture's venue timezone (doc 13 §7:
- * schedule_settings.tz of the fixture's division, else UTC). Day-of links —
+ * V304 venue lane: division override → org timezone → UTC). Day-of links —
  * whoever holds the phone scores today, the link dies at local midnight.
  */
 export function endOfLocalDay(now: Date, tz: string): Date {
@@ -111,8 +111,13 @@ export async function createDeviceLink(
     if (fixture.status === "finalized" || fixture.status === "cancelled") {
       throw new HttpError(422, `fixture is ${fixture.status} — nothing left to score`);
     }
+    // Venue lane (V304): division override → org timezone → UTC.
     const [settings] = await tx<{ tz: string }[]>`
-      select tz from schedule_settings where division_id = ${fixture.division_id}`;
+      select coalesce(ss.tz, o.timezone, 'UTC') as tz
+      from divisions d
+      left join schedule_settings ss on ss.division_id = d.id
+      left join organizations o on o.id = d.org_id
+      where d.id = ${fixture.division_id}`;
     const expiresAt = endOfLocalDay(new Date(), settings?.tz ?? "UTC");
 
     // One live device per fixture: minting revokes prior active links.

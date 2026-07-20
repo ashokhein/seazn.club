@@ -14235,15 +14235,20 @@
                     "additionalProperties": false
                   },
                   "tz": {
-                    "default": "UTC",
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 64
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
-                  "config",
-                  "tz"
+                  "config"
                 ],
                 "additionalProperties": false
               },

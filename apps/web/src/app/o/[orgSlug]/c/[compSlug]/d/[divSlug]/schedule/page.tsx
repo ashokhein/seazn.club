@@ -258,7 +258,6 @@ export default async function DivisionSchedulePage({
           <StandaloneScheduleSettings
             divisionId={id}
             config={settings.config}
-            tz={settings.tz}
             canEdit={editable}
             constraintsAllowed={constraints}
             venueCap={venueLabel(division.sport_key)}
@@ -271,7 +270,6 @@ export default async function DivisionSchedulePage({
           initialSettings={{
             division_id: id,
             config: settings.config as Record<string, unknown>,
-            tz: settings.tz,
           }}
           canEdit={canEdit && !frozen && constraints}
         />

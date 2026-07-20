@@ -29,7 +29,6 @@ interface Constraints {
 interface Settings {
   division_id: string;
   config: Record<string, unknown> & { constraints?: Constraints };
-  tz: string;
 }
 interface WaitRow {
   display_name: string;
@@ -83,7 +82,10 @@ export function ConstraintsPanel({
       const current = await apiV1<Settings>(`/api/v1/divisions/${divisionId}/schedule-settings`);
       await apiV1(`/api/v1/divisions/${divisionId}/schedule-settings`, {
         method: "PUT",
-        json: { config: { ...current.config, constraints: next }, tz: current.tz },
+        // No `tz` (V304): re-sending the RESOLVED zone would pin this
+        // division to it and quietly break inheritance from the org. An
+        // omitted tz leaves the stored value exactly as it is.
+        json: { config: { ...current.config, constraints: next } },
       });
       setConstraints(next);
     }, true);
