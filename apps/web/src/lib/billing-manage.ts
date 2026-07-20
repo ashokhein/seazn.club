@@ -48,15 +48,26 @@ export interface IntervalChangeArgs {
   prorationDate: number;
 }
 
-/** Both directions switch immediately: anchor resets to now and the proration
- *  invoice is issued on the spot, so "charged X today" is literally true;
- *  a downgrade's negative total becomes customer credit balance. */
+/** The change lands immediately: `always_invoice` issues the proration invoice
+ *  on the spot, so "charged X today" is literally true; a downgrade's negative
+ *  total becomes customer credit balance.
+ *
+ *  NO `billing_cycle_anchor: "now"`. Stripe refuses the pair outright — "You
+ *  cannot specify `proration_date` when `billing_cycle_anchor=now`" — on the
+ *  preview call as well as the update, which is every in-app plan change we
+ *  offer. It was also redundant: an INTERVAL change resets the cycle on its
+ *  own (verified in test mode 2026-07-20: an annual sub repriced to monthly
+ *  came back with a period of 2026-07-20 → 2026-08-20), and a same-interval
+ *  plan change must NOT reset it — Pro → Pro Plus mid-year keeps the July
+ *  renewal and bills the difference, which is what the preview shows.
+ *
+ *  The pinned proration_date is the half worth keeping: it is what makes the
+ *  applied proration equal the previewed one. */
 function prorationShape(a: IntervalChangeArgs) {
   return a.trialing
     ? ({ proration_behavior: "none" } as const)
     : ({
         proration_behavior: "always_invoice",
-        billing_cycle_anchor: "now",
         proration_date: a.prorationDate,
       } as const);
 }
