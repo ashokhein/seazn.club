@@ -950,9 +950,13 @@ async function callModel(
  * @throws HttpError 503 (no ANTHROPIC_API_KEY), 422 AI_PLAN_FAILED (model
  *   refusal, or an un-correctable structural violation), 422 AI_PLAN_TIMEOUT.
  */
-export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Promise<AiPlanResult> {
+export async function runAiPlan(
+  pack: SchedulePack,
+  movableIds: Set<string>,
+  modelOverride?: string,
+): Promise<AiPlanResult> {
   const client = anthropicClient(); // 503 before any network if unconfigured
-  const model = schedulingAiModel();
+  const model = modelOverride ?? schedulingAiModel();
 
   const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
   const config = verifyConfig(pack);
@@ -1141,6 +1145,99 @@ function isoConstraintSuggestions(
   };
 }
 
+/** Opt-in cheaper first-attempt model. Unset (the default) means no escalation
+ *  and behaviour is exactly as before. */
+export function schedulingAiCheapModel(): string | null {
+  return process.env.SCHEDULING_AI_CHEAP_MODEL || null;
+}
+
+/** Warnings-per-movable-fixture above which a cheap plan is rejected and the
+ *  primary model re-runs.
+ *
+ *  UNCALIBRATED. Measured 2026-07-20 (n=3 per cell): sonnet-5 scored 0 warnings
+ *  on both benched packs; haiku-4-5 scored 0 on the sparse pack and 20/43/100
+ *  on the dense one — 0.67, 1.43 and 3.33 per fixture. The default of 1.0 sits
+ *  inside that observed range rather than at a boundary derived from real
+ *  divisions, so it will need tuning against production data before this is
+ *  trusted. That is exactly why escalation is opt-in. */
+function escalationWarningRatio(): number {
+  const n = Number(process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO);
+  return Number.isFinite(n) && n >= 0 ? n : 1.0;
+}
+
+/** Is a plan good enough to ship without re-running on the primary model?
+ *  Blocking conflicts are never acceptable — the engine says the schedule is
+ *  physically impossible. Warnings are soft (rest, blackout, session window,
+ *  cross-person), so they are judged against pack size rather than absolutely. */
+function planIsAcceptable(result: AiPlanResult, movableCount: number): boolean {
+  if (result.blocking.length > 0) return false;
+  if (movableCount === 0) return true;
+  return result.warnings.length / movableCount <= escalationWarningRatio();
+}
+
+/**
+ * Run the architect, optionally trying a cheaper model first.
+ *
+ * This deliberately ESCALATES on evidence rather than PREDICTING from the pack.
+ * Choosing a model up front needs a "density" metric, and the 2026-07-20 bench
+ * could not supply one: its two packs differ on structure, court ratio, rest,
+ * no-back-to-back, blackouts and cross-person links simultaneously, so which
+ * factor degrades a cheap model is unknown. The referee already measures the
+ * thing that actually matters — plan quality — so let it decide.
+ *
+ * Failure mode is bounded: a wasted cheap attempt costs ~11% on top of the
+ * primary run (measured: $0.05 + $0.465 vs $0.465), and can never ship a worse
+ * plan than the primary model would have. A mispredicting router, by contrast,
+ * hands the organiser a degraded schedule with no signal at all.
+ *
+ * Usage from BOTH attempts is summed — an escalated run costs what it costs,
+ * and the ledger must not report only the half that happened to win.
+ */
+async function runAiPlanEscalating(
+  pack: SchedulePack,
+  movableIds: Set<string>,
+): Promise<AiPlanResult & { escalated_from?: string }> {
+  const cheap = schedulingAiCheapModel();
+  const primary = schedulingAiModel();
+  if (!cheap || cheap === primary) return runAiPlan(pack, movableIds);
+
+  // A cheap model can fail two ways: return a poor-but-usable plan, or give up
+  // entirely (AI_PLAN_FAILED / AI_PLAN_TIMEOUT). Both must escalate — letting a
+  // thrown cheap failure surface as a 422 would make an opt-in cost optimisation
+  // *reduce* success rate, which is never an acceptable trade. Provider outages
+  // (503 / APIError) still propagate: retrying a different model against a
+  // broken provider only burns another call.
+  let first: AiPlanResult | null = null;
+  let spent = { input_tokens: 0, output_tokens: 0, repair_rounds: 0 };
+  try {
+    first = await runAiPlan(pack, movableIds, cheap);
+    spent = first.usage;
+    if (planIsAcceptable(first, movableIds.size)) return first;
+  } catch (err) {
+    const recoverable =
+      err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT");
+    if (!recoverable) throw err;
+    // Tokens the failed attempt already spent ride on the error's extra.
+    const u = (err.extra?.usage ?? {}) as Partial<typeof spent>;
+    spent = {
+      input_tokens: u.input_tokens ?? 0,
+      output_tokens: u.output_tokens ?? 0,
+      repair_rounds: u.repair_rounds ?? 0,
+    };
+  }
+
+  const second = await runAiPlan(pack, movableIds, primary);
+  return {
+    ...second,
+    escalated_from: cheap,
+    usage: {
+      input_tokens: spent.input_tokens + second.usage.input_tokens,
+      output_tokens: spent.output_tokens + second.usage.output_tokens,
+      repair_rounds: spent.repair_rounds + second.usage.repair_rounds,
+    },
+  };
+}
+
 /**
  * POST /divisions/{id}/schedule/ai-plan orchestrator. Gate order is deliberate
  * (design/v4/00 §5): the staged-rollout kill switch (fail-open) → the paid gate
@@ -1220,9 +1317,9 @@ export async function aiPlanForDivision(
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
 
   const model = schedulingAiModel();
-  let result: AiPlanResult;
+  let result: AiPlanResult & { escalated_from?: string };
   try {
-    result = await runAiPlan(pack, movableIds);
+    result = await runAiPlanEscalating(pack, movableIds);
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible
@@ -1310,6 +1407,17 @@ export async function aiPlanForDivision(
                 model,
                 usage: result.usage,
                 cost_usd,
+                // Escalation telemetry: which cheap model was tried and
+                // rejected, and the warning ratio that rejected it. The
+                // threshold is uncalibrated (see escalationWarningRatio), so
+                // the ledger has to carry what it would take to tune it.
+                ...(result.escalated_from
+                  ? {
+                      escalated_from: result.escalated_from,
+                      warnings: result.warnings.length,
+                      movable: movableIds.size,
+                    }
+                  : {}),
               } as never)}, ${auth.userId})`;
   });
 
