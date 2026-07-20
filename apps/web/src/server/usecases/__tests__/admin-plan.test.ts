@@ -445,4 +445,36 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { actorId } = await seedOrg();
     await expect(restoreTrial(actorId, orgId, "reason")).rejects.toThrow(/subscription row/i);
   });
+
+  // The admin panel needs trial_used_at to show whether Restore trial has
+  // anything to do — planPanel must actually select it, not just carry the
+  // field in its type.
+  it("planPanel exposes trial_used_at, including on a departed org that still shows a Pro plan_key", async () => {
+    const { orgId, actorId } = await seedOrg();
+    expect((await planPanel(orgId)).trial_used_at).toBeNull();
+
+    await extendTrial(actorId, orgId, 7, "trial for the summary");
+    const { trial_used_at: stamped } = await planPanel(orgId);
+    expect(stamped).not.toBeNull();
+
+    // Depart the org (cancelled subscription, dead id) while leaving plan_key
+    // at pro — planPanel must keep reporting the real trial_used_at rather
+    // than nulling it out because the subscription looks dead.
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_gone', status = 'canceled', plan_key = 'pro'
+               where org_id = ${orgId}`;
+    const departed = await planPanel(orgId);
+    expect(departed.status).toBe("canceled");
+    expect(departed.plan_key).toBe("pro");
+    expect(departed.trial_used_at).toEqual(stamped);
+  });
+
+  it("planPanel's no-subscription-row default reports trial_used_at: null (not undefined)", async () => {
+    const s = randomUUID().slice(0, 8);
+    const [{ id: orgId }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug) values (${"No Sub TU " + s}, ${"no-sub-tu-" + s}) returning id`;
+    const panel = await planPanel(orgId);
+    expect(panel.source).toBe("none");
+    expect(panel.trial_used_at).toBeNull();
+  });
 });

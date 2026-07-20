@@ -22,6 +22,9 @@ interface SubRow {
   current_period_end: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  // One-trial-per-org stamp (V277). Threaded through so the panel can show
+  // whether Restore trial has anything to do, instead of staff guessing.
+  trial_used_at: string | null;
 }
 
 export interface PlanPanel extends SubRow {
@@ -32,12 +35,13 @@ export interface PlanPanel extends SubRow {
 export async function planPanel(orgId: string): Promise<PlanPanel> {
   const [sub] = await sql<SubRow[]>`
     select plan_key, status, trial_end, comped_until, current_period_end,
-           stripe_customer_id, stripe_subscription_id
+           stripe_customer_id, stripe_subscription_id, trial_used_at
     from subscriptions where org_id = ${orgId}`;
   if (!sub) {
     return {
       plan_key: "community", status: "active", trial_end: null, comped_until: null,
       current_period_end: null, stripe_customer_id: null, stripe_subscription_id: null,
+      trial_used_at: null,
       source: "none",
     };
   }

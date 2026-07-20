@@ -16,6 +16,10 @@ interface Plan {
   current_period_end: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  // One-trial-per-org stamp (V277). Independent of status/plan_key — a
+  // departed org (status: canceled) can still carry a pro plan_key AND a
+  // trial_used_at date; neither hides the other here.
+  trial_used_at: string | null;
 }
 
 interface Override {
@@ -54,6 +58,7 @@ export function AdminPlanPanel({
   const [compReason, setCompReason] = useState("");
   const [trialDays, setTrialDays] = useState("14");
   const [trialReason, setTrialReason] = useState("");
+  const [restoreReason, setRestoreReason] = useState("");
   const [downReason, setDownReason] = useState("");
   const [ov, setOv] = useState({ key: "", value: "", expires: "", reason: "" });
 
@@ -155,6 +160,12 @@ export function AdminPlanPanel({
           {plan.trial_end && (
             <span className="text-xs text-slate-400">trial ends {fmtDate(plan.trial_end)}</span>
           )}
+          {/* Independent of status/plan_key on purpose: a departed org (status
+              canceled) can still show trial used here alongside a leftover
+              pro plan_key above — neither fact papers over the other. */}
+          {plan.trial_used_at && (
+            <span className="text-xs text-slate-500">trial used {fmtDate(plan.trial_used_at)}</span>
+          )}
         </div>
         <div className="mt-2 flex gap-3 text-xs">
           {plan.stripe_customer_id && (
@@ -180,7 +191,7 @@ export function AdminPlanPanel({
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-4">
         {/* Comp to Pro */}
         <div className="rounded-lg bg-slate-800 p-4 space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -280,6 +291,46 @@ export function AdminPlanPanel({
           {stripeBilled && (
             <p className="text-[11px] text-slate-500">Also updates trial_end in Stripe.</p>
           )}
+        </div>
+
+        {/* Restore trial — the undo for one-trial-per-org. Every route that
+            grants Pro (checkout sync, comp, grant) burns the trial, so staff
+            need a sanctioned way back instead of editing SQL. Not gated on
+            stripeBilled: a departed org (dead subscription id, canceled
+            status) is exactly the case this exists for, and the usecase
+            itself refuses a LIVE subscription with a clear 400. */}
+        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Restore trial
+          </h3>
+          <p className="text-xs text-slate-400">
+            Clears the one-trial-per-org stamp, so this org can start a 14-day
+            trial again. The next comp or grant burns it once more.
+          </p>
+          <p className="text-[11px] text-slate-500">
+            {plan.trial_used_at
+              ? `Trial used ${fmtDate(plan.trial_used_at)}.`
+              : "This org has not used its trial yet — nothing to restore."}
+          </p>
+          <input
+            value={restoreReason}
+            onChange={(e) => setRestoreReason(e.target.value)}
+            placeholder="Reason (required)"
+            className={`${inputCls} w-full`}
+          />
+          <button
+            onClick={() =>
+              call(
+                "restore-trial",
+                { method: "POST", body: JSON.stringify({ reason: restoreReason }) },
+                "restore",
+              )
+            }
+            disabled={!restoreReason || busy === "restore"}
+            className="rounded bg-purple-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-600 disabled:opacity-50"
+          >
+            {busy === "restore" ? "…" : "Restore trial"}
+          </button>
         </div>
 
         {/* Downgrade */}
