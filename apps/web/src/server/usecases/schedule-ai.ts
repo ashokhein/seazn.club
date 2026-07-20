@@ -674,6 +674,25 @@ export function parseAiEffort(raw: string | undefined, fallback: AiEffort): AiEf
   return (AI_EFFORTS as readonly string[]).includes(raw ?? "") ? (raw as AiEffort) : fallback;
 }
 
+/** Thinking mode for the architect call.
+ *
+ *  Measured 2026-07-20: the structured plan is only ~2,588 tokens of a 27,349
+ *  token response — 90.5% of what a run costs is thinking, not output. So this
+ *  is the largest single cost lever available, an order of magnitude bigger
+ *  than any schema change (short ids save 2.1%, diff-from-draft 7.5%).
+ *
+ *  Default stays "adaptive". Turning it off is only defensible because the
+ *  deterministic referee verifies every proposal and the repair loop re-prompts
+ *  on blocking conflicts — a thin plan gets caught, never shipped. Whether that
+ *  actually wins is an open question: fewer thinking tokens per round, but
+ *  possibly more rounds, and each round re-sends the prior output as input.
+ *  SCHEDULING_AI_THINKING=disabled exists so the bench can settle it. */
+export type AiThinking = "adaptive" | "disabled";
+
+export function schedulingAiThinking(): AiThinking {
+  return process.env.SCHEDULING_AI_THINKING === "disabled" ? "disabled" : "adaptive";
+}
+
 export function anthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -851,7 +870,7 @@ async function callModel(
       {
         model,
         max_tokens: 32_000,
-        thinking: { type: "adaptive" },
+        thinking: schedulingAiThinking() === "disabled" ? { type: "disabled" } : { type: "adaptive" },
         output_config: { effort: schedulingAiEffort(), format: zodOutputFormat(AiSchedulePlan) },
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [...messages],

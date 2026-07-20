@@ -195,6 +195,32 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(body.output_config.effort).toBe("medium");
   });
 
+  // Thinking is ~90% of a run's output tokens (only 2,588 of 27,349 was the
+  // plan on the 2026-07-20 measurement), so this knob dwarfs every schema
+  // change. It stays on until the bench says otherwise — the engine referee
+  // makes a thin plan safe to attempt, not free.
+  it("thinks adaptively by default; SCHEDULING_AI_THINKING=disabled turns it off", async () => {
+    delete process.env.SCHEDULING_AI_THINKING;
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { thinking: { type: string } }).thinking.type).toBe("adaptive");
+
+    parse.mockClear();
+    process.env.SCHEDULING_AI_THINKING = "disabled";
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { thinking: { type: string } }).thinking.type).toBe("disabled");
+
+    // Anything but the exact opt-out keeps thinking on: a typo must not
+    // silently halve the reasoning behind every schedule.
+    parse.mockClear();
+    process.env.SCHEDULING_AI_THINKING = "off";
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { thinking: { type: string } }).thinking.type).toBe("adaptive");
+    delete process.env.SCHEDULING_AI_THINKING;
+  });
+
   it("SCHEDULING_AI_EFFORT overrides the default; an unknown value falls back to medium", async () => {
     process.env.SCHEDULING_AI_EFFORT = "xhigh";
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));

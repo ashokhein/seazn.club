@@ -200,13 +200,22 @@ type Row = {
 
 const rows: Row[] = [];
 
-async function bench(name: string, build: () => { pack: SchedulePack; movable: Set<string> }, effort: string) {
+async function bench(
+  name: string,
+  build: () => { pack: SchedulePack; movable: Set<string> },
+  effort: string,
+  thinking: "adaptive" | "disabled" = "adaptive",
+) {
   process.env.SCHEDULING_AI_EFFORT = effort;
+  process.env.SCHEDULING_AI_THINKING = thinking;
+  // Label the cell by both knobs, so a no-thinking arm never aggregates into
+  // the adaptive arm that shares its effort level.
+  const cellEffort = thinking === "disabled" ? `${effort}/no-think` : effort;
   const { pack, movable } = build();
   const t0 = Date.now();
   const row: Row = {
     pack: name,
-    effort,
+    effort: cellEffort,
     secs: 0,
     rounds: 0,
     in: 0,
@@ -236,30 +245,89 @@ async function bench(name: string, build: () => { pack: SchedulePack; movable: S
   row.introUsd = usd(row.in, row.out, 2, 10);
   rows.push(row);
   process.stdout.write(
-    `\n[${name} / effort=${effort}] ${row.secs}s  rounds=${row.rounds}  in=${row.in} out=${row.out}  ` +
+    `\n[${name} / effort=${cellEffort}] ${row.secs}s  rounds=${row.rounds}  in=${row.in} out=${row.out}  ` +
       `list=$${row.listUsd} intro=$${row.introUsd}  blocking=${row.blocking} warnings=${row.warnings} ` +
       `unsched=${row.unschedulable} placed=${row.placed}${row.error ? `  ERROR: ${row.error}` : ""}\n`,
   );
   // A swallowed error is worse than a red test: it looks like a cheap run.
-  expect(row.error, `${name}/${effort} failed`).toBe("");
+  expect(row.error, `${name}/${cellEffort} failed`).toBe("");
   return row;
 }
 
-describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
-  const T = 3_300_000; // up to 3 rounds at the configured round timeout, plus slack
+// Adaptive thinking is noisy: a repeated cell varied 2.1x run-to-run on
+// 2026-07-20 (individuals-50 @ high, 7,911 vs 16,923 output tokens for a
+// byte-identical pack). One sample per cell can order the arms but cannot size
+// the gap between them, so REPEATS>1 is what turns the cost delta from
+// directional into quotable.
+const REPEATS = Math.max(1, Number(process.env.AI_AB_REPEATS) || 1);
 
-  it("teams-15 @ high", async () => { await bench("teams-15", teamsPack, "high"); }, T);
-  it("teams-15 @ medium", async () => { await bench("teams-15", teamsPack, "medium"); }, T);
-  it("individuals-50 @ high", async () => { await bench("individuals-50", individualsPack, "high"); }, T);
-  it("individuals-50 @ medium", async () => { await bench("individuals-50", individualsPack, "medium"); }, T);
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** mean / min / max of one field across a cell's repeats. */
+function agg(cell: Row[], pick: (r: Row) => number) {
+  const xs = cell.map(pick);
+  const mean = xs.reduce((s, x) => s + x, 0) / xs.length;
+  return { mean: round2(mean), min: round2(Math.min(...xs)), max: round2(Math.max(...xs)) };
+}
+
+describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
+  // Worst observed cell is ~1095s; leave room for REPEATS of it plus repairs.
+  const T = Math.max(3_300_000, REPEATS * 1_400_000);
+
+  const cell = (
+    name: string,
+    build: () => { pack: SchedulePack; movable: Set<string> },
+    effort: string,
+    thinking: "adaptive" | "disabled" = "adaptive",
+  ) =>
+    it(`${name} @ ${effort}${thinking === "disabled" ? "/no-think" : ""} x${REPEATS}`, async () => {
+      for (let i = 0; i < REPEATS; i++) await bench(name, build, effort, thinking);
+    }, T);
+
+  cell("teams-15", teamsPack, "high");
+  cell("teams-15", teamsPack, "medium");
+  cell("individuals-50", individualsPack, "high");
+  cell("individuals-50", individualsPack, "medium");
+
+  // The 90.5% arm. Measured 2026-07-20: of a 27,349-token response only 2,588
+  // was the plan — the rest was thinking. Turning thinking off is the only
+  // lever of that magnitude, and it is only safe to try because the engine
+  // referee re-checks every proposal and the repair loop re-prompts on
+  // blocking conflicts. Watch `rounds`: the trade is fewer thinking tokens per
+  // round against possibly more rounds, and each repair re-sends the prior
+  // round's output as input.
+  cell("teams-15", teamsPack, "low", "disabled");
+  cell("individuals-50", individualsPack, "low", "disabled");
 
   it("summary", () => {
     const roundMs = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 300_000;
-    process.stdout.write(`\n===== effort A/B — model=${schedulingAiModel()} roundTimeout=${roundMs / 1000}s =====\n`);
+    process.stdout.write(
+      `\n===== effort A/B — model=${schedulingAiModel()} roundTimeout=${roundMs / 1000}s repeats=${REPEATS} =====\n`,
+    );
     for (const r of rows) process.stdout.write(`${JSON.stringify(r)}\n`);
+
+    // Per-cell aggregates. Spread (max/min) is the number that says whether the
+    // between-effort gap is bigger than the within-effort noise.
+    const keys = [...new Set(rows.map((r) => `${r.pack}|${r.effort}`))];
+    process.stdout.write(`\n--- per cell (n=${REPEATS}) ---\n`);
+    for (const k of keys) {
+      const [pack, effort] = k.split("|");
+      const c = rows.filter((r) => `${r.pack}|${r.effort}` === k);
+      const secs = agg(c, (r) => r.secs);
+      const out = agg(c, (r) => r.out);
+      const cost = agg(c, (r) => r.introUsd);
+      const spread = out.min > 0 ? round2(out.max / out.min) : 0;
+      const clean = c.filter((r) => r.blocking === 0 && r.warnings === 0 && r.unschedulable === 0).length;
+      process.stdout.write(
+        `${pack} @ ${effort}: secs mean=${secs.mean} [${secs.min}-${secs.max}] | ` +
+          `out mean=${out.mean} [${out.min}-${out.max}] spread=${spread}x | ` +
+          `$intro mean=${cost.mean} [${cost.min}-${cost.max}] | clean ${clean}/${c.length}\n`,
+      );
+    }
+
     const total = rows.reduce((s, r) => s + r.introUsd, 0);
-    process.stdout.write(`total spend this bench (intro rates): $${Math.round(total * 10000) / 10000}\n`);
-    expect(rows.length).toBe(4);
+    process.stdout.write(`\ntotal spend this bench (intro rates): $${Math.round(total * 10000) / 10000}\n`);
+    expect(rows.length).toBe(6 * REPEATS);
     expect(rows.every((r) => r.error === "")).toBe(true);
   });
 });
