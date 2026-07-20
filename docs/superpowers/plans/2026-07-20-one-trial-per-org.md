@@ -416,6 +416,7 @@ Also widens the entitlement resolver: its comp-expiry branch requires `stripe_su
 - Modify: `apps/web/src/server/usecases/admin-plan.ts:137-174` (`extendTrial`)
 - Modify: `apps/web/src/lib/entitlements.ts:65-72` (comp-expiry branch)
 - Test: `apps/web/src/server/usecases/__tests__/admin-plan.test.ts`
+- Create: `apps/web/src/server/usecases/__tests__/admin-plan-trial-stripe.test.ts`
 
 **Interfaces:**
 - Consumes: `hasLiveSubscription` from `@/lib/billing` (Task 3).
@@ -526,13 +527,107 @@ Append inside `describe.skipIf(!HAS_DB)("admin plan tools")` in `admin-plan.test
   });
 ```
 
+- [ ] **Step 1b: Cover the Stripe-facing arms in a mocked file**
+
+`admin-plan.test.ts` deliberately never touches Stripe ("comped orgs only" — its
+header says so), so the live-`trialing` arm and the "no Stripe call" assertions
+need their own file. Create
+`apps/web/src/server/usecases/__tests__/admin-plan-trial-stripe.test.ts`:
+
+```ts
+// The Stripe-facing arms of extendTrial. admin-plan.test.ts covers the comped
+// paths and never touches Stripe; this file mocks it so we can assert both
+// that the trialing arm calls subscriptions.update and — just as important —
+// that the arms which must NOT call it never do.
+import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { randomUUID } from "node:crypto";
+
+const stripeMock = vi.hoisted(() => {
+  const subscriptionUpdate = vi.fn();
+  return { subscriptionUpdate, stripe: { subscriptions: { update: subscriptionUpdate } } };
+});
+vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
+
+import { sql } from "@/lib/db";
+import { extendTrial } from "@/server/usecases/admin-plan";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+
+async function seedOrg(): Promise<{ orgId: string; actorId: string }> {
+  const s = randomUUID().slice(0, 8);
+  const [{ id: orgId }] = await sql<{ id: string }[]>`
+    insert into organizations (name, slug) values (${"AdmS " + s}, ${"adms-" + s}) returning id`;
+  await sql`insert into subscriptions (org_id, plan_key, status)
+            values (${orgId}, 'community', 'active') on conflict (org_id) do nothing`;
+  const [{ id: actorId }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name, is_staff, staff_role)
+    values (${"staffs-" + s + "@test.local"}, 'Staff', true, 'superadmin') returning id`;
+  return { orgId, actorId };
+}
+
+beforeEach(() => {
+  stripeMock.subscriptionUpdate.mockReset().mockResolvedValue({ id: "sub_ok" });
+});
+
+afterAll(async () => {
+  if (!HAS_DB) return;
+  const g = globalThis as { _sql?: { end(): Promise<void> } };
+  const c = g._sql;
+  g._sql = undefined;
+  await c?.end();
+});
+
+describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
+  it("pushes trial_end into Stripe for a live trialing sub and leaves comped_until alone", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_trialing', status = 'trialing',
+                     plan_key = 'pro'
+               where org_id = ${orgId}`;
+
+    const end = await extendTrial(actorId, orgId, 7, "sales call");
+
+    expect(stripeMock.subscriptionUpdate).toHaveBeenCalledTimes(1);
+    const [subId, params] = stripeMock.subscriptionUpdate.mock.calls[0];
+    expect(subId).toBe("sub_trialing");
+    expect(params.trial_end).toBe(Math.floor(new Date(end).getTime() / 1000));
+    expect(params.proration_behavior).toBe("none");
+
+    const [row] = await sql<{ comped_until: string | null; plan_key: string }[]>`
+      select comped_until, plan_key from subscriptions where org_id = ${orgId}`;
+    expect(row.comped_until).toBeNull(); // the subscription owns the lifecycle
+    expect(row.plan_key).toBe("pro");
+  });
+
+  it("never calls Stripe for a cancelled subscription that kept its id", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_dead', status = 'canceled'
+               where org_id = ${orgId}`;
+    await extendTrial(actorId, orgId, 7, "win-back");
+    expect(stripeMock.subscriptionUpdate).not.toHaveBeenCalled();
+  });
+
+  it("never calls Stripe for the refused arms", async () => {
+    for (const status of ["active", "past_due"]) {
+      const { orgId, actorId } = await seedOrg();
+      await sql`update subscriptions
+                   set stripe_subscription_id = ${"sub_" + status}, status = ${status}
+                 where org_id = ${orgId}`;
+      await expect(extendTrial(actorId, orgId, 7, "gift")).rejects.toThrow(/Stripe/i);
+    }
+    expect(stripeMock.subscriptionUpdate).not.toHaveBeenCalled();
+  });
+});
+```
+
 - [ ] **Step 2: Run to verify failure**
 
 ```bash
-cd apps/web && DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" DATABASE_SSL=disable npx vitest run src/server/usecases/__tests__/admin-plan.test.ts
+cd apps/web && DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" DATABASE_SSL=disable npx vitest run src/server/usecases/__tests__/admin-plan.test.ts src/server/usecases/__tests__/admin-plan-trial-stripe.test.ts
 ```
 
-Expected: the seven new tests FAIL — `plan_key` stays `community`, no 400 is thrown, the cancelled-org grant never lapses.
+Expected: the seven tests in `admin-plan.test.ts` FAIL — `plan_key` stays `community`, no 400 is thrown, the cancelled-org grant never lapses. In the mocked file, the trialing-arm test FAILS on `comped_until` and the refused-arm test FAILS because nothing throws.
 
 - [ ] **Step 3: Widen the resolver's comp-expiry branch**
 
@@ -632,7 +727,7 @@ Then replace the whole body of `extendTrial` after the day-bounds check:
 - [ ] **Step 5: Run to verify it passes**
 
 ```bash
-cd apps/web && DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" DATABASE_SSL=disable npx vitest run src/server/usecases/__tests__/admin-plan.test.ts src/lib/__tests__/entitlements-pastdue.test.ts
+cd apps/web && DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" DATABASE_SSL=disable npx vitest run src/server/usecases/__tests__/admin-plan.test.ts src/server/usecases/__tests__/admin-plan-trial-stripe.test.ts src/lib/__tests__/entitlements-pastdue.test.ts
 ```
 
 Expected: PASS. `entitlements-pastdue.test.ts` guards the resolver you just edited — if it reds, the `case` arms are in the wrong order.
@@ -640,7 +735,7 @@ Expected: PASS. `entitlements-pastdue.test.ts` guards the resolver you just edit
 - [ ] **Step 6: Commit**
 
 ```bash
-git add apps/web/src/server/usecases/admin-plan.ts apps/web/src/lib/entitlements.ts apps/web/src/server/usecases/__tests__/admin-plan.test.ts
+git add apps/web/src/server/usecases/admin-plan.ts apps/web/src/lib/entitlements.ts apps/web/src/server/usecases/__tests__/admin-plan.test.ts apps/web/src/server/usecases/__tests__/admin-plan-trial-stripe.test.ts
 git commit -m "fix(admin): a granted trial conveys real Pro and expires itself"
 ```
 
@@ -1133,7 +1228,7 @@ git commit -m "docs(help): staff-set trials count against the one trial per org"
 
 **Spec coverage.** Item 1 → Task 1. Item 2 → Task 2. Item 3 (all four arms, liveness predicate, no-partial-write, resolver widening) → Tasks 3 and 4. Item 4 → Task 3. Item 5 → Tasks 5 and 6. Item 6 (no backfill) → Global Constraints. Item 7 → Task 7. Item 8 → Task 8. Pro Plus needs no task — `applyPlanChange` already coalesces through `syncSubscription`; Task 4's demotion test covers the one edge it introduced. Help pages and the visual gate → Task 9.
 
-**Test-matrix coverage.** Spec cases 1–6 → Task 1 (cases 4 and 6 are folded into the replay/re-buy tests, which exercise the same coalesce). Cases 7–8 → Task 2. Cases 9–17 → Task 4. Cases 18–22 → Task 3. Cases 23–27 → Task 5, except case 26 (non-staff 403), which `requireStaff` provides and the route inherits from the other admin routes' shared gate. Cases 28–30 → Task 7. Cases 31–33 → Task 8.
+**Test-matrix coverage.** Spec cases 1–6 → Task 1 (cases 4 and 6 are folded into the replay/re-buy tests, which exercise the same coalesce). Cases 7–8 → Task 2. Cases 9–17 → Task 4 (13's "no Stripe call" assertion and 14 need a mock, so they live in the new `admin-plan-trial-stripe.test.ts`; `admin-plan.test.ts` stays Stripe-free as its header promises). Cases 18–22 → Task 3. Cases 23–27 → Task 5, except case 26 (non-staff 403), which `requireStaff` provides and the route inherits from the other admin routes' shared gate. Cases 28–30 → Task 7. Cases 31–33 → Task 8.
 
 **Naming consistency.** `hasLiveSubscription` is defined in Task 3 and consumed in Task 4 with the same signature. `restoreTrial(actorId, orgId, reason)` matches between Tasks 5 and 6. `CHECKOUT_BRANDING` is defined and consumed within Task 7.
 
