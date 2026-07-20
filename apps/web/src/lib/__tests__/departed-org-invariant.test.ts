@@ -8,15 +8,23 @@
 // assertCheckoutAllowed 409s it, compToPro/extendTrial 400, downgradeToCommunity
 // 400, and a dated comp can never lapse. Only manual SQL frees it.
 //
-// This defect has landed three times, each fix closing one writer and exposing
+// This defect has landed five times, each fix closing one writer and exposing
 // the next — so this suite is parameterised over the writers rather than
 // hand-written per case. ADDING A NEW WRITER MEANS ADDING ONE ENTRY TO `WRITERS`.
 // The assertion uses the real hasLiveSubscription against the re-read row, so it
 // cannot drift from the production predicate.
 //
-// Real Postgres required; skipped without DATABASE_URL. Stripe is never reached:
-// every writer here takes its non-live arm for a departed org, which is exactly
-// the property under test.
+// To check WRITERS is still complete, list every site that touches the table:
+//   grep -rn "update subscriptions\|insert into subscriptions" apps/web/src \
+//     | grep -v __tests__
+// and confirm each mutating entry point that a departed org can reach has an
+// entry below.
+//
+// Real Postgres required; skipped without DATABASE_URL. Stripe is never reached
+// — and that is this suite's honest limit: the seed is ALWAYS a departed org,
+// so every writer takes its non-live arm. The live arms, and races where a
+// cancellation lands mid-write, are out of reach here and need their own tests
+// (see server/usecases/__tests__/admin-plan-trial-stripe.test.ts).
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";

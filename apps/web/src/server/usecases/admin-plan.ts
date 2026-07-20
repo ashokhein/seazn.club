@@ -215,9 +215,13 @@ export async function extendTrial(
       -- The racing writer is handleSubscriptionDeleted in billing-events.ts: it
       -- sets status = canceled keyed on org_id and LEAVES THE ID INTACT, so an
       -- id pin alone never fires for that race. STATUS is the column that moves.
-      -- The id pin stays for the other race — a resubscribe swapping in a NEW
-      -- subscription id, where writing this trial_end would target the wrong
-      -- subscription. Two races, two conjuncts.
+      -- The id pin covers the other race — a resubscribe swapping in a NEW
+      -- subscription id. It does NOT prevent the Stripe-side mistake: the
+      -- subscriptions.update above has already run, so the trial_end went onto
+      -- whichever subscription the id we read names. All the id conjunct buys
+      -- is that the LOCAL row is not overwritten to describe a subscription it
+      -- no longer belongs to; the Stripe write must be reconciled by the
+      -- webhook. Two races, two conjuncts.
       -- A zero-row result is SAFE, not an error: the row is exactly as read and
       -- the webhook has written the truth. It is recorded in the audit detail
       -- below rather than thrown, because the Stripe call already succeeded.
@@ -254,7 +258,13 @@ export async function extendTrial(
   await logStaffAction(actorId, "extend_trial", "org", orgId, {
     reason, days,
     before: { trial_end: before.trial_end, plan_key: before.plan_key },
-    after: { trial_end: iso, granted_pro: !live },
+    // trial_end names what the LOCAL row now holds; when the pinned write was
+    // skipped the row holds no such date, so the value is reported under
+    // trial_end_stripe — what was pushed to Stripe and nowhere else.
+    after: {
+      ...(localWriteSkipped ? { trial_end_stripe: iso } : { trial_end: iso }),
+      granted_pro: !live,
+    },
     // Stripe accepted the new trial_end but the local row had already moved on
     // (cancelled or resubscribed between the read and the write), so nothing was
     // written here. Surfaced, never silent.

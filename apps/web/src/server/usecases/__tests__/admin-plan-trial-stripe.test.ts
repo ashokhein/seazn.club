@@ -70,6 +70,50 @@ describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
     expect(row.trial_used_at).not.toBeNull(); // V277 stamp, written by the same UPDATE
   });
 
+  // The real race, not a simulation of a tighter pin: the webhook cancels the
+  // subscription WHILE the Stripe call is in flight. handleSubscriptionDeleted
+  // moves STATUS and leaves the id intact, so only the status conjunct of the
+  // pin can catch this — deleting it lets the write resurrect the row to
+  // 'trialing' and this test reds.
+  it("skips the local write when a cancellation lands during the Stripe call", async () => {
+    const { orgId, actorId } = await seedOrg();
+    // Backdate trial_end so "unchanged" cannot pass by colliding with the value
+    // the unpinned write would have produced (now + 7 days).
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_racing', status = 'trialing',
+                     plan_key = 'pro', trial_end = now() - interval '30 days'
+               where org_id = ${orgId}`;
+    const [seeded] = await sql<{ trial_end: string | null; status: string }[]>`
+      select trial_end, status from subscriptions where org_id = ${orgId}`;
+    expect(seeded.trial_end).not.toBeNull();
+    expect(seeded.status).toBe("trialing"); // the arm under test is the live one
+
+    stripeMock.subscriptionUpdate.mockImplementation(async () => {
+      // The racing webhook: status moves, the id stays.
+      await sql`update subscriptions set status = 'canceled' where org_id = ${orgId}`;
+      return { id: "sub_racing" };
+    });
+
+    await extendTrial(actorId, orgId, 7, "sales call");
+
+    expect(stripeMock.subscriptionUpdate).toHaveBeenCalledTimes(1);
+    const [after] = await sql<{
+      trial_end: string | null; status: string; stripe_subscription_id: string | null;
+    }[]>`
+      select trial_end, status, stripe_subscription_id
+        from subscriptions where org_id = ${orgId}`;
+    expect(after.status).toBe("canceled"); // the webhook's truth stands
+    expect(after.stripe_subscription_id).toBe("sub_racing");
+    expect(new Date(after.trial_end as string).getTime())
+      .toBe(new Date(seeded.trial_end as string).getTime());
+
+    const [audit] = await sql<{ detail: { local_write_skipped?: boolean } }[]>`
+      select detail from staff_audit_log
+      where target_id = ${orgId} and action = 'extend_trial'
+      order by created_at desc limit 1`;
+    expect(audit.detail.local_write_skipped).toBe(true);
+  });
+
   it("never calls Stripe for a cancelled subscription that kept its id", async () => {
     const { orgId, actorId } = await seedOrg();
     await sql`update subscriptions
