@@ -128,6 +128,9 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
 
     await syncSubscription(orgId, stripeSub({ id: "sub_replay", status: "active" }));
     const first = await readStamp();
+    // Guard: without this, a regression that stops stamping entirely leaves
+    // both sides null and the toEqual below passes vacuously.
+    expect(first).not.toBeNull();
     await syncSubscription(orgId, stripeSub({ id: "sub_replay", status: "active" }));
     expect(await readStamp()).toEqual(first);
   });
@@ -144,6 +147,9 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
 
     await syncSubscription(orgId, stripeSub({ id: "sub_first", status: "active" }));
     const first = await readStamp();
+    // Guard: without this, a regression that stops stamping entirely leaves
+    // both sides null and the toEqual below passes vacuously.
+    expect(first).not.toBeNull();
     await sql`update subscriptions set status = 'canceled' where org_id = ${orgId}`;
     await syncSubscription(orgId, stripeSub({ id: "sub_second", status: "active" }));
     expect(await readStamp()).toEqual(first);

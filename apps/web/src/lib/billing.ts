@@ -54,8 +54,9 @@ export function buildEmbeddedCheckoutParams(args: {
 
 /**
  * One trial per organisation (product gap 2026-07-13): the downgrade→upgrade
- * loop must not re-arm the 14-day trial. `trial_used_at` is stamped by
- * syncSubscription the first time a trialing sub syncs and never cleared.
+ * loop must not re-arm the 14-day trial. `trial_used_at` means "this org has
+ * had Pro": syncSubscription stamps it on the first sync of ANY subscription,
+ * trialing or not, and it is never cleared.
  */
 export function checkoutTrialDays(
   sub: { trial_used_at: string | null } | undefined,
@@ -203,6 +204,9 @@ export async function syncSubscription(
       -- reaching us counts, including a dashboard-created one that never
       -- carried a trial_end (V277's backfill always assumed this; the code
       -- did not). Never cleared except by the staff Restore trial action.
+      -- excluded.trial_used_at is always non-null (the insert stamps it
+      -- unconditionally); now() is a backstop should that ever become
+      -- conditional again.
       trial_used_at          = coalesce(subscriptions.trial_used_at,
                                         excluded.trial_used_at, now()),
       cancel_at_period_end   = excluded.cancel_at_period_end,
