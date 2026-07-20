@@ -30,6 +30,7 @@
   "board.ai.run.repair": "Corriger le calendrier",
   "board.ai.running": "Planification de votre calendrier…",
   "board.ai.flagged": "Le moteur a signalé le brouillon — correction…",
+  "board.ai.elapsed": "{elapsed} · généralement moins de 4 min",
   "board.ai.errorLabel": "Impossible de terminer.",
   "board.ai.errorGeneric": "Une erreur s'est produite. Réessayez.",
   "board.ai.error.upgrade": "La planification IA nécessite un forfait Pro.",
