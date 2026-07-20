@@ -13,6 +13,7 @@ import {
   downgradeFreezePreview,
   extendTrial,
   planPanel,
+  restoreTrial,
 } from "@/server/usecases/admin-plan";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -362,5 +363,86 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId, actorId } = await seedOrg();
     await expect(extendTrial(actorId, orgId, 0, "nope")).rejects.toThrow(/1–365/);
     await expect(extendTrial(actorId, orgId, 366, "nope")).rejects.toThrow(/1–365/);
+  });
+
+  it("restore trial clears the stamp, audits it, and is not a permanent bypass", async () => {
+    const { orgId, actorId } = await seedOrg();
+    const readSub = async () =>
+      (
+        await sql<{ trial_used_at: string | null }[]>`
+          select trial_used_at from subscriptions where org_id = ${orgId}`
+      )[0];
+
+    await compToPro(actorId, orgId, null, "comp that became a deal");
+    expect(checkoutTrialDays(await readSub())).toBe(0);
+
+    await restoreTrial(actorId, orgId, "comp converted to a paid pilot");
+    expect((await readSub()).trial_used_at).toBeNull();
+    expect(checkoutTrialDays(await readSub())).toBe(14);
+
+    const [audit] = await sql<{ detail: { reason: string } }[]>`
+      select detail from staff_audit_log
+      where target_id = ${orgId} and action = 'restore_trial' order by created_at desc limit 1`;
+    expect(audit.detail.reason).toBe("comp converted to a paid pilot");
+
+    // The hatch reopens the door once — the next grant closes it again.
+    await extendTrial(actorId, orgId, 7, "pilot extension");
+    expect(checkoutTrialDays(await readSub())).toBe(0);
+  });
+
+  it("restore trial demands a reason", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await expect(restoreTrial(actorId, orgId, "  ")).rejects.toThrow(/reason/i);
+  });
+
+  // The crux of the escape hatch: syncSubscription re-stamps trial_used_at on
+  // every sync of ANY live subscription (coalesce keeps the first date), so
+  // clearing the burn on a Stripe-billed org would be silently undone by the
+  // next webhook. An honest 400 beats a restore that reverts itself.
+  it("refuses to restore a trial while a live Stripe subscription exists, and writes nothing", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_live', status = 'active',
+                     plan_key = 'pro', trial_used_at = now() - interval '30 days'
+               where org_id = ${orgId}`;
+    const before = (
+      await sql<{ trial_used_at: string }[]>`
+        select trial_used_at from subscriptions where org_id = ${orgId}`
+    )[0];
+
+    await expect(restoreTrial(actorId, orgId, "please undo")).rejects.toThrow(/Stripe/i);
+
+    const after = (
+      await sql<{ trial_used_at: string }[]>`
+        select trial_used_at from subscriptions where org_id = ${orgId}`
+    )[0];
+    expect(after.trial_used_at).toEqual(before.trial_used_at);
+    const audits = await sql<{ id: string }[]>`
+      select id from staff_audit_log where target_id = ${orgId} and action = 'restore_trial'`;
+    expect(audits).toHaveLength(0);
+  });
+
+  // A cancelled subscription keeps its id forever — presence alone is not
+  // liveness. A departed org is exactly the case this hatch exists for, so it
+  // must be allowed through even though `stripe_subscription_id` is non-null.
+  it("restores a trial for a departed org (cancelled subscription, dead id)", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_gone', status = 'canceled',
+                     trial_used_at = now() - interval '30 days'
+               where org_id = ${orgId}`;
+
+    await restoreTrial(actorId, orgId, "departed customer, giving them another shot");
+    const [row] = await sql<{ trial_used_at: string | null }[]>`
+      select trial_used_at from subscriptions where org_id = ${orgId}`;
+    expect(row.trial_used_at).toBeNull();
+  });
+
+  it("restoring a trial for an org with no subscription row throws 404", async () => {
+    const s = randomUUID().slice(0, 8);
+    const [{ id: orgId }] = await sql<{ id: string }[]>`
+      insert into organizations (name, slug) values (${"No Sub " + s}, ${"no-sub-" + s}) returning id`;
+    const { actorId } = await seedOrg();
+    await expect(restoreTrial(actorId, orgId, "reason")).rejects.toThrow(/subscription row/i);
   });
 });

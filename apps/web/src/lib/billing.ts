@@ -57,7 +57,10 @@ export function buildEmbeddedCheckoutParams(args: {
  * One trial per organisation (product gap 2026-07-13): the downgrade→upgrade
  * loop must not re-arm the 14-day trial. `trial_used_at` means "this org has
  * had Pro": syncSubscription stamps it on the first sync of ANY subscription,
- * trialing or not, and it is never cleared.
+ * trialing or not. It is not cleared by any normal plan action — the sole
+ * exception is the staff `restoreTrial` escape hatch (admin-plan.ts), which
+ * refuses to clear it while a live Stripe subscription exists (that sync
+ * would just re-stamp it) and is itself audited.
  */
 export function checkoutTrialDays(
   sub: { trial_used_at: string | null } | undefined,

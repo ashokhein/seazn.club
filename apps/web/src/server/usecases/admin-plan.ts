@@ -272,3 +272,50 @@ export async function extendTrial(
   });
   return iso;
 }
+
+/**
+ * Give an org its trial back. "One trial per organisation" (V277) is enforced
+ * on every route that grants Pro, which makes it strict enough to be wrong
+ * occasionally — a comp that turns into a paid pilot, a test org promoted to a
+ * real customer. This is the sanctioned undo, so nobody edits subscriptions by
+ * hand.
+ *
+ * Refuses a LIVE Stripe subscription: syncSubscription upserts
+ * `trial_used_at = coalesce(subscriptions.trial_used_at, excluded.trial_used_at, now())`
+ * on every sync of any subscription, so clearing the burn on a Stripe-billed
+ * org would be silently re-stamped by the next webhook or reconcile — an
+ * honest refusal beats a restore that reverts itself. A departed org
+ * (cancelled status, dead subscription id) is not live and passes through;
+ * that is exactly the case this hatch exists for. The next grant of any kind
+ * (comp, staff trial, or a fresh Stripe checkout) re-stamps the burn — this is
+ * a one-time reopening, not a permanent bypass.
+ */
+export async function restoreTrial(
+  actorId: string,
+  orgId: string,
+  reason: string,
+): Promise<void> {
+  if (!reason.trim()) throw new HttpError(400, "A reason is required.");
+  const [before] = await sql<{
+    trial_used_at: string | null;
+    stripe_subscription_id: string | null;
+    status: string | null;
+  }[]>`
+    select trial_used_at, stripe_subscription_id, status
+    from subscriptions where org_id = ${orgId}`;
+  if (!before) throw new HttpError(404, "Organization has no subscription row.");
+  if (hasLiveSubscription(before)) {
+    throw new HttpError(
+      400,
+      "This organization is billed through Stripe — the next sync would re-stamp the trial as used.",
+    );
+  }
+  await sql`update subscriptions set trial_used_at = null, updated_at = now()
+            where org_id = ${orgId}`;
+  await invalidateOrgEntitlements(orgId);
+  await logStaffAction(actorId, "restore_trial", "org", orgId, {
+    reason,
+    before: { trial_used_at: before.trial_used_at },
+    after: { trial_used_at: null },
+  });
+}
