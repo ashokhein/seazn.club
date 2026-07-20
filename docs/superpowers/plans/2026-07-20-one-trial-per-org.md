@@ -854,6 +854,51 @@ must not be charged again), where the intent is explicit and audited.
 
 ---
 
+### Task 4D: Billing surface polish
+
+Three user-reported items, 2026-07-20.
+
+**Files:**
+- Modify: `apps/web/src/dictionaries/en/ui.json` (`payments.planBilling`)
+- Modify: `apps/web/src/app/o/[orgSlug]/settings/billing/page.tsx`
+- Modify: `apps/web/src/app/o/[orgSlug]/settings/connect/page.tsx`
+- Modify: `apps/web/src/lib/__tests__/breadcrumb-chain.test.ts`
+- Modify: `apps/web/e2e/navigation.spec.ts`
+- Modify: all four `ui.json` dictionaries (new "powered by Stripe" key)
+
+**1. Sidebar label capitalisation.** `payments.planBilling` is `"Plan & billing"`;
+make it `"Plan & Billing"`. **English only** — fr/es/nl follow their own casing
+conventions ("Forfait et facturation", "Plan y facturación", "Plan & facturering")
+and must NOT be changed. The same key feeds the breadcrumb, so the crumb changes
+too, which is consistent and wanted.
+
+Two assertions break and must be updated, not deleted:
+- `apps/web/src/lib/__tests__/breadcrumb-chain.test.ts` (two cases assert the old string)
+- `apps/web/e2e/navigation.spec.ts:40` — `getByRole("link", { name: "Plan & billing" })`
+
+**2. "Payments powered by Stripe" at the top of the billing page.** New i18n key
+across all four locales. Place it under the page title, before the banner//content.
+Keep it quiet — this is a trust signal, not a headline. Load the
+`frontend-design` skill before styling it.
+
+**3. Remove BOTH hand-rolled back links.** User decision, explicit: the
+breadcrumb IS the back affordance.
+- `settings/billing/page.tsx` — the `btn btn-ghost` "← Settings" beside the `<h1>`;
+  the heading row's `flex items-center justify-between` collapses to just the title.
+- `settings/connect/page.tsx` — the bare `text-sm text-slate-500` "← Settings"
+  above the `<h1>`.
+Both pages are under `/o/[orgSlug]/`, so `OrgLayout` already renders
+`<Breadcrumbs>` with a clickable "Settings" crumb. The project convention is that
+`BackLink` is for console pages OUTSIDE the breadcrumb shell — do not substitute
+it here. Remove now-unused imports (`Link`, `routes`) only if nothing else on the
+page uses them.
+
+**Verify:** `npm run i18n:gen-keys` and `npm run i18n:check` **from the worktree
+root** (running codegen from the main checkout silently no-ops). Then `tsc`, the
+breadcrumb unit test, and the navigation e2e.
+
+---
+
 ### Task 5A: End-to-end coverage for the trial rules
 
 Added 2026-07-20 after the plan was challenged: Tasks 1-5 ship only unit and
