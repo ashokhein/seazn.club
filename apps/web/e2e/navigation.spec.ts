@@ -29,13 +29,13 @@ test.describe("navigation shell", () => {
 });
 
 // Settings de-duplication: the standalone /settings/account page was removed and
-// folded into the tabbed settings; Plan & billing keeps its own route.
+// folded into the tabbed settings; Plan & Billing keeps its own route.
 test.describe("settings shell", () => {
   test("sidebar keeps Platform API and links billing to its own route", async ({ page }) => {
     await page.goto("/settings?tab=account");
     // Regression: the Platform API nav item once vanished during the dedup.
     await expect(page.getByRole("link", { name: "Platform API" })).toBeVisible();
-    // Plan & billing owns Stripe reconciliation, so it links out, not a ?tab=.
+    // Plan & Billing owns Stripe reconciliation, so it links out, not a ?tab=.
     // PROMPT-30: billing is org-scoped — /o/[slug]/settings/billing.
     await expect(page.getByRole("link", { name: "Plan & Billing", exact: true })).toHaveAttribute(
       "href",

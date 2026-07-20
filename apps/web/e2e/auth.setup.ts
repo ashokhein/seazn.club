@@ -75,14 +75,15 @@ setup("authenticate as a fresh Pro org", async ({ page }) => {
   await provision(page, email);
   // Pro plan → advanced entitlements resolve like a paying org.
   await setOrgPlanBySql({ email }, "pro");
-  // The e2e run budgets 5 owned orgs for this shared user (see
+  // The e2e run budgets 7 owned orgs for this shared user (see
   // playwright.config); the v3 pro cap is 3, so lift it via override —
-  // exactly the grandfathering tool real over-cap owners get.
+  // exactly the grandfathering tool real over-cap owners get. Raised from 5
+  // to 7 for the two trial-rule specs (burnt-trial CTA, staff grant).
   const orgs = (await (
     await page.request.get("/api/orgs")
   ).json()) as { data?: { id: string }[] };
   const setupOrgId = orgs.data?.[0]?.id;
-  if (setupOrgId) await setEntitlementOverrideSql(setupOrgId, "orgs.max_owned", 5);
+  if (setupOrgId) await setEntitlementOverrideSql(setupOrgId, "orgs.max_owned", 7);
   await capture(page, PRO_STATE);
 });
 

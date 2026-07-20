@@ -78,7 +78,7 @@ function roleLabel(dict: Dict, role: string): string {
 
 type Tab = "organization" | "news" | "sponsors" | "team" | "api" | "account";
 
-// Plan & billing lives at its own route (/settings/billing) — it owns the
+// Plan & Billing lives at its own route (/settings/billing) — it owns the
 // Stripe checkout-return reconciliation and portal flows — so it links out of
 // the tabbed sidebar rather than rendering an inline panel here. `labelKey`
 // is a ui-catalog key resolved per-request (t) so the nav localizes.
@@ -220,7 +220,7 @@ export default async function SettingsPage({
                   </Link>
                 );
               })}
-              {/* Connect + Plan & billing are their own routes (each owns a
+              {/* Connect + Plan & Billing are their own routes (each owns a
                   Stripe reconcile-on-return round trip). */}
               <Link
                 href={routes.connect(orgSlug)}

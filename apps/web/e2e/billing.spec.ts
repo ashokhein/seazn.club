@@ -1,5 +1,11 @@
 import { test, expect, type Page } from "@playwright/test";
-import { TAG, apiJson, addEntrantsViaApi, setOrgPlanBySql } from "./helpers";
+import {
+  TAG,
+  apiJson,
+  addEntrantsViaApi,
+  setOrgPlanBySql,
+  setOrgSubscriptionSql,
+} from "./helpers";
 
 // Billing lifecycle. Runs on the Pro account but against FRESH orgs (new orgs
 // start on community), so nothing here disturbs the setup org's Pro plan and
@@ -155,5 +161,44 @@ test.describe.serial("billing", () => {
     // The in-quota competitions stay writable.
     const alive = await addEntrantsViaApi(page.request, divisionIds[2]!, ["Still Alive"]);
     expect(alive.status).toBeLessThan(300);
+  });
+
+  // The reported bug, at the surface the user actually saw: an org that had
+  // already had Pro (downgraded, then came back) was still shown the 14-day
+  // trial CTA — and checkout then 409'd, or worse, handed out a second trial.
+  // trial_used_at is the only input that moves here, so the CTA is asserted
+  // both ways around a single column flip.
+  test("an org that has already had Pro is not offered the trial again", async ({ page }) => {
+    const orgC = await createFreshOrg(page);
+    // Explicit null: a fresh org has never had Pro, so the trial is on offer.
+    await setOrgSubscriptionSql(orgC, {
+      plan_key: "community",
+      status: "active",
+      trial_used_at: null,
+    });
+    await page.goto("/settings/billing");
+
+    // Anchored: the Pro Plus CTA is literally "Go Pro Plus — …", so an
+    // unanchored /Go Pro/ matches the wrong button, and the default
+    // getByRole name matcher is a case-insensitive SUBSTRING match.
+    const trialCta = page.getByRole("button", { name: /^Start free trial — / });
+    const goProCta = page.getByRole("button", { name: /^Go Pro — / });
+    await expect(trialCta).toBeVisible({ timeout: 20_000 });
+    await expect(goProCta).toHaveCount(0);
+    await expect(page.getByText(/14-day free trial/)).toBeVisible();
+
+    // Burn the trial — the one column that decides this.
+    await setOrgSubscriptionSql(orgC, {
+      plan_key: "community",
+      status: "active",
+      trial_used_at: new Date().toISOString(),
+    });
+    await page.reload();
+
+    await expect(goProCta).toBeVisible({ timeout: 20_000 });
+    // Negative on the whole page, not on the anchored locator: no button
+    // anywhere may still promise a trial this org cannot have.
+    await expect(page.getByRole("button", { name: /start free trial/i })).toHaveCount(0);
+    await expect(page.getByText(/your free trial has already been used/)).toBeVisible();
   });
 });
