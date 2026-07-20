@@ -50,10 +50,19 @@ thinking  24,761  = 90.5%
 
 Consequences, in order of how much they change what we should do:
 
-- **Prompt caching is not the lever.** Input is under 4% of spend. `schedule-ai.ts` already
-  sets `cache_control` on the system prompt, and that prompt is ~1,200 tokens — under the
-  2,048-token minimum cacheable prefix, so it is likely a silent no-op. Worth fixing only
-  for multi-round runs; worth nothing for the common single-round case.
+- **Prompt caching is not the lever — and it already works.** Measured 2026-07-20 on
+  sonnet-5: the system prompt is 1,292 tokens and DOES cache (call 1
+  `cache_write=1286`, call 2 `cache_read=1286`). An earlier draft of this document
+  claimed it was "likely a silent no-op, under the 2,048-token minimum" — wrong; sonnet-5's
+  minimum cacheable prefix is lower than that tier. The economics are the point: at
+  1,286 cached tokens against a $0.465 run, a cache read saves **0.75%** and a wasted
+  cache write (TTL expired before a second run) costs **0.21%**. Noise in both directions.
+
+  Caching only becomes material on REPAIR rounds, where the conversation is re-sent as
+  input — the no-think arm reached 65,015 input tokens over 3 rounds, and breakpoints on
+  the growing conversation would cut ~47% off such a run. But there were **zero repair
+  rounds across all 12 baseline runs** at effort:high, so that is optimising a path that
+  does not execute.
 - **Schema changes are capped at 9.5%**, no matter how aggressive:
 
   | candidate | saving | % of output |
@@ -211,7 +220,10 @@ On a repair-spiralling run input became 57% of cost.
 4. **Record `thinking_tokens`** instead of inferring it.
 5. **Bench Phase B.** `runOfficialsAiPlan(pack)` is pure over its pack, and the knob now
    exists — the Phase A harness is the template.
-6. **Fix or remove the system-prompt `cache_control`.** Likely a silent no-op today.
+6. ~~Fix or remove the system-prompt `cache_control`.~~ **Resolved 2026-07-20:** it works
+   (1,286 tokens written then read on back-to-back calls). Left as is — worth 0.75% at
+   best, -0.21% at worst. Do not extend caching to the repair loop without first seeing
+   repair rounds actually occur in production; they were 0/12 in the bench.
 
 ---
 
