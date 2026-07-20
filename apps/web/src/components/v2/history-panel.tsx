@@ -365,9 +365,13 @@ export function HistoryPanel({
             Clears timetable slots only — locked and decided fixtures always survive, and
             the action is undoable above.
           </p>
+          {/* btn-danger, not hand-rolled: `border-red-200` sets a border colour
+              but no width, so this painted no border and no background — a
+              destructive action that read as bare red text, its .btn padding
+              showing only as a stray indent. */}
           <button
             type="button"
-            className="btn mt-2 border-red-200 text-red-700 hover:bg-red-50"
+            className="btn btn-danger mt-2"
             disabled={busy}
             onClick={async () => {
               const ok = await confirmDialog({
