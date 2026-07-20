@@ -12,7 +12,7 @@ Spec: `docs/superpowers/specs/2026-07-20-one-trial-per-org-design.md`
 
 ## Global Constraints
 
-- **No migration.** `trial_used_at` (V277) and `comped_until` already exist. Do not add a `V303`.
+- **One migration, V303 only** (added 2026-07-20 for Task 4C). Tasks 1-4 and 5-9 add none — `trial_used_at` (V277) and `comped_until` already exist. V303 adds `subscriptions.has_payment_method`.
 - **DB-backed vitest needs an explicit URL.** Run from `apps/web`:
   `DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" DATABASE_SSL=disable npx vitest run <path>`.
   Without it every DB suite silently **skips** and reports green.
@@ -738,6 +738,84 @@ Expected: PASS. `entitlements-pastdue.test.ts` guards the resolver you just edit
 git add apps/web/src/server/usecases/admin-plan.ts apps/web/src/lib/entitlements.ts apps/web/src/server/usecases/__tests__/admin-plan.test.ts apps/web/src/server/usecases/__tests__/admin-plan-trial-stripe.test.ts
 git commit -m "fix(admin): a granted trial conveys real Pro and expires itself"
 ```
+
+---
+
+### Task 4C: The trial banner must not ask for a card the org already gave
+
+User-reported 2026-07-20: "I already added the payment method but it is still showing
+*4 days left in your Pro trial. Add a payment method →*".
+
+`BillingBanner` (`apps/web/src/components/billing-banner.tsx`) selects only
+`plan_key, status, trial_end` and never checks whether a card is on file, so it
+tells every trialing org to add one. `billingCtaLabel` in `lib/billing.ts` has
+the same defect — it keys on `status` alone.
+
+The banner renders on **org home** (`app/o/[orgSlug]/page.tsx:50`) as well as the
+billing page, so a live Stripe read is not acceptable. User decision: store the
+fact locally. **The countdown stays** — only the add-a-card CTA is conditional.
+
+**Files:**
+- Create: `db/migration/deltas/V303__subscription_has_payment_method.sql`
+- Modify: `apps/web/src/lib/billing.ts` (`syncSubscription`, `billingCtaLabel`)
+- Modify: `apps/web/src/server/usecases/billing-manage.ts` (`setDefaultPaymentMethod`, `removePaymentMethod`)
+- Modify: `apps/web/src/server/usecases/billing-events.ts` (payment-method webhooks)
+- Modify: `apps/web/src/components/billing-banner.tsx`
+- Modify: `apps/web/src/lib/types.ts` (Subscription)
+- Test: `apps/web/src/lib/__tests__/billing-payment-method.test.ts` (new)
+
+**THE WRITER SET IS THE WHOLE TASK.** This branch has been bitten five times by
+fixing one writer and missing the rest. Enumerate before implementing:
+1. `setDefaultPaymentMethod` — **the in-app add-card path the user actually hit.**
+   It updates Stripe's `invoice_settings.default_payment_method` and writes
+   nothing locally. Set the flag true here.
+2. `removePaymentMethod` — must clear the flag when the last card goes.
+3. `syncSubscription` — derive from the Stripe subscription's
+   `default_payment_method`, falling back to the customer default. Runs on every
+   subscription webhook and on reconcile.
+4. `billing-events.ts` — dashboard-side changes (`payment_method.attached`,
+   `payment_method.detached`, `customer.updated`) so a card added in the Stripe
+   dashboard is reflected too.
+
+- [ ] **Step 1: Write the failing test first**
+
+Cover: flag false on a fresh trialing org; `setDefaultPaymentMethod` sets it true;
+`removePaymentMethod` clears it; `syncSubscription` derives it from the Stripe
+object; and — the user's exact scenario — a trialing org WITH the flag true does
+not render the "Add a payment method" CTA while still rendering the countdown.
+
+- [ ] **Step 2: Run it, confirm it fails for the stated reason.**
+
+- [ ] **Step 3: V303**
+
+```sql
+-- V303: the trial banner told every trialing org to add a card, including orgs
+-- that already had one, because nothing local recorded the fact. Stripe knows;
+-- the banner renders on org home (a hot path) where a live Stripe read is not
+-- acceptable, so mirror it here.
+alter table subscriptions
+  add column if not exists has_payment_method boolean not null default false;
+```
+
+- [ ] **Step 4: Implement all four writers, then the banner.**
+
+Banner contract: the countdown text is unchanged in every case. When
+`has_payment_method` is true, drop the "Add a payment method →" / "Add a card to
+keep Pro →" link; the org has done what was asked. When false, keep today's copy.
+`billingCtaLabel` takes the flag as a second argument.
+
+- [ ] **Step 5: Apply V303 locally and verify**
+
+```bash
+DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" npm run db:apply
+```
+The dev DB has out-of-order V296/V297 from another worktree, so `db:apply` may
+fail validation there — if it does, apply V303 by hand for the test run and say so.
+
+- [ ] **Step 6: Prove the fix by mutation** — revert the banner condition, confirm
+the user-scenario test reds. Then restore.
+
+- [ ] **Step 7: Commit.**
 
 ---
 
