@@ -70,8 +70,10 @@ test.describe.serial("billing", () => {
     await expect(page.locator('iframe[src*="stripe.com"]').first()).toBeVisible({
       timeout: 30_000,
     });
-    // Unmount so the page is left clean.
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    // Unmount so the page is left clean — checkout lives in a Modal (Task 8);
+    // its close control is the "×" button carrying aria-label="Close", same
+    // as the "opens checkout in a modal" test below.
+    await page.getByRole("dialog").getByRole("button", { name: "Close" }).click();
   });
 
   test("full checkout via the Stripe test flow", async ({ page }) => {
