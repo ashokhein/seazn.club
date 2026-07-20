@@ -160,6 +160,11 @@ export async function extendTrial(
   await sql`
     update subscriptions set
       status = 'trialing', trial_end = ${trialEnd.toISOString()},
+      -- One trial per org (V277) counts staff-granted trials too: without this
+      -- stamp the org could downgrade and take a fresh 14-day checkout trial.
+      -- coalesce keeps the FIRST grant's date across extensions, and the
+      -- syncSubscription upsert coalesces the same way, so Stripe agrees.
+      trial_used_at = coalesce(trial_used_at, now()),
       status_changed_at = case when status is distinct from 'trialing'
                                then now() else status_changed_at end,
       updated_at = now()

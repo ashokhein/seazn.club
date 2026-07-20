@@ -5,6 +5,7 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
+import { checkoutTrialDays } from "@/lib/billing";
 import { hasFeature } from "@/lib/entitlements";
 import {
   adminDowngrade,
@@ -111,5 +112,27 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const [row] = await sql<{ status: string }[]>`
       select status from subscriptions where org_id = ${orgId}`;
     expect(row.status).toBe("trialing");
+  });
+
+  // One trial per org (V277) counts EVERY trial, not just Stripe's. An
+  // admin-granted trial used to leave trial_used_at null, so the org could
+  // downgrade and take a fresh 14-day checkout trial afterwards.
+  it("a granted trial burns the org's one trial", async () => {
+    const { orgId, actorId } = await seedOrg();
+    const readSub = async () =>
+      (
+        await sql<{ trial_used_at: string | null }[]>`
+          select trial_used_at from subscriptions where org_id = ${orgId}`
+      )[0];
+    expect(checkoutTrialDays(await readSub())).toBe(14);
+
+    await extendTrial(actorId, orgId, 14, "sales call");
+    const stamped = (await readSub()).trial_used_at;
+    expect(stamped).not.toBeNull();
+    expect(checkoutTrialDays(await readSub())).toBe(0);
+
+    // A second grant extends the trial but never re-dates the stamp.
+    await extendTrial(actorId, orgId, 7, "one more week");
+    expect((await readSub()).trial_used_at).toEqual(stamped);
   });
 });
