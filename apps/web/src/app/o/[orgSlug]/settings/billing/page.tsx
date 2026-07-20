@@ -22,7 +22,7 @@ import { EVENTS } from "@/lib/analytics-events";
 import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { resolveLocale } from "@/lib/resolve-locale";
-import { getDictionary, t, plural, type Dict, type Locale } from "@/lib/i18n";
+import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
 
 function fmt(iso: string | null, locale: Locale) {
   if (!iso) return null;

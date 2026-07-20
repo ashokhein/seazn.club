@@ -8,7 +8,7 @@ Cancel Pro and your org returns to Community limits. The rule is simple: **nothi
 
 ## A failed renewal has a grace period
 
-If a renewal payment fails, nothing changes straight away. Stripe retries the card for **14 days** (this is called dunning) and your org stays on Pro the whole time — so a lapsed card or a bank blip never yanks features mid-tournament. Only if those 14 days pass with no successful payment does the org fall back to Community limits, and the moment a payment does go through, Pro is restored immediately. Update your card under **Settings → Plan & billing** to clear it sooner.
+If a renewal payment fails, nothing changes straight away. Stripe retries the card for **14 days** (this is called dunning) and your org stays on Pro the whole time — so a lapsed card or a bank blip never yanks features mid-tournament. Only if those 14 days pass with no successful payment does the org fall back to Community limits, and the moment a payment does go through, Pro is restored immediately. Update your card under **Settings → Plan & Billing** to clear it sooner.
 
 ## The freeze
 

@@ -37,7 +37,7 @@ test.describe("settings shell", () => {
     await expect(page.getByRole("link", { name: "Platform API" })).toBeVisible();
     // Plan & billing owns Stripe reconciliation, so it links out, not a ?tab=.
     // PROMPT-30: billing is org-scoped — /o/[slug]/settings/billing.
-    await expect(page.getByRole("link", { name: "Plan & Billing" })).toHaveAttribute(
+    await expect(page.getByRole("link", { name: "Plan & Billing", exact: true })).toHaveAttribute(
       "href",
       /\/o\/[^/]+\/settings\/billing$/,
     );
