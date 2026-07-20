@@ -4,7 +4,7 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getActiveOrgId, requireOrgRole, requireUser } from "@/lib/auth";
-import { syncSubscription } from "@/lib/billing";
+import { syncPaymentMethodFlag, syncSubscription } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import {
   buildAddressUpdateParams,
@@ -215,6 +215,10 @@ export async function setDefaultPaymentMethod(
   await stripe.customers.update(customerId, {
     invoice_settings: { default_payment_method: pmId },
   });
+  // The in-app add-card path the user actually hits during a trial. Stripe now
+  // knows; mirror it locally or the trial banner keeps asking for a card the
+  // org has just given (report 2026-07-20).
+  await syncPaymentMethodFlag(orgId);
   if (args.setupIntentId) {
     await captureServer({
       event: EVENTS.BILLING_CARD_ADDED,
@@ -241,6 +245,9 @@ export async function removePaymentMethod(orgId: string, paymentMethodId: string
       throw new HttpError(400, "Make another card the default before removing this one.");
   }
   await stripe.paymentMethods.detach(paymentMethodId);
+  // Re-reads Stripe rather than assuming: other cards may remain, in which case
+  // the flag stays true.
+  await syncPaymentMethodFlag(orgId);
 }
 
 // ---------------------------------------------------------------------------

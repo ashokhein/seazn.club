@@ -186,7 +186,7 @@ export default async function BillingPage({
               status === "trialing" &&
               ((overview?.paymentMethods.length ?? 0) === 0 ? (
                 <a href="#payment-methods" className="btn btn-primary">
-                  {billingCtaLabel(status)}
+                  {billingCtaLabel(status, (overview?.paymentMethods.length ?? 0) > 0)}
                 </a>
               ) : (
                 <p className="text-sm text-emerald-600">

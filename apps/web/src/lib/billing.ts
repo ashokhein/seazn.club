@@ -188,12 +188,94 @@ const STATUS_MAP: Record<string, string> = {
 };
 
 /**
- * Label for the primary billing CTA. A trialing Pro org has a Stripe customer
- * but no card yet (14-day no-card trial), so the primary ask is "add a card";
- * once active it's ordinary card management — both in-app now (v3/11).
+ * Label for the primary billing CTA. A trialing Pro org usually has a Stripe
+ * customer but no card yet (14-day no-card trial), so the primary ask is "add a
+ * card"; once active — or once a trialing org HAS added one — it's ordinary
+ * card management, both in-app (v3/11).
+ *
+ * `hasPaymentMethod` is required rather than defaulted: keying on status alone
+ * is exactly the defect this fixes (user report 2026-07-20), and a default
+ * would let a new call site reintroduce it silently.
  */
-export function billingCtaLabel(status: string): string {
-  return status === "trialing" ? "Add a card to keep Pro →" : "Manage payment methods";
+export function billingCtaLabel(status: string, hasPaymentMethod: boolean): string {
+  return status === "trialing" && !hasPaymentMethod
+    ? "Add a card to keep Pro →"
+    : "Manage payment methods";
+}
+
+/**
+ * THE ONLY WRITER of subscriptions.has_payment_method outside syncSubscription.
+ *
+ * Every path that can change whether an org has a card on file calls this —
+ * in-app add/remove, the Stripe-dashboard payment_method/customer webhooks, and
+ * any future staff action. It re-reads the truth from Stripe rather than taking
+ * the caller's word, so a new writer is one call, not a new derivation to get
+ * wrong. (This branch has repeatedly shipped a fix to one writer and missed its
+ * siblings.)
+ *
+ * Never called from a render path: the banner reads the mirrored column.
+ *
+ * Returns the value written, or null when nothing was written — no
+ * subscriptions row, or Stripe was unreachable. A Stripe failure deliberately
+ * LEAVES THE MIRROR ALONE: a transient outage must not tell an org that just
+ * added a card to add one again.
+ */
+export async function syncPaymentMethodFlag(orgId: string): Promise<boolean | null> {
+  const [sub] = await sql<{ stripe_customer_id: string | null }[]>`
+    select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+  if (!sub) return null;
+  // No Stripe customer at all means no card, and that is knowable without a
+  // round trip.
+  if (!sub.stripe_customer_id) return writePaymentMethodFlag(orgId, false);
+
+  try {
+    const stripe = getStripe();
+    const [customer, pms] = await Promise.all([
+      stripe.customers.retrieve(sub.stripe_customer_id),
+      stripe.customers.listPaymentMethods(sub.stripe_customer_id, { type: "card", limit: 1 }),
+    ]);
+    // An attached card counts even before it is made the customer default: the
+    // add-card flow promotes it a moment later, and the banner must not flap.
+    const rawDefault = customer.deleted
+      ? null
+      : (customer.invoice_settings?.default_payment_method ?? null);
+    const has = pms.data.length > 0 || !!rawDefault;
+    return writePaymentMethodFlag(orgId, has);
+  } catch {
+    return null;
+  }
+}
+
+/** Persist the flag. Private on purpose — go through syncPaymentMethodFlag so
+ *  the value always comes from Stripe. */
+async function writePaymentMethodFlag(orgId: string, has: boolean): Promise<boolean> {
+  await sql`
+    update subscriptions
+    set has_payment_method = ${has},
+        updated_at = case when has_payment_method is distinct from ${has}
+                          then now() else updated_at end
+    where org_id = ${orgId}`;
+  return has;
+}
+
+/**
+ * Does this Stripe subscription prove a card is on file? true / false / null
+ * for "cannot tell from this object".
+ *
+ * The null case is load-bearing. Under the 14-day no-card trial the card the
+ * organiser adds lands on the CUSTOMER (invoice_settings.default_payment_method)
+ * and the SUBSCRIPTION's default_payment_method stays null, so a webhook that
+ * read absence as "no card" would clear the flag minutes after the user added
+ * one — the reported bug, restored. Only an EXPANDED customer lets us say false.
+ */
+export function paymentMethodFromStripeSubscription(
+  stripeSub: Stripe.Subscription,
+): boolean | null {
+  if (stripeSub.default_payment_method) return true;
+  const customer = stripeSub.customer;
+  if (!customer || typeof customer === "string") return null;
+  if ("deleted" in customer && customer.deleted) return null;
+  return !!(customer as Stripe.Customer).invoice_settings?.default_payment_method;
 }
 
 /** Look up our plan_key from a Stripe price ID. */
@@ -222,12 +304,14 @@ export async function syncSubscription(
   const status = STATUS_MAP[stripeSub.status] ?? "past_due";
   // In Stripe v22, current_period_end lives on each subscription item.
   const periodEnd = stripeSub.items.data[0]?.current_period_end ?? null;
+  // null = this object cannot answer; see paymentMethodFromStripeSubscription.
+  const hasPm = paymentMethodFromStripeSubscription(stripeSub);
 
   await sql`
     insert into subscriptions
       (org_id, plan_key, status, stripe_subscription_id,
        current_period_end, trial_end, trial_used_at, cancel_at_period_end, currency,
-       updated_at, status_changed_at)
+       has_payment_method, updated_at, status_changed_at)
     values
       (${orgId}, ${knownPlanKey ?? "community"}, ${status},
        ${stripeSub.id},
@@ -236,6 +320,7 @@ export async function syncSubscription(
        ${new Date().toISOString()},
        ${stripeSub.cancel_at_period_end},
        ${stripeSub.currency ?? null},
+       ${hasPm ?? false},
        now(), now())
     on conflict (org_id) do update set
       -- Unknown price keeps the org's current plan (never mass-downgrade on drift).
@@ -254,6 +339,14 @@ export async function syncSubscription(
       trial_used_at          = coalesce(subscriptions.trial_used_at,
                                         excluded.trial_used_at, now()),
       cancel_at_period_end   = excluded.cancel_at_period_end,
+      -- Card on file: only OVERWRITE when this Stripe object could actually
+      -- answer. A trialing subscription created by the no-card checkout never
+      -- carries its own default_payment_method, so an unexpanded webhook
+      -- payload says nothing -- and clearing on it would re-arm the
+      -- add-a-payment-method banner for an org that has already added one
+      -- (the 2026-07-20 report). The in-app and payment_method webhook
+      -- writers keep the mirror honest in that case.
+      has_payment_method     = coalesce(${hasPm}::boolean, subscriptions.has_payment_method),
       currency               = coalesce(excluded.currency, subscriptions.currency),
       -- Task 7 fold-in: a re-buy (new sub id) clears any stale dispute flags so an
       -- old dispute's late loss can't downgrade the fresh sub; a renewal (same id)

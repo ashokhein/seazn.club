@@ -203,5 +203,9 @@ export interface Subscription {
   /** One trial per org (V277): stamped when the first trial starts, never cleared. */
   trial_used_at: string | null;
   cancel_at_period_end: boolean;
+  /** Local mirror of "a card is on file at Stripe" (V304), so the trial banner
+   *  on org home never needs a live Stripe read. Written by
+   *  syncPaymentMethodFlag() and syncSubscription(). */
+  has_payment_method: boolean;
   updated_at: string;
 }
