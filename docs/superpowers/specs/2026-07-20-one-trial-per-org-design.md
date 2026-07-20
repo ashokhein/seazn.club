@@ -93,6 +93,14 @@ two cannot drift.
 The 400 arms must write **nothing** — no local row update, no Stripe call. A
 partial write here is the expensive failure, so the guard runs before both.
 
+**The grant must be able to expire.** The resolver's comp-expiry branch reads
+`comped_until <= now() **and s.stripe_subscription_id is null**`. A cancelled
+subscription keeps its id, so granting days to a departed customer would produce
+a `comped_until` that never fires — free Pro forever. Widen that branch to
+`(s.stripe_subscription_id is null or s.status = 'canceled')`. It is a pure
+addition to the existing `case`, but it sits in the cached entitlement hot path,
+so it needs its own test at the boundary.
+
 The no-Stripe arm lifts `plan_key` to `'pro'` **only when it is currently
 `'community'`** — granting days to an org already comped at `pro_plus` must not
 demote it. Expiry rides the existing resolver branch
