@@ -40,14 +40,13 @@ describe("buildSetupIntentParams", () => {
 });
 
 describe("buildIntervalPreviewParams / buildIntervalChangeParams", () => {
-  it("previews an immediate anchored switch with the pinned proration_date", () => {
+  it("previews an immediate switch with the pinned proration_date", () => {
     const p = buildIntervalPreviewParams(change);
     expect(p.customer).toBe("cus_1");
     expect(p.subscription).toBe("sub_1");
     expect(p.subscription_details).toEqual({
       items: [{ id: "si_1", price: "price_annual" }],
       proration_behavior: "always_invoice",
-      billing_cycle_anchor: "now",
       proration_date: change.prorationDate,
     });
   });
@@ -56,10 +55,30 @@ describe("buildIntervalPreviewParams / buildIntervalChangeParams", () => {
     const p = buildIntervalChangeParams(change);
     expect(p.items).toEqual([{ id: "si_1", price: "price_annual" }]);
     expect(p.proration_behavior).toBe("always_invoice");
-    expect(p.billing_cycle_anchor).toBe("now");
     expect(p.proration_date).toBe(change.prorationDate);
     expect(p.payment_behavior).toBe("allow_incomplete");
     expect(p.expand).toEqual(["latest_invoice.confirmation_secret"]);
+  });
+
+  // Stripe rejects the pair outright: "You cannot specify `proration_date`
+  // when `billing_cycle_anchor=now`". Both builders shipped it for months —
+  // the shape assertions above were happy, because a param object cannot tell
+  // you the API refuses it. This is the rule itself, stated once.
+  it("never sends billing_cycle_anchor alongside proration_date", () => {
+    for (const params of [
+      buildIntervalPreviewParams(change).subscription_details as Record<string, unknown>,
+      buildIntervalChangeParams(change) as unknown as Record<string, unknown>,
+      buildIntervalPreviewParams({ ...change, trialing: true })
+        .subscription_details as Record<string, unknown>,
+      buildIntervalChangeParams({ ...change, trialing: true }) as unknown as Record<
+        string,
+        unknown
+      >,
+    ]) {
+      expect(
+        params.billing_cycle_anchor !== undefined && params.proration_date !== undefined,
+      ).toBe(false);
+    }
   });
 
   it("switches a trialing sub without prorations or anchor reset (nothing paid yet)", () => {
