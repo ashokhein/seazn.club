@@ -17,6 +17,7 @@ import {
   paymentMethodRows,
   intervalForPrice,
   needsRenewalResync,
+  cardRemovalConsequence,
 } from "@/lib/billing-manage";
 
 const change = {
@@ -178,6 +179,34 @@ describe("paymentMethodRows", () => {
     );
     expect(rows).toHaveLength(1);
     expect(rows[0].isDefault).toBe(false);
+  });
+});
+
+describe("cardRemovalConsequence (Task 6C staff card removal — panel confirm copy)", () => {
+  it("is a plain detach when other cards remain, regardless of status", () => {
+    expect(cardRemovalConsequence(1, "active")).toBe(
+      "This card will be detached from the customer.",
+    );
+    expect(cardRemovalConsequence(2, "trialing")).toBe(
+      "This card will be detached from the customer.",
+    );
+  });
+
+  it("warns the next invoice will fail when it's the last card on an active/past_due sub", () => {
+    expect(cardRemovalConsequence(0, "active")).toBe(
+      "This is the last card on file — the next invoice will fail.",
+    );
+    expect(cardRemovalConsequence(0, "past_due")).toBe(
+      "This is the last card on file — the next invoice will fail.",
+    );
+  });
+
+  it("warns of cancellation at trial end instead, when it's the last card on a trialing sub", () => {
+    // The pair that proves the branch is REALLY keyed on status: same
+    // cardsRemainingAfter (0), different copy.
+    expect(cardRemovalConsequence(0, "trialing")).toBe(
+      "This is the last card on file — the subscription will cancel at trial end.",
+    );
   });
 });
 

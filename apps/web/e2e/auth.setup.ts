@@ -75,14 +75,25 @@ setup("authenticate as a fresh Pro org", async ({ page }) => {
   await provision(page, email);
   // Pro plan → advanced entitlements resolve like a paying org.
   await setOrgPlanBySql({ email }, "pro");
-  // The e2e run budgets 5 owned orgs for this shared user (see
-  // playwright.config); the v3 pro cap is 3, so lift it via override —
-  // exactly the grandfathering tool real over-cap owners get.
+  // ORG BUDGET — single source of truth. Every project shares this
+  // storageState, so owned orgs accumulate across the WHOLE run. The v3 pro
+  // cap is 3, so lift it via override (the same grandfathering tool real
+  // over-cap owners get).
+  //
+  // The number is deliberate HEADROOM, not a ledger. An exact count is not
+  // maintainable on a shared fixture: known creators today are auth.setup(1),
+  // billing.spec(3), billing-states.spec(2), org-management.spec(1),
+  // schedule-panels.spec(1) and ai-architect.spec(3) = 11 — and a CI retry
+  // re-creates every org its test made. Anything short of generous headroom
+  // turns an unrelated new test into a 402 in billing.spec.
+  // Nothing in e2e asserts this value; the only assertion on the key is
+  // src/server/usecases/__tests__/scorers.test.ts (own fixtures), so raising
+  // it is free. Raise it further rather than hunting for the true count.
   const orgs = (await (
     await page.request.get("/api/orgs")
   ).json()) as { data?: { id: string }[] };
   const setupOrgId = orgs.data?.[0]?.id;
-  if (setupOrgId) await setEntitlementOverrideSql(setupOrgId, "orgs.max_owned", 5);
+  if (setupOrgId) await setEntitlementOverrideSql(setupOrgId, "orgs.max_owned", 50);
   await capture(page, PRO_STATE);
 });
 

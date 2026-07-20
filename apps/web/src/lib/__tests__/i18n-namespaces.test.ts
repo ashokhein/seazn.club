@@ -19,4 +19,15 @@ describe("i18n namespace registry", () => {
       }
     }
   });
+
+  // Two keys, one label: the settings sidebar / connect page name the billing
+  // route via payments.planBilling, and the billing page titles itself with
+  // billing.title. A user reads them as the same thing, so they must not drift
+  // apart in casing or wording. Guarded here because the only other guard is
+  // an e2e assertion, and e2e is not run in CI on this project.
+  it("the billing nav label and the billing page title are the same English string", async () => {
+    const dict = (await getDictionary("en", "ui")) as Record<string, string>;
+    expect(dict["billing.title"]).toBe("Plan & Billing");
+    expect(dict["payments.planBilling"]).toBe(dict["billing.title"]);
+  });
 });

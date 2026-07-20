@@ -398,6 +398,16 @@ await i18nSuite();
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
   await platformRevenueSuite(admin, `admin_${tag}@example.com`);
 
+  // --- One trial per organisation, ever (V277): both staff stamping rails on
+  // the pro path, the comp rail + the upgrade CTA on the free path. Own fresh
+  // orgs; keyless-safe.
+  await oneTrialSuite();
+
+  // --- Task 11: staff-only default-card removal + the customer-facing
+  // refusal it deliberately does not loosen. Needs a real Stripe test-mode
+  // card; keyless-safe (see the suite's own doc comment).
+  await paymentMethodSuite();
+
   // --- clubs-w1 (W1): parent clubs group teams — the hub lifecycle (create →
   // profile → contact → standalone team → move under the club → squad with a
   // quick-created person) on Pro, and the tunable clubs.max=2 community cap.
@@ -2158,6 +2168,355 @@ async function platformRevenueSuite(admin: Session, staffEmail: string): Promise
     }
     const bad = await raw(admin, "/api/admin/revenue?from=notadate");
     check("revenue 400s on malformed range", bad.status === 400);
+  } finally {
+    await setStaff(staffEmail, null);
+  }
+}
+
+/** One Pro trial per organisation, ever (V277) over real HTTP. `trial_used_at`
+ *  means "this org has ALREADY had Pro"; once stamped it is never cleared, so
+ *  the downgrade→upgrade loop can't re-arm the 14-day checkout trial.
+ *
+ *  Pro path: the staff TRIAL-GRANT rail (extendTrial) — it lifts a community
+ *  org to Pro, burns the one trial, survives an extension, is refused outright
+ *  once Stripe owns the billing timeline, and still lands for a DEPARTED org
+ *  whose cancelled subscription id is not liveness.
+ *  Free path: the staff COMP rail (compToPro) — the other stamping writer —
+ *  plus the surface an owner actually reads: the billing page's upgrade CTA,
+ *  which must stop promising a trial the checkout would not grant.
+ *
+ *  Runs on its own fresh orgs (never touches org/org2) and is keyless-safe:
+ *  no arm reaches Stripe — the comp rail has no subscription to update, and
+ *  the refusal arm answers BEFORE the Stripe call by design. */
+async function oneTrialSuite(): Promise<void> {
+  const staffEmail = `trial_staff_${tag}@example.com`;
+  const staff = newSession();
+  await signIn(staff, staffEmail);
+
+  interface TrialRow {
+    plan_key: string;
+    status: string;
+    trial_end: Date | null;
+    trial_used_at: Date | null;
+  }
+  /** The columns the one-trial contract is written in, read straight from the
+   *  row the usecases write (same ad-hoc client convention as
+   *  checkTermsStamp/setStaff). */
+  const readSub = async (orgId: string): Promise<TrialRow> => {
+    const db = smokeDb();
+    try {
+      const [row] = await db<TrialRow[]>`
+        select plan_key, status, trial_end, trial_used_at
+        from subscriptions where org_id = ${orgId}`;
+      return row!;
+    } finally {
+      await db.end();
+    }
+  };
+  const at = (d: Date | null) => (d ? new Date(d).toISOString() : null);
+  /** Age an EXISTING burn so "the first burn survives" is a comparison against a
+   *  date no later write could coincidentally reproduce (an org that trialled a
+   *  month ago is the real-world state this pins).
+   *
+   *  `where trial_used_at is not null` is load-bearing: unconditionally writing
+   *  the backdated stamp would MANUFACTURE the burn the writer under test was
+   *  supposed to make, so a regression that dropped the stamp would still leave
+   *  the following check green. This helper may only age a burn, never create
+   *  one. */
+  const backdateBurn = async (orgId: string): Promise<void> => {
+    const db = smokeDb();
+    try {
+      await db`
+        update subscriptions set trial_used_at = now() - interval '30 days'
+        where org_id = ${orgId} and trial_used_at is not null`;
+    } finally {
+      await db.end();
+    }
+  };
+  /** Put a Stripe subscription id on the row at the given status. The liveness
+   *  rule is BOTH columns (`hasLiveSubscription`: id set AND status in
+   *  trialing/active/past_due), so the status argument is what decides whether
+   *  the org counts as Stripe-billed — a cancelled sub keeps its id forever and
+   *  is NOT live. Used for both arms below: 'active' = live and refused,
+   *  'canceled' = departed and still grantable. */
+  const seedStripeBilled = async (orgId: string, status: string): Promise<void> => {
+    const db = smokeDb();
+    try {
+      await db`
+        update subscriptions
+        set stripe_subscription_id = ${"sub_smoke_" + orgId.slice(0, 8)}, status = ${status}
+        where org_id = ${orgId}`;
+    } finally {
+      await db.end();
+    }
+  };
+
+  // === PRO PATH — the staff trial-grant rail ============================
+  const pro = newSession();
+  const proOrg = (await signIn(pro, `trial_pro_${tag}@example.com`)).org_id;
+  // A second pro-path org, used only for the DEPARTED case (an ex-customer that
+  // kept its dead subscription id). It needs to be unburned at grant time, so
+  // it cannot share proOrg.
+  const dep = newSession();
+  const depOrg = (await signIn(dep, `trial_dep_${tag}@example.com`)).org_id;
+
+  // === FREE PATH — a fresh community owner ==============================
+  const free = newSession();
+  const freeOrg = (await signIn(free, `trial_free_${tag}@example.com`)).org_id;
+  const freeSlug = ((await call(free, "/api/orgs")) as { id: string; slug: string }[])
+    .find((o) => o.id === freeOrg)!.slug;
+
+  // A community org's upgrade card composes its CTA label as
+  // `${startTrial|goPro} — <price>/mo billed yearly`. Match the label as the
+  // BUTTON renders it (leading '>'), never the bare dict string: the /o
+  // DictProvider serializes the whole `ui` dict into the page's flight payload,
+  // so both trial copies — and `upgrade.proCard.cta` = "Go Pro — 14-day free
+  // trial" — sit in the body whatever the org's state. Inside that JSON the
+  // label is preceded by an escaped quote, so only the rendered <button> text
+  // matches here. ("Go Pro Plus — …" never collides: '>Go Pro —' needs the
+  // dash next.)
+  const OFFERS_TRIAL = ">Start free trial —";
+  const OFFERS_NO_TRIAL = ">Go Pro —";
+
+  const freshBilling = await html(free, `/o/${freeSlug}/settings/billing`);
+  const freshSub = await readSub(freeOrg);
+  check(
+    "trial/free: a fresh community org is unburned and offered the 14-day trial",
+    freshSub.trial_used_at === null &&
+      freshBilling.status === 200 &&
+      freshBilling.body.includes(OFFERS_TRIAL) &&
+      !freshBilling.body.includes(OFFERS_NO_TRIAL),
+  );
+
+  await setStaff(staffEmail, "superadmin");
+  try {
+    // --- Pro path 1: the grant IS free Pro, so it burns the one trial.
+    const grant = await raw(staff, `/api/admin/orgs/${proOrg}/grant-trial`, "POST", {
+      days: 14,
+      reason: "smoke: one trial per org",
+    });
+    const granted = await readSub(proOrg);
+    check(
+      "trial/pro: a staff-granted trial lifts the org to Pro and burns its one trial",
+      grant.status === 200 &&
+        granted.plan_key === "pro" &&
+        granted.status === "trialing" &&
+        granted.trial_used_at !== null,
+    );
+
+    // --- Pro path 2: extensions move trial_end; the BURN is written once.
+    await backdateBurn(proOrg);
+    const burned = await readSub(proOrg);
+    const extend = await raw(staff, `/api/admin/orgs/${proOrg}/grant-trial`, "POST", {
+      days: 7,
+      reason: "smoke: extension must not re-burn",
+    });
+    const extended = await readSub(proOrg);
+    check(
+      "trial/pro: extending the trial moves trial_end but never re-burns trial_used_at",
+      extend.status === 200 &&
+        at(extended.trial_end) !== at(burned.trial_end) &&
+        at(extended.trial_used_at) === at(burned.trial_used_at),
+    );
+
+    // --- Pro path 3: once Stripe owns the timeline the grant is refused with a
+    // 400, before any write and before any Stripe call.
+    //
+    // What this proves: the guard fires and the endpoint refuses. It does NOT
+    // discriminate the two-column liveness rule on its own — the seed sets id
+    // AND a live status together, so a regression branching on the id alone
+    // would refuse here too. Pro path 4 below is the case that tells them apart.
+    //
+    // trial_end is the only row column that can move on a realistic regression
+    // here: if the guard stopped recognising this org as live, the non-live arm
+    // would run and write trial_end unconditionally. `status` and
+    // `trial_used_at` are NOT asserted — neither can move on any single
+    // regression (the non-live arm gates status on `stripe_subscription_id is
+    // null`, the live arm's pinned UPDATE requires status = 'trialing' while the
+    // seed is 'active', and every writer coalesces an already-set trial_used_at)
+    // so asserting them would be assertion theatre next to a "row untouched"
+    // claim.
+    await seedStripeBilled(proOrg, "active");
+    const beforeRefusal = await readSub(proOrg);
+    const refused = await raw(staff, `/api/admin/orgs/${proOrg}/grant-trial`, "POST", {
+      days: 30,
+      reason: "smoke: stripe-billed orgs are refused",
+    });
+    const afterRefusal = await readSub(proOrg);
+    check(
+      "trial/pro: a Stripe-billed org is refused a staff trial (400) and trial_end never moves",
+      refused.status === 400 && at(afterRefusal.trial_end) === at(beforeRefusal.trial_end),
+    );
+
+    // --- Pro path 4: the DISCRIMINATING case. A departed org keeps its Stripe
+    // subscription id for ever but is not billed by it, so liveness is
+    // `id is not null AND status in (trialing, active, past_due)` — 'canceled'
+    // fails it. Such an org is still grantable, and the grant still burns its
+    // one trial. A blunter guard (`if (stripe_subscription_id)`) would 400 here
+    // and leave trial_used_at null; that is what separates it from path 3.
+    // The cancelled status must also survive the grant: writing a live-looking
+    // status back onto a dead id would send the NEXT grant down the Stripe arm.
+    await seedStripeBilled(depOrg, "canceled");
+    const beforeDeparted = await readSub(depOrg);
+    const departedGrant = await raw(staff, `/api/admin/orgs/${depOrg}/grant-trial`, "POST", {
+      days: 14,
+      reason: "smoke: a departed org is not Stripe-billed",
+    });
+    const departed = await readSub(depOrg);
+    check(
+      "trial/pro: a DEPARTED org (dead sub id, canceled) is still granted a trial, and it burns",
+      beforeDeparted.trial_used_at === null &&
+        departedGrant.status === 200 &&
+        departed.plan_key === "pro" &&
+        departed.trial_used_at !== null &&
+        departed.status === "canceled",
+    );
+
+    // --- Restore trial 1: the sanctioned undo, on the departed org from path
+    // 4 above (canceled status, dead id — not live, so the restore is
+    // allowed). trial_used_at must actually clear, not just the call 200.
+    const beforeRestore = await readSub(depOrg);
+    const restore = await raw(staff, `/api/admin/orgs/${depOrg}/restore-trial`, "POST", {
+      reason: "smoke: restore trial is the sanctioned one-time undo",
+    });
+    const restored = await readSub(depOrg);
+    check(
+      "trial/restore: a departed org's burn is cleared by restoreTrial",
+      beforeRestore.trial_used_at !== null &&
+        restore.status === 200 &&
+        restored.trial_used_at === null,
+    );
+
+    // --- Restore trial 2: the DISCRIMINATING refusal. proOrg was made LIVE in
+    // Pro path 3 above (id + status 'active') and is still burned — restoring
+    // it would just be re-stamped by the next sync, so the usecase refuses
+    // with 400 before writing anything. trial_used_at must be UNCHANGED, not
+    // merely "still non-null" (which a broken restore that cleared-then-
+    // recoalesced could still satisfy).
+    const beforeRefuseRestore = await readSub(proOrg);
+    const restoreRefused = await raw(staff, `/api/admin/orgs/${proOrg}/restore-trial`, "POST", {
+      reason: "smoke: a live org keeps its burn",
+    });
+    const afterRefuseRestore = await readSub(proOrg);
+    check(
+      "trial/restore: a LIVE org is refused (400) and its burn is unchanged",
+      beforeRefuseRestore.trial_used_at !== null &&
+        restoreRefused.status === 400 &&
+        at(afterRefuseRestore.trial_used_at) === at(beforeRefuseRestore.trial_used_at),
+    );
+
+    // --- Free path 2: the OTHER stamping writer. A comp is free Pro too.
+    const comp = await raw(staff, `/api/admin/orgs/${freeOrg}/comp-to-pro`, "POST", {
+      until: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10),
+      reason: "smoke: a comp burns the trial",
+    });
+    const comped = await readSub(freeOrg);
+    check(
+      "trial/free: a staff comp lifts the org to Pro and burns its one trial",
+      comp.status === 200 && comped.plan_key === "pro" && comped.trial_used_at !== null,
+    );
+
+    // --- Free path 3: back on Community, the burn stands and the upgrade CTA
+    // stops promising a second trial. This is the whole product rule, at the
+    // surface the owner reads before paying.
+    await backdateBurn(freeOrg);
+    const burnedFree = await readSub(freeOrg);
+    const down = await raw(staff, `/api/admin/orgs/${freeOrg}/downgrade`, "POST", {
+      reason: "smoke: downgrade must not re-arm the trial",
+    });
+    const downgraded = await readSub(freeOrg);
+    const returnBilling = await html(free, `/o/${freeSlug}/settings/billing`);
+    check(
+      "trial/free: downgrading to Community keeps the burn and the CTA offers no second trial",
+      down.status === 200 &&
+        downgraded.plan_key === "community" &&
+        at(downgraded.trial_used_at) === at(burnedFree.trial_used_at) &&
+        returnBilling.status === 200 &&
+        returnBilling.body.includes(OFFERS_NO_TRIAL) &&
+        !returnBilling.body.includes(OFFERS_TRIAL),
+    );
+  } finally {
+    await setStaff(staffEmail, null);
+  }
+}
+
+/** Task 11: staffRemovePaymentMethod (staff can remove even the DEFAULT card)
+ *  and the customer-facing removePaymentMethod's default-card refusal, both
+ *  new user-visible rails with no prior smoke arm. Needs a REAL Stripe
+ *  test-mode customer + card — no app route mints one headless, since the
+ *  actual "add a card" flow mounts Stripe's own Elements iframe
+ *  (AddCardForm). Stripe's `pm_card_visa` token exists exactly for this:
+ *  attaching it to a customer in test mode creates a real PaymentMethod with
+ *  no client-side confirmation step needed. Keyless-safe: skips (rather than
+ *  fails) without STRIPE_SECRET_KEY, the same convention as the sponsor
+ *  Connect checkout suite. */
+async function paymentMethodSuite(): Promise<void> {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    check("pm: skipped (no STRIPE_SECRET_KEY — cannot attach a real test card)", true);
+    return;
+  }
+  const { default: Stripe } = await import("stripe");
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+  const staffEmail = `pm_staff_${tag}@example.com`;
+  const staff = newSession();
+  await signIn(staff, staffEmail);
+
+  const owner = newSession();
+  const ownerOrg = (await signIn(owner, `pm_owner_${tag}@example.com`)).org_id;
+
+  const customer = await stripe.customers.create({ email: `pm_owner_${tag}@example.com` });
+  const pm = await stripe.paymentMethods.attach("pm_card_visa", { customer: customer.id });
+  await stripe.customers.update(customer.id, {
+    invoice_settings: { default_payment_method: pm.id },
+  });
+
+  const readFlag = async (): Promise<boolean | null> => {
+    const d = smokeDb();
+    try {
+      const [row] = await d<{ has_payment_method: boolean | null }[]>`
+        select has_payment_method from subscriptions where org_id = ${ownerOrg}`;
+      return row ? row.has_payment_method : null;
+    } finally {
+      await d.end();
+    }
+  };
+
+  const db = smokeDb();
+  try {
+    await db`
+      update subscriptions
+      set stripe_customer_id = ${customer.id}, has_payment_method = true
+      where org_id = ${ownerOrg}`;
+  } finally {
+    await db.end();
+  }
+
+  await setStaff(staffEmail, "superadmin");
+  try {
+    // The org's only card is also its default — the customer-facing path
+    // refuses exactly that (400), before Stripe is ever called.
+    const customerAttempt = await raw(owner, "/api/billing/remove-payment-method", "POST", {
+      payment_method_id: pm.id,
+    });
+    check(
+      "pm/customer: removing the DEFAULT card is refused (400)",
+      customerAttempt.status === 400,
+    );
+
+    // Staff CAN remove it — the audited exception (Task 6C) — and the mirror
+    // re-reads Stripe rather than assuming, so it flips false once no cards
+    // remain (this org had exactly one).
+    const staffRemove = await raw(
+      staff,
+      `/api/admin/orgs/${ownerOrg}/remove-payment-method`,
+      "POST",
+      { payment_method_id: pm.id, reason: "smoke: staff can remove the default card" },
+    );
+    check(
+      "pm/staff: staff removes the default card (200) and has_payment_method re-mirrors false",
+      staffRemove.status === 200 && (await readFlag()) === false,
+    );
   } finally {
     await setStaff(staffEmail, null);
   }
@@ -4811,6 +5170,12 @@ async function cleanup(tag: string): Promise<void> {
     ]),
     `clubpro_${tag}@example.com`,
     `clubfree_${tag}@example.com`,
+    `trial_staff_${tag}@example.com`,
+    `trial_pro_${tag}@example.com`,
+    `trial_free_${tag}@example.com`,
+    `trial_dep_${tag}@example.com`,
+    `pm_staff_${tag}@example.com`,
+    `pm_owner_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {
@@ -4819,6 +5184,7 @@ async function cleanup(tag: string): Promise<void> {
     prepare: !url.includes(":6543"),
     max: 1,
   });
+  let teardownError: string | null = null;
   try {
     // sponsor_orders are RESTRICT (V299): money rows must go before their org.
     await sql`
@@ -4828,13 +5194,65 @@ async function cleanup(tag: string): Promise<void> {
     const orgs = await sql`
       delete from organizations
       where created_by in (select id from users where email = any(${emails}))`;
-    const users = await sql`delete from users where email = any(${emails})`;
+    // Any test user the run turned into a staff ACTOR is deliberately left
+    // behind. staff_audit_log.actor_id → users.id has no ON DELETE, so those
+    // users cannot be dropped without first touching the audit log — and the
+    // audit log must not be touched. V111 makes it tamper-EVIDENT: every row's
+    // hash is chained to the previous one, and /admin/audit renders a permanent
+    // "hash chain broken" banner as soon as verify_staff_audit_log_chain()
+    // finds a mismatch. Deleting rows is exactly the tampering that design
+    // exists to detect, and repointing actor_id is no better — the verifier
+    // recomputes row_hash from the LIVE column values (actor_id among them),
+    // while the trigger only fires `before insert`, so an UPDATE breaks the
+    // chain just as permanently. Nothing repairs it afterwards. A handful of
+    // leftover user rows per run is the cheaper cost by a wide margin.
+    // Currently that is oneTrialSuite's staff account and platformRevenueSuite's
+    // admin (the revenue page logs revenue_report_viewed); the subquery keeps it
+    // correct for any suite that becomes a staff writer later. Their ORGS are
+    // still removed — the org purge above keys on the same `emails` list.
+    const users = await sql`
+      delete from users
+      where email = any(${emails})
+        and id not in (select actor_id from staff_audit_log)`;
     console.log(`cleanup: removed ${orgs.count} org(s), ${users.count} user(s)`);
   } catch (e) {
-    console.warn("cleanup failed:", e instanceof Error ? e.message : e);
+    // Recorded, not swallowed. The check below is the guard against a teardown
+    // that damages the audit trail, and the symptom that motivated it WAS a
+    // teardown abort (the staff_audit_log FK violation) — so an abort has to
+    // make that check red, never a warning line next to a green run.
+    teardownError = e instanceof Error ? e.message : String(e);
+    console.warn("cleanup failed:", teardownError);
+  }
+  // Deliberately OUTSIDE the try above, so a throw in the deletes still reaches
+  // this assertion. Its own failures are caught the same way, for the same
+  // reason: an unreadable audit table is a red check, not a silent skip.
+  let audit: { mine: number; broken: string | null } | undefined;
+  try {
+    [audit] = await sql<{ mine: number; broken: string | null }[]>`
+      select (select count(*)::int from staff_audit_log
+              where actor_id in (select id from users where email = any(${emails}))) as mine,
+             verify_staff_audit_log_chain()::text as broken`;
+  } catch (e) {
+    console.warn("audit-trail probe failed:", e instanceof Error ? e.message : e);
   } finally {
     await sql.end();
   }
+  // Teardown must complete AND leave the audit trail alone. Every conjunct can
+  // fail on a different real regression:
+  //  - teardownError — the deletes threw (the original symptom: the
+  //    staff_audit_log FK aborting the whole purge);
+  //  - audit.mine > 0 — the run's own audit rows were deleted, which is what a
+  //    teardown that purges them (the fix this replaced) does;
+  //  - audit.broken === null — the V111 hash chain no longer verifies, which is
+  //    what a MID-chain deletion does. On its own this conjunct is NOT enough:
+  //    the run's rows sit at the TIP of the chain on a quiet DB, and lopping off
+  //    the tail still verifies — the corruption only becomes permanent once
+  //    anything else (a parallel e2e run, a real staff action) has written after
+  //    them. All three together are the honest assertion.
+  check(
+    "cleanup completes and keeps the staff audit trail (rows survive, V111 chain verifies)",
+    teardownError === null && !!audit && audit.mine > 0 && audit.broken === null,
+  );
 }
 
 main()

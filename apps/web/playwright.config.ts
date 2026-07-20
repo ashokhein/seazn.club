@@ -16,8 +16,9 @@ import { defineConfig, devices } from "@playwright/test";
 //   parallel — specs that only touch state they create (own competitions/
 //              divisions); safe at several workers, tests within a file too.
 //   serial   — specs entangled with shared org-level state: owned-org quota
-//              (billing, billing-states, org-management sit exactly at Pro's
-//              cap of 5 with setup), the community org's competitions.max_active
+//              (billing, billing-states, org-management all mint orgs on the
+//              shared Pro user — cap + reasoning in e2e/auth.setup.ts,
+//              "ORG BUDGET"), the community org's competitions.max_active
 //              slots (journey-community, device-links), org renames, plan
 //              flips, and the single Pro scorer seat. One worker, one file at
 //              a time — `npm run test:e2e` runs this phase with --workers=1.

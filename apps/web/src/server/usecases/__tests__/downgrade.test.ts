@@ -41,6 +41,28 @@ describe.skipIf(!HAS_DB)("downgradeToCommunity", () => {
     expect(await hasFeature(orgId, "exports.branded")).toBe(false); // revoked
   });
 
+  // A DEPARTED org keeps its cancelled subscription id for ever. The guard above
+  // lets it through (not live), so the UPDATE actually runs on it — and writing
+  // status = 'active' onto a row that still holds an id makes it LIVE again.
+  // plan_key alone cannot catch that: the entitlement probe reads false either
+  // way once plan_key is 'community'. The status and the second call do.
+  it("un-comping a departed org leaves its cancelled status alone and stays idempotent", async () => {
+    const orgId = await seedProOrg({ stripeSub: "sub_gone" });
+    await sql`update subscriptions set status = 'canceled' where org_id = ${orgId}`;
+
+    await downgradeToCommunity(orgId);
+
+    const [row] = await sql<{ plan_key: string; status: string }[]>`
+      select plan_key, status from subscriptions where org_id = ${orgId}`;
+    expect(row.plan_key).toBe("community");
+    // 'active' here would resurrect liveness on the dead id.
+    expect(row.status).toBe("canceled");
+
+    // The docstring promises idempotence: a second call must not 400 with
+    // "billed through Stripe" because the first call faked a live status.
+    await expect(downgradeToCommunity(orgId)).resolves.toBeUndefined();
+  });
+
   it("refuses when the org is billed through Stripe (must use the portal)", async () => {
     const orgId = await seedProOrg({ stripeSub: "sub_test_123" });
     await expect(downgradeToCommunity(orgId)).rejects.toMatchObject({ status: 400 });

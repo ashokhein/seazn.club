@@ -8,7 +8,21 @@ import {
   buildEmbeddedCheckoutParams,
   buildPassCheckoutParams,
   checkoutTrialDays,
+  hasLiveSubscription,
 } from "@/lib/billing";
+// Stripe's allowed font list for branding_settings.font_family, confirmed
+// against the live API's own validation error on 2026-07-20 (a
+// StripeInvalidRequestError for an unlisted value enumerates exactly this
+// set) — not copied from the human-readable docs table, which omits
+// noto_sans_jp. Barlow Condensed (the brand face) is NOT on it, so checkout
+// cannot match the site type — `inter` is the closest neutral.
+const STRIPE_FONTS = [
+  "default", "be_vietnam_pro", "bitter", "chakra_petch", "hahmlet", "inconsolata",
+  "inter", "lato", "lora", "m_plus_1_code", "montserrat", "noto_sans_jp",
+  "noto_sans", "noto_serif", "nunito", "open_sans", "pridi", "pt_sans",
+  "pt_serif", "raleway", "roboto", "roboto_slab", "source_sans_pro",
+  "titillium_web", "ubuntu_mono", "zen_maru_gothic",
+];
 import {
   currencyFromAcceptLanguage,
   formatMinor,
@@ -18,6 +32,7 @@ import {
   type Currency,
   SUPPORTED_CURRENCIES,
 } from "@/lib/currency";
+import { HttpError } from "@/lib/errors";
 import { checkoutSchema } from "@/lib/types";
 
 const base = {
@@ -133,6 +148,43 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
   });
 });
 
+describe("checkout branding", () => {
+  it("brands the subscription checkout", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" });
+    expect(p.branding_settings).toMatchObject({
+      background_color: "#150b36",
+      button_color: "#a3e635",
+      border_style: "rounded",
+      display_name: "Seazn Club",
+    });
+  });
+
+  it("brands the Event Pass checkout identically", () => {
+    const p = buildPassCheckoutParams({
+      priceId: "price_pass", orgId: "org-abc", competitionId: "comp-1",
+      returnUrl: base.returnUrl, customerEmail: "a@b.com",
+    });
+    expect(p.branding_settings).toEqual(
+      buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" }).branding_settings,
+    );
+  });
+
+  // A typo here is a live 400 at checkout, so pin it against Stripe's list.
+  it("uses a font Stripe actually accepts", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" });
+    expect(STRIPE_FONTS).toContain(p.branding_settings!.font_family);
+  });
+
+  it("leaves the trial params alone", () => {
+    const withTrial = buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" });
+    expect(withTrial.payment_method_collection).toBe("if_required");
+    expect(withTrial.subscription_data?.trial_period_days).toBe(14);
+    const noTrial = buildEmbeddedCheckoutParams({ ...base, trialDays: 0, customerEmail: "a@b.com" });
+    expect("payment_method_collection" in noTrial).toBe(false);
+    expect(noTrial.subscription_data?.trial_period_days).toBeUndefined();
+  });
+});
+
 describe("currency price points (v3/07 §4)", () => {
   it("reads SET price points from stripe-plans.json", () => {
     expect(proPrice("monthly", "usd")).toBe(1900);
@@ -182,6 +234,94 @@ describe("Pro Plus price points", () => {
         );
       }
     }
+  });
+});
+
+describe("hasLiveSubscription", () => {
+  it("is true only for a subscription id in a non-terminal status", () => {
+    for (const status of ["trialing", "active", "past_due"]) {
+      expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status })).toBe(true);
+    }
+  });
+
+  // A cancelled subscription keeps its id forever. Branching on the column
+  // alone would send a departed customer down the Stripe rails.
+  it("is false for a cancelled subscription that still carries its id", () => {
+    expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status: "canceled" })).toBe(false);
+  });
+
+  it("is false with no subscription id, whatever the status", () => {
+    expect(hasLiveSubscription({ stripe_subscription_id: null, status: "past_due" })).toBe(false);
+    expect(hasLiveSubscription(undefined)).toBe(false);
+  });
+
+  // The predicate must NARROW, not just return true: callers read
+  // stripe_subscription_id as a plain string off the back of it. `id: string`
+  // below stops compiling if the return type reverts to boolean.
+  it("narrows both columns to non-null for callers", () => {
+    const sub: { stripe_subscription_id: string | null; status: string | null } = {
+      stripe_subscription_id: "sub_1",
+      status: "active",
+    };
+    expect(hasLiveSubscription(sub)).toBe(true);
+    if (!hasLiveSubscription(sub)) throw new Error("unreachable");
+    const id: string = sub.stripe_subscription_id;
+    const status: string = sub.status;
+    expect([id, status]).toEqual(["sub_1", "active"]);
+  });
+
+  // Pins the `?? ""` fallback: a null status (row written before the column was
+  // populated) is not live, and neither is a raw Stripe status — STATUS_MAP has
+  // already folded `incomplete` into past_due before anything reaches here, so
+  // seeing the raw value means an unmapped write, not a live subscription.
+  it("is false for a null status or a raw unmapped Stripe status", () => {
+    expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status: null })).toBe(false);
+    expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status: "incomplete" })).toBe(
+      false,
+    );
+  });
+});
+
+describe("assertCheckoutAllowed past_due", () => {
+  // Dunning still owns a live subscription — a second checkout would mint a
+  // SECOND subscription for the same org.
+  it("409s an org in dunning", () => {
+    // /subscription/i alone also matches the generic active/trialing message, so
+    // match on text unique to dunning — and pin the type and status code, or a
+    // regression to a plain Error / a 400 would still pass.
+    const call = () =>
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "past_due" });
+    expect(call).toThrow(HttpError);
+    expect(call).toThrow(/update your card/i);
+    let status: unknown;
+    try {
+      call();
+    } catch (e) {
+      status = (e as HttpError).status;
+    }
+    expect(status).toBe(409);
+  });
+
+  // STATUS_MAP folds Stripe's `incomplete` into past_due, so this message is
+  // the whole recovery path for an org whose first payment never confirmed.
+  it("names the recovery path so the block is not a dead end", () => {
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "past_due" }),
+    ).toThrow(/payment method|retry/i);
+  });
+
+  it("still lets a departed customer buy again", () => {
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "canceled" }),
+    ).not.toThrow();
+  });
+
+  // A comped org degraded by the past_due grace has no subscription id and
+  // must not be locked out of its FIRST purchase.
+  it("never blocks an org with no subscription id", () => {
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: null, status: "past_due" }),
+    ).not.toThrow();
   });
 });
 

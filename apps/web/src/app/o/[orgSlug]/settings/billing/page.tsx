@@ -1,9 +1,7 @@
 export const dynamic = "force-dynamic";
-import Link from "@/components/ui/console-link";
 import { sql } from "@/lib/db";
-import { reconcileCheckout, billingCtaLabel } from "@/lib/billing";
+import { reconcileCheckout, billingCtaLabel, hasLiveSubscription } from "@/lib/billing";
 import { requireOrgPage } from "@/server/page-auth";
-import { routes } from "@/lib/routes";
 import { BillingBanner } from "@/components/billing-banner";
 import { UpgradeButton, DowngradeButton } from "@/components/billing-actions";
 import {
@@ -24,7 +22,7 @@ import { EVENTS } from "@/lib/analytics-events";
 import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { resolveLocale } from "@/lib/resolve-locale";
-import { getDictionary, t, plural, type Dict, type Locale } from "@/lib/i18n";
+import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
 
 function fmt(iso: string | null, locale: Locale) {
   if (!iso) return null;
@@ -88,9 +86,11 @@ export default async function BillingPage({
   // One trial per org (V277): the upgrade CTA must not promise a trial the
   // checkout won't grant.
   const trialAvailable = !sub?.trial_used_at;
-  // A comped/dev-granted Pro org has no Stripe subscription — it gets the
-  // in-app downgrade instead of the cancel-at-period-end flow.
-  const hasStripeSubscription = !!sub?.stripe_subscription_id;
+  // A comped/dev-granted Pro org — or a departed org whose cancelled row
+  // still carries a dead id — has no LIVE Stripe subscription; it gets the
+  // in-app downgrade instead of the cancel-at-period-end/manage flow, which
+  // would otherwise throw at Stripe against a dead subscription id.
+  const hasStripeSubscription = hasLiveSubscription(sub);
 
   // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
   // PROMPT-15 cutover; overrides are honoured via getLimit.
@@ -122,13 +122,17 @@ export default async function BillingPage({
       />
       {orgId && <BillingBanner orgId={orgId} />}
       <main className="mx-auto max-w-3xl px-4 py-8">
-        <div className="mb-6 flex items-center justify-between">
+        {/* No back link here: OrgLayout's breadcrumb already carries a
+            clickable "Settings" crumb — the hand-rolled one duplicated it. */}
+        <div className="mb-6">
           <h1 className="page-title">
             {t(dict, "billing.title")}
           </h1>
-          <Link href={routes.orgSettings(orgSlug)} className="btn btn-ghost">
-            ← {t(dict, "action.settings")}
-          </Link>
+          {/* Quiet trust signal, not a headline: card entry never touches our
+              servers (SAQ A), and saying so belongs above the plan card. */}
+          <p className="mt-1 text-xs text-slate-500">
+            {t(dict, "billing.poweredByStripe")}
+          </p>
         </div>
 
         {justCheckedOut && (
@@ -186,7 +190,10 @@ export default async function BillingPage({
               status === "trialing" &&
               ((overview?.paymentMethods.length ?? 0) === 0 ? (
                 <a href="#payment-methods" className="btn btn-primary">
-                  {billingCtaLabel(status)}
+                  {/* The MIRROR, not the list: this arm is also taken when the
+                      Stripe read failed (overview null), and the mirror still
+                      knows whether the org has a card. */}
+                  {billingCtaLabel(status, sub?.has_payment_method ?? false)}
                 </a>
               ) : (
                 <p className="text-sm text-emerald-600">

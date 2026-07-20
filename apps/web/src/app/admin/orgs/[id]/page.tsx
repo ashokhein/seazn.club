@@ -5,7 +5,7 @@ import { AdminOrgActions } from "@/components/admin-org-actions";
 import { AdminPlanPanel } from "@/components/admin-plan-panel";
 import { AdminDiscoveryActions } from "@/components/admin-discovery-actions";
 import { hasFeature } from "@/lib/entitlements";
-import { planPanel } from "@/server/usecases/admin-plan";
+import { cardsForCustomer, planPanel } from "@/server/usecases/admin-plan";
 import { feePercentFor } from "@/server/usecases/registrations";
 
 export default async function AdminOrgPage({
@@ -22,6 +22,11 @@ export default async function AdminOrgPage({
   if (!org) notFound();
 
   const plan = await planPanel(id);
+  // Task 6C: cards live on the org's Stripe customer, fetched separately from
+  // the plain-DB planPanel read — planPanel is also the shared "before"
+  // snapshot for compToPro/adminDowngrade/extendTrial, none of which touch
+  // cards, so this Stripe round trip must not ride along with theirs.
+  const cards = await cardsForCustomer(plan.stripe_customer_id);
 
   const members = await sql<{
     user_id: string; email: string; display_name: string; role: string; joined_at: string;
@@ -72,7 +77,7 @@ export default async function AdminOrgPage({
 
       {/* Plan panel (v3/08 §1): plan + source + Stripe links + all plan
           actions — comp, trial, downgrade, overrides. */}
-      <AdminPlanPanel orgId={id} orgName={org.name} plan={plan} overrides={overrides} />
+      <AdminPlanPanel orgId={id} orgName={org.name} plan={{ ...plan, cards }} overrides={overrides} />
 
       {/* Effective entry-fee cut (spec §5): resolution result for THIS org.
           Per-org deals ride the overrides editor above with feature key

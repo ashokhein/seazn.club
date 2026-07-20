@@ -506,6 +506,7 @@
   "role.viewer": "Espectador",
   "role.scorer": "Anotador",
   "billing.title": "Plan y facturación",
+  "billing.poweredByStripe": "Pagos procesados por Stripe",
   "billing.checkoutComplete": "Compra completada — tu plan ahora es",
   "billing.trialSuffix": " (prueba)",
   "billing.currentPlan": "Plan actual",

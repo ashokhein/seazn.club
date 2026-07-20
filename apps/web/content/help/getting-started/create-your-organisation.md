@@ -18,7 +18,7 @@ Everything you run on seazn.club lives inside an **organisation** — your club,
 The welcome tour walks you through this next, right after naming your organisation:
 
 1. **Connect Stripe** under **Settings → Connect** so you can take **card entry fees** — registrants pay at sign-up and the money settles straight into your own Stripe account. It's a one-time, secure onboarding; [here's the whole money journey](/help/registration/card-payments).
-2. Check **Settings → Plan & billing** — you start on the free **Community** plan. Card entry fees and other paid extras unlock on **Pro**; you can [compare plans and upgrade](/help/billing/plans) whenever you're ready. Running a free event? Community is plenty.
+2. Check **Settings → Plan & Billing** — you start on the free **Community** plan. Card entry fees and other paid extras unlock on **Pro**; you can [compare plans and upgrade](/help/billing/plans) whenever you're ready. Running a free event? Community is plenty.
 
 ## Common questions
 

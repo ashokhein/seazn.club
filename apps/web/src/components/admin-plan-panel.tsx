@@ -6,6 +6,8 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useConfirm } from "@/components/ui/confirm-provider";
+import { hasLiveSubscription } from "@/lib/subscription-status";
+import { cardRemovalConsequence, type PaymentMethodRow } from "@/lib/billing-manage";
 
 interface Plan {
   plan_key: string;
@@ -16,6 +18,14 @@ interface Plan {
   current_period_end: string | null;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  // One-trial-per-org stamp (V277). Independent of status/plan_key — a
+  // departed org (status: canceled) can still carry a pro plan_key AND a
+  // trial_used_at date; neither hides the other here.
+  trial_used_at: string | null;
+  // Task 6C: cards on the org's Stripe customer, so staff can remove one —
+  // including the default, which the customer-facing surface refuses on
+  // purpose (billing-manage.ts). Empty for an org with no Stripe customer.
+  cards: PaymentMethodRow[];
 }
 
 interface Override {
@@ -54,7 +64,12 @@ export function AdminPlanPanel({
   const [compReason, setCompReason] = useState("");
   const [trialDays, setTrialDays] = useState("14");
   const [trialReason, setTrialReason] = useState("");
+  const [restoreReason, setRestoreReason] = useState("");
   const [downReason, setDownReason] = useState("");
+  // Keyed by card id, NOT one shared string — a reason typed while looking at
+  // one card must never be able to ride along with a different card's Remove
+  // click (the two controls used to share a single input).
+  const [cardReasons, setCardReasons] = useState<Record<string, string>>({});
   const [ov, setOv] = useState({ key: "", value: "", expires: "", reason: "" });
 
   async function call(path: string, init: RequestInit, tag: string) {
@@ -80,19 +95,26 @@ export function AdminPlanPanel({
   async function downgrade() {
     setBusy("preview");
     setError("");
-    let preview: { frozen: { name: string }[]; active: number; limit: number | null } | null =
-      null;
+    let frozenNames: string[] = [];
     try {
       const res = await fetch(`/api/admin/orgs/${orgId}/downgrade`);
-      preview = await res.json();
-      if (!res.ok) throw new Error("Preview failed");
+      // handler() wraps every successful payload as { ok, data } (lib/http.ts)
+      // — the preview lives under body.data, not on the response body itself.
+      const body = (await res.json()) as {
+        ok: boolean;
+        data?: { frozen?: { name: string }[]; active: number; limit: number | null };
+        error?: string;
+      };
+      if (!res.ok || !body.ok || !body.data) throw new Error(body.error ?? "Preview failed");
+      // Guard .frozen itself too: a shape surprise degrades into the "nothing
+      // will freeze" confirm-dialog branch below instead of throwing.
+      frozenNames = (body.data.frozen ?? []).map((f) => f.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
       setBusy(null);
       return;
     }
     setBusy(null);
-    const frozenNames = preview?.frozen.map((f) => f.name) ?? [];
     const ok = await confirmDialog({
       title: "Downgrade to Free — immediately?",
       body:
@@ -105,6 +127,35 @@ export function AdminPlanPanel({
     });
     if (!ok) return;
     await call("downgrade", { method: "POST", body: JSON.stringify({ reason: downReason }) }, "downgrade");
+  }
+
+  // Staff-only card removal (Task 6C), including the default — the
+  // customer-facing page refuses that on purpose. States the consequence
+  // BEFORE the click via a danger confirm, not after.
+  async function removeCard(card: PaymentMethodRow) {
+    const remainingAfter = plan.cards.length - 1;
+    const ok = await confirmDialog({
+      title: `Remove ${card.brand} •••• ${card.last4}?`,
+      body: cardRemovalConsequence(remainingAfter, plan.status),
+      confirmLabel: "Remove card",
+      tone: "danger",
+    });
+    if (!ok) return;
+    const done = await call(
+      "remove-payment-method",
+      {
+        method: "POST",
+        body: JSON.stringify({ payment_method_id: card.id, reason: cardReasons[card.id] ?? "" }),
+      },
+      `pm-${card.id}`,
+    );
+    if (done) {
+      setCardReasons((prev) => {
+        const next = { ...prev };
+        delete next[card.id];
+        return next;
+      });
+    }
   }
 
   async function saveOverride() {
@@ -128,7 +179,10 @@ export function AdminPlanPanel({
     if (done) setOv({ key: "", value: "", expires: "", reason: "" });
   }
 
-  const stripeBilled = !!plan.stripe_subscription_id;
+  // Liveness, not id presence: a cancelled subscription keeps its id for ever
+  // (V277), so a departed org must see these three forms exactly like the
+  // Restore-trial control does — same rule, one voice across the panel.
+  const stripeBilled = hasLiveSubscription(plan);
 
   return (
     <div className="space-y-6">
@@ -155,6 +209,12 @@ export function AdminPlanPanel({
           {plan.trial_end && (
             <span className="text-xs text-slate-400">trial ends {fmtDate(plan.trial_end)}</span>
           )}
+          {/* Independent of status/plan_key on purpose: a departed org (status
+              canceled) can still show trial used here alongside a leftover
+              pro plan_key above — neither fact papers over the other. */}
+          {plan.trial_used_at && (
+            <span className="text-xs text-slate-500">trial used {fmtDate(plan.trial_used_at)}</span>
+          )}
         </div>
         <div className="mt-2 flex gap-3 text-xs">
           {plan.stripe_customer_id && (
@@ -180,7 +240,65 @@ export function AdminPlanPanel({
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-3">
+      {/* Payment methods (Task 6C): staff-only removal of the DEFAULT card —
+          customers can remove a non-default card themselves, but only staff
+          may remove the default (billing-manage.tsx hides that control from
+          customers and the server 400s a customer attempt). A customer with
+          `stripe_customer_id` set but an empty card list is otherwise
+          invisible here: nothing renders, and staff working a fraud-cleanup
+          or erasure request can't tell "no cards" from "Stripe didn't
+          answer" — so that state gets its own explicit line below. */}
+      {plan.stripe_customer_id && plan.cards.length === 0 && (
+        <div className="rounded-lg bg-slate-800 p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Payment methods
+          </h3>
+          <p className="mt-2 text-xs text-slate-500">
+            No cards on file — or Stripe could not be reached.
+          </p>
+        </div>
+      )}
+      {plan.cards.length > 0 && (
+        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Payment methods
+          </h3>
+          <ul className="divide-y divide-slate-700/60">
+            {plan.cards.map((c) => (
+              <li key={c.id} className="space-y-1.5 py-2 text-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="text-slate-300">
+                    {c.brand} •••• {c.last4} ({c.expMonth}/{c.expYear})
+                    {c.isDefault && (
+                      <span className="ml-2 rounded bg-purple-900/70 px-1.5 py-0.5 text-[11px] text-purple-200">
+                        default
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    onClick={() => removeCard(c)}
+                    disabled={!cardReasons[c.id] || busy === `pm-${c.id}`}
+                    className="rounded bg-red-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                  >
+                    {busy === `pm-${c.id}` ? "…" : "Remove card"}
+                  </button>
+                </div>
+                {/* Per-card reason, scoped by id — see cardReasons above. */}
+                <input
+                  value={cardReasons[c.id] ?? ""}
+                  onChange={(e) =>
+                    setCardReasons((prev) => ({ ...prev, [c.id]: e.target.value }))
+                  }
+                  placeholder="Reason (required)"
+                  className={`${inputCls} w-full`}
+                />
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="grid gap-4 lg:grid-cols-4">
         {/* Comp to Pro */}
         <div className="rounded-lg bg-slate-800 p-4 space-y-2">
           <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
@@ -280,6 +398,46 @@ export function AdminPlanPanel({
           {stripeBilled && (
             <p className="text-[11px] text-slate-500">Also updates trial_end in Stripe.</p>
           )}
+        </div>
+
+        {/* Restore trial — the undo for one-trial-per-org. Every route that
+            grants Pro (checkout sync, comp, grant) burns the trial, so staff
+            need a sanctioned way back instead of editing SQL. Not gated on
+            stripeBilled: a departed org (dead subscription id, canceled
+            status) is exactly the case this exists for, and the usecase
+            itself refuses a LIVE subscription with a clear 400. */}
+        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Restore trial
+          </h3>
+          <p className="text-xs text-slate-400">
+            Clears the one-trial-per-org stamp, so this org can start a 14-day
+            trial again. The next comp or grant burns it once more.
+          </p>
+          <p className="text-[11px] text-slate-500">
+            {plan.trial_used_at
+              ? `Trial used ${fmtDate(plan.trial_used_at)}.`
+              : "This org has not used its trial yet — nothing to restore."}
+          </p>
+          <input
+            value={restoreReason}
+            onChange={(e) => setRestoreReason(e.target.value)}
+            placeholder="Reason (required)"
+            className={`${inputCls} w-full`}
+          />
+          <button
+            onClick={() =>
+              call(
+                "restore-trial",
+                { method: "POST", body: JSON.stringify({ reason: restoreReason }) },
+                "restore",
+              )
+            }
+            disabled={!restoreReason || busy === "restore"}
+            className="rounded bg-purple-700 px-3 py-1.5 text-xs font-medium text-white hover:bg-purple-600 disabled:opacity-50"
+          >
+            {busy === "restore" ? "…" : "Restore trial"}
+          </button>
         </div>
 
         {/* Downgrade */}

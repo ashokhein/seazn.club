@@ -2,6 +2,7 @@ import Link from "@/components/ui/console-link";
 import { CircleUserRound, LayoutDashboard, Settings, Users } from "lucide-react";
 import { HelpMenu } from "@/components/help-menu";
 import { getActiveOrgId, getCurrentUser, getUserOrgs } from "@/lib/auth";
+import { pickActiveOrg } from "@/lib/active-org";
 import { hasClaimedProfile } from "@/server/usecases/me";
 import { routes } from "@/lib/routes";
 import { needsTourAfterOnboarding } from "@/lib/activation";
@@ -31,7 +32,10 @@ function orgLogoUrl(org: { logo_storage_path: string | null; logo_url: string | 
   return null;
 }
 
-export async function Nav() {
+/** `orgSlug` is the org the PATH is about (/o/[orgSlug] pages pass it). It wins
+ *  over the seazn_org cookie, which lags a link-driven org switch by a render —
+ *  see pickActiveOrg. Chrome outside the /o tree omits it and stays cookie-led. */
+export async function Nav({ orgSlug }: { orgSlug?: string } = {}) {
   // Console chrome locale (v5 i18n cycle 46): cookie → user → header → en. Nav
   // already reads cookies via getCurrentUser(), so it is dynamic regardless.
   const locale = await resolveLocale();
@@ -49,7 +53,7 @@ export async function Nav() {
     const orgs = await getUserOrgs(user.id);
     if (orgs.length > 0) {
       const activeId = await getActiveOrgId();
-      activeOrg = orgs.find((o) => o.id === activeId) ?? orgs[0];
+      activeOrg = pickActiveOrg(orgs, { pathSlug: orgSlug, cookieOrgId: activeId });
     }
   }
   const logoUrl = activeOrg ? orgLogoUrl(activeOrg) : null;

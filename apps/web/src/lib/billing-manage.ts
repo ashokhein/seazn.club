@@ -185,6 +185,22 @@ export function paymentMethodRows(
     .sort((a, b) => Number(b.isDefault) - Number(a.isDefault));
 }
 
+/**
+ * Staff card-removal consequence copy (Task 6C) — shown in the confirm
+ * dialog BEFORE the click, not after. Only the LAST card carries a real
+ * consequence: an active subscription's next invoice has nothing to charge;
+ * a trialing subscription (missing_payment_method: "cancel", see
+ * buildEmbeddedCheckoutParams) cancels outright at trial end instead of
+ * degrading gracefully. Any other card is just detached — the customer still
+ * has one on file, so nothing about billing changes.
+ */
+export function cardRemovalConsequence(cardsRemainingAfter: number, status: string): string {
+  if (cardsRemainingAfter > 0) return "This card will be detached from the customer.";
+  return status === "trialing"
+    ? "This is the last card on file — the subscription will cancel at trial end."
+    : "This is the last card on file — the next invoice will fail.";
+}
+
 export function intervalForPrice(
   priceId: string | null,
   plan: { stripe_price_id_monthly: string | null; stripe_price_id_annual: string | null },

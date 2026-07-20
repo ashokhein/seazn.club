@@ -8,9 +8,11 @@ import "server-only";
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import {
+  linkStripeCustomer,
   recordPassPurchase,
   refundDuplicatePassPayment,
   revokePassForRefundedCharge,
+  syncPaymentMethodFlag,
   syncSubscription,
 } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
@@ -53,6 +55,12 @@ export const HANDLED_EVENT_TYPES = [
   // (entry fees, passes) are ignored inside the handlers.
   "payment_intent.succeeded",
   "payment_intent.payment_failed",
+  // Cards added/removed/promoted in the STRIPE DASHBOARD (support, or the org
+  // via an emailed invoice). Without these the has_payment_method mirror only
+  // tracks in-app changes and the trial banner asks for a card that exists.
+  "payment_method.attached",
+  "payment_method.detached",
+  "customer.updated",
 ] as const;
 
 /** Best-effort person id for org-scoped revenue events: the org owner, falling
@@ -95,14 +103,52 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  // Link the Stripe customer to this org
+  // Link the Stripe customer to this org. A re-buy after a cancel mints a NEW
+  // customer, and has_payment_method mirrors cards on the OLD one — so this
+  // goes through linkStripeCustomer, which re-derives the flag on a change.
   if (session.customer) {
-    await sql`
-      update subscriptions set stripe_customer_id = ${session.customer as string}
-      where org_id = ${orgId}`;
+    await linkStripeCustomer(orgId, session.customer as string);
   }
 
   // Subscription details arrive via subscription.created; nothing more to do here.
+}
+
+/** Org behind a Stripe customer id, or null when we do not bill them. */
+async function orgForCustomer(customerId: string | null | undefined): Promise<string | null> {
+  if (!customerId) return null;
+  const [row] = await sql<{ org_id: string }[]>`
+    select org_id from subscriptions where stripe_customer_id = ${customerId}`;
+  return row?.org_id ?? null;
+}
+
+/**
+ * A card was attached, detached, or the customer's default changed — in the
+ * Stripe dashboard, not in our UI. Re-mirror has_payment_method so the trial
+ * banner agrees with Stripe either way.
+ *
+ * A DETACHED payment method carries a null customer (Stripe nulls the link as
+ * part of the change), so the org has to come from previous_attributes.
+ *
+ * customer.updated is CHATTY — it fires for a name, an address, a tax id, a
+ * balance change — and only invoice_settings can move the default card, so
+ * that event is gated on previous_attributes.invoice_settings and everything
+ * else is a cheap ACK instead of a Stripe round trip. attached/detached stay
+ * unconditional: those events ARE the card change.
+ */
+async function handlePaymentMethodChanged(event: Stripe.Event) {
+  const object = event.data.object as { id?: string; customer?: string | { id: string } | null };
+  const previous = (event.data as {
+    previous_attributes?: { customer?: string | null; invoice_settings?: unknown };
+  }).previous_attributes;
+  if (event.type === "customer.updated" && !(previous && "invoice_settings" in previous)) return;
+  const raw =
+    event.type === "customer.updated"
+      ? object.id
+      : (typeof object.customer === "string" ? object.customer : object.customer?.id) ??
+        previous?.customer;
+  const orgId = await orgForCustomer(raw);
+  if (!orgId) return;
+  await syncPaymentMethodFlag(orgId);
 }
 
 async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
@@ -370,6 +416,11 @@ export async function processStripeEvent(event: Stripe.Event): Promise<void> {
       }
       break;
     }
+    case "payment_method.attached":
+    case "payment_method.detached":
+    case "customer.updated":
+      await handlePaymentMethodChanged(event);
+      break;
     case "customer.subscription.deleted":
       await handleSubscriptionDeleted(event.data.object as Stripe.Subscription);
       break;

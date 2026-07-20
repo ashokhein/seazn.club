@@ -4,8 +4,13 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { getActiveOrgId, requireOrgRole, requireUser } from "@/lib/auth";
-import { syncSubscription } from "@/lib/billing";
+import {
+  syncPaymentMethodFlag,
+  syncPaymentMethodFlagFromCards,
+  syncSubscription,
+} from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { logStaffAction } from "@/lib/admin";
 import {
   buildAddressUpdateParams,
   buildApplyPromoParams,
@@ -148,6 +153,18 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
     const rawDefault = customer.invoice_settings?.default_payment_method;
     const defaultId = typeof rawDefault === "string" ? rawDefault : (rawDefault?.id ?? null);
 
+    // Self-heal the has_payment_method mirror from the card list we ALREADY
+    // hold — no extra Stripe call. Orgs that added a card before V304 shipped
+    // (the 2026-07-20 reporter included) have the column stuck at its `false`
+    // default until some writer touches Stripe for them; their own visit to
+    // /settings/billing is that writer, so no backfill is needed. The helper
+    // swallows its own write error, so a mirror hiccup can never collapse this
+    // whole try into `return null` and blank the billing page.
+    await syncPaymentMethodFlagFromCards(orgId, {
+      cardCount: pms.data.length,
+      hasCustomerDefault: !!defaultId,
+    });
+
     const [plan] = await sql<
       { stripe_price_id_monthly: string | null; stripe_price_id_annual: string | null }[]
     >`
@@ -215,6 +232,10 @@ export async function setDefaultPaymentMethod(
   await stripe.customers.update(customerId, {
     invoice_settings: { default_payment_method: pmId },
   });
+  // The in-app add-card path the user actually hits during a trial. Stripe now
+  // knows; mirror it locally or the trial banner keeps asking for a card the
+  // org has just given (report 2026-07-20).
+  await syncPaymentMethodFlag(orgId);
   if (args.setupIntentId) {
     await captureServer({
       event: EVENTS.BILLING_CARD_ADDED,
@@ -241,6 +262,43 @@ export async function removePaymentMethod(orgId: string, paymentMethodId: string
       throw new HttpError(400, "Make another card the default before removing this one.");
   }
   await stripe.paymentMethods.detach(paymentMethodId);
+  // Re-reads Stripe rather than assuming: other cards may remain, in which case
+  // the flag stays true.
+  await syncPaymentMethodFlag(orgId);
+}
+
+/**
+ * Staff-only removal of an org's card, INCLUDING the default (Task 6C). The
+ * customer-facing removePaymentMethod above refuses the default on purpose —
+ * cutting an org's last card silently breaks billing (next invoice fails, or
+ * a trialing sub with missing_payment_method: "cancel" loses the subscription
+ * at trial end) — but staff sometimes need exactly that (erasure requests,
+ * fraud cleanup, a card that must never be charged again). This is the
+ * deliberate, audited exception; it does not touch removePaymentMethod's
+ * guard.
+ */
+export async function staffRemovePaymentMethod(
+  actorId: string,
+  orgId: string,
+  paymentMethodId: string,
+  reason: string,
+): Promise<void> {
+  if (!reason.trim()) throw new HttpError(400, "A reason is required.");
+  const { customerId } = await requireCustomer(orgId);
+  const stripe = getStripe();
+  const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+  if (pm.customer !== customerId)
+    throw new HttpError(400, "That card does not belong to this account.");
+  await stripe.paymentMethods.detach(paymentMethodId);
+  // The fifth writer of the has_payment_method mirror (Task 4C's enumerated
+  // set in lib/__tests__/billing-payment-method.test.ts) — re-reads Stripe
+  // rather than assuming, so this clears the flag exactly when the removed
+  // card was the last one and leaves it true when others remain.
+  await syncPaymentMethodFlag(orgId);
+  await logStaffAction(actorId, "remove_payment_method", "org", orgId, {
+    reason,
+    card: { brand: pm.card?.brand ?? "card", last4: pm.card?.last4 ?? "····" },
+  });
 }
 
 // ---------------------------------------------------------------------------

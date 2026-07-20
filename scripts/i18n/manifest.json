@@ -518,7 +518,7 @@
     "payments.title": "632e1c5839411a10",
     "payments.desc": "eaadc2942b20ad5e",
     "payments.planNote": "9e92dc788264d349",
-    "payments.planBilling": "5878174a60bccd35",
+    "payments.planBilling": "b6f72cdb12a395ab",
     "settings.nav.title": "74a883a037bc227f",
     "settings.nav.organization": "350be3643ce78043",
     "settings.nav.team": "5985039f106df054",
@@ -2178,7 +2178,8 @@
     "pay.saving": "23e39291d6135814",
     "pay.save": "1509f561f2416598",
     "pay.saved": "fca046ccd586c67f",
-    "pay.saveFailed": "2c07997249abaa76"
+    "pay.saveFailed": "2c07997249abaa76",
+    "billing.poweredByStripe": "7c3b00ad21d08c24"
   },
   "fr": {
     "app.name": "fb56d648fbb9ae92",
@@ -2699,7 +2700,7 @@
     "payments.title": "632e1c5839411a10",
     "payments.desc": "eaadc2942b20ad5e",
     "payments.planNote": "9e92dc788264d349",
-    "payments.planBilling": "5878174a60bccd35",
+    "payments.planBilling": "b6f72cdb12a395ab",
     "settings.nav.title": "74a883a037bc227f",
     "settings.nav.organization": "350be3643ce78043",
     "settings.nav.team": "5985039f106df054",
@@ -4359,7 +4360,8 @@
     "pay.saving": "23e39291d6135814",
     "pay.save": "1509f561f2416598",
     "pay.saved": "fca046ccd586c67f",
-    "pay.saveFailed": "2c07997249abaa76"
+    "pay.saveFailed": "2c07997249abaa76",
+    "billing.poweredByStripe": "7c3b00ad21d08c24"
   },
   "nl": {
     "app.name": "fb56d648fbb9ae92",
@@ -4880,7 +4882,7 @@
     "payments.title": "632e1c5839411a10",
     "payments.desc": "eaadc2942b20ad5e",
     "payments.planNote": "9e92dc788264d349",
-    "payments.planBilling": "5878174a60bccd35",
+    "payments.planBilling": "b6f72cdb12a395ab",
     "settings.nav.title": "74a883a037bc227f",
     "settings.nav.organization": "350be3643ce78043",
     "settings.nav.team": "5985039f106df054",
@@ -6540,6 +6542,7 @@
     "pay.saving": "23e39291d6135814",
     "pay.save": "1509f561f2416598",
     "pay.saved": "fca046ccd586c67f",
-    "pay.saveFailed": "2c07997249abaa76"
+    "pay.saveFailed": "2c07997249abaa76",
+    "billing.poweredByStripe": "7c3b00ad21d08c24"
   }
 }

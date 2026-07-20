@@ -1,6 +1,9 @@
 import { sql } from "@/lib/db";
 import { PaymentRequiredError } from "@/lib/errors";
 import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
+// Leaf module, NOT lib/billing.ts: billing imports invalidateOrgEntitlements
+// from here, so importing it back would close a cycle.
+import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 
 export { PaymentRequiredError } from "@/lib/errors";
 
@@ -65,8 +68,24 @@ async function resolveFromDb(
   // no scheduler flips it, the resolution does (bounded by the 5-min cache).
   const [orgPlan] = await sql<{ plan_key: string }[]>`
     select case
+      -- A comp/grant past its end date resolves as community at read time — no
+      -- scheduler flips it, the resolution does. A CANCELLED subscription keeps
+      -- its id forever, so an is-null test alone would leave a win-back grant
+      -- running for ever; a live subscription still owns the plan, so exempt.
+      -- The status list is INTERPOLATED from LIVE_SUBSCRIPTION_STATUSES (the
+      -- same set hasLiveSubscription uses), so the two can no longer drift —
+      -- negated rather than listing the dead statuses, which would drift.
+      -- coalesce is load-bearing: a bare NOT IN over a null status yields NULL,
+      -- not true, so the arm would silently never fire for rows with no status.
+      -- BEHAVIOUR CHANGE (deliberate): negating the live list is WIDER than the
+      -- old "status = canceled" test — it also fires for 'suspended', which is
+      -- written in-app by the staff suspend route and never restored on
+      -- reactivate. A suspended org's lapsed comp therefore now degrades where
+      -- before it kept running. That is the intent: suspension is not billing.
       when s.comped_until is not null and s.comped_until <= now()
-           and s.stripe_subscription_id is null then 'community'
+           and (s.stripe_subscription_id is null
+                or coalesce(s.status, '') not in ${sql([...LIVE_SUBSCRIPTION_STATUSES])})
+           then 'community'
       -- past_due grace (spec P1-6): dunning gets 14 days, then reads degrade to
       -- community until an invoice succeeds (which flips status back to active).
       -- Anchored on the TRANSITION (status_changed_at): dunning retries touch

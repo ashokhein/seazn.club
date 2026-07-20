@@ -276,14 +276,7 @@ export async function invalidateOrgEntitlements(
   // Flip the org's owner (== the calling session in every e2e spec). NEVER
   // key on the *Email() helpers here — TAG is per-process, so a spec worker
   // computes a different tag than the setup worker that minted the account.
-  const setStaff = (on: boolean) =>
-    withDb((sql) =>
-      on
-        ? sql`update users set is_staff = true, staff_role = 'superadmin'
-            where id in (select user_id from org_members where org_id = ${orgId} and role = 'owner')`
-        : sql`update users set is_staff = false, staff_role = null
-            where id in (select user_id from org_members where org_id = ${orgId} and role = 'owner')`,
-    );
+  const setStaff = (on: boolean) => setOwnerStaffSql(orgId, on);
   const KEY = "e2e.cache.bust";
   await setStaff(true);
   try {
@@ -321,19 +314,55 @@ export async function grantCompetitionPassSql(
 }
 
 /** Force a subscription lifecycle state (trialing / past_due / …) for banner
- *  and CTA assertions — states Stripe would otherwise own. */
+ *  and CTA assertions — states Stripe would otherwise own.
+ *
+ *  `trial_used_at` is the V277 "this org has already had Pro" stamp: pass it
+ *  explicitly (a date to burn the trial, null to hand it back) — omitting it
+ *  leaves whatever the row already holds, since the app itself only ever
+ *  coalesces that column and never clears it as a side effect. */
 export async function setOrgSubscriptionSql(
   orgId: string,
-  fields: { plan_key: string; status: string; trial_end?: string | null },
+  fields: {
+    plan_key: string;
+    status: string;
+    trial_end?: string | null;
+    trial_used_at?: string | null;
+    // Optional so callers testing liveness (id present + status) can force a
+    // "departed" org — a cancelled sub that keeps its dead Stripe id forever.
+    // Omitting it leaves whatever the row already holds.
+    stripe_subscription_id?: string | null;
+  },
 ): Promise<void> {
+  const burn = "trial_used_at" in fields;
+  const used = fields.trial_used_at ?? null;
+  const setId = "stripe_subscription_id" in fields;
   await withDb(async (sql) => {
     await sql`
-      insert into subscriptions (org_id, plan_key, status, trial_end)
-      values (${orgId}, ${fields.plan_key}, ${fields.status}, ${fields.trial_end ?? null})
+      insert into subscriptions (org_id, plan_key, status, trial_end, trial_used_at)
+      values (${orgId}, ${fields.plan_key}, ${fields.status}, ${fields.trial_end ?? null}, ${used})
       on conflict (org_id) do update
         set plan_key = ${fields.plan_key}, status = ${fields.status},
             trial_end = ${fields.trial_end ?? null}`;
+    if (burn) {
+      await sql`update subscriptions set trial_used_at = ${used} where org_id = ${orgId}`;
+    }
+    if (setId) {
+      await sql`update subscriptions set stripe_subscription_id = ${fields.stripe_subscription_id ?? null} where org_id = ${orgId}`;
+    }
   });
+}
+
+/** Flip the org owner's staff bit (the calling session in every e2e spec) so a
+ *  test can drive the superadmin surfaces. ALWAYS restore it in a finally —
+ *  the shared Pro user outlives the test that borrowed the privilege. */
+export async function setOwnerStaffSql(orgId: string, on: boolean): Promise<void> {
+  await withDb((sql) =>
+    on
+      ? sql`update users set is_staff = true, staff_role = 'superadmin'
+          where id in (select user_id from org_members where org_id = ${orgId} and role = 'owner')`
+      : sql`update users set is_staff = false, staff_role = null
+          where id in (select user_id from org_members where org_id = ${orgId} and role = 'owner')`,
+  );
 }
 
 export interface OrgInfo {
