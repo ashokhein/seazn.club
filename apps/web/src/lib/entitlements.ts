@@ -69,8 +69,14 @@ async function resolveFromDb(
       -- scheduler flips it, the resolution does. A CANCELLED subscription keeps
       -- its id forever, so an is-null test alone would leave a win-back grant
       -- running for ever; a live subscription still owns the plan, so exempt.
+      -- The status list is LIVE_SUBSCRIPTION_STATUSES from lib/billing.ts (the
+      -- same set hasLiveSubscription uses) — negated rather than listing the
+      -- dead statuses, which would drift. coalesce is load-bearing: a bare NOT
+      -- IN over a null status yields NULL, not true, so the arm would silently
+      -- never fire for rows with no status.
       when s.comped_until is not null and s.comped_until <= now()
-           and (s.stripe_subscription_id is null or s.status = 'canceled')
+           and (s.stripe_subscription_id is null
+                or coalesce(s.status, '') not in ('trialing', 'active', 'past_due'))
            then 'community'
       -- past_due grace (spec P1-6): dunning gets 14 days, then reads degrade to
       -- community until an invoice succeeds (which flips status back to active).

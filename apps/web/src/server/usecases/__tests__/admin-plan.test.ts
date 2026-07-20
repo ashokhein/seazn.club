@@ -182,6 +182,8 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
       { plan_key: string; comped_until: string | null; trial_end: string | null }[]
     >`select plan_key, comped_until, trial_end from subscriptions where org_id = ${orgId}`;
     expect(row.plan_key).toBe("pro");
+    // Both null would satisfy the equality below if the writes were dropped.
+    expect(row.comped_until).not.toBeNull();
     expect(row.comped_until).toEqual(row.trial_end);
     expect(await hasFeature(orgId, "api.access")).toBe(true);
 
@@ -197,8 +199,14 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
   it("stacked grants extend from the existing end and keep the first stamp", async () => {
     const { orgId, actorId } = await seedOrg();
     const first = await extendTrial(actorId, orgId, 7, "one");
+    // Backdate before re-reading the baseline: two now() writes in the same
+    // millisecond compare equal, so without this the stamp assertion below
+    // would hold even with the coalesce removed.
+    await sql`update subscriptions set trial_used_at = now() - interval '30 days'
+              where org_id = ${orgId}`;
     const [{ trial_used_at: stamped }] = await sql<{ trial_used_at: string }[]>`
       select trial_used_at from subscriptions where org_id = ${orgId}`;
+    expect(stamped).not.toBeNull();
 
     const second = await extendTrial(actorId, orgId, 7, "two");
     const days = (new Date(second).getTime() - Date.now()) / 86_400_000;
@@ -252,6 +260,31 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
       select plan_key from subscriptions where org_id = ${orgId}`;
     expect(row.plan_key).toBe("pro");
     expect(await hasFeature(orgId, "api.access")).toBe(true);
+  });
+
+  // The comp must also LAPSE. Writing a live-looking status onto the departed
+  // row would resurrect liveness and the resolver's comp-expiry arm could never
+  // fire — the org would sit on free Pro for ever (and be locked out of
+  // checkout). A null end date hides this, so this one is dated.
+  it("a dated comp on a departed org still lapses", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_gone', status = 'canceled'
+               where org_id = ${orgId}`;
+
+    await compToPro(actorId, orgId, new Date(Date.now() + 30 * 86_400_000), "win-back comp");
+    expect(await hasFeature(orgId, "api.access")).toBe(true);
+    const [row] = await sql<{ status: string; comped_until: string | null }[]>`
+      select status, comped_until from subscriptions where org_id = ${orgId}`;
+    expect(row.comped_until).not.toBeNull();
+    // The dead id keeps its cancelled status: nothing may fake liveness.
+    expect(row.status).toBe("canceled");
+
+    await sql`update subscriptions set comped_until = now() - interval '1 minute'
+              where org_id = ${orgId}`;
+    const { invalidateOrgEntitlements } = await import("@/lib/entitlements");
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "api.access")).toBe(false);
   });
 
   it("does not label a cancelled subscription as a Stripe-sourced plan", async () => {

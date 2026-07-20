@@ -43,9 +43,11 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
   }
   // Liveness, not mere presence: a cancelled subscription keeps its id for
   // ever, and that org's plan is no longer sourced from Stripe.
+  // Any PAID plan without a live subscription is a comp — an org comped at
+  // pro_plus is just as comped as one at pro.
   const source = hasLiveSubscription(sub)
     ? "stripe"
-    : sub.plan_key === "pro"
+    : sub.plan_key === "pro" || sub.plan_key === "pro_plus"
       ? "comped"
       : "none";
   return { ...sub, source };
@@ -72,13 +74,20 @@ export async function compToPro(
   }
   await sql`
     update subscriptions set
-      plan_key = 'pro', status = 'active',
+      plan_key = 'pro',
+      -- status only moves when there is NO subscription id at all. A departed
+      -- org keeps its dead id, and writing a live-looking status onto that row
+      -- would resurrect liveness: the resolver's comp-expiry branch could never
+      -- fire (the comp would never lapse), checkout would 409 and downgrade
+      -- would 400. So a cancelled status stands. Same shape as extendTrial.
+      status = case when stripe_subscription_id is null then 'active' else status end,
       comped_until = ${until ? until.toISOString() : null},
       -- A comp IS the free ride: the org has had Pro without paying, so a
       -- later self-serve upgrade bills from day one. coalesce keeps the first
       -- comp's date across re-comps. Reversible via Restore trial.
       trial_used_at = coalesce(trial_used_at, now()),
-      status_changed_at = case when status is distinct from 'active'
+      status_changed_at = case when stripe_subscription_id is null
+                                    and status is distinct from 'active'
                                then now() else status_changed_at end,
       updated_at = now()
     where org_id = ${orgId}`;
