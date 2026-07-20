@@ -64,19 +64,48 @@ export function checkoutTrialDays(
   return sub?.trial_used_at ? 0 : 14;
 }
 
+/** Statuses in which a Stripe subscription still owns the org's billing. Our
+ *  STATUS_MAP collapses incomplete/unpaid/paused into past_due, so this list
+ *  is the whole non-terminal set. `canceled` is terminal — a departed customer
+ *  must be able to come back. */
+const LIVE_SUBSCRIPTION_STATUSES = ["trialing", "active", "past_due"];
+
+/**
+ * Is this org billed by a subscription right now? A cancelled subscription
+ * keeps its id on the row forever, so the id alone is NOT the test — anything
+ * branching on `stripe_subscription_id` would treat a long-departed customer as
+ * Stripe-billed. Shared by the checkout guard and the staff trial grant so the
+ * two can never drift apart.
+ */
+export function hasLiveSubscription(
+  sub: { stripe_subscription_id: string | null; status: string | null } | undefined,
+): boolean {
+  return (
+    !!sub?.stripe_subscription_id &&
+    LIVE_SUBSCRIPTION_STATUSES.includes(sub.status ?? "")
+  );
+}
+
 /**
  * A live Stripe subscription means plan changes go through the in-app manage
  * flow — a second checkout would mint a second subscription for the same org.
+ * Dunning counts as live: the subscription is still there, it just needs a
+ * working card, so the message points at that rather than at a new purchase.
  */
 export function assertCheckoutAllowed(
   sub: { stripe_subscription_id: string | null; status: string | null } | undefined,
 ): void {
-  if (sub?.stripe_subscription_id && (sub.status === "active" || sub.status === "trialing")) {
+  if (!hasLiveSubscription(sub)) return;
+  if (sub!.status === "past_due") {
     throw new HttpError(
       409,
-      "This organization already has a subscription — manage your plan from the billing page instead.",
+      "This organization's subscription needs a working payment method — update your card or retry the invoice from the billing page instead of starting a new subscription.",
     );
   }
+  throw new HttpError(
+    409,
+    "This organization already has a subscription — manage your plan from the billing page instead.",
+  );
 }
 
 /**

@@ -8,6 +8,7 @@ import {
   buildEmbeddedCheckoutParams,
   buildPassCheckoutParams,
   checkoutTrialDays,
+  hasLiveSubscription,
 } from "@/lib/billing";
 import {
   currencyFromAcceptLanguage,
@@ -182,6 +183,60 @@ describe("Pro Plus price points", () => {
         );
       }
     }
+  });
+});
+
+describe("hasLiveSubscription", () => {
+  it("is true only for a subscription id in a non-terminal status", () => {
+    for (const status of ["trialing", "active", "past_due"]) {
+      expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status })).toBe(true);
+    }
+  });
+
+  // A cancelled subscription keeps its id forever. Branching on the column
+  // alone would send a departed customer down the Stripe rails.
+  it("is false for a cancelled subscription that still carries its id", () => {
+    expect(hasLiveSubscription({ stripe_subscription_id: "sub_1", status: "canceled" })).toBe(false);
+  });
+
+  it("is false with no subscription id, whatever the status", () => {
+    expect(hasLiveSubscription({ stripe_subscription_id: null, status: "past_due" })).toBe(false);
+    expect(hasLiveSubscription(undefined)).toBe(false);
+  });
+});
+
+describe("assertCheckoutAllowed past_due", () => {
+  // Dunning still owns a live subscription — a second checkout would mint a
+  // SECOND subscription for the same org.
+  it("409s an org in dunning", () => {
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "past_due" }),
+    ).toThrow(/subscription/i);
+  });
+
+  // STATUS_MAP folds Stripe's `incomplete` into past_due, so this message is
+  // the whole recovery path for an org whose first payment never confirmed.
+  it("names the recovery path so the block is not a dead end", () => {
+    try {
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "past_due" });
+      throw new Error("expected a 409");
+    } catch (e) {
+      expect((e as Error).message).toMatch(/payment method|retry/i);
+    }
+  });
+
+  it("still lets a departed customer buy again", () => {
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: "sub_1", status: "canceled" }),
+    ).not.toThrow();
+  });
+
+  // A comped org degraded by the past_due grace has no subscription id and
+  // must not be locked out of its FIRST purchase.
+  it("never blocks an org with no subscription id", () => {
+    expect(() =>
+      assertCheckoutAllowed({ stripe_subscription_id: null, status: "past_due" }),
+    ).not.toThrow();
   });
 });
 
