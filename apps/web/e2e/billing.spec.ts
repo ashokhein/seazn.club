@@ -17,8 +17,9 @@ import {
 //    across tests; and the `request` fixture is a SEPARATE cookie jar from the
 //    page. All org mutations therefore go through `page.request` (shares the
 //    page's jar) and each test re-activates the org it needs.
-//  - Pro caps owned orgs at 5 (orgs.max_owned) — the suite reuses two fresh
-//    orgs rather than minting one per test.
+//  - Owned orgs are a SHARED, run-wide budget (orgs.max_owned). The cap and
+//    the reasoning live in ONE place — e2e/auth.setup.ts, "ORG BUDGET". This
+//    file mints three fresh orgs; reuse before adding a fourth.
 //
 // Stripe-dependent tests probe the checkout endpoint and skip cleanly when
 // Stripe isn't configured (same spirit as scripts/smoke.ts).
@@ -184,7 +185,14 @@ test.describe.serial("billing", () => {
     const trialCta = page.getByRole("button", { name: /^Start free trial — / });
     const goProCta = page.getByRole("button", { name: /^Go Pro — / });
     await expect(trialCta).toBeVisible({ timeout: 20_000 });
-    await expect(goProCta).toHaveCount(0);
+    // Page-wide negative, deliberately NOT the anchored locator above: on a
+    // single UpgradeButton the anchored count is fully determined by the
+    // assertion before it. Sweep every "Go Pro" button on the page (minus the
+    // Pro Plus CTA, which is always there) so any other component offering
+    // paid-now-no-trial would red here.
+    await expect(
+      page.getByRole("button", { name: /go pro/i }).filter({ hasNotText: /pro plus/i }),
+    ).toHaveCount(0);
     await expect(page.getByText(/14-day free trial/)).toBeVisible();
 
     // Burn the trial — the one column that decides this.

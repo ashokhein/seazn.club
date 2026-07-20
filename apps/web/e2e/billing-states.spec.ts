@@ -5,12 +5,27 @@ import { TAG, apiJson, setOrgSubscriptionSql, setOwnerStaffSql } from "./helpers
 // forced via SQL so the app-wide billing banner and CTAs can be asserted
 // without a live Stripe subscription.
 //
-// ORG BUDGET: pro caps owned orgs at 7 (orgs.max_owned override in
-// auth.setup.ts) and the whole run shares one Pro user — setup(1) +
-// billing.spec(3) + this file(2) + org-management(1) = 7, exactly at the cap.
-// Reuse orgs here; do not add per-test orgs without retiring one elsewhere.
+// ORG BUDGET: owned orgs are a SHARED, run-wide budget. The cap and the
+// reasoning live in ONE place — e2e/auth.setup.ts, "ORG BUDGET". This file
+// mints two fresh orgs; reuse before adding a third.
 test.describe.serial("billing lifecycle states", () => {
   let orgId: string;
+
+  // Superadmin is granted on the SHARED Pro user, so a leak would silently
+  // change every later spec in the run. An in-test `finally` is not enough:
+  // if an assertion inside the try pushes the test past its timeout,
+  // Playwright kills the worker and the finally never runs. afterEach is
+  // honoured on timeout, so the flag is revoked either way. Keyed by org id
+  // (the flag is written through the org's owner membership).
+  const staffOrgIds = new Set<string>();
+  async function grantStaff(id: string): Promise<void> {
+    staffOrgIds.add(id);
+    await setOwnerStaffSql(id, true);
+  }
+  test.afterEach(async () => {
+    for (const id of staffOrgIds) await setOwnerStaffSql(id, false);
+    staffOrgIds.clear();
+  });
 
   async function activate(page: Page): Promise<void> {
     // Each test starts from the storageState snapshot (setup org active) —
@@ -88,7 +103,7 @@ test.describe.serial("billing lifecycle states", () => {
     }
     expect(blockedAt, "community never hit its competition ceiling").toBeGreaterThan(0);
 
-    await setOwnerStaffSql(grantOrgId, true);
+    await grantStaff(grantOrgId);
     try {
       await page.goto(`/admin/orgs/${grantOrgId}`);
       // Two "Reason (required)" inputs live on this page (comp + trial), so
@@ -105,7 +120,10 @@ test.describe.serial("billing lifecycle states", () => {
       // the entitlement resolver honours, so it is the visible receipt.
       await expect(page.getByText(/comped until/i)).toBeVisible({ timeout: 20_000 });
     } finally {
+      // Idempotent alongside the hook — revokes immediately so the assertion
+      // below runs as a plain owner, not as staff.
       await setOwnerStaffSql(grantOrgId, false);
+      staffOrgIds.delete(grantOrgId);
     }
 
     // The point of the whole task: the very call that was refused above is
