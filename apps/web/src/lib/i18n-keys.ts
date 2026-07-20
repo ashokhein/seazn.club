@@ -236,6 +236,7 @@ export type DictionaryKey =
   | "board.ai.error.upgrade"
   | "board.ai.errorGeneric"
   | "board.ai.errorLabel"
+  | "board.ai.elapsed"
   | "board.ai.flagged"
   | "board.ai.ghost.aria"
   | "board.ai.instructionHint"
