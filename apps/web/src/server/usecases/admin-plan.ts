@@ -50,7 +50,9 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
 }
 
 /** Comp an org to Pro until a date (or forever). Refuses Stripe-billed orgs —
- *  their plan belongs to the subscription lifecycle, not to us. */
+ *  their plan belongs to the subscription lifecycle, not to us. Also burns the
+ *  org's one trial (V277): a comp IS free Pro, so it stamps trial_used_at and
+ *  a later self-serve upgrade bills from day one. The first comp's date wins. */
 export async function compToPro(
   actorId: string,
   orgId: string,
@@ -139,7 +141,9 @@ export async function adminDowngrade(
 }
 
 /** Extend (or start) a trial. Writes trial_end in-app and, when a Stripe
- *  subscription exists, pushes the same trial_end so Stripe agrees. */
+ *  subscription exists, pushes the same trial_end so Stripe agrees. Also burns
+ *  the org's one trial (V277): a staff-granted trial stamps trial_used_at, so
+ *  checkout offers no second one. The first grant's date survives extensions. */
 export async function extendTrial(
   actorId: string,
   orgId: string,

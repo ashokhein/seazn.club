@@ -127,9 +127,16 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(checkoutTrialDays(await readSub())).toBe(14);
 
     await extendTrial(actorId, orgId, 14, "sales call");
+    expect((await readSub()).trial_used_at).not.toBeNull();
+    expect(checkoutTrialDays(await readSub())).toBe(0);
+
+    // Backdate the stamp so a re-dating write cannot land on the same
+    // millisecond as the original — otherwise the equality below would hold
+    // even without the coalesce.
+    await sql`update subscriptions set trial_used_at = now() - interval '30 days'
+              where org_id = ${orgId}`;
     const stamped = (await readSub()).trial_used_at;
     expect(stamped).not.toBeNull();
-    expect(checkoutTrialDays(await readSub())).toBe(0);
 
     // A second grant extends the trial but never re-dates the stamp.
     await extendTrial(actorId, orgId, 7, "one more week");
@@ -149,6 +156,13 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(checkoutTrialDays(await readSub())).toBe(14);
 
     await compToPro(actorId, orgId, null, "founder friend");
+    expect((await readSub()).trial_used_at).not.toBeNull();
+
+    // Backdate the stamp so a re-dating write cannot land on the same
+    // millisecond as the original — otherwise the equality below would hold
+    // even without the coalesce.
+    await sql`update subscriptions set trial_used_at = now() - interval '30 days'
+              where org_id = ${orgId}`;
     const stamped = (await readSub()).trial_used_at;
     expect(stamped).not.toBeNull();
 
