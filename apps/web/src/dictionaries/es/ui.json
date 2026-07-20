@@ -1705,6 +1705,7 @@
   "wizard.schedulingHint": "Canchas, duración del partido y una hora de inicio para el calendario. Puedes cambiarlo después en el tablero de programación.",
   "wizard.matchLengthHint": "Precargado para el deporte y la variante seleccionados; ajústalo si es necesario.",
   "wizard.endDateHint": "Define cuántos días abarca la vista semanal del calendario.",
+  "wizard.venuesProHint": "Empieza con una {venue}; Pro desbloquea varias {venue}s en paralelo.",
   "wizard.venueCount": "{n} {venue}",
   "wizard.cancel": "Cancelar",
   "wizard.back": "Atrás",
