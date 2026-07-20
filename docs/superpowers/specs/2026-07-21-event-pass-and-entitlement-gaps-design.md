@@ -54,6 +54,8 @@ below, and it recurs at 27 call-site groups.
 | D12 | A pass bought within **30 days** credits its full price against the org's first Pro invoice, delivered as a **Stripe customer balance credit** (not a coupon — `discounts` and `allow_promotion_codes` are mutually exclusive in Checkout, and both builders set the latter). The pass keeps working if they later downgrade. |
 | D13 | A pass holder **keeps** the 14-day Pro trial but **must supply a card** to start it. `trial_used_at` is not stamped by a pass purchase. |
 | D14 | `subscriptions.currency` is pinned at the org's **first purchase of any kind, including a pass**, and never changed thereafter. |
+| D15 | Every regression suite is extended, not just the ones nearest the change: unit (vitest), E2E (Playwright, desktop + mobile), `scripts/smoke.ts` (pro **and** free paths), and the help pages. A workstream is not done until its suite entries exist. |
+| D16 | One branch, resolver first (workstream 1 before all others). Visual direction is chosen by the implementer for this session only; the standing sign-off rule resumes next session. |
 
 ## What the pass actually sells (corrected)
 
