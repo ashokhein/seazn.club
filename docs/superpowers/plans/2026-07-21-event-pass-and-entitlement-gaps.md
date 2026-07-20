@@ -189,6 +189,22 @@ git commit -m "test(entitlements): pin the five SQL/TS resolver drifts"
 - Consumes: Task 1's test file.
 - Produces: `org_has_feature(p_org_id uuid, p_feature_key text, p_competition_id uuid default null) returns boolean`. Every later SQL task calls the 3-arg form. The 2-arg form is **dropped** — callers must be updated in this same migration.
 
+**Schema facts, verified against the live local DB 2026-07-21 — do not re-derive:**
+- `org_has_feature(uuid, text)` exists in **two** schemas: `public` and `seazn_club`.
+  So do all four public views. This is a **local-dev artifact**; the app lives in
+  `seazn_club` (`db/flyway.toml:8-13` — `scripts/flyway.sh` passes
+  `-schemas/-defaultSchema` from `${DB_SCHEMA:-seazn_club}`).
+- Therefore: use **unqualified** DDL, exactly as V228 did. It lands in the Flyway
+  default schema, which is the one that matters. **Do not** add `public.`-qualified
+  statements to "fix" the duplicate — production has no such copy, and the migration
+  would fail there.
+- `security definer` requires a pinned `search_path`. Use the Flyway placeholder
+  `${flyway:defaultSchema}` (available per `db/flyway.toml:13`), **not** a literal
+  `public` — a literal would make the function resolve tables in the wrong schema and
+  silently return `false` for everything.
+- The `drop function if exists org_has_feature(uuid, text)` at the end is likewise
+  unqualified and will drop only the default-schema copy. That is correct.
+
 **Read before writing:** `db/README.md` lines 1-45, and
 `db/migration/v2-engine/views/V230__view_public_competitions.sql`,
 `V238__view_public_discovery.sql`, `db/migration/deltas/V289__entrant_badge_public_view.sql`
@@ -217,7 +233,8 @@ create or replace function org_has_feature(
   p_feature_key text,
   p_competition_id uuid default null
 ) returns boolean
-  language sql stable security definer set search_path = public as $$
+  language sql stable security definer
+  set search_path = ${flyway:defaultSchema} as $$
     with plan as (
       select case
         -- Mirrors entitlements.ts:85-88 — a comp past its end date resolves as
