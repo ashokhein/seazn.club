@@ -56,10 +56,18 @@ describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
     expect(params.trial_end).toBe(Math.floor(new Date(end).getTime() / 1000));
     expect(params.proration_behavior).toBe("none");
 
-    const [row] = await sql<{ comped_until: string | null; plan_key: string }[]>`
-      select comped_until, plan_key from subscriptions where org_id = ${orgId}`;
+    // plan_key would be a vacuous probe here: the seed sets 'pro', the live arm
+    // never writes it. What needs proving is that the PINNED local UPDATE ran at
+    // all — a pin that matched nothing would leave the row untouched and be
+    // invisible otherwise.
+    const [row] = await sql<{
+      comped_until: string | null; trial_end: string | null; trial_used_at: string | null;
+    }[]>`
+      select comped_until, trial_end, trial_used_at from subscriptions where org_id = ${orgId}`;
     expect(row.comped_until).toBeNull(); // the subscription owns the lifecycle
-    expect(row.plan_key).toBe("pro");
+    expect(row.trial_end).not.toBeNull();
+    expect(new Date(row.trial_end as string).toISOString()).toBe(end);
+    expect(row.trial_used_at).not.toBeNull(); // V277 stamp, written by the same UPDATE
   });
 
   it("never calls Stripe for a cancelled subscription that kept its id", async () => {

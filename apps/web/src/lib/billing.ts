@@ -160,8 +160,16 @@ export async function downgradeToCommunity(orgId: string): Promise<void> {
   }
   await sql`
     update subscriptions
-    set plan_key = 'community', status = 'active', cancel_at_period_end = false,
-        status_changed_at = case when status is distinct from 'active'
+    set plan_key = 'community', cancel_at_period_end = false,
+        -- status only moves when there is NO subscription id at all. A departed
+        -- org keeps its dead id, and writing 'active' onto that row would
+        -- RESURRECT liveness: this very function would then 400 on the next
+        -- call (breaking the idempotence promised above), checkout would 409 and
+        -- comp/extendTrial would refuse. So a cancelled status stands. Same
+        -- shape as compToPro and extendTrial.
+        status = case when stripe_subscription_id is null then 'active' else status end,
+        status_changed_at = case when stripe_subscription_id is null
+                                      and status is distinct from 'active'
                                  then now() else status_changed_at end
     where org_id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);

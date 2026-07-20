@@ -187,6 +187,10 @@ export async function extendTrial(
   const trialEnd = new Date(base.getTime() + days * 24 * 60 * 60 * 1000);
   const iso = trialEnd.toISOString();
 
+  // The live arm's local UPDATE is pinned to the row we validated, so a
+  // concurrent cancellation makes it a no-op. Staff must see that.
+  let localWriteSkipped = false;
+
   if (live) {
     // Mid-trial on Stripe: push their trial_end so the first charge moves. The
     // plan already came from the price, and comped_until stays out of it — the
@@ -195,7 +199,7 @@ export async function extendTrial(
       trial_end: Math.floor(trialEnd.getTime() / 1000),
       proration_behavior: "none",
     });
-    await sql`
+    const pinned = await sql<{ org_id: string }[]>`
       update subscriptions set
         status = 'trialing', trial_end = ${iso},
         -- One trial per org (V277) counts staff-granted trials too: without
@@ -207,10 +211,21 @@ export async function extendTrial(
                                  then now() else status_changed_at end,
         updated_at = now()
       -- planPanel read the row BEFORE the Stripe call; a cancellation landing in
-      -- between would make this write resurrect liveness on a departed row. Pin
-      -- the write to the id we validated, so a changed row is a no-op instead.
+      -- between would make this write resurrect liveness on a departed row.
+      -- The racing writer is handleSubscriptionDeleted in billing-events.ts: it
+      -- sets status = canceled keyed on org_id and LEAVES THE ID INTACT, so an
+      -- id pin alone never fires for that race. STATUS is the column that moves.
+      -- The id pin stays for the other race — a resubscribe swapping in a NEW
+      -- subscription id, where writing this trial_end would target the wrong
+      -- subscription. Two races, two conjuncts.
+      -- A zero-row result is SAFE, not an error: the row is exactly as read and
+      -- the webhook has written the truth. It is recorded in the audit detail
+      -- below rather than thrown, because the Stripe call already succeeded.
       where org_id = ${orgId}
-        and stripe_subscription_id = ${before.stripe_subscription_id}`;
+        and status = 'trialing'
+        and stripe_subscription_id = ${before.stripe_subscription_id}
+      returning org_id`;
+    localWriteSkipped = pinned.length === 0;
   } else {
     // No live subscription: the grant has to CONVEY Pro, because entitlements
     // resolve on plan_key — status/trial_end grant nothing. comped_until is the
@@ -240,6 +255,10 @@ export async function extendTrial(
     reason, days,
     before: { trial_end: before.trial_end, plan_key: before.plan_key },
     after: { trial_end: iso, granted_pro: !live },
+    // Stripe accepted the new trial_end but the local row had already moved on
+    // (cancelled or resubscribed between the read and the write), so nothing was
+    // written here. Surfaced, never silent.
+    ...(localWriteSkipped ? { local_write_skipped: true } : {}),
   });
   return iso;
 }

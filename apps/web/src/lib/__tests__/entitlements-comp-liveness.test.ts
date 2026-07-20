@@ -75,6 +75,16 @@ describe.skipIf(!HAS_DB)("comp-expiry arm derives its status list from billing",
   // it stays as the guard for any future nullable status, since a bare NOT IN
   // over NULL yields NULL rather than true and would kill the arm silently.
 
+  // 'suspended' is written by api/admin/orgs/[id]/suspend and is in no
+  // STATUS_MAP — the column's vocabulary is wider than Stripe's. The arm negates
+  // the live list rather than naming dead statuses precisely so non-Stripe
+  // statuses like this one degrade too; hand-written dead-status SQL would miss it.
+  it("a non-Stripe 'suspended' status lets the lapsed comp expire", async () => {
+    const orgId = await seedLapsedComp({ status: "suspended" });
+    expect(await hasFeature(orgId, "exports.branded")).toBe(false);
+    expect(await getLimit(orgId, "competitions.max_active")).toBe(COMMUNITY_MAX_ACTIVE);
+  });
+
   it("no stripe id at all (pure staff grant) expires on comped_until", async () => {
     const orgId = await seedLapsedComp({ status: "canceled", withStripeId: false });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
