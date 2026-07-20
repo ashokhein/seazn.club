@@ -183,6 +183,32 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(body.model).toBe("claude-sonnet-5");
   });
 
+  // 2026-07-20 live 2x2 (sonnet-5, 25- and 30-fixture packs): medium returned an
+  // engine-CLEAN plan in one round on every arm, 5.1x/1.9x faster than high
+  // (high needed 1095s on the 30-fixture pack — an unshippable wait). The
+  // referee checks every proposal regardless of effort.
+  it("defaults to effort:medium when SCHEDULING_AI_EFFORT is unset", async () => {
+    delete process.env.SCHEDULING_AI_EFFORT;
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    const body = parse.mock.calls[0][0] as { output_config: { effort: string } };
+    expect(body.output_config.effort).toBe("medium");
+  });
+
+  it("SCHEDULING_AI_EFFORT overrides the default; an unknown value falls back to medium", async () => {
+    process.env.SCHEDULING_AI_EFFORT = "xhigh";
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { output_config: { effort: string } }).output_config.effort).toBe("xhigh");
+
+    parse.mockClear();
+    process.env.SCHEDULING_AI_EFFORT = "turbo";
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { output_config: { effort: string } }).output_config.effort).toBe("medium");
+    delete process.env.SCHEDULING_AI_EFFORT;
+  });
+
   it("client is constructed with an explicit timeout — without one the SDK refuses non-streaming max_tokens:32000 calls", async () => {
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);

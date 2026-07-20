@@ -607,7 +607,19 @@ export async function buildSchedulePack(
 // per round even at ~17 movable fixtures (measured 2026-07-19: opus round 1
 // >120s, sonnet ~4 rounds ≈ 480s). The abort must outlast a real round or
 // every sizable live run dies as AI_PLAN_TIMEOUT.
-const ROUND_TIMEOUT_MS = 300_000;
+// 600s. Measured 2026-07-20 on a 30-fixture pack with dense constraints
+// (round-robin + 60m rest + no-back-to-back + a court blackout): effort:high
+// needed 1095s and never returned inside the old 300s, so the run 422'd having
+// spent a full generation it could neither bill nor show; effort:medium took
+// 213s and 194s across two runs — under 300s, but with <30% headroom against
+// observed ~2x run-to-run variance in adaptive thinking, so a slow sample of a
+// passing config would still 422.
+//
+// Raising this does NOT make the model generate more: the abort is client-side
+// and only decides whether we receive the round. It does make repair rounds 2-3
+// reachable, and each round re-sends the prior round's output as input — so the
+// worst case gets more expensive even though the per-round cost is unchanged.
+const ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
 const MAX_REPAIR_ROUNDS = 2;
 
 /**
@@ -624,6 +636,35 @@ const MAX_REPAIR_ROUNDS = 2;
  *  still overrides. */
 export function schedulingAiModel(): string {
   return process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
+}
+
+/** Effort hint for the architect call. Output tokens are ~96% of a run's cost,
+ *  and effort is the direct knob on thinking depth — so this is the cost lever,
+ *  not prompt caching (input is <4% of spend).
+ *
+ *  Default "medium" since 2026-07-20, on a live 2x2 (sonnet-5, two packs, both
+ *  efforts). Every arm returned an engine-verified CLEAN plan in one round —
+ *  medium cost no measurable quality:
+ *
+ *    pack (fixtures)   high              medium
+ *    teams-15 (30)     1095s / 27.3k out  213s / 22.5k out
+ *    individuals-50    159s / 16.9k out    84s /  9.9k out
+ *
+ *  The decisive term is latency, not money: medium is 5.1x / 1.9x faster, and
+ *  18 minutes is not a viable wait at any price. Treat the cost delta (17-39%)
+ *  as directional only — a repeated cell varied 2.1x run-to-run, so a single
+ *  sample cannot size it. SCHEDULING_AI_EFFORT overrides.
+ *
+ *  Phase B (officials-ai.ts) is deliberately still "high": it was not measured.
+ *
+ *  The deterministic referee verifies every proposal regardless, so a thinner
+ *  plan surfaces as repair rounds, never as a silently bad schedule. */
+export function schedulingAiEffort(): "low" | "medium" | "high" | "xhigh" | "max" {
+  const raw = process.env.SCHEDULING_AI_EFFORT;
+  const allowed = ["low", "medium", "high", "xhigh", "max"] as const;
+  return (allowed as readonly string[]).includes(raw ?? "")
+    ? (raw as (typeof allowed)[number])
+    : "medium";
 }
 
 export function anthropicClient(): Anthropic {
@@ -804,7 +845,7 @@ async function callModel(
         model,
         max_tokens: 32_000,
         thinking: { type: "adaptive" },
-        output_config: { effort: "high", format: zodOutputFormat(AiSchedulePlan) },
+        output_config: { effort: schedulingAiEffort(), format: zodOutputFormat(AiSchedulePlan) },
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [...messages],
       },
@@ -1101,13 +1142,25 @@ export async function aiPlanForDivision(
     // in analytics or the run ledger. The failure row uses its own event type
     // ('schedule.ai_failed'): the quota above counts 'schedule.ai_generated'
     // only, so failures never consume a generation.
-    if (err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT")) {
-      const usage = (err.extra?.usage ?? {}) as {
+    // An Anthropic.APIError (billing 400, auth 401, rate-limit 429, overloaded
+    // 529, upstream 5xx) is NOT a planning failure — the provider is unusable
+    // right now. Before 2026-07-20 it matched neither branch below: it was
+    // rethrown raw from callModel, surfaced to the tenant as a 500, and left no
+    // ledger row. Observed live during the effort bench, where an exhausted
+    // credit balance took AI scheduling down with no diagnostic. Meter it under
+    // its own outcome and translate it to a 503 — the provider's message can
+    // carry our billing state and must never reach a tenant.
+    const providerErr = Anthropic.APIError && err instanceof Anthropic.APIError ? err : null;
+    const planErr =
+      err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT") ? err : null;
+
+    if (planErr || providerErr) {
+      const usage = (planErr?.extra?.usage ?? {}) as {
         input_tokens?: number;
         output_tokens?: number;
         repair_rounds?: number;
       };
-      const outcome = err.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
+      const outcome = providerErr ? "provider_error" : planErr!.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
       const cost_usd = aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
       await withTenant(auth.orgId, async (tx) => {
         await tx`
@@ -1125,6 +1178,11 @@ export async function aiPlanForDivision(
                       repair_rounds: usage.repair_rounds ?? 0,
                     },
                     cost_usd,
+                    // Provider diagnostics stay server-side (ops needs the real
+                    // status; the tenant gets a bare 503).
+                    ...(providerErr
+                      ? { provider_status: providerErr.status ?? null, provider_type: providerErr.name }
+                      : {}),
                   } as never)}, ${auth.userId})`;
       });
       await captureServer({
@@ -1142,8 +1200,12 @@ export async function aiPlanForDivision(
           cost_usd,
           blocking: 0,
           outcome,
+          ...(providerErr ? { provider_status: providerErr.status ?? null } : {}),
         },
       });
+    }
+    if (providerErr) {
+      throw new HttpError(503, "AI scheduling is temporarily unavailable; please retry", "AI_PROVIDER_UNAVAILABLE");
     }
     throw err;
   }
