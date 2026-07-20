@@ -65,6 +65,7 @@ import {
   getBillingOverview,
   setDefaultPaymentMethod,
   removePaymentMethod,
+  staffRemovePaymentMethod,
 } from "@/server/usecases/billing-manage";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 import { BillingBanner } from "@/components/billing-banner";
@@ -266,6 +267,27 @@ const WRITERS: WriterCase[] = [
       });
       stripeMock.detachPaymentMethod.mockResolvedValue({ id: "pm_old" });
       await removePaymentMethod(orgId, "pm_old");
+    },
+  },
+  {
+    // The fifth writer (Task 6C): staff detach an org's card, including its
+    // default — the customer-facing removePaymentMethod refuses that, but
+    // this is the audited exception (erasure requests, fraud cleanup).
+    name: "staffRemovePaymentMethod (staff detaches a card, incl. the default)",
+    cardsAfter: 0,
+    expected: false,
+    async run(orgId) {
+      stripeMock.retrievePaymentMethod.mockResolvedValue({
+        id: "pm_staff",
+        customer: await customerOf(orgId),
+        card: { brand: "visa", last4: "4242" },
+      });
+      stripeMock.detachPaymentMethod.mockResolvedValue({ id: "pm_staff" });
+      const [{ id: actorId }] = await sql<{ id: string }[]>`
+        insert into users (email, display_name, is_staff, staff_role)
+        values (${`pm6c-staff-${orgId}@test.local`}, 'Staff', true, 'superadmin')
+        returning id`;
+      await staffRemovePaymentMethod(actorId, orgId, "pm_staff", "fraud cleanup");
     },
   },
   {

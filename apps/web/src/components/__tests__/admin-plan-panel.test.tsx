@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AdminPlanPanel } from "../admin-plan-panel";
 import { ConfirmProvider } from "@/components/ui/confirm-provider";
+import type { PaymentMethodRow } from "@/lib/billing-manage";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
@@ -21,6 +22,7 @@ interface TestPlan {
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
   trial_used_at: string | null;
+  cards: PaymentMethodRow[];
 }
 
 const basePlan: TestPlan = {
@@ -33,6 +35,7 @@ const basePlan: TestPlan = {
   stripe_customer_id: null,
   stripe_subscription_id: null,
   trial_used_at: null,
+  cards: [],
 };
 
 function render(plan: TestPlan) {
@@ -179,5 +182,34 @@ describe("AdminPlanPanel — Comp/Extend/Downgrade gate on LIVENESS, not presenc
     // hint's stripeBilled gate outright would still pass the departed-org
     // "not present" assertion.
     expect(html).toContain("Also updates trial_end in Stripe.");
+  });
+});
+
+describe("AdminPlanPanel — Payment methods (Task 6C staff-only card removal)", () => {
+  const cardVisa: PaymentMethodRow = {
+    id: "pm_1", brand: "visa", last4: "4242", expMonth: 12, expYear: 2030, isDefault: true,
+  };
+  const cardMastercard: PaymentMethodRow = {
+    id: "pm_2", brand: "mastercard", last4: "1111", expMonth: 3, expYear: 2028, isDefault: false,
+  };
+
+  it("renders nothing when the org has no cards on file", () => {
+    const html = render(basePlan);
+    expect(html).not.toContain("Payment methods");
+  });
+
+  it("renders the card list — including its DEFAULT card, which the customer-facing page never shows a Remove control for — with a Remove button disabled until a reason is typed", () => {
+    const html = render({ ...basePlan, cards: [cardVisa] });
+    expect(html).toContain("Payment methods");
+    expect(html).toContain("visa");
+    expect(html).toContain("4242");
+    expect(html).toContain("default");
+    expect(isReallyDisabled(buttonHtmlFor(html, "Remove card"))).toBe(true);
+  });
+
+  it("does not badge a non-default card — the pair the case above alone can't prove", () => {
+    const html = render({ ...basePlan, cards: [cardMastercard] });
+    expect(html).toContain("mastercard");
+    expect(html).not.toContain("default");
   });
 });

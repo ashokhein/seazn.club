@@ -9,6 +9,7 @@ import { getLimit, invalidateOrgEntitlements } from "@/lib/entitlements";
 import { downgradeToCommunity, hasLiveSubscription } from "@/lib/billing";
 import { getStripe } from "@/lib/stripe";
 import { logStaffAction } from "@/lib/admin";
+import { paymentMethodRows, type PaymentMethodRow } from "@/lib/billing-manage";
 import {
   ACTIVE_COMPETITION_STATUSES,
   selectFrozen,
@@ -30,6 +31,30 @@ interface SubRow {
 export interface PlanPanel extends SubRow {
   /** Where the plan comes from: a Stripe subscription or an admin comp. */
   source: "stripe" | "comped" | "none";
+  /** Cards on the org's Stripe customer (Task 6C) — lets the panel render
+   *  staff-only removal, including of the default. Empty for an org with no
+   *  Stripe customer at all (no extra round trip attempted). */
+  cards: PaymentMethodRow[];
+}
+
+/** Best-effort card list for the admin panel. Only reads Stripe when there is
+ *  a customer to ask about; swallows its own failure (a Stripe hiccup must
+ *  degrade to an empty list, never break the whole org page). */
+async function cardsForCustomer(customerId: string | null): Promise<PaymentMethodRow[]> {
+  if (!customerId) return [];
+  try {
+    const stripe = getStripe();
+    const [customer, pms] = await Promise.all([
+      stripe.customers.retrieve(customerId),
+      stripe.customers.listPaymentMethods(customerId, { type: "card", limit: 10 }),
+    ]);
+    if (customer.deleted) return [];
+    const rawDefault = customer.invoice_settings?.default_payment_method;
+    const defaultId = typeof rawDefault === "string" ? rawDefault : (rawDefault?.id ?? null);
+    return paymentMethodRows(pms.data, defaultId);
+  } catch {
+    return [];
+  }
 }
 
 export async function planPanel(orgId: string): Promise<PlanPanel> {
@@ -43,6 +68,7 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
       current_period_end: null, stripe_customer_id: null, stripe_subscription_id: null,
       trial_used_at: null,
       source: "none",
+      cards: [],
     };
   }
   // Liveness, not mere presence: a cancelled subscription keeps its id for
@@ -54,7 +80,8 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
     : sub.plan_key === "pro" || sub.plan_key === "pro_plus"
       ? "comped"
       : "none";
-  return { ...sub, source };
+  const cards = await cardsForCustomer(sub.stripe_customer_id);
+  return { ...sub, source, cards };
 }
 
 /** Comp an org to Pro until a date (or forever). Refuses Stripe-billed orgs —

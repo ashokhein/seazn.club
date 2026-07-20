@@ -7,6 +7,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { hasLiveSubscription } from "@/lib/subscription-status";
+import { cardRemovalConsequence, type PaymentMethodRow } from "@/lib/billing-manage";
 
 interface Plan {
   plan_key: string;
@@ -21,6 +22,10 @@ interface Plan {
   // departed org (status: canceled) can still carry a pro plan_key AND a
   // trial_used_at date; neither hides the other here.
   trial_used_at: string | null;
+  // Task 6C: cards on the org's Stripe customer, so staff can remove one —
+  // including the default, which the customer-facing surface refuses on
+  // purpose (billing-manage.ts). Empty for an org with no Stripe customer.
+  cards: PaymentMethodRow[];
 }
 
 interface Override {
@@ -61,6 +66,7 @@ export function AdminPlanPanel({
   const [trialReason, setTrialReason] = useState("");
   const [restoreReason, setRestoreReason] = useState("");
   const [downReason, setDownReason] = useState("");
+  const [cardReason, setCardReason] = useState("");
   const [ov, setOv] = useState({ key: "", value: "", expires: "", reason: "" });
 
   async function call(path: string, init: RequestInit, tag: string) {
@@ -111,6 +117,28 @@ export function AdminPlanPanel({
     });
     if (!ok) return;
     await call("downgrade", { method: "POST", body: JSON.stringify({ reason: downReason }) }, "downgrade");
+  }
+
+  // Staff-only card removal (Task 6C), including the default — the
+  // customer-facing page refuses that on purpose. States the consequence
+  // BEFORE the click via a danger confirm, not after.
+  async function removeCard(card: PaymentMethodRow) {
+    const remainingAfter = plan.cards.length - 1;
+    const ok = await confirmDialog({
+      title: `Remove ${card.brand} •••• ${card.last4}?`,
+      body: cardRemovalConsequence(remainingAfter, plan.status),
+      confirmLabel: "Remove card",
+      tone: "danger",
+    });
+    if (!ok) return;
+    await call(
+      "remove-payment-method",
+      {
+        method: "POST",
+        body: JSON.stringify({ payment_method_id: card.id, reason: cardReason }),
+      },
+      `pm-${card.id}`,
+    );
   }
 
   async function saveOverride() {
@@ -194,6 +222,45 @@ export function AdminPlanPanel({
           )}
         </div>
       </div>
+
+      {/* Payment methods (Task 6C): staff-only removal, including the
+          default — customers never see this control (billing-manage.tsx
+          hides it and the server 400s). Only rendered when the org actually
+          has cards on file. */}
+      {plan.cards.length > 0 && (
+        <div className="rounded-lg bg-slate-800 p-4 space-y-2">
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+            Payment methods
+          </h3>
+          <ul className="divide-y divide-slate-700/60">
+            {plan.cards.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-3 py-2 text-sm">
+                <span className="text-slate-300">
+                  {c.brand} •••• {c.last4} ({c.expMonth}/{c.expYear})
+                  {c.isDefault && (
+                    <span className="ml-2 rounded bg-purple-900/70 px-1.5 py-0.5 text-[11px] text-purple-200">
+                      default
+                    </span>
+                  )}
+                </span>
+                <button
+                  onClick={() => removeCard(c)}
+                  disabled={!cardReason || busy === `pm-${c.id}`}
+                  className="rounded bg-red-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-red-700 disabled:opacity-50"
+                >
+                  {busy === `pm-${c.id}` ? "…" : "Remove card"}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <input
+            value={cardReason}
+            onChange={(e) => setCardReason(e.target.value)}
+            placeholder="Reason (required)"
+            className={`${inputCls} w-full`}
+          />
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-4">
         {/* Comp to Pro */}

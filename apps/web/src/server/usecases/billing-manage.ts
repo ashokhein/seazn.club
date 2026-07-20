@@ -10,6 +10,7 @@ import {
   syncSubscription,
 } from "@/lib/billing";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { logStaffAction } from "@/lib/admin";
 import {
   buildAddressUpdateParams,
   buildApplyPromoParams,
@@ -264,6 +265,40 @@ export async function removePaymentMethod(orgId: string, paymentMethodId: string
   // Re-reads Stripe rather than assuming: other cards may remain, in which case
   // the flag stays true.
   await syncPaymentMethodFlag(orgId);
+}
+
+/**
+ * Staff-only removal of an org's card, INCLUDING the default (Task 6C). The
+ * customer-facing removePaymentMethod above refuses the default on purpose —
+ * cutting an org's last card silently breaks billing (next invoice fails, or
+ * a trialing sub with missing_payment_method: "cancel" loses the subscription
+ * at trial end) — but staff sometimes need exactly that (erasure requests,
+ * fraud cleanup, a card that must never be charged again). This is the
+ * deliberate, audited exception; it does not touch removePaymentMethod's
+ * guard.
+ */
+export async function staffRemovePaymentMethod(
+  actorId: string,
+  orgId: string,
+  paymentMethodId: string,
+  reason: string,
+): Promise<void> {
+  if (!reason.trim()) throw new HttpError(400, "A reason is required.");
+  const { customerId } = await requireCustomer(orgId);
+  const stripe = getStripe();
+  const pm = await stripe.paymentMethods.retrieve(paymentMethodId);
+  if (pm.customer !== customerId)
+    throw new HttpError(400, "That card does not belong to this account.");
+  await stripe.paymentMethods.detach(paymentMethodId);
+  // The fifth writer of the has_payment_method mirror (Task 4C's enumerated
+  // set in lib/__tests__/billing-payment-method.test.ts) — re-reads Stripe
+  // rather than assuming, so this clears the flag exactly when the removed
+  // card was the last one and leaves it true when others remain.
+  await syncPaymentMethodFlag(orgId);
+  await logStaffAction(actorId, "remove_payment_method", "org", orgId, {
+    reason,
+    card: { brand: pm.card?.brand ?? "card", last4: pm.card?.last4 ?? "····" },
+  });
 }
 
 // ---------------------------------------------------------------------------
