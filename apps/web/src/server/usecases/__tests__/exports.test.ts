@@ -92,16 +92,36 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(xlsx.length).toBeGreaterThan(500);
   });
 
-  it("scoresheets pageBreaks=per_pitch: each court starts a new page", async () => {
+  it("scoresheets pageBreaks=per_pitch: one stack per court, one break between them", async () => {
     const { auth } = await seedOrg();
     const { division, fixtures } = await seedDivision(auth);
+    // Two courts, interleaved exactly as a real round robin comes back: R1 on
+    // both courts, then R2 on both. This is the shape the old code got wrong —
+    // it broke a page every time the court changed *in round order*, so it
+    // produced three breaks here and grouped nothing.
     await patchFixture(auth, fixtures[0]!.id, { scheduled_at: "2026-07-20T09:00:00.000Z", court_label: "Court 1" });
-    await patchFixture(auth, fixtures[1]!.id, { scheduled_at: "2026-07-20T09:30:00.000Z", court_label: "Court 2" });
+    await patchFixture(auth, fixtures[1]!.id, { scheduled_at: "2026-07-20T09:00:00.000Z", court_label: "Court 2" });
+    await patchFixture(auth, fixtures[2]!.id, { scheduled_at: "2026-07-20T09:30:00.000Z", court_label: "Court 1" });
+    await patchFixture(auth, fixtures[3]!.id, { scheduled_at: "2026-07-20T09:30:00.000Z", court_label: "Court 2" });
     const model = await buildDivisionDocModel(auth, division.id, "scoresheet", {
       printedAt: PRINTED, pageBreaks: "per_pitch",
     });
-    expect(model.sections.length).toBeGreaterThanOrEqual(2);
-    expect(model.sections.some((s) => s.pageBreakBefore === true)).toBe(true);
+
+    // seedDivision is a 4-entrant round robin (6 fixtures), so the two left
+    // without a court form a third group that sorts last. Three groups → two
+    // boundaries, never in front of the first sheet. The old code broke on
+    // every court change in round order and produced far more.
+    const breaks = model.sections.filter((s) => s.pageBreakBefore === true);
+    expect(breaks).toHaveLength(2);
+    expect(model.sections[0]!.pageBreakBefore).not.toBe(true);
+
+    // Every Court 1 sheet precedes every Court 2 sheet, and unassigned sheets
+    // come last — that is the point of the option: one pile per official.
+    const courtOf = (sub?: string) =>
+      sub?.includes("Court 1") ? 1 : sub?.includes("Court 2") ? 2 : 3;
+    const order = model.sections.map((s) => courtOf(s.subheading));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+
     // generic sport falls back to the result form with signatures
     expect(model.sections[0]!.signatures).toContain("Referee");
   });

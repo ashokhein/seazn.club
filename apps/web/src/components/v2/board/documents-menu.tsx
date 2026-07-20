@@ -120,6 +120,11 @@ export function DocumentsMenu({
       label: msg("documents.matchSheets"),
       base: `/api/v1/divisions/${divisionId}/exports/scoresheet`,
       xlsx: true,
+      // One printed stack per court, to hand each court's official. A no-op on
+      // a single-court division (one group, no breaks), and only worth having
+      // now that per_pitch groups by court instead of breaking on every court
+      // change in round order.
+      params: "pageBreaks=per_pitch",
     },
     {
       label: msg("documents.rota"),
