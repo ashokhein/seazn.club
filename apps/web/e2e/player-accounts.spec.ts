@@ -117,7 +117,12 @@ test.describe("player accounts (PROMPT-53)", () => {
     const viewport = playerPage.viewportSize()!;
     expect(Math.abs(cardBox.x + cardBox.width / 2 - viewport.width / 2)).toBeLessThan(3);
 
-    await loginUi(playerPage, playerEmail);
+    // The claim page's AuthForm carries next=/claim/<token>, and that is what
+    // keeps a claiming player player-only: a login with no `next` falls
+    // through to the org-resolution branch and hands them "My organization"
+    // (the person link they are about to make does not exist yet, so
+    // isPlayerOnly is false at this moment). Mirror the real flow.
+    await loginUi(playerPage, playerEmail, claimUrl.slice(claimUrl.indexOf("/claim/")));
     await playerPage.goto(claimUrl);
     await playerPage.getByRole("button", { name: /This is me/ }).click();
     await playerPage.waitForURL(/\/me\?claimed=1/);

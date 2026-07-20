@@ -89,13 +89,24 @@ export async function mintLoginPathBySql(email: string): Promise<string> {
  * Requests a magic link and opens the dev-exposed URL to establish the session;
  * an unknown email auto-creates the account. Production targets skip the route
  * (it would email a real — bouncing — address) and mint the token in the DB.
+ *
+ * `next` is the post-login redirect, and it is not cosmetic: a bare login runs
+ * the org-resolution branch, which auto-provisions "My organization" for a user
+ * who belongs to none. Every real entry point that logs someone in on their way
+ * somewhere (claim, join, invite pages) carries one, so a spec that skips it
+ * quietly turns its player into an organiser.
  */
-export async function loginUi(page: Page, email: string): Promise<void> {
+export async function loginUi(page: Page, email: string, next?: string): Promise<void> {
   let loginUrl: string | undefined;
   if (PROD_TARGET) {
+    // mintLoginPathBySql writes the token row only; the route appends `next`
+    // to the URL it emails, so do the same here.
     loginUrl = await mintLoginPathBySql(email);
+    if (next) loginUrl += `&next=${encodeURIComponent(next)}`;
   } else {
-    const res = await page.request.post("/api/auth/magic-link", { data: { email } });
+    const res = await page.request.post("/api/auth/magic-link", {
+      data: next ? { email, next } : { email },
+    });
     loginUrl = ((await res.json()) as { data?: { login_url?: string } }).data?.login_url;
   }
   if (!loginUrl) throw new Error("magic-link login_url missing — dev server required");
