@@ -1409,7 +1409,7 @@
   "boardset.rest": "Minimum rest per entrant (minutes)",
   "boardset.restHint": "Breathing room between one entrant's matches",
   "boardset.proSuffix": " (Pro)",
-  "boardset.venuesLabel": "{venue}s",
+  "boardset.venuesLabel": "{venue}",
   "boardset.venuesDesc": "Name each {venue} available — matches run in parallel across them.",
   "boardset.removeVenue": "Remove {venue} {n}",
   "boardset.addVenue": "+ Add {venue}",

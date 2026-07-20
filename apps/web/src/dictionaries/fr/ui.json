@@ -1409,7 +1409,7 @@
   "boardset.rest": "Repos minimum par participant (minutes)",
   "boardset.restHint": "Temps de récupération entre les matchs d'un participant",
   "boardset.proSuffix": " (Pro)",
-  "boardset.venuesLabel": "{venue}s",
+  "boardset.venuesLabel": "{venue}",
   "boardset.venuesDesc": "Nommez chaque {venue} disponible — les matchs s'y déroulent en parallèle.",
   "boardset.removeVenue": "Supprimer {venue} {n}",
   "boardset.addVenue": "+ Ajouter un {venue}",

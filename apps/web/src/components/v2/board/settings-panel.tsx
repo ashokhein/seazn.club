@@ -16,6 +16,7 @@ import {
 } from "@/lib/schedule-board";
 import type { BoardConfig } from "./types";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { pluralizeVenue } from "@/lib/venue";
 
 /** Self-contained wrapper for RSC pages (constraints tab): owns the saved/
  *  error notice the board would otherwise host. Opens expanded — on a
@@ -226,7 +227,7 @@ export function SettingsPanel({
       </div>
 
       <div>
-        <span className="label">{msg("boardset.venuesLabel", { venue: venueCap })}</span>
+        <span className="label">{msg("boardset.venuesLabel", { venue: pluralizeVenue(venueCap) })}</span>
         <p className="mb-2 text-xs text-slate-400">{msg("boardset.venuesDesc", { venue })}</p>
         {/* Court names are short ("Court 1", "Show court"), so a full-bleed
             input looked like a paragraph field. Capped at one column of the

@@ -1364,7 +1364,7 @@
   "boardset.rest": "Minimale rust per deelnemer (minuten)",
   "boardset.restHint": "Adempauze tussen de wedstrijden van één deelnemer",
   "boardset.proSuffix": " (Pro)",
-  "boardset.venuesLabel": "{venue}s",
+  "boardset.venuesLabel": "{venue}",
   "boardset.venuesDesc": "Benoem elke beschikbare {venue} — wedstrijden verlopen er parallel op.",
   "boardset.removeVenue": "{venue} {n} verwijderen",
   "boardset.addVenue": "+ {venue} toevoegen",

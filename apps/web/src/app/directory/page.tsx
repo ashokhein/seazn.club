@@ -47,7 +47,7 @@ export default async function DirectoryPage({
           </p>
         </div>
 
-        <nav className="mb-6 flex gap-1 border-b border-slate-200">
+        <nav className="scroll-x scroll-x-fade mb-6 flex gap-1 whitespace-nowrap border-b border-slate-200">
           {TABS.map((tabKey) => (
             <Link
               key={tabKey}

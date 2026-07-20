@@ -168,7 +168,7 @@ export default async function DivisionSchedulePage({
 
         {/* Tabs (Jul3): the board + each panel is its own view — the page was
             one long scroll otherwise. */}
-        <nav className="mb-6 flex gap-1 border-b border-slate-200">
+        <nav className="scroll-x scroll-x-fade mb-6 flex gap-1 whitespace-nowrap border-b border-slate-200">
           {TABS.map((t) => (
             <Link
               key={t}

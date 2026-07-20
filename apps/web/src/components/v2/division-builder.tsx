@@ -11,7 +11,7 @@ import { STAGE_TEMPLATES, buildTemplateStages, type StageDraft } from "./format-
 import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { routes } from "@/lib/routes";
 import { UpgradeGate } from "@/components/upgrade-gate";
-import { venueNoun, venueLabel } from "@/lib/venue";
+import { venueNoun, venueLabel, pluralizeVenue } from "@/lib/venue";
 import { defaultMatchMinutes } from "@/lib/match-length";
 import { FormatExplainerPanel } from "@/components/v2/format-explainer-panel";
 import { FormatRecommendStrip } from "@/components/v2/format-recommend-strip";
@@ -762,7 +762,7 @@ export function DivisionBuilder({
         </div>
 
         <div>
-          <span className="label">{msg("boardset.venuesLabel", { venue: VenueCap })}</span>
+          <span className="label">{msg("boardset.venuesLabel", { venue: pluralizeVenue(VenueCap) })}</span>
           <p className="mb-2 text-xs text-slate-400">{msg("boardset.venuesDesc", { venue })}</p>
           <ul className="space-y-2">
             {courts.map((c, i) => (

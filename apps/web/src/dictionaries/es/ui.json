@@ -1364,7 +1364,7 @@
   "boardset.rest": "Descanso mínimo por participante (minutos)",
   "boardset.restHint": "Margen de respiro entre los partidos de un participante",
   "boardset.proSuffix": " (Pro)",
-  "boardset.venuesLabel": "{venue}s",
+  "boardset.venuesLabel": "{venue}",
   "boardset.venuesDesc": "Nombra cada {venue} disponible: los partidos se juegan en paralelo entre ellos.",
   "boardset.removeVenue": "Quitar {venue} {n}",
   "boardset.addVenue": "+ Añadir {venue}",

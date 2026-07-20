@@ -3822,8 +3822,6 @@ async function schedRegV3Suite(
   check("reg without privacy consent refused (422)", noConsent.status === 422);
 
   // --- Dual payments (spec 2026-07-12): offline mark-paid + card gates (pro) ---
-  const orgsList = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
-  const proOrgId = orgsList.find((o) => o.slug === proOrgSlug)!.id;
   const payDiv = v1data<{ id: string; slug: string }>(
     await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
       name: "Paid Offline",
