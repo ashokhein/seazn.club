@@ -234,7 +234,10 @@ export function SettingsPanel({
       <div>
         <span className="label">{msg("boardset.venuesLabel", { venue: venueCap })}</span>
         <p className="mb-2 text-xs text-slate-400">{msg("boardset.venuesDesc", { venue })}</p>
-        <ul className="space-y-2">
+        {/* Court names are short ("Court 1", "Show court"), so a full-bleed
+            input looked like a paragraph field. Capped at one column of the
+            gap-4 two-col grid above so it lines up with those fields. */}
+        <ul className="space-y-2 sm:max-w-[calc(50%-0.5rem)]">
           {courts.map((c, i) => (
             <li key={i} className="flex items-center gap-2">
               <input
