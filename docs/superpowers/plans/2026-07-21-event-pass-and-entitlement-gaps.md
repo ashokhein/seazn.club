@@ -291,33 +291,81 @@ drop function if exists org_has_feature(uuid, text);
 
 - [ ] **Step 2: Fix the TS null-bool fork**
 
-In `apps/web/src/lib/entitlements.ts`, replace lines 60-65:
+`resolveFromDb` currently queries the override FIRST and returns it wholesale
+(`entitlements.ts:60-65`), so an override that answers only the INT question
+makes `hasFeature` see `bool_value === null` and yield **false**, while the SQL
+resolver's `coalesce` falls through to the plan row and yields **true**.
+
+Fix by inverting the order: resolve the base (pass → plan) first, then overlay
+only the override's non-null fields. That is exactly `coalesce` semantics, so
+the two resolvers agree by construction. Rewrite `resolveFromDb` in
+`apps/web/src/lib/entitlements.ts` as:
 
 ```ts
-  // Expired overrides are dead (v3/08 §1 admin expiry) — ignored here; the
-  // admin panel shows and sweeps them.
+async function resolveFromDb(
+  orgId: string,
+  featureKey: string,
+  competitionId?: string,
+): Promise<Resolved | null> {
+  // Plan first: both the pass branch and the override overlay need it, and it
+  // must be resolved exactly once.
+  const [orgPlan] = await sql<{ plan_key: string }[]>`
+    select case
+      when s.comped_until is not null and s.comped_until <= now()
+           and (s.stripe_subscription_id is null
+                or coalesce(s.status, '') not in ${sql([...LIVE_SUBSCRIPTION_STATUSES])})
+           then 'community'
+      when s.status = 'past_due'
+           and coalesce(s.status_changed_at, s.updated_at) <= now() - interval '14 days'
+           then 'community'
+      else coalesce(s.plan_key, 'community')
+    end as plan_key
+    from organizations o
+    left join subscriptions s on s.org_id = o.id
+    where o.id = ${orgId}`;
+  const planKey = orgPlan?.plan_key ?? "community";
+
+  // Event Pass: community orgs only, competition in scope. A key absent from
+  // the pass matrix falls through to the plan row rather than denying.
+  let base: Resolved | null = null;
+  if (planKey === "community" && competitionId) {
+    const [pass] = await sql<Resolved[]>`
+      select pe.bool_value, pe.int_value
+      from competition_passes cp
+      join plan_entitlements pe
+        on pe.plan_key = cp.pass_key and pe.feature_key = ${featureKey}
+      where cp.competition_id = ${competitionId} and cp.org_id = ${orgId}`;
+    base = pass ?? null;
+  }
+  if (!base) {
+    const [pe] = await sql<Resolved[]>`
+      select bool_value, int_value
+      from plan_entitlements
+      where plan_key = ${planKey} and feature_key = ${featureKey}`;
+    base = pe ?? null;
+  }
+
+  // Live overrides win, FIELD BY FIELD. An int-only override must not deny the
+  // boolean, and a bool-only override must not zero the quota. Mirrors the SQL
+  // resolver's coalesce (spec drift #5). A deliberate deny sets bool_value
+  // false, which is non-null and therefore still wins.
   const [ov] = await sql<Resolved[]>`
     select bool_value, int_value
     from org_entitlement_overrides
     where org_id = ${orgId} and feature_key = ${featureKey}
       and (expires_at is null or expires_at > now())`;
-  // An override that answers only the INT question must not deny the BOOL one:
-  // returning it wholesale made hasFeature see bool_value null and yield false,
-  // while the SQL resolver's coalesce fell through to the plan row. Fall
-  // through here too, so the two agree (spec drift #5).
-  if (ov && ov.bool_value !== null) return ov;
-  if (ov && ov.int_value !== null) {
-    const [planRow] = await sql<Resolved[]>`
-      select bool_value, int_value from plan_entitlements
-      where plan_key = 'community' and feature_key = ${featureKey}`;
-    return { bool_value: planRow?.bool_value ?? null, int_value: ov.int_value };
-  }
+  if (!ov) return base;
+  return {
+    bool_value: ov.bool_value ?? base?.bool_value ?? null,
+    int_value: ov.int_value ?? base?.int_value ?? null,
+  };
+}
 ```
 
-**Note for the implementer:** the `plan_key = 'community'` literal above is
-wrong for a paid org. Resolve the plan first (move the `orgPlan` query above
-this block) and use `planKey`. Restructure the function so plan resolution
-happens once, at the top, and both the override and pass branches use it.
+**Behaviour change to verify:** an override on a key the org has no plan row for
+now returns a `Resolved` object rather than `null`. `getLimit` returns
+`row.int_value` (possibly null = unlimited) instead of `0`. Check the
+`entitlement-admin` tests for anything that depended on the old shape.
 
 - [ ] **Step 3: Apply the migration and run the tests**
 
@@ -1026,9 +1074,9 @@ cd apps/web && npx tsc --noEmit && npx vitest run
 - **Spec coverage:** D1→T17, D2→T13/T14, D3→T19, D4→T8, D5→T7, D6→T2/T9,
   D7→T17/T18, D8→T2/T3, D9→Phase 1 ordering, D10→T21, D11→T20, D12→T15,
   D13→T15, D14→T13, D15→T22/T23/T24, D16→phase order.
-- **Known gap:** Task 2 Step 2's snippet uses a `'community'` literal that is
-  wrong for a paid org; the step says so and instructs restructuring. An
-  implementer must not paste it verbatim.
+- **Resolved pre-flight:** Task 2 Step 2 originally carried a snippet with a
+  `'community'` literal that is wrong for a paid org. Replaced with the full
+  corrected `resolveFromDb`. Paste that one verbatim.
 - **Known gap:** Tasks 4, 6-11, 19 give the shape of each test rather than full
   code. Write them against the local-seed convention shown in Task 1 — copy the
   `seedOrg` helper shape and adapt. Do **not** invent a shared factories module;
