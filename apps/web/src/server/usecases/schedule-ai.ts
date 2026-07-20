@@ -693,6 +693,43 @@ export function schedulingAiThinking(): AiThinking {
   return process.env.SCHEDULING_AI_THINKING === "disabled" ? "disabled" : "adaptive";
 }
 
+/** Models that predate adaptive thinking and the effort parameter. Verified
+ *  live against the API on 2026-07-20 — claude-haiku-4-5 rejects BOTH:
+ *    thinking:{type:"adaptive"}  → 400 "adaptive thinking is not supported on this model"
+ *    output_config.effort        → 400 "This model does not support the effort parameter."
+ *  It does accept legacy `thinking:{type:"enabled",budget_tokens}` and returns
+ *  structured output through zodOutputFormat exactly like the newer models, so
+ *  it is usable here — just not with the request shape the newer models want. */
+const LEGACY_REASONING_MODELS = new Set(["claude-haiku-4-5", "claude-sonnet-4-5"]);
+
+/** Thinking budget for legacy-reasoning models. Must stay below max_tokens.
+ *  Unlike effort's five positions this is a token-precise ceiling, which is the
+ *  shape this workload wants: the 2026-07-20 repeats showed effort:medium's
+ *  problem was spread (1.63x), not its average. */
+export function schedulingAiThinkingBudget(): number {
+  const n = Number(process.env.SCHEDULING_AI_THINKING_BUDGET);
+  return Number.isFinite(n) && n >= 1024 ? Math.floor(n) : 0;
+}
+
+/** The reasoning half of the request, shaped for what `model` actually accepts.
+ *  Returning the fields rather than mutating a request object keeps the
+ *  per-model branching in one place instead of at every call site. */
+export function aiReasoningParams(model: string): {
+  thinking?: { type: "adaptive" } | { type: "disabled" } | { type: "enabled"; budget_tokens: number };
+  effort?: AiEffort;
+} {
+  if (LEGACY_REASONING_MODELS.has(model)) {
+    const budget = schedulingAiThinkingBudget();
+    // No adaptive, no effort. A budget or nothing — omitting `thinking`
+    // entirely is how these models run without reasoning.
+    return budget > 0 ? { thinking: { type: "enabled", budget_tokens: budget } } : {};
+  }
+  return {
+    thinking: schedulingAiThinking() === "disabled" ? { type: "disabled" } : { type: "adaptive" },
+    effort: schedulingAiEffort(),
+  };
+}
+
 export function anthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -865,13 +902,18 @@ async function callModel(
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ROUND_TIMEOUT_MS);
+  const reasoning = aiReasoningParams(model);
   try {
     return await client.messages.parse(
       {
         model,
         max_tokens: 32_000,
-        thinking: schedulingAiThinking() === "disabled" ? { type: "disabled" } : { type: "adaptive" },
-        output_config: { effort: schedulingAiEffort(), format: zodOutputFormat(AiSchedulePlan) },
+        // Reasoning params vary by model — haiku-4-5 400s on adaptive/effort.
+        ...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
+        output_config: {
+          ...(reasoning.effort ? { effort: reasoning.effort } : {}),
+          format: zodOutputFormat(AiSchedulePlan),
+        },
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [...messages],
       },

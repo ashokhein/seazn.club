@@ -17,6 +17,7 @@ import { useMsg } from "@/components/i18n/dict-provider";
 import type { MessageKey } from "@/lib/messages";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { PlanBadge } from "@/components/plan-badge";
+import { RunElapsed } from "./run-elapsed";
 import type {
   AiPlanRequest,
   AiPlanResponse,
@@ -927,6 +928,10 @@ function BriefStep({
           </>
         )}
       </button>
+      {/* Below the button, not inside it: a per-second counter on a gradient
+          fill would jitter the label, and gray would not read on violet.
+          Mounted only while busy — the unmount is what resets the clock. */}
+      {busy && <RunElapsed />}
     </div>
   );
 }

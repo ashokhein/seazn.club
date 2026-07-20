@@ -18,7 +18,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { runAiPlan } from "../schedule-ai";
+import { aiReasoningParams, runAiPlan } from "../schedule-ai";
 import type { SchedulePack } from "../schedule-ai";
 
 // --- Fixed ids -------------------------------------------------------------
@@ -233,6 +233,35 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     await runAiPlan(pack, movableIds);
     expect((parse.mock.calls[0][0] as { output_config: { effort: string } }).output_config.effort).toBe("medium");
     delete process.env.SCHEDULING_AI_EFFORT;
+  });
+
+  // Verified live 2026-07-20: claude-haiku-4-5 rejects BOTH of the reasoning
+  // params the newer models want —
+  //   thinking:{type:"adaptive"} → 400 "adaptive thinking is not supported…"
+  //   output_config.effort       → 400 "This model does not support the effort parameter."
+  // so sending them makes SCHEDULING_AI_MODEL=claude-haiku-4-5 fail outright.
+  it("shapes reasoning params per model — haiku gets budget_tokens, never adaptive/effort", () => {
+    delete process.env.SCHEDULING_AI_THINKING;
+    delete process.env.SCHEDULING_AI_EFFORT;
+
+    process.env.SCHEDULING_AI_THINKING_BUDGET = "8000";
+    const haiku = aiReasoningParams("claude-haiku-4-5");
+    expect(haiku).toEqual({ thinking: { type: "enabled", budget_tokens: 8000 } });
+    expect(haiku.effort).toBeUndefined();
+
+    // No budget → omit `thinking` entirely; that is how a legacy model runs
+    // without reasoning. Sending {type:"disabled"} is not the same thing.
+    delete process.env.SCHEDULING_AI_THINKING_BUDGET;
+    expect(aiReasoningParams("claude-haiku-4-5")).toEqual({});
+
+    // Modern models keep the adaptive + effort shape.
+    const sonnet = aiReasoningParams("claude-sonnet-5");
+    expect(sonnet.thinking).toEqual({ type: "adaptive" });
+    expect(sonnet.effort).toBe("medium");
+
+    process.env.SCHEDULING_AI_THINKING = "disabled";
+    expect(aiReasoningParams("claude-sonnet-5").thinking).toEqual({ type: "disabled" });
+    delete process.env.SCHEDULING_AI_THINKING;
   });
 
   it("client is constructed with an explicit timeout — without one the SDK refuses non-streaming max_tokens:32000 calls", async () => {
