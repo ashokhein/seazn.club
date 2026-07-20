@@ -29,7 +29,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { downgradeToCommunity, hasLiveSubscription } from "@/lib/billing";
-import { adminDowngrade, compToPro, extendTrial } from "@/server/usecases/admin-plan";
+import { adminDowngrade, compToPro, extendTrial, restoreTrial } from "@/server/usecases/admin-plan";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -43,6 +43,7 @@ const WRITERS: { name: string; run: (orgId: string, actorId: string) => Promise<
   { name: "extendTrial", run: (o, a) => extendTrial(a, o, 7, "win-back trial") },
   { name: "adminDowngrade", run: (o, a) => adminDowngrade(a, o, "comp withdrawn") },
   { name: "downgradeToCommunity", run: (o) => downgradeToCommunity(o) },
+  { name: "restoreTrial", run: (o, a) => restoreTrial(a, o, "departed org, giving them another shot") },
 ];
 
 /** A departed org: Pro once, subscription cancelled, dead id still on the row. */
