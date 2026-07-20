@@ -327,10 +327,15 @@ export async function setOrgSubscriptionSql(
     status: string;
     trial_end?: string | null;
     trial_used_at?: string | null;
+    // Optional so callers testing liveness (id present + status) can force a
+    // "departed" org — a cancelled sub that keeps its dead Stripe id forever.
+    // Omitting it leaves whatever the row already holds.
+    stripe_subscription_id?: string | null;
   },
 ): Promise<void> {
   const burn = "trial_used_at" in fields;
   const used = fields.trial_used_at ?? null;
+  const setId = "stripe_subscription_id" in fields;
   await withDb(async (sql) => {
     await sql`
       insert into subscriptions (org_id, plan_key, status, trial_end, trial_used_at)
@@ -340,6 +345,9 @@ export async function setOrgSubscriptionSql(
             trial_end = ${fields.trial_end ?? null}`;
     if (burn) {
       await sql`update subscriptions set trial_used_at = ${used} where org_id = ${orgId}`;
+    }
+    if (setId) {
+      await sql`update subscriptions set stripe_subscription_id = ${fields.stripe_subscription_id ?? null} where org_id = ${orgId}`;
     }
   });
 }

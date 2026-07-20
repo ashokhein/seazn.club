@@ -403,6 +403,11 @@ await i18nSuite();
   // orgs; keyless-safe.
   await oneTrialSuite();
 
+  // --- Task 11: staff-only default-card removal + the customer-facing
+  // refusal it deliberately does not loosen. Needs a real Stripe test-mode
+  // card; keyless-safe (see the suite's own doc comment).
+  await paymentMethodSuite();
+
   // --- clubs-w1 (W1): parent clubs group teams — the hub lifecycle (create →
   // profile → contact → standalone team → move under the club → squad with a
   // quick-created person) on Pro, and the tunable clubs.max=2 community cap.
@@ -2367,6 +2372,39 @@ async function oneTrialSuite(): Promise<void> {
         departed.status === "canceled",
     );
 
+    // --- Restore trial 1: the sanctioned undo, on the departed org from path
+    // 4 above (canceled status, dead id — not live, so the restore is
+    // allowed). trial_used_at must actually clear, not just the call 200.
+    const beforeRestore = await readSub(depOrg);
+    const restore = await raw(staff, `/api/admin/orgs/${depOrg}/restore-trial`, "POST", {
+      reason: "smoke: restore trial is the sanctioned one-time undo",
+    });
+    const restored = await readSub(depOrg);
+    check(
+      "trial/restore: a departed org's burn is cleared by restoreTrial",
+      beforeRestore.trial_used_at !== null &&
+        restore.status === 200 &&
+        restored.trial_used_at === null,
+    );
+
+    // --- Restore trial 2: the DISCRIMINATING refusal. proOrg was made LIVE in
+    // Pro path 3 above (id + status 'active') and is still burned — restoring
+    // it would just be re-stamped by the next sync, so the usecase refuses
+    // with 400 before writing anything. trial_used_at must be UNCHANGED, not
+    // merely "still non-null" (which a broken restore that cleared-then-
+    // recoalesced could still satisfy).
+    const beforeRefuseRestore = await readSub(proOrg);
+    const restoreRefused = await raw(staff, `/api/admin/orgs/${proOrg}/restore-trial`, "POST", {
+      reason: "smoke: a live org keeps its burn",
+    });
+    const afterRefuseRestore = await readSub(proOrg);
+    check(
+      "trial/restore: a LIVE org is refused (400) and its burn is unchanged",
+      beforeRefuseRestore.trial_used_at !== null &&
+        restoreRefused.status === 400 &&
+        at(afterRefuseRestore.trial_used_at) === at(beforeRefuseRestore.trial_used_at),
+    );
+
     // --- Free path 2: the OTHER stamping writer. A comp is free Pro too.
     const comp = await raw(staff, `/api/admin/orgs/${freeOrg}/comp-to-pro`, "POST", {
       until: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10),
@@ -2396,6 +2434,88 @@ async function oneTrialSuite(): Promise<void> {
         returnBilling.status === 200 &&
         returnBilling.body.includes(OFFERS_NO_TRIAL) &&
         !returnBilling.body.includes(OFFERS_TRIAL),
+    );
+  } finally {
+    await setStaff(staffEmail, null);
+  }
+}
+
+/** Task 11: staffRemovePaymentMethod (staff can remove even the DEFAULT card)
+ *  and the customer-facing removePaymentMethod's default-card refusal, both
+ *  new user-visible rails with no prior smoke arm. Needs a REAL Stripe
+ *  test-mode customer + card — no app route mints one headless, since the
+ *  actual "add a card" flow mounts Stripe's own Elements iframe
+ *  (AddCardForm). Stripe's `pm_card_visa` token exists exactly for this:
+ *  attaching it to a customer in test mode creates a real PaymentMethod with
+ *  no client-side confirmation step needed. Keyless-safe: skips (rather than
+ *  fails) without STRIPE_SECRET_KEY, the same convention as the sponsor
+ *  Connect checkout suite. */
+async function paymentMethodSuite(): Promise<void> {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    check("pm: skipped (no STRIPE_SECRET_KEY — cannot attach a real test card)", true);
+    return;
+  }
+  const { default: Stripe } = await import("stripe");
+  const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+  const staffEmail = `pm_staff_${tag}@example.com`;
+  const staff = newSession();
+  await signIn(staff, staffEmail);
+
+  const owner = newSession();
+  const ownerOrg = (await signIn(owner, `pm_owner_${tag}@example.com`)).org_id;
+
+  const customer = await stripe.customers.create({ email: `pm_owner_${tag}@example.com` });
+  const pm = await stripe.paymentMethods.attach("pm_card_visa", { customer: customer.id });
+  await stripe.customers.update(customer.id, {
+    invoice_settings: { default_payment_method: pm.id },
+  });
+
+  const readFlag = async (): Promise<boolean | null> => {
+    const d = smokeDb();
+    try {
+      const [row] = await d<{ has_payment_method: boolean | null }[]>`
+        select has_payment_method from subscriptions where org_id = ${ownerOrg}`;
+      return row ? row.has_payment_method : null;
+    } finally {
+      await d.end();
+    }
+  };
+
+  const db = smokeDb();
+  try {
+    await db`
+      update subscriptions
+      set stripe_customer_id = ${customer.id}, has_payment_method = true
+      where org_id = ${ownerOrg}`;
+  } finally {
+    await db.end();
+  }
+
+  await setStaff(staffEmail, "superadmin");
+  try {
+    // The org's only card is also its default — the customer-facing path
+    // refuses exactly that (400), before Stripe is ever called.
+    const customerAttempt = await raw(owner, "/api/billing/remove-payment-method", "POST", {
+      payment_method_id: pm.id,
+    });
+    check(
+      "pm/customer: removing the DEFAULT card is refused (400)",
+      customerAttempt.status === 400,
+    );
+
+    // Staff CAN remove it — the audited exception (Task 6C) — and the mirror
+    // re-reads Stripe rather than assuming, so it flips false once no cards
+    // remain (this org had exactly one).
+    const staffRemove = await raw(
+      staff,
+      `/api/admin/orgs/${ownerOrg}/remove-payment-method`,
+      "POST",
+      { payment_method_id: pm.id, reason: "smoke: staff can remove the default card" },
+    );
+    check(
+      "pm/staff: staff removes the default card (200) and has_payment_method re-mirrors false",
+      staffRemove.status === 200 && (await readFlag()) === false,
     );
   } finally {
     await setStaff(staffEmail, null);
@@ -5054,6 +5174,8 @@ async function cleanup(tag: string): Promise<void> {
     `trial_pro_${tag}@example.com`,
     `trial_free_${tag}@example.com`,
     `trial_dep_${tag}@example.com`,
+    `pm_staff_${tag}@example.com`,
+    `pm_owner_${tag}@example.com`,
   ];
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
   const sql = postgres(url, {

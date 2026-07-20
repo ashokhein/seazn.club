@@ -246,4 +246,21 @@ describe("AdminPlanPanel — Payment methods (Task 6C staff-only card removal)",
     const reasonInputCount = (section.match(/placeholder="Reason \(required\)"/g) ?? []).length;
     expect(reasonInputCount).toBe(1);
   });
+
+  // A Stripe customer with an EMPTY card list used to render nothing at all —
+  // staff working a fraud-cleanup or erasure request couldn't tell "this org
+  // has no cards" from "the Stripe read failed". Distinct from the plain
+  // "renders nothing" case above: that one has no stripe_customer_id either,
+  // so it can't tell apart "no customer" from "customer, no cards" — this
+  // pair can.
+  it("states plainly when a Stripe customer exists but no cards came back", () => {
+    const html = render({ ...basePlan, stripe_customer_id: "cus_123", cards: [] });
+    expect(html).toContain("Payment methods");
+    expect(html).toContain("No cards on file — or Stripe could not be reached.");
+  });
+
+  it("does not show the empty-cards line once real cards are on file — the pair the case above alone can't prove", () => {
+    const html = render({ ...basePlan, stripe_customer_id: "cus_123", cards: [cardVisa] });
+    expect(html).not.toContain("No cards on file — or Stripe could not be reached.");
+  });
 });

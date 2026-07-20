@@ -60,7 +60,7 @@ test.describe.serial("billing", () => {
       "POST",
       { plan_key: "pro", interval: "monthly" },
     );
-    test.skip(probe.status >= 500 || probe.status === 503, "Stripe not configured — skipping");
+    test.skip(probe.status >= 500, "Stripe not configured — skipping");
     expect(probe.status).toBe(200);
     expect(probe.data?.client_secret).toBeTruthy();
 
@@ -229,7 +229,11 @@ test.describe.serial("billing", () => {
       "POST",
       { plan_key: "pro", interval: "annual" },
     );
-    test.skip(probe.status >= 500 || probe.status === 503, "Stripe not configured — skipping");
+    test.skip(probe.status >= 500, "Stripe not configured — skipping");
+    // A healthy-looking skip previously CONCEALED a real regression on this
+    // branch — pin the non-skip path to a real 200 so this can't quietly
+    // start skipping every run without anyone noticing.
+    expect(probe.status).toBe(200);
 
     // NOTE: "/settings?tab=billing" redirects through routes.orgSettings() to
     // the tabbed org-profile page, NOT the billing page — that's a different

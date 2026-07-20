@@ -137,7 +137,19 @@ test.describe.serial("billing lifecycle states", () => {
   // as { ok, data }. The panel used to read `.frozen` off that whole envelope
   // instead of `.data.frozen`, so the click threw inside the async handler
   // and the confirm dialog silently never opened (nothing visibly happens).
-  test("staff Preview & downgrade unwraps the freeze-preview envelope and opens the confirm dialog", async ({
+  //
+  // A fresh org's `frozen` list is `[]` on BOTH the correct and the
+  // regressed (`body.frozen ?? []`) reads, so that variant cannot tell them
+  // apart — it only reds against the ORIGINAL throwing form. This variant
+  // seeds a NON-EMPTY `frozen` list instead: fill Community's real
+  // competitions.max_active ceiling, comp the org to Pro (lifting the
+  // ceiling), add ONE more competition, then downgrade-preview it. Only
+  // `limit` most-recently-active competitions stay active (selectFrozen),
+  // so the FIRST one created is always the one that freezes once a later
+  // one exists — asserting ITS NAME appears is only possible if
+  // `.data.frozen` was actually read; `body.frozen ?? []` still yields `[]`
+  // and the dialog would show the (wrong) "nothing will freeze" copy.
+  test("staff Preview & downgrade shows the real frozen competitions, not an envelope-masked empty list", async ({
     page,
   }) => {
     const org = await apiJson<{ id: string }>(page.request, "/api/orgs", "POST", {
@@ -146,8 +158,43 @@ test.describe.serial("billing lifecycle states", () => {
     expect(org.status).toBeLessThan(300);
     const previewOrgId = org.data!.id;
 
+    const newCompetition = (n: string) =>
+      apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
+        name: `${n} ${TAG}`,
+        visibility: "private",
+      });
+
+    // Discover Community's real ceiling by filling it until a create 402s
+    // (plan data, not a constant — see the sibling "staff trial grant" test
+    // above). The oldest one created ("FreezeOldest") is what must show up
+    // frozen later, since selectFrozen keeps the most-recently-active N.
+    let blockedAt = 0;
+    for (let i = 1; i <= 6 && blockedAt === 0; i++) {
+      const res = await newCompetition(i === 1 ? "FreezeOldest" : `FreezeFiller ${i}`);
+      if (res.status === 402) {
+        expect(res.error?.code).toBe("PAYMENT_REQUIRED");
+        blockedAt = i;
+      } else {
+        expect(res.status).toBe(201);
+      }
+    }
+    expect(blockedAt, "community never hit its competition ceiling").toBeGreaterThan(0);
+
     await grantStaff(previewOrgId);
     try {
+      const comp = await apiJson(
+        page.request,
+        `/api/admin/orgs/${previewOrgId}/comp-to-pro`,
+        "POST",
+        { reason: "e2e: freeze preview needs a non-empty frozen list" },
+      );
+      expect(comp.status).toBeLessThan(300);
+
+      // Pro has no competitions ceiling, so this succeeds — the org is now
+      // one competition over Community's limit.
+      const over = await newCompetition("FreezeNewest");
+      expect(over.status).toBe(201);
+
       await page.goto(`/admin/orgs/${previewOrgId}`);
       const downgradeCard = page
         .locator("div")
@@ -155,24 +202,60 @@ test.describe.serial("billing lifecycle states", () => {
         .last();
       await downgradeCard
         .getByPlaceholder("Reason (required)")
-        .fill("e2e: preview must not throw");
+        .fill("e2e: assert the real frozen name renders");
       await downgradeCard
         .getByRole("button", { name: "Preview & downgrade", exact: true })
         .click();
 
-      // A fresh org has zero competitions, so the honest preview is the
-      // "nothing will freeze" branch — asserting its exact copy proves the
-      // envelope was actually unwrapped (frozen: []), not just that some
-      // dialog happened to appear.
       const dialog = page.getByRole("alertdialog", { name: "Downgrade to Free — immediately?" });
       await expect(dialog).toBeVisible({ timeout: 20_000 });
-      await expect(
-        dialog.getByText(/within Free limits — nothing will freeze/i),
-      ).toBeVisible();
+      await expect(dialog.getByText(new RegExp(`FreezeOldest ${TAG}`))).toBeVisible();
+      await expect(dialog.getByText(/nothing will freeze/i)).toHaveCount(0);
       await dialog.getByRole("button", { name: "Cancel" }).click();
     } finally {
       await setOwnerStaffSql(previewOrgId, false);
       staffOrgIds.delete(previewOrgId);
     }
+  });
+
+  // compToPro can comp a departed org (a cancelled sub keeps its dead Stripe
+  // id forever), so `plan_key='pro'` + a dead id + `status='canceled'` is
+  // reachable. The billing page used to gate its Stripe-manage block on mere
+  // id PRESENCE, so such an org got the Cancel-subscription/interval-switch
+  // controls (which would throw at Stripe against a dead id) and lost the
+  // in-app DowngradeButton. Both arms share one org so the SQL is identical
+  // except for `status` — proving the two cases genuinely disagree.
+  test("departed org (dead id, canceled) gets Downgrade, not the Stripe manage block — live org is the opposite", async ({
+    page,
+  }) => {
+    const org = await apiJson<{ id: string }>(page.request, "/api/orgs", "POST", {
+      name: `Departed ${TAG}`,
+    });
+    expect(org.status).toBeLessThan(300);
+    orgId = org.data!.id;
+    const deadId = `sub_dead_${TAG}`;
+
+    await setOrgSubscriptionSql(orgId, {
+      plan_key: "pro",
+      status: "canceled",
+      stripe_subscription_id: deadId,
+    });
+    await page.goto("/settings/billing");
+    await expect(page.getByRole("button", { name: "Downgrade to Community" })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole("button", { name: "Cancel subscription" })).toHaveCount(0);
+
+    // Same org, same (still-present) id — only status changes to a live one.
+    await setOrgSubscriptionSql(orgId, {
+      plan_key: "pro",
+      status: "active",
+      stripe_subscription_id: deadId,
+    });
+    await page.goto("/settings/billing");
+    await expect(page.getByRole("button", { name: "Cancel subscription" })).toBeVisible({
+      timeout: 20_000,
+    });
+    await expect(page.getByRole("button", { name: "Downgrade to Community" })).toHaveCount(0);
   });
 });
