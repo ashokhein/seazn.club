@@ -4,7 +4,7 @@
 // on a 422. The Anthropic SDK, PostHog, and the Redis window counter are mocked;
 // everything else (entitlements, the pack builder) hits real Postgres, so the
 // suite is skipped without DATABASE_URL.
-import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
 // Hoisted mock handles — referenced from vi.mock factories (which hoist above
@@ -354,6 +354,152 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
       aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
     ).rejects.toMatchObject({ status: 403, code: "FEATURE_DISABLED" });
     expect(parse).not.toHaveBeenCalled();
+  });
+
+  // A frozen division rejects every applied plan (applySchedule, 422), so a run
+  // could only ever produce a proposal the organiser is then blocked from
+  // using — and that block landed at Apply, minutes and one paid generation
+  // later. The guard belongs ahead of the quota and spend gates.
+  it("frozen division → 409 SCHEDULE_LOCKED, before any spend", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedPlannable(auth);
+    await sql`update divisions set schedule_locked = true where id = ${divisionId}`;
+
+    await expect(
+      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
+    ).rejects.toMatchObject({ status: 409, code: "SCHEDULE_LOCKED" });
+
+    // No model call, no generation consumed, no rate-limit slot burned.
+    expect(parse).not.toHaveBeenCalled();
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where payload->>'division_id' = ${divisionId}
+        and type in ('schedule.ai_generated', 'schedule.ai_failed')`;
+    expect(n).toBe(0);
+    expect(rlCounts.size).toBe(0);
+
+    // Unfreezing restores the normal path — the guard gates on state, not identity.
+    await sql`update divisions set schedule_locked = false where id = ${divisionId}`;
+    parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
+    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" });
+    expect(out.proposal.length).toBeGreaterThan(0);
+  });
+
+  // Runtime model escalation: try a cheap model, keep it only if the referee
+  // says the plan is good enough, otherwise re-run on the primary. Opt-in via
+  // SCHEDULING_AI_CHEAP_MODEL, so the default path is untouched.
+  describe("cheap-model escalation", () => {
+    afterEach(() => {
+      delete process.env.SCHEDULING_AI_CHEAP_MODEL;
+      delete process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO;
+    });
+
+    it("keeps the cheap plan when the referee is happy — one call, no escalation", async () => {
+      process.env.SCHEDULING_AI_CHEAP_MODEL = "claude-haiku-4-5";
+      // legalPlan is conflict-free but not warning-free: it packs fixtures 30
+      // minutes apart at matchMinutes:30, so entrants get zero rest against the
+      // 20-minute minimum. A tolerant ratio isolates what this test is about
+      // (an acceptable plan is kept) from the warning threshold, which the
+      // sibling tests exercise.
+      process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO = "999";
+      const auth = await seedPlusOrg();
+      const { divisionId, fixtureIds } = await seedPlannable(auth);
+      parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
+
+      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+
+      expect(parse).toHaveBeenCalledTimes(1);
+      expect((parse.mock.calls[0][0] as { model: string }).model).toBe("claude-haiku-4-5");
+      expect(out.proposal.length).toBe(fixtureIds.length);
+    });
+
+    // A cheap model that gives up entirely must not surface as a 422 — an
+    // opt-in cost optimisation that lowers success rate is not a trade worth
+    // making. Its spent tokens still ride on the escalated run's bill.
+    it("escalates when the cheap model fails outright, and still bills its tokens", async () => {
+      process.env.SCHEDULING_AI_CHEAP_MODEL = "claude-haiku-4-5";
+      const auth = await seedPlusOrg();
+      const { divisionId, fixtureIds } = await seedPlannable(auth);
+
+      // Refusal → runAiPlan throws 422 AI_PLAN_FAILED carrying usage.
+      parse.mockResolvedValueOnce({
+        parsed_output: null, stop_reason: "refusal", usage: { input_tokens: 100, output_tokens: 50 }, content: [],
+      });
+      parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds), { input_tokens: 700, output_tokens: 300 }));
+
+      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+      expect(out.proposal.length).toBe(fixtureIds.length);
+
+      const models = parse.mock.calls.map((c) => (c[0] as { model: string }).model);
+      expect(models).toEqual(["claude-haiku-4-5", "claude-sonnet-5"]);
+
+      const [row] = await sql<{ payload: { usage: { input_tokens: number; output_tokens: number }; escalated_from?: string } }[]>`
+        select payload from competition_events
+        where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}
+        order by created_at desc limit 1`;
+      expect(row?.payload.escalated_from).toBe("claude-haiku-4-5");
+      // 100+700 in, 50+300 out — the abandoned attempt is not free.
+      expect(row!.payload.usage.input_tokens).toBe(800);
+      expect(row!.payload.usage.output_tokens).toBe(350);
+    });
+
+    it("escalates on blocking conflicts, and bills BOTH attempts", async () => {
+      process.env.SCHEDULING_AI_CHEAP_MODEL = "claude-haiku-4-5";
+      const auth = await seedPlusOrg();
+      const { divisionId, fixtureIds } = await seedPlannable(auth);
+
+      // Otherwise-legal plan with ONE court double-booking: fixture[1] is moved
+      // onto fixture[0]'s exact slot and court. Structurally valid (every
+      // movable id appears once) so it reaches the verifier, which reports a
+      // blocking court conflict — the condition escalation exists for.
+      const legal = legalPlan(fixtureIds) as { assignments: { fixture_id: string; scheduled_at: string; court_label: string }[] };
+      const clash = {
+        ...legal,
+        assignments: legal.assignments.map((a, i) =>
+          i === 1 ? { ...a, scheduled_at: legal.assignments[0].scheduled_at, court_label: legal.assignments[0].court_label } : a,
+        ),
+      };
+      // Persistent fallback is the clean plan; the first three calls (the cheap
+      // model's initial attempt + MAX_REPAIR_ROUNDS) are the clash. Written this
+      // way so the test does not depend on the exact call count of the repair
+      // loop — only on "cheap keeps failing, primary succeeds".
+      parse.mockResolvedValue(planResponse(legal, { input_tokens: 700, output_tokens: 300 }));
+      for (let i = 0; i < 3; i++) {
+        parse.mockResolvedValueOnce(planResponse(clash, { input_tokens: 100, output_tokens: 50 }));
+      }
+
+      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }).catch(
+        () => null,
+      );
+
+      // Both models were tried: cheap first, primary second.
+      const models = parse.mock.calls.map((c) => (c[0] as { model: string }).model);
+      expect(models[0]).toBe("claude-haiku-4-5");
+      expect(models).toContain("claude-sonnet-5");
+
+      // A wasted cheap attempt is real spend. If the ledger only counted the
+      // winning half it would under-report every escalated run.
+      if (out) {
+        const [row] = await sql<{ payload: { usage: { input_tokens: number }; escalated_from?: string } }[]>`
+          select payload from competition_events
+          where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}
+          order by created_at desc limit 1`;
+        expect(row?.payload.escalated_from).toBe("claude-haiku-4-5");
+        // Strictly more than any single attempt spent.
+        expect(row!.payload.usage.input_tokens).toBeGreaterThan(100);
+      }
+    });
+
+    it("unset cheap model → single call on the primary (default behaviour)", async () => {
+      const auth = await seedPlusOrg();
+      const { divisionId, fixtureIds } = await seedPlannable(auth);
+      parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
+
+      await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+
+      expect(parse).toHaveBeenCalledTimes(1);
+      expect((parse.mock.calls[0][0] as { model: string }).model).toBe("claude-sonnet-5");
+    });
   });
 
   it("6th call in the hour → 429", async () => {

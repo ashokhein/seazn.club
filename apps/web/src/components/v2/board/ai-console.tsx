@@ -133,6 +133,7 @@ export function AiConsole({
   divisionId,
   expectedSeq,
   aiAllowed,
+  scheduleFrozen,
   brief,
   fixtures,
   officialsPolicy,
@@ -150,6 +151,11 @@ export function AiConsole({
   /** Client-side entitlement read (server prop) — false renders the paywall
    *  inside the dock with no network call. */
   aiAllowed: boolean;
+  /** The division's schedule lock. A frozen board rejects every apply
+   *  (applySchedule, 422), so a run could only ever produce a proposal the
+   *  organiser is blocked from using — the server refuses with 409
+   *  SCHEDULE_LOCKED, and this stops the button offering it in the first place. */
+  scheduleFrozen: boolean;
   /** Live brief inputs derived by the board (pre-flight card + chip pickers). */
   brief: AiBriefContext;
   /** This division's current fixtures (before any proposal) — powers the diff
@@ -582,6 +588,7 @@ export function AiConsole({
           onWishes={applyWishes}
           onFill={fillInstruction}
           lastRun={lastRun}
+          scheduleFrozen={scheduleFrozen}
         />
       )}
       {state.step === "schedule" && (
@@ -770,11 +777,15 @@ function BriefStep({
   onWishes,
   onFill,
   lastRun,
+  scheduleFrozen,
 }: {
   state: AiConsoleState;
   dispatch: (a: Parameters<typeof aiConsoleReducer>[1]) => void;
   run: () => void;
   busy: boolean;
+  /** Frozen board — the server refuses the run with 409 SCHEDULE_LOCKED, so
+   *  never offer it. */
+  scheduleFrozen: boolean;
   msg: ReturnType<typeof useMsg>;
   brief: AiBriefContext;
   preflight: PreflightInput;
@@ -885,10 +896,24 @@ function BriefStep({
         </p>
       )}
 
+      {/* A frozen board rejects every apply, so a run could only ever produce a
+          proposal the organiser is then blocked from using. Say so where the
+          decision is made, rather than letting them spend a generation and
+          several minutes to find out at Apply. */}
+      {scheduleFrozen && (
+        <p
+          role="status"
+          className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-900/40 dark:bg-amber-950/40 dark:text-amber-200"
+        >
+          <span aria-hidden>❄</span>
+          {msg("board.ai.frozen")}
+        </p>
+      )}
+
       <button
         type="button"
         onClick={run}
-        disabled={tooShort || busy}
+        disabled={tooShort || busy || scheduleFrozen}
         className="ai-run inline-flex w-full items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
       >
         {busy ? (

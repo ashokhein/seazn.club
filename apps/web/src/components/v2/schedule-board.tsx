@@ -850,6 +850,9 @@ export function ScheduleBoard({
           divisionId={single.id}
           expectedSeq={single.seq}
           aiAllowed={aiAllowed}
+          // Absent lock state reads as unfrozen: the server is the authority
+          // (409 SCHEDULE_LOCKED), so a missing field must not hide the button.
+          scheduleFrozen={single.schedule_locked ?? false}
           brief={aiBrief}
           fixtures={aiFixtures}
           prefillRepair={aiRepairScope}

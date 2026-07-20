@@ -200,13 +200,35 @@ type Row = {
 
 const rows: Row[] = [];
 
-async function bench(name: string, build: () => { pack: SchedulePack; movable: Set<string> }, effort: string) {
+type Arm = {
+  effort: string;
+  thinking?: "adaptive" | "disabled";
+  /** Overrides SCHEDULING_AI_MODEL for this arm. */
+  model?: string;
+  /** Legacy-reasoning models only (haiku): token-precise thinking ceiling. */
+  budget?: number;
+  /** Cell label — arms must not aggregate together just because they share an
+   *  effort value. */
+  label: string;
+};
+
+async function bench(
+  name: string,
+  build: () => { pack: SchedulePack; movable: Set<string> },
+  arm: Arm,
+) {
+  const { effort, thinking = "adaptive", model, budget, label: cellEffort } = arm;
   process.env.SCHEDULING_AI_EFFORT = effort;
+  process.env.SCHEDULING_AI_THINKING = thinking;
+  if (model) process.env.SCHEDULING_AI_MODEL = model;
+  else delete process.env.SCHEDULING_AI_MODEL;
+  if (budget) process.env.SCHEDULING_AI_THINKING_BUDGET = String(budget);
+  else delete process.env.SCHEDULING_AI_THINKING_BUDGET;
   const { pack, movable } = build();
   const t0 = Date.now();
   const row: Row = {
     pack: name,
-    effort,
+    effort: cellEffort,
     secs: 0,
     rounds: 0,
     in: 0,
@@ -232,34 +254,110 @@ async function bench(name: string, build: () => { pack: SchedulePack; movable: S
     row.error = err instanceof Error ? `${(err as { code?: string }).code ?? ""} ${err.message}`.trim() : String(err);
   }
   row.secs = Math.round((Date.now() - t0) / 100) / 10;
-  row.listUsd = usd(row.in, row.out, 3, 15);
-  row.introUsd = usd(row.in, row.out, 2, 10);
+  // Rates per the arm's model. Reconciliation against the real account balance
+  // on 2026-07-20 ($15 -> $9 over ~$5.6 of list-rate runs) says this account is
+  // billed at LIST, not the introductory sonnet rate — so `listUsd` is the
+  // column to trust and `introUsd` is kept only for comparison.
+  const [inRate, outRate] = model === "claude-haiku-4-5" ? [1, 5] : [3, 15];
+  row.listUsd = usd(row.in, row.out, inRate, outRate);
+  row.introUsd = usd(row.in, row.out, model === "claude-haiku-4-5" ? 1 : 2, model === "claude-haiku-4-5" ? 5 : 10);
   rows.push(row);
   process.stdout.write(
-    `\n[${name} / effort=${effort}] ${row.secs}s  rounds=${row.rounds}  in=${row.in} out=${row.out}  ` +
+    `\n[${name} / effort=${cellEffort}] ${row.secs}s  rounds=${row.rounds}  in=${row.in} out=${row.out}  ` +
       `list=$${row.listUsd} intro=$${row.introUsd}  blocking=${row.blocking} warnings=${row.warnings} ` +
       `unsched=${row.unschedulable} placed=${row.placed}${row.error ? `  ERROR: ${row.error}` : ""}\n`,
   );
   // A swallowed error is worse than a red test: it looks like a cheap run.
-  expect(row.error, `${name}/${effort} failed`).toBe("");
+  expect(row.error, `${name}/${cellEffort} failed`).toBe("");
   return row;
 }
 
-describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
-  const T = 3_300_000; // up to 3 rounds at the configured round timeout, plus slack
+// Adaptive thinking is noisy: a repeated cell varied 2.1x run-to-run on
+// 2026-07-20 (individuals-50 @ high, 7,911 vs 16,923 output tokens for a
+// byte-identical pack). One sample per cell can order the arms but cannot size
+// the gap between them, so REPEATS>1 is what turns the cost delta from
+// directional into quotable.
+const REPEATS = Math.max(1, Number(process.env.AI_AB_REPEATS) || 1);
 
-  it("teams-15 @ high", async () => { await bench("teams-15", teamsPack, "high"); }, T);
-  it("teams-15 @ medium", async () => { await bench("teams-15", teamsPack, "medium"); }, T);
-  it("individuals-50 @ high", async () => { await bench("individuals-50", individualsPack, "high"); }, T);
-  it("individuals-50 @ medium", async () => { await bench("individuals-50", individualsPack, "medium"); }, T);
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/** mean / min / max of one field across a cell's repeats. */
+function agg(cell: Row[], pick: (r: Row) => number) {
+  const xs = cell.map(pick);
+  const mean = xs.reduce((s, x) => s + x, 0) / xs.length;
+  return { mean: round2(mean), min: round2(Math.min(...xs)), max: round2(Math.max(...xs)) };
+}
+
+describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
+  // Worst observed cell is ~1095s; leave room for REPEATS of it plus repairs.
+  const T = Math.max(3_300_000, REPEATS * 1_400_000);
+
+  const cell = (name: string, build: () => { pack: SchedulePack; movable: Set<string> }, arm: Arm) =>
+    it(`${name} @ ${arm.label} x${REPEATS}`, async () => {
+      for (let i = 0; i < REPEATS; i++) await bench(name, build, arm);
+    }, T);
+
+  // Baseline arms are settled (2026-07-20, n=3): kept here only so a re-run
+  // reproduces the full comparison. Enable with AI_AB_BASELINE=1.
+  if (process.env.AI_AB_BASELINE === "1") {
+    cell("teams-15", teamsPack, { effort: "high", label: "high" });
+    cell("teams-15", teamsPack, { effort: "medium", label: "medium" });
+    cell("individuals-50", individualsPack, { effort: "high", label: "high" });
+    cell("individuals-50", individualsPack, { effort: "medium", label: "medium" });
+  }
+
+  // --- The two open questions -------------------------------------------
+  //
+  // Both test the same hypothesis: does producing a legal schedule from a
+  // solver draft actually require a reasoning model? Thinking is ~90% of a
+  // run's output tokens, and the engine referee re-checks every proposal, so a
+  // thin plan is caught rather than shipped. Watch `rounds` — the trade is
+  // fewer thinking tokens per round against possibly MORE rounds, and each
+  // repair re-sends the prior round's output as input.
+
+  // 1. Same model, no reasoning. The control: isolates thinking from model.
+  cell("teams-15", teamsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
+  cell("individuals-50", individualsPack, { effort: "low", thinking: "disabled", label: "low/no-think" });
+
+  // 2. Cheaper model, token-capped reasoning. haiku-4-5 is $1/$5 against
+  //    sonnet-5's $3/$15 and needs no port — same SDK, same zodOutputFormat,
+  //    same parsed_output (verified live 2026-07-20). It rejects adaptive and
+  //    effort, so it runs on a legacy budget_tokens ceiling instead, which is
+  //    the token-precise knob effort never gave us.
+  const HAIKU = { model: "claude-haiku-4-5", budget: 8_000, effort: "low" as const };
+  cell("teams-15", teamsPack, { ...HAIKU, label: "haiku/budget8k" });
+  cell("individuals-50", individualsPack, { ...HAIKU, label: "haiku/budget8k" });
 
   it("summary", () => {
     const roundMs = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 300_000;
-    process.stdout.write(`\n===== effort A/B — model=${schedulingAiModel()} roundTimeout=${roundMs / 1000}s =====\n`);
+    process.stdout.write(
+      `\n===== effort A/B — model=${schedulingAiModel()} roundTimeout=${roundMs / 1000}s repeats=${REPEATS} =====\n`,
+    );
     for (const r of rows) process.stdout.write(`${JSON.stringify(r)}\n`);
+
+    // Per-cell aggregates. Spread (max/min) is the number that says whether the
+    // between-effort gap is bigger than the within-effort noise.
+    const keys = [...new Set(rows.map((r) => `${r.pack}|${r.effort}`))];
+    process.stdout.write(`\n--- per cell (n=${REPEATS}) ---\n`);
+    for (const k of keys) {
+      const [pack, effort] = k.split("|");
+      const c = rows.filter((r) => `${r.pack}|${r.effort}` === k);
+      const secs = agg(c, (r) => r.secs);
+      const out = agg(c, (r) => r.out);
+      const cost = agg(c, (r) => r.introUsd);
+      const spread = out.min > 0 ? round2(out.max / out.min) : 0;
+      const clean = c.filter((r) => r.blocking === 0 && r.warnings === 0 && r.unschedulable === 0).length;
+      process.stdout.write(
+        `${pack} @ ${effort}: secs mean=${secs.mean} [${secs.min}-${secs.max}] | ` +
+          `out mean=${out.mean} [${out.min}-${out.max}] spread=${spread}x | ` +
+          `$intro mean=${cost.mean} [${cost.min}-${cost.max}] | clean ${clean}/${c.length}\n`,
+      );
+    }
+
     const total = rows.reduce((s, r) => s + r.introUsd, 0);
-    process.stdout.write(`total spend this bench (intro rates): $${Math.round(total * 10000) / 10000}\n`);
-    expect(rows.length).toBe(4);
+    process.stdout.write(`\ntotal spend this bench (intro rates): $${Math.round(total * 10000) / 10000}\n`);
+    const expected = (process.env.AI_AB_BASELINE === "1" ? 8 : 4) * REPEATS;
+    expect(rows.length).toBe(expected);
     expect(rows.every((r) => r.error === "")).toBe(true);
   });
 });

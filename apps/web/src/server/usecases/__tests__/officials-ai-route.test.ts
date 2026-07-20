@@ -181,6 +181,11 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     const callOpts = parse.mock.calls[0]![1] as { timeout?: number; signal?: unknown };
     expect(callOpts.timeout).toBeTypeOf("number");
     expect(callOpts.timeout!).toBeGreaterThan(0);
+    // Phase B stays on effort:high while Phase A moved to medium — that move
+    // was justified by a bench over SCHEDULE packs, and officials has never
+    // been measured. Guards against someone "harmonising" the two defaults.
+    const body = parse.mock.calls[0]![0] as { output_config: { effort: string } };
+    expect(body.output_config.effort).toBe("high");
     const lockedRow = out.assignments.find((a) => a.fixtureId === fixtureIds[0] && a.officialId === refA);
     expect(lockedRow).toMatchObject({ roleKey: "referee", locked: true });
     expect(out.usage.repair_rounds).toBe(0);

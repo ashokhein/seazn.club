@@ -638,33 +638,102 @@ export function schedulingAiModel(): string {
   return process.env.SCHEDULING_AI_MODEL ?? "claude-sonnet-5";
 }
 
-/** Effort hint for the architect call. Output tokens are ~96% of a run's cost,
- *  and effort is the direct knob on thinking depth — so this is the cost lever,
- *  not prompt caching (input is <4% of spend).
+/** Effort hint for the architect call.
  *
- *  Default "medium" since 2026-07-20, on a live 2x2 (sonnet-5, two packs, both
- *  efforts). Every arm returned an engine-verified CLEAN plan in one round —
- *  medium cost no measurable quality:
+ *  Stays "high". A live A/B (2026-07-20, sonnet-5, two packs, n=3 per cell)
+ *  was run specifically to justify lowering it, and concluded against:
  *
- *    pack (fixtures)   high              medium
- *    teams-15 (30)     1095s / 27.3k out  213s / 22.5k out
- *    individuals-50    159s / 16.9k out    84s /  9.9k out
+ *    pack             effort   secs mean            out mean   warnings
+ *    teams-15 (30)    high     276.8 [268.5-282.9]   29,858       0
+ *    teams-15 (30)    medium   616.1 [291.4-808.3]   20,411       0
+ *    individuals-50   high      97.6 [ 73.4-142.7]   11,510       0
+ *    individuals-50   medium    80.0 [ 55.8- 98.0]    9,460       0
  *
- *  The decisive term is latency, not money: medium is 5.1x / 1.9x faster, and
- *  18 minutes is not a viable wait at any price. Treat the cost delta (17-39%)
- *  as directional only — a repeated cell varied 2.1x run-to-run, so a single
- *  sample cannot size it. SCHEDULING_AI_EFFORT overrides.
+ *  Quality is identical — all 12 runs returned an engine-verified plan with
+ *  zero blocking, zero warnings, zero repair rounds. So the only live axes are
+ *  latency and money, and on the dense pack medium is 2.2x SLOWER to save
+ *  $0.135. Against a lifetime quota of 20-50 runs per division that is a few
+ *  dollars, traded for ~5.6 extra minutes of an organiser watching a spinner.
+ *
+ *  An n=1 pass had briefly suggested the opposite (medium "5.1x faster") — that
+ *  was a 1095s outlier on the high side; with n=3 high never exceeded 283s on
+ *  that pack. Recorded here because the wrong conclusion shipped for a day.
+ *
+ *  Effort escalation is NOT viable for the same reason: medium never produced a
+ *  degraded plan, so the referee has nothing to escalate on. Cheap-MODEL
+ *  escalation is a different matter — see runAiPlanEscalating.
  *
  *  Phase B (officials-ai.ts) is deliberately still "high": it was not measured.
+ *  Full write-up: design/v4/04-architect-benchmarks.md. */
+export function schedulingAiEffort(): AiEffort {
+  return parseAiEffort(process.env.SCHEDULING_AI_EFFORT, "high");
+}
+
+export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+const AI_EFFORTS: readonly AiEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+/** Shared by both architect phases, which carry DIFFERENT defaults on purpose:
+ *  Phase A is benched, Phase B is not. An unset or unrecognised value falls back
+ *  rather than throwing — a typo'd env var must not take AI scheduling down. */
+export function parseAiEffort(raw: string | undefined, fallback: AiEffort): AiEffort {
+  return (AI_EFFORTS as readonly string[]).includes(raw ?? "") ? (raw as AiEffort) : fallback;
+}
+
+/** Thinking mode for the architect call.
  *
- *  The deterministic referee verifies every proposal regardless, so a thinner
- *  plan surfaces as repair rounds, never as a silently bad schedule. */
-export function schedulingAiEffort(): "low" | "medium" | "high" | "xhigh" | "max" {
-  const raw = process.env.SCHEDULING_AI_EFFORT;
-  const allowed = ["low", "medium", "high", "xhigh", "max"] as const;
-  return (allowed as readonly string[]).includes(raw ?? "")
-    ? (raw as (typeof allowed)[number])
-    : "medium";
+ *  Measured 2026-07-20: the structured plan is only ~2,588 tokens of a 27,349
+ *  token response — 90.5% of what a run costs is thinking, not output. So this
+ *  is the largest single cost lever available, an order of magnitude bigger
+ *  than any schema change (short ids save 2.1%, diff-from-draft 7.5%).
+ *
+ *  Default stays "adaptive". Turning it off is only defensible because the
+ *  deterministic referee verifies every proposal and the repair loop re-prompts
+ *  on blocking conflicts — a thin plan gets caught, never shipped. Whether that
+ *  actually wins is an open question: fewer thinking tokens per round, but
+ *  possibly more rounds, and each round re-sends the prior output as input.
+ *  SCHEDULING_AI_THINKING=disabled exists so the bench can settle it. */
+export type AiThinking = "adaptive" | "disabled";
+
+export function schedulingAiThinking(): AiThinking {
+  return process.env.SCHEDULING_AI_THINKING === "disabled" ? "disabled" : "adaptive";
+}
+
+/** Models that predate adaptive thinking and the effort parameter. Verified
+ *  live against the API on 2026-07-20 — claude-haiku-4-5 rejects BOTH:
+ *    thinking:{type:"adaptive"}  → 400 "adaptive thinking is not supported on this model"
+ *    output_config.effort        → 400 "This model does not support the effort parameter."
+ *  It does accept legacy `thinking:{type:"enabled",budget_tokens}` and returns
+ *  structured output through zodOutputFormat exactly like the newer models, so
+ *  it is usable here — just not with the request shape the newer models want. */
+const LEGACY_REASONING_MODELS = new Set(["claude-haiku-4-5", "claude-sonnet-4-5"]);
+
+/** Thinking budget for legacy-reasoning models. Must stay below max_tokens.
+ *  Unlike effort's five positions this is a token-precise ceiling, which is the
+ *  shape this workload wants: the 2026-07-20 repeats showed effort:medium's
+ *  problem was spread (1.63x), not its average. */
+export function schedulingAiThinkingBudget(): number {
+  const n = Number(process.env.SCHEDULING_AI_THINKING_BUDGET);
+  return Number.isFinite(n) && n >= 1024 ? Math.floor(n) : 0;
+}
+
+/** The reasoning half of the request, shaped for what `model` actually accepts.
+ *  Returning the fields rather than mutating a request object keeps the
+ *  per-model branching in one place instead of at every call site. */
+export function aiReasoningParams(model: string): {
+  thinking?: { type: "adaptive" } | { type: "disabled" } | { type: "enabled"; budget_tokens: number };
+  effort?: AiEffort;
+} {
+  if (LEGACY_REASONING_MODELS.has(model)) {
+    const budget = schedulingAiThinkingBudget();
+    // No adaptive, no effort. A budget or nothing — omitting `thinking`
+    // entirely is how these models run without reasoning.
+    return budget > 0 ? { thinking: { type: "enabled", budget_tokens: budget } } : {};
+  }
+  return {
+    thinking: schedulingAiThinking() === "disabled" ? { type: "disabled" } : { type: "adaptive" },
+    effort: schedulingAiEffort(),
+  };
 }
 
 export function anthropicClient(): Anthropic {
@@ -839,13 +908,18 @@ async function callModel(
 ) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ROUND_TIMEOUT_MS);
+  const reasoning = aiReasoningParams(model);
   try {
     return await client.messages.parse(
       {
         model,
         max_tokens: 32_000,
-        thinking: { type: "adaptive" },
-        output_config: { effort: schedulingAiEffort(), format: zodOutputFormat(AiSchedulePlan) },
+        // Reasoning params vary by model — haiku-4-5 400s on adaptive/effort.
+        ...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
+        output_config: {
+          ...(reasoning.effort ? { effort: reasoning.effort } : {}),
+          format: zodOutputFormat(AiSchedulePlan),
+        },
         system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
         messages: [...messages],
       },
@@ -882,9 +956,13 @@ async function callModel(
  * @throws HttpError 503 (no ANTHROPIC_API_KEY), 422 AI_PLAN_FAILED (model
  *   refusal, or an un-correctable structural violation), 422 AI_PLAN_TIMEOUT.
  */
-export async function runAiPlan(pack: SchedulePack, movableIds: Set<string>): Promise<AiPlanResult> {
+export async function runAiPlan(
+  pack: SchedulePack,
+  movableIds: Set<string>,
+  modelOverride?: string,
+): Promise<AiPlanResult> {
   const client = anthropicClient(); // 503 before any network if unconfigured
-  const model = schedulingAiModel();
+  const model = modelOverride ?? schedulingAiModel();
 
   const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
   const config = verifyConfig(pack);
@@ -1073,6 +1151,99 @@ function isoConstraintSuggestions(
   };
 }
 
+/** Opt-in cheaper first-attempt model. Unset (the default) means no escalation
+ *  and behaviour is exactly as before. */
+export function schedulingAiCheapModel(): string | null {
+  return process.env.SCHEDULING_AI_CHEAP_MODEL || null;
+}
+
+/** Warnings-per-movable-fixture above which a cheap plan is rejected and the
+ *  primary model re-runs.
+ *
+ *  UNCALIBRATED. Measured 2026-07-20 (n=3 per cell): sonnet-5 scored 0 warnings
+ *  on both benched packs; haiku-4-5 scored 0 on the sparse pack and 20/43/100
+ *  on the dense one — 0.67, 1.43 and 3.33 per fixture. The default of 1.0 sits
+ *  inside that observed range rather than at a boundary derived from real
+ *  divisions, so it will need tuning against production data before this is
+ *  trusted. That is exactly why escalation is opt-in. */
+function escalationWarningRatio(): number {
+  const n = Number(process.env.SCHEDULING_AI_ESCALATE_WARN_RATIO);
+  return Number.isFinite(n) && n >= 0 ? n : 1.0;
+}
+
+/** Is a plan good enough to ship without re-running on the primary model?
+ *  Blocking conflicts are never acceptable — the engine says the schedule is
+ *  physically impossible. Warnings are soft (rest, blackout, session window,
+ *  cross-person), so they are judged against pack size rather than absolutely. */
+function planIsAcceptable(result: AiPlanResult, movableCount: number): boolean {
+  if (result.blocking.length > 0) return false;
+  if (movableCount === 0) return true;
+  return result.warnings.length / movableCount <= escalationWarningRatio();
+}
+
+/**
+ * Run the architect, optionally trying a cheaper model first.
+ *
+ * This deliberately ESCALATES on evidence rather than PREDICTING from the pack.
+ * Choosing a model up front needs a "density" metric, and the 2026-07-20 bench
+ * could not supply one: its two packs differ on structure, court ratio, rest,
+ * no-back-to-back, blackouts and cross-person links simultaneously, so which
+ * factor degrades a cheap model is unknown. The referee already measures the
+ * thing that actually matters — plan quality — so let it decide.
+ *
+ * Failure mode is bounded: a wasted cheap attempt costs ~11% on top of the
+ * primary run (measured: $0.05 + $0.465 vs $0.465), and can never ship a worse
+ * plan than the primary model would have. A mispredicting router, by contrast,
+ * hands the organiser a degraded schedule with no signal at all.
+ *
+ * Usage from BOTH attempts is summed — an escalated run costs what it costs,
+ * and the ledger must not report only the half that happened to win.
+ */
+async function runAiPlanEscalating(
+  pack: SchedulePack,
+  movableIds: Set<string>,
+): Promise<AiPlanResult & { escalated_from?: string }> {
+  const cheap = schedulingAiCheapModel();
+  const primary = schedulingAiModel();
+  if (!cheap || cheap === primary) return runAiPlan(pack, movableIds);
+
+  // A cheap model can fail two ways: return a poor-but-usable plan, or give up
+  // entirely (AI_PLAN_FAILED / AI_PLAN_TIMEOUT). Both must escalate — letting a
+  // thrown cheap failure surface as a 422 would make an opt-in cost optimisation
+  // *reduce* success rate, which is never an acceptable trade. Provider outages
+  // (503 / APIError) still propagate: retrying a different model against a
+  // broken provider only burns another call.
+  let first: AiPlanResult | null = null;
+  let spent = { input_tokens: 0, output_tokens: 0, repair_rounds: 0 };
+  try {
+    first = await runAiPlan(pack, movableIds, cheap);
+    spent = first.usage;
+    if (planIsAcceptable(first, movableIds.size)) return first;
+  } catch (err) {
+    const recoverable =
+      err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT");
+    if (!recoverable) throw err;
+    // Tokens the failed attempt already spent ride on the error's extra.
+    const u = (err.extra?.usage ?? {}) as Partial<typeof spent>;
+    spent = {
+      input_tokens: u.input_tokens ?? 0,
+      output_tokens: u.output_tokens ?? 0,
+      repair_rounds: u.repair_rounds ?? 0,
+    };
+  }
+
+  const second = await runAiPlan(pack, movableIds, primary);
+  return {
+    ...second,
+    escalated_from: cheap,
+    usage: {
+      input_tokens: spent.input_tokens + second.usage.input_tokens,
+      output_tokens: spent.output_tokens + second.usage.output_tokens,
+      repair_rounds: spent.repair_rounds + second.usage.repair_rounds,
+    },
+  };
+}
+
 /**
  * POST /divisions/{id}/schedule/ai-plan orchestrator. Gate order is deliberate
  * (design/v4/00 §5): the staged-rollout kill switch (fail-open) → the paid gate
@@ -1084,7 +1255,8 @@ function isoConstraintSuggestions(
  * still metered.
  *
  * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (paid gate or
- *   over-quota run cap), 429 (rate limit), plus everything
+ *   over-quota run cap), 409 SCHEDULE_LOCKED (frozen division — refused before
+ *   the quota and spend gates), 429 (rate limit), plus everything
  *   buildSchedulePack/runAiPlan raise (409/422/400/503).
  */
 export async function aiPlanForDivision(
@@ -1110,16 +1282,34 @@ export async function aiPlanForDivision(
   // and refuse the (cap+1)th here, before the LLM call, so an over-quota org
   // never burns a request.
   const gate = await withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ competition_id: string }[]>`
-      select competition_id from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ competition_id: string; schedule_locked: boolean }[]>`
+      select competition_id, schedule_locked from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     const [row] = await tx<{ n: number }[]>`
       select count(*)::int as n from competition_events
       where competition_id = ${division.competition_id}
         and type = 'schedule.ai_generated'
         and payload->>'division_id' = ${divisionId}`;
-    return { competitionId: division.competition_id, priorRuns: row?.n ?? 0 };
+    return {
+      competitionId: division.competition_id,
+      priorRuns: row?.n ?? 0,
+      frozen: division.schedule_locked ?? false,
+    };
   });
+
+  // A frozen division rejects every applied plan (schedule.ts applySchedule,
+  // 422 "the division schedule is locked"). Running the architect anyway spends
+  // a generation, a rate-limit slot and real tokens to produce a proposal the
+  // organiser is then blocked from using — the failure only surfaced at Apply,
+  // several minutes and one paid run later. Refuse here, ahead of the quota and
+  // spend gates, so a frozen board costs nothing.
+  if (gate.frozen) {
+    throw new HttpError(
+      409,
+      "the division schedule is frozen — unfreeze it to plan with AI",
+      "SCHEDULE_LOCKED",
+    );
+  }
   const cap = await withinLimit(
     auth.orgId,
     "scheduling.ai.runs_per_division.max",
@@ -1133,9 +1323,9 @@ export async function aiPlanForDivision(
   const { pack, movableIds } = await buildSchedulePack(auth, divisionId, input);
 
   const model = schedulingAiModel();
-  let result: AiPlanResult;
+  let result: AiPlanResult & { escalated_from?: string };
   try {
-    result = await runAiPlan(pack, movableIds);
+    result = await runAiPlanEscalating(pack, movableIds);
   } catch (err) {
     // Meter a refused / un-correctable / timed-out run's token spend too —
     // usage rides on the 422 extra so a failed architect call is not invisible
@@ -1223,6 +1413,17 @@ export async function aiPlanForDivision(
                 model,
                 usage: result.usage,
                 cost_usd,
+                // Escalation telemetry: which cheap model was tried and
+                // rejected, and the warning ratio that rejected it. The
+                // threshold is uncalibrated (see escalationWarningRatio), so
+                // the ledger has to carry what it would take to tune it.
+                ...(result.escalated_from
+                  ? {
+                      escalated_from: result.escalated_from,
+                      warnings: result.warnings.length,
+                      movable: movableIds.size,
+                    }
+                  : {}),
               } as never)}, ${auth.userId})`;
   });
 

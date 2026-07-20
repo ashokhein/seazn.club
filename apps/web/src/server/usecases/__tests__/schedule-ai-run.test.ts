@@ -18,7 +18,7 @@ vi.mock("@anthropic-ai/sdk", () => ({
   },
 }));
 
-import { runAiPlan } from "../schedule-ai";
+import { aiReasoningParams, runAiPlan } from "../schedule-ai";
 import type { SchedulePack } from "../schedule-ai";
 
 // --- Fixed ids -------------------------------------------------------------
@@ -183,19 +183,46 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     expect(body.model).toBe("claude-sonnet-5");
   });
 
-  // 2026-07-20 live 2x2 (sonnet-5, 25- and 30-fixture packs): medium returned an
-  // engine-CLEAN plan in one round on every arm, 5.1x/1.9x faster than high
-  // (high needed 1095s on the 30-fixture pack — an unshippable wait). The
-  // referee checks every proposal regardless of effort.
-  it("defaults to effort:medium when SCHEDULING_AI_EFFORT is unset", async () => {
+  // Stays "high". The 2026-07-20 A/B (n=3 per cell) was run to justify lowering
+  // this and concluded against: quality was identical across all 12 runs (0
+  // blocking, 0 warnings, 0 repair rounds), so the only axes left were latency
+  // and money — and on the dense pack medium is 2.2x SLOWER to save $0.135.
+  // An n=1 pass had suggested medium was faster; that was an outlier.
+  it("defaults to effort:high when SCHEDULING_AI_EFFORT is unset", async () => {
     delete process.env.SCHEDULING_AI_EFFORT;
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);
     const body = parse.mock.calls[0][0] as { output_config: { effort: string } };
-    expect(body.output_config.effort).toBe("medium");
+    expect(body.output_config.effort).toBe("high");
   });
 
-  it("SCHEDULING_AI_EFFORT overrides the default; an unknown value falls back to medium", async () => {
+  // Thinking is ~90% of a run's output tokens (only 2,588 of 27,349 was the
+  // plan on the 2026-07-20 measurement), so this knob dwarfs every schema
+  // change. It stays on until the bench says otherwise — the engine referee
+  // makes a thin plan safe to attempt, not free.
+  it("thinks adaptively by default; SCHEDULING_AI_THINKING=disabled turns it off", async () => {
+    delete process.env.SCHEDULING_AI_THINKING;
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { thinking: { type: string } }).thinking.type).toBe("adaptive");
+
+    parse.mockClear();
+    process.env.SCHEDULING_AI_THINKING = "disabled";
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { thinking: { type: string } }).thinking.type).toBe("disabled");
+
+    // Anything but the exact opt-out keeps thinking on: a typo must not
+    // silently halve the reasoning behind every schedule.
+    parse.mockClear();
+    process.env.SCHEDULING_AI_THINKING = "off";
+    parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
+    await runAiPlan(pack, movableIds);
+    expect((parse.mock.calls[0][0] as { thinking: { type: string } }).thinking.type).toBe("adaptive");
+    delete process.env.SCHEDULING_AI_THINKING;
+  });
+
+  it("SCHEDULING_AI_EFFORT overrides the default; an unknown value falls back to high", async () => {
     process.env.SCHEDULING_AI_EFFORT = "xhigh";
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);
@@ -205,8 +232,37 @@ describe("runAiPlan (v4/00 §3-4)", () => {
     process.env.SCHEDULING_AI_EFFORT = "turbo";
     parse.mockResolvedValueOnce(planResponse(finishBy18Plan));
     await runAiPlan(pack, movableIds);
-    expect((parse.mock.calls[0][0] as { output_config: { effort: string } }).output_config.effort).toBe("medium");
+    expect((parse.mock.calls[0][0] as { output_config: { effort: string } }).output_config.effort).toBe("high");
     delete process.env.SCHEDULING_AI_EFFORT;
+  });
+
+  // Verified live 2026-07-20: claude-haiku-4-5 rejects BOTH of the reasoning
+  // params the newer models want —
+  //   thinking:{type:"adaptive"} → 400 "adaptive thinking is not supported…"
+  //   output_config.effort       → 400 "This model does not support the effort parameter."
+  // so sending them makes SCHEDULING_AI_MODEL=claude-haiku-4-5 fail outright.
+  it("shapes reasoning params per model — haiku gets budget_tokens, never adaptive/effort", () => {
+    delete process.env.SCHEDULING_AI_THINKING;
+    delete process.env.SCHEDULING_AI_EFFORT;
+
+    process.env.SCHEDULING_AI_THINKING_BUDGET = "8000";
+    const haiku = aiReasoningParams("claude-haiku-4-5");
+    expect(haiku).toEqual({ thinking: { type: "enabled", budget_tokens: 8000 } });
+    expect(haiku.effort).toBeUndefined();
+
+    // No budget → omit `thinking` entirely; that is how a legacy model runs
+    // without reasoning. Sending {type:"disabled"} is not the same thing.
+    delete process.env.SCHEDULING_AI_THINKING_BUDGET;
+    expect(aiReasoningParams("claude-haiku-4-5")).toEqual({});
+
+    // Modern models keep the adaptive + effort shape.
+    const sonnet = aiReasoningParams("claude-sonnet-5");
+    expect(sonnet.thinking).toEqual({ type: "adaptive" });
+    expect(sonnet.effort).toBe("high");
+
+    process.env.SCHEDULING_AI_THINKING = "disabled";
+    expect(aiReasoningParams("claude-sonnet-5").thinking).toEqual({ type: "disabled" });
+    delete process.env.SCHEDULING_AI_THINKING;
   });
 
   it("client is constructed with an explicit timeout — without one the SDK refuses non-streaming max_tokens:32000 calls", async () => {
