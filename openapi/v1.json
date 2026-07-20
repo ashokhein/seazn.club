@@ -52118,7 +52118,7 @@
         "tags": [
           "history"
         ],
-        "x-required-scope": "none",
+        "x-required-scope": "manage",
         "parameters": [
           {
             "name": "id",
