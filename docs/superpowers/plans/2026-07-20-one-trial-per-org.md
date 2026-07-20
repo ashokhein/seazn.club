@@ -741,6 +741,103 @@ git commit -m "fix(admin): a granted trial conveys real Pro and expires itself"
 
 ---
 
+### Task 5A: End-to-end coverage for the trial rules
+
+Added 2026-07-20 after the plan was challenged: Tasks 1-5 ship only unit and
+DB-backed tests. The **user-reported symptom itself** — a burnt-trial org still
+being offered the trial — has no browser-level test, and the existing billing
+specs have not been run since Task 1 even though Tasks 2 and 4 changed the
+comp-to-downgrade path they exercise.
+
+**Files:**
+- Modify: `apps/web/e2e/billing.spec.ts`
+- Modify: `apps/web/e2e/billing-states.spec.ts`
+
+**Interfaces:**
+- Consumes: `setOrgPlanBySql`, `setOrgSubscriptionSql`, `setEntitlementOverrideSql`, `activeOrg`, `apiJson` from `./helpers`.
+- Produces: nothing.
+
+- [ ] **Step 1: Run the existing billing specs unchanged, against this branch**
+
+Start a dev server on 3021 with `DATABASE_URL` set, then:
+
+```bash
+cd apps/web && PLAYWRIGHT_BASE=http://localhost:3021 DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" DATABASE_SSL=disable npx playwright test e2e/billing.spec.ts e2e/billing-states.spec.ts --project=parallel --workers=1 --reporter=list
+```
+
+Record the result BEFORE writing anything new. If `comped Pro downgrade freezes over-quota competitions` is red, that is a regression from Task 2 or Task 4 — report it and stop.
+
+- [ ] **Step 2: The reported symptom — burnt trial changes the CTA**
+
+The org has had Pro, so the billing page must offer "Go Pro", never "Start free trial". Stamp the column directly and reload:
+
+```ts
+test("an org that has already had Pro is not offered the trial again", async ({ page }) => {
+  const org = await activeOrg(page);
+  await setOrgSubscriptionSql(org.id, { trial_used_at: null });
+  await page.goto(`/o/${org.slug}/settings/billing`);
+  await expect(page.getByRole("button", { name: /Start free trial/i }).first()).toBeVisible();
+
+  await setOrgSubscriptionSql(org.id, { trial_used_at: new Date().toISOString() });
+  await page.reload();
+  await expect(page.getByRole("button", { name: /Go Pro/i }).first()).toBeVisible();
+  await expect(page.getByRole("button", { name: /Start free trial/i })).toHaveCount(0);
+});
+```
+
+If `setOrgSubscriptionSql` cannot set `trial_used_at`, extend that helper — it already writes other subscription columns.
+
+- [ ] **Step 3: A staff grant conveys real Pro**
+
+This is the dead-state Task 4 fixed: before it, the grant wrote `status='trialing'` and the org still had no Pro. Drive the admin panel, then assert a Pro-only surface is reachable for that org.
+
+- [ ] **Step 4: Restore trial flips the CTA back**
+
+Burn the trial, use the admin Restore trial control (Task 6), reload the billing page, assert "Start free trial" returns. This is the only end-to-end proof the escape hatch works.
+
+- [ ] **Step 5: Verify each new test fails without its fix**
+
+For Step 2, revert `trialAvailable` in the billing page to a constant `true` and confirm the test reds. For Step 3, revert `plan_key` lifting in `extendTrial`'s non-live arm. Report both outputs. This branch has produced nine assertions that could not fail — do not add a tenth.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add apps/web/e2e/
+git commit -m "test(e2e): the trial rules, at the surface the user actually sees"
+```
+
+---
+
+### Task 5B: Smoke coverage for the trial rules
+
+`scripts/smoke.ts` has no trial coverage at all (`grep trial scripts/smoke.ts` is empty), and the standing project rule is that every feature extends the pro and free smoke paths.
+
+**Files:**
+- Modify: `scripts/smoke.ts`
+
+- [ ] **Step 1: Read the existing pro and free paths** and follow their assertion style — do not invent a new harness.
+
+- [ ] **Step 2: Assert the invariant on both paths**
+
+After the pro path's checkout/plan setup, assert `trial_used_at` is stamped. On the free path, assert a fresh org starts unstamped and that a staff comp stamps it. Keep assertions on state the smoke script already has access to.
+
+- [ ] **Step 3: Run it**
+
+```bash
+DATABASE_URL="postgresql://ashokhein@localhost:5432/seazn" npm run test:smoke
+```
+
+Report the pass count. Smoke is the witness that caught a cross-task contract drift earlier in this project's history — treat a red here as real.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add scripts/smoke.ts
+git commit -m "test(smoke): pin one-trial-per-org on the pro and free paths"
+```
+
+---
+
 ### Task 5: Restore trial (usecase + route)
 
 The policy above has no undo. Without one, staff reach for raw SQL the first time a comp turns into a real deal.
