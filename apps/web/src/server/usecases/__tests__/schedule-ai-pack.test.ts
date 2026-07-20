@@ -246,11 +246,11 @@ describe.skipIf(!HAS_DB)("buildSchedulePack (v4/01 §2)", () => {
       config: GENERIC_CONFIG, eligibility: [],
     });
     await sql`update divisions set scheduling_mode = 'flexible' where id = ${flex.id}`;
-    // No fixtures, so the pack refuses on emptiness — not on the mode. Any
-    // outcome other than AI_PLAN_UNSUPPORTED proves the guard is gone.
-    await expect(
-      buildSchedulePack(auth, flex.id, { mode: "generate", instruction: "x" }),
-    ).rejects.not.toMatchObject({ message: "AI_PLAN_UNSUPPORTED" });
+    // It used to throw 409 AI_PLAN_UNSUPPORTED before reading anything else.
+    // Now it packs the division like any other — an empty one, since this
+    // fixture has no fixtures — which is the proof the guard is gone.
+    const pack = await buildSchedulePack(auth, flex.id, { mode: "generate", instruction: "x" });
+    expect(pack.pack.division.name).toBe("Flexi");
   });
 });
 
