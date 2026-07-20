@@ -281,39 +281,98 @@ export async function divisionHistory(
 // Checkpoints (Jul3/03 §2) — named save points; restore = undo to watermark.
 // ---------------------------------------------------------------------------
 
+/** `manual` = an organiser's own save point, counted against
+ *  schedule.checkpoints.max. `ai` = an undo anchor the AI accept flow creates on
+ *  their behalf (V303) — exempt, because it is the feature's bookkeeping, not
+ *  something the organiser chose to spend a slot on. */
+export type CheckpointKind = "manual" | "ai";
+
 export interface CheckpointRow {
   id: string;
   seq: number;
   label: string;
+  kind: CheckpointKind;
   created_at: string;
+  /** True for every AI anchor except the newest — the panel strikes these
+   *  through. They stay restorable: the ledger can rewind to any watermark, and
+   *  jumping back two AI runs is a real capability worth keeping. */
+  superseded?: boolean;
 }
 
 export async function listCheckpoints(auth: AuthCtx, divisionId: string): Promise<CheckpointRow[]> {
-  return withTenant(auth.orgId, (tx) => tx<CheckpointRow[]>`
-    select id, seq, label, created_at from division_checkpoints
+  const rows = await withTenant(auth.orgId, (tx) => tx<CheckpointRow[]>`
+    select id, seq, label, kind, created_at from division_checkpoints
     where division_id = ${divisionId} order by created_at desc`);
+  // Newest first, so the first `ai` row is the live anchor and the rest are
+  // superseded. Derived on read rather than stored — a stored flag would need
+  // updating on every AI apply and could drift.
+  let seenLiveAi = false;
+  return rows.map((r) => {
+    if (r.kind !== "ai") return r;
+    if (!seenLiveAi) {
+      seenLiveAi = true;
+      return r;
+    }
+    return { ...r, superseded: true };
+  });
 }
 
 export async function createCheckpoint(
   auth: AuthCtx,
   divisionId: string,
   label: string,
+  kind: CheckpointKind = "manual",
 ): Promise<CheckpointRow> {
   return withTenant(auth.orgId, async (tx) => {
     const meta = await divisionMeta(tx, divisionId);
     // Jul3/03 §7 → V290: save points are a per-plan quota (community 1,
     // pro 5, pro_plus unlimited). schedule.versioning still gates scope locks.
-    const [{ n }] = await tx<{ n: number }[]>`
-      select count(*)::int as n from division_checkpoints where division_id = ${divisionId}`;
-    const quota = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
-    if (!quota.ok) throw new PaymentRequiredError("schedule.checkpoints.max");
+    //
+    // V303: the count is MANUAL rows only. Charging the organiser for the AI
+    // flow's own undo anchor is what previously blocked a community org that
+    // already held one save point from applying an AI schedule at all — the
+    // create 402'd, the apply aborted, and the AI generation was already spent.
+    if (kind === "manual") {
+      const [{ n }] = await tx<{ n: number }[]>`
+        select count(*)::int as n from division_checkpoints
+        where division_id = ${divisionId} and kind = 'manual'`;
+      const quota = await withinLimit(auth.orgId, "schedule.checkpoints.max", n + 1);
+      if (!quota.ok) throw new PaymentRequiredError("schedule.checkpoints.max");
+    }
     const ledger = await loadLedger(tx, divisionId);
     const wm = meta.edit_watermark ?? (ledger[ledger.length - 1]?.seq ?? 0);
     const [row] = await tx<CheckpointRow[]>`
-      insert into division_checkpoints (division_id, seq, label, created_by)
-      values (${divisionId}, ${wm}, ${label}, ${auth.userId})
-      returning id, seq, label, created_at`;
+      insert into division_checkpoints (division_id, seq, label, kind, created_by)
+      values (${divisionId}, ${wm}, ${label}, ${kind}, ${auth.userId})
+      returning id, seq, label, kind, created_at`;
     return row!;
+  });
+}
+
+/** DELETE /divisions/{id}/checkpoints/{checkpointId} — drop a save point.
+ *
+ *  Deleting a MANUAL save point frees a quota slot, which is the point: the
+ *  quota is per-division and nothing could reclaim one, so an organiser who
+ *  made a save point they no longer wanted was stuck with it — on community,
+ *  that meant permanently holding their only slot.
+ *
+ *  AI anchors are deletable too. They cost no quota so there is no need to
+ *  remove one, but they are rows in the organiser's own division and hiding the
+ *  affordance would be stranger than allowing it. The next AI apply creates a
+ *  fresh anchor regardless. */
+export async function deleteCheckpoint(
+  auth: AuthCtx,
+  divisionId: string,
+  checkpointId: string,
+): Promise<void> {
+  await withTenant(auth.orgId, async (tx) => {
+    // Scoped by division as well as id, so a checkpoint id belonging to another
+    // division cannot be deleted by guessing it.
+    const [row] = await tx<{ id: string }[]>`
+      delete from division_checkpoints
+      where id = ${checkpointId} and division_id = ${divisionId}
+      returning id`;
+    if (!row) throw new HttpError(404, "checkpoint not found");
   });
 }
 

@@ -19,6 +19,8 @@ import {
   redoDivision,
   divisionHistory,
   createCheckpoint,
+  deleteCheckpoint,
+  listCheckpoints,
   restoreCheckpoint,
   clearScheduleScoped,
   clearPoolEntrants,
@@ -224,6 +226,92 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     await expect(createCheckpoint(freeAuth, freeDiv.id, "two")).rejects.toMatchObject({
       featureKey: "schedule.checkpoints.max",
     });
+  });
+
+  // V303. Before this the AI accept flow's undo anchor was billed as one of the
+  // organiser's save points. A community org already holding one could not apply
+  // an AI schedule at all: the anchor 402'd, applyAiPlans aborted, and the AI
+  // generation had already been spent producing the plan.
+  it("AI anchors are exempt from the save-point quota — community keeps its one manual slot", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+
+    await createCheckpoint(auth, division.id, "my save point");
+    await expect(createCheckpoint(auth, division.id, "another")).rejects.toMatchObject({
+      featureKey: "schedule.checkpoints.max",
+    });
+
+    // AI applies still work — repeatedly — and never touch that quota.
+    await expect(createCheckpoint(auth, division.id, "Before AI · run 1", "ai")).resolves.toBeTruthy();
+    await expect(createCheckpoint(auth, division.id, "Before AI · run 2", "ai")).resolves.toBeTruthy();
+    await expect(createCheckpoint(auth, division.id, "Before AI · run 3", "ai")).resolves.toBeTruthy();
+
+    // …and the manual quota is still exactly as spent: one used, none free.
+    await expect(createCheckpoint(auth, division.id, "yet another")).rejects.toMatchObject({
+      featureKey: "schedule.checkpoints.max",
+    });
+  });
+
+  it("pro with 3 manual save points keeps its remaining 2 after AI runs", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division } = await seedDivision(auth);
+    for (let i = 1; i <= 3; i++) await createCheckpoint(auth, division.id, `manual ${i}`, "manual");
+    await createCheckpoint(auth, division.id, "Before AI · run 1", "ai");
+    await createCheckpoint(auth, division.id, "Before AI · run 2", "ai");
+    // 3 manual of 5 used → two more allowed, then 402. The AI rows do not count.
+    await expect(createCheckpoint(auth, division.id, "manual 4")).resolves.toBeTruthy();
+    await expect(createCheckpoint(auth, division.id, "manual 5")).resolves.toBeTruthy();
+    await expect(createCheckpoint(auth, division.id, "manual 6")).rejects.toMatchObject({
+      featureKey: "schedule.checkpoints.max",
+    });
+  });
+
+  it("only the newest AI anchor is live; older ones are superseded but still listed", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division } = await seedDivision(auth);
+    await createCheckpoint(auth, division.id, "manual one", "manual");
+    await createCheckpoint(auth, division.id, "Before AI · older", "ai");
+    await createCheckpoint(auth, division.id, "Before AI · newest", "ai");
+
+    const rows = await listCheckpoints(auth, division.id);
+    const ai = rows.filter((r) => r.kind === "ai");
+    expect(ai).toHaveLength(2);
+    // Newest-first ordering: the first AI row is the live anchor.
+    expect(ai[0]!.label).toContain("newest");
+    expect(ai[0]!.superseded).toBeFalsy();
+    expect(ai[1]!.superseded).toBe(true);
+    // A manual save point is never superseded, however many AI runs there were.
+    expect(rows.find((r) => r.label === "manual one")!.superseded).toBeFalsy();
+  });
+
+  // The quota is per-division and nothing could reclaim a slot, so an organiser
+  // who made a save point they no longer wanted was stuck with it — on
+  // community that meant permanently holding their only one.
+  it("deleting a manual save point frees its quota slot", async () => {
+    const { auth } = await seedOrg("community");
+    const { division } = await seedDivision(auth);
+    const cp = await createCheckpoint(auth, division.id, "wrong moment");
+    await expect(createCheckpoint(auth, division.id, "the one I wanted")).rejects.toMatchObject({
+      featureKey: "schedule.checkpoints.max",
+    });
+
+    await deleteCheckpoint(auth, division.id, cp.id);
+    await expect(createCheckpoint(auth, division.id, "the one I wanted")).resolves.toBeTruthy();
+  });
+
+  it("deleting is scoped to the division, and a missing checkpoint is 404", async () => {
+    const { auth } = await seedOrg("pro");
+    const { division: a } = await seedDivision(auth);
+    const { division: b } = await seedDivision(auth);
+    const cp = await createCheckpoint(auth, a.id, "belongs to A");
+
+    // Right id, wrong division — must not delete by guessing an id.
+    await expect(deleteCheckpoint(auth, b.id, cp.id)).rejects.toMatchObject({ status: 404 });
+    expect(await listCheckpoints(auth, a.id)).toHaveLength(1);
+
+    await expect(
+      deleteCheckpoint(auth, a.id, "00000000-0000-4000-8000-000000000000"),
+    ).rejects.toMatchObject({ status: 404 });
   });
 
   it("checkpoints quota ladder: pro allows 5 then 402; pro_plus unlimited", async () => {

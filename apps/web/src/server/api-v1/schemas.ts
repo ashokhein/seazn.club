@@ -1477,7 +1477,13 @@ export const HistoryStep = z.object({
   expected_seq: z.number().int().optional(),
 });
 
-export const CreateCheckpoint = z.object({ label: z.string().min(1).max(120) });
+export const CreateCheckpoint = z.object({
+  label: z.string().min(1).max(120),
+  /** V303. Omitted = "manual": an organiser's own save point, counted against
+   *  schedule.checkpoints.max. "ai" is the undo anchor the AI accept flow
+   *  creates on their behalf, and is exempt from that quota. */
+  kind: z.enum(["manual", "ai"]).optional(),
+});
 
 export const RestoreCheckpoint = z.object({
   checkpoint_id: Uuid,

@@ -18,8 +18,23 @@ import type { AiApplyMeta, AiPlanResponse, PutScheduleSettings, ScheduleConfig }
  *  default for provenance; the server trims + records whatever it receives. */
 export const AI_APPLY_MODEL = "claude-sonnet-5";
 
-/** Default checkpoint label — the save point the success toast's Undo restores. */
-export const AI_CHECKPOINT_LABEL = "before-ai";
+/** Prefix for the AI accept flow's undo anchor. Each apply gets its own,
+ *  stamped with the local date and time — an unlabelled "before-ai" could not
+ *  say WHICH run it preceded, which is the whole point of a restore target. */
+export const AI_CHECKPOINT_PREFIX = "Before AI";
+
+/** e.g. "Before AI · 20 Jul 2026, 13:05". Local time on purpose: the organiser
+ *  reads this next to a wall clock, not a server log. */
+export function aiCheckpointLabel(at: Date = new Date()): string {
+  const stamp = at.toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `${AI_CHECKPOINT_PREFIX} · ${stamp}`;
+}
 
 /** One proposed placement, tagged with its stage (the apply route is
  *  stage-scoped and rejects cross-stage fixtures). */
@@ -147,33 +162,29 @@ export function mergeConstraintSuggestions(
  */
 export async function applyAiPlans(input: ApplyAiInput, api: ApplyApi = apiV1): Promise<ApplyOutcome> {
   const excluded = new Set(input.excludedFixtureIds);
-  const label = input.checkpointLabel ?? AI_CHECKPOINT_LABEL;
+  const label = input.checkpointLabel ?? aiCheckpointLabel();
 
-  // 1. Checkpoint first — the save point the success toast's Undo restores. AI
-  //    scheduling is now graded onto every tier, but the save-point quota isn't
-  //    (community caps at 1), so a fresh POST per apply would 402 on the second
-  //    AI apply — or the first, if any save point already exists. Reuse a prior
-  //    "before-ai" save point instead of stacking a new one, so AI applies
-  //    consume at most one save point per division, ever. (No DELETE endpoint
-  //    exists, so this stays client-only — list, then create only when absent —
-  //    with no API-surface churn.) If the checkpoint step fails nothing has
-  //    changed yet, so surface it and stop.
+  // 1. Checkpoint first — the anchor the success toast's Undo restores to.
+  //
+  //    Every apply gets its OWN anchor, timestamped, created with kind:"ai"
+  //    (V303) so it is exempt from the organiser's save-point quota. Restore
+  //    therefore rewinds the LAST AI run, not the first.
+  //
+  //    This replaces a reuse-by-label hack that existed because the quota
+  //    counted these. That had two failures: restore rolled back to the first
+  //    AI apply however many had happened since, and a community org already
+  //    holding one ordinary save point could not apply an AI schedule at all —
+  //    the create 402'd, this function aborted, and the AI generation had
+  //    already been spent producing the plan.
+  //
+  //    If the anchor fails nothing has changed yet, so surface it and stop.
   let checkpointId: string | null = null;
   try {
-    const existing = await api<{ id: string; label: string }[]>(
-      `/api/v1/divisions/${input.divisionId}/checkpoints`,
-      { method: "GET" },
-    );
-    const prior = existing.find((c) => c.label === label);
-    if (prior) {
-      checkpointId = prior.id;
-    } else {
-      const cp = await api<{ id: string }>(`/api/v1/divisions/${input.divisionId}/checkpoints`, {
-        method: "POST",
-        json: { label },
-      });
-      checkpointId = cp.id;
-    }
+    const cp = await api<{ id: string }>(`/api/v1/divisions/${input.divisionId}/checkpoints`, {
+      method: "POST",
+      json: { label, kind: "ai" },
+    });
+    checkpointId = cp.id;
   } catch (err) {
     return {
       schedule: "error",
