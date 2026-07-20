@@ -96,6 +96,11 @@ export const TIPS = {
     body: "A save point bookmarks the timetable exactly as it is now — every kick-off time and court. Restore rewinds the schedule to that bookmark by undoing each change since, one by one. Match results are never touched: if rewinding would erase a played result, the restore stops there. One save point is free, Pro includes five, Pro Plus is unlimited.",
     helpSlug: "scheduling/undo",
   },
+  "schedule.field-fairness": {
+    title: "Field fairness",
+    body: "A tie-break, not a rule. When two courts are free at the same moment, this decides which one an entrant gets: Balance courts favours the court they have used least, Rotate every game avoids the one they just played on. Kick-off times always win — no match is ever delayed to even out courts.",
+    helpSlug: "scheduling/constraints",
+  },
 } as const satisfies Record<string, TipEntry>;
 
 export type TipId = keyof typeof TIPS;

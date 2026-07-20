@@ -8,6 +8,7 @@ import { apiV1, ApiV1Error } from "@/lib/client-v1";
 import { UpgradeGate } from "@/components/upgrade-gate";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { Tip } from "@/components/ui/tip";
 
 /** 625 → "10h 25m"; 45 → "45m". The raw minute dumps read like debug output. */
 function fmtDuration(minutes: number): string {
@@ -95,69 +96,121 @@ export function ConstraintsPanel({
       {paywallFeature && <UpgradeGate feature={paywallFeature} />}
       {error && <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{error}</p>}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        {/* constraint editor */}
-        <div className="card space-y-3 p-4">
-          <h3 className="text-sm font-semibold text-slate-900">Constraints</h3>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked={constraints.crossPersonClash === "hard"}
-              disabled={!canEdit || busy}
-              onChange={(e) =>
-                void save({ ...constraints, crossPersonClash: e.target.checked ? "hard" : "warn" })
-              }
-            />
-            A player can never be in two matches at once (across divisions)
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            <input
-              type="checkbox"
-              checked={constraints.noBackToBack === true}
-              disabled={!canEdit || busy}
-              onChange={(e) => void save({ ...constraints, noBackToBack: e.target.checked })}
-            />
-            At least one break between a team&apos;s matches
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            Minimum rest
+      {/* VARIANT B — a rules sheet: each row states the rule in plain English
+          on the left and puts its control on the right, so the column of
+          controls scans top-to-bottom and new rules slot in without redesign. */}
+      <div className="card divide-y divide-slate-100 p-0">
+        <div className="px-4 py-3 sm:px-5">
+          <h3 className="text-sm font-semibold text-slate-900">Scheduling rules</h3>
+          <p className="mt-0.5 text-xs text-slate-500">
+            Auto-schedule and AI Schedule both obey these; matches you place by hand are
+            checked against them too.
+          </p>
+        </div>
+
+        <label className="flex items-center justify-between gap-4 px-4 py-3 sm:px-5">
+          <span className="min-w-0">
+            <span className="block text-sm text-slate-800">
+              A player is never in two matches at once
+            </span>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              Enforced across every division. Off, a double-booking is only a warning.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="shrink-0"
+            checked={constraints.crossPersonClash === "hard"}
+            disabled={!canEdit || busy}
+            onChange={(e) =>
+              void save({ ...constraints, crossPersonClash: e.target.checked ? "hard" : "warn" })
+            }
+          />
+        </label>
+
+        <label className="flex items-center justify-between gap-4 px-4 py-3 sm:px-5">
+          <span className="min-w-0">
+            <span className="block text-sm text-slate-800">
+              At least one break between a team&apos;s matches
+            </span>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              No entrant plays two rounds running.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="shrink-0"
+            checked={constraints.noBackToBack === true}
+            disabled={!canEdit || busy}
+            onChange={(e) => void save({ ...constraints, noBackToBack: e.target.checked })}
+          />
+        </label>
+
+        <label className="flex flex-col items-start gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4 sm:px-5">
+          <span className="min-w-0">
+            <span className="block text-sm text-slate-800">Minimum rest</span>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              Breathing room between one entrant&apos;s matches.
+            </span>
+          </span>
+          <span className="flex shrink-0 items-center gap-2 text-sm text-slate-500">
             <input
               type="number"
               min={0}
-              className="input w-24"
+              inputMode="numeric"
+              className="input w-20 text-right"
               value={constraints.restMin ?? 0}
               disabled={!canEdit || busy}
               onChange={(e) =>
                 void save({ ...constraints, restMin: Math.max(0, Number(e.target.value)) })
               }
             />
-            minutes
-          </label>
-          <label className="flex items-center gap-2 text-sm text-slate-600">
-            Field fairness
+            min
+          </span>
+        </label>
+
+        {/* Row, not <label>: the Tip is a <button>, and a button inside a label
+            both pollutes the label's accessible name and re-targets clicks at
+            the select. Same reason the history panel keeps its Tip outside the
+            heading. */}
+        <div className="flex flex-col items-start gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-5">
+          <span className="min-w-0">
+            <label htmlFor="ff-select" className="block text-sm text-slate-800">
+              Field fairness
+            </label>
+            <span className="mt-0.5 block text-xs text-slate-400">
+              A tie-break between courts free at the same moment — never a delay.
+            </span>
+          </span>
+          <span className="flex w-full items-center gap-2 sm:w-auto">
+            <Tip id="schedule.field-fairness" className="shrink-0" small />
             <select
-              className="input"
-              value={constraints.fieldFairness ?? "off"}
-              disabled={!canEdit || busy}
-              onChange={(e) =>
-                void save({
-                  ...constraints,
-                  fieldFairness: e.target.value as Constraints["fieldFairness"],
-                })
-              }
-            >
-              <option value="off">off</option>
-              <option value="balance">balance courts</option>
-              <option value="rotate">rotate every game</option>
+              id="ff-select"
+              className="select w-full sm:w-44"
+            value={constraints.fieldFairness ?? "off"}
+            disabled={!canEdit || busy}
+            onChange={(e) =>
+              void save({
+                ...constraints,
+                fieldFairness: e.target.value as Constraints["fieldFairness"],
+              })
+            }
+          >
+              <option value="off">Off</option>
+              <option value="balance">Balance courts</option>
+              <option value="rotate">Rotate every game</option>
             </select>
-          </label>
-          {(constraints.startWindows?.length ?? 0) > 0 && (
-            <p className="text-xs text-slate-500">
-              {constraints.startWindows!.length} start window(s) set.
-            </p>
-          )}
+          </span>
         </div>
 
+        {(constraints.startWindows?.length ?? 0) > 0 && (
+          <p className="px-4 py-3 text-xs text-slate-500 sm:px-5">
+            {constraints.startWindows!.length} start window(s) set.
+          </p>
+        )}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
         {/* bulk shift */}
         {canEdit && (
           <div className="card space-y-3 p-4">
