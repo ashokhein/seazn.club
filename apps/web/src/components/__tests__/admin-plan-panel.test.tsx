@@ -45,12 +45,30 @@ function render(plan: TestPlan) {
 
 /** Isolate the HTML of the <button> whose text is `label`, so a `disabled`
  *  assertion can't accidentally pass off some OTHER button on the page (the
- *  panel starts with several disabled-until-reason-typed buttons). */
+ *  panel starts with several disabled-until-reason-typed buttons). Anchored
+ *  on the button's CLOSING form (`>${label}</button>`), not just `>${label}<`
+ *  — each card's <h3> heading repeats the button's own label text and
+ *  renders first, so a bare `>${label}<` match lands on the heading and the
+ *  backward walk from there finds the PRECEDING card's button instead. The
+ *  heading closes with `</h3>`, never `</button>`, so this string can only
+ *  match the real button. */
 function buttonHtmlFor(html: string, label: string): string {
-  const labelIdx = html.indexOf(`>${label}<`);
-  if (labelIdx === -1) throw new Error(`button not found: ${label}`);
-  const tagStart = html.lastIndexOf("<button", labelIdx);
-  return html.slice(tagStart, labelIdx + label.length + 2);
+  const closeTag = `>${label}</button>`;
+  const closeIdx = html.indexOf(closeTag);
+  if (closeIdx === -1) throw new Error(`button not found: ${label}`);
+  const tagStart = html.lastIndexOf("<button", closeIdx);
+  return html.slice(tagStart, closeIdx + closeTag.length);
+}
+
+/** True disabled-attribute check. React's static renderer emits a boolean
+ *  `disabled` prop as the literal attribute `disabled=""` when true and
+ *  omits it entirely when false — it never renders as `disabled:` (that's
+ *  only the Tailwind class-variant prefix, e.g. `disabled:opacity-50`,
+ *  which every button on this panel carries whether or not it is actually
+ *  disabled). Matching on `disabled="` distinguishes the real attribute
+ *  from that class string. */
+function isReallyDisabled(buttonHtml: string): boolean {
+  return /\bdisabled="/.test(buttonHtml);
 }
 
 describe("AdminPlanPanel — restore trial", () => {
@@ -58,7 +76,7 @@ describe("AdminPlanPanel — restore trial", () => {
     const html = render(basePlan);
     expect(html).toContain("Restore trial");
     expect(html).toContain("Clears the one-trial-per-org stamp");
-    expect(buttonHtmlFor(html, "Restore trial")).toContain("disabled");
+    expect(isReallyDisabled(buttonHtmlFor(html, "Restore trial"))).toBe(true);
   });
 
   it("states plainly when there is nothing to restore", () => {
@@ -95,6 +113,10 @@ describe("AdminPlanPanel — restore trial", () => {
     // what the usecase's docstring calls out as the case this hatch exists
     // for) — it must not be gated away by a presence-only Stripe check.
     expect(html).toContain("Restore trial");
-    expect(buttonHtmlFor(html, "Restore trial")).toBeTruthy();
+    // Not just present — still correctly disabled (no reason typed yet),
+    // even for this departed/leftover-plan combination. A regression that
+    // dropped the disabled-until-reason guard specifically for this branch
+    // would flip this from true to false.
+    expect(isReallyDisabled(buttonHtmlFor(html, "Restore trial"))).toBe(true);
   });
 });
