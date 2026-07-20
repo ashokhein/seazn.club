@@ -140,14 +140,19 @@ export function buildPassCheckoutParams(args: {
 }
 
 /**
- * In-app downgrade to Community for orgs WITHOUT a Stripe subscription
+ * In-app downgrade to Community for orgs WITHOUT a LIVE Stripe subscription
  * (admin-comped / dev-granted Pro). A Stripe-billed org must cancel through the
  * in-app Cancel (period-end) flow instead, so paid state never desyncs. Idempotent.
+ *
+ * Liveness, not id presence: a cancelled subscription keeps its id for ever, and
+ * compToPro/extendTrial will comp a DEPARTED org back to Pro. Guarding on the id
+ * alone would leave staff no way to un-comp what they just comped (`until: null`
+ * means for ever) — so `status` is selected and hasLiveSubscription decides.
  */
 export async function downgradeToCommunity(orgId: string): Promise<void> {
-  const [sub] = await sql<{ stripe_subscription_id: string | null }[]>`
-    select stripe_subscription_id from subscriptions where org_id = ${orgId}`;
-  if (sub?.stripe_subscription_id) {
+  const [sub] = await sql<{ stripe_subscription_id: string | null; status: string | null }[]>`
+    select stripe_subscription_id, status from subscriptions where org_id = ${orgId}`;
+  if (hasLiveSubscription(sub)) {
     throw new HttpError(
       400,
       "This organization is billed through Stripe — use “Cancel subscription” on this page.",

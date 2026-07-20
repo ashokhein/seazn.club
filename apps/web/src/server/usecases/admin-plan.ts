@@ -206,7 +206,11 @@ export async function extendTrial(
         status_changed_at = case when status is distinct from 'trialing'
                                  then now() else status_changed_at end,
         updated_at = now()
-      where org_id = ${orgId}`;
+      -- planPanel read the row BEFORE the Stripe call; a cancellation landing in
+      -- between would make this write resurrect liveness on a departed row. Pin
+      -- the write to the id we validated, so a changed row is a no-op instead.
+      where org_id = ${orgId}
+        and stripe_subscription_id = ${before.stripe_subscription_id}`;
   } else {
     // No live subscription: the grant has to CONVEY Pro, because entitlements
     // resolve on plan_key — status/trial_end grant nothing. comped_until is the

@@ -8,7 +8,13 @@
 import { afterAll, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { hasFeature } from "@/lib/entitlements";
+import { getLimit, hasFeature } from "@/lib/entitlements";
+
+// Proof that the degrade landed on COMMUNITY rather than merely losing a Pro
+// flag. `exports` is true on both matrices (V285), so asserting it holds for
+// every plan_key the CASE can return and cannot fail; competitions.max_active
+// is 1 on community and unlimited (null) on pro, so it genuinely separates them.
+const COMMUNITY_MAX_ACTIVE = 1;
 import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -59,7 +65,8 @@ describe.skipIf(!HAS_DB)("comp-expiry arm derives its status list from billing",
   it("a terminal 'canceled' subscription lets the lapsed comp expire", async () => {
     const orgId = await seedLapsedComp({ status: "canceled" });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
-    expect(await hasFeature(orgId, "exports")).toBe(true); // community matrix, not a deny
+    // Community matrix, not a blanket deny — pro is unlimited here.
+    expect(await getLimit(orgId, "competitions.max_active")).toBe(COMMUNITY_MAX_ACTIVE);
   });
 
   // subscriptions.status is NOT NULL, so a null status only reaches this CASE
@@ -78,6 +85,6 @@ describe.skipIf(!HAS_DB)("comp-expiry arm derives its status list from billing",
     // still see it and degrade. Ordering regression guard.
     const orgId = await seedLapsedComp({ status: "past_due", statusChangedDaysAgo: 20 });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
-    expect(await hasFeature(orgId, "exports")).toBe(true);
+    expect(await getLimit(orgId, "competitions.max_active")).toBe(COMMUNITY_MAX_ACTIVE);
   });
 });

@@ -77,6 +77,11 @@ async function resolveFromDb(
       -- negated rather than listing the dead statuses, which would drift.
       -- coalesce is load-bearing: a bare NOT IN over a null status yields NULL,
       -- not true, so the arm would silently never fire for rows with no status.
+      -- BEHAVIOUR CHANGE (deliberate): negating the live list is WIDER than the
+      -- old "status = canceled" test — it also fires for 'suspended', which is
+      -- written in-app by the staff suspend route and never restored on
+      -- reactivate. A suspended org's lapsed comp therefore now degrades where
+      -- before it kept running. That is the intent: suspension is not billing.
       when s.comped_until is not null and s.comped_until <= now()
            and (s.stripe_subscription_id is null
                 or coalesce(s.status, '') not in ${sql([...LIVE_SUBSCRIPTION_STATUSES])})

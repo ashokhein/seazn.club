@@ -287,6 +287,27 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(await hasFeature(orgId, "api.access")).toBe(false);
   });
 
+  // Comp is reversible-IN (above) — it must be reversible-OUT too. The downgrade
+  // guard used to test the id's PRESENCE, so once staff comped a departed org
+  // (dead id, cancelled status) the un-comp threw 400 "billed through Stripe"
+  // and there was no way back — with `until: null` that meant free Pro for ever.
+  it("un-comps a departed org: adminDowngrade reverses a comp on a cancelled subscription", async () => {
+    const { orgId, actorId } = await seedOrg();
+    await sql`update subscriptions
+                 set stripe_subscription_id = 'sub_gone', status = 'canceled'
+               where org_id = ${orgId}`;
+    await compToPro(actorId, orgId, null, "win-back comp");
+    expect(await hasFeature(orgId, "api.access")).toBe(true);
+
+    await adminDowngrade(actorId, orgId, "comp withdrawn");
+
+    const [row] = await sql<{ plan_key: string; comped_until: string | null }[]>`
+      select plan_key, comped_until from subscriptions where org_id = ${orgId}`;
+    expect(row.plan_key).toBe("community");
+    expect(row.comped_until).toBeNull();
+    expect(await hasFeature(orgId, "api.access")).toBe(false);
+  });
+
   it("does not label a cancelled subscription as a Stripe-sourced plan", async () => {
     const { orgId } = await seedOrg();
     await sql`update subscriptions
