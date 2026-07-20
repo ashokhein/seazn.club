@@ -356,6 +356,35 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     expect(parse).not.toHaveBeenCalled();
   });
 
+  // A frozen division rejects every applied plan (applySchedule, 422), so a run
+  // could only ever produce a proposal the organiser is then blocked from
+  // using — and that block landed at Apply, minutes and one paid generation
+  // later. The guard belongs ahead of the quota and spend gates.
+  it("frozen division → 409 SCHEDULE_LOCKED, before any spend", async () => {
+    const auth = await seedPlusOrg();
+    const { divisionId, fixtureIds } = await seedPlannable(auth);
+    await sql`update divisions set schedule_locked = true where id = ${divisionId}`;
+
+    await expect(
+      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
+    ).rejects.toMatchObject({ status: 409, code: "SCHEDULE_LOCKED" });
+
+    // No model call, no generation consumed, no rate-limit slot burned.
+    expect(parse).not.toHaveBeenCalled();
+    const [{ n }] = await sql<{ n: number }[]>`
+      select count(*)::int as n from competition_events
+      where payload->>'division_id' = ${divisionId}
+        and type in ('schedule.ai_generated', 'schedule.ai_failed')`;
+    expect(n).toBe(0);
+    expect(rlCounts.size).toBe(0);
+
+    // Unfreezing restores the normal path — the guard gates on state, not identity.
+    await sql`update divisions set schedule_locked = false where id = ${divisionId}`;
+    parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
+    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" });
+    expect(out.proposal.length).toBeGreaterThan(0);
+  });
+
   it("6th call in the hour → 429", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedPlannable(auth);

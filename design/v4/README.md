@@ -20,6 +20,13 @@ applicable schedule — then refines it in follow-up turns and repairs it after 
 disruptions. Pro-only (`scheduling.ai`). Token spend is acceptable: a couple of runs per
 division, quality over cost.
 
+> **Amended 2026-07-20 by measurement — see `04-architect-benchmarks.md`.** "Quality over
+> cost" still holds, but the cost turned out to sit somewhere nobody assumed: ~90% of a run
+> is the model *thinking*, and only ~10% the plan it emits. That makes effort/thinking the
+> only levers worth pulling, and makes prompt caching and output-schema trimming close to
+> irrelevant. Quality was never the thing being traded — every benched arm produced an
+> engine-clean plan in one round.
+
 **Architecture in one line: solver drafts → AI plans → engine referees.** The LLM is never
 trusted for legality; `validateAssignments` re-checks every proposal server-side and feeds
 conflicts back for repair rounds. Output is the existing `applySchedule` shape, so apply,
@@ -33,6 +40,7 @@ undo, checkpoints, seq-concurrency and the ledger all work unchanged.
 | 01 | `01-llm-contract.md` | The LLM contract: model/params, context-pack format, output schema, verbatim system prompt, repair/refine protocol, eval fixtures | 41, 42 |
 | 02 | `02-board-ux.md` | Board UX design + prototype finding: surface the referee/repair loop, 3-colour state contract, block/summary/instruction decisions, states. Prototype artifact linked. | 43 |
 | 03 | `03-two-phase-officials-and-intake.md` | 2026-07-18 approved revision: Phase B officials (draft→LLM→referee), pre-flight + wish chips, repair nudges, ledger audit, Pro Plus gates + admin override, drift fixes, deferrals | 85, 86, 87 |
+| 04 | `04-architect-benchmarks.md` | Live measurements + the reasoning behind every runtime default (effort, round timeout, thinking, Phase B). Token anatomy: ~90% of spend is thinking, so schema changes cap at 9.5%. States explicitly what the evidence does **not** support. | — |
 
 ## Prompt index (prompts/)
 

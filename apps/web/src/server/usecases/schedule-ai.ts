@@ -1110,7 +1110,8 @@ function isoConstraintSuggestions(
  * still metered.
  *
  * @throws HttpError 403 FEATURE_DISABLED (kill switch), 402 (paid gate or
- *   over-quota run cap), 429 (rate limit), plus everything
+ *   over-quota run cap), 409 SCHEDULE_LOCKED (frozen division — refused before
+ *   the quota and spend gates), 429 (rate limit), plus everything
  *   buildSchedulePack/runAiPlan raise (409/422/400/503).
  */
 export async function aiPlanForDivision(
@@ -1136,16 +1137,34 @@ export async function aiPlanForDivision(
   // and refuse the (cap+1)th here, before the LLM call, so an over-quota org
   // never burns a request.
   const gate = await withTenant(auth.orgId, async (tx) => {
-    const [division] = await tx<{ competition_id: string }[]>`
-      select competition_id from divisions where id = ${divisionId}`;
+    const [division] = await tx<{ competition_id: string; schedule_locked: boolean }[]>`
+      select competition_id, schedule_locked from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     const [row] = await tx<{ n: number }[]>`
       select count(*)::int as n from competition_events
       where competition_id = ${division.competition_id}
         and type = 'schedule.ai_generated'
         and payload->>'division_id' = ${divisionId}`;
-    return { competitionId: division.competition_id, priorRuns: row?.n ?? 0 };
+    return {
+      competitionId: division.competition_id,
+      priorRuns: row?.n ?? 0,
+      frozen: division.schedule_locked ?? false,
+    };
   });
+
+  // A frozen division rejects every applied plan (schedule.ts applySchedule,
+  // 422 "the division schedule is locked"). Running the architect anyway spends
+  // a generation, a rate-limit slot and real tokens to produce a proposal the
+  // organiser is then blocked from using — the failure only surfaced at Apply,
+  // several minutes and one paid run later. Refuse here, ahead of the quota and
+  // spend gates, so a frozen board costs nothing.
+  if (gate.frozen) {
+    throw new HttpError(
+      409,
+      "the division schedule is frozen — unfreeze it to plan with AI",
+      "SCHEDULE_LOCKED",
+    );
+  }
   const cap = await withinLimit(
     auth.orgId,
     "scheduling.ai.runs_per_division.max",
