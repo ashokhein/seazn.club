@@ -51,6 +51,9 @@ below, and it recurs at 27 call-site groups.
 | D9 | The override-expiry and lapsed-comp leaks land **first** in the branch — the Event Pass work builds on a correct resolver. |
 | D10 | Spec + fix + E2E ship on one branch; the upgrade-page visual redesign needs screenshot sign-off before merge. |
 | D11 | The Event Pass checkout opens in the **same `Modal` and theme as the Pro checkout** on the billing page — one checkout presentation across the product. |
+| D12 | A pass bought within **30 days** credits its full price against the org's first Pro invoice, delivered as a **Stripe customer balance credit** (not a coupon — `discounts` and `allow_promotion_codes` are mutually exclusive in Checkout, and both builders set the latter). The pass keeps working if they later downgrade. |
+| D13 | A pass holder **keeps** the 14-day Pro trial but **must supply a card** to start it. `trial_used_at` is not stamped by a pass purchase. |
+| D14 | `subscriptions.currency` is pinned at the org's **first purchase of any kind, including a pass**, and never changed thereafter. |
 
 ## What the pass actually sells (corrected)
 
@@ -240,7 +243,52 @@ added here must land in all four.
    link to the competition, link to the invoice PDF.
 4. Probe `customer_update: { address: "auto" }`. Both builders set
    `automatic_tax.enabled` and pass an existing `customer`; Stripe may 400. Bites
-   an org that had Pro, downgraded (keeping its customer id), then buys a pass.
+   an org that had Pro, downgraded (keeping its customer id), then buys a pass —
+   and, once step 2 lands, **every** pass holder upgrading to Pro. The customer
+   link makes this path common rather than rare, so it must be settled here.
+5. Stamp `subscriptions.currency` on pass reconcile (D14), reusing
+   `syncSubscription`'s never-overwrite shape:
+   `currency = coalesce(excluded.currency, subscriptions.currency)`
+   (`lib/billing.ts:451`). Today only `syncSubscription` writes it (`:414,:423`),
+   so a pass-only org keeps `NULL` and `preferredCurrency`
+   (`lib/currency-server.ts:20-24`) falls through to the cookie and then
+   Accept-Language — meaning a buyer who paid £25 for a pass can be quoted USD for
+   Pro later.
+
+## Workstream 4b — Event Pass to Pro (D12/D13/D14)
+
+What happens today, traced end to end:
+
+| Step | Today | After |
+|---|---|---|
+| Checkout allowed? | yes — `assertCheckoutAllowed` only blocks a *live* sub (`billing.ts:115`) | unchanged |
+| Trial | 14 days, **no card** — `checkoutTrialDays` returns 14 because a pass never stamps `trial_used_at`, and `trialDays > 0` implies `payment_method_collection: "if_required"` (`billing.ts:69`) | 14 days, **card required** (D13) |
+| Stripe customer | **a second one is minted** — `stripe_customer_id` is NULL, so the builder falls to `customer_email` | reused; one customer per org |
+| The $29 | sunk; nothing reads `competition_passes` in any pricing path | credited to the customer balance if bought ≤30 days ago (D12) |
+| The pass row | dormant — the resolver skips it while `planKey !== 'community'` (`entitlements.ts:109`) | unchanged; revives on downgrade |
+| Currency | may differ from the pass purchase | pinned at first purchase (D14) |
+
+The reverse direction already behaves: a Pro org attempting a pass gets 400
+"Your plan already covers everything an Event Pass adds" (`pass-checkout/route.ts:34`).
+
+**D13 implementation note.** `buildEmbeddedCheckoutParams` currently ties
+card collection to the trial:
+
+```ts
+...(args.trialDays > 0 ? { payment_method_collection: "if_required" as const } : {}),
+```
+
+Add an explicit `requireCard` argument rather than overloading `trialDays`. When
+true the parameter is omitted, so Checkout defaults to `always`, and
+`trial_settings.end_behavior.missing_payment_method: "cancel"` becomes
+belt-and-braces instead of the primary control.
+
+**D12 precondition.** The credit must attach to the customer that will be billed
+for Pro, so it is only correct **after** the customer-link fix in workstream 4.
+Verified enabling fact: every org gets a `subscriptions` row at creation
+(`lib/auth.ts:242-245`, `community`/`active`), so `linkStripeCustomer`'s
+`if (!before) return` guard (`billing.ts:331`) will not silently no-op for a
+pass-only org.
 
 ## Workstream 5 — discovery (D3)
 
@@ -295,7 +343,8 @@ frontend-design skill. Build variants, screenshot desktop and mobile, get sign-o
 | U11 | Pass holder | AI schedule | 10 runs/division, quota surfaced |
 | U12 | Pass holder | Billing page | Purchases section + invoice PDF |
 | U13 | Pro org | Opens the upgrade page | "Your plan already covers this", no purchase |
-| U14 | Pass holder | Upgrades to Pro | Pass moot, no double charge, no regression |
+| U14 | Pass holder | Upgrades to Pro within 30 days | Same Stripe customer; $29 on the customer balance; 14-day trial with a card required; pass dormant, not consumed |
+| U14b | Pass holder | Upgrades to Pro after 30 days | Same, but no credit; copy says so before they commit |
 | U15 | Pro org | Downgrades to community | **Pass survives** on its competition |
 | U16 | Staff | Refunds the pass in the Stripe dashboard | Pass revoked, quotas re-freeze |
 
@@ -315,6 +364,11 @@ frontend-design skill. Build variants, screenshot desktop and mobile, get sign-o
 | E10 | Org suspended holding a pass | Suspension is not billing; pass unaffected |
 | E11 | Buyer in EUR/GBP/INR/AUD | Charged in the quoted currency; `adaptive_pricing` off (#191) |
 | E12 | Org with a stale `stripe_customer_id` from a cancelled sub | Reused, not duplicated; watch the `automatic_tax` 400 |
+| E21 | Pass bought in GBP, Pro later quoted | GBP — `subscriptions.currency` pinned at the pass purchase (D14) |
+| E22 | Credit applied, buyer then cancels inside the trial | Balance credit stays on the customer; it is not clawed back |
+| E23 | Two passes bought, then upgrade to Pro | Credit is capped at one pass price — the most recent within 30 days, not the sum |
+| E24 | Pass refunded, then upgrade to Pro | No credit — the refund already returned the money |
+| E25 | Pass holder upgrades to Pro Plus, not Pro | Same credit rule; D12 is not Pro-specific |
 | E13 | Pass on a competition in another org | 404 (`pass-checkout/route.ts:28`) |
 | E14 | `stripe_price_id_onetime` unset | 503 with support copy |
 | E15 | Expired staff override | **No longer grants** (workstream 1) |
