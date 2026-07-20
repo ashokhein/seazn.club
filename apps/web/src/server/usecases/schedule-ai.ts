@@ -659,12 +659,19 @@ export function schedulingAiModel(): string {
  *
  *  The deterministic referee verifies every proposal regardless, so a thinner
  *  plan surfaces as repair rounds, never as a silently bad schedule. */
-export function schedulingAiEffort(): "low" | "medium" | "high" | "xhigh" | "max" {
-  const raw = process.env.SCHEDULING_AI_EFFORT;
-  const allowed = ["low", "medium", "high", "xhigh", "max"] as const;
-  return (allowed as readonly string[]).includes(raw ?? "")
-    ? (raw as (typeof allowed)[number])
-    : "medium";
+export function schedulingAiEffort(): AiEffort {
+  return parseAiEffort(process.env.SCHEDULING_AI_EFFORT, "medium");
+}
+
+export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
+
+const AI_EFFORTS: readonly AiEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+/** Shared by both architect phases, which carry DIFFERENT defaults on purpose:
+ *  Phase A is benched, Phase B is not. An unset or unrecognised value falls back
+ *  rather than throwing — a typo'd env var must not take AI scheduling down. */
+export function parseAiEffort(raw: string | undefined, fallback: AiEffort): AiEffort {
+  return (AI_EFFORTS as readonly string[]).includes(raw ?? "") ? (raw as AiEffort) : fallback;
 }
 
 export function anthropicClient(): Anthropic {
