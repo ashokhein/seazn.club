@@ -55,7 +55,9 @@ export default async function OrgLayout({
   ]);
   return (
     <DictProvider dict={ui} locale={locale}>
-      <Nav />
+      {/* The path owns which org the chrome shows; the cookie is corrected
+          afterwards by ActiveOrgSync, so the nav must not wait for it. */}
+      <Nav orgSlug={resolved.slug} />
       <ActiveOrgSync orgId={resolved.id} stale={activeOrgId !== resolved.id} />
       <Breadcrumbs
         orgName={resolved.name}

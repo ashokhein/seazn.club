@@ -97,5 +97,15 @@ test("fresh login lands on /o/[slug]; two org tabs stay independent", async ({ b
   await pageA.reload();
   await expect(pageA).toHaveURL(new RegExp(`/o/${orgA.slug}$`));
   await expect(pageA.getByRole("heading", { name: "Competitions", exact: true })).toBeVisible();
+
+  // Regression (user report 2026-07-20): the console chrome must follow the URL
+  // too. With the cookie on org B, tab A's nav once linked Settings at org B —
+  // switching org and then clicking Settings landed on the org just left.
+  await expect(pageA.getByRole("link", { name: "Settings" })).toHaveAttribute(
+    "href",
+    `/o/${orgA.slug}/settings`,
+  );
+  await pageA.getByRole("link", { name: "Settings" }).click();
+  await expect(pageA).toHaveURL(new RegExp(`/o/${orgA.slug}/settings`));
   await context.close();
 });
