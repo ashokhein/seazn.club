@@ -42,7 +42,7 @@ export function buildEmbeddedCheckoutParams(args: {
   customerId?: string;
   customerEmail?: string;
   /** ISO currency picking one of the price's currency_options (v3/07 §4);
-   *  omit for the price's default (usd). */
+   *  defaults to usd, and is ALWAYS sent — see the note on the field below. */
   currency?: string;
 }): Stripe.Checkout.SessionCreateParams {
   return {
@@ -50,7 +50,21 @@ export function buildEmbeddedCheckoutParams(args: {
     ui_mode: "embedded_page",
     mode: "subscription",
     ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
-    ...(args.currency && args.currency !== "usd" ? { currency: args.currency } : {}),
+    // Always sent, usd included, so the session states the currency WE chose
+    // via preferredCurrency (subscription → cookie → Accept-Language) instead
+    // of leaving it implicit. Safe for every value isSupportedCurrency accepts:
+    // usd/eur/gbp/inr/aud all exist in every price's currency_options (verified
+    // against live Stripe 2026-07-20). A currency a price LACKS is a 400 at
+    // checkout, so those two lists must stay in step — see stripe-plans.json.
+    currency: args.currency ?? "usd",
+    // This is the one that actually fixes the reported bug. Stripe's Adaptive
+    // Pricing is ON by default and converts at RENDER time from the customer's
+    // IP: the billing page quoted $13.25/mo while the embedded checkout charged
+    // £125.00/yr for a UK visitor. Verified live 2026-07-20 — the session came
+    // back currency=usd amount_total=15900 with the currency both omitted AND
+    // explicitly usd, so setting `currency` alone does NOT stop it. Only this
+    // flag does. We quote in one currency; we must charge in that currency.
+    adaptive_pricing: { enabled: false },
     metadata: { org_id: args.orgId },
     ...(args.trialDays > 0 ? { payment_method_collection: "if_required" as const } : {}),
     subscription_data: {
@@ -133,7 +147,11 @@ export function buildPassCheckoutParams(args: {
     ui_mode: "embedded_page",
     mode: "payment",
     ...(args.customerId ? { customer: args.customerId } : { customer_email: args.customerEmail }),
-    ...(args.currency && args.currency !== "usd" ? { currency: args.currency } : {}),
+    // Both for the same reason as the subscription flow above: state our own
+    // currency, and stop Adaptive Pricing re-quoting the pass at render time in
+    // whatever currency the buyer's IP suggests.
+    currency: args.currency ?? "usd",
+    adaptive_pricing: { enabled: false },
     metadata: { org_id: args.orgId, competition_id: args.competitionId, pass_key: "event_pass" },
     line_items: [{ price: args.priceId, quantity: 1 }],
     return_url: args.returnUrl,
