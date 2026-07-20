@@ -211,14 +211,26 @@ export function HistoryPanel({
                 });
               }}
             >
+              {/* Sized down from the app-wide .input/.btn defaults on purpose.
+                  The list below runs at 12.5px with 10.5px actions, so a 14px
+                  solid-purple button made creating a save point look like the
+                  loudest thing in the panel. Restoring is what people come here
+                  for; creating is setup, so it takes the quiet ghost styling and
+                  the same 12px scale as everything around it. */}
               <input
-                className="input"
+                className="input py-1.5 text-xs"
                 placeholder="e.g. before rain reshuffle"
                 value={label}
                 onChange={(e) => setLabel(e.target.value)}
                 aria-label="Save point label"
               />
-              <button type="submit" className="btn btn-primary" disabled={busy}>Save point</button>
+              <button
+                type="submit"
+                className="btn btn-ghost shrink-0 whitespace-nowrap px-2.5 py-1.5 text-xs"
+                disabled={busy}
+              >
+                Save point
+              </button>
             </form>
           )}
           {/* Grouped by kind, because the two obey different rules: a manual
@@ -353,9 +365,13 @@ export function HistoryPanel({
             Clears timetable slots only — locked and decided fixtures always survive, and
             the action is undoable above.
           </p>
+          {/* btn-danger, not hand-rolled: `border-red-200` sets a border colour
+              but no width, so this painted no border and no background — a
+              destructive action that read as bare red text, its .btn padding
+              showing only as a stray indent. */}
           <button
             type="button"
-            className="btn mt-2 border-red-200 text-red-700 hover:bg-red-50"
+            className="btn btn-danger mt-2"
             disabled={busy}
             onClick={async () => {
               const ok = await confirmDialog({

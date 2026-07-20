@@ -880,7 +880,6 @@ export function ScheduleBoard({
         <SettingsPanel
           divisionId={settings.division_id}
           config={cfg}
-          tz={settings.tz}
           canEdit={canEdit}
           constraintsAllowed={constraintsAllowed}
           venueCap={venueCap}

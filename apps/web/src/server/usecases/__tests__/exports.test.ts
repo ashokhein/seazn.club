@@ -92,16 +92,36 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     expect(xlsx.length).toBeGreaterThan(500);
   });
 
-  it("scoresheets pageBreaks=per_pitch: each court starts a new page", async () => {
+  it("scoresheets pageBreaks=per_pitch: one stack per court, one break between them", async () => {
     const { auth } = await seedOrg();
     const { division, fixtures } = await seedDivision(auth);
+    // Two courts, interleaved exactly as a real round robin comes back: R1 on
+    // both courts, then R2 on both. This is the shape the old code got wrong —
+    // it broke a page every time the court changed *in round order*, so it
+    // produced three breaks here and grouped nothing.
     await patchFixture(auth, fixtures[0]!.id, { scheduled_at: "2026-07-20T09:00:00.000Z", court_label: "Court 1" });
-    await patchFixture(auth, fixtures[1]!.id, { scheduled_at: "2026-07-20T09:30:00.000Z", court_label: "Court 2" });
+    await patchFixture(auth, fixtures[1]!.id, { scheduled_at: "2026-07-20T09:00:00.000Z", court_label: "Court 2" });
+    await patchFixture(auth, fixtures[2]!.id, { scheduled_at: "2026-07-20T09:30:00.000Z", court_label: "Court 1" });
+    await patchFixture(auth, fixtures[3]!.id, { scheduled_at: "2026-07-20T09:30:00.000Z", court_label: "Court 2" });
     const model = await buildDivisionDocModel(auth, division.id, "scoresheet", {
       printedAt: PRINTED, pageBreaks: "per_pitch",
     });
-    expect(model.sections.length).toBeGreaterThanOrEqual(2);
-    expect(model.sections.some((s) => s.pageBreakBefore === true)).toBe(true);
+
+    // seedDivision is a 4-entrant round robin (6 fixtures), so the two left
+    // without a court form a third group that sorts last. Three groups → two
+    // boundaries, never in front of the first sheet. The old code broke on
+    // every court change in round order and produced far more.
+    const breaks = model.sections.filter((s) => s.pageBreakBefore === true);
+    expect(breaks).toHaveLength(2);
+    expect(model.sections[0]!.pageBreakBefore).not.toBe(true);
+
+    // Every Court 1 sheet precedes every Court 2 sheet, and unassigned sheets
+    // come last — that is the point of the option: one pile per official.
+    const courtOf = (sub?: string) =>
+      sub?.includes("Court 1") ? 1 : sub?.includes("Court 2") ? 2 : 3;
+    const order = model.sections.map((s) => courtOf(s.subheading));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+
     // generic sport falls back to the result form with signatures
     expect(model.sections[0]!.signatures).toContain("Referee");
   });
@@ -180,19 +200,18 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
       select slug from organizations where id = ${auth.orgId}`;
 
     // seedDivision creates the competition as visibility: "private" — its
-    // /shared/... page 404s, so no QR should be set even with an origin.
+    // /shared/... page 404s, so no QR belongs on it.
     const privateModel = await buildDivisionDocModel(auth, division.id, "timetable", {
-      printedAt: PRINTED, origin: "https://seazn.club",
+      printedAt: PRINTED,
     });
     expect(privateModel.meta.liveUrl).toBeUndefined();
 
-    // no origin at all (e.g. a test/caller that never threads one): still no QR.
+    // The origin is no longer threaded from the request: a QR is scanned by a
+    // phone that has to reach the public site, so it comes from siteOrigin()
+    // and visibility is the only thing that decides whether one is drawn.
     await sql`update competitions set visibility = 'public' where id = ${comp.id}`;
-    const noOrigin = await buildDivisionDocModel(auth, division.id, "timetable", { printedAt: PRINTED });
-    expect(noOrigin.meta.liveUrl).toBeUndefined();
-
     const model = await buildDivisionDocModel(auth, division.id, "timetable", {
-      printedAt: PRINTED, origin: "https://seazn.club",
+      printedAt: PRINTED,
     });
     expect(model.meta.liveUrl).toBe(
       `https://seazn.club/shared/${orgSlug}/${comp.slug}/${division.slug}`,
@@ -230,9 +249,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
          ${randomUUID()}, ${"TIX-" + suffix})
       returning ref_code`;
 
-    const model = await buildAdmitTicketsDoc(
-      auth, comp.id, { printedAt: PRINTED }, "https://example.seazn.club",
-    );
+    const model = await buildAdmitTicketsDoc(auth, comp.id, { printedAt: PRINTED });
     expect(model.kind).toBe("admit_ticket");
     const ticket = model.sections[0]!.ticket!;
     expect(ticket.maskedName).toBeTruthy();
@@ -241,7 +258,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
   });
 
   it("buildMyRotaDoc: SEAZN-neutral — no org branding", async () => {
-    const model = await buildMyRotaDoc(randomUUID(), { printedAt: PRINTED }, "https://example.seazn.club");
+    const model = await buildMyRotaDoc(randomUUID(), { printedAt: PRINTED });
     expect(model.kind).toBe("officials_rota");
     expect(model.branding).toBeUndefined();
   });
@@ -251,7 +268,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     const { division: freeDiv, comp: freeComp } = await seedDivision(freeAuth);
     const freeRota = await buildOfficialsRotaDoc(freeAuth, freeDiv.id, { printedAt: PRINTED });
     expect(freeRota.branding).toBeUndefined();
-    const freeTickets = await buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED }, "https://example.seazn.club");
+    const freeTickets = await buildAdmitTicketsDoc(freeAuth, freeComp.id, { printedAt: PRINTED });
     expect(freeTickets.branding).toBeUndefined();
 
     const { auth: proAuth } = await seedOrg("pro");
@@ -260,7 +277,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
       buildOfficialsRotaDoc(proAuth, proDiv.id, { printedAt: PRINTED }),
     ).resolves.toBeTruthy();
     await expect(
-      buildAdmitTicketsDoc(proAuth, proComp.id, { printedAt: PRINTED }, "https://example.seazn.club"),
+      buildAdmitTicketsDoc(proAuth, proComp.id, { printedAt: PRINTED }),
     ).resolves.toBeTruthy();
   });
 
@@ -295,7 +312,7 @@ describe.skipIf(!HAS_DB)("rich exports (Jul3/06)", () => {
     const a = await makeLinkedOfficial("Rota User A", fixtures[0]!.id); // Court 1
     await makeLinkedOfficial("Rota User B", fixtures[1]!.id); // Court 2
 
-    const model = await buildMyRotaDoc(a.userId, { printedAt: PRINTED }, "https://example.seazn.club");
+    const model = await buildMyRotaDoc(a.userId, { printedAt: PRINTED });
     const flat = JSON.stringify(model.sections);
     // A's own duty (Court 1) shows; B's fixture (Court 2) never leaks in.
     expect(flat).toContain("Court 1");

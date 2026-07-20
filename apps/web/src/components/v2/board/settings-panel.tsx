@@ -16,6 +16,7 @@ import {
 } from "@/lib/schedule-board";
 import type { BoardConfig } from "./types";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { pluralizeVenue } from "@/lib/venue";
 
 /** Self-contained wrapper for RSC pages (constraints tab): owns the saved/
  *  error notice the board would otherwise host. Opens expanded — on a
@@ -23,7 +24,6 @@ import { useMsg } from "@/components/i18n/dict-provider";
 export function StandaloneScheduleSettings(props: {
   divisionId: string;
   config: BoardConfig;
-  tz: string;
   canEdit: boolean;
   constraintsAllowed: boolean;
   venueCap?: string;
@@ -56,7 +56,6 @@ export function StandaloneScheduleSettings(props: {
 export function SettingsPanel({
   divisionId,
   config,
-  tz,
   canEdit,
   constraintsAllowed,
   venueCap = "Court",
@@ -66,7 +65,6 @@ export function SettingsPanel({
 }: {
   divisionId: string;
   config: BoardConfig;
-  tz: string;
   canEdit: boolean;
   constraintsAllowed: boolean;
   venueCap?: string;
@@ -86,7 +84,6 @@ export function SettingsPanel({
   const [courts, setCourts] = useState<string[]>(
     config.courts.length > 0 ? [...config.courts] : [`${venueCap} 1`],
   );
-  const [zone, setZone] = useState(tz);
   const [saving, setSaving] = useState(false);
   const [hoursError, setHoursError] = useState<string | null>(null);
   // Prefill only when the stored windows are a uniform daily pattern —
@@ -131,6 +128,10 @@ export function SettingsPanel({
     setSaving(true);
     try {
       const cleanCourts = courts.map((c) => c.trim()).filter(Boolean);
+      // No `tz` key (V305): the venue timezone is an ORGANISATION setting now
+      // and is inherited. Omitting it is load-bearing — the PUT treats an
+      // absent tz as "leave the stored value alone", so divisions that already
+      // carry their own zone keep it instead of being silently reset.
       await apiV1(`/api/v1/divisions/${divisionId}/schedule-settings`, {
         method: "PUT",
         json: {
@@ -144,7 +145,6 @@ export function SettingsPanel({
             courts: cleanCourts.length > 0 ? cleanCourts : [`${venueCap} 1`],
             sessionWindows,
           },
-          tz: zone,
         },
       });
       // Board's inline card collapses back to its one-liner; the settings
@@ -224,17 +224,15 @@ export function SettingsPanel({
             {msg("boardset.restHint")}{constrained ? msg("boardset.proSuffix") : ""}
           </span>
         </label>
-        <label className="block">
-          <span className="label">{msg("boardset.timezone")}</span>
-          <input value={zone} onChange={(e) => setZone(e.target.value)} className="input w-full" disabled={!canEdit} />
-          <span className="mt-0.5 block text-xs text-slate-400">{msg("boardset.timezoneHint")}</span>
-        </label>
       </div>
 
       <div>
-        <span className="label">{msg("boardset.venuesLabel", { venue: venueCap })}</span>
+        <span className="label">{msg("boardset.venuesLabel", { venue: pluralizeVenue(venueCap) })}</span>
         <p className="mb-2 text-xs text-slate-400">{msg("boardset.venuesDesc", { venue })}</p>
-        <ul className="space-y-2">
+        {/* Court names are short ("Court 1", "Show court"), so a full-bleed
+            input looked like a paragraph field. Capped at one column of the
+            gap-4 two-col grid above so it lines up with those fields. */}
+        <ul className="space-y-2 sm:max-w-[calc(50%-0.5rem)]">
           {courts.map((c, i) => (
             <li key={i} className="flex items-center gap-2">
               <input

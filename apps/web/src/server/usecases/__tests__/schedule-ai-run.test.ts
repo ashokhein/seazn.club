@@ -34,10 +34,11 @@ const E = (n: number) => `${n}${n}${n}${n}${n}${n}${n}${n}-${n}${n}${n}${n}-4${n
 function makePack(overrides: Partial<SchedulePack> = {}): SchedulePack {
   return {
     mode: "generate",
-    division: { id: "d1", name: "Open", sport: "generic", tz: "Europe/London", scheduling_mode: "timed" },
+    division: { id: "d1", name: "Open", sport: "generic", tz: "Europe/London" },
     settings: {
       matchMinutes: 30,
       gapMinutes: 0,
+      perEntrantMinRest: 0,
       courts: ["Court 1", "Court 2"],
       sessionWindows: [{ from: "2026-08-01T09:00:00+01:00", to: "2026-08-01T18:00:00+01:00" }],
       blackouts: [],

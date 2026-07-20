@@ -9,10 +9,10 @@ import { docModelToPdf } from "@/server/doc-render";
  *  entitlement gate: the officiating portal is free, and the doc is scoped
  *  by getMyOfficiating(userId), never by org membership. Raw file response;
  *  errors keep the v1 envelope. */
-export async function GET(req: Request) {
+export async function GET() {
   try {
     const user = await requireUser();
-    const model = await buildMyRotaDoc(user.id, { printedAt: new Date().toISOString() }, new URL(req.url).origin);
+    const model = await buildMyRotaDoc(user.id, { printedAt: new Date().toISOString() });
     const bytes = await docModelToPdf(model);
     return new NextResponse(new Uint8Array(bytes), {
       headers: {

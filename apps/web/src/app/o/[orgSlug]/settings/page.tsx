@@ -19,6 +19,7 @@ import { OrgRename } from "@/components/org-rename";
 import { OrgLogo } from "@/components/org-logo";
 import { OrgBrandColor } from "@/components/org-brand-color";
 import { OrgAbout } from "@/components/org-about";
+import { OrgTimezone } from "@/components/org-timezone";
 import { OrgSponsors } from "@/components/org-sponsors";
 import { SponsorPackages } from "@/components/sponsor-packages";
 import { listSponsorRows } from "@/server/usecases/sponsors";
@@ -321,6 +322,16 @@ export default async function SettingsPage({
                   </div>
                 )}
 
+
+                {/* Scheduling timezone (V305) — the VENUE lane every division
+                    inherits. Lives here, not on the division: divisions no
+                    longer ask for a timezone at all. */}
+                {canEdit && (
+                  <div className="mt-5 border-t border-slate-100 pt-5">
+                    <SubSection icon={Clock} label={t(dict, "settings.org.timezone")} />
+                    <OrgTimezone orgId={active.id} initialTimezone={active.timezone} />
+                  </div>
+                )}
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">

@@ -6,6 +6,7 @@ import { fireOrgRevalidate } from "@/server/public-site/revalidate";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
 import { mergeBrandColor, mergeSponsors } from "@/lib/org-branding";
+import { isValidIana } from "@/lib/tz";
 import { EDITOR_ROLES, renameOrgSchema, type Organization } from "@/lib/types";
 import { z } from "zod";
 
@@ -17,6 +18,16 @@ const orgPatchSchema = z.union([
   z.object({ default_payment_method: z.enum(["offline", "stripe"]) }).strict(),
   // Org "about" (v3/06 §2): Markdown, rendered on the public org page.
   z.object({ about: z.string().max(20_000).nullable() }).strict(),
+  // Scheduling timezone (V305) — the VENUE lane, inherited by every division
+  // that has no stored tz. null clears it back to UTC. Validated against the
+  // runtime's Intl, the same rule as users.timezone (lib/tz isValidIana).
+  z.object({
+    timezone: z
+      .string()
+      .max(64)
+      .refine(isValidIana, { message: "Unknown timezone" })
+      .nullable(),
+  }).strict(),
   // Brand color ({ colors: { primary } }, same shape as competitions.branding).
   // primary: null clears back to the platform default. Writes are accepted on
   // any plan — reads are gated by dashboard.branding, like competitions.
@@ -73,6 +84,7 @@ export async function PATCH(
     if ("payment_instructions" in body) updates.payment_instructions = body.payment_instructions;
     if ("default_payment_method" in body) updates.default_payment_method = body.default_payment_method;
     if ("about" in body) updates.about = body.about;
+    if ("timezone" in body) updates.timezone = body.timezone;
     // Branding writes MERGE into the blob (lib/org-branding): colors and
     // sponsors share the column, and neither may clobber the other.
     if ("branding" in body || "sponsors" in body) {
@@ -92,7 +104,7 @@ export async function PATCH(
       const [row] = await tx<Organization[]>`
         update organizations set ${tx(updates)}
         where id = ${id}
-        returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, default_payment_method, branding`;
+        returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, default_payment_method, branding, timezone`;
       if (!row) throw new HttpError(404, "Organization not found");
       if (previousSlug) await recordSlugHistory(tx, "org", null, previousSlug, id);
       return row;

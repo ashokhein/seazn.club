@@ -44,6 +44,13 @@ export interface Organization {
   default_payment_method: "offline" | "stripe";
   /** `{ colors: { primary: "#hex" } }` — same shape as competitions.branding. */
   branding: unknown;
+  /**
+   * VENUE-lane scheduling timezone (V305), inherited by every division that
+   * has no stored tz of its own. Null = not set → 'UTC'. This is NOT
+   * `users.timezone`: that is the personal display lane, and a London-based
+   * organiser can run an event in Malaga.
+   */
+  timezone: string | null;
 }
 
 /** An organization paired with the current user's role in it. */

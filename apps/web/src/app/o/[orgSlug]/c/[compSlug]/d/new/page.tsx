@@ -5,6 +5,7 @@ import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { getCompetition } from "@/server/usecases/competitions";
 import { withTenant } from "@/lib/db";
+import { hasFeature } from "@/lib/entitlements";
 import { DivisionBuilder, type SportOption } from "@/components/v2/division-builder";
 
 export default async function NewDivisionPage({
@@ -17,7 +18,12 @@ export default async function NewDivisionPage({
   const { auth, canEdit } = page;
   const id = page.competition.id;
   if (!canEdit) redirect(routes.competition(orgSlug, compSlug));
-  const competition = await getCompetition(auth, id);
+  const [competition, constraintsAllowed] = await Promise.all([
+    getCompetition(auth, id),
+    // A multi-venue schedule seed is Pro (doc 12 §5) — gate the list in the
+    // wizard rather than letting the settings PUT 402 after create.
+    hasFeature(auth.orgId, "scheduling.constraints"),
+  ]);
 
   // Sport catalog + variant presets (system rows are tenant-readable, org
   // presets scoped by RLS — doc 07).
@@ -47,7 +53,13 @@ export default async function NewDivisionPage({
         <p className="mb-6 text-sm text-slate-500">
           in <span className="font-medium">{competition.name}</span>
         </p>
-        <DivisionBuilder competitionId={id} orgSlug={orgSlug} compSlug={compSlug} sports={sports} />
+        <DivisionBuilder
+          competitionId={id}
+          orgSlug={orgSlug}
+          compSlug={compSlug}
+          sports={sports}
+          constraintsAllowed={constraintsAllowed}
+        />
       </main>
     </>
   );

@@ -298,7 +298,7 @@ async function main() {
 
   // --- v3 scheduling board + registration v2 (PROMPT-33/34): board render,
   // seq-tokened reschedule + stale 409, SZ refs + /r/[ref] on pro AND free.
-  await schedRegV3Suite(admin, renamed.slug);
+  await schedRegV3Suite(admin, renamed.slug, org2.id);
 
   // --- v10 sponsor CRM: tiers + placement + tracked clicks + Connect rail
   // on the pro org; flat free strip + 402 gates on a fresh community owner.
@@ -3603,6 +3603,7 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
 async function schedRegV3Suite(
   admin: Session,
   proOrgSlug: string,
+  proOrgId: string,
 ): Promise<void> {
   // --- Pro path: competition + division + timetable + board page ---
   const comp = v1data<{ id: string; slug: string }>(
@@ -3630,13 +3631,54 @@ async function schedRegV3Suite(
       seq: 1, kind: "league", name: "League",
     }),
   );
+  // V305: no `tz` in the body — the console never sends one. The venue zone
+  // comes from the ORGANISATION and is inherited by every division.
   await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
     config: {
       startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
       courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
     },
-    tz: "UTC",
   });
+
+  // Org scheduling timezone (V305): set it once on the org, and the division
+  // that stores no tz of its own reports it. Then pin the division explicitly
+  // and prove a tz-less save no longer moves it (pre-V305 divisions keep
+  // their zone forever), before restoring inheritance with an explicit null.
+  await call(admin, `/api/orgs/${proOrgId}`, "PATCH", { timezone: "Europe/Madrid" });
+  const inherited = v1data<{ tz: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`),
+  );
+  check("division inherits the org scheduling timezone (V305)", inherited.tz === "Europe/Madrid");
+  await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
+    config: {
+      startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
+      courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+    },
+    tz: "Asia/Kolkata",
+  });
+  const kept = v1data<{ tz: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
+      config: {
+        startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
+        courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      },
+    }),
+  );
+  check("a tz-less save keeps a division's own timezone (V305)", kept.tz === "Asia/Kolkata");
+  const recleared = v1data<{ tz: string }>(
+    await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
+      config: {
+        startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
+        courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      },
+      tz: null,
+    }),
+  );
+  check("tz: null clears back to inheriting the org zone (V305)", recleared.tz === "Europe/Madrid");
+  // Restore: the rest of this suite (and every later suite on this org)
+  // assumes UTC wall clocks.
+  await call(admin, `/api/orgs/${proOrgId}`, "PATCH", { timezone: null });
+
   const gen = v1data<{ fixtures: { id: string }[] }>(
     await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST"),
   );
@@ -3780,8 +3822,6 @@ async function schedRegV3Suite(
   check("reg without privacy consent refused (422)", noConsent.status === 422);
 
   // --- Dual payments (spec 2026-07-12): offline mark-paid + card gates (pro) ---
-  const orgsList = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
-  const proOrgId = orgsList.find((o) => o.slug === proOrgSlug)!.id;
   const payDiv = v1data<{ id: string; slug: string }>(
     await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
       name: "Paid Offline",

@@ -124,6 +124,11 @@ export interface PackConstraints {
 export interface PackSettings {
   matchMinutes: number;
   gapMinutes: number;
+  /** The Settings-tab rest. Absent from the pack until now, which is how the
+   *  referee came to enforce only `constraints.restMin` — a division whose rest
+   *  was set in Settings had it silently ignored by AI Schedule while
+   *  Auto-schedule honoured it. Both the model and the referee need it. */
+  perEntrantMinRest: number;
   courts: string[];
   sessionWindows: { from: string; to: string }[];
   blackouts: { court?: string; from: string; to: string }[];
@@ -180,7 +185,7 @@ export interface PackAssignment {
 
 export interface SchedulePack {
   mode: "generate" | "refine" | "repair";
-  division: { id: string; name: string; sport: string; tz: string; scheduling_mode: string };
+  division: { id: string; name: string; sport: string; tz: string };
   settings: PackSettings;
   entrants: PackEntrant[];
   people: PackPerson[];
@@ -228,7 +233,6 @@ function byAssignment(a: PackAssignment, b: PackAssignment): number {
  *
  * @returns the pack plus the set of fixture ids the LLM may place — later tasks
  *   reject any assignment id outside `movableIds`.
- * @throws HttpError 409 AI_PLAN_UNSUPPORTED (flexible division — no timetable),
  *   422 AI_PLAN_TOO_LARGE (>500 movable), 422 AI_PLAN_EMPTY_SCOPE (repair scope
  *   matched nothing), 400 (scope names a court that is not in settings.courts).
  */
@@ -243,17 +247,11 @@ export async function buildSchedulePack(
 
   return withTenant(auth.orgId, async (tx) => {
     const [division] = await tx<
-      { id: string; name: string; sport_key: string; scheduling_mode: string; competition_id: string }[]
+      { id: string; name: string; sport_key: string; competition_id: string }[]
     >`
-      select id, name, sport_key, scheduling_mode, competition_id
+      select id, name, sport_key, competition_id
       from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
-    // Flexible divisions are ordered, never clock-slotted (Jul3/04 §4) — there
-    // is no timetable for the architect to solve.
-    if (division.scheduling_mode === "flexible") {
-      throw new HttpError(409, "AI_PLAN_UNSUPPORTED", "AI_PLAN_UNSUPPORTED");
-    }
-
     const settings = await loadSettings(tx, divisionId);
     const config = settings.config;
     const tz = settings.tz;
@@ -532,6 +530,7 @@ export async function buildSchedulePack(
     const settingsOut: PackSettings = {
       matchMinutes,
       gapMinutes: config.gapMinutes,
+      perEntrantMinRest: config.perEntrantMinRest,
       // v15 venues: when venue_courts lands, this builder is the single
       // place court_label strings become venue-scoped (design/v15-venue).
       courts,
@@ -571,7 +570,6 @@ export async function buildSchedulePack(
         name: division.name,
         sport: division.sport_key,
         tz,
-        scheduling_mode: division.scheduling_mode,
       },
       settings: settingsOut,
       entrants: packEntrants,
@@ -850,9 +848,36 @@ function toObstacleAssignments(pack: SchedulePack): Assignment[] {
   }));
 }
 
-function verifyConfig(pack: SchedulePack): Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> {
+function verifyConfig(
+  pack: SchedulePack,
+): Pick<SlotConfig, "perEntrantMinRest" | "gapMinutes" | "blackouts" | "sessionWindows"> &
+  Partial<Pick<SlotConfig, "matchMinutes" | "constraints">> {
   return {
-    perEntrantMinRest: pack.settings.constraints?.restMin ?? 0,
+    // Both rest sources, plus the match length noBackToBack needs: the engine's
+    // effectiveRestMinutes takes the strictest, exactly as the solver does.
+    perEntrantMinRest: pack.settings.perEntrantMinRest,
+    matchMinutes: pack.settings.matchMinutes,
+    // Only the rest-bearing fields: the pack's startWindows carry ISO strings
+    // (the model reads them), while the engine wants epoch ms. Window
+    // validation is a separate piece of work — carrying them across here would
+    // silently compare the wrong units.
+    ...(pack.settings.constraints !== null
+      ? {
+          constraints: {
+            ...(pack.settings.constraints.restMin !== undefined
+              ? { restMin: pack.settings.constraints.restMin }
+              : {}),
+            ...(pack.settings.constraints.restByGroup !== undefined
+              ? { restByGroup: pack.settings.constraints.restByGroup }
+              : {}),
+            noBackToBack: pack.settings.constraints.noBackToBack,
+            startWindows: [],
+            fieldFairness: "off" as const,
+            parallelism: "mixed" as const,
+            crossPersonClash: "warn" as const,
+          },
+        }
+      : {}),
     gapMinutes: pack.settings.gapMinutes,
     blackouts: pack.settings.blackouts.map((b) => ({
       ...(b.court !== undefined ? { court: b.court } : {}),

@@ -3478,13 +3478,6 @@
                   "officials_hide_names": {
                     "type": "boolean"
                   },
-                  "scheduling_mode": {
-                    "type": "string",
-                    "enum": [
-                      "timed",
-                      "flexible"
-                    ]
-                  },
                   "auto_progress": {
                     "type": "boolean"
                   },
@@ -18172,15 +18165,20 @@
                     "additionalProperties": false
                   },
                   "tz": {
-                    "default": "UTC",
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 64
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
                   }
                 },
                 "required": [
-                  "config",
-                  "tz"
+                  "config"
                 ],
                 "additionalProperties": false
               },

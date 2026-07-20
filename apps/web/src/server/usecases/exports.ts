@@ -37,6 +37,7 @@ import { participantRows } from "./clubs";
 import { resolveSponsors } from "./sponsors";
 import { getMyOfficiating } from "./me-officiating";
 import { eventRecorderNames, type AuditLedger } from "./fixtures";
+import { siteOrigin } from "@/lib/site-origin";
 
 type Tx = postgres.TransactionSql;
 
@@ -45,9 +46,6 @@ export interface ExportOpts {
   landscape?: boolean;
   blank?: boolean;
   printedAt: string; // request time — injected, never Date.now() in the engine
-  /** Request origin (Task 16) — used to build the `/shared/...` live-page
-   *  QR link on timetable/standings. Absent in tests that don't care. */
-  origin?: string;
 }
 
 interface DivisionMeta {
@@ -81,12 +79,42 @@ async function divisionMeta(tx: Tx, divisionId: string): Promise<DivisionMeta> {
   return row;
 }
 
+/** Order fixtures so every court's sheets sit together, and flag the first
+ *  fixture of each court so a page break can be put in front of it.
+ *
+ *  `pageBreaks=per_pitch` exists so an organiser can hand each court official
+ *  their own pile. That only works if the sheets are grouped by court —
+ *  `exportFixtures` orders by stage/round, which interleaves courts by design,
+ *  so breaking on "the court changed" against that order breaks nearly every
+ *  sheet and groups nothing.
+ *
+ *  Courts sort naturally ("Court 2" before "Court 10"), and fixtures with no
+ *  court go last — they are the ones nobody can hand to a court yet. The sort
+ *  is stable, so within a court the original stage/round order survives, which
+ *  is the order play actually happens in. */
+export function groupByCourt<T extends { court_label: string | null }>(
+  fixtures: readonly T[],
+): { fixture: T; startsNewCourt: boolean }[] {
+  const ordered = [...fixtures].sort((a, b) => {
+    if (a.court_label === b.court_label) return 0;
+    if (a.court_label === null) return 1;
+    if (b.court_label === null) return -1;
+    return a.court_label.localeCompare(b.court_label, undefined, { numeric: true });
+  });
+  let lastCourt: string | null | undefined;
+  return ordered.map((fixture, i) => {
+    const startsNewCourt = i > 0 && fixture.court_label !== lastCourt;
+    lastCourt = fixture.court_label;
+    return { fixture, startsNewCourt };
+  });
+}
+
 // v12/Task 16: the live-page QR only points somewhere reachable — a
 // `private` competition's `/shared/...` page 404s (V230 public_competitions_v
 // gate), so no QR when private. `public`/`unlisted` both resolve.
-function liveUrlFor(meta: DivisionMeta, origin: string | undefined): string | undefined {
-  if (origin === undefined || meta.visibility === "private") return undefined;
-  return `${origin}/shared/${meta.org_slug}/${meta.comp_slug}/${meta.div_slug}`;
+export function liveUrlFor(meta: Pick<DivisionMeta, "visibility" | "org_slug" | "comp_slug" | "div_slug">): string | undefined {
+  if (meta.visibility === "private") return undefined;
+  return `${siteOrigin()}/shared/${meta.org_slug}/${meta.comp_slug}/${meta.div_slug}`;
 }
 
 // Jul3/06 §6 / v12: branding (club colours, sponsor logos, tournament
@@ -211,7 +239,7 @@ export async function buildDivisionDocModel(
       ...(opts.landscape !== undefined ? { landscape: opts.landscape } : {}),
     };
 
-    const liveUrl = liveUrlFor(meta, opts.origin);
+    const liveUrl = liveUrlFor(meta);
 
     switch (kind) {
       case "timetable": {
@@ -303,7 +331,22 @@ export async function buildDivisionDocModel(
         const sportModule = resolveModule(meta.sport_key, meta.module_version);
         const fixtures = await exportFixtures(tx, divisionId);
         const sections: DocSection[] = [];
-        for (const f of fixtures.filter((x) => x.status !== "decided")) {
+        const undecided = fixtures.filter((x) => x.status !== "decided");
+        // per_pitch means "one printed stack per court", so the sheets have to
+        // be grouped by court before anything is laid out. exportFixtures
+        // orders by stage/round, which deliberately interleaves courts — the
+        // old code broke a page "when the court changed" against that order and
+        // so broke at nearly every sheet instead of at a handful of boundaries.
+        const perPitch = (opts.pageBreaks ?? "auto") === "per_pitch";
+        const plan = perPitch
+          ? groupByCourt(undecided)
+          : undecided.map((fixture) => ({ fixture, startsNewCourt: false }));
+        for (const { fixture: f, startsNewCourt } of plan) {
+          // Where this fixture's sheets begin. A sport template may emit more
+          // than one section per fixture, so the break is anchored here rather
+          // than at a section index — indexing sections against the fixture
+          // list reads courts off the wrong fixture as soon as one does.
+          const firstSection = sections.length;
           const input = {
             home: f.home_label,
             away: f.away_label,
@@ -328,16 +371,10 @@ export async function buildDivisionDocModel(
               signatures: ["Referee", `Captain — ${f.home_label}`, `Captain — ${f.away_label}`],
             });
           }
-        }
-        // per_pitch: fresh page whenever the court changes (30 Sep, 20 Oct)
-        if ((opts.pageBreaks ?? "auto") === "per_pitch") {
-          let lastCourt: string | null = null;
-          const undecided = fixtures.filter((x) => x.status !== "decided");
-          sections.forEach((s, i) => {
-            const court = undecided[i]?.court_label ?? null;
-            if (i > 0 && court !== lastCourt) s.pageBreakBefore = true;
-            lastCourt = court;
-          });
+          const start = sections[firstSection];
+          if (startsNewCourt && firstSection > 0 && start !== undefined) {
+            start.pageBreakBefore = true;
+          }
         }
         return DocModel.parse({
           kind: "scoresheet",
@@ -456,7 +493,7 @@ interface OfficialDutyRow {
 async function officialDutyRows(tx: Tx, divisionId: string): Promise<OfficialDutyRow[]> {
   return tx<OfficialDutyRow[]>`
     select o.id as official_id, o.display_name as official_name,
-           f.scheduled_at::text as scheduled_at, ss.tz as venue_tz, f.court_label,
+           f.scheduled_at::text as scheduled_at, coalesce(ss.tz, vorg.timezone, 'UTC') as venue_tz, f.court_label,
            c.name as comp_name, d.name as div_name,
            fo.role_key, fo.response,
            h.display_name as home, a.display_name as away
@@ -466,6 +503,7 @@ async function officialDutyRows(tx: Tx, divisionId: string): Promise<OfficialDut
     join divisions d on d.id = f.division_id
     join competitions c on c.id = d.competition_id
     left join schedule_settings ss on ss.division_id = d.id
+    left join organizations vorg on vorg.id = d.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     where f.division_id = ${divisionId}
@@ -561,7 +599,6 @@ export async function buildAdmitTicketsDoc(
   auth: AuthCtx,
   competitionId: string,
   opts: ExportOpts,
-  origin: string,
 ): Promise<DocModel> {
   await requireFeature(auth.orgId, "exports", competitionId);
   return withTenant(auth.orgId, async (tx) => {
@@ -575,7 +612,7 @@ export async function buildAdmitTicketsDoc(
       dates,
       ref: r.ref_code,
       status: r.status.toUpperCase(),
-      qrUrl: `${origin}/r/${r.ref_code}`,
+      qrUrl: `${siteOrigin()}/r/${r.ref_code}`,
       seq: i + 1,
     }));
     return buildAdmitTickets(meta.name, tickets, {
@@ -592,9 +629,7 @@ export async function buildAdmitTicketsDoc(
 export async function buildMyRotaDoc(
   userId: string,
   opts: ExportOpts,
-  origin: string,
 ): Promise<DocModel> {
-  void origin; // no per-fixture links in this doc yet — kept for signature parity
   const { assignments } = await getMyOfficiating(userId);
   const byOfficial = new Map<string, ExportOfficialSchedule>();
   for (const a of assignments) {

@@ -7,11 +7,11 @@ import { sql } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
-import { createDivision, patchDivision } from "../divisions";
+import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 import { patchFixture } from "../fixtures";
-import { putScheduleSettings, autoSchedule } from "../schedule";
+import { putScheduleSettings } from "../schedule";
 import { PutScheduleSettings } from "@/server/api-v1/schemas";
 import { undoDivision } from "../history";
 import {
@@ -114,7 +114,7 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
     expect(report.worst[0]).toMatchObject({ display_name: "A", maxGapMinutes: 270 });
   });
 
-  it("constraint fields on schedule-settings are Pro; flexible mode blocks auto-scheduling", async () => {
+  it("constraint fields on schedule-settings are Pro", async () => {
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth);
     await expect(
@@ -127,10 +127,5 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
         }),
       ),
     ).rejects.toMatchObject({ featureKey: "scheduling.constraints" });
-
-    const { auth } = await seedOrg();
-    const { division, stage } = await seedDivision(auth);
-    await patchDivision(auth, division.id, { scheduling_mode: "flexible" });
-    await expect(autoSchedule(auth, stage.id, true)).rejects.toThrow(/flexible scheduling/);
   });
 });

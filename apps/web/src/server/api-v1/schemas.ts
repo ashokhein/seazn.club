@@ -129,8 +129,6 @@ export const PatchDivision = z
     status: DivisionStatus,
     /** Hide official names on all public reads (Jul3/02, 25 Jun). */
     officials_hide_names: z.boolean(),
-    /** Jul3/04 §4: 'flexible' = ordered fixtures, no clock. */
-    scheduling_mode: z.enum(["timed", "flexible"]),
     /** Jul3/08 §5: progression fires without a button (Pro formats.advanced). */
     auto_progress: z.boolean(),
     /** SPEC-2: draft a news post when results land (Pro `news.auto` on write). */
@@ -720,14 +718,27 @@ export type ScheduleConfig = z.infer<typeof ScheduleConfig>;
 
 export const PutScheduleSettings = z.object({
   config: ScheduleConfig,
-  /** Venue-local timezone (doc 12 §6 — DST boundaries in sessionWindows). */
-  tz: z.string().min(1).max(64).default("UTC"),
+  /**
+   * Venue-local timezone (doc 12 §6 — DST boundaries in sessionWindows).
+   *
+   * Since V305 the venue zone is set on the ORGANISATION and inherited; there
+   * is no division-level timezone control in the console any more. The column
+   * and this field survive for the divisions that already hold a value (and
+   * for platform-API clients), so this is tri-state:
+   *   omitted  → leave the division's stored value untouched (what the
+   *              console now always does — a save must never move a
+   *              division's venue zone)
+   *   null     → clear it, inherit from the org
+   *   string   → pin this division to an explicit zone
+   */
+  tz: z.string().min(1).max(64).nullish(),
 });
 export type PutScheduleSettings = z.infer<typeof PutScheduleSettings>;
 
 export const ScheduleSettings = z.object({
   division_id: Uuid,
   config: ScheduleConfig,
+  /** RESOLVED venue zone (V305): stored division tz → org timezone → 'UTC'. */
   tz: z.string(),
   updated_at: z.string(),
 });

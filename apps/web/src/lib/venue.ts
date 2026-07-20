@@ -36,3 +36,15 @@ export function venueLabel(sportKey?: string | null): string {
   const n = venueNoun(sportKey);
   return n.charAt(0).toUpperCase() + n.slice(1);
 }
+
+/** Plural of an already-capitalised venue word, e.g. "Pitch" → "Pitches".
+ *
+ *  The label copy used to be "{venue}s", which rendered "Pitchs" — and worse,
+ *  every locale carried that same English rule, so es/fr/nl pluralised with an
+ *  English "s" too. Pluralising here keeps it out of the translations.
+ *
+ *  Sibilant endings take -es; that covers "pitch" and every other noun this
+ *  file can produce (rink, table, court, board). */
+export function pluralizeVenue(label: string): string {
+  return /(?:ch|sh|s|x|z)$/i.test(label) ? `${label}es` : `${label}s`;
+}

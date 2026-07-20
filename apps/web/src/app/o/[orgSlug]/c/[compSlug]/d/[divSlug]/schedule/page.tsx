@@ -57,7 +57,6 @@ export default async function DivisionSchedulePage({
     officials,
     blackouts,
     busy,
-    canExport,
   ] = await Promise.all([
     getCompetition(auth, division.competition_id),
     listStages(auth, id),
@@ -70,7 +69,6 @@ export default async function DivisionSchedulePage({
     listOfficialsForConsole(auth),
     listOfficialBlackouts(auth),
     listOfficialBusyElsewhere(auth),
-    hasFeature(auth.orgId, "exports"),
   ]);
 
   // Feed wiring for TBD card labels ("Winner of R1 #2" — doc 12 §2).
@@ -159,29 +157,18 @@ export default async function DivisionSchedulePage({
             <h1 className="page-title">
               Schedule — {division.name}
             </h1>
-            <span className="ml-auto flex flex-wrap items-center gap-1.5">
-              {/* Jul3/06 print templates — raw file endpoints, gated to plans
-                  with `exports`. Community sees the paywall instead of a raw
-                  402 (the buttons are direct links, so a blocked click would
-                  otherwise navigate the browser to the JSON error). */}
-              {canExport ? (
-                <>
-                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/timetable?format=pdf`}>Timetable PDF</a>
-                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/scoresheet?format=pdf&pageBreaks=per_pitch`}>Scoresheets</a>
-                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/roster?format=pdf`}>Rosters</a>
-                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/standings?format=pdf&landscape=true`}>Standings PDF</a>
-                  <a className="btn btn-ghost text-xs" href={`/api/v1/divisions/${id}/exports/participants?format=xlsx`}>Participants XLSX</a>
-                </>
-              ) : (
-                <UpgradeGate feature="exports" compact />
-              )}
-            </span>
+            {/* Exports used to sit here as five loose buttons, duplicating a
+                Documents menu that already existed on the fixtures view. One
+                home now: the menu (documents-menu.tsx), which gained Rosters,
+                Standings and Participants in the move. The paywall goes with
+                them — with nothing left to gate, an "upgrade for exports"
+                prompt on this page pointed at a feature that isn't here. */}
           </div>
         </div>
 
         {/* Tabs (Jul3): the board + each panel is its own view — the page was
             one long scroll otherwise. */}
-        <nav className="mb-6 flex gap-1 border-b border-slate-200">
+        <nav className="scroll-x scroll-x-fade mb-6 flex gap-1 whitespace-nowrap border-b border-slate-200">
           {TABS.map((t) => (
             <Link
               key={t}
@@ -271,7 +258,6 @@ export default async function DivisionSchedulePage({
           <StandaloneScheduleSettings
             divisionId={id}
             config={settings.config}
-            tz={settings.tz}
             canEdit={editable}
             constraintsAllowed={constraints}
             venueCap={venueLabel(division.sport_key)}
@@ -284,7 +270,6 @@ export default async function DivisionSchedulePage({
           initialSettings={{
             division_id: id,
             config: settings.config as Record<string, unknown>,
-            tz: settings.tz,
           }}
           canEdit={canEdit && !frozen && constraints}
         />

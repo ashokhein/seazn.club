@@ -34,7 +34,7 @@ export async function mintCheckinToken(fixtureId: string, expiresAt: Date): Prom
 /**
  * Organiser mint (editor session only, device-links rule): sign a check-in
  * token for the fixture, valid until the end of the fixture's local day
- * (schedule_settings.tz of its division, UTC fallback).
+ * (V305 venue lane: division override → org timezone → UTC).
  */
 export async function createCheckinLink(
   auth: AuthCtx,
@@ -52,8 +52,13 @@ export async function createCheckinLink(
     if (fixture.status !== "scheduled") {
       throw new HttpError(422, `fixture is ${fixture.status} — check-in codes are minted before the match starts`);
     }
+    // Venue lane (V305): division override → org timezone → UTC.
     const [settings] = await tx<{ tz: string }[]>`
-      select tz from schedule_settings where division_id = ${fixture.division_id}`;
+      select coalesce(ss.tz, o.timezone, 'UTC') as tz
+      from divisions d
+      left join schedule_settings ss on ss.division_id = d.id
+      left join organizations o on o.id = d.org_id
+      where d.id = ${fixture.division_id}`;
     const expiresAt = endOfLocalDay(new Date(), settings?.tz ?? "UTC");
     const token = await mintCheckinToken(fixtureId, expiresAt);
     return { token, expires_at: expiresAt.toISOString() };

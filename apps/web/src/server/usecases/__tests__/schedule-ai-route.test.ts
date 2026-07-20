@@ -514,16 +514,13 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     ).rejects.toMatchObject({ status: 429 });
   });
 
-  it("flexible division → 409; 501 movable → 422; unknown scope court → 400", async () => {
+  it("501 movable → 422; unknown scope court → 400", async () => {
     const auth = await seedPlusOrg();
 
-    // flexible → 409 AI_PLAN_UNSUPPORTED
-    const { divisionId: flexId } = await seedPlannable(auth);
-    await sql`update divisions set scheduling_mode = 'flexible' where id = ${flexId}`;
-    await invalidateOrgEntitlements(auth.orgId);
-    await expect(
-      aiPlanForDivision(auth, flexId, { instruction: "x", mode: "generate" }),
-    ).rejects.toMatchObject({ status: 409, message: "AI_PLAN_UNSUPPORTED" });
+    // The flexible-division 409 used to be asserted here. That mode was never
+    // selectable — no screen read the column — so it is gone, and with it the
+    // status code; see schedule-ai-pack.test.ts for the proof the guard no
+    // longer fires.
 
     // >500 movable → 422 AI_PLAN_TOO_LARGE
     const bigId = await seedBigDivision(auth, 501);

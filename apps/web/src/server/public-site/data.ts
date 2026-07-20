@@ -280,7 +280,7 @@ export async function getPublicDivision(
   fixtures: PublicFixture[];
   standings: PublicStandings[];
   entrants: PublicEntrant[];
-  /** Venue zone for schedule display (schedule_settings.tz; UTC if unset). */
+  /** Venue zone for schedule display (V305): division override → org tz → UTC. */
   tz: string;
 } | null> {
   const shell = await getPublicCompetition(orgSlug, compSlug);
@@ -312,8 +312,13 @@ export async function getPublicDivision(
                team_display, badge_url
         from public_entrants_v where division_id = ${division.id}
         order by seed nulls last, display_name`;
+      // Venue lane (V305): the division's override, else the org's timezone.
       const [ss] = await sql<{ tz: string }[]>`
-        select tz from schedule_settings where division_id = ${division.id}`;
+        select coalesce(ss.tz, o.timezone, 'UTC') as tz
+        from divisions d
+        left join schedule_settings ss on ss.division_id = d.id
+        left join organizations o on o.id = d.org_id
+        where d.id = ${division.id}`;
       return { stages, pools, fixtures, standings, entrants, tz: ss?.tz ?? "UTC" };
     },
     ["pub-div", division.id],

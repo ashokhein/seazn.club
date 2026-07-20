@@ -576,10 +576,13 @@ async function assignedNotices(
     court_label: string | null; venue_tz: string | null;
     home_name: string | null; away_name: string | null;
   }[]>`
-    select f.id, f.scheduled_at, f.venue, f.court_label, ss.tz as venue_tz,
+    -- venue lane (V305): division override → org timezone → UTC
+    select f.id, f.scheduled_at, f.venue, f.court_label,
+           coalesce(ss.tz, fo.timezone, 'UTC') as venue_tz,
            h.display_name as home_name, a.display_name as away_name
     from fixtures f
     left join schedule_settings ss on ss.division_id = f.division_id
+    left join organizations fo on fo.id = f.org_id
     left join entrants h on h.id = f.home_entrant_id
     left join entrants a on a.id = f.away_entrant_id
     where f.id in ${tx(fixtureIds)}`;

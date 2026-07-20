@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 // Documents menu (v12 task 15): one control on the schedule board that
 // surfaces every matchday document instead of the single "Print schedule"
 // timetable link it replaces. A native <details>/<summary> disclosure —
@@ -12,11 +12,32 @@ import { useState } from "react";
 // export button in this codebase links straight to the /api/v1 route.
 import { useMsg } from "@/components/i18n/dict-provider";
 
+/** Should a pointerdown on `target` dismiss the menu? Extracted so the rule is
+ *  testable: this workspace runs vitest with environment "node" and has no
+ *  jsdom, so the effect that consumes it cannot be exercised directly. */
+export function dismissesMenu(
+  root: { open: boolean; contains: (n: Node) => boolean } | null,
+  target: Node,
+): boolean {
+  if (!root?.open) return false;
+  return !root.contains(target);
+}
+
+/** One place builds the URL, so the busy-state comparison can never drift
+ *  from the URL the download actually requests. */
+function docUrl(row: DocRow, format: "pdf" | "xlsx"): string {
+  return `${row.base}?format=${format}${row.params ? `&${row.params}` : ""}`;
+}
+
 interface DocRow {
   label: string;
   base: string;
   /** Admit tickets only ship as PDF — no spreadsheet edition. */
   xlsx: boolean;
+  /** Participants is the mirror case: a spreadsheet with no print edition. */
+  pdf?: boolean;
+  /** Extra query the endpoint needs — standings wants landscape paper. */
+  params?: string;
 }
 
 export function DocumentsMenu({
@@ -32,8 +53,33 @@ export function DocumentsMenu({
   const [busy, setBusy] = useState<string | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
 
+  // A bare <details> only ever toggles from its own <summary>, so the menu sat
+  // open over the fixtures list until you went back and clicked the trigger
+  // again. Close it the way every other popover here does — pointerdown
+  // outside, or Escape. The listeners are only attached while it is open, and
+  // the markup stays static either way so renderToStaticMarkup tests still see
+  // every row.
+  const rootRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const close = () => {
+      if (rootRef.current) rootRef.current.open = false;
+    };
+    const onDown = (e: PointerEvent) => {
+      if (dismissesMenu(rootRef.current, e.target as Node)) close();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") close();
+    };
+    document.addEventListener("pointerdown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
   async function download(row: DocRow, format: "pdf" | "xlsx") {
-    const url = `${row.base}?format=${format}`;
+    const url = docUrl(row, format);
     setBusy(url);
     setErrors((e) => ({ ...e, [row.base]: undefined as never }));
     try {
@@ -74,6 +120,11 @@ export function DocumentsMenu({
       label: msg("documents.matchSheets"),
       base: `/api/v1/divisions/${divisionId}/exports/scoresheet`,
       xlsx: true,
+      // One printed stack per court, to hand each court's official. A no-op on
+      // a single-court division (one group, no breaks), and only worth having
+      // now that per_pitch groups by court instead of breaking on every court
+      // change in round order.
+      params: "pageBreaks=per_pitch",
     },
     {
       label: msg("documents.rota"),
@@ -91,10 +142,30 @@ export function DocumentsMenu({
       base: `/api/v1/divisions/${divisionId}/exports/bracket`,
       xlsx: false,
     },
+    // Moved off the schedule page header, which carried its own row of five
+    // export buttons. Two of those (timetable, scoresheet) already lived here;
+    // these three did not, so they come across rather than disappear.
+    {
+      label: msg("documents.rosters"),
+      base: `/api/v1/divisions/${divisionId}/exports/roster`,
+      xlsx: false,
+    },
+    {
+      label: msg("documents.standings"),
+      base: `/api/v1/divisions/${divisionId}/exports/standings`,
+      xlsx: false,
+      params: "landscape=true",
+    },
+    {
+      label: msg("documents.participants"),
+      base: `/api/v1/divisions/${divisionId}/exports/participants`,
+      xlsx: true,
+      pdf: false,
+    },
   ];
 
   return (
-    <details className="relative">
+    <details ref={rootRef} className="relative">
       <summary
         className="btn btn-ghost cursor-pointer text-xs [&::-webkit-details-marker]:hidden"
         data-testid="documents-menu-trigger"
@@ -111,20 +182,22 @@ export function DocumentsMenu({
             <div className="flex items-center justify-between gap-2">
               <span className="min-w-0 truncate">{row.label}</span>
               <span className="flex shrink-0 items-center gap-2 text-xs font-medium">
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={busy === `${row.base}?format=pdf`}
-                  onClick={() => void download(row, "pdf")}
-                  className="text-purple-700 hover:underline focus-visible:underline disabled:text-slate-300"
-                >
-                  {msg("documents.pdf")}
-                </button>
+                {row.pdf !== false && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={busy === docUrl(row, "pdf")}
+                    onClick={() => void download(row, "pdf")}
+                    className="text-purple-700 hover:underline focus-visible:underline disabled:text-slate-300"
+                  >
+                    {msg("documents.pdf")}
+                  </button>
+                )}
                 {row.xlsx && (
                   <button
                     type="button"
                     role="menuitem"
-                    disabled={busy === `${row.base}?format=xlsx`}
+                    disabled={busy === docUrl(row, "xlsx")}
                     onClick={() => void download(row, "xlsx")}
                     className="text-purple-700 hover:underline focus-visible:underline disabled:text-slate-300"
                   >
