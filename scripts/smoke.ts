@@ -3631,7 +3631,7 @@ async function schedRegV3Suite(
       seq: 1, kind: "league", name: "League",
     }),
   );
-  // V304: no `tz` in the body — the console never sends one. The venue zone
+  // V305: no `tz` in the body — the console never sends one. The venue zone
   // comes from the ORGANISATION and is inherited by every division.
   await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
     config: {
@@ -3640,15 +3640,15 @@ async function schedRegV3Suite(
     },
   });
 
-  // Org scheduling timezone (V304): set it once on the org, and the division
+  // Org scheduling timezone (V305): set it once on the org, and the division
   // that stores no tz of its own reports it. Then pin the division explicitly
-  // and prove a tz-less save no longer moves it (pre-V304 divisions keep
+  // and prove a tz-less save no longer moves it (pre-V305 divisions keep
   // their zone forever), before restoring inheritance with an explicit null.
   await call(admin, `/api/orgs/${proOrgId}`, "PATCH", { timezone: "Europe/Madrid" });
   const inherited = v1data<{ tz: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`),
   );
-  check("division inherits the org scheduling timezone (V304)", inherited.tz === "Europe/Madrid");
+  check("division inherits the org scheduling timezone (V305)", inherited.tz === "Europe/Madrid");
   await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
     config: {
       startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
@@ -3664,7 +3664,7 @@ async function schedRegV3Suite(
       },
     }),
   );
-  check("a tz-less save keeps a division's own timezone (V304)", kept.tz === "Asia/Kolkata");
+  check("a tz-less save keeps a division's own timezone (V305)", kept.tz === "Asia/Kolkata");
   const recleared = v1data<{ tz: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
       config: {
@@ -3674,7 +3674,7 @@ async function schedRegV3Suite(
       tz: null,
     }),
   );
-  check("tz: null clears back to inheriting the org zone (V304)", recleared.tz === "Europe/Madrid");
+  check("tz: null clears back to inheriting the org zone (V305)", recleared.tz === "Europe/Madrid");
   // Restore: the rest of this suite (and every later suite on this org)
   // assumes UTC wall clocks.
   await call(admin, `/api/orgs/${proOrgId}`, "PATCH", { timezone: null });

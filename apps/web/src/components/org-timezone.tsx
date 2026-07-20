@@ -1,6 +1,6 @@
 "use client";
 
-// Organisation scheduling timezone (V304) — the VENUE lane. Every division
+// Organisation scheduling timezone (V305) — the VENUE lane. Every division
 // inherits this; there is no per-division timezone control any more. It is
 // deliberately NOT users.timezone (the personal display lane, spec
 // 2026-07-14): a London-based organiser can run an event in Malaga, so the

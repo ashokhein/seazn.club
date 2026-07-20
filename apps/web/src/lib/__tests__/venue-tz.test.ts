@@ -1,7 +1,7 @@
-// V304 — the scheduling timezone is an ORGANISATION setting that divisions
+// V305 — the scheduling timezone is an ORGANISATION setting that divisions
 // inherit. The division-level control was removed from the console entirely,
 // but `schedule_settings.tz` survives and keeps winning: divisions created
-// before V304 hold real zones, and if resolution stopped honouring them their
+// before V305 hold real zones, and if resolution stopped honouring them their
 // published timetables would silently shift.
 import { describe, expect, it } from "vitest";
 import { pickTimezone, resolveVenueTz } from "@/lib/tz";
@@ -21,7 +21,7 @@ const CONFIG = {
 describe("resolveVenueTz — venue lane precedence", () => {
   it("keeps an existing per-division tz even though the UI can no longer set one", () => {
     // The load-bearing case. Org says Madrid; this division was pinned to
-    // Chennai before V304 and must stay there.
+    // Chennai before V305 and must stay there.
     expect(resolveVenueTz("Asia/Kolkata", "Europe/Madrid")).toBe("Asia/Kolkata");
   });
 

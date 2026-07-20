@@ -68,7 +68,7 @@ const OCCUPYING = ["scheduled", "in_play", "decided", "finalized", "forfeited"];
 export interface ScheduleSettingsOut {
   division_id: string;
   config: ScheduleConfig;
-  /** RESOLVED venue zone (V304): stored division tz → org timezone → 'UTC'. */
+  /** RESOLVED venue zone (V305): stored division tz → org timezone → 'UTC'. */
   tz: string;
   updated_at: string;
 }
@@ -99,7 +99,7 @@ export async function putScheduleSettings(
       select competition_id from divisions where id = ${divisionId}`;
     if (!division) throw new HttpError(404, "division not found");
     await assertCompetitionNotFrozen(auth.orgId, division.competition_id, tx);
-    // tz is tri-state (V304). An ABSENT key must not clobber the stored value:
+    // tz is tri-state (V305). An ABSENT key must not clobber the stored value:
     // the division settings form no longer offers a timezone at all, so every
     // console save omits it, and a save may never move a division's venue zone.
     const tzTouched = input.tz !== undefined;
@@ -790,7 +790,7 @@ export async function moveFixture(
       changeNotices = await tx`
         select o.email, o.display_name, fo.role_key, org.name as org_name,
                h.display_name as home_name, a.display_name as away_name,
-               -- venue lane (V304): division override → org timezone → UTC
+               -- venue lane (V305): division override → org timezone → UTC
                coalesce(ss.tz, org.timezone, 'UTC') as venue_tz
         from fixture_officials fo
         join officials o on o.id = fo.official_id
@@ -873,7 +873,7 @@ export async function validateSchedule(
       where f.division_id = ${divisionId}
         and fo.response in ('accepted','pending')
         and f.scheduled_at is not null
-        -- venue lane (V304): settings already carries the RESOLVED zone
+        -- venue lane (V305): settings already carries the RESOLVED zone
         -- (division override → org timezone → UTC), and this whole query is
         -- scoped to one division, so bind it rather than re-joining.
         and oa.date = (f.scheduled_at at time zone ${settings.tz})::date`;

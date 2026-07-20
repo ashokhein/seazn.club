@@ -128,7 +128,7 @@ export function SettingsPanel({
     setSaving(true);
     try {
       const cleanCourts = courts.map((c) => c.trim()).filter(Boolean);
-      // No `tz` key (V304): the venue timezone is an ORGANISATION setting now
+      // No `tz` key (V305): the venue timezone is an ORGANISATION setting now
       // and is inherited. Omitting it is load-bearing — the PUT treats an
       // absent tz as "leave the stored value alone", so divisions that already
       // carry their own zone keep it instead of being silently reset.

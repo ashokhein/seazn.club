@@ -721,7 +721,7 @@ export const PutScheduleSettings = z.object({
   /**
    * Venue-local timezone (doc 12 §6 — DST boundaries in sessionWindows).
    *
-   * Since V304 the venue zone is set on the ORGANISATION and inherited; there
+   * Since V305 the venue zone is set on the ORGANISATION and inherited; there
    * is no division-level timezone control in the console any more. The column
    * and this field survive for the divisions that already hold a value (and
    * for platform-API clients), so this is tri-state:
@@ -738,7 +738,7 @@ export type PutScheduleSettings = z.infer<typeof PutScheduleSettings>;
 export const ScheduleSettings = z.object({
   division_id: Uuid,
   config: ScheduleConfig,
-  /** RESOLVED venue zone (V304): stored division tz → org timezone → 'UTC'. */
+  /** RESOLVED venue zone (V305): stored division tz → org timezone → 'UTC'. */
   tz: z.string(),
   updated_at: z.string(),
 });

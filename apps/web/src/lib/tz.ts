@@ -33,7 +33,7 @@ export function pickTimezone(
 }
 
 /**
- * VENUE-lane precedence (V304): the division's own `schedule_settings.tz`
+ * VENUE-lane precedence (V305): the division's own `schedule_settings.tz`
  * override, else the organisation's `organizations.timezone`, else UTC.
  *
  * Deliberately separate from `pickTimezone` (the PERSONAL lane): a

@@ -323,7 +323,7 @@ export default async function SettingsPage({
                 )}
 
 
-                {/* Scheduling timezone (V304) — the VENUE lane every division
+                {/* Scheduling timezone (V305) — the VENUE lane every division
                     inherits. Lives here, not on the division: divisions no
                     longer ask for a timezone at all. */}
                 {canEdit && (

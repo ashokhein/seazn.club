@@ -1,4 +1,4 @@
-// V304 — the division Settings tab no longer asks for a timezone. The zone is
+// V305 — the division Settings tab no longer asks for a timezone. The zone is
 // an organisation setting and is inherited; asking per division was a question
 // organisers could not answer consistently and the answers drifted.
 //

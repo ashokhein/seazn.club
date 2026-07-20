@@ -35,7 +35,7 @@ const COLS = ["id", "fixture_id", "label", "issued_by", "expires_at", "revoked_a
 
 /**
  * End of the CURRENT day in the fixture's venue timezone (doc 13 §7:
- * V304 venue lane: division override → org timezone → UTC). Day-of links —
+ * V305 venue lane: division override → org timezone → UTC). Day-of links —
  * whoever holds the phone scores today, the link dies at local midnight.
  */
 export function endOfLocalDay(now: Date, tz: string): Date {
@@ -111,7 +111,7 @@ export async function createDeviceLink(
     if (fixture.status === "finalized" || fixture.status === "cancelled") {
       throw new HttpError(422, `fixture is ${fixture.status} — nothing left to score`);
     }
-    // Venue lane (V304): division override → org timezone → UTC.
+    // Venue lane (V305): division override → org timezone → UTC.
     const [settings] = await tx<{ tz: string }[]>`
       select coalesce(ss.tz, o.timezone, 'UTC') as tz
       from divisions d

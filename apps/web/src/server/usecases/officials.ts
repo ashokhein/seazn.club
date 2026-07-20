@@ -576,7 +576,7 @@ async function assignedNotices(
     court_label: string | null; venue_tz: string | null;
     home_name: string | null; away_name: string | null;
   }[]>`
-    -- venue lane (V304): division override → org timezone → UTC
+    -- venue lane (V305): division override → org timezone → UTC
     select f.id, f.scheduled_at, f.venue, f.court_label,
            coalesce(ss.tz, fo.timezone, 'UTC') as venue_tz,
            h.display_name as home_name, a.display_name as away_name

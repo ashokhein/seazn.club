@@ -18,7 +18,7 @@ const orgPatchSchema = z.union([
   z.object({ default_payment_method: z.enum(["offline", "stripe"]) }).strict(),
   // Org "about" (v3/06 §2): Markdown, rendered on the public org page.
   z.object({ about: z.string().max(20_000).nullable() }).strict(),
-  // Scheduling timezone (V304) — the VENUE lane, inherited by every division
+  // Scheduling timezone (V305) — the VENUE lane, inherited by every division
   // that has no stored tz. null clears it back to UTC. Validated against the
   // runtime's Intl, the same rule as users.timezone (lib/tz isValidIana).
   z.object({

@@ -32,7 +32,7 @@ export interface MyFixture {
   entrant_name: string | null;
   opponent_name: string | null;
   scheduled_at: string | null;
-  /** Venue zone (V304): division override → org timezone → UTC. */
+  /** Venue zone (V305): division override → org timezone → UTC. */
   venue_tz: string | null;
   venue: string | null;
   court_label: string | null;

@@ -1,9 +1,9 @@
-// V304 — the scheduling timezone moved to the ORGANISATION and divisions
+// V305 — the scheduling timezone moved to the ORGANISATION and divisions
 // inherit it. Two things must hold at the DB boundary:
 //   1. a division with no stored tz reports the org's zone;
 //   2. a division that already stores its own tz keeps it, forever, even
 //      though nothing in the console can set (or resend) one any more.
-// (2) is the dangerous one: divisions created before V304 hold real zones and
+// (2) is the dangerous one: divisions created before V305 hold real zones and
 // a silent reset would shift their published timetables.
 // Real Postgres required; skipped without DATABASE_URL (CI runs them).
 import { afterAll, describe, expect, it } from "vitest";
@@ -74,7 +74,7 @@ afterAll(async () => {
   await client?.end();
 });
 
-describe.skipIf(!HAS_DB)("venue timezone inheritance (V304)", () => {
+describe.skipIf(!HAS_DB)("venue timezone inheritance (V305)", () => {
   it("inherits the org timezone when the division stores none", async () => {
     const auth = await seedOrg("Europe/Madrid");
     const divisionId = await seedDivision(auth);
@@ -94,7 +94,7 @@ describe.skipIf(!HAS_DB)("venue timezone inheritance (V304)", () => {
     const auth = await seedOrg("Europe/Madrid");
     const divisionId = await seedDivision(auth);
 
-    // Pin the division the way a pre-V304 division would have been.
+    // Pin the division the way a pre-V305 division would have been.
     await putScheduleSettings(auth, divisionId, { config: CONFIG, tz: "Asia/Kolkata" });
     expect((await getScheduleSettings(auth, divisionId)).tz).toBe("Asia/Kolkata");
 

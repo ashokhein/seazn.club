@@ -34,7 +34,7 @@ export async function mintCheckinToken(fixtureId: string, expiresAt: Date): Prom
 /**
  * Organiser mint (editor session only, device-links rule): sign a check-in
  * token for the fixture, valid until the end of the fixture's local day
- * (V304 venue lane: division override → org timezone → UTC).
+ * (V305 venue lane: division override → org timezone → UTC).
  */
 export async function createCheckinLink(
   auth: AuthCtx,
@@ -52,7 +52,7 @@ export async function createCheckinLink(
     if (fixture.status !== "scheduled") {
       throw new HttpError(422, `fixture is ${fixture.status} — check-in codes are minted before the match starts`);
     }
-    // Venue lane (V304): division override → org timezone → UTC.
+    // Venue lane (V305): division override → org timezone → UTC.
     const [settings] = await tx<{ tz: string }[]>`
       select coalesce(ss.tz, o.timezone, 'UTC') as tz
       from divisions d
