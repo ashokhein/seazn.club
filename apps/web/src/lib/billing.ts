@@ -4,7 +4,7 @@ import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
-import { LIVE_SUBSCRIPTION_STATUSES } from "@/lib/subscription-status";
+import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
 
 /**
  * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
@@ -68,28 +68,11 @@ export function checkoutTrialDays(
   return sub?.trial_used_at ? 0 : 14;
 }
 
-/** Re-exported from its leaf module so the historical import site keeps working.
- *  See lib/subscription-status.ts for why it does not live here. */
-export { LIVE_SUBSCRIPTION_STATUSES };
-
-/**
- * Is this org billed by a subscription right now? A cancelled subscription
- * keeps its id on the row forever, so the id alone is NOT the test — anything
- * branching on `stripe_subscription_id` would treat a long-departed customer as
- * Stripe-billed. Shared by the checkout guard and the staff trial grant so the
- * two can never drift apart.
- *
- * Type predicate: a true result means both columns are non-null, so callers can
- * read `sub.stripe_subscription_id` / `sub.status` without a `!` assertion.
- */
-export function hasLiveSubscription(
-  sub: { stripe_subscription_id: string | null; status: string | null } | undefined,
-): sub is { stripe_subscription_id: string; status: string } {
-  return (
-    !!sub?.stripe_subscription_id &&
-    LIVE_SUBSCRIPTION_STATUSES.includes(sub.status ?? "")
-  );
-}
+/** Re-exported from their leaf module so historical import sites keep working.
+ *  See lib/subscription-status.ts for why they do not live here — that module
+ *  is also where the admin plan panel (a client component) imports
+ *  hasLiveSubscription from directly, since this file carries `server-only`. */
+export { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription };
 
 /**
  * A live Stripe subscription means plan changes go through the in-app manage

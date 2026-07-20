@@ -23,3 +23,27 @@ export const LIVE_SUBSCRIPTION_STATUSES: readonly string[] = [
   "active",
   "past_due",
 ];
+
+/**
+ * Is this org billed by a subscription right now? A cancelled subscription
+ * keeps its id on the row forever, so the id alone is NOT the test — anything
+ * branching on `stripe_subscription_id` would treat a long-departed customer as
+ * Stripe-billed. Shared by the checkout guard, the staff trial grant, AND the
+ * admin plan panel (a CLIENT component) so none of the three can drift apart.
+ *
+ * Lives beside LIVE_SUBSCRIPTION_STATUSES rather than in lib/billing.ts for the
+ * same reason: this module has no imports, so a client component can import it
+ * directly. lib/billing.ts re-exports it for the historical server-side import
+ * site.
+ *
+ * Type predicate: a true result means both columns are non-null, so callers can
+ * read `sub.stripe_subscription_id` / `sub.status` without a `!` assertion.
+ */
+export function hasLiveSubscription(
+  sub: { stripe_subscription_id: string | null; status: string | null } | undefined,
+): sub is { stripe_subscription_id: string; status: string } {
+  return (
+    !!sub?.stripe_subscription_id &&
+    LIVE_SUBSCRIPTION_STATUSES.includes(sub.status ?? "")
+  );
+}

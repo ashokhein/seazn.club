@@ -6,6 +6,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useConfirm } from "@/components/ui/confirm-provider";
+import { hasLiveSubscription } from "@/lib/subscription-status";
 
 interface Plan {
   plan_key: string;
@@ -133,7 +134,10 @@ export function AdminPlanPanel({
     if (done) setOv({ key: "", value: "", expires: "", reason: "" });
   }
 
-  const stripeBilled = !!plan.stripe_subscription_id;
+  // Liveness, not id presence: a cancelled subscription keeps its id for ever
+  // (V277), so a departed org must see these three forms exactly like the
+  // Restore-trial control does — same rule, one voice across the panel.
+  const stripeBilled = hasLiveSubscription(plan);
 
   return (
     <div className="space-y-6">

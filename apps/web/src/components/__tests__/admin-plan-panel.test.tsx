@@ -120,3 +120,54 @@ describe("AdminPlanPanel — restore trial", () => {
     expect(isReallyDisabled(buttonHtmlFor(html, "Restore trial"))).toBe(true);
   });
 });
+
+describe("AdminPlanPanel — Comp/Extend/Downgrade gate on LIVENESS, not presence", () => {
+  // A departed org: the Stripe subscription id is DEAD FOREVER (V277), but
+  // `stripeBilled` used to be `!!plan.stripe_subscription_id`, which reads
+  // this exact row as still Stripe-billed. The server (admin-plan.ts,
+  // hasLiveSubscription) already accepts all three actions for this org —
+  // the panel must stop hiding the forms behind a stale id.
+  const departedOrg: TestPlan = {
+    ...basePlan,
+    plan_key: "pro",
+    status: "canceled",
+    source: "comped",
+    stripe_subscription_id: "sub_dead",
+  };
+
+  // A genuinely live org: same non-null id, but a status Stripe still owns.
+  // This must disagree with the departed case above — otherwise the pair
+  // proves nothing (e.g. deleting the gate outright would pass both).
+  const liveOrg: TestPlan = {
+    ...basePlan,
+    plan_key: "pro",
+    status: "active",
+    source: "stripe",
+    stripe_subscription_id: "sub_live",
+  };
+
+  it("a departed org (dead subscription id, canceled status) sees Comp-to-Pro, Extend-trial and Downgrade, not the Stripe-billed message", () => {
+    const html = render(departedOrg);
+    expect(html).not.toContain("Stripe-billed — adjust the subscription in Stripe instead.");
+    expect(html).not.toContain("Stripe-billed — cancellation must go through the subscription.");
+    // The actual form controls, not just absence of the message. plan_key is
+    // already "pro" for a departed org (leftover from before it left), so the
+    // Comp-to-Pro button reads "Update comp" (see the component's own
+    // plan.plan_key === "pro" ? "Update comp" : "Comp to Pro" ternary).
+    expect(isReallyDisabled(buttonHtmlFor(html, "Update comp"))).toBe(true); // no reason typed yet
+    expect(isReallyDisabled(buttonHtmlFor(html, "Preview &amp; downgrade"))).toBe(true);
+    expect(html).toContain("Extend trial");
+  });
+
+  it("a live org (non-null id, status active) still sees the Stripe-billed message and NOT the Comp-to-Pro/Downgrade forms", () => {
+    const html = render(liveOrg);
+    expect(html).toContain("Stripe-billed — adjust the subscription in Stripe instead.");
+    expect(html).toContain("Stripe-billed — cancellation must go through the subscription.");
+    // The form controls must be entirely absent, not merely disabled — a
+    // disabled-but-present button would mean the guard rendered the wrong
+    // branch and only the reason-gate saved it. plan_key is "pro" here too,
+    // so the comp button (if it rendered) would read "Update comp".
+    expect(() => buttonHtmlFor(html, "Update comp")).toThrow();
+    expect(() => buttonHtmlFor(html, "Preview &amp; downgrade")).toThrow();
+  });
+});
