@@ -30,6 +30,20 @@ function backToBack(gapMinutes: number): Assignment[] {
     },
   ];
 }
+
+/** The engine's SchedulingConstraints has required fields with zod defaults;
+ *  these tests only care about the rest-bearing ones, so fill the rest. */
+function cons(partial: Record<string, unknown>) {
+  return {
+    noBackToBack: false,
+    startWindows: [],
+    fieldFairness: "off" as const,
+    parallelism: "mixed" as const,
+    crossPersonClash: "warn" as const,
+    ...partial,
+  };
+}
+
 const rests = (cs: ReturnType<typeof validateAssignments>) => cs.filter((c) => c.reason === "rest");
 
 describe("validateAssignments — rest resolved the same way the solver resolves it", () => {
@@ -41,7 +55,7 @@ describe("validateAssignments — rest resolved the same way the solver resolves
       perEntrantMinRest: 0,
       gapMinutes: 0,
       matchMinutes: 30,
-      constraints: { restMin: 60, noBackToBack: false, startWindows: [] },
+      constraints: cons({ restMin: 60, noBackToBack: false, startWindows: [] }),
     });
     expect(rests(conflicts)).not.toHaveLength(0);
   });
@@ -52,7 +66,7 @@ describe("validateAssignments — rest resolved the same way the solver resolves
       perEntrantMinRest: 60,
       gapMinutes: 0,
       matchMinutes: 30,
-      constraints: { restMin: 0, noBackToBack: false, startWindows: [] },
+      constraints: cons({ restMin: 0, noBackToBack: false, startWindows: [] }),
     });
     expect(rests(conflicts)).not.toHaveLength(0);
   });
@@ -62,7 +76,7 @@ describe("validateAssignments — rest resolved the same way the solver resolves
       perEntrantMinRest: 20,
       gapMinutes: 0,
       matchMinutes: 30,
-      constraints: { restMin: 90, noBackToBack: false, startWindows: [] },
+      constraints: cons({ restMin: 90, noBackToBack: false, startWindows: [] }),
     });
     expect(rests(conflicts)).not.toHaveLength(0);
   });
@@ -74,7 +88,7 @@ describe("validateAssignments — rest resolved the same way the solver resolves
       perEntrantMinRest: 0,
       gapMinutes: 0,
       matchMinutes: 30,
-      constraints: { restMin: 0, noBackToBack: true, startWindows: [] },
+      constraints: cons({ restMin: 0, noBackToBack: true, startWindows: [] }),
     });
     expect(rests(conflicts)).not.toHaveLength(0);
   });
@@ -85,12 +99,12 @@ describe("validateAssignments — rest resolved the same way the solver resolves
       perEntrantMinRest: 0,
       gapMinutes: 0,
       matchMinutes: 30,
-      constraints: {
+      constraints: cons({
         restMin: 0,
         noBackToBack: false,
         startWindows: [],
         restByGroup: { d1: 45 },
-      },
+      }),
     });
     expect(rests(conflicts)).not.toHaveLength(0);
   });
@@ -100,7 +114,7 @@ describe("validateAssignments — rest resolved the same way the solver resolves
       perEntrantMinRest: 20,
       gapMinutes: 0,
       matchMinutes: 30,
-      constraints: { restMin: 60, noBackToBack: true, startWindows: [] },
+      constraints: cons({ restMin: 60, noBackToBack: true, startWindows: [] }),
     });
     expect(rests(conflicts)).toHaveLength(0);
   });
@@ -118,11 +132,7 @@ describe("placer and verifier agree", () => {
   it("accepts what slotFixtures produces under the same constraints", () => {
     // The property that matters: a schedule the solver built must never be
     // reported as broken by the validator it is checked against.
-    const constraints = {
-      restMin: 45,
-      noBackToBack: true,
-      startWindows: [],
-    };
+    const constraints = cons({ restMin: 45, noBackToBack: true });
     const result = slotFixtures({
       fixtures: [
         { id: "f1", home: "A", away: "B" },
