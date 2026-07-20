@@ -93,6 +93,18 @@ two cannot drift.
 The 400 arms must write **nothing** — no local row update, no Stripe call. A
 partial write here is the expensive failure, so the guard runs before both.
 
+**The non-live arm must not fake liveness.** Writing `status = 'trialing'`
+unconditionally is wrong: on a departed org (cancelled subscription, stale id)
+the row then satisfies the liveness rule itself, which (a) stops the
+comp-expiry branch below from ever firing, so the grant runs forever, (b) sends
+the NEXT grant down the Stripe arm against a dead subscription, and (c) makes
+`assertCheckoutAllowed` 409 the org out of ever buying. Set the status only when
+there is no subscription id at all — a cancelled status must stand:
+`status = case when stripe_subscription_id is null then 'trialing' else status end`
+(and gate `status_changed_at` the same way). Corrected 2026-07-20 during
+implementation, after the original spec text reintroduced the very hole the
+next paragraph exists to close.
+
 **The grant must be able to expire.** The resolver's comp-expiry branch reads
 `comped_until <= now() **and s.stripe_subscription_id is null**`. A cancelled
 subscription keeps its id, so granting days to a departed customer would produce
