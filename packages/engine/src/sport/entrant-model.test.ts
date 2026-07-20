@@ -55,10 +55,19 @@ describe("effectiveEntrantModel", () => {
     expect(entrantKindCap("team", { maxTeamMembers: 26 })).toBe(26);
   });
 
-  it("setbased kernel threads entrantModel (badminton pair, volleyball team)", () => {
+  it("setbased kernel threads entrantModel (badminton pair, volleyball team+pair)", () => {
     expect(badminton.entrantModel?.kinds).toEqual(["individual", "pair"]);
-    expect(volleyball.entrantModel?.kinds).toEqual(["team"]);
+    expect(volleyball.entrantModel?.kinds).toEqual(["team", "pair"]);
     expect(volleyball.entrantModel?.team?.captain).toBe(true);
     expect(tabletennis.entrantModel?.kinds).toEqual(["individual", "pair"]);
+  });
+
+  // The entrant model is declared per sport, not per variant, so volleyball has
+  // to admit both shapes: indoor 6v6 teams and the `beach` variant's 2v2 pairs.
+  // Default stays `team` — indoor is the module default (spec 04 §3.1).
+  it("volleyball takes beach pairs without a division override", () => {
+    const eff = effectiveEntrantModel(volleyball.entrantModel);
+    expect(eff.kinds).toContain("pair");
+    expect(eff.defaultKind).toBe("team");
   });
 });

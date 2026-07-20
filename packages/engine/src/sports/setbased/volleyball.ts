@@ -49,7 +49,14 @@ export const volleyball = makeSetBasedModule({
   officialLabel: { scorer: "Referee" }, // doc 13 §1
   coarseEventType: "set.summary",
   rallyEntitlement: "scoring.rally_by_rally", // doc 10 / volleyball.md §3
-  entrantModel: { kinds: ["team"], defaultKind: "team", team: { squadNumbers: true, captain: true } },
+  // Entrant shapes are declared per sport, not per variant: indoor is 6v6 teams
+  // (the default), `beach` is 2v2 pairs. Both kinds stay open at the sport level
+  // and a division narrows them via config.entrants when the organiser wants.
+  entrantModel: {
+    kinds: ["team", "pair"],
+    defaultKind: "team",
+    team: { squadNumbers: true, captain: true },
+  },
 });
 
 // Jul3/06 §3 — the 12-Jun scoresheet: point-by-point columns per set,
