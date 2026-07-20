@@ -131,4 +131,48 @@ test.describe.serial("billing lifecycle states", () => {
     const granted = await newCompetition(`Grant ${blockedAt}`);
     expect(granted.status).toBe(201);
   });
+
+  // The admin panel's downgrade preview reads `GET /downgrade`, which — like
+  // every other admin route — goes through handler() and comes back wrapped
+  // as { ok, data }. The panel used to read `.frozen` off that whole envelope
+  // instead of `.data.frozen`, so the click threw inside the async handler
+  // and the confirm dialog silently never opened (nothing visibly happens).
+  test("staff Preview & downgrade unwraps the freeze-preview envelope and opens the confirm dialog", async ({
+    page,
+  }) => {
+    const org = await apiJson<{ id: string }>(page.request, "/api/orgs", "POST", {
+      name: `PreviewDowngrade ${TAG}`,
+    });
+    expect(org.status).toBeLessThan(300);
+    const previewOrgId = org.data!.id;
+
+    await grantStaff(previewOrgId);
+    try {
+      await page.goto(`/admin/orgs/${previewOrgId}`);
+      const downgradeCard = page
+        .locator("div")
+        .filter({ has: page.getByRole("heading", { name: "Downgrade to Free", exact: true }) })
+        .last();
+      await downgradeCard
+        .getByPlaceholder("Reason (required)")
+        .fill("e2e: preview must not throw");
+      await downgradeCard
+        .getByRole("button", { name: "Preview & downgrade", exact: true })
+        .click();
+
+      // A fresh org has zero competitions, so the honest preview is the
+      // "nothing will freeze" branch — asserting its exact copy proves the
+      // envelope was actually unwrapped (frozen: []), not just that some
+      // dialog happened to appear.
+      const dialog = page.getByRole("alertdialog", { name: "Downgrade to Free — immediately?" });
+      await expect(dialog).toBeVisible({ timeout: 20_000 });
+      await expect(
+        dialog.getByText(/within Free limits — nothing will freeze/i),
+      ).toBeVisible();
+      await dialog.getByRole("button", { name: "Cancel" }).click();
+    } finally {
+      await setOwnerStaffSql(previewOrgId, false);
+      staffOrgIds.delete(previewOrgId);
+    }
+  });
 });

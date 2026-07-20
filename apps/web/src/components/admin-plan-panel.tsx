@@ -95,19 +95,26 @@ export function AdminPlanPanel({
   async function downgrade() {
     setBusy("preview");
     setError("");
-    let preview: { frozen: { name: string }[]; active: number; limit: number | null } | null =
-      null;
+    let frozenNames: string[] = [];
     try {
       const res = await fetch(`/api/admin/orgs/${orgId}/downgrade`);
-      preview = await res.json();
-      if (!res.ok) throw new Error("Preview failed");
+      // handler() wraps every successful payload as { ok, data } (lib/http.ts)
+      // — the preview lives under body.data, not on the response body itself.
+      const body = (await res.json()) as {
+        ok: boolean;
+        data?: { frozen?: { name: string }[]; active: number; limit: number | null };
+        error?: string;
+      };
+      if (!res.ok || !body.ok || !body.data) throw new Error(body.error ?? "Preview failed");
+      // Guard .frozen itself too: a shape surprise degrades into the "nothing
+      // will freeze" confirm-dialog branch below instead of throwing.
+      frozenNames = (body.data.frozen ?? []).map((f) => f.name);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Error");
       setBusy(null);
       return;
     }
     setBusy(null);
-    const frozenNames = preview?.frozen.map((f) => f.name) ?? [];
     const ok = await confirmDialog({
       title: "Downgrade to Free — immediately?",
       body:
