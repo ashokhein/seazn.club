@@ -4,12 +4,20 @@ import { apiJson, seedScoredDivision, setOrgPlanBySql, TAG } from "./helpers";
 // PROMPT-22/23/24/26 schedule console (now tabbed): each panel mounts on its
 // tab AND its core interaction works end-to-end (real POSTs, not just render).
 
-test("tabs mount: board exports + each panel", async ({ page, request }) => {
+test("tabs mount: board + each panel, exports in the Documents menu", async ({ page, request }) => {
   const { divisionId } = await seedScoredDivision(request);
 
   await page.goto(`/divisions/${divisionId}/schedule?tab=board`);
-  await expect(page.getByRole("link", { name: /timetable pdf/i })).toBeVisible({ timeout: 20_000 });
-  await expect(page.getByRole("link", { name: /participants xlsx/i })).toBeVisible();
+  await expect(page.getByRole("group", { name: /board density/i })).toBeVisible({ timeout: 20_000 });
+
+  // #189 moved the five loose export buttons off this header into the
+  // Documents menu on the fixtures view — one home for every document — so
+  // that is where the timetable and the participants sheet now live.
+  await page.goto(`/divisions/${divisionId}`);
+  await page.getByTestId("documents-menu-trigger").click();
+  const documents = page.getByRole("menu", { name: /documents/i });
+  await expect(documents.getByText("Order of play")).toBeVisible({ timeout: 20_000 });
+  await expect(documents.getByText("Participants")).toBeVisible();
 
   await page.goto(`/divisions/${divisionId}/schedule?tab=officials`);
   await expect(page.getByRole("heading", { name: "Officials", exact: true })).toBeVisible();
@@ -74,7 +82,7 @@ test("constraints (PROMPT-24): edits save and persist across reload", async ({ p
   const { divisionId } = await seedScoredDivision(request);
   await page.goto(`/divisions/${divisionId}/schedule?tab=constraints`);
 
-  const clash = page.getByLabel(/never be in two matches at once/i);
+  const clash = page.getByLabel(/never in two matches at once/i);
   const rest = page.getByRole("spinbutton", { name: /minimum rest/i });
   await expect(clash).toBeVisible({ timeout: 20_000 });
   const startChecked = await clash.isChecked();
@@ -91,7 +99,7 @@ test("constraints (PROMPT-24): edits save and persist across reload", async ({ p
 
   // persisted server-side: a fresh load reflects both edits
   await page.reload();
-  await expect(page.getByLabel(/never be in two matches at once/i)).toBeChecked({
+  await expect(page.getByLabel(/never in two matches at once/i)).toBeChecked({
     checked: !startChecked,
     timeout: 20_000,
   });

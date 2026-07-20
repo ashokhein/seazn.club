@@ -333,7 +333,14 @@ test.describe.serial("schedule board", () => {
     expect(started.data!.status).toBe("active");
   });
 
-  test("flexible divisions have no timetable to solve (422 on auto)", async ({ request }) => {
+  // `scheduling_mode` is retired (#189): no screen ever offered it, so the
+  // only way to reach 'flexible' was to hand-patch the v1 API — which then
+  // dead-ended Auto-schedule (422) and AI Schedule (409) while the board let
+  // you hand-build a timetable anyway. PatchDivision no longer accepts the
+  // field, and auto treats every division alike.
+  test("scheduling_mode is retired: the PATCH is rejected and auto still solves", async ({
+    request,
+  }) => {
     const comp = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
       name: `Flex ${TAG}`,
       visibility: "private",
@@ -353,7 +360,7 @@ test.describe.serial("schedule board", () => {
     const patched = await apiJson(request, `/api/v1/divisions/${div.data!.id}`, "PATCH", {
       scheduling_mode: "flexible",
     });
-    expect(patched.status).toBe(200);
+    expect(patched.status).toBe(400);
     const stage = await apiJson<{ id: string }>(request, `/api/v1/divisions/${div.data!.id}/stages`, "POST", {
       seq: 1,
       kind: "league",
@@ -362,7 +369,7 @@ test.describe.serial("schedule board", () => {
     await apiJson(request, `/api/v1/stages/${stage.data!.id}/generate`, "POST");
 
     const auto = await apiJson(request, `/api/v1/stages/${stage.data!.id}/schedule/auto`, "POST", {});
-    expect(auto.status).toBe(422);
+    expect(auto.status).toBe(200);
   });
 });
 
