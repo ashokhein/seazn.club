@@ -819,6 +819,41 @@ the user-scenario test reds. Then restore.
 
 ---
 
+### Task 6C: Staff-only removal of an org's default card
+
+User-requested 2026-07-20, with the customer-facing counterpart explicitly
+REJECTED in the same breath — and that rejection is the design.
+
+`billing-manage.tsx:107` hides both "Make default" and "Remove" for the default
+card (`{!pm.isDefault && …}`), and `removePaymentMethod` 400s on it server-side
+("Make another card the default before removing this one."). With one card on
+file that card IS the default, so a customer sees no Remove control at all.
+**Keep it that way.** A customer removing their only card does not stop billing —
+it makes the next invoice fail, dropping them into dunning → 14-day grace →
+degradation; a trialing org with `missing_payment_method: 'cancel'` loses the
+subscription at trial end. Cancel subscription is the clean customer path.
+
+Staff need the deliberate exception (erasure requests, fraud cleanup, a card that
+must not be charged again), where the intent is explicit and audited.
+
+**Files:**
+- Modify: `apps/web/src/server/usecases/billing-manage.ts` (new staff usecase; do NOT loosen `removePaymentMethod`)
+- Create: `apps/web/src/app/api/admin/orgs/[id]/remove-payment-method/route.ts`
+- Modify: `apps/web/src/components/admin-plan-panel.tsx`
+- Modify: `apps/web/src/server/usecases/admin-plan.ts` (`planPanel` must expose the cards to render)
+- Test: `apps/web/src/server/usecases/__tests__/` (mocked Stripe, following `admin-plan-trial-stripe.test.ts`)
+
+**Requirements:**
+1. A NEW usecase — `staffRemovePaymentMethod(actorId, orgId, paymentMethodId, reason)`. It may detach the default; that is the whole point. Leave the customer-facing `removePaymentMethod` guard intact.
+2. Reason required, `logStaffAction("remove_payment_method", …)` with the card's brand/last4 in the detail so the audit says WHICH card.
+3. **Must clear `has_payment_method` (Task 4C) when no cards remain** — otherwise the trial banner goes quiet exactly when it should be shouting. This is the fifth writer of that flag; add it to Task 4C's enumerated set.
+4. The panel must state the consequence before the click, not after: removing the last card means the next invoice fails (active) or the subscription cancels at trial end (trialing). Use the existing `useConfirm` with `tone: "danger"`.
+5. Staff-only via `requireStaff()`, like the other admin routes.
+
+**Test cases:** removing a non-default card leaves the flag true when others remain; removing the LAST card clears it; the audit row carries the reason and the card identity; a non-staff caller 403s; the customer-facing `removePaymentMethod` still refuses the default (regression — prove the guard was not loosened).
+
+---
+
 ### Task 5A: End-to-end coverage for the trial rules
 
 Added 2026-07-20 after the plan was challenged: Tasks 1-5 ship only unit and
