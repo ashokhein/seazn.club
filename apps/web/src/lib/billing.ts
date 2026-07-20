@@ -17,6 +17,23 @@ import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscript
  * Stripe redirects there on completion, where the billing page reconciles
  * from the session id.
  */
+/**
+ * Checkout branding (verified against API 2026-06-24.dahlia). Kept in code
+ * rather than the Stripe Dashboard so it is versioned and cannot drift between
+ * test and live. This is a token set, not CSS — colours, radius, font, logo.
+ * `font_family` comes from a fixed list of 26 that does NOT include Barlow
+ * Condensed, so checkout cannot match the site's type; `inter` is the closest
+ * neutral. Anything finer-grained would mean ui_mode "elements" and owning the
+ * payment UI, which is not worth it.
+ */
+export const CHECKOUT_BRANDING = {
+  background_color: "#150b36",
+  button_color: "#a3e635",
+  border_style: "rounded",
+  font_family: "inter",
+  display_name: "Seazn Club",
+} as const satisfies Stripe.Checkout.SessionCreateParams.BrandingSettings;
+
 export function buildEmbeddedCheckoutParams(args: {
   priceId: string;
   orgId: string;
@@ -48,6 +65,7 @@ export function buildEmbeddedCheckoutParams(args: {
     line_items: [{ price: args.priceId, quantity: 1 }],
     return_url: args.returnUrl,
     allow_promotion_codes: true,
+    branding_settings: { ...CHECKOUT_BRANDING },
     tax_id_collection: { enabled: true },
     automatic_tax: { enabled: true },
   };
@@ -120,6 +138,7 @@ export function buildPassCheckoutParams(args: {
     line_items: [{ price: args.priceId, quantity: 1 }],
     return_url: args.returnUrl,
     allow_promotion_codes: true,
+    branding_settings: { ...CHECKOUT_BRANDING },
     tax_id_collection: { enabled: true },
     automatic_tax: { enabled: true },
   };

@@ -10,6 +10,19 @@ import {
   checkoutTrialDays,
   hasLiveSubscription,
 } from "@/lib/billing";
+// Stripe's allowed font list for branding_settings.font_family, confirmed
+// against the live API's own validation error on 2026-07-20 (a
+// StripeInvalidRequestError for an unlisted value enumerates exactly this
+// set) — not copied from the human-readable docs table, which omits
+// noto_sans_jp. Barlow Condensed (the brand face) is NOT on it, so checkout
+// cannot match the site type — `inter` is the closest neutral.
+const STRIPE_FONTS = [
+  "default", "be_vietnam_pro", "bitter", "chakra_petch", "hahmlet", "inconsolata",
+  "inter", "lato", "lora", "m_plus_1_code", "montserrat", "noto_sans_jp",
+  "noto_sans", "noto_serif", "nunito", "open_sans", "pridi", "pt_sans",
+  "pt_serif", "raleway", "roboto", "roboto_slab", "source_sans_pro",
+  "titillium_web", "ubuntu_mono", "zen_maru_gothic",
+];
 import {
   currencyFromAcceptLanguage,
   formatMinor,
@@ -132,6 +145,43 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
   it("honours the currency switch like the subscription flow", () => {
     expect(buildPassCheckoutParams({ ...pass, currency: "inr" }).currency).toBe("inr");
     expect("currency" in buildPassCheckoutParams({ ...pass, currency: "usd" })).toBe(false);
+  });
+});
+
+describe("checkout branding", () => {
+  it("brands the subscription checkout", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" });
+    expect(p.branding_settings).toMatchObject({
+      background_color: "#150b36",
+      button_color: "#a3e635",
+      border_style: "rounded",
+      display_name: "Seazn Club",
+    });
+  });
+
+  it("brands the Event Pass checkout identically", () => {
+    const p = buildPassCheckoutParams({
+      priceId: "price_pass", orgId: "org-abc", competitionId: "comp-1",
+      returnUrl: base.returnUrl, customerEmail: "a@b.com",
+    });
+    expect(p.branding_settings).toEqual(
+      buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" }).branding_settings,
+    );
+  });
+
+  // A typo here is a live 400 at checkout, so pin it against Stripe's list.
+  it("uses a font Stripe actually accepts", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" });
+    expect(STRIPE_FONTS).toContain(p.branding_settings!.font_family);
+  });
+
+  it("leaves the trial params alone", () => {
+    const withTrial = buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" });
+    expect(withTrial.payment_method_collection).toBe("if_required");
+    expect(withTrial.subscription_data?.trial_period_days).toBe(14);
+    const noTrial = buildEmbeddedCheckoutParams({ ...base, trialDays: 0, customerEmail: "a@b.com" });
+    expect("payment_method_collection" in noTrial).toBe(false);
+    expect(noTrial.subscription_data?.trial_period_days).toBeUndefined();
   });
 });
 
