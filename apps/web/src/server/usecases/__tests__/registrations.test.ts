@@ -42,6 +42,7 @@ vi.mock("@/lib/email", async (importOriginal) => ({
 }));
 
 import { sql } from "@/lib/db";
+import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition } from "../competitions";
@@ -594,7 +595,7 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     expect(settings.capacity).toBe(8);
   });
 
-  it("Community org: offline entry fee is allowed; only online (Stripe) fees need Pro", async () => {
+  it("Community org: offline AND card entry fees are both allowed (V309)", async () => {
     const { orgId, orgSlug, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
@@ -616,9 +617,8 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     }, "http://t.local");
     expect(res.registration.status).toBe("pending");
 
-    // Since spec 2026-07-12 the Pro gate rides the chosen METHOD, not the
-    // Connect flag: an offline fee stays allowed even with charges enabled
-    // (the org may take cards elsewhere but run this division in cash)…
+    // An offline fee stays allowed even with charges enabled (the org may take
+    // cards elsewhere but run this division in cash)…
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
     const offlineStill = await putRegistrationSettings(owner, division.id, {
       enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
@@ -626,14 +626,15 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     });
     expect(offlineStill.fee_cents).toBe(500);
 
-    // …while explicitly choosing the card method still needs Pro.
-    await expect(
-      putRegistrationSettings(owner, division.id, {
-        enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
-        form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
-        payment_method: "stripe",
-      }),
-    ).rejects.toThrow(PaymentRequiredError);
+    // …and since V309 (D19) the card method needs only live Connect, not a
+    // plan. Community pays for it in the rate instead — 8% vs Pro's 2%
+    // (registration.fee_percent, see entitlements-v2.test.ts).
+    const card = await putRegistrationSettings(owner, division.id, {
+      enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
+      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      payment_method: "stripe",
+    });
+    expect(card.payment_method).toBe("stripe");
   });
 
   it("capacity above the plan's entrant quota is rejected at save", async () => {
@@ -792,11 +793,23 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     expect(ok.charges_enabled).toBe(true);
   });
 
-  it("community org cannot pick the card method (registration.paid gate)", async () => {
+  // V309 (D19) inverted this: a community org CAN pick the card method. The
+  // registration.paid gate itself is unchanged and still fires — the only thing
+  // that can deny the key now is a staff override, which is the second half.
+  it("community org can pick the card method, but a registration.paid deny still blocks it", async () => {
     const { orgId, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { division } = await rig(owner);
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
+    const ok = await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+    });
+    expect(ok.payment_method).toBe("stripe");
+
+    await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+              values (${orgId}, 'registration.paid', false)
+              on conflict (org_id, feature_key) do update set bool_value = false`;
+    await invalidateOrgEntitlements(orgId);
     await expect(
       putRegistrationSettings(owner, division.id, {
         ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,

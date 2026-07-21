@@ -5,6 +5,7 @@
 import { describe, expect, it } from "vitest";
 import { buildPricingSections, type MatrixData } from "@/lib/pricing-matrix";
 import { ENTITLEMENT_DOMAINS } from "@/lib/entitlement-domains";
+import { sql } from "@/lib/db";
 
 const cell = (int: number | null = null, bool: boolean | null = null) => ({
   int_value: int,
@@ -42,13 +43,16 @@ const DATA: MatrixData = {
     pro: cell(null),
     pro_plus: cell(null),
   },
+  // V309 (D18/D19/D20): charging entry fees is free for everyone; the pass and
+  // the paid plans buy a CHEAPER cut, not the ability itself.
   "registration.paid": {
-    community: cell(null, false),
+    community: cell(null, true),
     event_pass: cell(null, true),
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
   "registration.fee_percent": {
+    community: cell(8),
     event_pass: cell(5),
     pro: cell(2),
     pro_plus: cell(1),
@@ -162,12 +166,17 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   });
 
   it("folds registration.paid + fee_percent into one entry-fee cell, keyed pricing.matrix.fees", () => {
+    // V309: every column charges; the ladder is what differs (8/5/2/1).
     expect(row("pricing.matrix.fees")).toMatchObject({
-      free: "—",
+      free: "✓ 8%",
       pass: "✓ 5%",
       pro: "✓ 2%",
       plus: "✓ 1%",
     });
+  });
+
+  it("charges every column — no plan is barred from taking entry fees", () => {
+    expect(row("pricing.matrix.fees").free).not.toBe("—");
   });
 
   it("never renders domains.custom or any D9 vestigial key", () => {
@@ -182,5 +191,74 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
     for (const key of banned) {
       expect(labelKeys.some((lk) => lk.includes(key))).toBe(false);
     }
+  });
+});
+
+// V309 (D18/D19/D20) — the packaging decision itself, asserted against the live
+// matrix rather than the fixture above. A fixture can be edited to say anything;
+// this is the row that has to exist for /pricing and the resolver to agree.
+//
+// Real Postgres required; skipped without DATABASE_URL (CI sets it).
+describe.skipIf(!process.env.DATABASE_URL)("V309 packaging: logos + paid entry for everyone", () => {
+  const load = async (key: string) => {
+    const rows = await sql<{ plan_key: string; bool_value: boolean | null; int_value: number | null }[]>`
+      select plan_key, bool_value, int_value from plan_entitlements where feature_key = ${key}`;
+    return (plan: string) => rows.find((r) => r.plan_key === plan);
+  };
+
+  it("grants org logos (branding) on every plan, community included", async () => {
+    const get = await load("branding");
+    for (const plan of ["community", "event_pass", "pro", "pro_plus"]) {
+      expect(get(plan)?.bool_value, plan).toBe(true);
+    }
+  });
+
+  it("grants registration.paid on every plan, community included", async () => {
+    const get = await load("registration.paid");
+    for (const plan of ["community", "event_pass", "pro", "pro_plus"]) {
+      expect(get(plan)?.bool_value, plan).toBe(true);
+    }
+  });
+
+  // The community row must EXIST and be > 0. feePercentFor
+  // (server/usecases/registrations.ts) falls back to platformFeeDefault() when
+  // getLimit returns null OR <= 0, and that default is 5 — the same cut the
+  // pass charges. Without a real row the pass would discount nothing.
+  it("ladders registration.fee_percent 8/5/2/1 with an EXPLICIT community row", async () => {
+    const get = await load("registration.fee_percent");
+    expect(get("community"), "community needs a real row, not the 5% env fallback").toBeDefined();
+    expect(get("community")?.int_value).toBe(8);
+    expect(get("event_pass")?.int_value).toBe(5);
+    expect(get("pro")?.int_value).toBe(2);
+    expect(get("pro_plus")?.int_value).toBe(1);
+    expect(get("community")!.int_value!).toBeGreaterThan(0);
+  });
+
+  // Deliberate: logos are table stakes, the org THEME COLOUR is not. This is
+  // the visible Pro differentiator and the PLG badge trigger (D7).
+  it("leaves dashboard.branding denied to community AND to the Event Pass", async () => {
+    const get = await load("dashboard.branding");
+    expect(get("community")?.bool_value).toBe(false);
+    expect(get("event_pass")?.bool_value).toBe(false);
+    expect(get("pro")?.bool_value).toBe(true);
+    expect(get("pro_plus")?.bool_value).toBe(true);
+  });
+
+  // Consequence the guard depends on: branding and registration.paid must stop
+  // being "lifted by the pass" (community now equals event_pass), while
+  // fee_percent stays lifted at 8 vs 5.
+  it("drops branding + registration.paid from the pass-lifted set, keeps fee_percent", async () => {
+    const lifted = await sql<{ feature_key: string }[]>`
+      select ep.feature_key
+      from plan_entitlements ep
+      left join plan_entitlements c
+        on c.plan_key = 'community' and c.feature_key = ep.feature_key
+      where ep.plan_key = 'event_pass'
+        and (ep.bool_value is distinct from c.bool_value
+             or ep.int_value is distinct from c.int_value)`;
+    const keys = lifted.map((r) => r.feature_key);
+    expect(keys).not.toContain("branding");
+    expect(keys).not.toContain("registration.paid");
+    expect(keys).toContain("registration.fee_percent");
   });
 });

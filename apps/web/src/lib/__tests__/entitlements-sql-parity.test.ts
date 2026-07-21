@@ -60,6 +60,10 @@ afterAll(async () => {
   await client?.end();
 });
 
+// The probe key is `realtime`, not `branding`: V309 made branding free for
+// community, so it can no longer show a DEGRADE (community and pro both answer
+// true) or a pass LIFT. `realtime` keeps the shape this suite needs —
+// community false, pro true, event_pass true.
 describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
   let orgId: string;
   beforeEach(async () => {
@@ -70,10 +74,10 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
   it("ignores an EXPIRED override, like the TS resolver does", async () => {
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value, expires_at)
-      values (${orgId}, 'branding', true, now() - interval '1 day')`;
+      values (${orgId}, 'realtime', true, now() - interval '1 day')`;
     await invalidateOrgEntitlements(orgId);
-    expect(await hasFeature(orgId, "branding")).toBe(false);
-    expect(await sqlHasFeature(orgId, "branding")).toBe(false);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
   });
 
   it("degrades a LAPSED comp to community", async () => {
@@ -83,8 +87,8 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
           stripe_subscription_id = null, status = 'active'
       where org_id = ${orgId}`;
     await invalidateOrgEntitlements(orgId);
-    expect(await hasFeature(orgId, "branding")).toBe(false);
-    expect(await sqlHasFeature(orgId, "branding")).toBe(false);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
   });
 
   it("degrades past_due beyond the 14-day grace", async () => {
@@ -95,8 +99,8 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
           stripe_subscription_id = 'sub_test'
       where org_id = ${orgId}`;
     await invalidateOrgEntitlements(orgId);
-    expect(await hasFeature(orgId, "branding")).toBe(false);
-    expect(await sqlHasFeature(orgId, "branding")).toBe(false);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
   });
 
   it("honours an Event Pass for the competition in scope, and only that one", async () => {
@@ -106,10 +110,10 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
       insert into competition_passes (competition_id, org_id) values (${passedId}, ${orgId})`;
     await invalidateOrgEntitlements(orgId);
 
-    expect(await hasFeature(orgId, "branding", passedId)).toBe(true);
-    expect(await sqlHasFeature(orgId, "branding", passedId)).toBe(true);
-    expect(await hasFeature(orgId, "branding", otherId)).toBe(false);
-    expect(await sqlHasFeature(orgId, "branding", otherId)).toBe(false);
+    expect(await hasFeature(orgId, "realtime", passedId)).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime", passedId)).toBe(true);
+    expect(await hasFeature(orgId, "realtime", otherId)).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime", otherId)).toBe(false);
   });
 
   it("treats a null-bool override as no answer, not as a deny", async () => {

@@ -1,13 +1,16 @@
 // Payments-hardening Task 10 (P2-10, decision §6.1): a Stripe-fee registration
 // division must stop taking cards the moment the org loses the paid layer.
 //
-// An org can drop to community WITHOUT touching Connect — a lost subscription
-// dispute, a canceled sub, or past_due grace expiry (Task 9 resolves the last
-// one as community at read time). Connect stays live (charges_enabled=true),
-// so the pre-existing charges_enabled gate does NOT fire; money would keep
-// landing on an entitlement the org no longer holds. The intake read + submit
-// now also gate on the `registration.paid` entitlement — scoped by competition
-// so an Event Pass keeps that one comp OPEN.
+// An org can lose `registration.paid` WITHOUT touching Connect. Connect stays
+// live (charges_enabled=true), so the pre-existing charges_enabled gate does
+// NOT fire; money would keep landing on an entitlement the org no longer holds.
+// The intake read + submit therefore also gate on the entitlement itself.
+//
+// V309 (D19) narrowed WHEN that happens without changing the gate. Charging an
+// entry fee is now free on every plan, so a downgrade to community no longer
+// revokes it — asserted directly below, because that is the behaviour change.
+// The surviving revocation path is a staff `org_entitlement_overrides` deny
+// (abuse, chargeback risk), and that is what the RED cases here use.
 //
 // Real Postgres required; skipped without DATABASE_URL. Seeds are run-unique
 // (randomUUID). The Stripe seam is stubbed so the RED submit case fails by
@@ -125,9 +128,16 @@ const SUBMIT_BASE = {
   players: [],
 };
 
-/** Pro org → save a Stripe-fee division → drop to community. Connect stays
- *  live; only the entitlement lapses. Optionally buy an Event Pass on the comp. */
-async function downgradedStripeRig(opts: { withPass?: boolean } = {}) {
+/** Pro org → save a Stripe-fee division → lose `registration.paid`. Connect
+ *  stays live; only the entitlement goes.
+ *
+ *  V309 CHANGED WHAT CAN TAKE IT AWAY. `registration.paid` is now true on every
+ *  plan including community, so a plan downgrade no longer revokes it (that is
+ *  asserted directly below). The surviving revocation path is a staff/admin
+ *  `org_entitlement_overrides` deny — abuse, chargeback risk, an unresolved
+ *  dispute — and that is what this rig now uses. The enforcement code in
+ *  usecases/registrations.ts is unchanged and still the thing under test. */
+async function revokedStripeRig() {
   const { orgId, orgSlug, ownerId } = await seedProOrg();
   const owner = asOwner(orgId, ownerId);
   const { competition, division } = await rig(owner);
@@ -136,14 +146,30 @@ async function downgradedStripeRig(opts: { withPass?: boolean } = {}) {
     payment_method: "stripe",
     fee_cents: 500,
   });
-  // The downgrade — lost dispute / canceled sub / grace expiry all resolve to
-  // community. charges_enabled is deliberately left true.
+  // charges_enabled is deliberately left true: the point of this suite is that
+  // the Connect flag alone is not the gate.
   await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
             where org_id = ${orgId}`;
-  if (opts.withPass) {
-    await sql`insert into competition_passes (competition_id, org_id)
-              values (${competition.id}, ${orgId})`;
-  }
+  await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+            values (${orgId}, 'registration.paid', false)
+            on conflict (org_id, feature_key) do update set bool_value = false`;
+  await invalidateOrgEntitlements(orgId);
+  return { orgId, orgSlug, ownerId, owner, competition, division };
+}
+
+/** Same shape, but ONLY the plan drops — no override. V309's new normal:
+ *  paid entry is no longer a plan perk, so nothing here should close. */
+async function downgradedStripeRig() {
+  const { orgId, orgSlug, ownerId } = await seedProOrg();
+  const owner = asOwner(orgId, ownerId);
+  const { competition, division } = await rig(owner);
+  await putRegistrationSettings(owner, division.id, {
+    ...SETTINGS_BASE,
+    payment_method: "stripe",
+    fee_cents: 500,
+  });
+  await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
+            where org_id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);
   return { orgId, orgSlug, ownerId, owner, competition, division };
 }
@@ -156,9 +182,9 @@ afterAll(async () => {
   await client?.end();
 });
 
-describe.skipIf(!HAS_DB)("post-downgrade card intake gate (P2-10)", () => {
-  it("closes a Stripe-fee division with payments_unavailable when registration.paid is gone", async () => {
-    const { orgSlug, competition, division } = await downgradedStripeRig();
+describe.skipIf(!HAS_DB)("revoked card intake gate (P2-10)", () => {
+  it("closes a Stripe-fee division with payments_unavailable when registration.paid is revoked", async () => {
+    const { orgSlug, competition, division } = await revokedStripeRig();
     const info = await publicRegistrationInfo(orgSlug, competition.slug);
     const d = info.divisions.find((x) => x.division_id === division.id)!;
     expect(d.payment_method).toBe("stripe");
@@ -166,16 +192,22 @@ describe.skipIf(!HAS_DB)("post-downgrade card intake gate (P2-10)", () => {
     expect(d.closed_reason).toBe("payments_unavailable");
   });
 
-  it("keeps the division OPEN when an Event Pass overlays registration.paid on the comp", async () => {
-    const { orgSlug, competition, division } = await downgradedStripeRig({ withPass: true });
+  // V309 (D19): charging entry fees is free for everyone, so the plan downgrade
+  // that used to close this division no longer does. The Event Pass case this
+  // replaced is gone with it — the pass cannot "overlay" a key that community
+  // already holds; what it buys now is the cheaper cut (8% → 5%), not the
+  // ability. See pricing-matrix.test.ts for the ladder.
+  it("keeps a downgraded org's Stripe-fee division OPEN — paid entry is free (V309)", async () => {
+    const { orgSlug, competition, division } = await downgradedStripeRig();
     const info = await publicRegistrationInfo(orgSlug, competition.slug);
     const d = info.divisions.find((x) => x.division_id === division.id)!;
+    expect(d.payment_method).toBe("stripe");
     expect(d.open).toBe(true);
     expect(d.closed_reason).toBeNull();
   });
 
-  it("rejects submit with 402 on a downgraded Stripe-fee division", async () => {
-    const { orgSlug, competition, division } = await downgradedStripeRig();
+  it("rejects submit with 402 when registration.paid is revoked", async () => {
+    const { orgSlug, competition, division } = await revokedStripeRig();
     await expect(
       submitRegistration(
         orgSlug,
@@ -186,7 +218,18 @@ describe.skipIf(!HAS_DB)("post-downgrade card intake gate (P2-10)", () => {
     ).rejects.toMatchObject({ status: 402 });
   });
 
-  it("leaves an offline paid division untouched by the lapsed entitlement", async () => {
+  it("lets a downgraded org's card submit through — no plan gate left", async () => {
+    const { orgSlug, competition, division } = await downgradedStripeRig();
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    expect(res.registration.status).toBe("pending");
+  });
+
+  it("leaves an offline paid division untouched by the revoked entitlement", async () => {
     const { orgId, orgSlug, ownerId } = await seedProOrg();
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
@@ -197,6 +240,9 @@ describe.skipIf(!HAS_DB)("post-downgrade card intake gate (P2-10)", () => {
     });
     await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
               where org_id = ${orgId}`;
+    await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
+              values (${orgId}, 'registration.paid', false)
+              on conflict (org_id, feature_key) do update set bool_value = false`;
     await invalidateOrgEntitlements(orgId);
 
     const info = await publicRegistrationInfo(orgSlug, competition.slug);
