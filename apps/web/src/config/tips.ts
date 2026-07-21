@@ -51,6 +51,21 @@ export const TIPS = {
     body: "Nothing is deleted. Anything over the Community limits becomes read-only until you upgrade again or archive something.",
     helpSlug: "billing/downgrade",
   },
+  "billing.groups": {
+    title: "One subscription, several organisations",
+    body: "A subscription can pay for more than one organisation. They share one card and one invoice, but each keeps its own limits, its own Stripe connection and its own payouts.",
+    helpSlug: "billing/groups",
+  },
+  "billing.extra-org": {
+    title: "What another organisation costs",
+    body: "Each organisation after the first is half your plan's rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
+    helpSlug: "billing/groups",
+  },
+  "billing.billed-by": {
+    title: "Why the plan is managed elsewhere",
+    body: "This organisation is covered by someone else's subscription. The card and the invoices sit with whoever pays, because one subscription can cover several organisations.",
+    helpSlug: "billing/groups",
+  },
   "billing.event-pass": {
     title: "What an Event Pass covers",
     body: "A pass upgrades one competition for its lifetime — every division inside it gets Pro features. It doesn't carry to next season's edition.",

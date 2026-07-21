@@ -23,6 +23,7 @@ import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency"
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
+import { Tip } from "@/components/ui/tip";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
@@ -177,6 +178,10 @@ export default async function BillingPage({
         <section data-tour="billing-plan" className="card mb-6 p-5">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
             {t(dict, "billing.currentPlan")}
+            {/* A subscription can cover several organisations, so "current plan"
+                is a property of the GROUP, not of this org alone. The chip is
+                what stops that reading as a per-org plan. */}
+            <Tip id="billing.groups" className="ml-1 align-middle" small />
           </h2>
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -251,6 +256,7 @@ export default async function BillingPage({
                 ? t(dict, "billing.billedBy.named", { payer: payer.payer_name })
                 : t(dict, "billing.billedBy.unnamed")}{" "}
               {t(dict, "billing.billedBy.note")}
+              <Tip id="billing.billed-by" className="ml-1 align-middle" />
             </div>
           )}
 
