@@ -1,62 +1,59 @@
 # HANDOFF
 
 ## Status
-Monorepo optimization session COMPLETE. PR #158 (CI/Docker CPU de-dupe) and
-PR #161 (i18n dead-key prune) both MERGED to main; staging deploys green.
-pnpm migration evaluated and REJECTED by benchmark. No open branches from
-this session; worktrees removed.
+Event Pass + entitlement branch `feat/event-pass-e2e-and-entitlement-gaps`, 36 commits
+off `origin/main` @ `4125922a`. Worktree `.claude/worktrees/event-pass`.
+Suite: 2423 passed / 11 skipped / 1 failed (known global `sweepRegistrations()` flake).
+Migrations V306-V312 applied locally. **Nothing deployed.**
 
 ## Current task
-None — session closed cleanly. Next session starts fresh.
+Phases 1-3 complete and reviewed. Help articles + chips done. Remaining: Phase 4 (copy
+surfaces), Phase 5 (discovery + upgrade-page UI), Phase 6 (E2E/smoke), Task 25 (test infra).
 
 ## Done
-- #158 (a4d645e5): SKIP_TYPECHECK env gate in next.config.js (tsc in CI test
-  job = sole type gate; smoke build + Dockerfile set the flag; 6GB heap bump
-  REMOVED from Dockerfile — never re-add); engine coverage + sim matrix gated
-  by dorny/paths-filter `engine-changes` (needs job `permissions:
-  pull-requests: read` — fix 21356589); security job installs nothing (audit
-  reads lockfile); deploy job `npm ci --omit=dev`; Docker BuildKit npm cache
-  mount + --prefer-offline. Staging deploy verified (/api/health 200).
-- pnpm benchmark NO-GO: warm 26.9s npm vs 25.1s pnpm; cold 48.2s vs 52.2s
-  (pnpm slower). Repo stays npm. Numbers in PR #158 body.
-- #161 (5307effb): 31 dead ui.json keys pruned ×4 locales + i18n-keys.ts
-  regen. Audit recipe in memory project_i18n_payload.md (plural rule!).
-- i18n hashed-JSON browser-cache plan REJECTED — inline dict is load-bearing
-  for island SSR (empty login-form problem). Spec records why:
-  docs/superpowers/specs/2026-07-19-i18n-browser-cache-design.md (7fb49dac).
+- V306 `org_has_feature` gains a competition arg + override expiry, `comped_until`,
+  `past_due` grace. 2-arg delegating wrapper retained (drop in Task 25).
+- Deleted two duplicate app-side resolvers (`api/orgs/[id]/entitlements`, `lib/auth.ts`).
+- V307 moved the `public_players_v` entitlement gate to its caller (outside `unstable_cache`).
+- V308 pass grants `dashboard.player_profiles`. V310 community gets `branding` +
+  `registration.paid`, fee ladder 8/5/2/1. V311 community 32 entrants / 5 comps, pass 64.
+  V312 deleted V270's grandfather `competitions.max_active` overrides.
+- `pass-scoping-guard.test.ts` — AST guard, derives lifted keys from the live matrix, plus a
+  counter-rule flagging `hasFeatureOnAnyPass` in enforcement layers. GREEN.
+- Phase 2 swept all 6 remaining unscoped call sites.
+- Pass purchases now link the Stripe customer, create a named Invoice, and pin
+  `subscriptions.currency`. Help articles rewritten (20 files).
 
 ## In progress
-Nothing. (Parallel sessions own: payments v179/#160, page-playoffs stg deploy
-HELD by user — see their memory files, not this handoff.)
+`track-tips` worktree — in-app help chips for the new pricing model.
 
 ## Next steps
-1. If page-load payload still matters: MEASURE first — console-page transfer
-   size + PostHog full-load vs client-nav ratio; only then consider the
-   ui.json per-surface split (project_i18n_payload.md has the ranked list).
-2. Optional: drop dead `pnpm-lock.yaml` entry from ci.yml engine filter if
-   pnpm is ruled out permanently (kept as future-proofing).
+1. Merge `track-tips`; **copy its `.superpowers/sdd/*.md` out BEFORE removing the worktree.**
+2. Phase 4 copy: `upgrade-gate.tsx` PASS_FEATURES (3 dead keys, 4 missing), `pricing-cards.ts`,
+   `stripe-plans.json` descriptions + `npm run stripe:sync`, `feature-copy.ts`, dictionaries ×4,
+   add `dashboard.player_profiles` + `scheduling.ai.runs_per_division.max` to
+   `ENTITLEMENT_DOMAINS`, relabel the `/pricing` fee row to "Platform fee on entry fees".
+3. 3 queued Minors in `lib/billing.ts` — see `.superpowers/sdd/progress.md`.
+4. Phase 5 UI, Phase 6 suites, Task 25 (CI/env/Redis/`sweepRegistrations` scoping).
 
 ## Key decisions
-- (clubs-w1 era decisions: see git history of this file @ 8bcd80f.)
-- 2026-07-19: type-check once per PR — builds skip via SKIP_TYPECHECK=1;
-  tsc gate lives in ci.yml test job only.
-- 2026-07-19: pnpm rejected on measurement (gate was ≥30s/job or ≥1min
-  Docker; best case 1.8s). Re-evaluate only for strictness/disk, not speed.
-- 2026-07-19: i18n dict stays inline in RSC payload — client-fetch delivery
-  breaks island SSR; any payload work goes through namespace splitting.
+- See `docs/superpowers/specs/2026-07-21-event-pass-and-entitlement-gaps-design.md` D1-D24.
+- Pre-launch, zero customers: no backfill or grandfathering anywhere.
+- Full review rigour on every task (owner ruling), Opus for every subagent.
 
 ## Gotchas
-- Node 26 dropped corepack; installed globally this session (pnpm 10.34.5
-  shim exists but repo is npm).
-- Main-checkout `npx tsc` may fail on corrupt .next/dev/types while other
-  sessions' dev servers run (ports 3400/3800 live at close) — verify in a
-  clean worktree or trust CI; do NOT rm .next under a live dev server.
-- gh pr checks --watch exits "no checks reported" if started before checks
-  register, and after any new push — restart it.
-- rtk proxies git; `git -C` from a worktree cwd behaved unreliably once —
-  cd to the target repo or use `rtk proxy git -C …` when state looks wrong.
+- **vitest does NOT read `apps/web/.env.local`** — export `DATABASE_URL` or ~692 DB tests
+  silently skip and the run reports green. Same hole in CI.
+- **`REDIS_URL` unset locally** makes the entitlement cache inert; two staleness bugs shipped
+  because of it.
+- **Reports in `.superpowers/sdd/` are gitignored and die with a removed worktree.**
+- `isolation: "worktree"` branches from `origin/main`, NOT your branch HEAD. Same for
+  `git worktree add … HEAD` run from the main repo. Always name the branch.
+- **Migration numbers are claimed in `/tmp/seaznclub/RESERVATIONS.md`** — a concurrent session
+  (`feat/billing-groups`) shares this repo and owns V309. Scanning the tree is not a claim.
+- Stripe Tax: `automatic_tax` enabled with **zero registrations** = silently collects nothing.
+  Owner/advisor decision, untouched.
+- Fresh-database apply of this chain has never been tested (`baselineVersion = "240"`).
 
 ## Verify
-cd apps/web && npx tsc --noEmit && npx vitest run
-# last (clean worktree @ 5307effb content): tsc clean, 1378 pass / 523 skip;
-# i18n parity ×3 OK; PR #161 CI 3/3 green; staging deploy success.
+cd apps/web && npx tsc --noEmit && npx vitest run   # export DATABASE_URL first
