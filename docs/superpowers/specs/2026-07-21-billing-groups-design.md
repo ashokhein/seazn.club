@@ -238,12 +238,28 @@ Found while implementing; each one silently produces wrong money if missed.
 ### The only sync rule
 
 ```
-stripe_quantity = max(active_org_count, quantity_paid)
+stripe_item_quantity = active_org_count          -- what Stripe bills from
+checkout_quantity    = max(active_org_count, quantity_paid)   -- a NEW subscription only
 
 active_org_count = count(*) from organizations
                    where subscription_id = $1
-                     and status = 'active' and deleted_at is null
+                     and deleted_at is null
 ```
+
+> **Correction, 2026-07-21 (second).** Two errors in the block above as first
+> written, both found by reading the code back against it.
+>
+> 1. It gave `max(active_org_count, quantity_paid)` as the quantity to put on
+>    Stripe. It is not. The subscription item is driven to the plain active
+>    count, because Stripe cuts renewals from that item and a quantity held
+>    artificially high is one the customer keeps paying. `max(...)` is only the
+>    seat count to QUOTE when buying a new subscription, which cannot inherit a
+>    dead one's paid slots.
+> 2. It filtered `active_org_count` on `status = 'active'`. The code does not,
+>    deliberately: a SUSPENDED org still counts. Suspension is moderation, not
+>    billing — the customer keeps paying for the slot, and dropping it would
+>    hand a discount for being moderated. Only `deleted_at` removes an org from
+>    the bill.
 
 - **Increment** — update quantity now, `proration_behavior: 'create_prorations'`,
   charge immediately. Set `quantity_paid` to the new value.
@@ -269,18 +285,36 @@ A removed org therefore frees a paid slot reusable at no charge until the period
 ends — worth up to eleven months on annual, and worth saying out loud in the UI.
 No refunds, and nothing to game by cycling orgs.
 
-**Not yet true in code.** Nothing writes `quantity_paid` today, so
-`max(active, quantity_paid)` degenerates to the active count and the freed-slot
-guarantee does not hold. The attach/detach task owns setting it: raise it when a
-quantity increment is charged, and reset it to the actual active count on
-`invoice.paid`. Until then, do not put the freed-slot promise in customer-facing
-copy — it would be a claim the code does not honour.
+**Now true in code** (was "not yet true" through 2026-07-21). `quantity_paid`
+is written by `syncGroupQuantity`, so the freed-slot guarantee holds and may go
+in customer-facing copy.
 
-Two guards fall out of this:
+Three guards fall out of this:
 
 - Quantity is always *derived by count*, never incremented blindly. Concurrent
   attaches take `select ... for update` on the subscription row.
 - Last org leaves → cancel the subscription. Never leave a live sub at quantity 0.
+- **`quantity_paid` is written only after Stripe confirms.** This is what makes
+  the reconcile sweep work: its predicate is `quantity_paid <> active_org_count`,
+  so a sync that fails leaves the two unequal and the group stays selected. Write
+  it optimistically and a failed sync sets them equal, blinding the sweep to the
+  very drift it just caused.
+
+### Rejected: a `stripe_quantity` mirror column
+
+Considered during the round-3 review, to let the sweep compare against a local
+copy of Stripe's item quantity rather than against `quantity_paid`. Rejected: it
+is a third number that can go stale independently of the other two, which is the
+failure mode being removed, not one to add. Ordering the `quantity_paid` write
+after Stripe's confirmation buys the same property with nothing new to keep in
+step.
+
+**Known blind spot, accepted.** If someone edits the quantity in the Stripe
+dashboard while `quantity_paid == active_org_count`, no predicate notices —
+and a mirror column would not have caught it either, since the mirror would
+also still agree. Only an unconditional daily scan of every live subscription
+closes it, which costs one Stripe retrieve per group per day to catch an
+out-of-band edit that should not happen. Revisit if it ever does.
 
 ## Entitlement resolution
 
