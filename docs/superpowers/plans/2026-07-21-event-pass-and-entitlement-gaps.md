@@ -740,6 +740,63 @@ out in the commit body so nobody "fixes" it by weakening the assertion.
 
 ---
 
+# Phase 1b — Repackage before sweeping
+
+## Task 5b: Open branding and paid registration to community (D18/D19/D20)
+
+**This lands BEFORE Task 6.** It changes which keys the pass actually lifts, and the
+Task 5 guard computes its offender list from that set — so sweeping first would mean
+threading `competitionId` through sites that are about to stop needing it.
+
+**Files:**
+- Create: `db/migration/deltas/V309__community_branding_and_paid_registration.sql`
+- Test: extend `apps/web/src/lib/__tests__/pricing-matrix.test.ts`
+
+**Current state (verified live 2026-07-21):**
+
+| key | community | event_pass | pro | pro_plus |
+|---|---|---|---|---|
+| `branding` | false | true | true | true |
+| `registration.paid` | false | true | true | true |
+| `registration.fee_percent` | **no row → 5% via env** | 5 | 2 | 1 |
+
+**Target state:**
+
+| key | community | event_pass | pro | pro_plus |
+|---|---|---|---|---|
+| `branding` | **true** | true | true | true |
+| `registration.paid` | **true** | true | true | true |
+| `registration.fee_percent` | **8 (explicit row)** | 5 | 2 | 1 |
+
+`dashboard.branding` is NOT touched — stays `false` for community and for the pass.
+
+- [ ] **Step 1: Failing test** — assert the four-column fee ladder is 8/5/2/1 and that
+      community resolves `branding` and `registration.paid` true. It must fail now.
+- [ ] **Step 2: Run it, confirm it fails.**
+- [ ] **Step 3: Write V309.** Three `insert … on conflict (plan_key, feature_key) do
+      update` statements. Unqualified DDL, app schema `seazn_club`.
+
+      **The explicit community fee row is load-bearing.** `feePercentFor`
+      (`server/usecases/registrations.ts:62`) reads `getLimit` and falls back to
+      `platformFeeDefault()` when the value is null or `<= 0`
+      (`lib/platform-settings.ts:15`, default 5). Without a real row community would
+      silently charge 5% — identical to the pass — and D20's entire fee story would be
+      a no-op.
+- [ ] **Step 4: `npm run db:apply`, tests pass.**
+- [ ] **Step 5: Re-run the Task 5 guard and record the new offender list.** `branding`
+      and `registration.paid` should drop out of the lifted set, resolving the four
+      org-level offenders without editing those files.
+      `registration.fee_percent` STAYS lifted (8 vs 5) and still needs scoping.
+- [ ] **Step 6: Commit** — `feat(pricing): logos and paid registration for everyone, fee ladder 8/5/2/1`
+
+**Follow-on consequences to handle in later tasks, not here:**
+- `server/usecases/stripe-connect.ts:99` gates Connect onboarding on `registration.paid`
+  with an inline any-pass escape. With community `true` that gate is now trivially
+  satisfied — simplify it in Phase 2 rather than extracting `hasFeatureOnAnyPass`.
+- Task 18 copy: the pass no longer unlocks entry fees, it **discounts** them.
+- `/pricing` already renders a folded fees row (`lib/pricing-matrix.ts:80-91`), so the
+  ladder should surface there automatically — verify it does.
+
 # Phase 2 — Close the pass-scoping gaps
 
 ## Task 6: The revenue bug — public registration caps at 16
