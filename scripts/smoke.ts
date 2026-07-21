@@ -295,6 +295,106 @@ async function main() {
       (oldConsole.location ?? "").includes(`/o/${renamed.slug}`),
   );
 
+  // --- Billing groups (V310): the new org joined the PAYER'S group, it did not
+  // get one of its own. This is the whole point of the change — before V310 the
+  // pricing page promised "organisations you can create: 1 / 5 / 10" while orgs
+  // two and three were born `community` and each needed their own $19
+  // subscription. Nothing else in smoke would notice if that regressed: every
+  // other org here has its plan forced by setPlan, so a second org silently
+  // falling back to community would still pass every downstream assertion.
+  {
+    const org2Sub = (await call(admin, `/api/orgs/${org2.id}/subscription`)) as {
+      plan_key: string;
+      status: string;
+    };
+    check(
+      "billing-group: a second org inherits the payer's plan, not community (V310)",
+      org2Sub.plan_key === "pro" && org2Sub.status === "active",
+    );
+    // Not merely the same plan NAME — the same resolved entitlements, through
+    // the group. A per-org plan column set to 'pro' would satisfy the check
+    // above; only the resolver proves the org is billing through the group.
+    const org2Ent = (await call(admin, `/api/orgs/${org2.id}/entitlements`)) as {
+      plan_key: string;
+      entitlements: Record<string, { enabled?: boolean; limit?: number | null }>;
+    };
+    check(
+      "billing-group: the second org resolves the group's entitlements",
+      org2Ent.plan_key === "pro" && org2Ent.entitlements["exports.branded"]?.enabled === true,
+    );
+    // Quotas stay PER ORG — that headroom is what the extra half-price seat
+    // buys, and confusing the two would make grouping look like a downgrade.
+    check(
+      "billing-group: quotas are per org, not shared across the group",
+      org2Ent.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 20,
+    );
+
+    // Move it back OUT, onto a billing group of its own. Two reasons.
+    //
+    // It is the only group operation smoke can currently reach: detach takes
+    // just an org_id, while attach needs the target subscription_id and no
+    // endpoint returns one.
+    //
+    // And every suite below this point runs org2 as the FREE org — the v1 API
+    // 402 gate, the community theme checks, the division cap, the 'Powered by'
+    // attribution. Those read as community assertions and were written when a
+    // second org was born community; under V310 org2 is Pro through the group,
+    // and leaving it there turns eight paid-vs-free checks into assertions that
+    // silently prove nothing.
+    const detached = (await call(admin, "/api/billing/group/detach", "POST", {
+      org_id: org2.id,
+    })) as { subscription_id: string; cancelled_group: string | null };
+    check("billing-group: detach gives the org a group of its own", !!detached.subscription_id);
+    // The old group is still paying for org1, so it must NOT have been cancelled.
+    check("billing-group: detaching one org leaves the payer's group alive", detached.cancelled_group === null);
+    const afterDetach = (await call(admin, `/api/orgs/${org2.id}/subscription`)) as {
+      plan_key: string;
+    };
+    // No current_period_end and no comped_until on a SQL-set plan, so there is
+    // no paid-through date to inherit and Community is the only safe landing —
+    // detach must never mint a paid plan that nothing can ever expire.
+    check(
+      "billing-group: a detached org with no paid-through date lands on community",
+      afterDetach.plan_key === "community",
+    );
+  }
+
+  // --- CRON: the daily quantity reconcile (spec 2026-07-21 §Operations). Stripe
+  // cuts every renewal invoice from the subscription item's own quantity and
+  // reads nothing of ours at cycle time, so a drift nothing corrects bills wrong
+  // for ever. Same secret gate as /api/cron/billing-events.
+  {
+    const wrongQty = await fetch(`${BASE}/api/cron/billing-quantity`, {
+      method: "POST",
+      headers: { "x-cron-secret": "definitely-wrong" },
+    });
+    check(
+      "billing-group: cron billing-quantity rejects a wrong secret (401, or 503 unconfigured)",
+      wrongQty.status === 401 || wrongQty.status === 503,
+    );
+    const qtySecret = process.env.CRON_SECRET;
+    if (qtySecret) {
+      const rightQty = await fetch(`${BASE}/api/cron/billing-quantity`, {
+        method: "POST",
+        headers: { "x-cron-secret": qtySecret },
+      });
+      const body = (await rightQty.json().catch(() => ({}))) as {
+        ok?: boolean;
+        data?: { checked?: number; corrected?: number; failed?: number };
+      };
+      // No group here has a Stripe subscription (smoke sets plans by SQL), so
+      // the sweep must find nothing to correct and nothing to fail. A non-zero
+      // `failed` means it reached Stripe, which it should never do from smoke.
+      check(
+        "billing-group: cron billing-quantity sweeps and corrects nothing",
+        rightQty.status === 200 &&
+          body.ok === true &&
+          body.data?.corrected === 0 &&
+          body.data?.failed === 0,
+      );
+    }
+  }
+
   // --- User timezone preference (spec 2026-07-14) — account-level, all plans ---
   {
     const saved = (await call(admin, "/api/users/me", "PATCH", {
@@ -330,6 +430,11 @@ async function main() {
   // --- Jul3 feature wave (PROMPT-21..28) over real HTTP ---
   // The advanced features are entitlement-gated — org2 must be Pro (and it
   // needs headroom past competitions.max_active for the extra competitions).
+  // Since V310 org2 is already Pro through the group it was created into, and
+  // the assertions above prove it. Kept anyway, deliberately: setPlan reprices
+  // the GROUP, so this is a no-op that documents the requirement rather than a
+  // second source of truth for it. If it ever starts mattering again, the
+  // billing-group checks above have regressed first.
   await setPlan(org2.id, "pro", admin);
   await jul3Suite(admin, org2.id, renamed.slug);
 
@@ -2728,9 +2833,13 @@ async function oneTrialSuite(): Promise<void> {
   const readSub = async (orgId: string): Promise<TrialRow> => {
     const db = smokeDb();
     try {
+      // Reached through organizations.subscription_id — V310 dropped
+      // subscriptions.org_id, because many orgs may now share the row.
       const [row] = await db<TrialRow[]>`
-        select plan_key, status, trial_end, trial_used_at
-        from subscriptions where org_id = ${orgId}`;
+        select s.plan_key, s.status, s.trial_end, s.trial_used_at
+        from subscriptions s
+        join organizations o on o.subscription_id = s.id
+        where o.id = ${orgId}`;
       return row!;
     } finally {
       await db.end();
@@ -2749,9 +2858,13 @@ async function oneTrialSuite(): Promise<void> {
   const backdateBurn = async (orgId: string): Promise<void> => {
     const db = smokeDb();
     try {
+      // Addressed through organizations.subscription_id — V310 dropped
+      // subscriptions.org_id. The trial belongs to the GROUP now, which is the
+      // point: it is what stops a detach farming a fresh 14 days.
       await db`
         update subscriptions set trial_used_at = now() - interval '30 days'
-        where org_id = ${orgId} and trial_used_at is not null`;
+        where id = (select subscription_id from organizations where id = ${orgId})
+          and trial_used_at is not null`;
     } finally {
       await db.end();
     }
@@ -2765,10 +2878,11 @@ async function oneTrialSuite(): Promise<void> {
   const seedStripeBilled = async (orgId: string, status: string): Promise<void> => {
     const db = smokeDb();
     try {
+      // Through organizations.subscription_id — see backdateBurn.
       await db`
         update subscriptions
         set stripe_subscription_id = ${"sub_smoke_" + orgId.slice(0, 8)}, status = ${status}
-        where org_id = ${orgId}`;
+        where id = (select subscription_id from organizations where id = ${orgId})`;
     } finally {
       await db.end();
     }
@@ -3002,8 +3116,12 @@ async function paymentMethodSuite(): Promise<void> {
   const readFlag = async (): Promise<boolean | null> => {
     const d = smokeDb();
     try {
+      // Through organizations.subscription_id — see readSub; V310 dropped
+      // subscriptions.org_id.
       const [row] = await d<{ has_payment_method: boolean | null }[]>`
-        select has_payment_method from subscriptions where org_id = ${ownerOrg}`;
+        select s.has_payment_method from subscriptions s
+        join organizations o on o.subscription_id = s.id
+        where o.id = ${ownerOrg}`;
       return row ? row.has_payment_method : null;
     } finally {
       await d.end();
@@ -3012,10 +3130,11 @@ async function paymentMethodSuite(): Promise<void> {
 
   const db = smokeDb();
   try {
+    // Through organizations.subscription_id — V310 dropped subscriptions.org_id.
     await db`
       update subscriptions
       set stripe_customer_id = ${customer.id}, has_payment_method = true
-      where org_id = ${ownerOrg}`;
+      where id = (select subscription_id from organizations where id = ${ownerOrg})`;
   } finally {
     await db.end();
   }
@@ -6562,6 +6681,16 @@ async function cleanup(tag: string): Promise<void> {
     // subquery keeps this correct for any suite that becomes a staff writer
     // later, and their ORGS are still removed (the org purge above keys on the
     // same `emails` list).
+    // Billing groups outlive their organisations (V310): organizations points
+    // AT subscriptions, so dropping the orgs above leaves the group rows behind,
+    // and subscriptions.owner_user_id → users(id) has no ON DELETE. Without this
+    // the user delete below aborts on subscriptions_owner_fk and takes the whole
+    // teardown with it. Only groups nobody is in — a group still holding an org
+    // belongs to another run and must not be touched.
+    await sql`
+      delete from subscriptions s
+      where s.owner_user_id in (select id from users where email = any(${emails}))
+        and not exists (select 1 from organizations o where o.subscription_id = s.id)`;
     const users = await sql`
       delete from users
       where email = any(${emails})
