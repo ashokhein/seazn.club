@@ -81,7 +81,14 @@ export default async function AdminOrgPage({
 
       {/* Effective entry-fee cut (spec §5): resolution result for THIS org.
           Per-org deals ride the overrides editor above with feature key
-          registration.fee_percent. */}
+          registration.fee_percent.
+
+          Deliberately called WITHOUT a competition id. `registration.fee_percent`
+          is Event-Pass-lifted (8% community → 5% pass), so the rate is per
+          competition and there is no single true number for an org page. The
+          org-level resolution is the right thing to show here; the sentence below
+          names the exception so staff reconciling a 5% charge are not left
+          hunting for an override that does not exist. */}
       <p className="text-xs text-slate-400">
         Entry-fee platform cut for this org:{" "}
         <span className="font-semibold text-slate-200">{await feePercentFor(id)}%</span>
@@ -89,7 +96,9 @@ export default async function AdminOrgPage({
         the plan panel; the global default lives under{" "}
         <Link href="/admin/settings" className="text-purple-300 hover:text-white">
           Settings
-        </Link>.
+        </Link>
+        . Competitions with an Event Pass bill at the pass rate instead, so a charge on one
+        of those will not match this number.
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
