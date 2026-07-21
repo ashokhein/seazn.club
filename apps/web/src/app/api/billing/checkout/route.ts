@@ -69,6 +69,9 @@ export async function POST(req: Request) {
       buildEmbeddedCheckoutParams({
         priceId: plan.price_id,
         orgId,
+        // The durable webhook key: this subscription pays for THIS group, and
+        // stays true even if `orgId` later moves to another one.
+        subscriptionId,
         returnUrl: `${baseUrl(req)}${routes.billing(org.slug)}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
         // One trial per org — a re-subscribing org pays from day one.
         trialDays: checkoutTrialDays(sub),

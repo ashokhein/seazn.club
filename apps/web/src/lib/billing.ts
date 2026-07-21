@@ -96,6 +96,21 @@ export function buildEmbeddedCheckoutParams(args: {
   /** The resolved price's `billing_scheme`. REQUIRED whenever quantity > 1 —
    *  see assertPriceBillsQuantity. Never read for quantity 1. */
   billingScheme?: Stripe.Price.BillingScheme | null;
+  /** The BILLING GROUP (subscriptions.id) this checkout pays for — stamped into
+   *  the Stripe metadata as `subscription_id` and the durable answer to "which
+   *  row does a webhook for this subscription write?".
+   *
+   *  `org_id` alone cannot answer that any more: many orgs share one group, and
+   *  an org can move between groups (detach), after which its stamp names a
+   *  group it no longer bills through — resolving through it would overwrite a
+   *  DIFFERENT customer's plan/status/period end. See resolveGroupForStripeSub
+   *  in server/usecases/billing-events.ts.
+   *
+   *  Optional only so the pure-params unit tests can omit it; every real caller
+   *  has it (api/billing/checkout gets it from requireBillingOwner, and every
+   *  org has had a group since creation). org_id stays alongside it — attribution
+   *  and the subscription.created analytics event still key off the buying org. */
+  subscriptionId?: string;
 }): Stripe.Checkout.SessionCreateParams {
   const quantity = Math.max(1, args.quantity ?? 1);
   assertPriceBillsQuantity({
@@ -103,6 +118,14 @@ export function buildEmbeddedCheckoutParams(args: {
     billingScheme: args.billingScheme,
     quantity,
   });
+  // Both the session and the subscription carry it: the session metadata is what
+  // the reconcile-on-return path reads, the SUBSCRIPTION metadata is what every
+  // later customer.subscription.* webhook carries (Stripe does not copy session
+  // metadata onto the subscription).
+  const metadata = {
+    org_id: args.orgId,
+    ...(args.subscriptionId ? { subscription_id: args.subscriptionId } : {}),
+  };
   return {
     // stripe-node v22 names the embedded UI mode "embedded_page".
     ui_mode: "embedded_page",
@@ -123,7 +146,7 @@ export function buildEmbeddedCheckoutParams(args: {
     // explicitly usd, so setting `currency` alone does NOT stop it. Only this
     // flag does. We quote in one currency; we must charge in that currency.
     adaptive_pricing: { enabled: false },
-    metadata: { org_id: args.orgId },
+    metadata: { ...metadata },
     ...(args.trialDays > 0 ? { payment_method_collection: "if_required" as const } : {}),
     subscription_data: {
       ...(args.trialDays > 0
@@ -132,7 +155,7 @@ export function buildEmbeddedCheckoutParams(args: {
             trial_settings: { end_behavior: { missing_payment_method: "cancel" as const } },
           }
         : {}),
-      metadata: { org_id: args.orgId },
+      metadata: { ...metadata },
     },
     line_items: [{ price: args.priceId, quantity }],
     return_url: args.returnUrl,
@@ -538,7 +561,20 @@ export async function syncSubscription(
   orgId: string,
   stripeSub: Stripe.Subscription,
 ): Promise<void> {
-  const subscriptionId = await requireSubscriptionIdForOrg(orgId);
+  await syncSubscriptionForGroup(await requireSubscriptionIdForOrg(orgId), stripeSub);
+}
+
+/**
+ * The same write, addressed by GROUP. The webhook path resolves a subscription
+ * (group) id directly — from the Stripe metadata stamp, the stored
+ * stripe_subscription_id, or the customer — and must NOT round-trip through an
+ * org to get back here: an org's `subscription_id` can move (detach), so
+ * org → group is exactly the hop that can land on the wrong row.
+ */
+export async function syncSubscriptionForGroup(
+  subscriptionId: string,
+  stripeSub: Stripe.Subscription,
+): Promise<void> {
   const priceId = stripeSub.items.data[0]?.price?.id ?? null;
   const knownPlanKey = priceId ? await planKeyForPrice(priceId) : null;
   // Unknown price (grandfathered/migrated in Stripe but not synced into `plans`):
