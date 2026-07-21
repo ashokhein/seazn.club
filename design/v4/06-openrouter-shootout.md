@@ -15,6 +15,15 @@
 > (no `anthropic/claude-sonnet-5` via OpenRouter, at all) rather than fixed. Read §10's
 > caveats before treating any number in it as comparable to this document's earlier
 > sections.
+>
+> **Update (2026-07-21/22, Task 12):** `openrouter-policy.ts`'s `ALLOWED_PROVIDERS` is now
+> narrowed to exactly `["xai", "google-vertex"]` — only `x-ai/grok-4.5` and
+> `google/gemini-3.6-flash` are pursued from here. §12 records a 2×2×3 matrix (2 models × 2
+> repeats × 3 packs, including a new `bracket-16` pack built to actually exercise the
+> ordering rule H6 and the shared-person rule H4) at the shipped 32,000-token default. §13
+> records a follow-up 40k exploratory rerun on the one pack that failed, per a mid-session
+> user request — it does **not** change the shipped default and is not part of the delivered
+> matrix.
 
 ---
 
@@ -466,3 +475,160 @@ cap (account balance was ≈$21.42 before this arm, per the prior update's confi
 
 Combined with §6's and §10d's earlier spend, total spend against the $25 cap across all three
 sessions is ≈$1.32–$1.46, leaving over $20 of headroom.
+
+## 12. Task 12 — narrowed allowlist, 2×2×3 matrix (2026-07-21/22)
+
+> This is the first section in this document built from a real, controlled matrix rather
+> than n=1 screening arms. Conditions: `x-ai/grok-4.5` and `google/gemini-3.6-flash`
+> (`openrouter-policy.ts`'s `ALLOWED_PROVIDERS` narrowed to exactly these two vendor slugs —
+> `anthropic`, `z-ai`, `moonshotai`, `openai` removed), `effort:high`, adaptive thinking,
+> `SCHEDULING_AI_MAX_TOKENS` left at the shipped 32,000 default (not overridden), `n=2`
+> repeats, three packs: the pre-existing `teams-15` (30 fixtures, round robin, no ordering
+> rules) and `individuals-50` (25 fixtures, flat R1, person-overlap only), plus a new
+> `bracket-16` pack (14 fixtures: 8 quarter-finals → 4 semi-finals → 2 finals, real
+> `feeds.winner_to`/`feeds.after` chains so H6 — a fixture must not start before every
+> fixture it depends on has finished — is actually under test; 4 shared people spanning
+> both halves of the bracket so H4 bites; 2 courts and a 5.5h window with one blackout,
+> tighter than `teams-15`'s 3 courts/12h; one pinned fixture). Built in
+> `apps/web/src/server/usecases/__tests__/schedule-ai-effort-ab.live.test.ts`'s
+> `bracketPack()`, run via `AI_AB_SHOOTOUT_STAGE3=1`.
+>
+> Standing caveats, restated because they still apply: n=2 is enough to see a spread but not
+> to call a result stable (04's own house rule is n=3 for that); there is still no
+> same-model-both-transports fidelity control (§10a — dropped by user instruction, not
+> restored); Anthropic's `$` figures elsewhere in this document are list pricing while every
+> row below is OpenRouter provider-reported cost, so they are not on the same rate basis;
+> `bracket-16` is new this session and has no historical baseline, so its numbers compare
+> `grok-4.5` against `gemini-3.6-flash` on this pack, not against any prior recorded run.
+
+### 12a. Per-cell results
+
+WARNINGS ARE REPORTED AT THE SAME PROMINENCE AS BLOCKING, per this document's own prior
+finding (04-architect-benchmarks.md §4: cheap tiers "stay legal but ignore soft constraints
+— 20-100 warnings where sonnet scored 0"; `gemini-3.5-flash-lite` reproduced that pattern
+with 18 warnings at 0 blocking, §11). **0 blocking alone is never called a clean pass below**
+— "clean" means 0 blocking **and** 0 warnings.
+
+| pack | model | rep | secs | in | out | out % of 32k ceiling | blocking | warnings | unsched | placed | $ (reported) | served | clean? |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| teams-15 | grok-4.5 | 1 | 371.0 | 6,868 | 21,255 | 66.4% | 0 | 0 | 0 | 30/30 | $0.1410484 | xAI | yes |
+| teams-15 | grok-4.5 | 2 | 242.4 | 6,868 | 15,302 | 47.8% | 0 | 0 | 0 | 30/30 | $0.0940152 | xAI | yes |
+| individuals-50 | grok-4.5 | 1 | 76.4 | 8,026 | 6,414 | 20.0% | 0 | 0 | 0 | 25/25 | $0.0543184 | xAI | yes |
+| individuals-50 | grok-4.5 | 2 | 77.8 | 8,026 | 6,105 | 19.1% | 0 | 0 | 0 | 25/25 | $0.0391908 | xAI | yes |
+| bracket-16 | grok-4.5 | 1 | 422.3 | 10,902 | 23,797 | 74.4% | — | — | — | — | $0.1606692 | xAI | **FAIL — `AI_PLAN_FAILED`** |
+| bracket-16 | grok-4.5 | 2 | — | — | — | — | — | — | — | — | — | — | **not run** (see note) |
+| teams-15 | gemini-3.6-flash | 1 | 125.9 | 8,648 | 31,555 | 98.6% | 0 | 0 | 0 | 30/30 | $0.2496345 | Google | yes |
+| teams-15 | gemini-3.6-flash | 2 | 65.1 | 8,648 | 18,321 | 57.3% | 0 | 0 | 0 | 30/30 | $0.1422201 | Google | yes |
+| individuals-50 | gemini-3.6-flash | 1 | 42.1 | 10,733 | 12,795 | 40.0% | 0 | 0 | 0 | 25/25 | $0.1120620 | Google | yes |
+| individuals-50 | gemini-3.6-flash | 2 | 54.3 | 10,733 | 14,559 | 45.5% | 0 | 0 | 0 | 25/25 | $0.1252920 | Google | yes |
+| bracket-16 | gemini-3.6-flash | 1 | 94.6 | 6,882 | 25,579 | 79.9% | 0 | 0 | 0 | 14/14 | $0.2021655 | Google | yes |
+| bracket-16 | gemini-3.6-flash | 2 | 168.5 | 15,092 | 46,680 | 145.9% (see note) | 0 | 0 | 0 | 14/14 | $0.3727380 | Google | yes |
+
+**`bracket-16 / grok-4.5` note:** the `it()` block loops `REPEATS` times and asserts each
+result's error is empty before continuing; rep 1's `AI_PLAN_FAILED` threw inside that loop,
+so rep 2 never ran — this cell is genuinely n=1, not n=2. Per the task brief ("if either
+model hits a first-class failure on the harder bracket pack, report it, do not raise the
+ceiling to rescue it"), this is reported as-is rather than silently retried at n=2. See §13
+for the separate, explicitly-labeled 40k rescue attempt.
+
+**`bracket-16 / gemini-3.6-flash` rep 2 note (145.9% of ceiling):** `usage.output_tokens` is
+cumulative across every LLM call inside one `runAiPlan()`, not capped at a single call's
+32,000-token ceiling. `rounds:0` on this row means zero *repair* rounds, but the harness
+cannot distinguish that from an internal corrective retry after a truncated first attempt —
+both are invisible to the `Row` type (§10b's design-note caveat: `AiChatResponse` exposes
+neither `finish_reason` nor a per-call token breakdown). §13's 40k rerun is informative here:
+at a 40,000-token ceiling, the same pack completed in ~23,000–24,000 tokens total — below
+even this row's *single-call* cap — which is consistent with the 32k run's rep 2 having
+needed two capped calls (one truncated, one corrective) rather than one call legitimately
+exceeding 32,000.
+
+**Probe `finish_reason` caveat, restated (§11):** every `gemini-3.6-flash` row's
+`finishReason:"length"` comes from `probeServedProvider()`'s own isolated 8-token sanity
+call, not the real bench round — this model spends part of even an 8-token budget on
+reasoning before content, unlike every other model's probe under the same cap, which returns
+`finish_reason:"stop"`. It is not evidence about the real round's finish reason one way or
+the other. No row's *real* generation round is directly observable for `finish_reason` (same
+structural limitation as §10b/§11); the strongest available evidence a round finished
+cleanly rather than truncated is `rounds:0` plus a schema-valid, fully-parsed, engine-clean
+plan — which every row above except the failed `bracket-16/grok-4.5` row produced.
+
+### 12b. Mean per (model, pack)
+
+| pack | model | secs mean | out mean | out % of 32k (mean) | $ mean | clean / n |
+|---|---|---|---|---|---|---|
+| teams-15 | grok-4.5 | 306.7 [242.4–371.0] | 18,278.5 [15,302–21,255] | 57.1% | $0.1175318 | 2/2 |
+| individuals-50 | grok-4.5 | 77.1 [76.4–77.8] | 6,259.5 [6,105–6,414] | 19.6% | $0.0467546 | 2/2 |
+| bracket-16 | grok-4.5 | 422.3 (n=1) | 23,797 (n=1) | 74.4% | $0.1606692 (n=1) | 0/1 |
+| teams-15 | gemini-3.6-flash | 95.5 [65.1–125.9] | 24,938 [18,321–31,555] | 77.9% | $0.1959273 | 2/2 |
+| individuals-50 | gemini-3.6-flash | 48.2 [42.1–54.3] | 13,677 [12,795–14,559] | 42.7% | $0.1186770 | 2/2 |
+| bracket-16 | gemini-3.6-flash | 131.6 [94.6–168.5] | 36,129.5 [25,579–46,680] | 112.9% (inflated by rep 2's likely retry — see note) | $0.2874518 | 2/2 |
+
+### 12c. Total spend, this matrix
+
+| item | $ |
+|---|---|
+| 11 completed cells (grok-4.5 × 5, gemini-3.6-flash × 6) | $1.6933541 |
+| Unconditional pre-existing baseline arms (`low/no-think`, `haiku/budget8k`, both packs, n=2 — always run when `AI_AB_LIVE=1`, not part of Task 12's scope) | $0.4449000 |
+| **Total, this run** | **$2.1383** — logged, exact (matches the harness's own printed total) |
+
+Well under the $6 stop-and-report threshold set for this task.
+
+### 12d. How to apply
+
+- **`gemini-3.6-flash` is not a clean win on this reading.** It is clean on
+  blocking/warnings (0/0 every cell) but runs the tightest token margins of any arm in this
+  document: `teams-15` rep 1 used 98.6% of the 32k ceiling, and `bracket-16` needed what
+  looks like two capped calls in one repeat (145.9% cumulative). This is the "fragile near
+  the ceiling" pattern the task brief called out in advance — `glm-5.2` (§11) failed outright
+  by crossing an equivalent ceiling; this model didn't fail, but the margin is thin enough
+  that the failure mode is visibly adjacent.
+- **`grok-4.5` has more headroom but a real, unrescued failure on the hard pack.**
+  `teams-15`/`individuals-50` both ran clean at 47.8–66.4% and 19.1–20.0% of ceiling
+  respectively — comfortable margins. `bracket-16` — the pack built specifically to stress
+  H6 ordering and H4 shared-person overlap under tight capacity — failed with
+  `AI_PLAN_FAILED` at 74.4% of ceiling (not a length exhaustion). §13 shows raising the
+  ceiling to 40k did not rescue this cell either; it changed the failure mode to a round
+  timeout instead.
+- **Neither model has a clean pass on `bracket-16` at n≥2.** `grok-4.5` failed its only
+  attempt; `gemini-3.6-flash`'s two attempts both nominally "passed" (0 blocking, 0
+  warnings, 14/14 placed) but rep 2's token usage is the least trustworthy number in this
+  table (§12a's cumulative-usage note) — it is not established that this was a clean single
+  call rather than a truncate-then-retry that happened to still produce a valid plan.
+- **The default model should not change on this evidence.** Both candidates are cheaper than
+  `sonnet-5 direct` (§11: $0.2471–$0.465 list) on the two easier packs, but the one pack
+  designed to be genuinely hard broke one candidate outright and left the other's margin
+  unverified. n=2 on two clean packs is not sufficient grounds to replace the shipped
+  default; it is grounds to keep watching `bracket-16`-shaped workloads specifically before
+  concluding either candidate is production-ready for hard, dependency-chained schedules.
+
+## 13. Bonus: 40k rescue-test on `bracket-16` (2026-07-22, mid-session user request)
+
+> Requested live, mid-run, after §12's `bracket-16/grok-4.5` failure and `bracket-16/gemini`'s
+> tight/over-cap numbers were reported: "can you raise the token limit to 40k?" This section
+> is a **separate, explicitly-scoped exploratory rerun**, not a change to §12's delivered
+> matrix and not a change to `schedule-ai.ts`'s shipped `SCHEDULING_AI_MAX_TOKENS` default
+> (still 32,000 in production). Scope: `bracket-16` only, both models, `maxTokens:40_000` set
+> per-arm via the harness's existing `Arm.maxTokens` field, n=2, run via
+> `AI_AB_SHOOTOUT_STAGE4=1`.
+
+| pack | model | rep | secs | in | out | out % of 40k ceiling | blocking | warnings | placed | $ | served | result |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| bracket-16 | grok-4.5/40k | 1 | 600.0 | 0 | 0 | — | — | — | — | $0 | xAI | **FAIL — `AI_PLAN_TIMEOUT`** (600s round timeout, not a token-ceiling failure) |
+| bracket-16 | grok-4.5/40k | 2 | — | — | — | — | — | — | — | — | — | **not run** (loop aborted after rep 1) |
+| bracket-16 | gemini-3.6-flash/40k | 1 | 84.9 | 6,882 | 23,892 | 59.7% | 0 | 0 | 14/14 | $0.189513 | Google | yes |
+| bracket-16 | gemini-3.6-flash/40k | 2 | 81.5 | 6,882 | 22,485 | 56.2% | 0 | 0 | 14/14 | $0.1789605 | Google | yes |
+
+**Reading it:** raising the ceiling did not rescue `grok-4.5` — it changed the failure mode
+from `AI_PLAN_FAILED` (§12, 74.4% of a 32k ceiling) to `AI_PLAN_TIMEOUT` (600s wall clock),
+a different problem the extra token budget didn't fix. `gemini-3.6-flash` did benefit: both
+40k reps completed in 22,485–23,892 tokens total — *below* the 32k run's single-call cap,
+and well below its own rep 2's 46,680-token cumulative total at 32k (§12a's note) — consistent
+with the 32k run having forced a truncate-then-retry that the 40k run didn't need. This is a
+narrow, single-pack, n≤2 signal; it does not establish that 40k should become the shipped
+default, and per the task brief's original instruction, no such change was made here.
+
+Spend, this rescue test: $0 (timeout) + $0.189513 + $0.1789605 = **$0.3684735**.
+
+Combined total spend across §12 and §13: $2.1383 + $0.3684735 ≈ **$2.5068**, still well under
+the $6 stop-and-report threshold and a small fraction of the ≈$21.19 remaining against the
+$25 cap noted at the start of this task.

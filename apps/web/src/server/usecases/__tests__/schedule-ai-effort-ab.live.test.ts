@@ -252,6 +252,130 @@ function individualsPack(): { pack: SchedulePack; movable: Set<string> } {
   return { pack, movable: new Set(movable.map((f) => f.id)) };
 }
 
+// --- Pack C: 16-entrant single-elim bracket, two independent halves each
+//     going QF(4) -> SF(2) -> Final(1) = 8 QF + 4 SF + 2 Finals = 14 fixtures.
+//     Unlike teams-15 (round robin, no ordering) and individuals-50 (flat R1,
+//     no ordering), this pack's SF/Final rows carry real `feeds.winner_to` /
+//     `feeds.after` chains — a fixture cannot legally start before every
+//     fixture it depends on has finished (H6). Four people are entered under
+//     two entrants each, spanning BOTH halves of the bracket, so a naive
+//     schedule can double-book a shared player across otherwise-unrelated
+//     matches (H4). Capacity is deliberately tighter than teams-15: 2 courts
+//     (not 3) over a 5.5h window (not 12h) with one blackout, so the solver
+//     cannot just spread everything out — 14 fixtures x 40min (30 match +
+//     10 gap) = 560 court-minutes against 660 available minus a 45min
+//     blackout = 615, ~9% slack even before the dependency chain forces idle
+//     gaps. One fixture is pinned to test that a locked slot survives.
+function bracketPack(): { pack: SchedulePack; movable: Set<string> } {
+  const entrants = [
+    ...Array.from({ length: 8 }, (_, i) => ({ id: uuid("e", i), name: `A${i + 1}`, pool: "A", seed: i + 1 })),
+    ...Array.from({ length: 8 }, (_, i) => ({ id: uuid("e", i + 8), name: `B${i + 1}`, pool: "B", seed: i + 1 })),
+  ];
+
+  const e = (i: number) => uuid("e", i);
+  const f = (i: number) => uuid("f", i);
+
+  // Round 1 (quarter-finals): 8 fixtures, both halves known up front.
+  const qf = [
+    [0, 1], [2, 3], [4, 5], [6, 7], // half A
+    [8, 9], [10, 11], [12, 13], [14, 15], // half B
+  ].map(([h, a], i) => ({
+    id: f(i),
+    ext_key: `qf-${i}`,
+    round: 1,
+    seq: i,
+    pool: i < 4 ? "A" : "B",
+    home: e(h),
+    away: e(a),
+    // f8/f9 = half A's semis, f10/f11 = half B's semis (assigned below).
+    feeds: { winner_to: f(8 + Math.floor(i / 2)), after: [] as string[] },
+    current: { at: null as string | null, court: null as string | null },
+    pinned: false,
+  }));
+
+  // Round 2 (semi-finals): 4 fixtures, entrants unknown until their QFs land.
+  const sf = [0, 1, 2, 3].map((i) => ({
+    id: f(8 + i),
+    ext_key: `sf-${i}`,
+    round: 2,
+    seq: i,
+    pool: i < 2 ? "A" : "B",
+    home: null as string | null,
+    away: null as string | null,
+    feeds: { winner_to: f(12 + Math.floor(i / 2)), after: [f(2 * i), f(2 * i + 1)] },
+    current: { at: null as string | null, court: null as string | null },
+    pinned: false,
+  }));
+
+  // Round 3 (finals): one per half.
+  const final = [0, 1].map((i) => ({
+    id: f(12 + i),
+    ext_key: `final-${i}`,
+    round: 3,
+    seq: i,
+    pool: i === 0 ? "A" : "B",
+    home: null as string | null,
+    away: null as string | null,
+    feeds: { winner_to: null as string | null, after: [f(8 + 2 * i), f(8 + 2 * i + 1)] },
+    current: { at: null as string | null, court: null as string | null },
+    pinned: false,
+  }));
+
+  const movable: PackFixture[] = [...qf, ...sf, ...final];
+
+  // Pin the very first quarter-final to its opening slot — a locked card the
+  // plan must echo back unchanged (structuralCheck rejects any drift).
+  const pinnedFixture = movable[0];
+  pinnedFixture.pinned = true;
+  pinnedFixture.current = { at: "2026-08-01T09:00:00+01:00", court: "Court 1" };
+
+  // Four shared players, each entered under two entrants that sit in
+  // DIFFERENT quarter-finals, two of them crossing from half A into half B —
+  // there is no bracket-structural reason these fixtures avoid each other,
+  // so only crossPersonClash keeps them apart.
+  const people: PackPerson[] = [
+    { person_id: uuid("p", 0), entrant_ids: [e(0), e(9)] }, // A-QF1 <-> B-QF1
+    { person_id: uuid("p", 1), entrant_ids: [e(3), e(12)] }, // A-QF2 <-> B-QF3
+    { person_id: uuid("p", 2), entrant_ids: [e(6), e(15)] }, // A-QF4 <-> B-QF4
+    { person_id: uuid("p", 3), entrant_ids: [e(2), e(10)] }, // A-QF2 <-> B-QF2
+  ];
+
+  const pack: SchedulePack = {
+    mode: "generate",
+    division: {
+      id: "ab-bracket",
+      name: "Knockout Cup",
+      sport: "generic",
+      tz: "Europe/London",
+    },
+    settings: {
+      matchMinutes: 30,
+      gapMinutes: 10,
+      perEntrantMinRest: 0,
+      courts: ["Court 1", "Court 2"],
+      sessionWindows: [{ from: "2026-08-01T09:00:00+01:00", to: "2026-08-01T14:30:00+01:00" }],
+      blackouts: [{ court: "Court 2", from: "2026-08-01T11:00:00+01:00", to: "2026-08-01T11:45:00+01:00" }],
+      constraints: {
+        restMin: 45,
+        noBackToBack: true,
+        startWindows: [],
+        fieldFairness: "balance",
+        parallelism: "mixed",
+        crossPersonClash: "hard",
+      },
+    },
+    entrants,
+    people,
+    fixtures: { movable, obstacles: [] },
+    draft: [],
+    instruction:
+      "Schedule the full knockout: two independent halves (A and B) of quarter-finals, semi-finals then a final, across two courts in a tight morning window. A semi-final cannot start until both quarter-finals that feed it have finished, and a final cannot start until both its semi-finals have finished. Four players are entered twice under different entrants and must never be double-booked, including across the two halves. Court 2 is unavailable 11:00-11:45. The first quarter-final (A1 v A2) is locked to Court 1 at 09:00 and must not move.",
+    prior: null,
+    officials: [],
+  };
+  return { pack, movable: new Set(movable.map((fx) => fx.id)) };
+}
+
 // --- cost -------------------------------------------------------------------
 // Sonnet 5 list is $3/$15 per MTok; introductory $2/$10 runs through
 // 2026-08-31, so today's real spend is the `intro` column.
@@ -562,6 +686,40 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
     cell("teams-15", teamsPack, FLASH_CANDIDATE);
   }
 
+  // --- Task 12: 2x2x3 matrix on the narrowed allowlist (2026-07-21) --------
+  // ALLOWED_PROVIDERS narrowed to ["xai", "google-vertex"] this session; only
+  // grok-4.5 and gemini-3.6-flash are pursued from here. n=2 (set
+  // AI_AB_REPEATS=2), all three packs including the new bracket-16 pack,
+  // effort high, 32k default (maxTokens left unset — do NOT raise it).
+  // Own flag so re-running this file doesn't re-bill stages 1/1B/1C/2.
+  // Enable with AI_AB_SHOOTOUT_STAGE3=1.
+  const FINAL_ARMS: Arm[] = [
+    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", label: "grok-4.5" },
+    { model: "google/gemini-3.6-flash", effort: "high", provider: "openrouter", label: "gemini-3.6-flash" },
+  ];
+  const FINAL_PACKS: [string, () => { pack: SchedulePack; movable: Set<string> }][] = [
+    ["teams-15", teamsPack],
+    ["individuals-50", individualsPack],
+    ["bracket-16", bracketPack],
+  ];
+  if (process.env.AI_AB_SHOOTOUT_STAGE3 === "1") {
+    for (const arm of FINAL_ARMS) {
+      for (const [name, build] of FINAL_PACKS) cell(name, build, arm);
+    }
+  }
+
+  // --- Bonus: 40k rescue-test on bracket-16 (2026-07-21, user request mid-run)
+  // The 32k-default STAGE3 result above is the delivered, spec-compliant
+  // matrix and is left untouched. This is a SEPARATE, explicitly-labeled
+  // exploratory rerun, scoped only to bracket-16 (the pack that failed for
+  // grok-4.5 and ran tight/over-cap for gemini-3.6-flash at 32k) — not a
+  // change to schedule-ai.ts's shipped SCHEDULING_AI_MAX_TOKENS default.
+  // Enable with AI_AB_SHOOTOUT_STAGE4=1.
+  const RESCUE_40K_ARMS: Arm[] = FINAL_ARMS.map((a) => ({ ...a, maxTokens: 40_000, label: `${a.label}/40k` }));
+  if (process.env.AI_AB_SHOOTOUT_STAGE4 === "1") {
+    for (const arm of RESCUE_40K_ARMS) cell("bracket-16", bracketPack, arm);
+  }
+
   it("summary", () => {
     const roundMs = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 300_000;
     process.stdout.write(
@@ -600,6 +758,8 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
     if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") expectedCells += stage2Arms.length * 2;
     if (process.env.AI_AB_SHOOTOUT_STAGE1B === "1") expectedCells += WIDENED_CANDIDATES.length;
     if (process.env.AI_AB_SHOOTOUT_STAGE1C === "1") expectedCells += 1;
+    if (process.env.AI_AB_SHOOTOUT_STAGE3 === "1") expectedCells += FINAL_ARMS.length * FINAL_PACKS.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE4 === "1") expectedCells += RESCUE_40K_ARMS.length;
     const expected = expectedCells * REPEATS;
     expect(rows.length).toBe(expected);
     expect(rows.every((r) => r.error === "")).toBe(true);

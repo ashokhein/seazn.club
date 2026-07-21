@@ -23,21 +23,18 @@
  *  from the `tag` field, up to the first `/`.
  *
  *  Each slug below was verified with a live request carrying the full policy;
- *  all six returned 200 and were served by the named vendor.
+ *  it returned 200 and was served by the named vendor.
  *
- *  Widened 2026-07-21 to six vendors: added `google-vertex` and `openai`.
- *  `google-vertex` (not `google-ai-studio`) was a deliberate choice — it's
- *  the enterprise GCP path with regional endpoints, which suits a UK/EU
- *  product. help/scheduling/ai-scheduling.md and ai-officials.md must name
- *  all six vendors (Task 12, not yet written as of this widening). */
-export const ALLOWED_PROVIDERS = [
-  "anthropic",
-  "xai",
-  "z-ai",
-  "moonshotai",
-  "google-vertex",
-  "openai",
-] as const;
+ *  Narrowed 2026-07-21 to two vendors — `anthropic`, `z-ai`, `moonshotai`
+ *  and `openai` were removed. By user decision only two models are pursued
+ *  through this transport: `x-ai/grok-4.5` and `google/gemini-3.6-flash`.
+ *  The `anthropic` slug was only ever needed to route Sonnet-via-OpenRouter,
+ *  which the user ruled out; Anthropic-direct traffic goes through
+ *  anthropic-provider.ts (select-provider.ts's default path) and never
+ *  consults this list. help/scheduling/ai-scheduling.md and
+ *  ai-officials.md (Task 12) must name exactly these two vendors plus
+ *  Anthropic-direct — three names total, not six. */
+export const ALLOWED_PROVIDERS = ["xai", "google-vertex"] as const;
 
 const POLICY = {
   provider: {
