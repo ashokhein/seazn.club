@@ -1117,7 +1117,98 @@ No layout exists at this level today; params are async in this version.
 
 ---
 
-## Task 18: Copy alignment across four surfaces
+## Task 17b: V311 caps + the brand-colour gate (D22/D23)
+
+**Files:** create `db/migration/deltas/V311__community_scale_caps.sql` (claimed in
+`/tmp/seaznclub/RESERVATIONS.md`); modify `apps/web/src/app/o/[orgSlug]/settings/page.tsx:117,305-312`.
+
+| key | community | event_pass | note |
+|---|---|---|---|
+| `entrants.per_division.max` | 16 → **32** | 32 → **64** | ladder 32/64/256/∞ |
+| `competitions.max_active` | 1 → **5** | *(unchanged)* | passed comps already excluded (`competitions.ts:86`) |
+
+**The functional half (D23).** `settings/page.tsx:117` computes one `canBrand =
+hasFeature("branding")` and uses it to gate BOTH the logo uploader and `OrgBrandColor`
+(`:305-312`). Since V310 made `branding` free, Community orgs are offered a colour picker
+whose value is stripped at render (`server/public-site/data.ts:180` gates on
+`dashboard.branding`). Split the two gates: logo on `branding`, colour on
+`dashboard.branding`. This revives `settings.upgrade.brandColor` (`ui.json:480`), currently
+dead code.
+
+**Watch the knock-on:** raising community entrants to 32 changes what the pass lifts.
+Re-run the pass-scoping guard afterwards and record the new offender list — 
+`registrations.ts:828` may drop off Phase 2's queue.
+
+---
+
+## Task 18: Copy alignment — EVERY surface (D21)
+
+An audit (2026-07-21) verified all copy against the live matrix. **Nothing below is
+self-correcting unless marked.** Locale multiplier: every dictionary fix is ×4
+(en/fr/es/nl) and the FR/ES/NL strings are real translations of the false claim.
+
+### P0 — actively false, buyer-facing
+
+| Surface | file:line | Wrong |
+|---|---|---|
+| Stripe product desc (shown **at checkout**) | `config/stripe-plans.json:53` | sells "entry fees, branding, exports" as pass unlocks — all free now |
+| Pricing FAQ | `dictionaries/*/marketing.json:172` | "with an Event Pass (5%) or on Pro (2%)" — community charges at 8% |
+| Help: downgrade | `content/help/billing/downgrade.md:24-28` | whole section claims Community can't take card registrations |
+| Help: event pass | `content/help/billing/event-pass.md:7` | "unlimited entrants" — it is 64 after V311 |
+| Help: plans | `content/help/billing/plans.md:9` | "2 active competitions" — 5 after V311 |
+| In-app billing cards | `settings/billing/page.tsx:394-396` | hardcoded ✗ on `community.f5`/`f6`; both are ✓ now |
+| Paywall reason | `lib/feature-copy.ts:65-66` | "Charging entry fees is a Pro feature" — false |
+
+### P1 — stale, and one lost sale
+
+`dictionaries/*/ui.json:579,580,583` (pass bullets + active-state) ·
+`components/upgrade-gate.tsx:12-21` (**3 dead keys, 4 missing** — gates for
+`exports.branded`, `dashboard.player_profiles`, `sponsors.tiers`, `sponsors.monetize` show
+only the Pro path, so a pass-liftable paywall never offers the pass) ·
+`lib/pricing-cards.ts:9,18,19,26,28,43` · `config/stripe-plans.json:9` ·
+`content/help/billing/plans.md:3,13,17,21` ·
+`content/help/getting-started/create-your-organisation.md:13,21` ·
+`content/help/registration/open-registration.md:18` ·
+`content/help/sharing/sponsors.md:7,14` (pass grants both sponsor keys) ·
+`content/help/scheduling/matchday-documents.md:31`, `scheduling/board.md:22`,
+`divisions/bracket-view.md:12` (branded exports now pass) ·
+`lib/feature-copy.ts:33,38,39,54`
+
+### P2/P3
+
+`lib/pricing-cards.ts:43` + `marketing.json:91,95,180` + `ui.json:571` +
+`stripe-plans.json:30` + `help/billing/plans.md:21` — **"AI-assisted scheduling" sold as
+Pro Plus exclusive; `scheduling.ai` is true on every plan** (V302). The differentiator is
+the 50-run quota. · `server/api-v1/openapi.ts:154,198,231,232,234` + regen ·
+`ui.json:479,683`, `pay.needPro`, `board.ai.error.upgrade`, `confirm.downgrade.body` ·
+`components/admin-plan-panel.tsx:123` ("Pro features switch off immediately" — branding and
+paid registration now survive a downgrade; only the fee rate moves 2%→8%) ·
+`marketing.json:70,237,256`
+
+### Additive — features granted but advertised NOWHERE
+
+- `dashboard.player_profiles` and `scheduling.ai.runs_per_division.max` are **absent from
+  `ENTITLEMENT_DOMAINS`**, so they never appear on `/pricing` at all. Add them.
+- Pass benefits with no prose anywhere: player cards, branded exports, `sponsors.tiers`,
+  `sponsors.monetize`, AI runs 5→10, and **the 8%→5% fee discount as the core value prop**.
+- V310's two giveaways — free logos, free paid registration — appear in **zero** acquisition
+  copy. `pricing-cards.ts:5-12` still says "Free-**event** online registration".
+
+### Relabel (D24)
+
+`pricing.matrix.fees` = "Entry fees paid out to your club" → **"Platform fee on entry
+fees"**, ×4 locales. Beside `✓ 8%` the old label states the inverse of the truth.
+Consider dropping the now-redundant `registration.enabled` row (✓✓✓✓).
+
+### Self-correcting — do NOT hand-edit
+
+`/pricing` comparison table (renders from `plan_entitlements` via `buildPricingSections`) ·
+`/admin/entitlements` (live matrix; but its "What it gates" column renders
+`featureReason()`, so fixing `feature-copy.ts` fixes it too) · admin platform settings ·
+admin org list and plan panel (raw `plan_key`, no feature lists) · export branding gate ·
+**emails carry no plan-feature copy — nothing to change** · `feePercentFor`.
+
+## Task 18 (original scope, superseded by the above)
 
 **Files:**
 - Modify: `apps/web/src/lib/pricing-cards.ts:14-21`
