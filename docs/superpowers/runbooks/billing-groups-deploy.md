@@ -1,6 +1,7 @@
 # Deploying billing groups (V310)
 
 Branch `feat/billing-groups`. Spec: `docs/superpowers/specs/2026-07-21-billing-groups-design.md`.
+Migrations: **V310** and **V311**.
 
 This one has an ordering trap in it. Read §2 before touching anything.
 
@@ -15,8 +16,13 @@ This one has an ordering trap in it. Read §2 before touching anything.
 - **Stripe Connect is untouched.** `organizations.stripe_account_id` stays per-org. Grouping
   who pays for the software moves no money into or out of anybody's bank account. If anything
   in a deploy step appears to touch Connect, stop — it is the wrong step.
-- New routes: `POST /api/billing/group/attach`, `/detach`, `/transfer`, `/transfer/accept`,
-  `/transfer/revoke`, and `POST /api/cron/billing-quantity`.
+- **V311** (`db/migration/deltas/V311__billing_group_transfers.sql`) — `billing_group_transfers`.
+  The transfer offer stops being a Stripe metadata stamp and becomes a row, because metadata is
+  editable from the Stripe dashboard and could not hold a single-use invariant. Additive only:
+  a new table plus indexes, no change to existing rows, so it is safe to apply ahead of the app.
+- New routes: `GET|POST /api/billing/group/transfer`, `POST /api/billing/group/attach`,
+  `/detach`, `/transfer/accept`, `/transfer/revoke`, `GET /api/billing/groups`, and
+  `POST /api/cron/billing-quantity`.
 - Tiered prices in `apps/web/src/config/stripe-plans.json` — graduated, tier 1 at the plan
   rate, tier 2+ at half. `quantity` is the org count.
 
@@ -42,9 +48,9 @@ before assuming there are none.
 
 ## 3. Order of operations
 
-1. **Migrate the database.** `npm run db:apply` (Flyway, incremental). V310 is additive then
-   destructive in one file — it drops `subscriptions.org_id` at the end, so the app must not
-   be running old code against it afterwards.
+1. **Migrate the database.** `npm run db:apply` (Flyway, incremental) applies V310 and V311.
+   V310 is additive then destructive in one file — it drops `subscriptions.org_id` at the end,
+   so the app must not be running old code against it afterwards. V311 is purely additive.
 2. **Deploy the app.** Old code reads `subscriptions.org_id`, which no longer exists. Keep the
    gap between steps 1 and 2 short.
 3. **Sync Stripe prices**, once per environment, pointing explicitly at that environment:
@@ -100,8 +106,14 @@ names each group in the logs.
 - An existing pre-deploy subscriber attaching a second org gets the 503 from §2. Confirm the
   message names support and the log line names the group.
 - `POST /api/cron/billing-quantity` with a wrong secret → 401; with none configured → 503.
+- Offer a group to another payer, reload the page, and confirm the offer is still listed and
+  withdrawable. That is the V310 bug V311 fixes; if it is not visible after a reload, the app
+  is running against a database without V311.
 
 ## 6. Rollback
+
+V311 alone is rollback-safe: dropping `billing_group_transfers` loses outstanding offers (each
+recipient just asks for a new one) and nothing else references it.
 
 V310 drops `subscriptions.org_id`; there is no down migration. Rolling the APP back without
 rolling the database back does not work. If the app must come back, restore the database from
