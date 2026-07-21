@@ -105,9 +105,18 @@ export async function groupIdsOwnedBy(userId: string): Promise<string[]> {
  * This bounds a GROUP. `assertMayOwnAnotherOrg` bounds a PERSON, and both are
  * enforced: a user holding two community groups would satisfy this check twice
  * over while owning two free orgs.
+ *
+ * `knownOrgIds` lets a caller that is already inside a transaction holding
+ * `select ... for update` on the group pass the membership it read THERE, so
+ * the cap is counted against the same snapshot the lock protects. Two
+ * concurrent attaches would otherwise both count through this module's own
+ * connection and could both see the pre-move state.
  */
-export async function assertGroupMayHoldAnotherOrg(subscriptionId: string): Promise<void> {
-  const orgIds = await orgIdsInGroup(subscriptionId);
+export async function assertGroupMayHoldAnotherOrg(
+  subscriptionId: string,
+  knownOrgIds?: string[],
+): Promise<void> {
+  const orgIds = knownOrgIds ?? (await orgIdsInGroup(subscriptionId));
   if (orgIds.length === 0) return;
   const limit = await getLimit(orgIds[0], "orgs.max_owned");
   // null is UNLIMITED; 0 means the plan has no row for the key at all, and both

@@ -482,6 +482,24 @@ export async function linkStripeCustomer(orgId: string, customerId: string): Pro
   // org: two orgs in one group share one customer and one card.
   const subscriptionId = await subscriptionIdForOrg(orgId);
   if (!subscriptionId) return;
+  await linkStripeCustomerForGroup(subscriptionId, customerId);
+}
+
+/**
+ * The same link, addressed by GROUP.
+ *
+ * org → group is the hop that goes wrong once orgs can move between groups: the
+ * checkout that created this customer paid for ONE group, and by the time its
+ * webhook arrives the org named in the metadata may bill through another one —
+ * at which point writing through the org stamps the payer's customer id onto a
+ * different customer's row. V310's partial unique index on stripe_customer_id
+ * turns that into a raised error rather than silent corruption, which is a
+ * safety net, not a licence to keep resolving through the org.
+ */
+export async function linkStripeCustomerForGroup(
+  subscriptionId: string,
+  customerId: string,
+): Promise<void> {
   const [before] = await sql<{ stripe_customer_id: string | null }[]>`
     select stripe_customer_id from subscriptions where id = ${subscriptionId}`;
   if (!before) return;

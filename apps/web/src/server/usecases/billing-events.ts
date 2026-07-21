@@ -8,7 +8,7 @@ import "server-only";
 import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import {
-  linkStripeCustomer,
+  linkStripeCustomerForGroup,
   recordPassPurchase,
   refundDuplicatePassPayment,
   revokePassForRefundedCharge,
@@ -107,14 +107,47 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     return;
   }
 
-  // Link the Stripe customer to this org. A re-buy after a cancel mints a NEW
-  // customer, and has_payment_method mirrors cards on the OLD one — so this
-  // goes through linkStripeCustomer, which re-derives the flag on a change.
+  // Link the Stripe customer to the GROUP that bought it. A re-buy after a
+  // cancel mints a NEW customer, and has_payment_method mirrors cards on the OLD
+  // one — so this goes through linkStripeCustomerForGroup, which re-derives the
+  // flag on a change.
+  //
+  // Group-addressed, not org-addressed: `stripe_customer_id` lives on the
+  // subscription row, and once orgs move between groups the org named in the
+  // metadata may no longer bill through the group that paid — writing through it
+  // would stamp this payer's customer onto somebody else's row (the same defect
+  // already fixed for the subscription webhooks). The checkout stamp is the
+  // durable answer; the org's current group is the fallback for sessions created
+  // before the stamp existed.
   if (session.customer) {
-    await linkStripeCustomer(orgId, session.customer as string);
+    const groupId = await checkoutGroupId(session, orgId);
+    if (groupId) await linkStripeCustomerForGroup(groupId, session.customer as string);
   }
 
   // Subscription details arrive via subscription.created; nothing more to do here.
+}
+
+/**
+ * Which billing GROUP did this checkout session pay for?
+ *
+ * `metadata.subscription_id` is stamped by buildEmbeddedCheckoutParams and names
+ * the group that actually paid, whatever has happened to the org since. It is
+ * verified against the table rather than trusted — a deleted group must not be
+ * written, and metadata is not a trusted channel. Falls back to the buying org's
+ * current group for sessions created before the stamp shipped.
+ */
+async function checkoutGroupId(
+  session: Stripe.Checkout.Session,
+  orgId: string,
+): Promise<string | null> {
+  const stamped = session.metadata?.subscription_id;
+  if (stamped) {
+    const [row] = await sql<{ id: string }[]>`
+      select id from subscriptions where id = ${stamped}`;
+    if (row) return row.id;
+    console.error(`[billing] checkout session ${session.id} stamped with unknown group ${stamped}`);
+  }
+  return subscriptionIdForOrg(orgId);
 }
 
 /** Billing GROUP behind a Stripe customer id, or null when we do not bill them.
@@ -391,6 +424,37 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
     returning id`;
   // Leaving dunning restores the plan for every org in the group.
   if (row) await invalidateGroupEntitlements(row.id);
+  await trueUpQuantityPaid(invoice, subId);
+}
+
+/**
+ * The deferred decrement, settled.
+ *
+ * `stripe_quantity = max(active_org_count, quantity_paid)` only keeps its
+ * promise — "a removed org frees a paid slot you can reuse at no charge until
+ * the period ends" — if `quantity_paid` eventually comes back DOWN. Nothing but
+ * a renewal may lower it: at that moment Stripe has just billed the new period
+ * at the true count, so the slots the customer paid for last period are spent
+ * and the count is the truth again.
+ *
+ * Gated on `billing_reason`, not merely on "an invoice was paid". A mid-period
+ * PRORATION invoice is also `invoice.payment_succeeded`, and lowering
+ * quantity_paid on one would confiscate a slot the customer has this second
+ * paid for: attach (3 seats charged), detach (2 orgs, 1 slot still owed to
+ * them), any other prorated change → the freed slot silently disappears.
+ * `subscription_create` is included because that first invoice IS the count the
+ * checkout bought, and nothing else records it.
+ */
+async function trueUpQuantityPaid(invoice: Stripe.Invoice, subId: string): Promise<void> {
+  const reason = invoice.billing_reason;
+  if (reason !== "subscription_cycle" && reason !== "subscription_create") return;
+  await sql`
+    update subscriptions s
+       set quantity_paid = greatest(1, (
+             select count(*) from organizations o
+              where o.subscription_id = s.id and o.deleted_at is null)),
+           updated_at = now()
+     where s.stripe_subscription_id = ${subId}`;
 }
 
 /** Current owner's email via org_members — NOT organizations.created_by, which
