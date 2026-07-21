@@ -80,6 +80,34 @@ export function fmtZoneAbbrev(
   return raw;
 }
 
+/**
+ * Numeric UTC offset at this instant — "GMT+4", "GMT+5:30", "GMT" for UTC.
+ *
+ * The picker shows this rather than fmtZoneAbbrev because an offset is what
+ * disambiguates two cities in the same region, and unlike an abbreviation it is
+ * never ambiguous ("IST" is both India and Ireland). DST-dependent, so the
+ * moment matters.
+ */
+export function fmtGmtOffset(
+  tz: string,
+  value: string | number | Date | null | undefined,
+): string {
+  const d = toDate(value) ?? new Date();
+  const parts = fmt(tz, { timeZoneName: "shortOffset" }).formatToParts(d);
+  const raw = parts.find((p) => p.type === "timeZoneName")?.value;
+  // `shortOffset` is Node 18+/modern browsers. On anything older the request is
+  // ignored and no timeZoneName part comes back — compute it instead.
+  if (raw) return raw;
+  const local = new Date(d.toLocaleString("en-US", { timeZone: tz }));
+  const utc = new Date(d.toLocaleString("en-US", { timeZone: UTC }));
+  const minutes = Math.round((local.getTime() - utc.getTime()) / 60_000);
+  if (minutes === 0) return "GMT";
+  const sign = minutes < 0 ? "-" : "+";
+  const abs = Math.abs(minutes);
+  const mm = abs % 60;
+  return `GMT${sign}${Math.floor(abs / 60)}${mm ? `:${String(mm).padStart(2, "0")}` : ""}`;
+}
+
 // DST-free zones whose common abbreviation some ICU builds don't emit. All are
 // year-round fixed offsets, so a static label is always correct.
 const DST_FREE_ABBREV: Record<string, string> = {

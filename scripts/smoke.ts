@@ -271,6 +271,14 @@ async function main() {
     await expectFail("bogus timezone rejected", () =>
       call(admin, "/api/users/me", "PATCH", { timezone: "Mars/Phobos" }),
     );
+    // The picker only ever writes canonical spellings now (lib/tz-data.ts
+    // TZ_ALIAS), but rows written before it existed hold legacy ones — the API
+    // must keep accepting them or those accounts break on their next save.
+    const legacy = (await call(admin, "/api/users/me", "PATCH", {
+      timezone: "Asia/Calcutta",
+    })) as { timezone: string | null };
+    check("pro: legacy zone spelling still accepted", legacy.timezone === "Asia/Calcutta");
+    await call(admin, "/api/users/me", "PATCH", { timezone: null });
     // Free path: the viewer session is plan-agnostic for account settings.
     const vSaved = (await call(viewer, "/api/users/me", "PATCH", {
       timezone: "Europe/London",

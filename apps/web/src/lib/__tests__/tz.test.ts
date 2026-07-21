@@ -10,7 +10,7 @@ vi.mock("next/headers", () => ({
   cookies: async () => ({ get: (k: string) => mockCookieGet(k) }),
 }));
 
-import { isValidIana, pickTimezone, listTimezones, DEFAULT_TZ } from "@/lib/tz";
+import { isValidIana, pickTimezone, DEFAULT_TZ } from "@/lib/tz";
 import { resolveTimezone } from "@/lib/tz-server";
 
 afterEach(() => vi.clearAllMocks());
@@ -69,23 +69,6 @@ describe("resolveTimezone (integration of sources)", () => {
   });
 });
 
-describe("listTimezones", () => {
-  it("returns the full IANA set (hundreds of zones), not a shortlist", () => {
-    const zones = listTimezones();
-    // supportedValuesOf yields ~400+; the static fallback is only ~20.
-    expect(zones.length).toBeGreaterThan(100);
-    expect(zones).toContain("Europe/London");
-    expect(zones).toContain("America/New_York");
-    expect(zones).toContain("Australia/Sydney");
-  });
-  it("canonicalizes legacy names to modern spelling", () => {
-    const zones = listTimezones();
-    expect(zones).toContain("Asia/Kolkata"); // not the legacy Asia/Calcutta
-    expect(zones).not.toContain("Asia/Calcutta");
-  });
-  it("is sorted and de-duplicated", () => {
-    const zones = listTimezones();
-    expect([...new Set(zones)].length).toBe(zones.length);
-    expect([...zones].sort()).toEqual(zones);
-  });
-});
+// The zone LIST moved to lib/tz-options.ts (over the generated lib/tz-data.ts)
+// so this module stays importable without the ~20KB zone table. Its tests moved
+// with it — see __tests__/tz-options.test.ts.

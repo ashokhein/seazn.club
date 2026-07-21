@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { TAG, activeOrg, type OrgInfo } from "./helpers";
+import { TAG, activeOrg, apiJson, type OrgInfo } from "./helpers";
 
 // Org administration: rename the active org, create a second org from the
 // switcher, and switch between orgs. Runs on the Pro account (community owns
@@ -77,5 +77,61 @@ test.describe.serial("org management", () => {
     await expect(page.getByLabel("Organization name")).toHaveValue(original.name, {
       timeout: 20_000,
     });
+  });
+
+  // The scheduling timezone picker searches, and files zones under human
+  // regions rather than IANA prefixes — Dubai belongs under Middle East, not
+  // beside Tokyo under "Asia" because that is how the tz database spells it.
+  test("scheduling timezone is searchable and grouped by real region", async ({ page }) => {
+    const org = await activeOrg(page);
+    const { data: orgs } = await apiJson<{ id: string; timezone: string | null }[]>(
+      page.request,
+      "/api/orgs",
+    );
+    const originalTz = orgs?.find((o) => o.id === org.id)?.timezone ?? null;
+    await page.goto("/settings");
+
+    const tz = page.getByRole("combobox", { name: "Organisation scheduling timezone" });
+    await expect(tz).toBeVisible();
+    await tz.click();
+    await tz.fill("dub");
+
+    // Two cities match "dub", and they sort into two different regions.
+    const middleEast = page.getByRole("group", { name: "Middle East" });
+    await expect(middleEast.getByRole("option", { name: /Dubai/ })).toBeVisible();
+    await expect(
+      page.getByRole("group", { name: "Europe" }).getByRole("option", { name: /Dublin/ }),
+    ).toBeVisible();
+    // The complaint, pinned: Dubai is not filed under an "Asia" heading.
+    await expect(page.getByRole("group", { name: "Asia" })).toHaveCount(0);
+
+    await middleEast.getByRole("option", { name: /Dubai/ }).click();
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().includes(`/api/orgs/${org.id}`) && r.request().method() === "PATCH" && r.ok(),
+      ),
+      page
+        .locator("div")
+        .filter({ has: tz })
+        .filter({ has: page.getByRole("button", { name: /^Sav/ }) })
+        .last()
+        .getByRole("button", { name: /^Sav/ })
+        .click(),
+    ]);
+
+    await page.reload();
+    await expect(
+      page.getByRole("combobox", { name: "Organisation scheduling timezone" }),
+    ).toContainText("Dubai", { timeout: 20_000 });
+
+    // Restore the zone this org actually had: it feeds every division's
+    // schedule rendering, so leaving it on Dubai would shift times for the rest
+    // of the suite.
+    const restore = await page.request.patch(`/api/orgs/${org.id}`, {
+      headers: { "Content-Type": "application/json" },
+      data: { timezone: originalTz },
+    });
+    expect(restore.ok()).toBe(true);
   });
 });
