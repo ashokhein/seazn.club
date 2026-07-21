@@ -288,6 +288,50 @@ describe("checkout branding", () => {
   });
 });
 
+// D13: a pass holder converting to Pro is asked for a card even during the
+// trial. Without this the credited subscription can start with nothing to
+// charge, and Stripe cancels it at trial end (missing_payment_method: "cancel")
+// after the credit has already been handed over.
+describe("requireCard on a trial checkout (v3/07 D13)", () => {
+  it("drops payment_method_collection so the trial still collects a card", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, requireCard: true, customerEmail: "a@b.com" });
+    // The trial itself is untouched — 14 free days, but a card on file.
+    expect("payment_method_collection" in p).toBe(false);
+    expect(p.subscription_data?.trial_period_days).toBe(14);
+    expect(p.subscription_data?.trial_settings).toEqual({
+      end_behavior: { missing_payment_method: "cancel" },
+    });
+  });
+
+  it("changes nothing for a trial checkout that does not require a card", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, requireCard: false, customerEmail: "a@b.com" });
+    expect(p.payment_method_collection).toBe("if_required");
+    expect(p).toEqual(buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" }));
+  });
+
+  it("is a no-op without a trial — trialDays 0 already always collects a card", () => {
+    const withFlag = buildEmbeddedCheckoutParams({
+      ...base,
+      trialDays: 0,
+      requireCard: true,
+      customerEmail: "a@b.com",
+    });
+    expect("payment_method_collection" in withFlag).toBe(false);
+    expect(withFlag).toEqual(
+      buildEmbeddedCheckoutParams({ ...base, trialDays: 0, customerEmail: "a@b.com" }),
+    );
+  });
+
+  // Credit is delivered as a customer balance transaction precisely BECAUSE
+  // this stays on: Checkout rejects `discounts` together with
+  // allow_promotion_codes, so a coupon was never available.
+  it("leaves allow_promotion_codes on, which is why credit is not a coupon", () => {
+    const p = buildEmbeddedCheckoutParams({ ...base, requireCard: true, customerEmail: "a@b.com" });
+    expect(p.allow_promotion_codes).toBe(true);
+    expect("discounts" in p).toBe(false);
+  });
+});
+
 describe("currency price points (v3/07 §4)", () => {
   it("reads SET price points from stripe-plans.json", () => {
     expect(proPrice("monthly", "usd")).toBe(1900);

@@ -11,6 +11,7 @@ import {
   checkoutTrialDays,
 } from "@/lib/billing";
 import { preferredCurrency } from "@/lib/currency-server";
+import { creditPassTowardSubscription, orgHoldsAnyPass } from "@/server/usecases/pass-credit";
 import { routes } from "@/lib/routes";
 
 /** POST /api/billing/checkout — start an EMBEDDED Stripe Checkout session and
@@ -51,6 +52,19 @@ export async function POST(req: Request) {
     // A live Stripe sub changes plan in-app, never via a second checkout.
     assertCheckoutAllowed(sub);
 
+    // Pass-to-Pro (v3/07, D12/D13). Both reads run BEFORE the session so the
+    // credit is on the customer when the first invoice is drawn.
+    //
+    // requireCard covers every pass holder, including a staff-granted one, so
+    // the trial cannot start with no way to charge it. The credit is far
+    // narrower — most recent pass only, paid, ≤30 days, matching currency, not
+    // refunded, not already credited — and never throws: a checkout must not
+    // 500 because a credit could not be worked out.
+    const [requireCard] = await Promise.all([
+      orgHoldsAnyPass(orgId),
+      creditPassTowardSubscription(orgId),
+    ]);
+
     const session = await getStripe().checkout.sessions.create(
       buildEmbeddedCheckoutParams({
         priceId: plan.price_id,
@@ -61,6 +75,7 @@ export async function POST(req: Request) {
         currency: await preferredCurrency(orgId, req),
         customerId: sub?.stripe_customer_id ?? undefined,
         customerEmail: user.email,
+        requireCard,
       }),
     );
 

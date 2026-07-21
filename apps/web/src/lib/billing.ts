@@ -51,9 +51,10 @@ const CUSTOMER_UPDATE_FOR_TAX = {
  * Params for an EMBEDDED subscription checkout (rendered in-page via Stripe's
  * Embedded Checkout, not a redirect). Pure — no Stripe/DB — so it's unit-tested.
  * `trialDays` 14 = the no-card trial (`payment_method_collection:
- * "if_required"` + cancel when no card is added by trial end); 0 = no trial
- * block at all, so Stripe charges at checkout and always collects a card —
- * one trial per org, decided by the caller via checkoutTrialDays().
+ * "if_required"` + cancel when no card is added by trial end) UNLESS
+ * `requireCard` overrides it; 0 = no trial block at all, so Stripe charges at
+ * checkout and always collects a card — one trial per org, decided by the
+ * caller via checkoutTrialDays().
  * `ui_mode: "embedded"` requires a `return_url` (not success/cancel urls);
  * Stripe redirects there on completion, where the billing page reconciles
  * from the session id.
@@ -68,6 +69,14 @@ export function buildEmbeddedCheckoutParams(args: {
   /** ISO currency picking one of the price's currency_options (v3/07 §4);
    *  defaults to usd, and is ALWAYS sent — see the note on the field below. */
   currency?: string;
+  /**
+   * Collect a card even when a trial is running (v3/07, D13). Set by the
+   * checkout route for an org that holds an Event Pass: that org has already
+   * paid us once and is being credited for it, so the "no-card trial" default
+   * would let a credited subscription start with nothing to charge at trial end.
+   * `trialDays: 0` already forces card collection, so this only bites on a trial.
+   */
+  requireCard?: boolean;
 }): Stripe.Checkout.SessionCreateParams {
   return {
     // stripe-node v22 names the embedded UI mode "embedded_page".
@@ -92,7 +101,9 @@ export function buildEmbeddedCheckoutParams(args: {
     // flag does. We quote in one currency; we must charge in that currency.
     adaptive_pricing: { enabled: false },
     metadata: { org_id: args.orgId },
-    ...(args.trialDays > 0 ? { payment_method_collection: "if_required" as const } : {}),
+    ...(args.trialDays > 0 && !args.requireCard
+      ? { payment_method_collection: "if_required" as const }
+      : {}),
     subscription_data: {
       ...(args.trialDays > 0
         ? {
