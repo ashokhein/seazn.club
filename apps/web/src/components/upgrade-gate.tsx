@@ -6,35 +6,19 @@ import { featurePlan, featureReason } from "@/lib/feature-copy";
 import { PlanBadge } from "@/components/plan-badge";
 import { usePassGateState } from "@/components/competition-pass-provider";
 import { formatMinor, passPrice, proPlusPrice, proPrice } from "@/lib/currency";
+import { PASS_FEATURES } from "@/lib/pass-features";
 import { routes } from "@/lib/routes";
 
 /**
- * Feature keys an Event Pass lifts — every key whose `event_pass` row in
- * `plan_entitlements` beats the `community` row. Only these gates offer the
- * per-event path next to Pro; everything else sends the user to billing.
+ * Feature keys an Event Pass lifts. Only these gates offer the per-event path
+ * next to Pro; everything else sends the user to billing.
  *
- * ONE key the pass lifts is deliberately absent: `registration.fee_percent`
- * (8% → 5%). It is a deduction RATE read through `getLimit`
- * (server/usecases/registrations.ts) and never throws PaymentRequiredError, so
- * no paywall can ever render for it — listing it would be dead weight, not a
- * lost sale.
- *
- * Do not hand-edit this set against a spec doc: it drifted that way once and
- * cost the pass five paywalls. `__tests__/upgrade-gate-pass-features.test.ts`
- * derives the same set from the live matrix and fails if the two disagree.
+ * The set itself lives in `@/lib/pass-features` because the upgrade PAGE — a
+ * server component — asks the same question, and a client module's exports
+ * reach the RSC graph as references rather than values. Re-exported here so
+ * every existing importer of `@/components/upgrade-gate` is untouched.
  */
-export const PASS_FEATURES = new Set([
-  "divisions.per_competition.max",
-  "entrants.per_division.max",
-  "formats.advanced",
-  "formats.double_elim",
-  "realtime",
-  "dashboard.player_profiles",
-  "exports.branded",
-  "sponsors.tiers",
-  "sponsors.monetize",
-  "scheduling.ai.runs_per_division.max",
-]);
+export { PASS_FEATURES } from "@/lib/pass-features";
 
 interface Props {
   /** Entitlement feature key, e.g. "scoring.ball_by_ball" (doc 10 §1). */
