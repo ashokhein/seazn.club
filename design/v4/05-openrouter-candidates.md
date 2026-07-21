@@ -64,7 +64,7 @@ Policy probe: one live request carrying `data_collection: "deny"` and `zdr: true
 | `google/gemma-4-26b-a4b-it:free` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `google/gemma-4-31b-it` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `inception/mercury-2` | derived | yes | yes | routed under data_collection=deny + zdr |
-| `meta/muse-spark-1.1` | derived | yes | no | HTTP 403: {"error":{"message":"Provider returned error","code":403,"metadata":{"raw":"This model is only available in the United States.","provider_name":"Meta","is_byok":false}},"user_id":"user_2xg03hoh7TjOgD3uXIJokRhkapR"} |
+| `meta/muse-spark-1.1` | derived | yes | no | HTTP 403: {"error":{"message":"Provider returned error","code":403,"metadata":{"raw":"This model is only available in the United States.","provider_name":"Meta","is_byok":false}},"user_id":"<redacted>"} |
 | `minimax/minimax-m2` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `minimax/minimax-m2.5` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `minimax/minimax-m2.7` | derived | yes | yes | routed under data_collection=deny + zdr |
@@ -151,7 +151,7 @@ Policy probe: one live request carrying `data_collection: "deny"` and `zdr: true
 | `qwen/qwen3.6-plus` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `qwen/qwen3.7-max` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `qwen/qwen3.7-plus` | derived | yes | yes | routed under data_collection=deny + zdr |
-| `sakana/fugu-ultra` | derived | yes | no | HTTP 403: {"error":{"message":"Provider returned error","code":403,"metadata":{"raw":"sakana/fugu-ultra is not available in your region: Sakana AI blocks requests originating from your location.","provider_name":"Sakana AI","is_byok":false}},"user_id":"user_2xg03hoh7TjOgD3uXIJokRhkapR"} |
+| `sakana/fugu-ultra` | derived | yes | no | HTTP 403: {"error":{"message":"Provider returned error","code":403,"metadata":{"raw":"sakana/fugu-ultra is not available in your region: Sakana AI blocks requests originating from your location.","provider_name":"Sakana AI","is_byok":false}},"user_id":"<redacted>"} |
 | `stepfun/step-3.7-flash` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `tencent/hunyuan-a13b-instruct` | derived | yes | yes | routed under data_collection=deny + zdr |
 | `tencent/hy3` | derived | yes | yes | routed under data_collection=deny + zdr |

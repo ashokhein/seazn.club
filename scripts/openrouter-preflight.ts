@@ -26,6 +26,13 @@ const BASE = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
 // and the same policy probe as everything the models endpoint returns.
 const NAMED = ["x-ai/grok-4.5", "z-ai/glm-5.2", "moonshotai/kimi-k2.6"];
 
+// Raw upstream error bodies can carry account identifiers (we've seen
+// "user_id" show up in OpenRouter 403 payloads), and this table gets
+// committed to the repo. Strip it before it ever reaches the report.
+function redactUserId(body: string): string {
+  return body.replace(/"user_id"\s*:\s*"[^"]*"/g, '"user_id":"<redacted>"');
+}
+
 async function probePolicy(model: string): Promise<{ ok: boolean; detail: string }> {
   const res = await fetch(`${BASE}/chat/completions`, {
     method: "POST",
@@ -39,7 +46,7 @@ async function probePolicy(model: string): Promise<{ ok: boolean; detail: string
     }),
   });
   const body = await res.text();
-  if (!res.ok) return { ok: false, detail: `HTTP ${res.status}: ${body.slice(0, 300)}` };
+  if (!res.ok) return { ok: false, detail: `HTTP ${res.status}: ${redactUserId(body.slice(0, 300))}` };
   return { ok: true, detail: "routed under data_collection=deny + zdr" };
 }
 
