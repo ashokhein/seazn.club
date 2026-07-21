@@ -51,10 +51,12 @@ rtk proxy npx vitest run
       idempotent, so a retry completes the deletion.
 - [x] `payment_method_types: ["card"]` dropped from the transfer SetupIntent — it disabled
       dynamic payment methods and would have left a SEPA/Bacs payer unable to accept at all.
-      **Loose end:** `finishHandover` still lists and detaches `{ type: "card" }` only, so a
-      departing payer's NON-card method survives the handover and keeps funding a group they no
-      longer control. Narrow (needs the old payer to have paid by SEPA/Bacs), but it is exactly
-      the property the two-phase design exists to guarantee.
+      **Loose end CLOSED** (`26b32245`): `finishHandover` listed `{ type: "card" }` only, so a
+      departing payer's SEPA/Bacs mandate survived the handover and kept funding a group they no
+      longer controlled — exactly the property the two-phase design exists to guarantee. Omitting
+      `type` returns every method type on the pinned API version. The test double was complicit
+      (it ignored the filter and answered with everything, so correct and broken were
+      indistinguishable to it) and now honours `type`.
 
 Done in `ffb16eaf`: renewal records the INVOICED seats (invoice line, pre-write item as
 fallback); renewal true-up moved under `syncGroupQuantity`'s lock so `quantity_paid` is never
@@ -130,9 +132,16 @@ affects.
 - [x] `/admin/orgs` — was a 500 on the dropped `s.org_id`; now joins through
       `organizations.subscription_id` and shows a "group of N" chip beside the plan.
 - [ ] `admin-org-actions.tsx` — still needs the group-size warning on destructive actions
-- [ ] `admin-plan-panel.tsx` — a staff plan grant now moves every org in the group
+- [x] `admin-plan-panel.tsx` — a staff plan grant moves every org in the group. `planPanel` now
+      returns `group_org_count` + up to ten other names and the panel renders an amber note
+      above the actions; silent at 1. Soft-deleted orgs excluded from both.
 - [ ] `/admin/billing-events`
-- [ ] `/admin/revenue` — **per-org revenue arithmetic breaks once a group holds two orgs**
+- [x] `/admin/revenue` — **the entry here was wrong; nothing to fix.** It reports Stripe
+      APPLICATION FEES from card entry fees, mapped to orgs via `organizations.stripe_account_id`
+      (`platform-revenue.ts:103`). That is Connect, which is per-org and which grouping never
+      touches. It was never subscription MRR, so a group holding two orgs changes none of its
+      arithmetic. Checked rather than assumed, because "revenue" reading as "MRR" is exactly the
+      wrong assumption to carry into an admin fix.
 - [ ] `/admin/coupons`
 
 ## 3. UI + visual verification (explicitly requested, not started)
