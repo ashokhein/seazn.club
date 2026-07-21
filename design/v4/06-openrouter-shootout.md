@@ -349,3 +349,95 @@ answer directly, within its own scope:
 
 Combined with §6's earlier ≈$1.10–$1.25, total spend against the $25 cap across both
 sessions is ≈$1.24–$1.38, leaving well over $20 of headroom.
+
+## 11. Consolidated six-arm table (2026-07-21, third update) — allowlist widened to six vendors
+
+> This section is the first point in the document where all six named candidates have a
+> result, all under the **same** stated conditions (`teams-15` only, n=1, `effort:high`,
+> `SCHEDULING_AI_MAX_TOKENS` left at the shipped 32,000 default, `provider.only` left at the
+> allowlist — never narrowed per-arm). It is still **not** a resumption of the blocked
+> stage-1 shootout (§1–§9): there is still no same-model-both-transports fidelity control
+> (§10a — dropped by explicit user instruction, not restored here), every arm is n=1 on a
+> single pack, Anthropic's `$` is list pricing while every OpenRouter `$` is provider-reported
+> (§6/§10d note the same asymmetry), and `openrouter-policy.ts`'s `ALLOWED_PROVIDERS` was
+> widened from four vendors to six (`google-vertex`, `openai` added) earlier in this same
+> session — a customer-disclosure change (help pages must name all six) still pending at
+> Task 12.
+
+Four rows are prior results, reproduced here verbatim from the run that produced them (not
+re-run this session, per instruction); two rows (`gemini-3.5-flash-lite`,
+`gpt-5.6-luna-pro`) are new this session, run under the widened allowlist.
+
+| pack | arm | secs | out (tokens) | blocking | warnings | cost (real/reported) | serving provider | pass/fail |
+|---|---|---|---|---|---|---|---|---|
+| teams-15 | sonnet-5 direct | 684.6 | 15,346 | 0 | 0 | $0.2471 (list) | anthropic (direct) | **PASS** — 30/30 placed |
+| teams-15 | grok-4.5 | 339.6 | 20,233 | 0 | 0 | $0.1319 (reported) | xAI | **PASS** — 30/30 placed |
+| teams-15 | glm-5.2 | 505 | 47,761 | — | — | $0.2189 (reported) | z-ai | **FAIL** — `finish_reason:"length"`, no usable plan |
+| teams-15 | kimi-k2.6 | 2,335 | 0 | — | — | $0 (in=0/out=0) | moonshotai | **FAIL (inconclusive)** — transport error, body read failed, not a model verdict |
+| teams-15 | gemini-3.5-flash-lite | 72 | 29,815 (in=8,648) | 0 | 18 | $0.0771319 (reported) | Google | **PASS** — 30/30 placed, `finish_reason:"stop"`, `native_finish_reason:"STOP"`, `refusal:null` |
+| teams-15 | gpt-5.6-luna-pro | 0.6 | 0 (in=0) | — | — | $0 (rejected pre-generation) | OpenAI *(from isolated probe only — the real call never reached a model)* | **FAIL** — HTTP 400 before generation: `"Invalid schema for response_format 'schedule_plan': ... 'required' is required to be supplied and to be an array including every key in properties"` |
+
+Notes on the two new rows:
+
+- **`gemini-3.5-flash-lite`** completed cleanly on round 1 (`rounds:0`), well inside the
+  32,000-token ceiling (29,815 of 32,000 — a margin closer to sonnet-5-direct's than to
+  grok-4.5's). 18 warnings is non-zero but `blocking:0`/`unscheduled:0`/`placed:30/30` — an
+  engine-clean, deployable plan, just not a *quiet* one. Served by Google (response `provider`
+  field), consistent with the `google-vertex` allowlist entry.
+- **`gpt-5.6-luna-pro`** never reached the model. OpenRouter's strict `response_format`
+  validator, fronting an OpenAI-served endpoint, rejected the wire schema with HTTP 400
+  *before* generation: `'required' is required to be supplied and to be an array including
+  every key in properties`. This is OpenAI's own strict-mode requirement that **every**
+  property in a JSON-schema object be listed in `required` (nullable is how you express
+  "optional" under that mode) — a schema-shape incompatibility, structurally the same kind of
+  finding as §2's two wire bugs, not a token-budget or reasoning-depth result like glm-5.2's
+  `finish_reason:"length"`. It was **not fixed** in this task (out of scope: JOB 2 was to run
+  two arms under existing conditions, not extend the schema adapter for a newly-added vendor)
+  — recorded as the arm's genuine result, the same way kimi-k2.6's transport failure was
+  recorded rather than silently retried. `served=OpenAI` above is only known from the isolated
+  `probeServedProvider()` sanity call (tiny separate request, same model/policy), since the
+  real bench call itself never got a response body worth reading.
+
+### How to apply
+
+**The default model should not change**, and the widened allowlist should not be read as
+"these two vendors are now validated production candidates":
+
+- Of six arms, three are clean passes with a schema-valid, engine-clean plan
+  (`sonnet-5 direct`, `grok-4.5`, `gemini-3.5-flash-lite`), one is inconclusive
+  (`kimi-k2.6`, transport failure, not a quality signal), and two are genuine failures under
+  the shipped 32,000-token default (`glm-5.2` exhausted the ceiling on reasoning;
+  `gpt-5.6-luna-pro` never got past OpenRouter's schema validator for OpenAI's strict mode).
+- **`gpt-5.6-luna-pro`'s failure is an adapter/schema gap, not evidence against the model.**
+  Before drawing any conclusion about GPT-family quality through this allowlist, the strict
+  `response_format` builder needs the same kind of `required`-completeness pass §2a already
+  did for the numeric/array bound keywords — that is new adapter work, out of scope here.
+- **`gemini-3.5-flash-lite` is the one genuinely new positive signal this session** — cheapest
+  of all six arms ($0.077, roughly a third of grok-4.5's cost and a third of sonnet-5's), fast
+  (72s), and fully placed. It is one n=1 sample on one pack with no repeat and no fidelity
+  control, exactly the caveat §10c already applied to grok-4.5 — not a basis for a default-model
+  change on its own, but a candidate worth an n=3 stage-2-style follow-up before any such
+  change is considered.
+- Every number in this table carries the same standing caveats as the rest of this document:
+  n=1 on a single pack (`teams-15` only — no `individuals-50` data for any of the six arms);
+  no same-model-both-transports fidelity control, dropped by explicit user instruction (§10a);
+  Anthropic's cost is list pricing while every OpenRouter cost is provider-reported, so the two
+  `$` figures are not on the same rate basis; `kimi-k2.6`'s failure is transport (body read
+  failed), not a quality verdict, and should never be quoted as "kimi failed the benchmark"
+  without that qualifier; and the allowlist now spans six vendors
+  (`anthropic`, `xai`, `z-ai`, `moonshotai`, `google-vertex`, `openai`) as of this session, which
+  is a customer-facing promise change (help/scheduling/ai-scheduling.md,
+  help/scheduling/ai-officials.md) still pending at Task 12 — do not treat the allowlist widen
+  as complete until those pages are updated.
+
+### Spend, this update only
+
+| item | $ |
+|---|---|
+| `gemini-3.5-flash-lite` (teams-15, n=1, 32k default) | $0.0771319 |
+| `gpt-5.6-luna-pro` (teams-15, n=1, rejected pre-generation) | $0 |
+| Isolated served-provider probes (2 × ~8 tokens) | ~$0.0002 |
+| **Total, this update** | **≈$0.0773** — confirmed via account balance delta ($21.50407462 → $21.42497982), well under the $3 stop-and-report threshold |
+
+Combined with §6's and §10d's earlier spend, total spend against the $25 cap across all three
+sessions is ≈$1.32–$1.46, leaving over $20 of headroom.

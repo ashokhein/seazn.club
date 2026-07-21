@@ -500,13 +500,14 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
   // to a single endpoint, only to the xai vendor slug — recorded per-row from
   // the live response's `provider` field either way (see `servedProvider`).
   //
-  // grok-4.5 runs at maxTokens=64_000 (2026-07-21): sonnet-5 via OpenRouter
-  // (pre-removal) exhausted the 32_000 default entirely on reasoning —
-  // finish_reason "length" both rounds, content null. This doubles the
-  // ceiling specifically to see whether Grok returns a usable plan under
-  // more room, on the same effort/pack contract sonnet failed on.
+  // task-11b brief (2026-07-21): run everything at the shipped 32,000-token
+  // default — do NOT raise SCHEDULING_AI_MAX_TOKENS for any arm here. The
+  // earlier exploratory grok-4.5 run (§10) doubled the ceiling to 64,000 to
+  // isolate "can Grok produce a plan at all"; this run instead tests the
+  // production contract as shipped. If a candidate exhausts 32k on reasoning
+  // and returns no content, that IS the recorded result for that arm.
   const CANDIDATES: Arm[] = [
-    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", maxTokens: 64_000, label: "grok-4.5" },
+    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", label: "grok-4.5" },
     { model: "z-ai/glm-5.2", effort: "high", provider: "openrouter", label: "glm-5.2" },
     { model: "moonshotai/kimi-k2.6", effort: "high", provider: "openrouter", label: "kimi-k2.6" },
   ];
@@ -518,15 +519,31 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
     for (const arm of stage1Arms) cell("teams-15", teamsPack, arm);
   }
 
-  // Stage 2 — full. n=3 (set AI_AB_REPEATS=3), both packs, survivors + both
-  // control arms. Populated after stage 1 determines survivors; empty array
-  // is a deliberate no-op until then. Enable with AI_AB_SHOOTOUT_STAGE2=1.
-  const stage2Arms: Arm[] = [];
+  // Stage 2 — full. n=3 (set AI_AB_REPEATS=3), both packs, all four arms
+  // (task-11b brief: control + 3 candidates, n=3, both packs, effort high,
+  // 32k default). Enable with AI_AB_SHOOTOUT_STAGE2=1.
+  const stage2Arms: Arm[] = [CONTROL_DIRECT, ...CANDIDATES];
   if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") {
     for (const arm of stage2Arms) {
       cell("teams-15", teamsPack, arm);
       cell("individuals-50", individualsPack, arm);
     }
+  }
+
+  // --- Task 12 prep: widened-allowlist candidates (2026-07-21) -----------
+  // openrouter-policy.ts's ALLOWED_PROVIDERS widened to six vendors this
+  // session (added google-vertex, openai). These two arms run under
+  // IDENTICAL conditions to the stage1 screen above (teams-15 only, n=1,
+  // effort high, 32k default, provider.only left at the widened allowlist —
+  // not overridden per-arm) so the numbers are directly comparable to
+  // CONTROL_DIRECT/CANDIDATES without re-running those already-recorded arms.
+  const WIDENED_CANDIDATES: Arm[] = [
+    { model: "google/gemini-3.5-flash-lite", effort: "high", provider: "openrouter", label: "gemini-3.5-flash-lite" },
+    { model: "openai/gpt-5.6-luna-pro", effort: "high", provider: "openrouter", label: "gpt-5.6-luna-pro" },
+  ];
+  // Enable with AI_AB_SHOOTOUT_STAGE1B=1.
+  if (process.env.AI_AB_SHOOTOUT_STAGE1B === "1") {
+    for (const arm of WIDENED_CANDIDATES) cell("teams-15", teamsPack, arm);
   }
 
   it("summary", () => {
@@ -565,6 +582,7 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
     let expectedCells = process.env.AI_AB_BASELINE === "1" ? 8 : 4;
     if (process.env.AI_AB_SHOOTOUT_STAGE1 === "1") expectedCells += stage1Arms.length;
     if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") expectedCells += stage2Arms.length * 2;
+    if (process.env.AI_AB_SHOOTOUT_STAGE1B === "1") expectedCells += WIDENED_CANDIDATES.length;
     const expected = expectedCells * REPEATS;
     expect(rows.length).toBe(expected);
     expect(rows.every((r) => r.error === "")).toBe(true);

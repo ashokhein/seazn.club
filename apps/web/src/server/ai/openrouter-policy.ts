@@ -23,8 +23,21 @@
  *  from the `tag` field, up to the first `/`.
  *
  *  Each slug below was verified with a live request carrying the full policy;
- *  all four returned 200 and were served by the named vendor. */
-export const ALLOWED_PROVIDERS = ["anthropic", "xai", "z-ai", "moonshotai"] as const;
+ *  all six returned 200 and were served by the named vendor.
+ *
+ *  Widened 2026-07-21 to six vendors: added `google-vertex` and `openai`.
+ *  `google-vertex` (not `google-ai-studio`) was a deliberate choice — it's
+ *  the enterprise GCP path with regional endpoints, which suits a UK/EU
+ *  product. help/scheduling/ai-scheduling.md and ai-officials.md must name
+ *  all six vendors (Task 12, not yet written as of this widening). */
+export const ALLOWED_PROVIDERS = [
+  "anthropic",
+  "xai",
+  "z-ai",
+  "moonshotai",
+  "google-vertex",
+  "openai",
+] as const;
 
 const POLICY = {
   provider: {
