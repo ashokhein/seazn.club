@@ -39,16 +39,38 @@ export async function GET() {
         current_period_end: string | null;
         cancel_at_period_end: boolean;
         trial_end: string | null;
-        orgs: { id: string; name: string; slug: string; status: string }[];
+        orgs: {
+          id: string;
+          name: string;
+          slug: string;
+          status: string;
+          owner_user_id: string | null;
+          owner_name: string | null;
+        }[];
       }[]
     >`
       select s.id, s.plan_key, s.status, s.quantity_paid,
              s.current_period_end, s.cancel_at_period_end, s.trial_end,
              coalesce(
                (select json_agg(json_build_object(
-                          'id', o.id, 'name', o.name, 'slug', o.slug, 'status', o.status)
+                          'id', o.id, 'name', o.name, 'slug', o.slug, 'status', o.status,
+                          -- The org's OWNER MEMBER, for the transfer picker. A
+                          -- payer can only hand the bill to someone who owns an
+                          -- organisation in it, so this is the candidate list.
+                          -- Name only, never email: the payer funds these orgs,
+                          -- which is not a reason to hand them contact details.
+                          'owner_user_id', owner.user_id, 'owner_name', owner.display_name)
                         order by o.created_at)
                   from organizations o
+                  left join lateral (
+                    select m.user_id, u.display_name
+                      from org_members m
+                      join users u on u.id = m.user_id and u.deleted_at is null
+                     where m.org_id = o.id and m.role = 'owner'
+                     -- Oldest owner wins, matching detachOrgFromGroup's choice
+                     -- of heir, so the two never disagree about who "the owner"
+                     -- of an organisation is.
+                     order by m.created_at, m.user_id limit 1) owner on true
                  where o.subscription_id = s.id and o.deleted_at is null),
                '[]'::json) as orgs
         from subscriptions s

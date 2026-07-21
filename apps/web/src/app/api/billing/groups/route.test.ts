@@ -72,7 +72,14 @@ type Body = {
     plan_key: string;
     quantity_paid: number;
     max_orgs: number | null;
-    orgs: { id: string; name: string; slug: string; status: string }[];
+    orgs: {
+      id: string;
+      name: string;
+      slug: string;
+      status: string;
+      owner_user_id: string | null;
+      owner_name: string | null;
+    }[];
   }[];
 };
 
@@ -100,6 +107,31 @@ describe.skipIf(!HAS_DB)("GET /api/billing/groups", () => {
     // Pro holds 5 (V310). The cap is what the UI needs to say "2 slots left"
     // without inventing the number itself.
     expect(mine!.max_orgs).toBe(5);
+  });
+
+  it("names each organisation's owner, which is the transfer picker's candidate list", async () => {
+    // A payer can only hand the bill to someone who owns an organisation in it,
+    // so this field IS the picker. Without it the transfer flow has no way to
+    // name a recipient — the use case takes a user id a browser cannot obtain.
+    const g = await seedGroup("pro", 2);
+    caller.id = g.payerId;
+
+    const mine = (await call()).data.find((x) => x.id === g.subId)!;
+    for (const o of mine.orgs) expect(o.owner_user_id).toBe(g.payerId);
+    expect(mine.orgs[0]!.owner_name).toBe("Payer");
+  });
+
+  it("leaves the owner null when an organisation has none, rather than dropping it", async () => {
+    // An org whose owner member is gone still bills and still occupies a seat,
+    // so it must stay in the list — it just cannot be a transfer candidate. An
+    // inner join here would have hidden a billed organisation from its payer.
+    const g = await seedGroup("pro", 2);
+    await sql`delete from org_members where org_id = ${g.orgIds[1]} and role = 'owner'`;
+    caller.id = g.payerId;
+
+    const mine = (await call()).data.find((x) => x.id === g.subId)!;
+    expect(mine.orgs).toHaveLength(2);
+    expect(mine.orgs.find((o) => o.id === g.orgIds[1])!.owner_user_id).toBeNull();
   });
 
   it("does NOT list a group the caller merely belongs to", async () => {

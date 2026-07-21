@@ -977,6 +977,105 @@ export async function revokeGroupTransfer(args: {
   return { revoked: true };
 }
 
+export interface PendingTransferOffer {
+  setup_intent_id: string;
+  subscription_id: string;
+  /** Only ever populated for the RECIPIENT — see listGroupTransferOffers. */
+  client_secret: string | null;
+  from_user_id: string | null;
+  to_user_id: string | null;
+  expires_at: number | null;
+  direction: "made_by_me" | "made_to_me";
+}
+
+/**
+ * Outstanding transfer offers involving this user, read back from STRIPE.
+ *
+ * This closes a hole the offer design had rather than adding the table it
+ * avoided. `offerGroupTransfer` returned the SetupIntent id exactly once, to the
+ * offerer, and nothing stored it — so after a page reload the payer could no
+ * longer REVOKE the offer they had just made. It stood as a live claim on their
+ * own subscription for the whole seven-day TTL with no way to withdraw it. The
+ * recipient, meanwhile, had no way to find it at all.
+ *
+ * The fix is to take the design at its word: the SetupIntent IS the record, and
+ * Stripe can be asked for it. Offers are listed per customer, which is bounded —
+ * a payer has one group, occasionally two after a detach.
+ *
+ * `client_secret` is returned ONLY to the recipient. They are the one who has to
+ * confirm a card against it; the offerer never needs to see it, and handing them
+ * a secret to forward is how it ends up in an email thread. That also means
+ * nobody has to "send a link" any more — the offer appears on the recipient's
+ * own billing page.
+ *
+ * Spent, withdrawn and lapsed offers are filtered out here rather than shown
+ * greyed: an offer that cannot be acted on is not information, it is clutter.
+ */
+export async function listGroupTransferOffers(
+  userId: string,
+): Promise<PendingTransferOffer[]> {
+  // Customers to ask about: the groups this user PAYS for (offers they made),
+  // and the groups their organisations sit in (offers made to them). A user is
+  // usually in both sets for the same group; dedupe before calling Stripe.
+  const rows = await sql<{ id: string; stripe_customer_id: string | null; mine: boolean }[]>`
+    select s.id, s.stripe_customer_id, (s.owner_user_id = ${userId}) as mine
+      from subscriptions s
+     where s.stripe_customer_id is not null
+       and (s.owner_user_id = ${userId}
+            or exists (select 1 from organizations o
+                        join org_members m on m.org_id = o.id
+                       where o.subscription_id = s.id
+                         and o.deleted_at is null
+                         and m.user_id = ${userId}
+                         and m.role = 'owner'))`;
+
+  const byCustomer = new Map<string, { subscriptionId: string; mine: boolean }>();
+  for (const r of rows) {
+    if (!r.stripe_customer_id) continue;
+    const seen = byCustomer.get(r.stripe_customer_id);
+    // `mine` wins if either row says so — being the payer is what decides
+    // whether an offer on this customer is one you made.
+    byCustomer.set(r.stripe_customer_id, {
+      subscriptionId: r.id,
+      mine: (seen?.mine ?? false) || r.mine,
+    });
+  }
+
+  const now = Math.floor(Date.now() / 1000);
+  const offers: PendingTransferOffer[] = [];
+  for (const [customerId, ctx] of byCustomer) {
+    // One broken customer must not blank the whole list — a payer with two
+    // groups still deserves to see the offers on the other one.
+    const list = await getStripe()
+      .setupIntents.list({ customer: customerId, limit: 100 })
+      .catch((err) => {
+        console.error(`[billing] could not list transfer offers for ${customerId}`, err);
+        return null;
+      });
+    if (!list) continue;
+    for (const si of list.data) {
+      const meta = si.metadata ?? {};
+      if (meta.kind !== TRANSFER_INTENT_KIND || !meta.subscription_id) continue;
+      if (meta.consumed_at || meta.revoked_at) continue;
+      if (meta.expires_at && Number(meta.expires_at) < now) continue;
+      const toMe = meta.to_user_id === userId;
+      // Neither party: an offer on a customer whose group this user merely owns
+      // an org in, made to somebody else. Not theirs to see.
+      if (!toMe && !ctx.mine) continue;
+      offers.push({
+        setup_intent_id: si.id,
+        subscription_id: meta.subscription_id,
+        client_secret: toMe ? si.client_secret : null,
+        from_user_id: meta.from_user_id ?? null,
+        to_user_id: meta.to_user_id ?? null,
+        expires_at: meta.expires_at ? Number(meta.expires_at) : null,
+        direction: toMe ? "made_to_me" : "made_by_me",
+      });
+    }
+  }
+  return offers;
+}
+
 /**
  * The ownership write, and the ONLY place it happens.
  *
