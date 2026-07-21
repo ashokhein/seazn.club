@@ -59,8 +59,20 @@ export async function GET(
 
     // Org-level questions, so no competition id: an Event Pass lifts a single
     // competition, not the org, and the 2-arg call is what asks that question.
-    // hasFeature/getLimit are cache-aside (5-min TTL), so on a warm cache this
-    // is N cache reads — no extra caching layer here.
+    //
+    // Cost, stated plainly. hasFeature/getLimit are cache-aside (5-min TTL), so
+    // a WARM cache is N cache reads and nothing else. A COLD cache is not: each
+    // key falls through to resolveFromDb, which issues three queries (the
+    // org-plan CASE, plan_entitlements, org_entitlement_overrides), so ~40 keys
+    // is ~120 queries against a pool of max: 5 (lib/db.ts:48) — and the org-plan
+    // query is byte-identical across all N keys, re-run N times. The known
+    // optimisation is a `resolveMany` batch API on lib/entitlements (resolve the
+    // org plan once, then fetch all keys in one plan_entitlements + one
+    // overrides query); it is a deliberate follow-up, not an oversight. Until
+    // then this route stays on the single resolver on purpose: for a
+    // low-traffic panel read, matching enforcement exactly beats being fast,
+    // and a second resolution path here is precisely the drift this route was
+    // just cured of.
     const entitlements = Object.fromEntries(
       await Promise.all(
         rows.map(async (r) =>

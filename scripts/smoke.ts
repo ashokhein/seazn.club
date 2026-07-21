@@ -233,7 +233,7 @@ async function main() {
   await expectFail("second org blocked on community (orgs.max_owned)", () =>
     call(admin, "/api/orgs", "POST", { name: `Blocked Org ${tag}` }),
   );
-  await setPlan(org.id, "pro");
+  await setPlan(org.id, "pro", admin);
 
   // --- Multi-org: a Pro owner may create additional orgs; slug is auto-assigned ---
   const org2 = (await call(admin, "/api/orgs", "POST", {
@@ -293,7 +293,7 @@ async function main() {
   // --- Jul3 feature wave (PROMPT-21..28) over real HTTP ---
   // The advanced features are entitlement-gated — org2 must be Pro (and it
   // needs headroom past competitions.max_active for the extra competitions).
-  await setPlan(org2.id, "pro");
+  await setPlan(org2.id, "pro", admin);
   await jul3Suite(admin, org2.id, renamed.slug);
 
   // --- Division delete/archive lifecycle (PROMPT-38, v3/09 §4): delete on a
@@ -448,7 +448,7 @@ async function disputeSurfacesSuite() {
   // (keyless-safe: the 422 answers before getStripe()).
   const owner = newSession();
   const who = await signIn(owner, `tos_${tag}@example.com`);
-  await setPlan(who.org_id, "pro");
+  await setPlan(who.org_id, "pro", owner);
   const refused = await v1(owner, `/api/v1/orgs/${who.org_id}/connect`, "POST", {
     return_path: "/settings/connect",
   });
@@ -474,7 +474,7 @@ async function p72Suite(): Promise<void> {
   const owner = newSession();
   const who = await signIn(owner, `p72_${tag}@example.com`);
   const orgId = who.org_id;
-  await setPlan(orgId, "pro"); // sponsor packages + api keys are Pro surfaces
+  await setPlan(orgId, "pro", owner); // sponsor packages + api keys are Pro surfaces
 
   const makeComp = async (name: string) =>
     v1data<{ id: string; slug: string }>(
@@ -654,9 +654,12 @@ async function smokePlanMatrix(): Promise<void> {
     config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
   };
   // Resolved entitlements + plan for an org (any member may read) — the same
-  // endpoint /admin/entitlements and the settings billing tab consume. Reads
-  // plan_entitlements live (no cache-aside), so it reflects a setPlan flip at
-  // once and never masks it.
+  // endpoint /admin/entitlements and the settings billing tab consume. It reads
+  // plan_entitlements live for the KEY LIST only; every VALUE now comes from the
+  // cache-aside resolver (300s TTL), so a read here CAN serve pre-flip answers.
+  // What keeps it honest is setPlan: it busts `ent:{org}:*` after its raw-SQL
+  // write, so the flip is visible to the very next read. Never reintroduce a
+  // plan flip that writes subscriptions directly and skips setPlan.
   const readEnt = async (s: Session, orgId: string) =>
     (await call(s, `/api/orgs/${orgId}/entitlements`)) as {
       plan_key: string;
@@ -883,7 +886,7 @@ async function smokePlanMatrix(): Promise<void> {
   // === PERSONA 2 — pro ==================================================
   const pro = newSession();
   const proOrg = (await signIn(pro, `smoke-pro-${tag}@example.com`)).org_id;
-  await setPlan(proOrg, "pro");
+  await setPlan(proOrg, "pro", pro);
   const proEnt = await readEnt(pro, proOrg);
   check("matrix/pro: org resolves the pro plan", proEnt.plan_key === "pro");
   check(
@@ -923,7 +926,7 @@ async function smokePlanMatrix(): Promise<void> {
   // === PERSONA 3 — pro_plus ============================================
   const plus = newSession();
   const plusOrg = (await signIn(plus, `smoke-proplus-${tag}@example.com`)).org_id;
-  await setPlan(plusOrg, "pro_plus");
+  await setPlan(plusOrg, "pro_plus", plus);
   const plusEnt = await readEnt(plus, plusOrg);
   check("matrix/pro_plus: org resolves the pro_plus plan", plusEnt.plan_key === "pro_plus");
   check(
@@ -1046,7 +1049,7 @@ async function clubsSuite(): Promise<void> {
   // --- Pro path: the full club-hub lifecycle.
   const pro = newSession();
   const proVer = await signIn(pro, `clubpro_${tag}@example.com`);
-  await setPlan(proVer.org_id, "pro");
+  await setPlan(proVer.org_id, "pro", pro);
 
   const club = await v1(pro, "/api/v1/clubs", "POST", { name: `Riverside SC ${tag}` });
   check("clubs pro: club created (201)", club.status === 201);
@@ -2903,7 +2906,7 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
     if (fixture) {
       const plus = newSession();
       const plusOrg = (await signIn(plus, `smoke-ai-plus-${tag}@example.com`)).org_id;
-      await setPlan(plusOrg, "pro_plus");
+      await setPlan(plusOrg, "pro_plus", plus);
       const { compId, divId, stageId } = await seedPlannableAiDivision(plus, "AI Plus");
       await v1(plus, "/api/v1/officials", "POST", { display_name: `AI Ref ${tag}`, role_keys: ["referee"] });
 
@@ -3065,7 +3068,7 @@ async function proPlusSuite(): Promise<void> {
   // (b) Pro: read-only keys stay free (api.access), but a score- or
   // manage-scope key still needs Pro Plus — V290 re-arms the above-Pro rung
   // (api.write).
-  await setPlan(orgId, "pro");
+  await setPlan(orgId, "pro", owner);
   const proScoreKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
     name: "plus score", scopes: ["score"],
   });
@@ -3084,7 +3087,7 @@ async function proPlusSuite(): Promise<void> {
   );
 
   // (c) Pro Plus: both quota gates lift and both write-capable key scopes mint.
-  await setPlan(orgId, "pro_plus");
+  await setPlan(orgId, "pro_plus", owner);
   const officialsOk = await setTwoOfficials();
   check("pp: pro_plus lifts officials.per_fixture.max", officialsOk.status === 200);
   const cp3 = await v1(owner, `/api/v1/divisions/${div.id}/checkpoints`, "POST", {
@@ -3115,7 +3118,7 @@ async function proPlusSuite(): Promise<void> {
 
   // Restore: this org is never touched by another suite in main(), but leave
   // it as found in case a later suite lands above this one (poison trap).
-  await setPlan(orgId, "community");
+  await setPlan(orgId, "community", owner);
 }
 
 /** PROMPT-36 (v3/07 §2–3): the plan matrix v3 + Event Pass, free → pass →
@@ -3177,7 +3180,7 @@ async function pricingV3Suite(): Promise<void> {
   check("p36: sibling comp still community-capped (402)", sibBlocked.status === 402);
 
   // Pro org buying a pass is pointless — the route refuses before Stripe.
-  await setPlan(orgId, "pro");
+  await setPlan(orgId, "pro", buyer);
   const proBuy = await raw(buyer, "/api/billing/pass-checkout", "POST", {
     competition_id: compB.id,
   });
@@ -3189,7 +3192,7 @@ async function pricingV3Suite(): Promise<void> {
   check("p36: pro lifts the sibling comp", sibUnderPro.status === 201);
 
   // Downgrade: the pass survives — comp A keeps its 10-division headroom.
-  await setPlan(orgId, "community");
+  await setPlan(orgId, "community", buyer);
   const afterDowngrade = await v1(buyer, `/api/v1/competitions/${compA.id}/divisions`, "POST", {
     name: "Div 4",
     ...genericDivision,
@@ -5159,9 +5162,58 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
   );
 }
 
+/**
+ * Drop an org's server-side entitlement cache (`ent:{org}:*`) after a SQL flip.
+ * lib/entitlements resolves cache-aside with a 300s TTL, so on any Redis-backed
+ * target (staging, a prod smoke run) an entitlement resolved BEFORE the flip
+ * stays cached and the flip never lands inside the run. Locally and in CI
+ * REDIS_URL is normally unset — the cache layer is inert there and this is a
+ * cheap no-op round-trip.
+ *
+ * There is no public invalidation endpoint, so this rides the superadmin
+ * entitlement-override route (its POST and DELETE both call
+ * invalidateOrgEntitlements): the org's OWNER is flipped to superadmin in SQL
+ * for the two calls, then restored. Same mechanism as
+ * apps/web/e2e/helpers.ts:283-307.
+ *
+ * `owner` must be a live session for that org's owner. It is deliberately an
+ * EXISTING session rather than a fresh signIn: /api/auth/magic-link is rate
+ * limited to 5 per 300s per IP and fails CLOSED wherever Redis is configured —
+ * i.e. in exactly the environments this bust exists for.
+ */
+async function bustOrgEntitlements(owner: Session, orgId: string): Promise<void> {
+  const setOwnerStaff = async (on: boolean) => {
+    const sql = smokeDb();
+    try {
+      await sql`
+        update users set is_staff = ${on}, staff_role = ${on ? "superadmin" : null}
+        where id in (
+          select user_id from org_members where org_id = ${orgId} and role = 'owner'
+        )`;
+    } finally {
+      await sql.end();
+    }
+  };
+  const KEY = "smoke.cache.bust";
+  const path = `/api/admin/orgs/${orgId}/entitlement-override`;
+  await setOwnerStaff(true);
+  try {
+    await raw(owner, path, "POST", {
+      feature_key: KEY,
+      reason: "smoke: drop cached entitlements after a SQL plan flip",
+    });
+    await raw(owner, path, "DELETE", { feature_key: KEY });
+  } finally {
+    await setOwnerStaff(false);
+  }
+}
+
 /** Flip an org's plan directly in the DB — smoke targets a disposable DB and
- *  the billing checkout path can't run without Stripe. */
-async function setPlan(orgId: string, plan: string): Promise<void> {
+ *  the billing checkout path can't run without Stripe. `owner` (the org
+ *  owner's session) is required, not optional: the raw-SQL write goes behind
+ *  the resolver's back, so every flip must bust the entitlement cache or a
+ *  Redis-backed target keeps serving the pre-flip answers for up to 300s. */
+async function setPlan(orgId: string, plan: string, owner: Session): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required to change a plan in smoke");
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
@@ -5180,6 +5232,7 @@ async function setPlan(orgId: string, plan: string): Promise<void> {
   } finally {
     await sql.end();
   }
+  await bustOrgEntitlements(owner, orgId);
 }
 
 async function cleanup(tag: string): Promise<void> {
@@ -5427,10 +5480,10 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
   const auditData = v1data<{ verified: boolean; head_hash: string | null; signature: unknown }>(audit);
   check("v13 audit chain verifies with a head hash", auditData.verified === true && auditData.head_hash !== null);
   check("v13 audit carries the signature field (null without a key, never absent)", "signature" in auditData);
-  await setPlan(proOrgId, "community");
+  await setPlan(proOrgId, "community", admin);
   const gated = await v1(admin, `/api/v1/fixtures/${kf.id}/audit`, "GET");
   check("v13 audit is Pro-gated (402 on community)", gated.status === 402);
-  await setPlan(proOrgId, "pro");
+  await setPlan(proOrgId, "pro", admin);
 
   const keys = await fetch(`${BASE}/.well-known/seazn-audit-keys`);
   check("v13 audit verify keys are public", keys.status === 200);

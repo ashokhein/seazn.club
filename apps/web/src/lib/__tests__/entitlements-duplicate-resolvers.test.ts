@@ -75,6 +75,10 @@ afterAll(async () => {
   await client?.end();
 });
 
+// Every case here writes subscriptions/overrides in raw SQL and then resolves
+// through getLimit, so each busts the entitlement cache first — same reason as
+// readPanel. Freshly-seeded orgs happen to be a guaranteed cache miss today,
+// but relying on that would go stale the moment a case resolves an org twice.
 describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations", () => {
   it("refuses a lapsed comp beyond the community cap", async () => {
     const { userId, orgId } = await seedOwnerWithOneOrg();
@@ -83,6 +87,7 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
       set plan_key = 'pro', comped_until = now() - interval '1 day',
           stripe_subscription_id = null
       where org_id = ${orgId}`;
+    await invalidateOrgEntitlements(orgId);
     // community orgs.max_owned = 1, and they already own one.
     await expect(assertMayOwnAnotherOrg(userId)).rejects.toThrow();
   });
@@ -92,7 +97,10 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
     await sql`
       update subscriptions set plan_key = 'pro', status = 'active'
       where org_id = ${orgId}`;
-    // pro orgs.max_owned = 5; owning one, a second is within cap.
+    await invalidateOrgEntitlements(orgId);
+    // pro orgs.max_owned = 3 (V112 seeded 5; V270__pricing_v3_matrix.sql:9
+    // dropped it to 3, which is why the grandfathering overrides exist).
+    // Owning one, a second is within cap.
     await expect(assertMayOwnAnotherOrg(userId)).resolves.toBeUndefined();
   });
 
@@ -111,6 +119,7 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value)
       values (${orgId}, 'orgs.max_owned', null)`;
+    await invalidateOrgEntitlements(orgId);
     await expect(assertMayOwnAnotherOrg(userId)).resolves.toBeUndefined();
   });
 
@@ -119,6 +128,7 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value, expires_at)
       values (${orgId}, 'orgs.max_owned', 9, now() - interval '1 day')`;
+    await invalidateOrgEntitlements(orgId);
     await expect(assertMayOwnAnotherOrg(userId)).rejects.toThrow();
   });
 });

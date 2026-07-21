@@ -194,6 +194,8 @@ export async function generateOrgSlug(name: string, excludeOrgId?: string): Prom
  * `orgs.max_owned` (doc 13 §5, billing decision (a)): subscriptions stay
  * per-org; the quota only caps CREATION, judged against the creating user's
  * best owned-org plan. A user who owns nothing may always create their first.
+ *
+ * @internal — exported for tests; the only production caller is createOrgForUser.
  */
 export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
   const owned = await sql<{ org_id: string }[]>`
@@ -208,6 +210,15 @@ export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
   // the best preserves the old cross-org override lift by construction —
   // v3 grandfathering, where the pro cap dropped 5 → 3 and existing owners keep
   // their headroom via an override on any org they own.
+  //
+  // Behaviour change worth naming: the old raw union took max() over
+  // plan_entitlements ∪ overrides, so a LOWERING override was silently
+  // discarded — an int_value = 0 on orgs.max_owned lost to the plan's number
+  // and never bit. getLimit lets the override win outright, so a restrictive
+  // override now applies. That is the correct semantics and what the resolver
+  // does everywhere else; it is safe here because production has only ever
+  // written raising overrides (V270__pricing_v3_matrix.sql:70 writes
+  // int_value = 5). Note it before writing a lowering override by hand.
   const limits = await Promise.all(
     owned.map((o) => getLimit(o.org_id, "orgs.max_owned")),
   );
