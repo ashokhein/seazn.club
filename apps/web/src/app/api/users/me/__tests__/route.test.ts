@@ -36,17 +36,22 @@ vi.mock("@/lib/auth", async (importOriginal) => {
 
 import { GET } from "../route";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 async function seedOrgWithPlan(plan: string): Promise<OrgMembership> {
   const suffix = randomUUID().slice(0, 8);
   const [org] = await sql<
-    { id: string; name: string; slug: string; created_by: string | null; created_at: string }[]
+    {
+      id: string;
+      name: string;
+      slug: string;
+      created_by: string | null;
+      created_at: string;
+    }[]
   >`
     insert into organizations (name, slug)
     values (${"Me Route Org " + suffix}, ${"me-route-org-" + suffix})
     returning id, name, slug, created_by, created_at`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${org!.id}, ${plan}, 'active')`;
+  await setOrgPlan(org!.id, plan);
   return {
     ...org!,
     logo_url: null,
@@ -90,7 +95,10 @@ describe.skipIf(!HAS_DB)("GET /api/users/me", () => {
     expect(res.headers.get("cache-control")).toBe(NO_STORE);
     const json = (await res.json()) as {
       ok: boolean;
-      data: { id: string; org: { id: string; name: string; plan: string } | null };
+      data: {
+        id: string;
+        org: { id: string; name: string; plan: string } | null;
+      };
     };
     expect(json.ok).toBe(true);
     expect(json.data.id).toBe(fakeUser.id);

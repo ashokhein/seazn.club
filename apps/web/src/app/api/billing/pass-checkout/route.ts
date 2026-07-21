@@ -27,13 +27,34 @@ export async function POST(req: Request) {
       select slug, org_id from competitions where id = ${competition_id}`;
     if (!comp || comp.org_id !== orgId) throw new HttpError(404, "competition not found");
 
-    // A Pro org has nothing to gain from a pass (v3/07 §3 interplay).
+    // A Pro org has nothing to gain from a pass (v3/07 §3 interplay). The plan
+    // resolves through the billing GROUP, so this reads the group's row.
     const [sub] = await sql<
-      { plan_key: string | null; stripe_customer_id: string | null }[]
-    >`select plan_key, stripe_customer_id from subscriptions where org_id = ${orgId}`;
+      {
+        plan_key: string | null;
+        stripe_customer_id: string | null;
+        owner_user_id: string | null;
+      }[]
+    >`select s.plan_key, s.stripe_customer_id, s.owner_user_id from subscriptions s
+       join organizations o on o.subscription_id = s.id
+       where o.id = ${orgId}`;
     if (sub?.plan_key && sub.plan_key !== "community") {
       throw new HttpError(400, "Your plan already covers everything an Event Pass adds.");
     }
+
+    // An Event Pass is genuinely ORG-scoped — one competition, one
+    // competition_passes row keyed by this org — so a member org's owner keeps
+    // the right to buy one for their own competition; blocking that would make
+    // a club inside an association's group unable to unlock its own event.
+    //
+    // What must NOT happen is the charge landing on the GROUP's Stripe
+    // customer, which carries the payer's saved cards: a member owner could
+    // then bill the association at will. So the group's customer is reused only
+    // when the buyer IS the payer; anyone else checks out against their own
+    // email and Stripe mints them their own customer. Nothing links that
+    // customer back to the group — handleCheckoutCompleted returns before
+    // linkStripeCustomer for pass sessions — so the group's card stays untouched.
+    const isPayer = !!sub?.owner_user_id && sub.owner_user_id === user.id;
 
     const [pass] = await sql<{ competition_id: string }[]>`
       select competition_id from competition_passes where competition_id = ${competition_id}`;
@@ -58,7 +79,7 @@ export async function POST(req: Request) {
         competitionId: competition_id,
         returnUrl,
         currency: await preferredCurrency(orgId, req),
-        customerId: sub?.stripe_customer_id ?? undefined,
+        customerId: (isPayer ? sub?.stripe_customer_id : null) ?? undefined,
         customerEmail: user.email,
       }),
       // Scope the key to the REQUESTING owner (org+comp+user). A double-click /

@@ -9,6 +9,8 @@ import {
 import { handler, HttpError } from "@/lib/http";
 import { deleteAccountSchema, updateProfileSchema } from "@/lib/types";
 import { sendAccountDeletionEmail } from "@/lib/email";
+import { cancelBillingGroup } from "@/lib/billing";
+import { groupIdsOwnedBy } from "@/lib/billing-group";
 import { toLocale } from "@/lib/i18n";
 
 /**
@@ -28,8 +30,10 @@ export async function GET() {
     if (!org) return { id: user.id, org: null };
 
     const [sub] = await sql<{ plan_key: string | null }[]>`
-      select coalesce(plan_key, 'community') as plan_key
-      from subscriptions where org_id = ${org.id}`;
+      select coalesce(s.plan_key, 'community') as plan_key
+      from subscriptions s
+      join organizations o on o.subscription_id = s.id
+      where o.id = ${org.id}`;
     return {
       id: user.id,
       org: { id: org.id, name: org.name, plan: sub?.plan_key ?? "community" },
@@ -96,6 +100,35 @@ export async function DELETE(req: Request) {
         409,
         `You are the sole owner of ${names}. Transfer ownership or remove all other members before deleting your account.`,
       );
+    }
+
+    // Hand on (or shut down) every billing group this user PAYS for, before
+    // org_members is emptied below — the heir is found through it.
+    //
+    // Since V310 billing gates on subscriptions.owner_user_id, so a group left
+    // pointing at a deleted user is unmanageable by anyone: every billing route
+    // 403s, nobody can cancel, and the card keeps being charged for ever. The
+    // sole-owner 409 above does not cover this — an association can pay for
+    // member clubs it is not a member of, so it owns groups it owns no orgs in.
+    for (const subscriptionId of await groupIdsOwnedBy(user.id)) {
+      // Oldest owner of any LIVE org in the group, other than the leaver.
+      const [heir] = await sql<{ user_id: string }[]>`
+        select m.user_id from org_members m
+        join organizations o on o.id = m.org_id
+        where o.subscription_id = ${subscriptionId}
+          and o.deleted_at is null
+          and m.role = 'owner'
+          and m.user_id <> ${user.id}
+        order by m.created_at, m.user_id
+        limit 1`;
+      if (heir) {
+        await sql`
+          update subscriptions set owner_user_id = ${heir.user_id}, updated_at = now()
+          where id = ${subscriptionId}`;
+      } else {
+        // Nobody left who could ever manage it — cancel rather than orphan.
+        await cancelBillingGroup(subscriptionId);
+      }
     }
 
     const purgeAfter = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);

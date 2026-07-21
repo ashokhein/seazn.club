@@ -44,7 +44,9 @@ export default async function CompetitionUpgradePage({
     sql<{ purchased_at: string }[]>`
       select purchased_at from competition_passes where competition_id = ${compId}`,
     sql<{ plan_key: string | null }[]>`
-      select plan_key from subscriptions where org_id = ${orgId}`,
+      select s.plan_key from subscriptions s
+      join organizations o on o.subscription_id = s.id
+      where o.id = ${orgId}`,
   ]);
   const isPro = !!sub?.plan_key && sub.plan_key !== "community";
   const currency: Currency = await preferredCurrency(orgId);

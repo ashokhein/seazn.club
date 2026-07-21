@@ -19,7 +19,9 @@ export async function POST(req: Request) {
 
     const [[sub], [org]] = await Promise.all([
       sql<{ stripe_customer_id: string | null }[]>`
-        select stripe_customer_id from subscriptions where org_id = ${orgId}`,
+        select s.stripe_customer_id from subscriptions s
+        join organizations o on o.subscription_id = s.id
+        where o.id = ${orgId}`,
       sql<{ slug: string }[]>`select slug from organizations where id = ${orgId}`,
     ]);
     if (!sub?.stripe_customer_id)

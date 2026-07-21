@@ -12,10 +12,15 @@ import {
   recordPassPurchase,
   refundDuplicatePassPayment,
   revokePassForRefundedCharge,
-  syncPaymentMethodFlag,
+  syncPaymentMethodFlagForSubscription,
   syncSubscription,
 } from "@/lib/billing";
-import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import {
+  invalidateEntitlementsForOrgGroup,
+  invalidateGroupEntitlements,
+  invalidateOrgEntitlements,
+} from "@/lib/entitlements";
+import { orgIdsInGroup, subscriptionIdForOrg } from "@/lib/billing-group";
 import { getStripe } from "@/lib/stripe";
 import {
   sendPassRevokedEmail,
@@ -113,12 +118,36 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   // Subscription details arrive via subscription.created; nothing more to do here.
 }
 
-/** Org behind a Stripe customer id, or null when we do not bill them. */
-async function orgForCustomer(customerId: string | null | undefined): Promise<string | null> {
+/** Billing GROUP behind a Stripe customer id, or null when we do not bill them.
+ *  A Stripe customer belongs to the subscription, not to any one org, so this
+ *  deliberately returns the subscription id rather than picking a member org. */
+async function groupForCustomer(customerId: string | null | undefined): Promise<string | null> {
   if (!customerId) return null;
-  const [row] = await sql<{ org_id: string }[]>`
-    select org_id from subscriptions where stripe_customer_id = ${customerId}`;
-  return row?.org_id ?? null;
+  const [row] = await sql<{ id: string }[]>`
+    select id from subscriptions where stripe_customer_id = ${customerId}`;
+  return row?.id ?? null;
+}
+
+/**
+ * An org to attribute a group-level event to (staff alert name, audit target,
+ * analytics). Oldest LIVE member org, so the choice is stable across sweeps and
+ * replays.
+ *
+ * `deleted_at is null` matters: orgIdsInGroup deliberately includes
+ * soft-deleted orgs (they still bear on billing), but a deleted org has no
+ * owner left for orgOwnerEmail to find, so attributing a dispute alert or a
+ * PAYMENT_FAILED to it would send the notification nowhere. Falls back to the
+ * oldest org of any state rather than dropping the event entirely — a group
+ * whose every org is deleted still has a real invoice failing.
+ */
+async function primaryOrgForGroup(subscriptionId: string): Promise<string | null> {
+  const [live] = await sql<{ id: string }[]>`
+    select id from organizations
+    where subscription_id = ${subscriptionId} and deleted_at is null
+    order by created_at limit 1`;
+  if (live) return live.id;
+  const orgs = await orgIdsInGroup(subscriptionId);
+  return orgs[0] ?? null;
 }
 
 /**
@@ -146,34 +175,40 @@ async function handlePaymentMethodChanged(event: Stripe.Event) {
       ? object.id
       : (typeof object.customer === "string" ? object.customer : object.customer?.id) ??
         previous?.customer;
-  const orgId = await orgForCustomer(raw);
-  if (!orgId) return;
-  await syncPaymentMethodFlag(orgId);
+  const subscriptionId = await groupForCustomer(raw);
+  if (!subscriptionId) return;
+  await syncPaymentMethodFlagForSubscription(subscriptionId);
 }
 
 async function handleSubscriptionChanged(stripeSub: Stripe.Subscription) {
   const orgId = stripeSub.metadata?.org_id;
   if (!orgId) return;
   await syncSubscription(orgId, stripeSub);
-  await invalidateOrgEntitlements(orgId);
+  // Plan/status just moved on the shared row: every org in the group resolves
+  // through it, so a single-org invalidation would leave siblings on the old
+  // plan for the 300s TTL.
+  await invalidateEntitlementsForOrgGroup(orgId);
 }
 
 async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
   const orgId = stripeSub.metadata?.org_id;
   if (!orgId) return;
+  const subscriptionId = await subscriptionIdForOrg(orgId);
+  if (!subscriptionId) return;
   // Stale-event guard (P1-5): only the CURRENTLY stored subscription may
-  // downgrade the org — a late-delivered deleted for a replaced sub must not
-  // touch a resubscribed org.
+  // downgrade the group — a late-delivered deleted for a replaced sub must not
+  // touch a resubscribed customer.
   const [current] = await sql<{ stripe_subscription_id: string | null }[]>`
-    select stripe_subscription_id from subscriptions where org_id = ${orgId}`;
+    select stripe_subscription_id from subscriptions where id = ${subscriptionId}`;
   if (current?.stripe_subscription_id && current.stripe_subscription_id !== stripeSub.id) return;
   await sql`
     update subscriptions
     set plan_key = 'community', status = 'canceled', updated_at = now(),
         status_changed_at = case when status is distinct from 'canceled'
                                  then now() else status_changed_at end
-    where org_id = ${orgId}`;
-  await invalidateOrgEntitlements(orgId);
+    where id = ${subscriptionId}`;
+  // A cancel drops EVERY org in the group to Community at once.
+  await invalidateGroupEntitlements(subscriptionId);
   await captureServer({
     event: EVENTS.SUBSCRIPTION_CANCELED,
     distinctId: await ownerDistinctId(orgId),
@@ -191,7 +226,7 @@ function invoiceSubId(invoice: Stripe.Invoice): string | null {
 async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
   const subId = invoiceSubId(invoice);
   if (!subId) return;
-  const [row] = await sql<{ org_id: string }[]>`
+  const [row] = await sql<{ id: string }[]>`
     update subscriptions
     set status = 'past_due', updated_at = now(),
         -- Grace anchor: only the FIRST failure starts the 14-day clock;
@@ -199,22 +234,33 @@ async function handleInvoicePaymentFailed(invoice: Stripe.Invoice) {
         status_changed_at = case when status is distinct from 'past_due'
                                  then now() else status_changed_at end
     where stripe_subscription_id = ${subId}
-    returning org_id`;
+    returning id`;
   if (row) {
-    await captureServer({
-      event: EVENTS.PAYMENT_FAILED,
-      distinctId: await ownerDistinctId(row.org_id),
-      orgId: row.org_id,
-    });
+    // past_due starts the 14-day grace the resolver reads, so it is a plan
+    // change in all but name — drop the whole group's cached entitlements.
+    await invalidateGroupEntitlements(row.id);
+    // One event per failed invoice, attributed to the group's primary org
+    // (there is one payer and one invoice, however many orgs share it).
+    const orgId = await primaryOrgForGroup(row.id);
+    if (orgId) {
+      await captureServer({
+        event: EVENTS.PAYMENT_FAILED,
+        distinctId: await ownerDistinctId(orgId),
+        orgId,
+      });
+    }
   }
 }
 
 async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
   const subId = invoiceSubId(invoice);
   if (!subId) return;
-  await sql`
+  const [row] = await sql<{ id: string }[]>`
     update subscriptions set status = 'active', updated_at = now()
-    where stripe_subscription_id = ${subId} and status != 'trialing'`;
+    where stripe_subscription_id = ${subId} and status != 'trialing'
+    returning id`;
+  // Leaving dunning restores the plan for every org in the group.
+  if (row) await invalidateGroupEntitlements(row.id);
 }
 
 /** Current owner's email via org_members — NOT organizations.created_by, which
@@ -367,30 +413,34 @@ async function handlePlatformDispute(
   // Subscription charge? Matched by the Stripe customer on the charge.
   const customer = await disputeCustomerId(dispute);
   if (!customer) return false;
-  const [sub] = await sql<{ org_id: string }[]>`
-    select org_id from subscriptions where stripe_customer_id = ${customer}`;
-  if (!sub) return false; // not a platform subscription charge
+  const subscriptionId = await groupForCustomer(customer);
+  if (!subscriptionId) return false; // not a platform subscription charge
+  // The dispute is against the GROUP's invoice; staff notification still needs
+  // one org to name, so the group's primary org stands in for it.
+  const orgId = await primaryOrgForGroup(subscriptionId);
+  if (!orgId) return false;
 
   if (phase === "created") {
     // coalesce keeps the FIRST flag time so a duplicate created (or a manual
     // /admin/billing-events re-process) never re-stamps disputed_at — mirrors
     // sponsors.ts's created path.
     await sql`update subscriptions set disputed_at = coalesce(disputed_at, now()),
-              dispute_id = ${dispute.id}, updated_at = now() where org_id = ${sub.org_id}`;
+              dispute_id = ${dispute.id}, updated_at = now() where id = ${subscriptionId}`;
   } else if (dispute.status === "won") {
-    // Guard on dispute_id: a win resolving long after the org re-bought clears
-    // ONLY the flag it set, never a newer dispute's — and clears dispute_id too
-    // so no sticky flag is left behind.
+    // Guard on dispute_id: a win resolving long after the customer re-bought
+    // clears ONLY the flag it set, never a newer dispute's — and clears
+    // dispute_id too so no sticky flag is left behind.
     await sql`update subscriptions set disputed_at = null, dispute_id = null, updated_at = now()
-              where org_id = ${sub.org_id} and dispute_id = ${dispute.id}`;
+              where id = ${subscriptionId} and dispute_id = ${dispute.id}`;
   } else if (dispute.status === "lost") {
     // Same guard: a stale loss (60+ days on) must not clobber a subscription the
-    // org has since renewed/re-bought under a different (or no) dispute.
+    // customer has since renewed/re-bought under a different (or no) dispute.
     await sql`update subscriptions set plan_key = 'community', status = 'canceled',
-              updated_at = now() where org_id = ${sub.org_id} and dispute_id = ${dispute.id}`;
-    await invalidateOrgEntitlements(sub.org_id);
+              updated_at = now() where id = ${subscriptionId} and dispute_id = ${dispute.id}`;
+    // A lost dispute cancels the plan for every org in the group.
+    await invalidateGroupEntitlements(subscriptionId);
   }
-  await notifyStaffDispute("subscription", sub.org_id, dispute, phase);
+  await notifyStaffDispute("subscription", orgId, dispute, phase);
   return true;
 }
 

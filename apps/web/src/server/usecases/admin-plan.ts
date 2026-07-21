@@ -5,7 +5,8 @@ import "server-only";
 // renders that history, so nothing here is silent.
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { getLimit, invalidateOrgEntitlements } from "@/lib/entitlements";
+import { getLimit, invalidateGroupEntitlements } from "@/lib/entitlements";
+import { subscriptionIdForOrg } from "@/lib/billing-group";
 import { downgradeToCommunity, hasLiveSubscription } from "@/lib/billing";
 import { getStripe } from "@/lib/stripe";
 import { logStaffAction } from "@/lib/admin";
@@ -14,6 +15,29 @@ import {
   ACTIVE_COMPETITION_STATUSES,
   selectFrozen,
 } from "@/server/usecases/entitlement-freeze";
+
+/**
+ * The org's billing group, as a STAFF-FACING error.
+ *
+ * `requireSubscriptionIdForOrg` throws 500 ("Organisation has no billing
+ * group"), which is right where it lives — deep in the stack an org without a
+ * group is a broken invariant. It is wrong here. Every function below is
+ * reached from the staff console with an operator-supplied org id, so a 500
+ * both blames us and pages someone for what is a data condition they are
+ * looking straight at. 404 says the true thing: there is no billing to act on.
+ * (This also restores restoreTrial's original 404, which V310 turned into a
+ * 500.)
+ */
+async function groupIdForOrg(orgId: string): Promise<string> {
+  const id = await subscriptionIdForOrg(orgId);
+  if (!id) {
+    throw new HttpError(
+      404,
+      "This organization has no billing group, so there is no subscription to change.",
+    );
+  }
+  return id;
+}
 
 interface SubRow {
   plan_key: string;
@@ -59,11 +83,16 @@ export async function cardsForCustomer(customerId: string | null): Promise<Payme
   }
 }
 
+/** The plan the org bills under — read from its billing GROUP, which it may
+ *  share with other orgs. Every staff action below therefore moves the plan for
+ *  every org in that group; the invalidations are group-wide to match. */
 export async function planPanel(orgId: string): Promise<PlanPanel> {
   const [sub] = await sql<SubRow[]>`
-    select plan_key, status, trial_end, comped_until, current_period_end,
-           stripe_customer_id, stripe_subscription_id, trial_used_at
-    from subscriptions where org_id = ${orgId}`;
+    select s.plan_key, s.status, s.trial_end, s.comped_until, s.current_period_end,
+           s.stripe_customer_id, s.stripe_subscription_id, s.trial_used_at
+    from subscriptions s
+    join organizations o on o.subscription_id = s.id
+    where o.id = ${orgId}`;
   if (!sub) {
     return {
       plan_key: "community", status: "active", trial_end: null, comped_until: null,
@@ -94,6 +123,7 @@ export async function compToPro(
   until: Date | null,
   reason: string,
 ): Promise<void> {
+  const subscriptionId = await groupIdForOrg(orgId);
   const before = await planPanel(orgId);
   // A DEPARTED org keeps its cancelled subscription id, so presence alone would
   // wrongly refuse it a win-back comp. Only a LIVE subscription owns the plan.
@@ -121,8 +151,10 @@ export async function compToPro(
                                     and status is distinct from 'active'
                                then now() else status_changed_at end,
       updated_at = now()
-    where org_id = ${orgId}`;
-  await invalidateOrgEntitlements(orgId);
+    where id = ${subscriptionId}`;
+  // A comp moves plan_key on the shared row, so every org in the group is now
+  // on Pro — invalidate all of them, not just the one staff named.
+  await invalidateGroupEntitlements(subscriptionId);
   await logStaffAction(actorId, "comp_to_pro", "org", orgId, {
     reason,
     before: { plan_key: before.plan_key, comped_until: before.comped_until },
@@ -172,10 +204,16 @@ export async function adminDowngrade(
   orgId: string,
   reason: string,
 ): Promise<FreezePreview> {
+  const subscriptionId = await groupIdForOrg(orgId);
   const before = await planPanel(orgId);
   const preview = await downgradeFreezePreview(orgId);
   await downgradeToCommunity(orgId); // throws 400 for Stripe-billed orgs
-  await sql`update subscriptions set comped_until = null where org_id = ${orgId}`;
+  await sql`update subscriptions set comped_until = null where id = ${subscriptionId}`;
+  // downgradeToCommunity already invalidated the group, but comped_until is
+  // cleared AFTER it returns and the resolver reads that column too — so the
+  // group is dropped again here rather than leaving a 300s window in which the
+  // comp still appears to be live.
+  await invalidateGroupEntitlements(subscriptionId);
   await logStaffAction(actorId, "admin_downgrade", "org", orgId, {
     reason,
     before: { plan_key: before.plan_key },
@@ -197,6 +235,7 @@ export async function extendTrial(
   if (!Number.isInteger(days) || days < 1 || days > 365) {
     throw new HttpError(400, "Trial extension must be 1–365 days.");
   }
+  const subscriptionId = await groupIdForOrg(orgId);
   const before = await planPanel(orgId);
   const live = hasLiveSubscription(before);
   // Verified against Stripe test mode 2026-07-20: pushing trial_end onto an
@@ -230,7 +269,7 @@ export async function extendTrial(
       trial_end: Math.floor(trialEnd.getTime() / 1000),
       proration_behavior: "none",
     });
-    const pinned = await sql<{ org_id: string }[]>`
+    const pinned = await sql<{ id: string }[]>`
       update subscriptions set
         status = 'trialing', trial_end = ${iso},
         -- One trial per org (V277) counts staff-granted trials too: without
@@ -244,8 +283,9 @@ export async function extendTrial(
       -- planPanel read the row BEFORE the Stripe call; a cancellation landing in
       -- between would make this write resurrect liveness on a departed row.
       -- The racing writer is handleSubscriptionDeleted in billing-events.ts: it
-      -- sets status = canceled keyed on org_id and LEAVES THE ID INTACT, so an
-      -- id pin alone never fires for that race. STATUS is the column that moves.
+      -- sets status = canceled on this same group row and LEAVES THE STRIPE ID
+      -- INTACT, so an id pin alone never fires for that race. STATUS is the
+      -- column that moves.
       -- The id pin covers the other race — a resubscribe swapping in a NEW
       -- subscription id. It does NOT prevent the Stripe-side mistake: the
       -- subscriptions.update above has already run, so the trial_end went onto
@@ -256,10 +296,10 @@ export async function extendTrial(
       -- A zero-row result is SAFE, not an error: the row is exactly as read and
       -- the webhook has written the truth. It is recorded in the audit detail
       -- below rather than thrown, because the Stripe call already succeeded.
-      where org_id = ${orgId}
+      where id = ${subscriptionId}
         and status = 'trialing'
         and stripe_subscription_id = ${before.stripe_subscription_id}
-      returning org_id`;
+      returning id`;
     localWriteSkipped = pinned.length === 0;
   } else {
     // No live subscription: the grant has to CONVEY Pro, because entitlements
@@ -282,10 +322,12 @@ export async function extendTrial(
                                       and status is distinct from 'trialing'
                                  then now() else status_changed_at end,
         updated_at = now()
-      where org_id = ${orgId}`;
+      where id = ${subscriptionId}`;
   }
 
-  await invalidateOrgEntitlements(orgId);
+  // Both arms move plan/status/comped_until on the shared row, so the whole
+  // group's cached entitlements are stale, not just this org's.
+  await invalidateGroupEntitlements(subscriptionId);
   await logStaffAction(actorId, "extend_trial", "org", orgId, {
     reason, days,
     before: { trial_end: before.trial_end, plan_key: before.plan_key },
@@ -327,13 +369,14 @@ export async function restoreTrial(
   reason: string,
 ): Promise<void> {
   if (!reason.trim()) throw new HttpError(400, "A reason is required.");
+  const subscriptionId = await groupIdForOrg(orgId);
   const [before] = await sql<{
     trial_used_at: string | null;
     stripe_subscription_id: string | null;
     status: string | null;
   }[]>`
     select trial_used_at, stripe_subscription_id, status
-    from subscriptions where org_id = ${orgId}`;
+    from subscriptions where id = ${subscriptionId}`;
   if (!before) throw new HttpError(404, "Organization has no subscription row.");
   if (hasLiveSubscription(before)) {
     throw new HttpError(
@@ -342,8 +385,10 @@ export async function restoreTrial(
     );
   }
   await sql`update subscriptions set trial_used_at = null, updated_at = now()
-            where org_id = ${orgId}`;
-  await invalidateOrgEntitlements(orgId);
+            where id = ${subscriptionId}`;
+  // The trial burn is a GROUP fact now — restoring it re-opens the 14-day
+  // checkout trial for every org billing through this row.
+  await invalidateGroupEntitlements(subscriptionId);
   await logStaffAction(actorId, "restore_trial", "org", orgId, {
     reason,
     before: { trial_used_at: before.trial_used_at },

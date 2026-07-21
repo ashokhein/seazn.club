@@ -19,7 +19,9 @@ export async function preferredCurrency(
 ): Promise<Currency> {
   if (orgId) {
     const [sub] = await sql<{ currency: string | null }[]>`
-      select currency from subscriptions where org_id = ${orgId}`;
+      select s.currency from subscriptions s
+      join organizations o on o.subscription_id = s.id
+      where o.id = ${orgId}`;
     if (isSupportedCurrency(sub?.currency)) return sub.currency;
   }
   const jar = await cookies();

@@ -19,13 +19,37 @@ export async function BillingBanner({ orgId }: Props) {
   // has_payment_method is a local MIRROR of Stripe (V304) precisely so this can
   // stay a single indexed read: the banner renders on org home, a hot path, and
   // a live Stripe call per page view is not acceptable.
+  //
+  // The row is reached through organizations.subscription_id (V310) and may be
+  // shared with sibling orgs; org_status comes from the ORG, because suspension
+  // is per-org moderation and no longer touches the shared subscription.
+  //
+  // LEFT join, driven from organizations: an org with a null subscription_id
+  // (a broken invariant, but one that must not silently swallow moderation
+  // state) still has to render its suspended banner. An inner join returned no
+  // row at all for those orgs and hid every banner.
   const [sub] = await sql<
-    Pick<Subscription, "plan_key" | "status" | "trial_end" | "has_payment_method">[]
+    (Pick<Subscription, "plan_key" | "status" | "trial_end" | "has_payment_method"> & {
+      org_status: string;
+    })[]
   >`
-    select plan_key, status, trial_end, has_payment_method
-    from subscriptions where org_id = ${orgId}`;
+    select s.plan_key, s.status, s.trial_end, s.has_payment_method, o.status as org_status
+    from organizations o
+    left join subscriptions s on s.id = o.subscription_id
+    where o.id = ${orgId}`;
 
-  if (!sub || sub.status === "active" || sub.plan_key === "community") return null;
+  if (!sub) return null;
+  if (sub.org_status === "suspended") {
+    return (
+      <div className="bg-red-600 px-4 py-2 text-center text-sm text-white">
+        Your account is suspended due to a failed payment. Data is preserved.{" "}
+        <Link href="/settings/billing" className="font-semibold underline">
+          Reactivate →
+        </Link>
+      </div>
+    );
+  }
+  if (sub.status === "active" || sub.plan_key === "community") return null;
 
   if (sub.status === "trialing") {
     const days = daysUntil(sub.trial_end);
@@ -66,17 +90,6 @@ export async function BillingBanner({ orgId }: Props) {
         Payment failed — your subscription is past due.{" "}
         <Link href="/settings/billing" className="font-semibold underline">
           Update payment →
-        </Link>
-      </div>
-    );
-  }
-
-  if (sub.status === "suspended") {
-    return (
-      <div className="bg-red-600 px-4 py-2 text-center text-sm text-white">
-        Your account is suspended due to a failed payment. Data is preserved.{" "}
-        <Link href="/settings/billing" className="font-semibold underline">
-          Reactivate →
         </Link>
       </div>
     );
