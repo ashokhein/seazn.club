@@ -26,7 +26,7 @@ const BASE = process.env.PLAYWRIGHT_BASE ?? "http://localhost:3000";
 const AUTH_STATE = "e2e/.auth/pro.json";
 
 const SERIAL_SPECS =
-  /(journey-pro|journey-community|org-management|billing|billing-states|members-roles|scorer|device-links|division-delete|pricing-v3|player-accounts)\.spec\.ts/;
+  /(journey-pro|journey-community|org-management|billing|billing-states|billing-groups|members-roles|scorer|device-links|division-delete|pricing-v3|player-accounts)\.spec\.ts/;
 
 export default defineConfig({
   testDir: "./e2e",

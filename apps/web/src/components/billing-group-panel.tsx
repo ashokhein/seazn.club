@@ -148,7 +148,10 @@ export function BillingGroupPanel({
   }
 
   return (
-    <section className="card mb-6 p-5">
+    // Test id rather than the heading text: e2e scopes every assertion in
+    // billing-groups.spec.ts to this container, and this panel's whole job is
+    // wording that is expected to be revised.
+    <section data-testid="billing-group-panel" className="card mb-6 p-5">
       <h2 className="mb-1 text-xs font-semibold uppercase tracking-wide text-purple-600">
         {msg("billing.group.title")}
         <Tip id="billing.groups" className="ml-1 align-middle" small />

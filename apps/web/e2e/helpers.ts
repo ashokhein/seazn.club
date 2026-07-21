@@ -403,6 +403,64 @@ export async function setOrgSubscriptionSql(
   });
 }
 
+/** The billing group an org bills through. */
+export async function orgGroupIdSql(orgId: string): Promise<string> {
+  return withDb((sql) => requireGroupId(sql, orgId));
+}
+
+/**
+ * Put `orgId` onto `groupId`, the way a real attach would — without Stripe.
+ *
+ * `POST /api/billing/group/attach` is the product path and it prices the move,
+ * which means a live group would have it call Stripe. e2e must never do that,
+ * so a spec that needs a group of two builds it here and asserts on what the
+ * PANEL does with it. The pricing itself is covered where Stripe is mocked
+ * (server/usecases/__tests__/billing-group-move.test.ts).
+ *
+ * Drops the org's previous group if that leaves it empty, mirroring
+ * dropEmptyGroup — an abandoned group still belongs to the payer and would
+ * otherwise show up in `GET /api/billing/groups` as a phantom.
+ */
+export async function joinOrgToGroupSql(orgId: string, groupId: string): Promise<void> {
+  await withDb(async (sql) => {
+    const previous = await requireGroupId(sql, orgId);
+    if (previous === groupId) return;
+    await sql`update organizations set subscription_id = ${groupId} where id = ${orgId}`;
+    const [{ count }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from organizations
+       where subscription_id = ${previous} and deleted_at is null`;
+    if (count === 0) await sql`delete from subscriptions where id = ${previous}`;
+  });
+}
+
+/**
+ * Force `quantity_paid` — the seats Stripe has already been billed for.
+ *
+ * Deliberately settable independently of the org count, because the two
+ * differing IS the state worth testing: a freed slot stays paid until renewal,
+ * so a group can hold fewer orgs than it has seats and the next move is free.
+ * Nothing in the app writes this without Stripe confirming first, so a spec
+ * cannot reach the state any other way.
+ */
+export async function setGroupSeatsPaidSql(groupId: string, seats: number): Promise<void> {
+  await withDb(async (sql) => {
+    const res = await sql`update subscriptions set quantity_paid = ${seats} where id = ${groupId}`;
+    if (res.count === 0) throw new Error(`no billing group ${groupId}`);
+  });
+}
+
+/**
+ * Moderation state. V310 moved suspension off `subscriptions.status` and onto
+ * the ORG, precisely so suspending one org cannot stop billing for the siblings
+ * that merely share its payer — so this writes the org and nothing else.
+ */
+export async function setOrgStatusSql(orgId: string, status: "active" | "suspended"): Promise<void> {
+  await withDb(async (sql) => {
+    const res = await sql`update organizations set status = ${status} where id = ${orgId}`;
+    if (res.count === 0) throw new Error(`no organization ${orgId}`);
+  });
+}
+
 /** Flip the org owner's staff bit (the calling session in every e2e spec) so a
  *  test can drive the superadmin surfaces. ALWAYS restore it in a finally —
  *  the shared Pro user outlives the test that borrowed the privilege. */
