@@ -8,6 +8,7 @@ import { reconcilePassCheckout } from "@/lib/billing";
 import { requireCompetitionPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { PassUpgradeButton } from "@/components/pass-upgrade";
+import { Tip } from "@/components/ui/tip";
 import { formatMinor, passPrice, proPrice, type Currency } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { resolveLocale } from "@/lib/resolve-locale";
@@ -86,8 +87,12 @@ export default async function CompetitionUpgradePage({
 
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             <div className="card p-6">
-              <p className="text-xs font-semibold uppercase tracking-wider text-purple-500">
+              {/* The pass is not "Pro for one competition" — the chip says
+                  what it actually buys, and that a passed competition stops
+                  counting against the active-competition limit. */}
+              <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-purple-500">
                 {t(dict, "upgrade.eventPass")}
+                <Tip id="billing.event-pass" small />
               </p>
               <p className="mt-1 text-3xl font-bold text-slate-900">
                 {formatMinor(passPrice(currency), currency)}

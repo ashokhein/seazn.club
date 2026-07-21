@@ -38,6 +38,8 @@ import { ApiKeysPanel } from "@/components/api-keys";
 import { TimezonePreference } from "@/components/timezone-preference";
 import { LocalePreference } from "@/components/locale-preference";
 import { CookieSettingsButton } from "@/components/cookie-settings-button";
+import { Tip } from "@/components/ui/tip";
+import type { TipId } from "@/config/tips";
 import { TourReplayButton } from "@/components/tour-replay";
 import { PlanBadge } from "@/components/plan-badge";
 
@@ -57,11 +59,21 @@ function SectionHeader({ icon: Icon, children, action }: {
   );
 }
 
-function SubSection({ icon: Icon, label }: { icon: LucideIcon; label: string }) {
+function SubSection({
+  icon: Icon,
+  label,
+  tip,
+}: {
+  icon: LucideIcon;
+  label: string;
+  /** Optional contextual chip beside the heading (config/tips.ts). */
+  tip?: TipId;
+}) {
   return (
     <div className="mb-2 flex items-center gap-1.5">
       <Icon className="h-3.5 w-3.5 text-slate-500" strokeWidth={1.75} />
       <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}</p>
+      {tip && <Tip id={tip} small className="ml-0.5" />}
     </div>
   );
 }
@@ -327,7 +339,14 @@ export default async function SettingsPage({
 
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
-                    <SubSection icon={Palette} label={t(dict, "settings.org.brandColor")} />
+                    {/* D23: the logo above is free, this control is Pro. The
+                        chip explains the split so the neighbouring upsell
+                        doesn't read as arbitrary. */}
+                    <SubSection
+                      icon={Palette}
+                      label={t(dict, "settings.org.brandColor")}
+                      tip="settings.brand-colour"
+                    />
                     {canBrandColor ? (
                       <OrgBrandColor orgId={active.id} initialBranding={active.branding} />
                     ) : (
