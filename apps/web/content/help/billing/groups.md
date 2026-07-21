@@ -37,7 +37,7 @@ Ownership of an organisation and payment for it are separate things. If an organ
 Adding is done by someone who owns **both** the organisation being added and the group it's joining — admins run the competition, not the money.
 
 - The bill goes up by half the plan rate straight away, prorated to the rest of the period.
-- The organisation is on the group's plan **immediately** — limits, features and the entry-fee rate all change the same second.
+- The organisation is on the group's plan **immediately** — limits, features and the entry-fee rate all change the same second. The lower rate applies to competitions that haven't taken a payment yet; one that already has an entrant paid keeps the rate it locked (see [below](#the-entry-fee-rate-locks-when-sales-start)).
 - Added during the group's free trial, it rides the same trial to the same end date and costs nothing now.
 - An organisation that already has its own live subscription can't be added yet. Cancel it, or wait for it to lapse.
 - A group can't take on a new organisation while its own payment is overdue or while it's set to cancel at the end of the period. Settle the invoice, or resume the subscription, and then add.
@@ -49,6 +49,8 @@ If the extra charge fails, the organisation stays in the group — it doesn't ge
 Either side can end it. The payer can push an organisation out; the organisation's owner can pull it out. Nobody needs the payer's permission to leave, and no payer is stuck funding an organisation that won't cooperate.
 
 **Leaving costs nothing.** No payment, no card, no settling up. The organisation keeps the plan it had — and the entry-fee rate that came with it — until the end of the period the group already paid for. After that it falls back to Community limits unless it takes out its own subscription. Nothing is deleted, exactly as in a [downgrade](/help/billing/downgrade).
+
+Competitions that have **already taken a payment keep their locked entry-fee rate** whatever happens to the plan — leaving a group never raises the fee on a competition whose entrants have started paying. Only competitions that haven't sold a place yet move to the new rate.
 
 Two details worth knowing:
 
@@ -79,6 +81,14 @@ Details worth knowing:
 - **Send them the link.** There's no inbox for pending offers yet, so the offer has to reach the recipient the way you'd send anything else. If they lose it, withdraw it and make a new one.
 - **A group with nothing to bill** — Community, or a subscription that has already been cancelled — moves in a single step, because there's no invoice to fail. It can only be handed to someone who already owns an organisation in the group, since there's no acceptance step to serve as their consent.
 - **Nothing about the organisations changes.** Same plan, same limits, same entry-fee rate, same Stripe Connect accounts, same payouts. The only things that move are who is billed and where the invoices and receipts go.
+
+## The entry-fee rate locks when sales start
+
+Because a group's plan can be changed by the payer — who might not be the person running a competition — the platform fee on entries is **fixed the moment a competition takes its first paid entry**. From then on every entrant in that competition is charged the same rate, whatever happens to the plan afterwards: a group detach, a downgrade, or a switch between Pro and Pro Plus none of it re-rates a competition whose entrants have already started paying.
+
+Before the first paid entry the rate is still live, so if you set a competition up on the wrong plan you can fix the plan and see the new rate apply — right up until someone pays. Free and offline entries don't lock anything; the rate is set by the first entry that actually pays through the platform.
+
+This protects the organiser, not the platform: it means the fee you were quoted when your first entrant paid is the fee you keep for the whole competition.
 
 ## Payouts never move
 

@@ -30,6 +30,18 @@ import {
   type ViewOffer as Offer,
 } from "@/lib/billing-group-view";
 
+/** The "what this also does" list under a confirm dialog's headline sentence.
+ *  Kept small and quiet — it informs the decision, it is not the decision. */
+function EffectsList({ items }: { items: string[] }) {
+  return (
+    <ul className="mt-1 list-disc space-y-1 pl-5 text-xs text-slate-500">
+      {items.map((t) => (
+        <li key={t}>{t}</li>
+      ))}
+    </ul>
+  );
+}
+
 async function api(path: string, body: unknown): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(path, {
     method: "POST",
@@ -114,8 +126,21 @@ export function BillingGroupPanel({
   async function attach(org: GroupOrg & { from: Group }) {
     const ok = await confirm({
       title: msg("billing.group.attach.confirmTitle", { org: org.name }),
-      // The price is stated BEFORE the click, always — see attachConfirmKey.
-      body: msg(attachConfirmKey(freeSlots), { org: org.name }),
+      // The price comes FIRST (attachConfirmKey), then the short list of what
+      // else moving an organisation onto the bill changes — the fee-rate and
+      // Connect consequences a payer would otherwise meet by surprise.
+      body: (
+        <>
+          <p>{msg(attachConfirmKey(freeSlots), { org: org.name })}</p>
+          <EffectsList
+            items={[
+              msg("billing.group.attach.effects.plan"),
+              msg("billing.group.attach.effects.feeLock"),
+              msg("billing.group.attach.effects.connect"),
+            ]}
+          />
+        </>
+      ),
       confirmLabel: msg("billing.group.attach.confirmAction"),
     });
     if (!ok) return;
@@ -133,9 +158,21 @@ export function BillingGroupPanel({
   async function detach(org: GroupOrg) {
     const ok = await confirm({
       title: msg("billing.group.detach.confirmTitle", { org: org.name }),
-      // No refund on the way out, and the slot stays paid for — both true, both
-      // surprising, so both said here rather than discovered on the invoice.
-      body: msg("billing.group.detach.confirmBody", { org: org.name }),
+      // No refund and the slot stays paid (confirmBody), then what removal does
+      // to the org itself: the downgrade at period end, which competitions keep
+      // their locked fee rate, and that Connect is untouched.
+      body: (
+        <>
+          <p>{msg("billing.group.detach.confirmBody", { org: org.name })}</p>
+          <EffectsList
+            items={[
+              msg("billing.group.detach.effects.downgrade"),
+              msg("billing.group.detach.effects.feeLock"),
+              msg("billing.group.detach.effects.connect"),
+            ]}
+          />
+        </>
+      ),
       confirmLabel: msg("billing.group.detach.confirmAction"),
       tone: "danger",
     });
