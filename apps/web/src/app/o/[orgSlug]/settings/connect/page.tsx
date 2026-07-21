@@ -9,6 +9,7 @@ import { sql } from "@/lib/db";
 import { requireOrgPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { OrgPaymentInstructions } from "@/components/org-payment-instructions";
+import { BackLink } from "@/components/back-link";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t } from "@/lib/i18n";
 
@@ -31,8 +32,12 @@ export default async function ConnectSettingsPage({
 
   return (
     <main className="mx-auto max-w-3xl px-4 py-8">
-      {/* No back link here: OrgLayout's breadcrumb already carries a
-          clickable "Settings" crumb — the hand-rolled one duplicated it. */}
+      {/* Same reason as the billing page: the apron chevron was not found. */}
+      <BackLink
+        href={routes.orgSettings(orgSlug)}
+        label={t(dict, "action.settings")}
+        emphasis="button"
+      />
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">{t(dict, "payments.title")}</h1>
         <p className="mt-1 text-sm text-slate-500">
