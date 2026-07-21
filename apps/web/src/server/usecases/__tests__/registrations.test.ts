@@ -1246,6 +1246,101 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     expect(args.payment_intent_data.application_fee_amount).toBe(10);
   });
 
+  // V312: the fee rate locks at the FIRST paid entry, so a plan change or a
+  // group detach mid-competition cannot re-rate entrants who have already
+  // committed. This is the gap billing groups opened — a third party (the group
+  // payer) can now move an org's plan out from under its in-flight competitions.
+  it("locks the competition fee rate at the first paid entry, immune to a later plan change", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+
+    // First entrant pays while the org is Pro (2%): £5 → 10p fee.
+    const first = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    expect(stripeMock.checkoutCreate.mock.calls[0][0].payment_intent_data.application_fee_amount).toBe(10);
+    await handleRegistrationCheckoutCompleted(fakeSession(first.registration.id, 500));
+
+    const [locked] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(locked.fee_percent).toBe(2);
+
+    // The org drops to Community (8%) — exactly what a detach from a paid group
+    // leaves behind once the comp lapses.
+    await setOrgPlan(orgId, "community");
+    stripeMock.checkoutCreate.mockClear();
+
+    // A LATER entrant is still charged 2%, not 8%: 10p, not 40p.
+    const second = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, contact_email: "second@test.local", division_id: division.id },
+      "http://test.local",
+    );
+    expect(stripeMock.checkoutCreate.mock.calls[0][0].payment_intent_data.application_fee_amount).toBe(10);
+    // And the second registration froze the SAME rate it was charged at. Read
+    // from the DB, not the returned row: submitRegistration snapshots the
+    // registration before createRegistrationCheckout writes fee_percent.
+    const [secondRow] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from registrations where id = ${second.registration.id}`;
+    expect(secondRow.fee_percent).toBe(2);
+  });
+
+  it("keeps the rate live until the first entrant pays, so a pre-sales plan fix applies", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+
+    // An unpaid entry does NOT lock the rate.
+    await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    const [before] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(before.fee_percent).toBeNull();
+
+    // Organiser corrects the plan up to Pro Plus (1%) before anyone pays.
+    await setOrgPlan(orgId, "pro_plus");
+    stripeMock.checkoutCreate.mockClear();
+
+    const paid = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, contact_email: "payer@test.local", division_id: division.id },
+      "http://test.local",
+    );
+    // £5 at 1% → 5p, the corrected rate, not the old 2%.
+    expect(stripeMock.checkoutCreate.mock.calls[0][0].payment_intent_data.application_fee_amount).toBe(5);
+    await handleRegistrationCheckoutCompleted(fakeSession(paid.registration.id, 500));
+    const [after] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(after.fee_percent).toBe(1);
+  });
+
+  it("an offline paid entry does not lock the rate — no platform fee flowed", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE,
+      payment_method: "offline",
+      fee_cents: 500,
+    });
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    await markRegistrationPaidOffline(owner, res.registration.id);
+    const [c] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(c.fee_percent).toBeNull();
+  });
+
   it("a failed checkout mint keeps the registration (pay from status page)", async () => {
     const { orgSlug, competition, division } = await stripeRig();
     stripeMock.checkoutCreate.mockRejectedValueOnce(new Error("stripe down"));
