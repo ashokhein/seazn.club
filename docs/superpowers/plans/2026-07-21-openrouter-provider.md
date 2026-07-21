@@ -729,10 +729,18 @@ import type { ZodType } from "zod";
 export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** How much the model should think, expressed provider-neutrally.
+ *
+ *  `thinking` and `effort` are ORTHOGONAL on the code this replaces:
+ *  schedule-ai.ts:731-734 sends `effort` unconditionally while flipping
+ *  `thinking` between adaptive and disabled off SCHEDULING_AI_THINKING. A
+ *  variant that collapsed "disabled" to "no reasoning at all" would silently
+ *  drop the effort setting on that path, so the effort variant carries the
+ *  thinking mode with it.
+ *
  *  `budget` exists for models that predate effort (claude-haiku-4-5 400s on
  *  adaptive thinking and on output_config.effort alike). */
 export type AiReasoning =
-  | { kind: "effort"; effort: AiEffort }
+  | { kind: "effort"; effort: AiEffort; thinking: "adaptive" | "disabled" }
   | { kind: "budget"; tokens: number }
   | { kind: "none" };
 
@@ -759,6 +767,11 @@ export type AiChatResponse<T> = {
   /** null when the model answered but the payload is not schema-valid — the
    *  caller runs its corrective retry rather than surfacing a 500. */
   parsed: T | null;
+  /** The model declined outright. MUST stay distinct from `parsed: null`:
+   *  schedule-ai.ts:1028 fails a refusal fast with 422 and does NOT spend a
+   *  corrective retry on it. Because assistantTurn.content is opaque, the
+   *  runner cannot recover this from the payload — the adapter has to say so. */
+  refused: boolean;
   assistantTurn: AiTurn;
   usage: {
     inputTokens: number;
@@ -838,7 +851,7 @@ export function anthropicProvider(): AiProvider {
 
       const thinking =
         req.reasoning.kind === "effort"
-          ? { type: "adaptive" as const }
+          ? { type: req.reasoning.thinking } // "adaptive" | "disabled"
           : req.reasoning.kind === "budget"
             ? { type: "enabled" as const, budget_tokens: req.reasoning.tokens }
             : undefined;
@@ -879,6 +892,7 @@ export function anthropicProvider(): AiProvider {
 
       return {
         parsed: check && check.success ? check.data : null,
+        refused: response.stop_reason === "refusal",
         assistantTurn: { role: "assistant", content: response.content ?? [] },
         usage: {
           inputTokens,
@@ -1076,13 +1090,21 @@ Replace the Anthropic-shaped helper (`:722-734`) with one returning `AiReasoning
  *  a legacy token budget. */
 function aiReasoning(model: string): AiReasoning {
   if (LEGACY_REASONING_MODELS.has(model)) {
-    const budget = AI_THINKING_BUDGET;
+    const budget = schedulingAiThinkingBudget();
     return budget > 0 ? { kind: "budget", tokens: budget } : { kind: "none" };
   }
-  if (schedulingAiThinking() === "disabled") return { kind: "none" };
-  return { kind: "effort", effort: schedulingAiEffort() };
+  // `effort` rides along even when thinking is disabled — the code this
+  // replaces (:731-734) sends it unconditionally. Mapping "disabled" to
+  // `kind: "none"` would silently drop SCHEDULING_AI_EFFORT on that path.
+  return {
+    kind: "effort",
+    effort: schedulingAiEffort(),
+    thinking: schedulingAiThinking() === "disabled" ? "disabled" : "adaptive",
+  };
 }
 ```
+
+Read `:722-734` for the exact helper names before writing this — use whatever the file actually calls the budget and thinking getters, not the names above.
 
 - [ ] **Step 6: Thread one provider through the run**
 
@@ -1096,6 +1118,12 @@ In the run entry point (`runScheduleAi`, around `:977-1000`), resolve the provid
 ```
 
 Use the exact status, message and code the current guard at `:738` throws — read it and copy them; `schedule-ai-run.test.ts:371` asserts the 503 and that no call was made. Pass `provider` to every `callModel` call. Delete the old inline client factory (`:738-750`) and `assistantTurn` (`:925-927`) — the adapter now owns both. Replace `assistantTurn(response)` uses with `response.assistantTurn`.
+
+- [ ] **Step 7a: Preserve the refusal fast-path**
+
+`schedule-ai.ts:1028` currently branches on `response?.stop_reason === "refusal"` and fails immediately with 422 `AI_PLAN_FAILED`, deliberately NOT spending a corrective retry. After migration `stop_reason` is no longer visible — `assistantTurn.content` is opaque — so read `response.refused` instead and keep the branch behaving identically.
+
+`schedule-ai-run.test.ts:361` asserts this ("refusal → 422 AI_PLAN_FAILED"). If that test passes but you routed a refusal into the corrective-retry path, the assertion will still fail on the round count — do not "fix" it by relaxing the assertion.
 
 - [ ] **Step 7: Update usage reads**
 
