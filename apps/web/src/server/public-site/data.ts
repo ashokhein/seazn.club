@@ -9,6 +9,7 @@ import "server-only";
 // `revalidateTag('division:{id}')` for instant refresh (see usecases/scoring.ts).
 import { unstable_cache } from "next/cache";
 import { sql } from "@/lib/db";
+import { hasFeature } from "@/lib/entitlements";
 import { isoDateTime } from "@/lib/public-site";
 import { resolveModule } from "@/server/engine-db";
 import { labelPlayerStats } from "@/server/player-stats";
@@ -395,7 +396,15 @@ export interface PublicPlayerStats {
   metrics: { key: string; label: string; value: number }[];
 }
 
-/** Player card (consent-gated: the view only contains consented persons). */
+/**
+ * Player card. Two gates, in two places, deliberately:
+ *  - consent lives in public_players_v (the view only contains persons who
+ *    granted `public_name`);
+ *  - the `dashboard.player_profiles` ENTITLEMENT lives here (V307). The view
+ *    cannot hold it: its filter sits over `from persons p` and a person plays
+ *    in many competitions, so there is no competition in scope to make the
+ *    check pass-aware — and an org-wide check would ignore an Event Pass.
+ */
 export async function getPublicPlayer(
   orgSlug: string,
   compSlug: string,
@@ -410,6 +419,18 @@ export async function getPublicPlayer(
   if (!/^[0-9a-f-]{36}$/i.test(personId)) return null;
   const shell = await getPublicCompetition(orgSlug, compSlug);
   if (!shell) return null;
+
+  // OUTSIDE the cache on purpose. The closure below is keyed on
+  // `competition:{id}`, and no entitlement write busts that tag — a gate placed
+  // inside it would be frozen at whatever the org held when the page was first
+  // cached, so a lapsed org would keep serving player cards for a full
+  // REVALIDATE_SLOW window. Evaluated per request, `hasFeature`'s own 5-minute
+  // cache is the only staleness, which is the bound we accept everywhere else.
+  // The competition id is what makes an Event Pass count for the competition it
+  // paid for, and only that one.
+  if (!(await hasFeature(shell.org.id, "dashboard.player_profiles", shell.competition.id))) {
+    return null;
+  }
 
   const detail = await unstable_cache(
     async () => {
