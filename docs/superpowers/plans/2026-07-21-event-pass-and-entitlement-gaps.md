@@ -749,7 +749,10 @@ Task 5 guard computes its offender list from that set — so sweeping first woul
 threading `competitionId` through sites that are about to stop needing it.
 
 **Files:**
-- Create: `db/migration/deltas/V309__community_branding_and_paid_registration.sql`
+- Create: `db/migration/deltas/V310__community_branding_and_paid_registration.sql`
+  *(shipped as V309, renumbered to V310 — `V309__billing_groups.sql` was claimed
+  concurrently on the `feat/billing-groups` branch. **V309 belongs to them; claim V311+
+  in `/tmp/seaznclub/RESERVATIONS.md` before writing any new migration.**)*
 - Test: extend `apps/web/src/lib/__tests__/pricing-matrix.test.ts`
 
 **Current state (verified live 2026-07-21):**
@@ -773,7 +776,7 @@ threading `competitionId` through sites that are about to stop needing it.
 - [ ] **Step 1: Failing test** — assert the four-column fee ladder is 8/5/2/1 and that
       community resolves `branding` and `registration.paid` true. It must fail now.
 - [ ] **Step 2: Run it, confirm it fails.**
-- [ ] **Step 3: Write V309.** Three `insert … on conflict (plan_key, feature_key) do
+- [ ] **Step 3: Write V310.** Three `insert … on conflict (plan_key, feature_key) do
       update` statements. Unqualified DDL, app schema `seazn_club`.
 
       **The explicit community fee row is load-bearing.** `feePercentFor`
