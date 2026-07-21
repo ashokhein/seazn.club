@@ -546,6 +546,22 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
     for (const arm of WIDENED_CANDIDATES) cell("teams-15", teamsPack, arm);
   }
 
+  // --- Seventh arm (2026-07-21): google/gemini-3.6-flash, full Flash (not
+  // flash-lite, already run above) -----------------------------------------
+  // Same conditions as WIDENED_CANDIDATES: teams-15 only, n=1, effort high,
+  // 32k default, provider.only left at the six-vendor allowlist (google-vertex
+  // already present, no policy change needed). Own flag so re-running this
+  // file doesn't re-bill the two arms above. Enable with AI_AB_SHOOTOUT_STAGE1C=1.
+  const FLASH_CANDIDATE: Arm = {
+    model: "google/gemini-3.6-flash",
+    effort: "high",
+    provider: "openrouter",
+    label: "gemini-3.6-flash",
+  };
+  if (process.env.AI_AB_SHOOTOUT_STAGE1C === "1") {
+    cell("teams-15", teamsPack, FLASH_CANDIDATE);
+  }
+
   it("summary", () => {
     const roundMs = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 300_000;
     process.stdout.write(
@@ -583,6 +599,7 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
     if (process.env.AI_AB_SHOOTOUT_STAGE1 === "1") expectedCells += stage1Arms.length;
     if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") expectedCells += stage2Arms.length * 2;
     if (process.env.AI_AB_SHOOTOUT_STAGE1B === "1") expectedCells += WIDENED_CANDIDATES.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE1C === "1") expectedCells += 1;
     const expected = expectedCells * REPEATS;
     expect(rows.length).toBe(expected);
     expect(rows.every((r) => r.error === "")).toBe(true);
