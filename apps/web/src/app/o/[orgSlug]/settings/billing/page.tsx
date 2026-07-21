@@ -97,12 +97,20 @@ export default async function BillingPage({
 
   // v2 usage vs plan quotas (doc 10 §1) — v1 seasons/tournaments died at the
   // PROMPT-15 cutover; overrides are honoured via getLimit.
+  //
+  // The active-competition count MUST exclude Event-Passed competitions, exactly
+  // as the write-side quota does (server/usecases/competitions.ts assertActiveQuota,
+  // v3/07 §3: a pass buys its competition out of the quota). Without the same
+  // `not exists` clause this meter read 6/5 — over quota, in red — for an org
+  // that enforcement was still happily letting create another competition.
   const [counts] = await sql<
     { competitions_active: number; dashboards_public: number; members: number }[]
   >`
     select
-      (select count(*)::int from competitions
-        where org_id = ${orgId} and status in ('draft','published','live'))
+      (select count(*)::int from competitions c
+        where c.org_id = ${orgId} and c.status in ('draft','published','live')
+          and not exists (
+            select 1 from competition_passes cp where cp.competition_id = c.id))
         as competitions_active,
       (select count(*)::int from competitions
         where org_id = ${orgId} and visibility = 'public') as dashboards_public,
