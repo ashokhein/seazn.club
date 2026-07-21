@@ -56,6 +56,7 @@ below, and it recurs at 27 call-site groups.
 | D14 | `subscriptions.currency` is pinned at the org's **first purchase of any kind, including a pass**, and never changed thereafter. |
 | D15 | Every regression suite is extended, not just the ones nearest the change: unit (vitest), E2E (Playwright, desktop + mobile), `scripts/smoke.ts` (pro **and** free paths), and the help pages. A workstream is not done until its suite entries exist. |
 | D16 | One branch, resolver first (workstream 1 before all others). Visual direction is chosen by the implementer for this session only; the standing sign-off rule resumes next session. |
+| D17 | The Event Pass **grants `dashboard.player_profiles`** for the competition it covers. Consent still governs independently — `V237` requires per-person `public_name` consent regardless of plan, so this cannot publish anyone who has not opted in. Add the `('event_pass','dashboard.player_profiles', true)` row and include it in the pass copy (Task 18). |
 
 ## What the pass actually sells (corrected)
 
