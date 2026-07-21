@@ -67,9 +67,13 @@ export interface GroupView {
   freeSlots: number;
   atCap: boolean;
   hasLive: boolean;
-  /** Organisations in the payer's OTHER groups, which they could move onto this
+  /** Organisations in the payer's OTHER groups that can actually move onto this
    *  bill. Carries the group each came from. */
   candidates: (ViewGroupOrg & { from: ViewGroup })[];
+  /** Organisations the payer owns that CANNOT move yet, because they still pay
+   *  for a live subscription of their own. Listed rather than hidden — see
+   *  `groupView`. */
+  blocked: (ViewGroupOrg & { from: ViewGroup })[];
   /** Who this bill could be handed to. */
   recipients: Recipient[];
   /** Live offers this payer has made on THIS group. */
@@ -98,9 +102,26 @@ export function groupView(args: {
   // Organisations sitting in this payer's OTHER groups. An org in a group
   // somebody else pays for is not listed and could not be attached anyway —
   // attach requires the actor to own both sides.
-  const candidates = groups
+  const elsewhere = groups
     .filter((g) => g.id !== subscriptionId)
     .flatMap((g) => g.orgs.map((o) => ({ ...o, from: g })));
+
+  // An organisation that still pays for a LIVE subscription of its own cannot
+  // join: attachOrgToGroup refuses it with a 409, because Stripe cannot move
+  // credit between customers and refunding an annual plan mid-term could be
+  // $130+. It must cancel its own subscription first.
+  //
+  // Offering it anyway was worse than a dead button: the payer clicked it, read
+  // a confirm dialog promising "your bill goes up by half your plan's rate —
+  // charged now", agreed to that, and only then got an error. The refusal is a
+  // rule, not a failure, so it belongs on the screen before the click.
+  //
+  // Listed rather than filtered away, because silence reads as a bug — the
+  // payer knows they own the organisation and would go looking for why it is
+  // missing. The sentence beside it is the one thing that would have saved the
+  // trip.
+  const candidates = elsewhere.filter((o) => !o.from.has_live_subscription);
+  const blocked = elsewhere.filter((o) => o.from.has_live_subscription);
 
   const onBill = group.orgs.length;
   const seatsPaid = group.quantity_paid;
@@ -140,8 +161,15 @@ export function groupView(args: {
   // also the moment it starts being useful. An outstanding offer counts: it is a
   // live claim on the subscription and must stay withdrawable even on a group
   // of one.
+  // `blocked` counts here too: an organisation the payer owns but cannot move
+  // yet is precisely the case that needs explaining, and hiding the panel would
+  // leave them with no way to find out why.
   const hidden =
-    onBill <= 1 && candidates.length === 0 && freeSlots === 0 && outgoing.length === 0;
+    onBill <= 1 &&
+    candidates.length === 0 &&
+    blocked.length === 0 &&
+    freeSlots === 0 &&
+    outgoing.length === 0;
 
   return {
     onBill,
@@ -150,6 +178,7 @@ export function groupView(args: {
     atCap,
     hasLive: group.has_live_subscription,
     candidates,
+    blocked,
     recipients,
     outgoing,
     hidden,

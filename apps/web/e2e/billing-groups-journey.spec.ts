@@ -204,7 +204,17 @@ test.describe.serial("billing groups — visual workflow", () => {
     await confirmDialog(page, "Take it off this bill");
 
     const after = panelOf(page);
-    await expect(after.getByText(`Northside ${TAG}`)).toHaveCount(0);
+    // Scoped to the BILL ROWS, not the panel. The panel is where candidates
+    // live too, and a detached org lands in a group of its own — which makes it
+    // immediately re-addable, so its name is still on screen, now as an "add"
+    // button. Asserting its absence from the whole panel failed for exactly
+    // that reason, and would have been the wrong thing to demand anyway.
+    const rows = after.locator("li").filter({ has: page.getByRole("button", { name: "Remove from this bill" }) });
+    await expect(rows.filter({ hasText: `Northside ${TAG}` })).toHaveCount(0);
+    await expect(rows.filter({ hasText: `Riverside ${TAG}` })).toHaveCount(1);
+    // Positive proof the detach did what it claims: it is offerable again,
+    // which only happens once it is in a group of its own.
+    await expect(after.getByRole("button", { name: `Northside ${TAG}` })).toBeVisible();
     await shot(after, "back-to-one-org");
 
     // It kept the plan it was paid up for, on a group of its own — not a
@@ -216,7 +226,33 @@ test.describe.serial("billing groups — visual workflow", () => {
     expect(moved[0].subscription_id).not.toBe(groupId);
   });
 
-  test("07 — a paid slot that has been freed is stated, with its number", async ({ page }) => {
+  test("07 — an organisation that already pays for itself cannot just join", async ({ page }) => {
+    // attachOrgToGroup refuses this with a 409: Stripe cannot move credit
+    // between customers, and refunding an annual plan mid-term could be $130+.
+    // The panel used to offer it anyway, so the payer agreed to a charge and
+    // THEN got the error. Now the rule is on screen instead of the button.
+    await db((sql) =>
+      sql`update subscriptions
+             set status = 'active', plan_key = 'pro',
+                 stripe_subscription_id = ${"sub_e2e_paying"}
+           where id = (select subscription_id from organizations where id = ${otherOrg})`,
+    );
+    try {
+      const panel = await openBilling(page, payerOrg);
+      await expect(panel.getByText(/pays for its own subscription/)).toBeVisible();
+      // And it is not offerable: no button, so no dialog promising a charge.
+      await expect(panel.getByRole("button", { name: `Northside ${TAG}` })).toHaveCount(0);
+      await shot(panel, "already-paying-cannot-join");
+    } finally {
+      await db((sql) =>
+        sql`update subscriptions
+               set stripe_subscription_id = null, plan_key = 'community'
+             where id = (select subscription_id from organizations where id = ${otherOrg})`,
+      );
+    }
+  });
+
+  test("08 — a paid slot that has been freed is stated, with its number", async ({ page }) => {
     // Three seats were paid for at renewal; two organisations left the bill.
     // This is the state that makes the next move free, and the reason the panel
     // never merges the two counts into "1 of 3".
@@ -227,7 +263,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(panel, "freed-slots");
   });
 
-  test("08 — moving into a slot already paid for is offered as free", async ({ page }) => {
+  test("09 — moving into a slot already paid for is offered as free", async ({ page }) => {
     const panel = await openBilling(page, payerOrg);
     await panel.getByRole("button", { name: `Northside ${TAG}` }).click();
 
@@ -243,7 +279,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(after, "re-attached-into-a-freed-slot");
   });
 
-  test("09 — a full plan says so instead of offering a move it would refuse", async ({ page }) => {
+  test("10 — a full plan says so instead of offering a move it would refuse", async ({ page }) => {
     // groupOrgLimit resolves through the OLDEST org in the group.
     await setEntitlementOverrideSql(payerOrg, "orgs.max_owned", 2);
     try {
@@ -257,7 +293,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     }
   });
 
-  test("10 — with nobody else owning an org here, the handover explains itself", async ({
+  test("11 — with nobody else owning an org here, the handover explains itself", async ({
     page,
   }) => {
     const panel = await openBilling(page, payerOrg);
@@ -267,7 +303,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(panel, "handover-no-recipients");
   });
 
-  test("11 — handing the whole bill to someone else", async ({ page }) => {
+  test("12 — handing the whole bill to someone else", async ({ page }) => {
     // Give Northside a different owner, which is what makes them a candidate.
     // Ownership of an ORG is separate from who pays, and it is the only consent
     // in the no-card handover path.
@@ -324,7 +360,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     }
   });
 
-  test("12 — the panel on a phone", async ({ page }) => {
+  test("13 — the panel on a phone", async ({ page }) => {
     await setGroupSeatsPaidSql(groupId, 3);
     await page.setViewportSize({ width: 390, height: 844 });
     const panel = await openBilling(page, payerOrg);
@@ -336,7 +372,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
   });
 
-  test("13 — what the pricing page promises about it", async ({ page }) => {
+  test("14 — what the pricing page promises about it", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/pricing");
     const row = page.getByText("Organisations on one bill").first();
@@ -345,7 +381,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(page, "pricing-row");
   });
 
-  test("14 — the help page a customer lands on", async ({ page }) => {
+  test("15 — the help page a customer lands on", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/help/billing/groups");
     await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 20_000 });

@@ -150,11 +150,18 @@ describe("the cap", () => {
   });
 });
 
+// A group an org can actually move OUT of: Community, nothing live to refund.
+// `group()` defaults to a live subscription, which is the payer's OWN bill —
+// a source group that looks like that is one attach would refuse.
+function communityGroup(over: Partial<ViewGroup> = {}): ViewGroup {
+  return group({ plan_key: "community", has_live_subscription: false, ...over });
+}
+
 describe("candidates to add", () => {
   it("offers the orgs in the payer's other groups, and never one already on this bill", () => {
     const v = view([
       group({ id: "grp-1", orgs: [org({ id: "here" })] }),
-      group({ id: "grp-2", orgs: [org({ id: "there", name: "Northside" })] }),
+      communityGroup({ id: "grp-2", orgs: [org({ id: "there", name: "Northside" })] }),
     ])!;
     expect(v.candidates.map((c) => c.id)).toEqual(["there"]);
     // The source group travels with the candidate — the panel needs it, and it
@@ -172,11 +179,62 @@ describe("candidates to add", () => {
   it("flattens every org across every other group, each keeping its own source", () => {
     const v = view([
       group({ id: "grp-1", orgs: [org({ id: "here" })] }),
-      group({ id: "grp-2", orgs: [org({ id: "a" }), org({ id: "b" })] }),
-      group({ id: "grp-3", orgs: [org({ id: "c" })] }),
+      communityGroup({ id: "grp-2", orgs: [org({ id: "a" }), org({ id: "b" })] }),
+      communityGroup({ id: "grp-3", orgs: [org({ id: "c" })] }),
     ])!;
     expect(v.candidates.map((c) => c.id)).toEqual(["a", "b", "c"]);
     expect(v.candidates.map((c) => c.from.id)).toEqual(["grp-2", "grp-2", "grp-3"]);
+  });
+
+  // attachOrgToGroup refuses an org that still pays for a live subscription
+  // (409): Stripe cannot move credit between customers, and refunding an annual
+  // plan mid-term could be $130+. Offering it anyway meant the payer agreed to
+  // "your bill goes up by half your plan's rate — charged now" and THEN got an
+  // error, which is the worst possible order for those two events.
+  it("does not offer an organisation that still pays for its own subscription", () => {
+    const v = view([
+      group({ id: "grp-1", orgs: [org({ id: "here" })] }),
+      group({ id: "grp-2", has_live_subscription: true, orgs: [org({ id: "paying" })] }),
+    ])!;
+    expect(v.candidates).toEqual([]);
+    expect(v.blocked.map((b) => b.id)).toEqual(["paying"]);
+  });
+
+  it("splits a mixed set, offering only the ones that can actually move", () => {
+    const v = view([
+      group({ id: "grp-1", orgs: [org({ id: "here" })] }),
+      communityGroup({ id: "grp-2", orgs: [org({ id: "free" })] }),
+      group({ id: "grp-3", has_live_subscription: true, orgs: [org({ id: "paying" })] }),
+    ])!;
+    expect(v.candidates.map((c) => c.id)).toEqual(["free"]);
+    expect(v.blocked.map((b) => b.id)).toEqual(["paying"]);
+  });
+
+  // A cancelled group keeps its Stripe id for ever, so presence is not
+  // liveness. Its orgs are billing nothing and CAN move.
+  it("offers an org whose old group is cancelled, not merely present in Stripe", () => {
+    const v = view([
+      group({ id: "grp-1", orgs: [org({ id: "here" })] }),
+      group({
+        id: "grp-2",
+        status: "canceled",
+        has_live_subscription: false,
+        orgs: [org({ id: "lapsed" })],
+      }),
+    ])!;
+    expect(v.candidates.map((c) => c.id)).toEqual(["lapsed"]);
+    expect(v.blocked).toEqual([]);
+  });
+
+  // The panel must not vanish on the one payer who most needs the explanation:
+  // a solo bill whose only other org is blocked has no candidates, no freed
+  // slots and no offers, which is precisely the old `hidden` predicate.
+  it("stays visible for a solo bill whose only other organisation is blocked", () => {
+    const v = view([
+      group({ id: "grp-1", quantity_paid: 1, orgs: [org({ id: "here" })] }),
+      group({ id: "grp-2", has_live_subscription: true, orgs: [org({ id: "paying" })] }),
+    ])!;
+    expect(v.hidden).toBe(false);
   });
 
   // An empty group of the payer's own — every org detached, subscription not

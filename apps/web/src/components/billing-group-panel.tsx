@@ -77,7 +77,8 @@ export function BillingGroupPanel({
   if (!view || view.hidden) return null;
 
   const group = groups.find((g) => g.id === subscriptionId)!;
-  const { onBill, seatsPaid, freeSlots, atCap, hasLive, candidates, recipients, outgoing } = view;
+  const { onBill, seatsPaid, freeSlots, atCap, hasLive, candidates, blocked, recipients, outgoing } =
+    view;
 
   async function offer(to: { id: string; name: string | null }) {
     const ok = await confirm({
@@ -215,7 +216,7 @@ export function BillingGroupPanel({
           <p className="text-sm text-slate-500">
             {msg("billing.group.atCap", { max: String(group.max_orgs) })}
           </p>
-        ) : candidates.length === 0 ? (
+        ) : candidates.length === 0 && blocked.length === 0 ? (
           // Not an error and not a dead control: there is simply nothing of
           // theirs to move, and the sentence says what would make one appear.
           <p className="text-sm text-slate-500">{msg("billing.group.noCandidates")}</p>
@@ -232,6 +233,23 @@ export function BillingGroupPanel({
                   <Plus className="mr-1 h-4 w-4" aria-hidden />
                   {o.name}
                 </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {/* Organisations that cannot move yet. Stated, not silently dropped:
+            the payer knows they own it and would go looking for why it is
+            missing, and the server's 409 would otherwise arrive only after
+            they had agreed to a charge. */}
+        {blocked.length > 0 && (
+          <ul className="mt-3 flex flex-col gap-2">
+            {blocked.map((o) => (
+              <li
+                key={o.id}
+                className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600"
+              >
+                {msg("billing.group.blocked", { org: o.name })}
               </li>
             ))}
           </ul>

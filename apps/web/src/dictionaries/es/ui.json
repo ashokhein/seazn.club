@@ -547,6 +547,7 @@
   "billing.group.add": "Añadir una organización",
   "billing.group.atCap": "Este plan cubre {max} organizaciones y todas están ocupadas. Mejora el plan para cubrir más.",
   "billing.group.noCandidates": "No tienes otras organizaciones que mover a esta factura. Una organización solo puede unirse desde su propio plan Community.",
+  "billing.group.blocked": "{org} paga su propia suscripción, así que todavía no puede unirse a esta factura. Cancela primero su suscripción: una organización solo puede unirse desde Community.",
   "billing.group.error": "No ha funcionado. Inténtalo de nuevo en un momento.",
   "billing.group.attach.confirmTitle": "¿Mover {org} a esta factura?",
   "billing.group.attach.confirmFree": "{org} pasa a este plan de inmediato. Tienes una plaza que ya has pagado, así que no hay nada que pagar ahora.",

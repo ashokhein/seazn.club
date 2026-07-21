@@ -547,6 +547,7 @@
   "billing.group.add": "Add an organisation",
   "billing.group.atCap": "This plan covers {max} organisations, and they are all in use. Upgrade to cover more.",
   "billing.group.noCandidates": "You have no other organisations to move onto this bill. An organisation can only join from its own Community plan.",
+  "billing.group.blocked": "{org} pays for its own subscription, so it cannot join this bill yet. Cancel its subscription first — an organisation can only join from Community.",
   "billing.group.error": "That did not work. Try again in a moment.",
   "billing.group.attach.confirmTitle": "Move {org} onto this bill?",
   "billing.group.attach.confirmFree": "{org} moves onto this plan straight away. You have a slot you have already paid for, so there is nothing to pay now.",

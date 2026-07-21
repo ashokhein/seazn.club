@@ -547,6 +547,7 @@
   "billing.group.add": "Ajouter une organisation",
   "billing.group.atCap": "Cette formule couvre {max} organisations et toutes sont occupées. Passez à une formule supérieure pour en couvrir davantage.",
   "billing.group.noCandidates": "Vous n’avez pas d’autre organisation à déplacer sur cette facture. Une organisation ne peut rejoindre qu’à partir de sa propre formule Community.",
+  "billing.group.blocked": "{org} paie son propre abonnement et ne peut donc pas encore rejoindre cette facture. Annulez d’abord son abonnement : une organisation ne peut rejoindre qu’à partir de Community.",
   "billing.group.error": "Cela n’a pas fonctionné. Réessayez dans un instant.",
   "billing.group.attach.confirmTitle": "Déplacer {org} sur cette facture ?",
   "billing.group.attach.confirmFree": "{org} passe sur cette formule immédiatement. Vous avez une place déjà payée, il n’y a donc rien à payer maintenant.",

@@ -547,6 +547,7 @@
   "billing.group.add": "Een organisatie toevoegen",
   "billing.group.atCap": "Dit abonnement dekt {max} organisaties en die zijn allemaal bezet. Upgrade om er meer te dekken.",
   "billing.group.noCandidates": "Je hebt geen andere organisaties om naar deze factuur te verplaatsen. Een organisatie kan alleen meedoen vanaf haar eigen Community-abonnement.",
+  "billing.group.blocked": "{org} betaalt een eigen abonnement en kan nog niet meedoen aan deze factuur. Zeg dat abonnement eerst op — een organisatie kan alleen meedoen vanaf Community.",
   "billing.group.error": "Dat is niet gelukt. Probeer het zo meteen opnieuw.",
   "billing.group.attach.confirmTitle": "{org} naar deze factuur verplaatsen?",
   "billing.group.attach.confirmFree": "{org} gaat meteen over op dit abonnement. Je hebt een plek die al betaald is, dus er valt nu niets te betalen.",
