@@ -2,8 +2,8 @@
 //
 // The system prompt below is VERBATIM from `design/v4/01-llm-contract.md` §4, with these
 // deliberate deviations from the source document:
-//   (a) a Coverage soft goal (S4) inserted after Fairness (S3), with the prior Stability
-//       goal renumbered S4 -> S5;
+//   (a) a Coverage soft goal (S4) inserted after Fairness (S3), pushing the source
+//       document's 4th soft goal, Stability, to S5;
 //   (b) hard rules relabelled `1.`-`7.` -> `H1.`-`H7.` and soft goals relabelled `a.`-`e.`
 //       -> `S1.`-`S5.`;
 //   (c) the OUTPUT sentence for unschedulable fixtures now requires the reason to cite the
