@@ -11,9 +11,16 @@ export type AiEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 /** How much the model should think, expressed provider-neutrally.
  *  `budget` exists for models that predate effort (claude-haiku-4-5 400s on
- *  adaptive thinking and on output_config.effort alike). */
+ *  adaptive thinking and on output_config.effort alike).
+ *
+ *  `effort.thinking` is deliberately separate from `effort.effort`: in the
+ *  code this preserves (schedule-ai.ts aiReasoningParams), whether thinking
+ *  is adaptive or disabled is an independent env-driven toggle, while effort
+ *  is sent UNCONDITIONALLY regardless of that toggle. Collapsing "disabled
+ *  thinking" into `{ kind: "none" }` would silently drop the effort setting
+ *  the caller still wants sent — do not re-collapse this. */
 export type AiReasoning =
-  | { kind: "effort"; effort: AiEffort }
+  | { kind: "effort"; effort: AiEffort; thinking: "adaptive" | "disabled" }
   | { kind: "budget"; tokens: number }
   | { kind: "none" };
 
@@ -53,6 +60,9 @@ export type AiChatResponse<T> = {
   /** The model that actually served the request, which can differ from the one
    *  asked for. Stamped onto the ledger in place of the requested constant. */
   servedModel: string;
+  /** The model declined outright. MUST stay distinct from `parsed: null`:
+   *  a refusal fails fast and spends no corrective retry. */
+  refused: boolean;
 };
 
 export interface AiProvider {

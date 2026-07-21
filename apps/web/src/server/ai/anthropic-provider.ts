@@ -34,7 +34,7 @@ export function anthropicProvider(): AiProvider {
 
       const thinking =
         req.reasoning.kind === "effort"
-          ? { type: "adaptive" as const }
+          ? { type: req.reasoning.thinking }
           : req.reasoning.kind === "budget"
             ? { type: "enabled" as const, budget_tokens: req.reasoning.tokens }
             : undefined;
@@ -82,6 +82,7 @@ export function anthropicProvider(): AiProvider {
           costUsd: aiRunCostUsd(servedModel, inputTokens, outputTokens),
         },
         servedModel,
+        refused: (response as { stop_reason?: string }).stop_reason === "refusal",
       };
     },
   };

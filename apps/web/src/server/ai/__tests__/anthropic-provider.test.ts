@@ -30,7 +30,7 @@ async function callOnce(over: Record<string, unknown> = {}) {
     system: "SYS",
     messages: [{ role: "user", content: "hello" }],
     maxTokens: 32_000,
-    reasoning: { kind: "effort", effort: "high" },
+    reasoning: { kind: "effort", effort: "high", thinking: "adaptive" },
     schema: { name: "plan", zod: Plan },
     signal: new AbortController().signal,
     timeoutMs: 600_000,
@@ -54,6 +54,21 @@ describe("anthropic provider", () => {
     expect(body.output_config.effort).toBe("high");
     expect(body.system[0].cache_control).toEqual({ type: "ephemeral" });
     expect(body.max_tokens).toBe(32_000);
+  });
+
+  it("sends disabled thinking while still sending effort — the two are orthogonal", async () => {
+    parse.mockResolvedValue({
+      parsed_output: { ok: true },
+      content: [{ type: "text", text: "x" }],
+      usage: { input_tokens: 10, output_tokens: 20 },
+      model: "claude-sonnet-5",
+    });
+
+    await callOnce({ reasoning: { kind: "effort", effort: "high", thinking: "disabled" } });
+
+    const [body] = parse.mock.calls[0];
+    expect(body.thinking).toEqual({ type: "disabled" });
+    expect(body.output_config.effort).toBe("high");
   });
 
   it("sends a legacy token budget instead of effort when the model demands it", async () => {
@@ -120,6 +135,32 @@ describe("anthropic provider", () => {
 
     const res = await callOnce();
     expect(res!.parsed).toBeNull();
+  });
+
+  it("returns refused:true when the model declines outright", async () => {
+    parse.mockResolvedValue({
+      parsed_output: null,
+      content: [],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: "claude-sonnet-5",
+      stop_reason: "refusal",
+    });
+
+    const res = await callOnce();
+    expect(res!.refused).toBe(true);
+  });
+
+  it("returns refused:false on an ordinary successful response", async () => {
+    parse.mockResolvedValue({
+      parsed_output: { ok: true },
+      content: [],
+      usage: { input_tokens: 1, output_tokens: 1 },
+      model: "claude-sonnet-5",
+      stop_reason: "end_turn",
+    });
+
+    const res = await callOnce();
+    expect(res!.refused).toBe(false);
   });
 
   it("reports whether it is configured, so the runner can refuse before calling", async () => {
