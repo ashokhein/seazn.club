@@ -92,6 +92,14 @@ affects.
 
 ## 3. UI + visual verification (explicitly requested, not started)
 
+- [ ] **BLOCKER for everything in this section: nothing exposes the group id.**
+      `POST /api/billing/group/attach` requires `subscription_id`, and no endpoint returns it.
+      `GET /api/orgs/[id]/subscription` deliberately projects `o.id as org_id` and returns
+      plan/status only — it dropped `stripe_customer_id` because ORG_ROLES lets any member of
+      any org in the group read it. So attach is currently uncallable from a browser, and the
+      smoke path below could not test re-attach either. Needs `GET /api/billing/groups` —
+      groups the user PAYS for (`groupIdsOwnedBy`), with org count, plan, and seats paid. Gate
+      it on the payer, not on org membership.
 - [ ] Place `billing.extra-org` tip beside the attach control
 - [ ] Freed-slot tip now that `quantity_paid` is written
 - [ ] Playwright verification desktop AND mobile
@@ -100,12 +108,22 @@ affects.
 
 ## 4. Closing passes
 
-- [ ] OpenAPI regen (CI drift gate) — attach/detach/transfer/accept/revoke/cron routes
-- [ ] Help pages for the new operations
-- [ ] `scripts/smoke.ts` group path (pro + free)
-- [ ] Deploy note: schedule `POST /api/cron/billing-quantity` (external scheduler, not in
-      repo — same shape as `/api/cron/billing-events`), plus `CRON_SECRET`
-- [ ] Deploy note: V310
+- [x] OpenAPI regen — ran `npm run openapi:gen`, **no diff**. Correct, not a miss: the spec is
+      built from the `/api/v1` Zod contract registry (`api-v1/openapi.ts`), and the new routes
+      are console routes under `/api/billing/*` and `/api/cron/*`, which have never been in it.
+      The CI drift gate is clean.
+- [x] Help: `content/help/billing/groups.md` gained "Handing the group to a new payer" (the
+      two-phase transfer, why the card does not travel, offers being single-use and expiring,
+      and the honest note that there is no inbox for pending offers) plus a Common Question on
+      the payer deleting their account.
+- [x] `scripts/smoke.ts`: asserts the second org inherits the PAYER'S plan and resolves the
+      group's entitlements while keeping its own per-org quotas — nothing else in smoke would
+      have noticed that regressing, since every other org has its plan forced by `setPlan`.
+      Plus the `/api/cron/billing-quantity` secret gate, mirroring the billing-events block.
+      NOT covered: attach/detach round trip, blocked on the missing endpoint in §3.
+- [x] Deploy runbook: `docs/superpowers/runbooks/billing-groups-deploy.md` — V310 ordering,
+      `CRON_SECRET` + two scheduling options (neither committed; a recurring outbound job is
+      the operator's call), verification, and the fact that there is no rollback.
 - [ ] Update `HANDOFF.md`
 
 ## 5. Open decisions / deferred
