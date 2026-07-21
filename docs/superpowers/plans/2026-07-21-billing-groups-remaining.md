@@ -3,7 +3,8 @@
 Branch `feat/billing-groups`, rebased on `feat/event-pass-e2e-and-entitlement-gaps` (134beecf).
 Spec: `docs/superpowers/specs/2026-07-21-billing-groups-design.md`. Migration: V310.
 
-Status 2026-07-21: round 3 implemented but **uncommitted**. Round-4 review in flight.
+Status 2026-07-21: rounds 3+4 committed (`ffb16eaf`). Round-5 review in flight — three findings
+listed under §1.
 
 ## Verification baseline (reproduce before trusting any green)
 
@@ -14,7 +15,8 @@ DATABASE_SSL=disable DB_SCHEMA=seazn_billing_v \
 rtk proxy npx vitest run
 ```
 
-- Current: **2512 passed / 2 failed / 9 skipped**.
+- Current at `ffb16eaf`: **2517 passed / 1 failed / 9 skipped**. Billing suites alone (with
+  `src/lib/__tests__/billing-groups.test.ts`): 63 passed, 0 skipped. `tsc --noEmit` clean.
 - Without `DATABASE_URL` the 50 billing tests SKIP and vitest still exits 0. Always read the
   skipped count, never the failure count alone.
 - Fresh schema needs `npm run sync:sports` (same env) or `funnel.test.ts` fails on the
@@ -22,17 +24,36 @@ rtk proxy npx vitest run
 - `pass-scoping-guard.test.ts` is deliberately red on the base branch; its 6 sites are all
   base's. Do not weaken it.
 
-## 1. In flight
+## 1. In flight — round-5 findings
 
-- [ ] Round-4 review of the round-3 diff (running).
-- [ ] **Bound the lock hold.** `syncGroupQuantity` holds `FOR UPDATE` on the group across two
-      Stripe round trips. `lib/stripe.ts` sets no `timeout` and no `maxNetworkRetries`
-      (stripe-node default 80s each); `lib/db.ts` sets no `statement_timeout`. Worst case
-      ~160s of held lock per call, blocking every attach/detach/transfer/sweep on that group
-      against a 60-connection budget.
-- [ ] Pin Stripe `apiVersion` (currently unpinned; latest `2026-06-24.dahlia`).
-- [ ] Commit round 3 by explicit path. Never `git add -A` — it has twice swept other agents'
-      work into the wrong commit on this branch.
+- [ ] **Blocker: `cancelGroupIfEmpty` still has the race its comment claims to close**
+      (`billing-groups.ts:348`). Its "emptiness test and status flip are ONE statement, so
+      there is no window" is false. In READ COMMITTED the statement snapshot is taken at
+      statement START; the CTE's `for update` blocks on the group lock attach holds, and when
+      attach commits, the `not exists` on `organizations` is still evaluated against the
+      original snapshot. EPQ does not help — and attach never UPDATEs the subscriptions row
+      (it takes the lock and writes `organizations`), so there is no updated tuple to trigger
+      EPQ at all. **Reproduced against real Postgres**: `UPDATE 1`, group `canceled` with a
+      live org in it. Fix (also verified: `UPDATE 0`): transaction, `for update` as statement
+      one, org count as a SEPARATE statement — a new statement gets a new snapshot. Keep
+      claim-before-Stripe, rollback-on-refusal, `not_empty`, and Stripe outside the txn.
+- [ ] **Major: account deletion discards `cancelBillingGroup`'s new `false`**
+      (`app/api/users/me/route.ts:130`). On a failed Stripe cancel the subscription stays live
+      and the user is anonymised anyway, so `owner_user_id` points at a deleted user, every
+      billing route 403s, and nobody can ever cancel it — the exact outcome the comment above
+      that loop says the code prevents. The sweep cannot see it either (its predicate is
+      `quantity_paid <> org count`). Fail the deletion rather than destroy the data.
+- [ ] Minor: `payment_method_types: ["card"]` on the transfer SetupIntent
+      (`billing-groups.ts:815`) — Stripe guidance is to omit it. Drop it or justify it.
+
+Done in `ffb16eaf`: renewal records the INVOICED seats (invoice line, pre-write item as
+fallback); renewal true-up moved under `syncGroupQuantity`'s lock so `quantity_paid` is never
+written ahead of Stripe; `groupOrgLimit`/`assertWithinGroupCap` split (pool acquisition inside
+a transaction deadlocked all DB access at `DB_POOL_MAX`=5); `createOrgForUser` counts under the
+group lock and syncs quantity; Stripe `apiVersion` pinned + `timeout: 10_000` +
+`maxNetworkRetries: 0` (a retried item update is a retried charge) + `lock_timeout`/
+`statement_timeout` on both lock-over-network transactions; transfer offer burned before the
+handover.
 
 ## 1b. CI gap (found 2026-07-21, wider than this branch)
 
@@ -41,14 +62,17 @@ CI's database job runs `npm test --workspace apps/web -- run src/server` and not
 test files outside `src/server` never execute in CI** — 18 in `src/lib/__tests__`, plus 4
 under `src/app`. They skip and the job goes green.
 
-- [ ] Extend the CI database job to the DB-gated suites outside `src/server`.
-      Turning them on makes `pass-scoping-guard.test.ts` a hard CI failure (its 6 sites are
-      base's deliberate work queue) — decide: fix those 6 first, or exclude that one file
-      with a comment pointing at the sweep.
-- [ ] Make the local skip loud: print a summary when DB suites skip, so `exit 0` with
-      everything skipped stops reading as a pass.
-- [ ] Do NOT auto-load `.env.local` in vitest. Its `DATABASE_URL` is the local DEV database
-      (`seazn` :5432, schema `seazn_club` = another session's). These suites mutate rows.
+- [x] Extend the CI database job to the DB-gated suites outside `src/server` (`a194e9a5`).
+      New step runs `src/lib src/app`; `pass-scoping-guard.test.ts` is EXCLUDED rather than
+      fixed — its 6 sites are base's deliberate work queue. Delete the exclude when the Event
+      Pass scoping sweep lands. Verified with the workflow's own command: 125 files / 763
+      tests pass.
+- [x] Make the local skip loud (`a194e9a5`): `apps/web/vitest.globalSetup.ts` warns once when
+      `DATABASE_URL` is absent, names the skipped count as the number to trust, and gives the
+      opt-in command. Silent when the DB is configured.
+- [x] Decided: do NOT auto-load `.env.local` in vitest. Its `DATABASE_URL` is the local DEV
+      database (`seazn` :5432, schema `seazn_club` = another session's) and these suites mutate
+      rows. Documented in the globalSetup file so the next person does not "helpfully" add it.
 
 Affected on this branch, verified passing locally (35 tests) but unenforced by CI:
 `entitlements-sql-parity.test.ts` (the tie between `lib/entitlements.ts` and V310's
@@ -89,9 +113,10 @@ affects.
 - [ ] Transfer offer discovery: the SetupIntent is returned only to the OFFERER, so the
       recipient cannot find it. Needs a "pending offers for me" listing. This is the cost of
       the no-schema offer design.
-- [ ] Document the dashboard-edit blind spot in the spec: if someone edits quantity in the
-      Stripe dashboard while `quantity_paid == live org count`, no predicate notices. Equal
-      under a mirror column, so a mirror was rejected; only an unconditional scan closes it.
+- [x] Dashboard-edit blind spot documented in the spec (`fe777a3f`): if someone edits quantity
+      in the Stripe dashboard while `quantity_paid == live org count`, no predicate notices.
+      Equally blind under a mirror column, so a mirror was rejected; only an unconditional
+      daily scan closes it, and that is declined until it actually happens.
 - [ ] Freeze `fee_percent` per competition at first paid entry (C3) — the 8%→2% swing is 4x
       worse after V309's fee ladder.
 - [ ] `runEvent` still stamps `billing_events.org_id` from metadata.
