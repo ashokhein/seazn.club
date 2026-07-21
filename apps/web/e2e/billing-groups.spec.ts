@@ -10,6 +10,7 @@ import {
   setOrgPlanBySql,
   setOrgStatusSql,
   setOrgSubscriptionSql,
+  splitOrgIntoOwnGroupSql,
 } from "./helpers";
 
 // The billing-group panel (spec 2026-07-21 billing-groups §Operations) — what
@@ -61,17 +62,47 @@ test.describe.serial("billing groups", () => {
     await setGroupSeatsPaidSql(groupA, 2);
   }
 
-  test("a solo Community organisation is not told it has a bill", async ({ page }) => {
+  test("a solo Community organisation is not told it has a bill", async ({ page, browser }) => {
     orgA = await makeOrg(page, "A");
     orgB = await makeOrg(page, "B");
     orgC = await makeOrg(page, "C");
-    // C is the control: its own group, Community, nothing paid ahead. The
-    // panel has no story for it, and one saying "On this bill: 1" on every
-    // free account is noise.
-    await activate(page, orgC);
-    await page.goto("/settings/billing");
-    await expect(page.getByText("Billing")).toBeVisible({ timeout: 20_000 });
-    await expect(panelOf(page)).toHaveCount(0);
+    // V309: a new org joins its creator's EXISTING group (lib/auth.ts
+    // createOrgForUser). Minted as-is, A, B and C are already on ONE bill
+    // together with the setup org — `onBill` reads 4, not 2, and neither the
+    // joins below nor the "move C in" cases mean anything, because C is never
+    // in a group of its own to be moved FROM. Break all three apart first; the
+    // cases then build the groups they describe.
+    await splitOrgIntoOwnGroupSql(orgA);
+    await splitOrgIntoOwnGroupSql(orgB);
+    await splitOrgIntoOwnGroupSql(orgC);
+
+    // The control CANNOT be one of these three. `hidden` in
+    // lib/billing-group-view.ts also clears the moment the payer owns any org
+    // in another group ("candidates"), and this file's payer is the shared Pro
+    // account, which owns the setup org plus A, B and C by construction — so C
+    // would render the panel however solo its own group is, and the assertion
+    // below would be about the fixture rather than the product.
+    //
+    // A genuinely solo Community payer is the Community storageState:
+    // one org, its own group, nothing paid ahead, nothing else to move in.
+    const solo = await browser.newContext({ storageState: "e2e/.auth/community.json" });
+    const soloPage = await solo.newPage();
+    try {
+      await soloPage.goto("/settings/billing");
+      // The page heading, not a bare getByText("Billing") — that matched the
+      // breadcrumb, the h1 AND a sentence inside the panel, so it was a strict-
+      // mode violation rather than a wait.
+      await expect(soloPage.getByRole("heading", { name: "Plan & Billing" })).toBeVisible({
+        timeout: 20_000,
+      });
+      // The panel mounts, then fetches, then decides. `toHaveCount(0)` against
+      // a page that has not finished those fetches passes for the wrong reason,
+      // so settle the network before asserting absence.
+      await soloPage.waitForLoadState("networkidle");
+      await expect(panelOf(soloPage)).toHaveCount(0);
+    } finally {
+      await solo.close();
+    }
   });
 
   test("two organisations on one bill are both listed", async ({ page }) => {

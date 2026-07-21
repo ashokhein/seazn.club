@@ -434,6 +434,39 @@ export async function joinOrgToGroupSql(orgId: string, groupId: string): Promise
 }
 
 /**
+ * Give `orgId` a billing group of ITS OWN, and return the new group's id.
+ *
+ * The inverse of joinOrgToGroupSql, and the fixture V309 made necessary: a new
+ * org joins its creator's EXISTING group (lib/auth.ts createOrgForUser), so
+ * three orgs minted by one e2e user are three orgs on ONE bill, not three
+ * groups. A spec that wants to watch orgs move between groups has to break them
+ * apart first, or every "join" it performs is a no-op against a group that
+ * already holds everything.
+ *
+ * Mirrors what a detach leaves behind — a fresh community group owned by the
+ * org's owner — and drops the old group if this emptied it, like dropEmptyGroup.
+ */
+export async function splitOrgIntoOwnGroupSql(orgId: string): Promise<string> {
+  return withDb(async (sql) => {
+    const previous = await requireGroupId(sql, orgId);
+    const [owner] = await sql<{ user_id: string }[]>`
+      select user_id from org_members
+       where org_id = ${orgId} and role = 'owner' limit 1`;
+    if (!owner) throw new Error(`organization ${orgId} has no owner member`);
+    const [group] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+      values (${owner.user_id}, 'community', 'active', 1)
+      returning id`;
+    await sql`update organizations set subscription_id = ${group.id} where id = ${orgId}`;
+    const [{ count }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from organizations
+       where subscription_id = ${previous} and deleted_at is null`;
+    if (count === 0) await sql`delete from subscriptions where id = ${previous}`;
+    return group.id;
+  });
+}
+
+/**
  * Force `quantity_paid` — the seats Stripe has already been billed for.
  *
  * Deliberately settable independently of the org count, because the two
