@@ -2055,7 +2055,13 @@ Survivors plus both control arms, `AI_AB_REPEATS=3`, both packs.
 
 Run: `AI_AB_LIVE=1 AI_AB_REPEATS=3 npx vitest run src/server/usecases/__tests__/schedule-ai-effort-ab.live.test.ts`
 
-**Every arm pins its endpoint.** OpenRouter serves many models in quantised variants — endpoint tags carry `fp8`, `fp4`, `int4` suffixes (`z-ai/glm-5.2` alone has 31 endpoints across ~30 companies). Left to routing, this shootout would compare full-precision Claude against a 4-bit GLM and attribute the difference to the model. Each arm therefore sends `provider.only` with its exact endpoint slug, and the results table records the quantisation beside cost and quality, so a row reads "GLM at fp8" rather than "GLM". An arm whose endpoint cannot be pinned is not run.
+**Record the endpoint each arm actually ran on.** OpenRouter serves many models in quantised variants — endpoint tags carry `fp8`, `fp4`, `int4` (`z-ai/glm-5.2` alone has 31 endpoints across ~30 companies). Unrecorded, this shootout would compare full-precision Claude against a 4-bit GLM and read the difference as the model.
+
+Do **not** solve this by overriding `provider.only` per arm. `applyPolicy` spreads the policy last precisely so no caller can narrow or widen it, and a bench that punches through that is a bench proving something the product does not do.
+
+It is already solved by the allowlist. Verified live 2026-07-21: under `only: ["anthropic","xai","z-ai","moonshotai"]` + `zdr` each model resolves to exactly its own vendor, and for two of them the vendor publishes a single endpoint — `z-ai/fp8` for GLM, `moonshotai/int4` for Kimi. The quantisation is therefore determined, not chosen.
+
+So the requirement is reporting, not routing: capture the serving provider from the response (`provider` field) and record it, with the known quantisation, as a column in the results table. A row must read "GLM at z-ai/fp8", never bare "GLM". If a run's served provider differs from the expected one, treat the row as suspect and say so rather than averaging it in.
 
 - [ ] **Step 6: Write up the results**
 
