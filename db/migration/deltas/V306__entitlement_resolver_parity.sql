@@ -7,18 +7,26 @@
 --
 -- security definer + a pinned search_path so the competition_passes read is not
 -- RLS-filtered if this is ever called from a withTenant transaction. The
--- search_path repeats the repo-wide definer convention verbatim —
--- `${flyway:defaultSchema}, public, extensions, pg_temp`, the same shape the
--- V226 hash-chain functions use. Two parts are load-bearing:
+-- search_path is `${flyway:defaultSchema}, pg_temp` — DELIBERATELY NARROWER than
+-- the repo-wide V226/V111 convention, which also names `public, extensions`.
+-- That convention exists because those functions call pgcrypto, installed into
+-- `public`. This resolver does not: it reads only organizations, subscriptions,
+-- plan_entitlements, org_entitlement_overrides and competition_passes, all in
+-- the app schema, and calls no extension function. There is no `extensions`
+-- schema in this database either, so that element was always inert.
+-- Dropping `public` also closes a real hazard: stale duplicate copies of
+-- org_has_feature and the four public views exist in `public` on dev machines,
+-- and with `public` on the path a missing app-schema object would silently
+-- resolve to a stale copy instead of raising. Two parts are load-bearing:
 --   * the FIRST element is the Flyway default schema placeholder, NOT a literal
 --     `public`: the app lives in seazn_club (db/flyway.toml, scripts/flyway.sh
 --     -defaultSchema), and a literal would make the function resolve tables in
 --     the wrong schema and silently return false for everything;
---   * pg_temp is named LAST on purpose. When it is not named at all Postgres
---     searches it FIRST, so any session able to `create temp table
---     plan_entitlements` (or subscriptions / org_entitlement_overrides /
---     competition_passes) could shadow the real table inside this definer
---     function and dictate what it returns.
+--   * pg_temp is named LAST on purpose, and must stay named explicitly. When it
+--     is not named at all Postgres searches it FIRST, so any session able to
+--     `create temp table plan_entitlements` (or subscriptions /
+--     org_entitlement_overrides / competition_passes) could shadow the real
+--     table inside this definer function and dictate what it returns.
 --
 -- The live-subscription status list is copied from
 -- apps/web/src/lib/subscription-status.ts (LIVE_SUBSCRIPTION_STATUSES =
@@ -39,7 +47,7 @@ create or replace function org_has_feature(
   p_competition_id uuid
 ) returns boolean
   language sql stable security definer
-  set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
+  set search_path = ${flyway:defaultSchema}, pg_temp as $$
     with plan as (
       select case
         -- Mirrors entitlements.ts — a comp past its end date resolves as
@@ -208,6 +216,6 @@ on conflict (plan_key, feature_key) do update
 create or replace function org_has_feature(p_org_id uuid, p_feature_key text)
   returns boolean
   language sql stable security definer
-  set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
+  set search_path = ${flyway:defaultSchema}, pg_temp as $$
     select org_has_feature(p_org_id, p_feature_key, null::uuid)
   $$;
