@@ -29,10 +29,17 @@ const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
 /** Seed a pro org with an explicit subscription status and comp window.
- *  `compedDaysFromNow` positions comped_until; omit for no comp at all. */
+ *  `compedDaysFromNow` positions comped_until; omit for no comp at all.
+ *
+ *  A comp also stamps `comped_at`, because that is what compToPro writes and it
+ *  is what the cancelled arm reads. Seeding comped_until alone would describe a
+ *  row production never produces. `indefinite` is the forever-comp: comped_at
+ *  set, comped_until null — the case that makes comped_until unusable as the
+ *  guard. */
 async function seedOrg(over: {
   status: string;
   compedDaysFromNow?: number;
+  indefinite?: boolean;
   planKey?: string;
 }): Promise<string> {
   const suffix = uniq();
@@ -42,15 +49,18 @@ async function seedOrg(over: {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug, created_by)
     values (${"Cancel Org " + suffix}, ${"cancel-org-" + suffix}, ${ownerId}) returning id`;
+  const comped = over.compedDaysFromNow !== undefined || over.indefinite === true;
   await sql`
     insert into subscriptions
-      (org_id, plan_key, status, stripe_subscription_id, comped_until, status_changed_at)
+      (org_id, plan_key, status, stripe_subscription_id,
+       comped_until, comped_at, status_changed_at)
     values (${orgId}, ${over.planKey ?? "pro"}, ${over.status}, ${"sub_" + suffix},
             ${
               over.compedDaysFromNow === undefined
                 ? null
                 : sql`now() + (${over.compedDaysFromNow} * interval '1 day')`
             },
+            ${comped ? sql`now()` : null},
             now() - interval '1 day')`;
   return orgId;
 }
@@ -83,6 +93,15 @@ describe.skipIf(!HAS_DB)("a cancelled subscription does not convey its plan", ()
   // this is what a staff comp on a previously-subscribed org actually looks like.
   it("canceled + a RUNNING comp still conveys pro — staff grants survive", async () => {
     const orgId = await seedOrg({ status: "canceled", compedDaysFromNow: 30 });
+    expect(await orgPlanKey(orgId)).toBe("pro");
+    expect(await hasFeature(orgId, "exports.branded")).toBe(true);
+  });
+
+  // The case that rules comped_until out as the guard, and the reason V313
+  // exists: a forever-comp writes comped_until = null, so a `comped_until is
+  // null` guard would revoke it. Provenance, not a deadline.
+  it("canceled + an INDEFINITE comp (comped_until null) still conveys pro", async () => {
+    const orgId = await seedOrg({ status: "canceled", indefinite: true });
     expect(await orgPlanKey(orgId)).toBe("pro");
     expect(await hasFeature(orgId, "exports.branded")).toBe(true);
   });

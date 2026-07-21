@@ -103,6 +103,34 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
   });
 
+  // V313's arm. It had to be added in BOTH resolvers: the public surfaces
+  // (public_competitions_v's branding, the realtime reads in public-site/data.ts)
+  // go through the SQL function and never touch lib/entitlements.ts, so a
+  // TypeScript-only fix would have left half the app conveying Pro to departed
+  // orgs.
+  it("degrades a cancelled subscription that was never comped", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'canceled', stripe_subscription_id = 'sub_gone'
+      where org_id = ${orgId}`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(false);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
+  });
+
+  // And the guard, in both: an indefinite staff comp writes comped_until = null,
+  // so only comped_at separates it from the row above.
+  it("keeps an indefinite comp alive on a cancelled subscription", async () => {
+    await sql`
+      update subscriptions
+      set plan_key = 'pro', status = 'canceled', stripe_subscription_id = 'sub_gone',
+          comped_until = null, comped_at = now()
+      where org_id = ${orgId}`;
+    await invalidateOrgEntitlements(orgId);
+    expect(await hasFeature(orgId, "realtime")).toBe(true);
+    expect(await sqlHasFeature(orgId, "realtime")).toBe(true);
+  });
+
   it("honours an Event Pass for the competition in scope, and only that one", async () => {
     const passedId = await seedCompetition(orgId, "passed");
     const otherId = await seedCompetition(orgId, "other");

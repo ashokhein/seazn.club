@@ -139,12 +139,15 @@ export async function orgPlanKey(orgId: string): Promise<string> {
       -- The comp guard is load-bearing, not defensive: compOrg deliberately
       -- LEAVES a dead subscription's cancelled status in place
       -- (admin-plan.ts — writing a live-looking status onto a departed row
-      -- would resurrect liveness and break the comp-expiry branch above). So
-      -- a cancelled status + a comp still running is a legitimate staff grant, and
-      -- degrading it here would revoke every comp handed to an org that once
-      -- subscribed. A LAPSED comp is already community via the first arm.
-      when s.status = 'canceled'
-           and (s.comped_until is null or s.comped_until <= now())
+      -- would resurrect liveness and break the comp-expiry branch above). So a
+      -- cancelled status plus a staff comp is a legitimate grant, and degrading
+      -- it here would revoke every comp handed to an org that once subscribed.
+      --
+      -- The guard is comped_at, NOT comped_until: a forever-comp writes
+      -- comped_until = null, so a null-comped_until test cannot tell an
+      -- indefinite comp from a row that never had one. V313 added comped_at for
+      -- exactly this. A LAPSED comp is already community via the first arm.
+      when s.status = 'canceled' and s.comped_at is null
            then 'community'
       else coalesce(s.plan_key, 'community')
     end as plan_key
