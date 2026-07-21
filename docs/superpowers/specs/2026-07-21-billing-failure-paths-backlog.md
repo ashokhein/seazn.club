@@ -120,6 +120,40 @@ The first is safer: it fixes every row already poisoned, not just future writes.
 **Regression test must fail without the fix:** seed `subscriptions` with
 `status = 'canceled', plan_key = 'pro'` and assert `orgPlanKey` returns `community`.
 
+## 6. Whole-branch review follow-ups (deferred 2026-07-22, NOT merge-blocking)
+
+Final review verdict was "ready to merge" (0 Critical). These survived triage as deferrable;
+the ones with consequence or that were pure corrections are fixed in `dcddf2e7`.
+
+- **PERF (Important): non-inlinable `org_has_feature` on public views.** V306's
+  `security definer` + `SET search_path` versions cannot be planner-inlined, and
+  `public_discovery_v` calls it 3×/row, `public_entrants_v` 2×/member row, each now a CTE +
+  correlated subqueries. Pre-launch there is no scale, so nothing to fix — but **measure the
+  discovery homepage and any large public entrant list before they ship at volume.** The
+  `competition_passes` RLS requirement makes the invoker/inline form unavailable, so if it is
+  slow the fix is a materialised/denormalised entitlement, not reverting the function.
+- **`lib/entitlements.ts:178-187` — TS pass-arm treats a pass row as authoritative on a null
+  `bool_value`; the SQL resolver coalesces a null bool THROUGH to the plan row.** No live key
+  triggers it (every pass matrix key has a non-null bool), so the two resolvers agree today.
+  It fires the moment an `event_pass` plan_entitlements row carries a null `bool_value` where
+  the community row is true — then TS denies and SQL allows, undetected. Fix: make the TS arm
+  skip a null-bool pass row (coalesce through), and add the case to
+  `entitlements-sql-parity.test.ts`. Deferred because it needs a data shape nothing currently
+  produces and touches the pass arm right at merge.
+- **`lib/billing.ts` `reconcilePassCheckout` money-trace writes inside the function-wide
+  try/catch.** A DB hiccup on the trace makes it return `false` for a pass already recorded
+  and live. Inert today — the caller ignores the return and the webhook self-heals — but the
+  refund call above already swallows its own errors; extend the same courtesy so the return
+  value stops lying. Deferred: no live consequence.
+- **`V311__…sql:31-35` stale comment** claims `registrations.ts:828` is still a scoping-guard
+  offender; the site threads `ctx.competition_id` now. Left as-is: editing an applied
+  migration for a comment costs a Flyway checksum repair for no behaviour change.
+- **Flyway `outOfOrder` not set + the V309 cross-branch gap.** This branch owns V310-V313;
+  the multi-org session starts above. If a branch later lands a migration numbered inside a
+  gap, a staging apply can refuse it without `outOfOrder=true`. A fresh prod baseline is
+  unaffected. Decide the deploy ordering across the pending waves (see the deploy-context
+  note in the pipeline memory) before the first multi-branch staging apply.
+
 ## 5. Also worth a look while in here
 
 - `incomplete → past_due` (`STATUS_MAP:257`): a checkout where 3DS was never completed
