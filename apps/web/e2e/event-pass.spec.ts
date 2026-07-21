@@ -371,7 +371,11 @@ for (const vp of VIEWPORTS) {
       await expect(gate).toBeVisible({ timeout: 30_000 });
       await expect(gate.locator("[data-pass-cta]")).toContainText("$29");
       const passHref = await gate.locator("[data-pass-cta]").getAttribute("href");
-      expect(passHref).toMatch(new RegExp(`/c/${rig.compSlug}/upgrade$`));
+      // The gate appends `?feature=<key>` so the upgrade page can render its
+      // ceiling state (76020eeb) — anchor on the path, not the whole string, and
+      // assert the key rides along rather than relaxing to a bare prefix.
+      expect(passHref).toMatch(new RegExp(`/c/${rig.compSlug}/upgrade(\\?|$)`));
+      expect(passHref).toContain("feature=divisions.per_competition.max");
 
       // …and the ticket it leads to is the unsold one.
       await page.goto(passHref!);
