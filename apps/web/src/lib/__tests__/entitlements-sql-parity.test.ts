@@ -60,7 +60,7 @@ afterAll(async () => {
   await client?.end();
 });
 
-// The probe key is `realtime`, not `branding`: V309 made branding free for
+// The probe key is `realtime`, not `branding`: V310 made branding free for
 // community, so it can no longer show a DEGRADE (community and pro both answer
 // true) or a pass LIFT. `realtime` keeps the shape this suite needs —
 // community false, pro true, event_pass true.

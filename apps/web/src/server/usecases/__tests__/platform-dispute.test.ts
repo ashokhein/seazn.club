@@ -149,7 +149,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
   it("closed lost: auto-downgrades to community/canceled and invalidates entitlements", async () => {
     const { orgId, customer } = await seedSubOrg("pro");
     // Pro resolves the Pro feature before the loss (also warms the cache).
-    // `realtime`, not `branding`: V309 made branding free for community, so it
+    // `realtime`, not `branding`: V310 made branding free for community, so it
     // no longer flips on a downgrade and would prove nothing here.
     expect(await hasFeature(orgId, "realtime")).toBe(true);
     const did = "dp_" + uniq();

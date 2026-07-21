@@ -1,4 +1,4 @@
--- V309 — repackaging (product owner, 2026-07-21, D18/D19/D20). Not a bug fix:
+-- V310 — repackaging (product owner, 2026-07-21, D18/D19/D20). Not a bug fix:
 -- two features move OUT of the paid tier and one is re-monetised by fee.
 --
 --   branding           org logo upload + display   → free for everyone
@@ -12,7 +12,10 @@
 -- ladder pays for itself at roughly £500 of entries on the $29 pass).
 --
 -- V308 is the highest applied migration in db/migration (deltas, jul3, perf,
--- v1-baseline, v2-engine all checked), so this is V309.
+-- v1-baseline, v2-engine all checked). This was authored as V309, then moved to
+-- V310: a concurrent branch (feat/billing-groups) claimed V309 for
+-- V309__billing_groups.sql, and duplicate V### values fail Flyway once both
+-- branches land. We moved; they keep V309.
 --
 -- Unqualified DDL: Flyway runs with -defaultSchema=seazn_club (db/flyway.toml,
 -- scripts/flyway.sh) and the app schema is the only schema in play; `public` is

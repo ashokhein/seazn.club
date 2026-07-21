@@ -451,7 +451,7 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(32);
   });
 
-  // V309 fee ladder (D20): community 8 → pass 5 → pro 2 → pro plus 1. The
+  // V310 fee ladder (D20): community 8 → pass 5 → pro 2 → pro plus 1. The
   // community leg is the one that matters. It used to have no row and fell back
   // to platformFeeDefault() (5), which is EXACTLY the pass rate — so the pass
   // discounted nothing. The assertion below is deliberately written against the

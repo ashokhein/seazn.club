@@ -595,7 +595,7 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     expect(settings.capacity).toBe(8);
   });
 
-  it("Community org: offline AND card entry fees are both allowed (V309)", async () => {
+  it("Community org: offline AND card entry fees are both allowed (V310)", async () => {
     const { orgId, orgSlug, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
@@ -626,7 +626,7 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     });
     expect(offlineStill.fee_cents).toBe(500);
 
-    // …and since V309 (D19) the card method needs only live Connect, not a
+    // …and since V310 (D19) the card method needs only live Connect, not a
     // plan. Community pays for it in the rate instead — 8% vs Pro's 2%
     // (registration.fee_percent, see entitlements-v2.test.ts).
     const card = await putRegistrationSettings(owner, division.id, {
@@ -793,7 +793,7 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     expect(ok.charges_enabled).toBe(true);
   });
 
-  // V309 (D19) inverted this: a community org CAN pick the card method. The
+  // V310 (D19) inverted this: a community org CAN pick the card method. The
   // registration.paid gate itself is unchanged and still fires — the only thing
   // that can deny the key now is a staff override, which is the second half.
   it("community org can pick the card method, but a registration.paid deny still blocks it", async () => {

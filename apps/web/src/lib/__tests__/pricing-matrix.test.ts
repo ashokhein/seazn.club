@@ -2,10 +2,20 @@
 // pro-plus-tier §5) — these pin the pivot: ints/∞, bool ticks, pass-column
 // fallback to community (the resolver's fall-through), and the folded
 // entry-fee cell, across all four plans + eight ENTITLEMENT_DOMAINS.
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { buildPricingSections, type MatrixData } from "@/lib/pricing-matrix";
 import { ENTITLEMENT_DOMAINS } from "@/lib/entitlement-domains";
 import { sql } from "@/lib/db";
+
+const HAS_DB = !!process.env.DATABASE_URL;
+
+afterAll(async () => {
+  if (!HAS_DB) return;
+  const globalForDb = globalThis as { _sql?: { end(): Promise<void> } };
+  const client = globalForDb._sql;
+  globalForDb._sql = undefined;
+  await client?.end();
+});
 
 const cell = (int: number | null = null, bool: boolean | null = null) => ({
   int_value: int,
@@ -43,7 +53,7 @@ const DATA: MatrixData = {
     pro: cell(null),
     pro_plus: cell(null),
   },
-  // V309 (D18/D19/D20): charging entry fees is free for everyone; the pass and
+  // V310 (D18/D19/D20): charging entry fees is free for everyone; the pass and
   // the paid plans buy a CHEAPER cut, not the ability itself.
   "registration.paid": {
     community: cell(null, true),
@@ -166,7 +176,7 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   });
 
   it("folds registration.paid + fee_percent into one entry-fee cell, keyed pricing.matrix.fees", () => {
-    // V309: every column charges; the ladder is what differs (8/5/2/1).
+    // V310: every column charges; the ladder is what differs (8/5/2/1).
     expect(row("pricing.matrix.fees")).toMatchObject({
       free: "✓ 8%",
       pass: "✓ 5%",
@@ -194,12 +204,12 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
   });
 });
 
-// V309 (D18/D19/D20) — the packaging decision itself, asserted against the live
+// V310 (D18/D19/D20) — the packaging decision itself, asserted against the live
 // matrix rather than the fixture above. A fixture can be edited to say anything;
 // this is the row that has to exist for /pricing and the resolver to agree.
 //
 // Real Postgres required; skipped without DATABASE_URL (CI sets it).
-describe.skipIf(!process.env.DATABASE_URL)("V309 packaging: logos + paid entry for everyone", () => {
+describe.skipIf(!HAS_DB)("V310 packaging: logos + paid entry for everyone", () => {
   const load = async (key: string) => {
     const rows = await sql<{ plan_key: string; bool_value: boolean | null; int_value: number | null }[]>`
       select plan_key, bool_value, int_value from plan_entitlements where feature_key = ${key}`;
