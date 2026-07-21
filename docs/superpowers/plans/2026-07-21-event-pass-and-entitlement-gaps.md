@@ -497,16 +497,41 @@ Expected: FAIL — the raw SQL reads `plan_key = 'pro'` and allows a second org.
 
 - [ ] **Step 3: Rewrite `assertMayOwnAnotherOrg`**
 
-Replace the raw query at `apps/web/src/lib/auth.ts:198-214` with a `getLimit`
-call. Keep the counting query; only the limit lookup changes:
+**Read `apps/web/src/lib/auth.ts:192-218` before writing anything.** This quota is
+NOT org-scoped — there is no single `orgId` to resolve. Per the doc comment at
+`:192-196` it is a **per-user, cross-org** cap: the user's *best* plan across every
+org they own decides, overrides on any owned org lift the user (v3 grandfathering,
+where the pro cap dropped 5 → 3), a null `int_value` means unlimited, and a user who
+owns nothing may always create their first.
+
+So `getLimit(orgId, …)` with one org is the wrong shape and would silently change
+who may create an org. Resolve per owned org and keep "best wins":
 
 ```ts
 import { getLimit } from "@/lib/entitlements";
 
-// ONE resolver. The raw plan_key + override union this replaced honoured
-// expires_at but not comped_until or past_due, so a lapsed comp kept the Pro cap.
-const limit = await getLimit(orgId, "orgs.max_owned");
+async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
+  const owned = await sql<{ org_id: string }[]>`
+    select m.org_id from org_members m
+    where m.user_id = ${userId} and m.role = 'owner'`;
+  if (owned.length === 0) return;
+
+  // ONE resolver per owned org. This replaces a raw plan_key + override union
+  // that honoured expires_at but NOT comped_until or past_due, so a lapsed comp
+  // kept the Pro cap. getLimit applies overrides (with expiry) per org, so the
+  // old cross-org override union is preserved by construction.
+  const limits = await Promise.all(
+    owned.map((o) => getLimit(o.org_id, "orgs.max_owned")),
+  );
+  // A null limit is UNLIMITED and wins outright — same rule as auth.ts:216.
+  if (limits.some((l) => l === null)) return;
+  const limit = Math.max(...(limits as number[]));
+  if (owned.length + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
+}
 ```
+
+Preserve the existing doc comment at `:192-196` — the billing decision it records
+is still the governing rule.
 
 - [ ] **Step 4: Rewrite the entitlements route**
 
