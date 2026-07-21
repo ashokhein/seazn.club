@@ -652,7 +652,7 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     await loginAsOwner(page, org.ownerEmail);
     await page.goto(`/o/${org.orgSlug}/settings/billing`);
     await expect(
-      page.locator('[data-tour="billing-plan"]').getByText("pro", { exact: true }),
+      page.locator('[data-tour="billing-plan"]').getByText("Pro", { exact: true }),
     ).toBeVisible({ timeout: 20_000 });
 
     // The dispute is lost → auto-downgrade to Community.
@@ -671,7 +671,7 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
 
     await page.reload();
     await expect(
-      page.locator('[data-tour="billing-plan"]').getByText("community", { exact: true }),
+      page.locator('[data-tour="billing-plan"]').getByText("Community", { exact: true }),
     ).toBeVisible({ timeout: 20_000 });
   });
 

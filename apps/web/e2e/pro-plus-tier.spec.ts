@@ -227,9 +227,11 @@ test.describe("Pro Plus · billing surface", () => {
     await loginAsOwner(page, org.ownerEmail);
     await page.goto(`/o/${org.orgSlug}/settings/billing`);
 
-    // Current-plan panel names the tier (raw key, capitalised by CSS).
+    // Current-plan panel names the tier. It used to render the raw plan key
+    // under a CSS `capitalize` — which reads "Pro_plus" — so this asserted
+    // "pro_plus"; planLabel() now supplies the product name (#196).
     await expect(
-      page.locator('[data-tour="billing-plan"]').getByText("pro_plus", { exact: true }),
+      page.locator('[data-tour="billing-plan"]').getByText("Pro Plus", { exact: true }),
     ).toBeVisible({ timeout: 20_000 });
     // A paid tier never sees the Community upgrade/compare grid …
     await expect(page.getByRole("heading", { name: "Upgrade to Pro" })).toHaveCount(0);
