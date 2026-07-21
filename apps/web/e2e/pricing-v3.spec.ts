@@ -134,7 +134,10 @@ test.describe.serial("event pass gate (community org)", () => {
     await expect(gate).toBeVisible({ timeout: 20_000 });
     await expect(gate.locator("[data-pass-cta]")).toContainText("$29");
     const passHref = await gate.locator("[data-pass-cta]").getAttribute("href");
-    expect(passHref).toMatch(new RegExp(`/c/${comp.data!.slug}/upgrade$`));
+    // The gate appends `?feature=<key>` so the upgrade page can render its
+    // ceiling state; anchor on the path, not the whole string.
+    expect(passHref).toMatch(new RegExp(`/c/${comp.data!.slug}/upgrade(\\?|$)`));
+    expect(passHref).toContain("feature=divisions.per_competition.max");
 
     // Purchase (SQL analogue — test-infra convention), then the gate lifts…
     // The 402 above cached this org's resolved limit server-side, so the
@@ -155,7 +158,10 @@ test.describe.serial("event pass gate (community org)", () => {
     // second time (spec D1). The competition-wide schedule board is Pro-only
     // and the pass never lifted it, so the paywall still renders — but as the
     // pass-owned card: one Pro path, no $29 button.
-    await page.goto(passHref!.replace(/\/upgrade$/, "/schedule"));
+    // Strip the query as well as the segment — `/upgrade$` alone stopped
+    // matching once the gate started appending `?feature=`, and a no-op replace
+    // would have quietly re-loaded the upgrade page and asserted against it.
+    await page.goto(passHref!.replace(/\/upgrade(\?.*)?$/, "/schedule"));
     const owned = page.locator("[data-pass-owned]").first();
     await expect(owned).toBeVisible({ timeout: 20_000 });
     await expect(owned).toContainText("Event Pass active");

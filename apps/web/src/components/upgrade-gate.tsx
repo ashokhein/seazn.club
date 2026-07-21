@@ -32,11 +32,20 @@ interface Props {
   compact?: boolean;
 }
 
-/** The competition upgrade URL when the gate renders inside a competition. */
-function passHrefFromPath(pathname: string | null): string | null {
+/**
+ * The competition upgrade URL when the gate renders inside a competition.
+ *
+ * Carries WHICH feature bit, because the upgrade page keys its ceiling state off
+ * `?feature=` and nothing used to supply one — so the page's ceiling copy ("you
+ * have used everything the Event Pass includes here") was unreachable in-app and
+ * a user who hit a ceiling saw the generic owned card instead. The gate is the
+ * only place that knows which key was refused, so it is the only place that can
+ * pass it.
+ */
+function passHrefFromPath(pathname: string | null, feature: string): string | null {
   const m = pathname?.match(/^\/o\/([^/]+)\/c\/([^/]+)(?:\/|$)/);
   if (!m || m[2] === "new") return null;
-  return routes.competitionUpgrade(m[1], m[2]);
+  return `${routes.competitionUpgrade(m[1], m[2])}?feature=${encodeURIComponent(feature)}`;
 }
 
 /**
@@ -112,7 +121,7 @@ export function UpgradeGate({ feature, href = "/settings/billing", compact = fal
   const passOwned = gate === "held";
   const liftable = PASS_FEATURES.has(feature);
   // Only an org that can still BENEFIT from a pass is offered one.
-  const passHref = liftable && gate === "none" ? passHrefFromPath(pathname) : null;
+  const passHref = liftable && gate === "none" ? passHrefFromPath(pathname, feature) : null;
 
   if (compact) {
     return (

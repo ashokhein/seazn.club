@@ -38,11 +38,17 @@ let pathname: string | null = "/o/riverside/c/summer-league/d/new";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
 
 const PASS_PRICE = formatMinor(passPrice("usd"), "usd"); // "$29"
-const UPGRADE_HREF = "/o/riverside/c/summer-league/upgrade";
 
 /** A key the pass lifts, and one it can never lift. */
 const LIFTABLE = "divisions.per_competition.max";
 const NOT_LIFTABLE = "scheduling.multi_division";
+
+// The CTA carries `?feature=<key>`: the upgrade page keys its ceiling state off
+// that param, the gate is the only place that knows which key was refused, and
+// without it the page falls back to the generic owned card. Asserted WITH the
+// query rather than relaxed to a prefix — a bare `/upgrade` would satisfy a
+// prefix match and silently lose the ceiling state again.
+const UPGRADE_HREF = `/o/riverside/c/summer-league/upgrade?feature=${LIFTABLE}`;
 
 /**
  * Render the gate with the competition layout's two facts.
