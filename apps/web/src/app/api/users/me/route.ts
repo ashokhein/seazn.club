@@ -125,9 +125,27 @@ export async function DELETE(req: Request) {
         await sql`
           update subscriptions set owner_user_id = ${heir.user_id}, updated_at = now()
           where id = ${subscriptionId}`;
-      } else {
+      } else if (!(await cancelBillingGroup(subscriptionId))) {
         // Nobody left who could ever manage it — cancel rather than orphan.
-        await cancelBillingGroup(subscriptionId);
+        //
+        // And STOP if that cancel did not happen. cancelBillingGroup returns
+        // false without writing anything local when Stripe refuses, which
+        // leaves the subscription live and still charging; carrying on would
+        // anonymise and soft-delete this user a few lines below, after which
+        // `owner_user_id` points at a deleted user, every billing route 403s
+        // and nobody can ever cancel it. Nothing sweeps it up either —
+        // reconcileGroupQuantities selects on `quantity_paid <> live org
+        // count`, which this group satisfies perfectly well.
+        //
+        // Deletion is the irreversible half, so it is the half that yields:
+        // fail loudly while the user still has an account (and a support path)
+        // rather than destroy their data into a subscription that outlives
+        // them. Retrying the same request once Stripe is reachable completes
+        // the deletion — every step above it is idempotent.
+        throw new HttpError(
+          503,
+          "We could not cancel your subscription just now, so your account has not been deleted — it would have kept being charged with nobody able to stop it. Please try again in a few minutes.",
+        );
       }
     }
 

@@ -328,53 +328,81 @@ export async function reconcileGroupQuantities(limit = 500): Promise<{
 }
 
 /**
- * Cancel a group ONLY if it is still empty, atomically.
+ * Cancel a group ONLY if it is still empty.
  *
- * The previous shape — re-count under a lock, commit, then cancel — narrowed the
- * race without closing it: an attach queued on that lock proceeds the instant
- * the re-count commits, sees `status = 'active'`, passes every gate and may be
- * charged for a seat, and only then does the cancel fire. The org ends up inside
- * a cancelled group having just paid for it.
+ * Two shapes have already failed here, and the reason is worth stating exactly,
+ * because both looked airtight:
  *
- * So the emptiness test and the status flip are ONE statement. Once the row says
+ *  1. Re-count under a lock, commit, then cancel. An attach queued on that lock
+ *     proceeds the instant the re-count commits, sees `status = 'active'`,
+ *     passes every gate and may be charged for a seat — and only then does the
+ *     cancel fire. The org ends up inside a cancelled group having just paid.
+ *  2. ONE statement: `update ... where not exists (live orgs)` over a `for
+ *     update` CTE. This does NOT close the race, whatever it looks like. In
+ *     READ COMMITTED a statement's snapshot is taken when the STATEMENT starts.
+ *     The CTE's `for update` blocks on the lock the attach holds, but
+ *     `not exists (select 1 from organizations ...)` is still evaluated against
+ *     the snapshot taken before the attach committed. EPQ re-evaluation does not
+ *     help: it substitutes the updated tuple of the row being LOCKED and
+ *     refreshes visibility for no other table — and an attach never UPDATEs the
+ *     subscriptions row at all (it takes the lock and writes `organizations`),
+ *     so there is no updated tuple to trigger it. Verified against real
+ *     Postgres: the group is cancelled with a live org in it.
+ *
+ * So the lock and the count are separate STATEMENTS inside one transaction. A
+ * new statement takes a new snapshot, so the count sees whatever committed while
+ * statement 1 was waiting — which is the whole point. Once the row does say
  * `canceled`, attach refuses it outright (its gate reads status under its own
- * lock), which is the correct outcome for anyone racing: refused, not admitted
- * to a dying group. The Stripe call happens after the claim, and the claim is
- * rolled back if Stripe refuses — leaving the group live, billable and visible
- * to the reconcile sweep rather than locally "cancelled" while still charging.
+ * lock), so anyone racing is refused rather than admitted to a dying group.
  *
- * Returns null when the group was not empty after all.
+ * The claim COMMITS before Stripe is called, and is rolled back to the captured
+ * previous values if Stripe refuses — leaving the group live, billable and
+ * visible to the reconcile sweep rather than locally "cancelled" while still
+ * charging. The Stripe call is deliberately outside the transaction: it would
+ * otherwise hold this row lock across a network round trip, and this runs from
+ * `syncGroupQuantity` immediately after that function has released its own.
+ *
+ * `not_empty` is a normal outcome, not an error: an org arrived, and the group
+ * is billable after all.
  */
+interface CancelClaim {
+  prev_status: string;
+  prev_plan: string;
+  prev_comped: Date | null;
+  prev_qty: number;
+  stripe_subscription_id: string | null;
+}
+
 async function cancelGroupIfEmpty(
   subscriptionId: string,
 ): Promise<"cancelled" | "not_empty" | "cancel_failed"> {
-  const [claimed] = await sql<
-    {
-      prev_status: string;
-      prev_plan: string;
-      prev_comped: Date | null;
-      prev_qty: number;
-      stripe_subscription_id: string | null;
-    }[]
-  >`
-    with prev as (
-      select id, status, plan_key, comped_until, quantity_paid, stripe_subscription_id
-        from subscriptions where id = ${subscriptionId} for update
-    )
-    update subscriptions s
-       set plan_key = 'community', status = 'canceled', cancel_at_period_end = false,
-           comped_until = null, quantity_paid = 1, updated_at = now(),
-           status_changed_at = case when s.status is distinct from 'canceled'
-                                    then now() else s.status_changed_at end
-      from prev
-     where s.id = prev.id
-       and prev.status in ('trialing', 'active', 'past_due')
-       and not exists (
-             select 1 from organizations o
-              where o.subscription_id = s.id and o.deleted_at is null)
-    returning prev.status as prev_status, prev.plan_key as prev_plan,
-              prev.comped_until as prev_comped, prev.quantity_paid as prev_qty,
-              prev.stripe_subscription_id`;
+  const claimed = (await sql.begin(async (tx) => {
+    // Statement 1: take the row lock, and WAIT for whoever holds it (an attach
+    // in flight). Nothing is decided here — the previous values are captured for
+    // the rollback below.
+    const [prev] = await tx<CancelClaim[]>`
+      select status as prev_status, plan_key as prev_plan, comped_until as prev_comped,
+             quantity_paid as prev_qty, stripe_subscription_id
+        from subscriptions where id = ${subscriptionId} for update`;
+    if (!prev) return null;
+    // Statement 2, and a NEW snapshot with it: this is where an attach that
+    // committed while statement 1 was blocked becomes visible. The status is
+    // re-tested in SQL for symmetry only — the row is locked, so it cannot have
+    // moved since it was read.
+    const [claim] = await tx<{ id: string }[]>`
+      update subscriptions s
+         set plan_key = 'community', status = 'canceled', cancel_at_period_end = false,
+             comped_until = null, quantity_paid = 1, updated_at = now(),
+             status_changed_at = case when s.status is distinct from 'canceled'
+                                      then now() else s.status_changed_at end
+       where s.id = ${subscriptionId}
+         and s.status in ('trialing', 'active', 'past_due')
+         and not exists (
+               select 1 from organizations o
+                where o.subscription_id = s.id and o.deleted_at is null)
+      returning s.id`;
+    return claim ? prev : null;
+  })) as CancelClaim | null;
   if (!claimed) return "not_empty";
 
   if (claimed.stripe_subscription_id) {
@@ -705,8 +733,9 @@ export async function detachOrgFromGroup(args: {
   // the local row truthful.
   // Never trusting the count from the committed transaction above: between that
   // commit and here, an attach can legitimately put another org into the group
-  // it just emptied. cancelGroupIfEmpty re-tests emptiness IN THE SAME STATEMENT
-  // that flips the status, so there is no window between the two.
+  // it just emptied. cancelGroupIfEmpty re-tests emptiness under the group's row
+  // lock, in a statement issued AFTER that lock is held — see the note there for
+  // why doing it in one statement does not close the window.
   let cancelled: string | null = null;
   const outcome = await cancelGroupIfEmpty(result.from);
   if (outcome !== "not_empty") {
@@ -810,9 +839,15 @@ export async function offerGroupTransfer(args: {
   });
 
   if (hasLiveSubscription(group) && group.stripe_customer_id) {
+    // No `payment_method_types`. Stripe's guidance is to let the account's
+    // payment method configuration decide (Terminal excepted): pinning it here
+    // turns dynamic payment methods off and silently forecloses every
+    // non-card method the account accepts for subscriptions — a SEPA or Bacs
+    // debit payer would simply be unable to accept a transfer. Nothing
+    // downstream needs a card specifically: acceptGroupTransfer only makes the
+    // confirmed method the customer's default, which is method-agnostic.
     const si = await getStripe().setupIntents.create({
       customer: group.stripe_customer_id,
-      payment_method_types: ["card"],
       usage: "off_session",
       metadata: {
         kind: TRANSFER_INTENT_KIND,

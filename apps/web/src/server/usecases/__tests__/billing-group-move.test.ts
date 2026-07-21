@@ -18,6 +18,12 @@ import { randomUUID } from "node:crypto";
 import type Stripe from "stripe";
 
 const store = vi.hoisted(() => new Map<string, string>());
+// A deliberate slow-down knob on the invalidation step, used by ONE test (the
+// snapshot race below) to make a forced interleave land where it must. Zero for
+// every other test, so nothing else is affected. It exists because the window
+// being tested sits between a committed transaction and the next statement, and
+// invalidateMove is the only thing that runs in it.
+const cacheHook = vi.hoisted(() => ({ delayMs: 0 }));
 vi.mock("@/lib/cache", () => ({
   cacheEnabled: () => true,
   cacheGet: async (key: string) => {
@@ -28,6 +34,7 @@ vi.mock("@/lib/cache", () => ({
     store.set(key, JSON.stringify(value));
   },
   cacheDelPattern: async (pattern: string) => {
+    if (cacheHook.delayMs) await new Promise((r) => setTimeout(r, cacheHook.delayMs));
     const re = new RegExp(
       "^" + pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\\\*/g, ".*") + "$",
     );
@@ -253,6 +260,7 @@ const orgGroup = async (orgId: string) =>
 
 beforeEach(() => {
   store.clear();
+  cacheHook.delayMs = 0;
   vi.clearAllMocks();
   stripeMock.state.quantity = 1;
   stripeMock.state.billingScheme = "tiered";
@@ -906,6 +914,14 @@ describe.skipIf(!HAS_DB)("transfer a billing group", () => {
 
     expect(offer.status).toBe("pending_card");
     expect(offer.client_secret).toBeTruthy();
+    // No payment_method_types: pinning it disables dynamic payment methods and
+    // locks the recipient out of every non-card method the account accepts for
+    // subscriptions. The set belongs to the Dashboard's payment method
+    // configuration, not to this call site.
+    const [created] = stripeMock.setupIntentsCreate.mock.calls[0] as unknown as [
+      Record<string, unknown>,
+    ];
+    expect(created).not.toHaveProperty("payment_method_types");
     // Nothing has moved, and above all the card is still attached: the
     // subscription is never left unfunded while an offer is outstanding.
     expect((await readGroup(group)).owner_user_id).toBe(payer);
@@ -1376,6 +1392,78 @@ describe.skipIf(!HAS_DB)("a detach racing an attach into the group it empties", 
     expect(res.cancelled_group).toBeNull();
     expect(stripeMock.subscriptionsCancel).not.toHaveBeenCalled();
   });
+
+  it("does not cancel a group an attach filled WHILE THE CLAIM WAS WAITING FOR THE LOCK", async () => {
+    // The test above only proves the claim re-reads: the org was already
+    // committed before the claim ran. This one is the real race, and it is a
+    // statement about READ COMMITTED, not about locking.
+    //
+    // A statement's snapshot is taken when the STATEMENT starts. If the cancel
+    // is one statement, its `select ... for update` blocks on the lock an attach
+    // is holding — but `not exists (select 1 from organizations ...)` was
+    // already frozen against the snapshot taken before the attach committed.
+    // EPQ re-evaluation does not save it: it re-checks the LOCKED row's own
+    // updated tuple, refreshes visibility for no other table, and an attach
+    // never UPDATEs the subscriptions row at all (it takes the lock and writes
+    // `organizations`), so there is no updated tuple to trigger it. The cancel
+    // therefore commits against a group that has an org in it — the attaching
+    // org passed every gate, was charged for its seat, and lands inside a
+    // cancelled group. Exactly the outcome the one-statement shape claimed to
+    // prevent.
+    //
+    // The interleave is forced in three queued steps: a holder takes the group
+    // lock, the detach queues behind it, and a stand-in for the attach queues
+    // behind the detach — so the attach holds the row from the instant the
+    // detach's transaction commits, and is still holding it (org already
+    // repointed, not yet committed) when the cancel decision runs.
+    const payer = await makeUser("payer");
+    const clubOwner = await makeUser("clubowner");
+    const group = await makeGroup(payer, {
+      stripeSubId: "sub_snapshot_" + uniq(),
+      periodEndDays: 30,
+    });
+    const leaving = await makeOrg(group, clubOwner);
+    const joiner = await makeLooseOrg(payer);
+
+    let releaseHolder!: () => void;
+    const holderReleased = new Promise<void>((r) => (releaseHolder = r));
+    const holder = sql.begin(async (tx) => {
+      await tx`select id from subscriptions where id = ${group} for update`;
+      await holderReleased;
+    });
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Keeps the cancel decision from being issued the microsecond the detach's
+    // own transaction commits, so the queued attach below is certain to hold the
+    // lock by then. invalidateMove is what runs in that window for real.
+    cacheHook.delayMs = 60;
+    const detaching = detachOrgFromGroup({ actorUserId: clubOwner, orgId: leaving });
+    await new Promise((r) => setTimeout(r, 150));
+
+    // The attach: same lock, same write, queued after the detach.
+    const attaching = sql.begin(async (tx) => {
+      await tx`select id from subscriptions where id = ${group} for update`;
+      // Held across the whole window in which the cancel is decided.
+      await new Promise((r) => setTimeout(r, 900));
+      await tx`update organizations set subscription_id = ${group} where id = ${joiner.orgId}`;
+    });
+    await new Promise((r) => setTimeout(r, 150));
+
+    releaseHolder();
+    await holder;
+    const res = await detaching;
+    await attaching;
+
+    const [{ n }] = await sql<{ n: string }[]>`
+      select count(*)::text as n from organizations
+       where subscription_id = ${group} and deleted_at is null`;
+    expect(Number(n)).toBe(1);
+    const after = await readGroup(group);
+    expect(after.status).toBe("active");
+    expect(after.plan_key).toBe("pro");
+    expect(res.cancelled_group).toBeNull();
+    expect(stripeMock.subscriptionsCancel).not.toHaveBeenCalled();
+  }, 20_000);
 
   it("does cancel when it really is empty, and never leaves an org in a dead group", async () => {
     const payer = await makeUser("payer");
