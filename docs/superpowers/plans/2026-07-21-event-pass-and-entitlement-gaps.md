@@ -1156,6 +1156,27 @@ hole.
 - [ ] **Step 1:** Grep the whole tree for 2-arg `org_has_feature(` calls. Expect zero.
 - [ ] **Step 2:** Write V308 dropping the wrapper. Unqualified DDL.
 - [ ] **Step 3:** `npm run db:apply`, then full suite.
+**Env consolidation (owner decision 2026-07-21).** The same problem in miniature: the
+root `.env.local` is read by NOTHING in `package.json`, `db:apply` relies on
+`DATABASE_URL` already being exported (`scripts/flyway.sh:16`), and `vitest run` loads
+no env file at all — so a local run silently skips ~692 DB tests and reports green.
+
+Root becomes the single canonical file:
+
+- [ ] **Step 3a:** Merge `NEXT_PUBLIC_POSTHOG_HOST` and `NEXT_PUBLIC_POSTHOG_KEY` (today
+      only in `apps/web/.env.local`) into the root `.env.local`, then replace
+      `apps/web/.env.local` with a symlink to `../../.env.local`. Next.js follows
+      symlinks, so every existing `--env-file=apps/web/.env.local` script keeps working.
+      **Do not commit either file** — both are gitignored. Document the symlink step in
+      `.env.example` so a fresh clone reproduces it.
+- [ ] **Step 3b:** Add `--env-file-if-exists=.env.local` to the `db:*` scripts in the root
+      `package.json`. That flag is already used by `stripe:sync` and `i18n:translate`, so
+      it is a proven pattern in this repo.
+- [ ] **Step 3c:** Load the root env in `apps/web/vitest.config.ts` (`process.loadEnvFile`,
+      guarded so a missing file is not fatal in CI where vars come from the environment).
+      **Expect this to surface pre-existing failures** — suites that have been skipping
+      will start executing. Report them; do not paper over them.
+
 - [ ] **Step 4:** Widen the integration job to run the `src/lib/__tests__` DB suites.
 - [ ] **Step 5:** Confirm the newly-included suites actually RUN — count them in the
       output. A suite that silently skips in CI is worse than no suite, because it
