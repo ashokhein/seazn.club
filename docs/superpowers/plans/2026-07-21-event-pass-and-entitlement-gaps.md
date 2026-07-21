@@ -1214,6 +1214,39 @@ Root becomes the single canonical file:
       **Expect this to surface pre-existing failures** — suites that have been skipping
       will start executing. Report them; do not paper over them.
 
+**Local Redis (owner decision 2026-07-21).** The third face of the same problem. With
+`REDIS_URL` unset locally the entitlement cache is inert, so cache-staleness bugs are
+invisible until a Redis-backed target runs them. Two such bugs shipped into this branch
+and were only caught by review, not by a test.
+
+`REDIS_URL` is a **single switch controlling two subsystems**: the fail-open cache
+(`lib/cache.ts:35-36`) and the rate limiter, which goes from inert to enforcing
+(`lib/rate-limit.ts:40-48`). The auth limits are keyed by **IP**, not user —
+`magic-link/route.ts:62` is `magic-link:${ip}` at 5 per 300s — and smoke signs in ~40
+users from one IP. So switching Redis on without addressing the limiter hard-breaks
+smoke and the Playwright auth setup at the 6th sign-in.
+
+- [ ] **Step 3d:** Add a local Redis (`redis://localhost:6379`; `lib/cache.ts:20` uses
+      ioredis, so a plain container works) and document the setup — compose file or
+      README — so a fresh clone reproduces it.
+- [ ] **Step 3e:** Reset the rate-limit counter from `scripts/smoke.ts` and the Playwright
+      auth setup **before each sign-in, not once before the burst.** `max` is 5 per 300s
+      and smoke signs in ~40 users, so a single flush still 429s on the 6th. Everything
+      comes from one IP, so this is one `DEL rl:magic-link:<ip>` per call (add
+      `rl:magic-link-consume:<ip>` if the consume step trips `AUTH_LIMIT`'s 10/60).
+
+      **Do NOT make the limits configurable.** Redis holds only the counter — `incrWindow`
+      (`lib/cache.ts:96-105`) is a Lua `INCR`+`EXPIRE` returning an integer; `max` and
+      `windowSeconds` are code constants in `rate-limit.ts:62-70` compared in application
+      memory. Adding an env knob would mean shipping a way to weaken a security control in
+      production. Deleting the counter is arithmetically identical and test-side only.
+
+      No teardown needed: the Lua script sets `EXPIRE`, so counters self-expire.
+- [ ] **Step 3f:** Re-run smoke and the full suite with `REDIS_URL` set. **Expect
+      failures that have been invisible** — that is the point. Report them; do not paper
+      over them. Land this AFTER the entitlement fixes so a red run means a new find,
+      not a known one.
+
 - [ ] **Step 4:** Widen the integration job to run the `src/lib/__tests__` DB suites.
 - [ ] **Step 5:** Confirm the newly-included suites actually RUN — count them in the
       output. A suite that silently skips in CI is worse than no suite, because it
