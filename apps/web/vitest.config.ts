@@ -1,5 +1,55 @@
 import { defineConfig } from "vitest/config";
+import fs from "fs";
 import path from "path";
+
+// vitest loads no env file of its own. Every DB-backed suite guards on
+// `const HAS_DB = !!process.env.DATABASE_URL` + `describe.skipIf(!HAS_DB)`, so
+// without it exported in the shell ~700 tests silently skipped and the run
+// still printed green — the suite read as coverage it was not providing.
+// Load the canonical repo-root .env.local (apps/web/.env.local symlinks to it)
+// so a bare `npx vitest run` exercises them.
+//
+// A missing file is not fatal: CI ships no .env.local and supplies DATABASE_URL
+// / REDIS_URL through the job environment instead. Node's loader never
+// overwrites an already-set variable, so an exported value (or CI's) still wins.
+const rootEnvFile = path.resolve(__dirname, "../../.env.local");
+const preexisting = new Set(Object.keys(process.env));
+if (fs.existsSync(rootEnvFile)) process.loadEnvFile(rootEnvFile);
+/** Keys this config introduced — an exported value was never overwritten. */
+const fileOnly = (k: string) => !preexisting.has(k) && k in process.env;
+
+// …but the file is a DEVELOPER's env, so it also carries live third-party
+// credentials, and a unit test that quietly calls a real vendor is worse than
+// one that skips. Drop the outbound ones the suite has always run without:
+//
+//   POSTHOG*  — posthog-server.ts reads the key at module load with
+//               flushAt:1/flushInterval:0, so every captureServer() awaits a
+//               real HTTPS round-trip. With the key present, org-posts'
+//               22- and 25-post pagination tests blew the 5s timeout, and the
+//               run was shipping fake events into the live project.
+//               posthog-server.test.ts already documents "unconfigured" as the
+//               contract for CI and local test.
+//   RESEND_API_KEY   — lib/email.ts:110 send() only no-ops WITHOUT a key; the
+//               suites that don't mock @/lib/email say so explicitly ("no-op
+//               without RESEND_API_KEY either way"). With one, they mail out.
+//   ANTHROPIC_API_KEY — every AI test sets its own dummy key; a real one just
+//               means a slipped path bills us. The one live bench
+//               (schedule-ai-effort-ab.live.test.ts, AI_AB_LIVE=1) reads
+//               .env.local itself, so it is unaffected.
+//
+// STRIPE_SECRET_KEY deliberately stays: the live billing suites (BILLING_LIVE=1)
+// take it from the ambient environment, and the rest mock the Stripe module.
+// Anything exported by hand survives this — it's only the file's values we drop.
+for (const key of [
+  "POSTHOG_KEY",
+  "POSTHOG_HOST",
+  "NEXT_PUBLIC_POSTHOG_KEY",
+  "NEXT_PUBLIC_POSTHOG_HOST",
+  "RESEND_API_KEY",
+  "ANTHROPIC_API_KEY",
+]) {
+  if (fileOnly(key)) delete process.env[key];
+}
 
 export default defineConfig({
   test: {

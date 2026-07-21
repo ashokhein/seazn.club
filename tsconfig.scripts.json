@@ -1,0 +1,31 @@
+{
+  // `scripts/` was covered by no tsconfig at all: apps/web/tsconfig.json
+  // excludes it, and nothing else looked at the repo root — so `tsc --noEmit`
+  // never saw scripts/smoke.ts (272 KB) or the seed/sync/openapi scripts.
+  //
+  // They can't just be folded into apps/web's config: these run under
+  // `node --experimental-strip-types`, so they need node module semantics
+  // (nodenext + explicit .ts specifiers), not the Next bundler's.
+  // Wired into `npm run typecheck --workspace apps/web`, which CI already runs.
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    // No explicit "lib": the default for this target is lib.es2022.FULL, which
+    // brings in DOM — and with it the DOM `Response.json(): Promise<any>` these
+    // scripts are written against. Pinning lib to es2023 swaps in @types/node's
+    // stricter `Promise<unknown>` and lights up call sites that node itself is
+    // perfectly happy with.
+    "target": "es2022",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    // node strips the types and resolves the real .ts file on disk.
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "types": ["node"],
+    // Scripts reach into apps/web sources (openapi-gen, i18n) which use the
+    // app's own "@/…" alias.
+    "paths": { "@/*": ["./apps/web/src/*"] }
+  },
+  "include": ["scripts/**/*.ts"]
+}

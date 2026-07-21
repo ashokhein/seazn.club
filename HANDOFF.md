@@ -42,8 +42,13 @@ surfaces), Phase 5 (discovery + upgrade-page UI), Phase 6 (E2E/smoke), Task 25 (
 - Full review rigour on every task (owner ruling), Opus for every subagent.
 
 ## Gotchas
-- **vitest does NOT read `apps/web/.env.local`** — export `DATABASE_URL` or ~692 DB tests
-  silently skip and the run reports green. Same hole in CI.
+- **Env: ONE file, `<root>/.env.local`;** `apps/web/.env.local` is a gitignored symlink to
+  it — recreate with `ln -sf ../../.env.local apps/web/.env.local` in a fresh worktree, or
+  vitest/`db:*` read the root copy and the two diverge. vitest now loads it (no more
+  hand-exporting `DATABASE_URL`), minus the PostHog/Resend/Anthropic keys, which would make
+  unit tests call live vendors.
+- **5s default `testTimeout` flakes under full-suite DB load** — `pass-scoping-guard` and
+  `org-posts` pagination time out in a whole-suite run, pass alone in ~1s.
 - **`REDIS_URL` unset locally** makes the entitlement cache inert; two staleness bugs shipped
   because of it.
 - **Reports in `.superpowers/sdd/` are gitignored and die with a removed worktree.**
@@ -56,4 +61,4 @@ surfaces), Phase 5 (discovery + upgrade-page UI), Phase 6 (E2E/smoke), Task 25 (
 - Fresh-database apply of this chain has never been tested (`baselineVersion = "240"`).
 
 ## Verify
-cd apps/web && npx tsc --noEmit && npx vitest run   # export DATABASE_URL first
+cd apps/web && npm run typecheck && npx vitest run   # typecheck also covers scripts/
