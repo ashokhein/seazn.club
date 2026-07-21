@@ -79,6 +79,8 @@
   "pricing.pass.per": " / event",
   "pricing.pass.note": "One-time. No subscription. Yours for the event's lifetime.",
   "pricing.pass.cta": "Start free, upgrade in-app",
+  "pricing.pass.ctaSignedIn": "Pick a competition",
+  "pricing.pass.included": "Your plan already includes everything here.",
   "pricing.table.feature": "Feature",
   "pricing.table.community": "Community",
   "pricing.table.pass": "Event Pass",

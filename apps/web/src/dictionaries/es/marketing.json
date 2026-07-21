@@ -79,6 +79,8 @@
   "pricing.pass.per": " / evento",
   "pricing.pass.note": "Pago único. Sin suscripción. Tuyo durante toda la vida del evento.",
   "pricing.pass.cta": "Empieza gratis, mejora en la app",
+  "pricing.pass.ctaSignedIn": "Elige una competición",
+  "pricing.pass.included": "Tu plan ya incluye todo lo que hay aquí.",
   "pricing.table.feature": "Función",
   "pricing.table.community": "Community",
   "pricing.table.pass": "Pase de Evento",

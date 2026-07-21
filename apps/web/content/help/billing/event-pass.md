@@ -53,4 +53,6 @@ The annual club championship, a one-off fundraiser, a school sports day: events 
 
 **What happens to the passed competition if my Pro subscription lapses?** It keeps everything the pass grants — the pass is bought outright for that event and survives a downgrade. Only the rest of your org falls back to Community limits ([what downgrading freezes](/help/billing/downgrade)).
 
-**Where do I buy one?** On the competition's settings page, next to the features it unlocks.
+**Where do I buy one?** Wherever the competition is: open it and the **Event Pass — $29 one-time** link sits above its name, on the overview and on its settings page. From the competition list, it's in the **⋯** menu on the card. Your [billing page](/o/settings/billing) lists the same link for each competition you could still pass, under **Event Pass** below the usage meter. All four go to the same one-page checkout.
+
+Once a competition holds a pass, those links are replaced by an **Event Pass active** marker — there's nothing left to buy for that event. On a paid plan they don't appear at all, because your plan already grants more.

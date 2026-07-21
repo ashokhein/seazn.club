@@ -79,6 +79,8 @@
   "pricing.pass.per": " / evenement",
   "pricing.pass.note": "Eenmalig. Geen abonnement. Van jou voor de hele levensduur van het evenement.",
   "pricing.pass.cta": "Begin gratis, upgrade in de app",
+  "pricing.pass.ctaSignedIn": "Kies een competitie",
+  "pricing.pass.included": "Je abonnement bevat dit alles al.",
   "pricing.table.feature": "Functie",
   "pricing.table.community": "Community",
   "pricing.table.pass": "Event Pass",

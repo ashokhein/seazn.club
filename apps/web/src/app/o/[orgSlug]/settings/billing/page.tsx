@@ -15,12 +15,13 @@ import {
   RetryPaymentButton,
 } from "@/components/billing-manage";
 import { BillingPassPurchases } from "@/components/billing-pass-purchases";
+import { BillingPassOffer, type PassCandidate } from "@/components/billing-pass-offer";
 import { getBillingOverview, getPassPurchases } from "@/server/usecases/billing-manage";
 import { type Subscription } from "@/lib/types";
-import { getLimit } from "@/lib/entitlements";
+import { getLimit, isPaidPlan, orgPlanKey } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
 import { EVENTS } from "@/lib/analytics-events";
-import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency";
+import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
@@ -132,6 +133,33 @@ export default async function BillingPage({
 
   const trialDays = daysUntil(sub?.trial_end ?? null);
   const currency = await preferredCurrency(orgId);
+
+  // Event Pass offer (task 19, entry point 2 of 4) — see <BillingPassOffer>.
+  //
+  // The plan test here is the RESOLVER's, not the `isPaid` above it. They
+  // disagree, in the direction that matters: a past_due subscription 14 days
+  // into dunning, and a staff comp past its end date, both still carry
+  // `plan_key = 'pro'` on the row (so `isPaid` is true) while `orgPlanKey`
+  // degrades them to community — and for those orgs the $29 pass genuinely
+  // lifts entitlements and must still be offered. `isPaidPlan(orgPlanKey())` is
+  // the one definition of "already paid for more than this"; nothing here
+  // re-invents it.
+  const passOfferable = isOwner && !isPaidPlan(await orgPlanKey(orgId));
+  // Competitions the pass would actually do something for: active, and not
+  // already passed. `not exists` is presence-only — a staff-granted pass has a
+  // null `stripe_payment_intent` and is fully active, so filtering on payment
+  // would re-offer a pass the org already holds.
+  const passCandidates = passOfferable
+    ? await sql<PassCandidate[]>`
+        select c.id, c.name, c.slug
+        from competitions c
+        where c.org_id = ${orgId}
+          and c.status in ('draft','published','live')
+          and not exists (
+            select 1 from competition_passes cp where cp.competition_id = c.id)
+        order by c.created_at desc
+        limit 5`
+    : [];
 
   return (
     <>
@@ -407,6 +435,15 @@ export default async function BillingPage({
             />
           </div>
         </section>
+
+        {/* Event Pass — directly under the meter it moves: a passed
+            competition stops counting against competitions.max_active. */}
+        <BillingPassOffer
+          rows={passCandidates}
+          orgSlug={orgSlug}
+          price={formatMinor(passPrice(currency), currency)}
+          dict={dict}
+        />
 
         {/* Upgrade / plan comparison */}
         {!isPaid && isOwner && (
