@@ -73,7 +73,15 @@ export function CookieConsent() {
       // banner still spans most of the viewport width (left-4..right-20,
       // not full-bleed), so it keeps clearing that corner instead of
       // resting flush against it.
-      className="fixed bottom-4 left-4 right-20 z-50 mx-auto max-w-xl rounded-2xl border border-purple-100 bg-white p-4 shadow-xl sm:left-6 sm:right-auto sm:max-w-sm"
+      //
+      // z-40, BELOW every dialog overlay (globals.css `.modal-overlay` and the
+      // confirm providers are all z-50). At z-50 it tied with them and won on
+      // DOM order — it is mounted last in the root layout — so on a phone it
+      // painted over the Event Pass checkout sheet and ate the click on "Pay".
+      // The buyers who see this banner are first-time buyers, which is every
+      // buyer of a $29 pass. Nothing needs to sit above a modal; sticky headers
+      // are z-40 too and this still beats them on the same DOM-order tie.
+      className="fixed bottom-4 left-4 right-20 z-40 mx-auto max-w-xl rounded-2xl border border-purple-100 bg-white p-4 shadow-xl sm:left-6 sm:right-auto sm:max-w-sm"
     >
       <p className="text-sm text-slate-600">
         {clientCommon(locale, "cookie.message")}{" "}

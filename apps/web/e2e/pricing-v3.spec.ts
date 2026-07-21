@@ -34,6 +34,27 @@ test.describe("pricing page v3", () => {
       await expect(entrantsRow).toContainText("64");
       await expect(entrantsRow).toContainText("256");
 
+      // The rest of what V310/V311 repackaged, on the page that sells it.
+      // These are the rows this branch MOVED, so a matrix drift shows up here
+      // before a buyer finds it (task 22).
+      // Cell 0 of every row is the feature LABEL (a <td>, not a <th>), so the
+      // plan columns start at 1: community, event pass, pro, pro plus.
+      const cell = (label: string, plan: 0 | 1 | 2 | 3) =>
+        matrix.locator("tr", { hasText: label }).locator("td").nth(plan + 1);
+      // Divisions per competition: community 2, pass 10 (the pass's own ceiling).
+      await expect(cell("Divisions per competition", 0)).toHaveText("2");
+      await expect(cell("Divisions per competition", 1)).toHaveText("10");
+      // The fee ladder — the pass's only recurring saving.
+      await expect(cell("Platform fee on entry fees", 0)).toContainText("8%");
+      await expect(cell("Platform fee on entry fees", 1)).toContainText("5%");
+      await expect(cell("Platform fee on entry fees", 2)).toContainText("2%");
+      // V308 added player profiles to the pass column…
+      await expect(cell("Public player profiles", 0)).toHaveText("—");
+      await expect(cell("Public player profiles", 1)).toHaveText("✓");
+      // …and V310 made `branding` free on EVERY plan, so the community cell
+      // must NOT be a dash. Re-gating it would be a silent takeaway.
+      await expect(cell("Custom branding", 0)).toHaveText("✓");
+
       // The dark Business plan never surfaces on marketing pages (v3/03 §6).
       expect(await page.locator("body").innerText()).not.toContain("Business");
 

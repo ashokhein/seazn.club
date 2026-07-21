@@ -103,6 +103,17 @@ async function assertTierAllowed(
   }
 }
 
+/** The competition an existing sponsor already sits on, so a patch that only
+ *  moves the TIER is still judged against a competition. Tenant-scoped: a
+ *  sponsor id from another org resolves to null, never to that org's scope. */
+async function sponsorCompetitionId(orgId: string, id: string): Promise<string | null> {
+  return withTenant(orgId, async (tx) => {
+    const [row] = await tx<{ competition_id: string | null }[]>`
+      select competition_id from sponsors where id = ${id}`;
+    return row?.competition_id ?? null;
+  });
+}
+
 /** Sponsor edits must show on the public tree promptly — same cache bust the
  *  org-branding PATCH fires (tail work; slug lookup included). */
 function bustPublicSponsors(orgId: string): void {
@@ -174,7 +185,26 @@ export async function patchSponsor(
   // Gate only what the patch introduces: promoting to a paid tier or scoping
   // to a competition needs sponsors.tiers. Editing name/url/logo on an
   // existing tiered sponsor stays allowed after a downgrade.
-  await assertTierAllowed(auth.orgId, patch.tier, patch.competition_id);
+  //
+  // The scope is the competition the sponsor ENDS UP on — the patch's own
+  // `competition_id` when the patch sets one, otherwise the row's existing one.
+  // Reading only the patch resolved a plain `{ tier: "title" }` promotion
+  // ORG-WIDE, and lib/entitlements.ts consults `competition_passes` only when a
+  // competition is in scope, so an Event Pass holder was refused the promotion
+  // on the very competition they had paid to tier. The pass-scoping guard could
+  // not see it: the argument was present, just carrying `undefined`.
+  //
+  // The extra read costs one query, and only on a promotion that does not
+  // already name a competition — `{ name }` / `{ status }` patches are
+  // untouched. Unscoping (`competition_id: null`) still resolves org-wide and
+  // is still refused; that asymmetry is deliberate, see assertTierAllowed.
+  const scope =
+    "competition_id" in patch
+      ? patch.competition_id
+      : patch.tier && patch.tier !== "partner"
+        ? await sponsorCompetitionId(auth.orgId, id)
+        : undefined;
+  await assertTierAllowed(auth.orgId, patch.tier, scope);
   return withTenant(auth.orgId, async (tx) => {
     // A placement parked by an open dispute stays down until the dispute
     // closes — reactivating it by hand would put a charged-back sponsor

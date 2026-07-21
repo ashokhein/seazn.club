@@ -430,8 +430,20 @@ function Comparison({
     <section className="mt-8">
       <h2 className="app-eyebrow">{t(dict, "upgrade.compare.title")}</h2>
       {/* Wide content scrolls inside its own container; the page body never
-          scrolls sideways (v3/02 pattern 4). */}
-      <div className="mt-3 overflow-x-auto">
+          scrolls sideways (v3/02 pattern 4).
+
+          Focusable and named, because at 375 px this container really does
+          overflow and its only content is a table — nothing inside it can take
+          focus, so a keyboard user had no way to scroll it and axe flagged
+          `scrollable-region-focusable` (serious) on the mobile audit added in
+          task 22. `role="region"` + the section's own heading text is what
+          turns the tab stop into something a screen reader can announce. */}
+      <div
+        className="mt-3 overflow-x-auto"
+        tabIndex={0}
+        role="region"
+        aria-label={t(dict, "upgrade.compare.title")}
+      >
         <table className="w-full min-w-[22rem] border-collapse text-sm">
           <thead>
             <tr className="border-b border-purple-100">

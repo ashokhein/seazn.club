@@ -3,6 +3,7 @@ import {
   TAG,
   apiJson,
   addEntrantsViaApi,
+  communityLimit,
   setOrgPlanBySql,
   setOrgSubscriptionSql,
 } from "./helpers";
@@ -49,6 +50,11 @@ test.describe.serial("billing", () => {
     // Usage card reflects plan limits ("✓ 2 active competitions" also exists
     // in the plan-comparison card — exact match dodges it).
     await expect(page.getByText("Active competitions", { exact: true })).toBeVisible();
+    // The Event Pass purchases section renders NOTHING for an org that holds no
+    // pass — an empty money card on every free org's billing page would read as
+    // a charge. This is the negative half of U12, whose positive half (a real
+    // $29 purchase, named and receipted) lives in e2e/event-pass.spec.ts.
+    await expect(page.locator("[data-pass-purchases]")).toHaveCount(0);
   });
 
   test("upgrade click mounts the embedded Stripe checkout", async ({ page }) => {
@@ -119,10 +125,17 @@ test.describe.serial("billing", () => {
     // with community values. No stripe_subscription_id → DowngradeButton shows.
     await setOrgPlanBySql({ orgId: orgB }, "pro");
 
-    // Three active competitions — one over the community ceiling of 2. Each
-    // gets a division so the freeze has a write surface to block.
+    // ONE over the community ceiling, and the ceiling is read from the matrix
+    // rather than written down. It has already moved once inside this branch
+    // (V310/V311 took `competitions.max_active` from 2 to 5) and this test went
+    // quietly green-then-red with it: three competitions no longer overshoot
+    // anything, so nothing froze and the 402 below came back 201. Derive the
+    // count and the assertion cannot drift with the packaging again.
+    const communityMaxActive = await communityLimit("competitions.max_active");
+    const overQuota = communityMaxActive + 1;
+    // Each competition gets a division so the freeze has a write surface to block.
     const divisionIds: string[] = [];
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < overQuota; i++) {
       const comp = await apiJson<{ id: string }>(page.request, "/api/v1/competitions", "POST", {
         name: `Freeze ${i + 1} ${TAG}`,
         visibility: "private",
@@ -169,8 +182,9 @@ test.describe.serial("billing", () => {
     expect(frozen.status).toBe(402);
     expect(frozen.error?.code).toBe("PAYMENT_REQUIRED");
 
-    // The in-quota competitions stay writable.
-    const alive = await addEntrantsViaApi(page.request, divisionIds[2]!, ["Still Alive"]);
+    // The in-quota competitions stay writable — the most recently active one,
+    // which is the last created whatever the ceiling turns out to be.
+    const alive = await addEntrantsViaApi(page.request, divisionIds.at(-1)!, ["Still Alive"]);
     expect(alive.status).toBeLessThan(300);
   });
 
