@@ -11,7 +11,7 @@
 //
 // The view keeps consent + public-visibility (asserted in
 // public-site/__tests__/consent.test.ts); the entitlement lives here.
-import { afterAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 
 // unstable_cache is a Next server-runtime API, absent under vitest. This double
@@ -31,6 +31,10 @@ vi.mock("next/cache", () => ({
       return cacheStore.get(k);
     },
   revalidateTag: vi.fn(),
+  // public-site/revalidate.ts (reached via usecases/competitions.ts) imports
+  // revalidatePath too. Omitting it only looked harmless because those call
+  // sites sit inside try/catch — the seed would have swallowed a TypeError.
+  revalidatePath: vi.fn(),
 }));
 
 import { sql } from "@/lib/db";
@@ -66,17 +70,27 @@ interface Scene {
  * A COMMUNITY org with one consented person rostered in TWO unlisted
  * competitions, one of which carries a competition pass.
  *
- * The pass is keyed to the `pro` matrix rather than `event_pass`: the shipped
- * event_pass matrix is deliberately sparse and has no dashboard.player_profiles
- * row at all today (it falls through to the plan row), so it could not separate
- * the two competitions. competition_passes.pass_key is a plain FK to plans.key
- * and the resolver joins plan_entitlements on it, so this exercises the real
- * per-competition mechanism without editing the shipped matrix.
+ * The pass is a real `event_pass`: V308 added
+ * ('event_pass', 'dashboard.player_profiles', true) to the matrix (owner
+ * decision D17), so the pass now separates the two competitions on the actual
+ * product path rather than a `pro`-keyed stand-in.
  *
  * Unlisted, not public: community orgs hold at most one PUBLIC competition
  * (dashboard.public.max), and unlisted is equally visible to public_players_v.
  */
 async function seedScene(): Promise<Scene> {
+  // Unstated precondition, stated. Everything below assumes the SHIPPED matrix
+  // grants this feature to event_pass (V308). Read it, never write it — if the
+  // matrix is ever flipped, this line says so instead of leaving a bare
+  // "expected null not to be null" under a test named for competition scoping.
+  const [grant] = await sql<{ bool_value: boolean | null }[]>`
+    select bool_value from plan_entitlements
+    where plan_key = 'event_pass' and feature_key = 'dashboard.player_profiles'`;
+  expect(
+    grant?.bool_value,
+    "precondition: plan_entitlements('event_pass','dashboard.player_profiles') must be true (V308)",
+  ).toBe(true);
+
   const suffix = randomUUID().slice(0, 8);
   const [{ id: orgId, slug: orgSlug }] = await sql<{ id: string; slug: string }[]>`
     insert into organizations (name, slug)
@@ -140,7 +154,7 @@ async function seedScene(): Promise<Scene> {
   // The pass — one competition, for its lifetime (V271).
   await sql`
     insert into competition_passes (competition_id, org_id, pass_key)
-    values (${slugs[0]!.id}, ${orgId}, 'pro')`;
+    values (${slugs[0]!.id}, ${orgId}, 'event_pass')`;
   await invalidateOrgEntitlements(orgId);
 
   return {
@@ -163,20 +177,36 @@ afterAll(async () => {
 });
 
 describe.skipIf(!HAS_DB)("getPublicPlayer — player-profile gate is competition-scoped", () => {
+  // The first two tests only READ, so they share one scene: every seedScene()
+  // writes an org, two competitions and two entrants into the shared dev DB,
+  // and three of them per run widened a known cross-suite race for no extra
+  // coverage. The third test DELETES the pass, so it keeps its own scene rather
+  // than leaving a mutated one behind for whatever runs next.
+  let shared: Scene;
+  beforeAll(async () => {
+    shared = await seedScene();
+  });
+
+  // Between tests, never within one. The third test depends on the store
+  // staying warm across its OWN two calls — that persistence is what proves the
+  // gate sits outside the unstable_cache closure. Clearing here resets the
+  // leak-through between tests without touching that.
+  beforeEach(() => {
+    cacheStore.clear();
+  });
+
   it("serves the card on the competition the pass paid for", async () => {
-    const scene = await seedScene();
-    const data = await getPublicPlayer(scene.orgSlug, scene.passedSlug, scene.personId);
+    const data = await getPublicPlayer(shared.orgSlug, shared.passedSlug, shared.personId);
     expect(data).not.toBeNull();
-    expect(data!.player.name).toBe(scene.personName);
+    expect(data!.player.name).toBe(shared.personName);
   });
 
   it("404s the SAME person on an unpassed competition in the SAME org", async () => {
-    const scene = await seedScene();
     // The leak this task exists to prevent: one Event Pass must not light up
     // every other competition in the org. A one-sided test would not see it.
-    const passed = await getPublicPlayer(scene.orgSlug, scene.passedSlug, scene.personId);
+    const passed = await getPublicPlayer(shared.orgSlug, shared.passedSlug, shared.personId);
     expect(passed).not.toBeNull();
-    const unpassed = await getPublicPlayer(scene.orgSlug, scene.unpassedSlug, scene.personId);
+    const unpassed = await getPublicPlayer(shared.orgSlug, shared.unpassedSlug, shared.personId);
     expect(unpassed).toBeNull();
   });
 
