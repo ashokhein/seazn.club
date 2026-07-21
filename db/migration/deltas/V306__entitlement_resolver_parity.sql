@@ -6,12 +6,19 @@
 -- granting Pro on every public page, and a paid Event Pass granted nothing.
 --
 -- security definer + a pinned search_path so the competition_passes read is not
--- RLS-filtered if this is ever called from a withTenant transaction (the V226
--- hash-chain functions use the same shape). The search_path is the Flyway
--- default schema placeholder, NOT a literal `public`: the app lives in
--- seazn_club (db/flyway.toml, scripts/flyway.sh -defaultSchema), and a literal
--- would make the function resolve tables in the wrong schema and silently
--- return false for everything.
+-- RLS-filtered if this is ever called from a withTenant transaction. The
+-- search_path repeats the repo-wide definer convention verbatim —
+-- `${flyway:defaultSchema}, public, extensions, pg_temp`, the same shape the
+-- V226 hash-chain functions use. Two parts are load-bearing:
+--   * the FIRST element is the Flyway default schema placeholder, NOT a literal
+--     `public`: the app lives in seazn_club (db/flyway.toml, scripts/flyway.sh
+--     -defaultSchema), and a literal would make the function resolve tables in
+--     the wrong schema and silently return false for everything;
+--   * pg_temp is named LAST on purpose. When it is not named at all Postgres
+--     searches it FIRST, so any session able to `create temp table
+--     plan_entitlements` (or subscriptions / org_entitlement_overrides /
+--     competition_passes) could shadow the real table inside this definer
+--     function and dictate what it returns.
 --
 -- The live-subscription status list is copied from
 -- apps/web/src/lib/subscription-status.ts (LIVE_SUBSCRIPTION_STATUSES =
@@ -32,7 +39,7 @@ create or replace function org_has_feature(
   p_competition_id uuid
 ) returns boolean
   language sql stable security definer
-  set search_path = ${flyway:defaultSchema} as $$
+  set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
     with plan as (
       select case
         -- Mirrors entitlements.ts — a comp past its end date resolves as
@@ -201,6 +208,6 @@ on conflict (plan_key, feature_key) do update
 create or replace function org_has_feature(p_org_id uuid, p_feature_key text)
   returns boolean
   language sql stable security definer
-  set search_path = ${flyway:defaultSchema} as $$
+  set search_path = ${flyway:defaultSchema}, public, extensions, pg_temp as $$
     select org_has_feature(p_org_id, p_feature_key, null::uuid)
   $$;
