@@ -1335,13 +1335,23 @@ Create `apps/web/src/server/ai/openrouter-policy.ts`. Populate `ALLOWED_PROVIDER
 //
 // Reviewed: 2026-07-21. Re-review whenever a provider is added.
 
-/** Upstream providers permitted to serve our traffic.
+/** Upstream providers permitted to serve our traffic — FIRST-PARTY VENDORS ONLY.
  *
- *  POPULATE FROM design/v4/05-openrouter-candidates.md — the policy-routable
- *  rows of the Task 2 probe, and nothing else. Left empty deliberately: the
- *  "keeps a non-empty allowlist" test fails until it is filled in, so this
- *  cannot ship as a guess about which providers cleared the policy. */
-export const ALLOWED_PROVIDERS = [] as const satisfies readonly string[];
+ *  A model id says who BUILT the model, never who SERVES it. Verified
+ *  2026-07-21 against /api/v1/models/{id}/endpoints: `anthropic/claude-sonnet-5`
+ *  has 7 endpoints across Azure, Anthropic, Amazon Bedrock and Google Vertex;
+ *  `z-ai/glm-5.2` has 31 across ~30 companies; `moonshotai/kimi-k2.6` has 20.
+ *  `data_collection: "deny"` filters on training policy — it does NOT pin who
+ *  processes the data. Without this list a single request could be served by
+ *  any of them, which is not what the help pages promise organisers.
+ *
+ *  These are provider ROUTING SLUGS, not model-id prefixes — they differ
+ *  (`x-ai/grok-4.5` is served by slug `xai`, display name "xAI"). Take slugs
+ *  from the `tag` field, up to the first `/`.
+ *
+ *  Each slug below was verified with a live request carrying the full policy;
+ *  all four returned 200 and were served by the named vendor. */
+export const ALLOWED_PROVIDERS = ["anthropic", "xai", "z-ai", "moonshotai"] as const;
 
 const POLICY = {
   provider: {
@@ -2029,9 +2039,11 @@ Survivors plus both control arms, `AI_AB_REPEATS=3`, both packs.
 
 Run: `AI_AB_LIVE=1 AI_AB_REPEATS=3 npx vitest run src/server/usecases/__tests__/schedule-ai-effort-ab.live.test.ts`
 
+**Every arm pins its endpoint.** OpenRouter serves many models in quantised variants — endpoint tags carry `fp8`, `fp4`, `int4` suffixes (`z-ai/glm-5.2` alone has 31 endpoints across ~30 companies). Left to routing, this shootout would compare full-precision Claude against a 4-bit GLM and attribute the difference to the model. Each arm therefore sends `provider.only` with its exact endpoint slug, and the results table records the quantisation beside cost and quality, so a row reads "GLM at fp8" rather than "GLM". An arm whose endpoint cannot be pinned is not run.
+
 - [ ] **Step 6: Write up the results**
 
-Create `design/v4/06-openrouter-shootout.md` in the same table shape as `design/v4/04-architect-benchmarks.md` (pack, arm, secs mean, out mean, blocking, warnings, $), with a short "How to apply" section stating explicitly whether the default model should change and why. Classify failures by the rule IDs Task 1 introduced.
+Create `design/v4/06-openrouter-shootout.md` in the same table shape as `design/v4/04-architect-benchmarks.md` (pack, arm, secs mean, out mean, blocking, warnings, $), plus a column naming the endpoint and quantisation each arm ran on. Include a short "How to apply" section stating explicitly whether the default model should change and why. Classify failures by the rule IDs Task 1 introduced.
 
 - [ ] **Step 7: Commit**
 
