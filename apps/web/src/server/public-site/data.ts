@@ -370,8 +370,15 @@ export async function getPublicFixture(
       const names = await sql<{ id: string; display_name: string }[]>`
         select id, display_name from public_entrants_v
         where division_id = ${division.id}`;
+      // Competition-scoped: an Event Pass grants realtime for the competition it
+      // was bought for, so the org-wide 2-arg overload denies a paid-for fixture.
+      // This is the SPECTATOR side of the grant — the organiser's own noticeboard
+      // was already comp-scoped, so an org-wide read here meant a buyer saw live
+      // scoring work for themselves and for none of their audience, which is the
+      // whole point of the feature.
       const [rt] = await sql<{ realtime: boolean }[]>`
-        select org_has_feature(${shell.org.id}, 'realtime') as realtime`;
+        select org_has_feature(${shell.org.id}, 'realtime', ${shell.competition.id})
+               as realtime`;
       return {
         fixture,
         entrantNames: Object.fromEntries(names.map((n) => [n.id, n.display_name])),
@@ -493,13 +500,18 @@ export async function getPublicPlayer(
 }
 
 /**
- * Realtime entitlement for a public fixture's org (token route, doc 09 §4).
+ * Realtime entitlement for a public fixture's COMPETITION (token route, doc 09 §4).
  * Uncached-tagless: short TTL via unstable_cache keyed on fixture id.
+ *
+ * Scoped to the competition, not the org: an Event Pass buys realtime for one
+ * competition, and the org-wide overload 403s the token route for a fixture the
+ * organiser has paid for. The join already carries the competition id — only the
+ * argument was missing.
  */
 export async function fixtureRealtimeEligible(fixtureId: string): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(fixtureId)) return false;
   const [row] = await sql<{ realtime: boolean }[]>`
-    select org_has_feature(c.org_id, 'realtime') as realtime
+    select org_has_feature(c.org_id, 'realtime', c.id) as realtime
     from public_fixtures_v f
     join public_divisions_v d on d.id = f.division_id
     join public_competitions_v c on c.id = d.competition_id
