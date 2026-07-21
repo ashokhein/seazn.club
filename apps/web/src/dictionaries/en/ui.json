@@ -522,7 +522,7 @@
   "billing.trialRemaining.one": "{count} day remaining in trial",
   "billing.trialRemaining.other": "{count} days remaining in trial",
   "billing.trialEnded": "Trial ended",
-  "billing.proUntil": "Pro until {date} — then Community",
+  "billing.proUntil": "{plan} until {date} — then Community",
   "billing.renews": "Renews {date}",
   "billing.billedYearly": "billed yearly",
   "billing.billedMonthly": "billed monthly",

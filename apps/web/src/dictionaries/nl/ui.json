@@ -522,7 +522,7 @@
   "billing.trialRemaining.one": "{count} dag over in proefperiode",
   "billing.trialRemaining.other": "{count} dagen over in proefperiode",
   "billing.trialEnded": "Proefperiode beëindigd",
-  "billing.proUntil": "Pro tot {date} — daarna Community",
+  "billing.proUntil": "{plan} tot {date} — daarna Community",
   "billing.renews": "Verlengt {date}",
   "billing.billedYearly": "jaarlijks gefactureerd",
   "billing.billedMonthly": "maandelijks gefactureerd",
