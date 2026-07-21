@@ -1,11 +1,15 @@
 # Billing groups — remaining work
 
 Branch `feat/billing-groups`, rebased on `feat/event-pass-e2e-and-entitlement-gaps` (134beecf).
-Spec: `docs/superpowers/specs/2026-07-21-billing-groups-design.md`. Migration: V310.
+Spec: `docs/superpowers/specs/2026-07-21-billing-groups-design.md`. Migrations: V310, V311.
 
-Status 2026-07-21: rounds 3+4+5 committed (through `5262c6e9`). Vitest **2521 passed / 1 failed
-/ 9 skipped** (the 1 is base's deliberate `pass-scoping-guard`). Smoke **500 passed / 3 failed**
-(all 3 base's — see §1c).
+Status 2026-07-21: rounds 3+4+5, the payer UI and V311 committed (through `a6c681ad`). Vitest
+**2536 passed / 1 failed / 9 skipped** (the 1 is base's deliberate `pass-scoping-guard`). Smoke
+**500 passed / 3 failed** (all 3 base's — see §1c).
+
+**Not shippable to a customer yet.** The two named blockers are the recipient's accept UI
+(§4b) and the admin panel (§2), where `/admin/revenue` currently computes per-org revenue
+arithmetic that a group of two silently makes wrong.
 
 ## Verification baseline (reproduce before trusting any green)
 
@@ -169,9 +173,12 @@ affects.
 
 ## 4b. Gaps I know about and have NOT closed
 
-- [ ] **Transfer has no UI at all.** `offer` / `accept` / `revoke` are API-only, so a payer
-      cannot hand a group over from the app — the whole two-phase flow is unreachable by a
-      customer. The biggest functional hole left.
+- [ ] **The RECIPIENT still cannot accept from the app.** The payer's half shipped in
+      `ef652e11` (offer from the picker, see the outstanding offer, withdraw it).
+      `GET /api/billing/group/transfer` returns offers made TO a user together with the
+      SetupIntent `client_secret` they need — but nothing renders a card form, so accepting a
+      two-phase offer is still an API call. This needs Stripe Elements, and it is the first
+      piece that CANNOT be verified locally under the never-call-real-Stripe rule.
 - [ ] **Nothing about Stripe has been validated against a real account.** Every Stripe call in
       this branch is mocked, deliberately (standing rule: never call the real API). So the
       central pricing assumption — a graduated tiered price billing `quantity` = org count,
@@ -191,9 +198,11 @@ affects.
 
 ## 5. Open decisions / deferred
 
-- [ ] Transfer offer discovery: the SetupIntent is returned only to the OFFERER, so the
-      recipient cannot find it. Needs a "pending offers for me" listing. This is the cost of
-      the no-schema offer design.
+- [x] Transfer offer discovery — CLOSED by V311 (`5db5dece`). The no-schema design could not
+      answer "which offers are mine": the SetupIntent went only to the offerer, so a reload lost
+      it and the recipient could never find it. The offer is a row now, single-use enforced by a
+      status CAS and one-live-offer by a partial unique index, and `listGroupTransferOffers`
+      serves both sides from an index instead of a Stripe round trip per customer.
 - [x] Dashboard-edit blind spot documented in the spec (`fe777a3f`): if someone edits quantity
       in the Stripe dashboard while `quantity_paid == live org count`, no predicate notices.
       Equally blind under a mirror column, so a mirror was rejected; only an unconditional
