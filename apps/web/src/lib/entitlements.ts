@@ -120,6 +120,32 @@ export async function orgPlanKey(orgId: string): Promise<string> {
       when s.status = 'past_due'
            and coalesce(s.status_changed_at, s.updated_at) <= now() - interval '14 days'
            then 'community'
+      -- A CANCELLED subscription does not convey its plan. Without this arm the
+      -- only thing standing between a departed org and permanent Pro is the
+      -- customer.subscription.deleted handler having run and written
+      -- plan_key = 'community' (billing-events.ts) — and a webhook that must
+      -- not be missed is a webhook that will be.
+      --
+      -- The leak this closes: dunning exhausts, Stripe cancels, the deleted
+      -- event goes astray, so the row still reads past_due. needsRenewalResync
+      -- fires on ANY past_due row (lib/billing-manage.ts), the billing page
+      -- re-syncs from the live subscription, and syncSubscription rewrites
+      -- plan_key from the subscription's PRICE — which a cancelled subscription
+      -- still carries. The row lands on status='canceled', plan_key='pro', and
+      -- needsRenewalResync returns false for canceled, so nothing ever revisits
+      -- it. Free Pro, for ever, triggered by the owner opening their own
+      -- billing page.
+      --
+      -- The comp guard is load-bearing, not defensive: compOrg deliberately
+      -- LEAVES a dead subscription's cancelled status in place
+      -- (admin-plan.ts — writing a live-looking status onto a departed row
+      -- would resurrect liveness and break the comp-expiry branch above). So
+      -- a cancelled status + a comp still running is a legitimate staff grant, and
+      -- degrading it here would revoke every comp handed to an org that once
+      -- subscribed. A LAPSED comp is already community via the first arm.
+      when s.status = 'canceled'
+           and (s.comped_until is null or s.comped_until <= now())
+           then 'community'
       else coalesce(s.plan_key, 'community')
     end as plan_key
     from organizations o

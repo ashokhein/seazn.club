@@ -62,7 +62,17 @@ surface. Dispute *handling* is proven; dispute *origination* is not, by choice.
 
 ---
 
-## 4. DEFECT found while auditing this — a canceled subscription can resolve as Pro
+## 4. DEFECT — a canceled subscription can resolve as Pro — **FIXED 2026-07-21**
+
+Fixed in this branch at the owner's direction (§4 only; §§1-2 and 5 remain queued).
+`orgPlanKey` now carries a `canceled` arm, guarded on a running comp; regression suite
+`src/lib/__tests__/entitlements-canceled-plan.test.ts` (6 cases). Proof it fails without
+the arm: `expected 'pro' to be 'community'` on 2 of the 6.
+
+No data repair was done, deliberately — pre-launch, no customers, and the owner wipes
+schema and test data before prod. The 618 already-poisoned rows below are seed data.
+
+Original write-up follows.
 
 **Not hypothetical. Read the code path before dismissing it.**
 
