@@ -418,6 +418,12 @@ await i18nSuite();
   // keyless-safe. The HTTP-level plan-truth net for the two e2e tasks that follow.
   await smokePlanMatrix();
 
+  // --- Task 23: every grant an Event Pass actually delivers, asserted as a
+  // passed-vs-sibling PAIR inside one fresh community org — allowed here,
+  // refused there — so no assertion can be satisfied by a passless org. Own
+  // fresh org; keyless-safe and spends no AI tokens.
+  await passGrantsSuite();
+
   await gapSuite(admin, org.id, org2.id);
 
   // --- design/v7 PROMPT-51: staff-console platform revenue report.
@@ -815,11 +821,16 @@ async function smokePlanMatrix(): Promise<void> {
     // --- Export WITH DATA: the standings export 404s without a snapshot, so a
     // 200 here proves it is content-bearing (empty-doc false-green avoided).
     // community.exports=true (V285) → every tier renders; exports.branded is
-    // the exact gate orgBranding() keys off to switch chrome on, so asserting
-    // it at the resolution seam is the faithful branded-vs-plain signal (PDF
-    // byte-scanning is unreliable under font subsetting). For event_pass the
-    // render itself also proves the comp-scoped `exports` pass grant is live
-    // while branding stays plain (exports.branded is not pass-scoped).
+    // the exact gate orgBranding() keys off to switch chrome on.
+    //
+    // `readEnt` asks the ORG-WIDE question (the route passes no competition id
+    // on purpose — see api/orgs/[id]/entitlements/route.ts), so for event_pass
+    // `expectBranded: false` is NOT a claim that the passed competition renders
+    // plain. It is the opposite claim, and the load-bearing one here: a
+    // competition-scoped pass must not lift `exports.branded` for the ORG. The
+    // pass DOES grant it (V306) and the passed competition really does render
+    // branded chrome — passGrantsSuite proves that half, competition-scoped,
+    // by reading the org name out of the exported workbook.
     const feedExport = await fetch(
       `${BASE}/api/v1/divisions/${feedDiv.id}/exports/standings?format=pdf`,
       { headers: { cookie: cookieHeader(owner) } },
@@ -831,7 +842,7 @@ async function smokePlanMatrix(): Promise<void> {
     );
     const feedEnt = await readEnt(owner, orgId);
     check(
-      `matrix/${key}: export chrome is ${expectBranded ? "branded (paid)" : "plain (community)"} (exports.branded=${expectBranded})`,
+      `matrix/${key}: ORG-WIDE exports.branded resolves ${expectBranded} (a pass must not lift it org-wide)`,
       (feedEnt.entitlements["exports.branded"]?.enabled ?? false) === expectBranded,
     );
   };
@@ -1048,12 +1059,358 @@ async function smokePlanMatrix(): Promise<void> {
   // recorded results), then the five tier-gated assertions run against the
   // populated competition. Reuses each persona's existing competition; for
   // event_pass the PASSED comp hosts the feed so the comp-scoped exports grant
-  // applies. Paid tiers (pro + pro_plus) get branded chrome; community and the
-  // event_pass overlay both render plain (exports.branded is not pass-scoped).
+  // applies. The last argument is the ORG-WIDE `exports.branded` answer: true
+  // for the paid plans, false for community AND for the pass (whose grant is
+  // competition-scoped and must never leak to the org — see the note above).
   await seedFeedAndAssert(comm, commOrg, cComp.id, "community", false);
   await seedFeedAndAssert(pro, proOrg, proComp.id, "pro", true);
   await seedFeedAndAssert(plus, plusOrg, plusComp.id, "proplus", true);
   await seedFeedAndAssert(passer, passOrg, passedComp.id, "pass", false);
+}
+
+/**
+ * Task 23 — every grant an Event Pass actually delivers, end to end.
+ *
+ * ── The shape, and why it is the only honest one ────────────────────────────
+ * ONE fresh community org, TWO competitions, a pass on exactly one of them.
+ * Every grant is asserted as a PAIR against that same org in the same run:
+ * the passed competition is ALLOWED, the sibling competition is REFUSED. A
+ * check that a passless community org would also satisfy proves nothing about
+ * the pass, and where a grant is a CEILING the pair is the only shape that can
+ * fail for the right reason — "allowed at 64" alone passes on a plan with no
+ * ceiling at all, and "refused at 65" alone passes on Community's 32.
+ *
+ * The sibling competition is also the leak detector: `competition_passes` is
+ * joined into the resolver per competition (lib/entitlements.ts resolveFromDb),
+ * so a grant that shows up on the SIBLING is a pass escaping its scope.
+ *
+ * ── Two numbers the plan brief got wrong, deliberately not asserted ─────────
+ *  • `branding` — V310 made it true on EVERY plan, so "the pass delivers
+ *    branding" is a test that cannot fail. Dropped. It is NOT the same key as
+ *    `dashboard.branding` (the brand-colour gate), which stays Pro-only and
+ *    which the pass does not grant, so neither is substituted for the other.
+ *  • "the 32-entrant cap" — V311 raised Community to 32 and the pass to 64.
+ *    Asserting 32 asserts what a passless community org already gets.
+ * The live matrix (`set search_path = seazn_club`; the `public` schema holds a
+ * stale pre-v3 copy) is the authority for every figure below.
+ *
+ * ── Keyless- and model-safe ────────────────────────────────────────────────
+ * Nothing here needs Stripe, and nothing spends an Anthropic token. The AI
+ * probes run `mode: "repair"` against a division with no movable fixtures, so
+ * the request dies at AI_PLAN_EMPTY_SCOPE inside buildSchedulePack — which sits
+ * AFTER the quota gate and BEFORE the model call, making "not capped" and
+ * "capped" cleanly distinguishable for free.
+ */
+async function passGrantsSuite(): Promise<void> {
+  const genericDiv = {
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  };
+  const featureKey = (r: V1Res) => (r.json.error as { feature_key?: string } | undefined)?.feature_key;
+  const errCode = (r: V1Res) => r.json.error?.code;
+
+  const s = newSession();
+  const orgId = (await signIn(s, `passgrant_${tag}@example.com`)).org_id;
+  const orgs = (await call(s, "/api/orgs")) as { id: string; slug: string; name: string }[];
+  const org = orgs.find((o) => o.id === orgId)!;
+
+  // Unlisted, not public: `dashboard.public.max` is 1 on community, and both
+  // competitions still resolve through the public read model (only `private`
+  // is excluded from public_competitions_v), so the public player card and the
+  // public register panel both stay reachable.
+  const mkComp = async (name: string) =>
+    v1data<{ id: string; slug: string }>(
+      await v1(s, "/api/v1/competitions", "POST", { name: `${name} ${tag}`, visibility: "unlisted" }),
+    );
+  const mkDiv = async (compId: string, name: string) =>
+    v1data<{ id: string; slug: string }>(
+      await v1(s, `/api/v1/competitions/${compId}/divisions`, "POST", { name, ...genericDiv }),
+    );
+  const entrants = (n: number, from: number, label: string) =>
+    Array.from({ length: n }, (_, i) => ({
+      kind: "individual",
+      display_name: `${label}${from + i}`,
+      seed: from + i,
+    }));
+
+  const passComp = await mkComp("Grants Passed");
+  const plainComp = await mkComp("Grants Plain");
+  await grantPass(orgId, passComp.id);
+  check(
+    "pass grants: fixture built — one community org, two competitions, one passed",
+    !!passComp.id && !!plainComp.id && passComp.id !== plainComp.id,
+  );
+
+  // A person consented to a public card, seated as an entrant member in BOTH
+  // competitions. public_players_v filters on consent + entrant membership and
+  // is NOT competition-scoped, so seating them twice removes the only other
+  // reason the card could 404 — whichever side 404s, it 404s on the
+  // entitlement and nothing else.
+  const person = v1data<{ id: string }>(
+    await v1(s, "/api/v1/persons", "POST", {
+      full_name: `Grants Player ${tag}`,
+      consent: { public_name: true },
+    }),
+  );
+
+  // Per competition: a board division carrying real fixtures (realtime, the
+  // branded export and the player card all read it) plus the ceiling probes.
+  const board: Record<"pass" | "plain", { divId: string; fixtureId: string }> = {} as never;
+  for (const [key, comp] of [["pass", passComp], ["plain", plainComp]] as const) {
+    const div = await mkDiv(comp.id, "Board");
+    await v1(s, `/api/v1/divisions/${div.id}/entrants`, "POST", [
+      { kind: "individual", display_name: `Board One ${key}`, seed: 1, members: [{ person_id: person.id }] },
+      { kind: "individual", display_name: `Board Two ${key}`, seed: 2 },
+    ]);
+    const stage = v1data<{ id: string }>(
+      await v1(s, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    );
+    const fixtures = v1data<{ fixtures: { id: string }[] }>(
+      await v1(s, `/api/v1/stages/${stage.id}/generate`, "POST"),
+    ).fixtures;
+    await v1(s, `/api/v1/divisions/${div.id}/start`, "POST");
+    board[key] = { divId: div.id, fixtureId: fixtures[0]!.id };
+  }
+
+  // === entrants.per_division.max — community 32, pass 64 =================
+  const passCap = await mkDiv(passComp.id, "Entrant Cap");
+  const plainCap = await mkDiv(plainComp.id, "Entrant Cap");
+  const passTo64 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(64, 1, "P"));
+  const pass65 = await v1(s, `/api/v1/divisions/${passCap.id}/entrants`, "POST", entrants(1, 65, "P"));
+  const plainTo32 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(32, 1, "C"));
+  const plain33 = await v1(s, `/api/v1/divisions/${plainCap.id}/entrants`, "POST", entrants(1, 33, "C"));
+  check(
+    "pass grants/entrants: the passed competition seats 64 — past community's 32",
+    passTo64.status === 201,
+  );
+  check(
+    "pass grants/entrants: the 65th is refused (the pass ceiling is 64, not unlimited)",
+    pass65.status === 402 && featureKey(pass65) === "entrants.per_division.max",
+  );
+  check(
+    "pass grants/entrants: the sibling competition seats 32 (community's own cap)",
+    plainTo32.status === 201,
+  );
+  check(
+    "pass grants/entrants: the sibling is refused at 33 — the 64 did not leak org-wide",
+    plain33.status === 402 && featureKey(plain33) === "entrants.per_division.max",
+  );
+
+  // === scheduling.ai.runs_per_division.max — community 5, pass 10 =========
+  // Three probes bracket the number exactly: 6th admitted on the pass, 11th
+  // refused on the pass, 6th refused on the sibling. Seeding only one side
+  // would pass whether the grant were 10 or unchanged at 5.
+  const passAiDiv = await mkDiv(passComp.id, "AI Five");
+  await seedAiRuns(orgId, passComp.id, passAiDiv.id, 5);
+  await seedAiRuns(orgId, passComp.id, passCap.id, 10);
+  await seedAiRuns(orgId, plainComp.id, plainCap.id, 5);
+  const emptyRepair = {
+    instruction: "smoke probe: repair with nothing movable in scope",
+    mode: "repair",
+    scope: { courts: [] },
+  };
+  const passAi6 = await v1(s, `/api/v1/divisions/${passAiDiv.id}/schedule/ai-plan`, "POST", emptyRepair);
+  const passAi11 = await v1(s, `/api/v1/divisions/${passCap.id}/schedule/ai-plan`, "POST", emptyRepair);
+  const plainAi6 = await v1(s, `/api/v1/divisions/${plainCap.id}/schedule/ai-plan`, "POST", emptyRepair);
+  check(
+    "pass grants/ai: the 6th run/division is ADMITTED on the passed competition (past community's 5)",
+    passAi6.status === 422 && errCode(passAi6) === "AI_PLAN_EMPTY_SCOPE",
+  );
+  check(
+    "pass grants/ai: the 11th run/division is refused (the pass ceiling is 10)",
+    passAi11.status === 402 && featureKey(passAi11) === "scheduling.ai.runs_per_division.max",
+  );
+  check(
+    "pass grants/ai: the sibling is refused at its 6th — the 10 did not leak org-wide",
+    plainAi6.status === 402 && featureKey(plainAi6) === "scheduling.ai.runs_per_division.max",
+  );
+
+  // === divisions.per_competition.max — community 2, pass 10 ===============
+  // The passed competition already holds three (Board, Entrant Cap, AI Five);
+  // that third one is itself the proof it is past community's 2, because the
+  // sibling — same org, same day — is refused its third below.
+  const plainThird = await v1(s, `/api/v1/competitions/${plainComp.id}/divisions`, "POST", {
+    name: "Third",
+    ...genericDiv,
+  });
+  check(
+    "pass grants/divisions: the sibling competition is refused a 3rd division (community's cap is 2)",
+    plainThird.status === 402 && featureKey(plainThird) === "divisions.per_competition.max",
+  );
+  let passDivisionsOk = true;
+  for (let i = 4; i <= 10; i++) {
+    const r = await v1(s, `/api/v1/competitions/${passComp.id}/divisions`, "POST", {
+      name: `Filler ${i}`,
+      ...genericDiv,
+    });
+    if (r.status !== 201) passDivisionsOk = false;
+  }
+  const pass11th = await v1(s, `/api/v1/competitions/${passComp.id}/divisions`, "POST", {
+    name: "Eleventh",
+    ...genericDiv,
+  });
+  check(
+    "pass grants/divisions: the passed competition takes all 10 (past community's 2)",
+    passDivisionsOk,
+  );
+  check(
+    "pass grants/divisions: the 11th is refused (the pass ceiling is 10)",
+    pass11th.status === 402 && featureKey(pass11th) === "divisions.per_competition.max",
+  );
+
+  // === realtime — community false, pass true ==============================
+  // The noticeboard is the surface that resolves `realtime` WITH a competition
+  // in hand (app/slideshow/divisions/[id]/page.tsx). The flag reaches the
+  // client island as a prop, so it lands in the RSC payload embedded in the
+  // page; the backslashes are the payload's own string escaping.
+  const flightFlag = (body: string, want: boolean) =>
+    body.replace(/\\/g, "").includes(`"realtime":${want}`);
+  const passBoard = await html(s, `/slideshow/divisions/${board.pass.divId}`);
+  const plainBoard = await html(s, `/slideshow/divisions/${board.plain.divId}`);
+  check(
+    "pass grants/realtime: the passed competition's noticeboard is live",
+    passBoard.status === 200 && flightFlag(passBoard.body, true),
+  );
+  check(
+    "pass grants/realtime: the sibling's noticeboard stays static — realtime did not leak",
+    plainBoard.status === 200 && flightFlag(plainBoard.body, false),
+  );
+
+  // === exports.branded — community false, pass true =======================
+  // Read the document, not the entitlement: docModelToXlsx writes the org name
+  // as its own row ONLY when orgBranding() resolved (usecases/exports.ts keys
+  // that on `exports.branded` with the competition id). XLSX rather than PDF
+  // because pdfkit compresses its content streams, so byte-scanning a PDF for
+  // the same string is unreliable.
+  const ExcelJS = (await import("exceljs")).default;
+  const exportColumnA = async (divisionId: string): Promise<string[]> => {
+    const res = await fetch(`${BASE}/api/v1/divisions/${divisionId}/exports/timetable?format=xlsx`, {
+      headers: { cookie: cookieHeader(s) },
+    });
+    if (res.status !== 200) return [`HTTP ${res.status}`];
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await res.arrayBuffer());
+    const cells: string[] = [];
+    wb.worksheets[0]?.eachRow((row) => cells.push(String(row.getCell(1).value ?? "")));
+    return cells;
+  };
+  const passExport = await exportColumnA(board.pass.divId);
+  const plainExport = await exportColumnA(board.plain.divId);
+  check(
+    "pass grants/exports: the passed competition's export carries branded chrome (org name row)",
+    passExport[1] === org.name,
+  );
+  check(
+    "pass grants/exports: the sibling's export renders plain — branding did not leak",
+    plainExport.length > 1 && !plainExport.includes(org.name),
+  );
+
+  // === dashboard.player_profiles — community false, pass true =============
+  // Same person, same consent, same entrant membership on both sides: the only
+  // difference between a 200 and a 404 here is the pass.
+  const passCard = await fetch(`${BASE}/shared/${org.slug}/${passComp.slug}/players/${person.id}`);
+  const plainCard = await fetch(`${BASE}/shared/${org.slug}/${plainComp.slug}/players/${person.id}`);
+  check(
+    "pass grants/profiles: the public player card renders on the passed competition (200)",
+    passCard.status === 200,
+  );
+  check(
+    "pass grants/profiles: the same person has no card on the sibling (404) — no leak",
+    plainCard.status === 404,
+  );
+
+  // === sponsors.tiers + sponsors.monetize — community false, pass true ====
+  const tierOn = async (competitionId: string, label: string) =>
+    v1(s, `/api/v1/orgs/${orgId}/sponsors`, "POST", {
+      name: `Grants Sponsor ${label} ${tag}`,
+      tier: "gold",
+      competition_id: competitionId,
+    });
+  const packageOn = async (competitionId: string, label: string) =>
+    v1(s, `/api/v1/orgs/${orgId}/sponsor-packages`, "POST", {
+      name: `Grants Package ${label}`,
+      price_cents: 25000,
+      currency: "gbp",
+      tier: "gold",
+      competition_id: competitionId,
+    });
+  const passTier = await tierOn(passComp.id, "pass");
+  const plainTier = await tierOn(plainComp.id, "plain");
+  const passPackage = await packageOn(passComp.id, "pass");
+  const plainPackage = await packageOn(plainComp.id, "plain");
+  check(
+    "pass grants/sponsors: a tiered sponsor saves on the passed competition (201)",
+    passTier.status === 201,
+  );
+  check(
+    "pass grants/sponsors: the sibling refuses the same tiered sponsor (402 sponsors.tiers)",
+    plainTier.status === 402 && featureKey(plainTier) === "sponsors.tiers",
+  );
+  check(
+    "pass grants/sponsors: a priced package saves on the passed competition (201)",
+    passPackage.status === 201,
+  );
+  check(
+    "pass grants/sponsors: the sibling refuses the same package (402 sponsors.monetize)",
+    plainPackage.status === 402 && featureKey(plainPackage) === "sponsors.monetize",
+  );
+
+  // === registration.fee_percent — community 8, pass 5 =====================
+  // Stated plainly, because this one is weaker than the rest and the reason
+  // matters: the rate has NO competition-scoped read surface. `feePercentFor`
+  // is consumed in exactly two places (the registration checkout and the
+  // sponsor checkout), and both feed it straight into a Stripe
+  // `application_fee_amount` that never comes back out — so there is nothing
+  // keyless to observe. What IS assertable is split in two:
+  //   • the matrix itself — the pass row must still say 5 against community's
+  //     8, which fails the moment a migration regresses the grant;
+  //   • the org-wide resolution — a competition-scoped 5% must not become the
+  //     org's rate, which is the leak this suite exists to catch.
+  // If a competition-scoped fee ever surfaces (a quote endpoint, or the
+  // application fee echoed on the registration read), replace the first half
+  // with the behavioural pair the other grants get.
+  const feeDb = smokeDb();
+  let feeMatrix: { plan_key: string; int_value: number | null }[] = [];
+  try {
+    feeMatrix = await feeDb<{ plan_key: string; int_value: number | null }[]>`
+      select plan_key, int_value from plan_entitlements
+      where feature_key = 'registration.fee_percent'
+        and plan_key in ('community', 'event_pass')`;
+  } finally {
+    await feeDb.end();
+  }
+  const feeFor = (planKey: string) => feeMatrix.find((r) => r.plan_key === planKey)?.int_value;
+  check(
+    "pass grants/fee: the pass still cuts the platform rate to 5% (community 8%)",
+    feeFor("event_pass") === 5 && feeFor("community") === 8,
+  );
+
+  // === The org itself is untouched — every grant above is competition-scoped
+  const ent = (await call(s, `/api/orgs/${orgId}/entitlements`)) as {
+    plan_key: string;
+    entitlements: Record<string, { enabled?: boolean; limit?: number | null }>;
+  };
+  const flagOff = (key: string) => ent.entitlements[key]?.enabled === false;
+  check(
+    "pass grants/scope: the org still resolves the community plan",
+    ent.plan_key === "community",
+  );
+  check(
+    "pass grants/scope: every boolean grant stays OFF org-wide (realtime, exports.branded, profiles, sponsors)",
+    flagOff("realtime") &&
+      flagOff("exports.branded") &&
+      flagOff("dashboard.player_profiles") &&
+      flagOff("sponsors.tiers") &&
+      flagOff("sponsors.monetize"),
+  );
+  check(
+    "pass grants/scope: every quota stays at the community figure org-wide (32/2/5 entrants/divisions/AI, fee 8%)",
+    ent.entitlements["entrants.per_division.max"]?.limit === 32 &&
+      ent.entitlements["divisions.per_competition.max"]?.limit === 2 &&
+      ent.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 5 &&
+      ent.entitlements["registration.fee_percent"]?.limit === 8,
+  );
 }
 
 /** clubs-w1 (W1 §5): parent clubs group teams across divisions. The Pro path
@@ -5352,6 +5709,9 @@ async function cleanup(tag: string): Promise<void> {
     `smoke-pro-${tag}@example.com`,
     `smoke-proplus-${tag}@example.com`,
     `smoke-pass-${tag}@example.com`,
+    // Task 23 — passGrantsSuite's own org (its two competitions, pass row,
+    // sponsors, packages, person and AI ledger rows all cascade with it).
+    `passgrant_${tag}@example.com`,
     // Task 20 — the three extra users seeded per plan org (owner is above).
     ...["community", "pro", "proplus", "pass"].flatMap((k) => [
       `scorer_${k}_${tag}@example.com`,
