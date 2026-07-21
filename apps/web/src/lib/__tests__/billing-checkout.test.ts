@@ -92,6 +92,7 @@ describe("buildEmbeddedCheckoutParams", () => {
         priceId: "price_pass",
         orgId: "org-abc",
         competitionId: "comp-1",
+        competitionName: "Riverside Cup",
         returnUrl: base.returnUrl,
         customerEmail: "a@b.com",
       }).adaptive_pricing,
@@ -167,6 +168,7 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
     priceId: "price_pass",
     orgId: "org-abc",
     competitionId: "comp-1",
+    competitionName: "Riverside Cup",
     returnUrl: "https://app.test/o/x/c/y/upgrade?checkout=success&session_id={CHECKOUT_SESSION_ID}",
   };
 
@@ -193,6 +195,59 @@ describe("buildPassCheckoutParams (v3/07 §3)", () => {
     expect(buildPassCheckoutParams({ ...pass, currency: "usd" }).currency).toBe("usd");
     expect(buildPassCheckoutParams(pass).currency).toBe("usd");
   });
+
+  // mode:"payment" produces a PaymentIntent and a Charge but NO Invoice, so a
+  // pass buyer had no invoice number, no PDF and no hosted URL — and the
+  // billing page, which lists invoices.list({ customer }), showed them nothing
+  // at all about $29 they spent. invoice_creation is what puts it there.
+  it("creates an invoice named after the competition", () => {
+    const p = buildPassCheckoutParams({ ...pass, customerEmail: "a@b.com" });
+    expect(p.invoice_creation?.enabled).toBe(true);
+    // Per-competition, not a constant: three passes must not be three
+    // identical rows on the billing page.
+    expect(p.invoice_creation?.invoice_data?.description).toBe("Event Pass — Riverside Cup");
+    const other = buildPassCheckoutParams({ ...pass, competitionName: "Autumn Open" });
+    expect(other.invoice_creation?.invoice_data?.description).toBe("Event Pass — Autumn Open");
+  });
+});
+
+// Verified against LIVE Stripe test mode 2026-07-21 — see
+// billing-automatic-tax.live.test.ts for the verbatim errors. An existing
+// customer with no address + automatic_tax is a 400
+// (`customer_tax_location_invalid`); adding only `address: "auto"` is a SECOND
+// 400 because tax_id_collection also needs `name`. And `customer_update`
+// without `customer` is a third 400 — so it must be conditional.
+describe("customer_update on an existing customer (automatic_tax)", () => {
+  const pass = {
+    priceId: "price_pass",
+    orgId: "org-abc",
+    competitionId: "comp-1",
+    competitionName: "Riverside Cup",
+    returnUrl: base.returnUrl,
+  };
+
+  it("sends address AND name auto whenever an existing customer is reused", () => {
+    for (const p of [
+      buildEmbeddedCheckoutParams({ ...base, customerId: "cus_9" }),
+      buildPassCheckoutParams({ ...pass, customerId: "cus_9" }),
+    ]) {
+      expect(p.automatic_tax).toEqual({ enabled: true });
+      expect(p.tax_id_collection).toEqual({ enabled: true });
+      // Both keys: address alone is still a 400 while tax_id_collection is on.
+      expect(p.customer_update).toEqual({ address: "auto", name: "auto" });
+    }
+  });
+
+  it("omits customer_update entirely on a first purchase (customer_email)", () => {
+    for (const p of [
+      buildEmbeddedCheckoutParams({ ...base, customerEmail: "a@b.com" }),
+      buildPassCheckoutParams({ ...pass, customerEmail: "a@b.com" }),
+    ]) {
+      // "`customer_update` can only be used with `customer`" — sending it
+      // unconditionally would 400 every brand-new buyer.
+      expect("customer_update" in p).toBe(false);
+    }
+  });
 });
 
 describe("checkout branding", () => {
@@ -209,6 +264,7 @@ describe("checkout branding", () => {
   it("brands the Event Pass checkout identically", () => {
     const p = buildPassCheckoutParams({
       priceId: "price_pass", orgId: "org-abc", competitionId: "comp-1",
+      competitionName: "Riverside Cup",
       returnUrl: base.returnUrl, customerEmail: "a@b.com",
     });
     expect(p.branding_settings).toEqual(

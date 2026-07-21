@@ -23,8 +23,10 @@ export async function POST(req: Request) {
     const { user } = await requireOrgRole(orgId, ["owner"]);
     const { competition_id } = schema.parse(await req.json());
 
-    const [comp] = await sql<{ slug: string; org_id: string }[]>`
-      select slug, org_id from competitions where id = ${competition_id}`;
+    // `name` is the Stripe invoice line description — without it an org that
+    // buys three passes sees three identical rows on its billing page.
+    const [comp] = await sql<{ slug: string; name: string; org_id: string }[]>`
+      select slug, name, org_id from competitions where id = ${competition_id}`;
     if (!comp || comp.org_id !== orgId) throw new HttpError(404, "competition not found");
 
     // A Pro org has nothing to gain from a pass (v3/07 §3 interplay).
@@ -56,6 +58,7 @@ export async function POST(req: Request) {
         priceId: price.price_id,
         orgId,
         competitionId: competition_id,
+        competitionName: comp.name,
         returnUrl,
         currency: await preferredCurrency(orgId, req),
         customerId: sub?.stripe_customer_id ?? undefined,
