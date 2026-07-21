@@ -22,6 +22,17 @@ Sign-up opens Stripe checkout. On payment the entry is **confirmed automatically
 
 Each payment settles to your connected Stripe account, minus Stripe's processing fee and the platform fee for your plan. Stripe pays out to your bank on its own schedule (typically every few days) — payout timing and bank details live in your Stripe dashboard, not on Seazn Club.
 
+**The platform fee.** Taking card fees needs no upgrade — every plan can do it, Community included. What your plan sets is the rate:
+
+| Plan | Platform fee |
+| --- | --- |
+| Community | 8% |
+| Event Pass | 5% |
+| Pro | 2% |
+| Pro Plus | 1% |
+
+The rate that applies is the best one the competition can claim, so a Community org can put its big annual event on an [Event Pass](/help/billing/event-pass) and pay 5% on that event while the rest of the org stays at 8%. Stripe's processing fee is separate, set by Stripe, and taken whichever plan you're on.
+
 ## 4. Refunds
 
 Withdrawals refund automatically **in full** when they land before the division's **refund lock date**: the money returns to the card, the platform fee is returned too, and the registrant gets a receipt email. After the lock date nothing refunds by itself — it's your call, via the manual refund on the entry.

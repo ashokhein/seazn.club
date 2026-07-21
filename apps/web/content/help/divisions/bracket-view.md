@@ -9,7 +9,7 @@ Knockout stages render as the classic **two-sided bracket**: quarter-finals on t
 - **Console** — the division's Fixtures tab shows the tree above the match list; each node links to its scoring page, live matches pulse.
 - **Public page** — the shared division page draws the same connected tree, filled from live results (`TBD` until a feed resolves).
 - **Big screen** — the [slideshow](/help/sharing/slideshow) and [presentation mode](/help/sharing/presentation-mode) get a bracket slide — the tree, the double-elim lanes, or the stepladder rungs, whichever the stage is.
-- **Poster** — Documents → *Bracket poster* exports a landscape PDF scaled to one sheet — all three shapes — with your branding on Pro.
+- **Poster** — Documents → *Bracket poster* exports a landscape PDF scaled to one sheet — all three shapes — with your branding on Pro or under an [Event Pass](/help/billing/event-pass).
 
 **Double elimination** gets its own geometry — on the console Fixtures tab *and* the public page: the winners bracket on top, the losers bracket beneath it, and the grand final (plus the bracket-reset match, when configured) joining the two lanes on the right. Stepladder stages keep their rung-by-rung view — that ladder *is* their shape.
 

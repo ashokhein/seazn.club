@@ -13,9 +13,9 @@ The public dashboard is your competition's home for everyone who isn't running i
 - **Match pages** — live score detail, updating without a refresh.
 - **Calendar feeds** — every division has an iCal link; subscribe once, matches appear in any calendar app.
 
-## Your brand on it (Pro)
+## Your brand on it
 
-Org logo, brand colour and competition banner theme the whole public tree — and the preview images that appear when links are shared to WhatsApp or social media carry the same look.
+Your **org logo** sits on the public tree on every plan, free included. The **brand colour** and competition banner that theme the rest of the pages are a **Pro** feature. Either way, the preview images that appear when links are shared to WhatsApp or social media carry the same look.
 
 ## Making it findable
 

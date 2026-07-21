@@ -15,7 +15,7 @@ It cycles standings, upcoming matchups and live scores on its own, refreshes its
 ## Making it look right
 
 - It's designed dark, broadcast-style, readable from across a hall.
-- Pro branding (logo, colour) carries onto the board.
+- Your **logo** carries onto the board on every plan; your **brand colour** needs Pro.
 - Sponsors you add in org settings get their own rotation slide — venue advertising your sponsors paid for.
 
 ## Common questions

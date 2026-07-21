@@ -19,13 +19,15 @@ Anything over a Community limit becomes **read-only**: your most recently active
 - **Archive** or complete competitions until you're inside the limits — frozen ones thaw automatically.
 - Or upgrade again; everything unfreezes instantly.
 
-Pro-only features (branding, entry fees, API keys…) simply switch off rather than freezing anything — public pages fall back to the standard look, keys stop authenticating.
+Pro-only features (your brand colour, branded exports, sponsor tiers and packages, API keys…) simply switch off rather than freezing anything — public pages fall back to the standard look with your logo still on it, exports come out as plain tables, keys stop authenticating.
 
-## Card entry fees close to new sign-ups
+## Entry fees keep running — the fee rate changes
 
-One switch-off is worth calling out. A division that collects entry fees **by card** can't take new registrations on Community — the public register panel closes it with a **"payments unavailable"** note rather than accept money your plan can't process. Your Stripe connection stays linked and every existing paid entry (and its money) is untouched; it's only *new* card sign-ups that pause until you're back on Pro. Divisions that take fees offline, or charge nothing, are unaffected.
+One thing that does **not** switch off: **card entry fees keep working on Community.** Your Stripe connection stays linked, existing paid entries are untouched, and divisions collecting **Card at sign-up** keep taking new registrations exactly as before — a downgrade never closes a register panel for money reasons.
 
-**Except passed competitions.** A competition covered by an [Event Pass](/help/billing/event-pass) keeps its card sign-ups open even after you downgrade — the pass carries the paid entitlement for that one event.
+What changes is the platform fee: back on Community the rate returns to **8%**, where Pro is 2% and Pro Plus 1%. See [the fee ladder](/help/billing/plans#the-platform-fee-on-entry-fees).
+
+**Passed competitions keep their own rate.** A competition covered by an [Event Pass](/help/billing/event-pass) stays at **5%** after the downgrade, and keeps everything else the pass grants — bigger limits, branded exports, sponsor tiers and packages — while the rest of the org sits on Community.
 
 ## Common questions
 
