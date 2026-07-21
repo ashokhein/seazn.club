@@ -191,6 +191,24 @@ jobs:
       - name: Engine-db + service-layer integration tests (real Postgres)
         run: npm test --workspace apps/web -- run src/server
 
+      # The DB-gated suites OUTSIDE src/server. They are `describe.skipIf(!HAS_DB)`,
+      # and the other unit job has no DATABASE_URL — so before this step existed
+      # they skipped in both jobs and CI went green having run none of them: 18
+      # files in src/lib/__tests__ and 4 under src/app. That silently un-enforced
+      # entitlements-sql-parity.test.ts, which is the ONLY tie between
+      # lib/entitlements.ts and the org_has_feature SQL mirror, and the whole
+      # billing-groups suite.
+      #
+      # pass-scoping-guard.test.ts is excluded, not fixed. It is deliberately red
+      # (read its header): its failure list IS the work queue for the Event Pass
+      # scoping sweep, and the six sites it names belong to that feature, not to
+      # this job. Delete this exclude the moment the sweep lands — do NOT weaken
+      # the test itself to get a green run.
+      - name: Service-layer integration tests outside src/server (real Postgres)
+        run: >-
+          npm test --workspace apps/web -- run src/lib src/app
+          --exclude 'src/lib/__tests__/pass-scoping-guard.test.ts'
+
       # REDIS_URL is scoped to this step only. Setting it job-wide would switch
       # the entitlement cache (lib/entitlements.ts) on for the src/server suite,
       # whose tests mutate entitlements via raw SQL without invalidating the
