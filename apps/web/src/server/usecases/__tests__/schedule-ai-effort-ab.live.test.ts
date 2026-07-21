@@ -30,9 +30,22 @@ function loadEnvKeyIfAbsent(name: string) {
   for (const rel of ["../../../../.env.local", "../../../../../../.env.local"]) {
     const p = path.resolve(__dirname, rel);
     if (!fs.existsSync(p)) continue;
-    const m = fs.readFileSync(p, "utf8").match(new RegExp(`^${name}=(.+)$`, "m"));
+    const m = fs.readFileSync(p, "utf8").match(new RegExp(`^${name}=(.*)$`, "m"));
     if (m) {
-      process.env[name] = m[1].trim().replace(/^["']|["']$/g, "");
+      const raw = m[1].trim();
+      let value: string;
+      if (raw[0] === '"' || raw[0] === "'") {
+        // Quoted: take up to the matching closing quote, discarding any
+        // trailing inline comment (e.g. `"sk-..."   # required for X`).
+        const quote = raw[0];
+        const end = raw.indexOf(quote, 1);
+        value = end === -1 ? raw.slice(1) : raw.slice(1, end);
+      } else {
+        // Unquoted: take up to the first whitespace-then-`#`.
+        const hashIdx = raw.search(/\s#/);
+        value = (hashIdx === -1 ? raw : raw.slice(0, hashIdx)).trim();
+      }
+      process.env[name] = value;
       break;
     }
   }
@@ -294,6 +307,10 @@ type Arm = {
    *  exactly as before this field existed. Sets AI_PROVIDER, which
    *  selectProvider() reads once per run. */
   provider?: "anthropic" | "openrouter";
+  /** Overrides SCHEDULING_AI_MAX_TOKENS for this arm. Unset arms fall back to
+   *  schedule-ai.ts's own default (32_000) — nothing about the shipped path
+   *  changes unless an arm sets this explicitly. */
+  maxTokens?: number;
 };
 
 async function bench(
@@ -301,7 +318,7 @@ async function bench(
   build: () => { pack: SchedulePack; movable: Set<string> },
   arm: Arm,
 ) {
-  const { effort, thinking = "adaptive", model, budget, label: cellEffort, provider = "anthropic" } = arm;
+  const { effort, thinking = "adaptive", model, budget, label: cellEffort, provider = "anthropic", maxTokens } = arm;
   process.env.SCHEDULING_AI_EFFORT = effort;
   process.env.SCHEDULING_AI_THINKING = thinking;
   process.env.AI_PROVIDER = provider;
@@ -309,6 +326,8 @@ async function bench(
   else delete process.env.SCHEDULING_AI_MODEL;
   if (budget) process.env.SCHEDULING_AI_THINKING_BUDGET = String(budget);
   else delete process.env.SCHEDULING_AI_THINKING_BUDGET;
+  if (maxTokens) process.env.SCHEDULING_AI_MAX_TOKENS = String(maxTokens);
+  else delete process.env.SCHEDULING_AI_MAX_TOKENS;
   const { pack, movable } = build();
   const t0 = Date.now();
   const row: Row = {
@@ -406,6 +425,17 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
   // Worst observed cell is ~1095s; leave room for REPEATS of it plus repairs.
   const T = Math.max(3_300_000, REPEATS * 1_400_000);
 
+  // Sanity-check the env parser above rather than the key's contents — never
+  // print the key itself. A prior bug here let a trailing inline `# comment`
+  // on a quoted .env.local line leak into the parsed value (167 chars,
+  // containing a U+2192), which the SDK silently rejected before any network
+  // call. The real key is 108 chars, pure ASCII (<= U+007E).
+  it("loaded ANTHROPIC_API_KEY has no trailing comment / non-ASCII bleed", () => {
+    const key = process.env.ANTHROPIC_API_KEY ?? "";
+    expect(key.length).toBe(108);
+    expect(/^[\x00-\x7E]*$/.test(key)).toBe(true);
+  });
+
   const cell = (name: string, build: () => { pack: SchedulePack; movable: Set<string> }, arm: Arm) =>
     it(`${name} @ ${arm.label} x${REPEATS}`, async () => {
       for (let i = 0; i < REPEATS; i++) await bench(name, build, arm);
@@ -444,30 +474,24 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
 
   // --- Task 11: the OpenRouter shootout -----------------------------------
   // design/v4/06-openrouter-shootout.md is written from this section's
-  // output. Two control arms gate everything: the fidelity arm (same model,
-  // different transport) must reproduce the direct arm before any candidate
-  // number is trusted (task-11-brief step 4). The third control arm answers
-  // open question 1 — does OpenRouter's unified `{effort, enabled:false}`
-  // actually suppress reasoning spend? — by comparing its output tokens
-  // against the adaptive fidelity arm on the same model/transport.
+  // output.
+  //
+  // 2026-07-21 user decision: do NOT run `anthropic/claude-sonnet-5` via
+  // OpenRouter, at all — the fidelity and no-think control arms that used to
+  // live here (same model, different transport) are removed and must not be
+  // re-run. Consequence, recorded here so it isn't silently lost: without a
+  // same-model-both-transports control, a poor candidate number cannot be
+  // cleanly attributed between the model and our OpenRouter adapter. The
+  // adapter's standing evidence is instead the e2e suite (ai-architect.spec.ts,
+  // 7/7 on both dialects against the fixture) and its unit tests, plus the two
+  // real wire bugs already found and fixed against them — weaker than a live
+  // same-model control. Every candidate number below should be read with that
+  // caveat, not as a clean apples-to-apples result.
   const CONTROL_DIRECT: Arm = {
     model: "claude-sonnet-5",
     effort: "high",
     provider: "anthropic",
     label: "sonnet-5 direct",
-  };
-  const CONTROL_FIDELITY: Arm = {
-    model: "anthropic/claude-sonnet-5",
-    effort: "high",
-    provider: "openrouter",
-    label: "sonnet-5 via openrouter",
-  };
-  const CONTROL_NO_THINK: Arm = {
-    model: "anthropic/claude-sonnet-5",
-    effort: "high",
-    thinking: "disabled",
-    provider: "openrouter",
-    label: "sonnet-5 via openrouter, no-think (enabled:false)",
   };
   // Candidates from design/v4/05-openrouter-candidates.md's policy-routable
   // named entrants. Quantisation per openrouter-policy.ts: z-ai/glm-5.2 and
@@ -475,12 +499,18 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
   // (z-ai/fp8, moonshotai/int4); x-ai/grok-4.5's is not independently pinned
   // to a single endpoint, only to the xai vendor slug — recorded per-row from
   // the live response's `provider` field either way (see `servedProvider`).
+  //
+  // grok-4.5 runs at maxTokens=64_000 (2026-07-21): sonnet-5 via OpenRouter
+  // (pre-removal) exhausted the 32_000 default entirely on reasoning —
+  // finish_reason "length" both rounds, content null. This doubles the
+  // ceiling specifically to see whether Grok returns a usable plan under
+  // more room, on the same effort/pack contract sonnet failed on.
   const CANDIDATES: Arm[] = [
-    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", label: "grok-4.5" },
+    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", maxTokens: 64_000, label: "grok-4.5" },
     { model: "z-ai/glm-5.2", effort: "high", provider: "openrouter", label: "glm-5.2" },
     { model: "moonshotai/kimi-k2.6", effort: "high", provider: "openrouter", label: "kimi-k2.6" },
   ];
-  const stage1Arms: Arm[] = [CONTROL_DIRECT, CONTROL_FIDELITY, CONTROL_NO_THINK, ...CANDIDATES];
+  const stage1Arms: Arm[] = [CONTROL_DIRECT, ...CANDIDATES];
 
   // Stage 1 — screen. n=1 (set AI_AB_REPEATS=1), teams-15 (dense pack) only.
   // Enable with AI_AB_SHOOTOUT_STAGE1=1.

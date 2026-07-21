@@ -7,6 +7,14 @@
 > regression-tested); a third, deeper problem was found and is **not** fixed here. No
 > candidate (`x-ai/grok-4.5`, `z-ai/glm-5.2`, `moonshotai/kimi-k2.6`) was run. **No candidate
 > beats sonnet-5, because no candidate was tested with valid data.**
+>
+> **Update (2026-07-21, later same day):** §10 below records a single follow-up
+> exploratory arm (`x-ai/grok-4.5`, harness key-parser bug fixed, `maxTokens` raised to
+> 64,000 for this arm only). It is not a resumption of the blocked stage-1 shootout above —
+> the fidelity control arm it depended on was deliberately dropped per a user instruction
+> (no `anthropic/claude-sonnet-5` via OpenRouter, at all) rather than fixed. Read §10's
+> caveats before treating any number in it as comparable to this document's earlier
+> sections.
 
 ---
 
@@ -229,3 +237,115 @@ Concretely:
   matched the Anthropic-direct no-think arm's warning profile closely. The problem is specific
   to the adaptive-thinking + `effort:high` + dense-pack combination against the current fixed
   token ceiling, not the transport in general.
+
+## 10. Follow-up (2026-07-21): one exploratory grok-4.5 arm — NOT the two-stage shootout
+
+> This section is a single n=1 arm on one pack, run to answer a narrow question left open
+> by §3. It is explicitly **not** a resumption of the stage-1 shootout, does not restore the
+> fidelity control, and should not be read as validating or ranking `grok-4.5` against
+> `sonnet-5` or the other two candidates. Treat every number below as a signal, not a result.
+
+### 10a. Two changes made before this run, both by explicit user instruction
+
+**Harness key-parser bug (unrelated to §4's key-corruption finding — a different bug in a
+different place).** `loadEnvKeyIfAbsent()` in
+`schedule-ai-effort-ab.live.test.ts` matched `^NAME=(.+)$` and stripped only the outer
+quotes, so a quoted key with a trailing inline comment —
+`ANTHROPIC_API_KEY="sk-ant-...AA"          # required to use the prose→constraints
+endpoint` — parsed to a 167-character value containing the comment text and a literal
+U+2192. The SDK rejected that value before any network call. The real key is 108 characters,
+pure ASCII. Fixed to take up to the matching closing quote (quoted values) or up to the
+first whitespace-then-`#` (unquoted values), discarding any trailing comment either way. A
+regression test (`loaded ANTHROPIC_API_KEY has no trailing comment / non-ASCII bleed`)
+asserts length 108 and `<= U+007E` on every value the parser loads, without ever printing
+it.
+
+**Dropped the sonnet-via-OpenRouter arms entirely.** Per direct user instruction: do not
+run `anthropic/claude-sonnet-5` via OpenRouter again, at all, in any configuration. The
+`sonnet-5 via openrouter` (fidelity) and `sonnet-5 via openrouter, no-think` arms are
+removed from the harness (`schedule-ai-effort-ab.live.test.ts`), not merely skipped —
+re-adding them would need new code, not a flag flip. **Consequence, stated plainly:**
+without a same-model-both-transports control, a poor (or good) candidate number below
+cannot be cleanly attributed between the model itself and this branch's OpenRouter adapter.
+The adapter's standing evidence is now: the e2e suite (`ai-architect.spec.ts`, 7/7 passing
+on both dialects against the fixture), its unit tests, and the two real wire bugs already
+found and fixed against live traffic (§2a, §2b). That is real evidence, but it is weaker
+than a live same-model control would have been — it does not rule out a transport-shaped
+distortion that happens not to trip the fixture or the two bugs already caught.
+
+**Output ceiling made configurable.** `schedule-ai.ts`'s `callModel()` hardcoded
+`maxTokens: 32_000` identically for every model/transport. Per user instruction, this is
+now `SCHEDULING_AI_MAX_TOKENS` (default `32_000` — the shipped Anthropic-direct path is
+byte-for-byte unchanged unless the env var is set). The harness's `Arm` type gained a
+matching `maxTokens` field, wired into `process.env.SCHEDULING_AI_MAX_TOKENS` per-arm. Only
+`grok-4.5`'s stage-1 entry sets it, to `64_000`, specifically to give reasoning the room
+sonnet-5 via OpenRouter didn't have in §3 — this is a one-arm exception, not a new default.
+
+### 10b. The run
+
+`x-ai/grok-4.5`, OpenRouter, `effort:high`, adaptive thinking, `maxTokens:64_000`, n=1,
+`teams-15` (dense pack, 30 fixtures). `provider.only` was left untouched — the allowlist
+already pins `grok-4.5` to the `xai` vendor slug.
+
+| field | value |
+|---|---|
+| wall clock | 272.7s |
+| repair rounds | 0 (round 1 succeeded outright) |
+| input tokens | 6,868 |
+| output tokens | 19,670 (of the 64,000 ceiling — **not** exhausted, unlike sonnet's 64,000/64,000) |
+| real cost (provider-reported) | $0.1315384 |
+| schema-valid plan returned | **yes** — parsed and validated on round 1 |
+| blocking conflicts | 0 |
+| warnings | 0 |
+| unschedulable | 0 |
+| fixtures placed | 30 / 30 |
+| served by (response `provider` field) | **xAI** |
+
+`finish_reason` / `native_finish_reason` for the real bench round are not directly
+observable — `AiChatResponse` (the shared provider seam) exposes neither field (§0's own
+design note explains why: exposing them would require changing a type shared by every
+production call, not a bench-only concern). The isolated post-run probe
+(`probeServedProvider()`, a separate ~8-token call, same model/policy) reported
+`finish_reason:"stop"`, `native_finish_reason:"completed"`, `refusal:null`, `provider:"xAI"`
+— consistent with, but not proof of, the real round's own finish reason. The strongest
+evidence for the real round specifically: it returned a schema-valid, fully-parsed plan at
+19,670 of a 64,000-token budget with zero repair rounds, which a length-truncated response
+could not do (a truncated response fails `AiSchedulePlan.safeParse()` and either triggers a
+repair round or throws — this run had `rounds:0` and no error).
+
+### 10c. Reading it against the sonnet-5-direct baseline (04 §4a, teams-15, n=3, 2026-07-20)
+
+| | sonnet-5 direct (baseline) | grok-4.5 via OpenRouter (this run, n=1) |
+|---|---|---|
+| secs | 276.8 mean [268.5–282.9] | 272.7 |
+| output tokens | 29,858 mean | 19,670 |
+| blocking / warnings | 0 / 0 | 0 / 0 |
+| cost | ~$0.465 | $0.1315384 |
+
+On this single sample, Grok returned a clean plan in comparable wall-clock time, using
+~34% fewer output tokens and at roughly a third of the cost. **This is not a verdict.** It
+is one run on one pack with no repeat and no fidelity control (§10a). The two things it does
+answer directly, within its own scope:
+
+- **The 32,000-token reasoning ceiling in §3 is not universal across every model on the
+  OpenRouter transport.** Sonnet-5 exhausted 64,000 tokens (2×32,000) on reasoning alone and
+  returned no content; Grok, given the same doubled ceiling, used less than a third of it and
+  returned a complete, engine-clean plan. Whether that's a genuine model-level difference in
+  reasoning-token efficiency, an artifact of OpenRouter's per-model accounting, or something
+  about `effort:high` mapping differently across vendors, is not established by n=1 — it
+  would need its own repeat-and-compare measurement (04's own house rule: n=1 orders, n=3
+  sizes the gap).
+- It does **not** answer whether Grok would also have completed inside the *original*
+  32,000-token ceiling sonnet failed under — this run deliberately used 64,000, per
+  instruction, to isolate "can Grok produce a plan at all here" from "does Grok fit the
+  shipped default." That's a distinct, still-open question.
+
+### 10d. Spend, this follow-up only
+
+| item | $ |
+|---|---|
+| grok-4.5 stage-1 arm (teams-15, n=1, maxTokens=64,000) | $0.1315384 |
+| **Total, this follow-up** | **$0.1315384** — well under the $3 stop-and-report threshold |
+
+Combined with §6's earlier ≈$1.10–$1.25, total spend against the $25 cap across both
+sessions is ≈$1.24–$1.38, leaving well over $20 of headroom.

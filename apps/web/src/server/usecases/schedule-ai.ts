@@ -626,6 +626,13 @@ export async function buildSchedulePack(
 const ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
 const MAX_REPAIR_ROUNDS = 2;
 
+/** Output token ceiling per round. Configurable per environment (same
+ *  philosophy as AI_PROVIDER) so a candidate that spends its whole budget on
+ *  reasoning can be given more room without a code change. Default of
+ *  32_000 is unchanged from the hardcoded value, so the shipped Anthropic
+ *  path behaves identically unless this is explicitly overridden. */
+const MAX_TOKENS = Number(process.env.SCHEDULING_AI_MAX_TOKENS) || 32_000;
+
 /** The model every architect run uses (both phases import this — single
  *  source). Default measured live 2026-07-19 (17-fixture pack, adaptive
  *  thinking, effort:high): opus-4-8 could not finish round 1 inside 300s;
@@ -942,7 +949,7 @@ async function callModel(
       model,
       system: SYSTEM_PROMPT,
       messages,
-      maxTokens: 32_000,
+      maxTokens: MAX_TOKENS,
       reasoning: aiReasoning(model),
       schema: { name: "schedule_plan", zod: AiSchedulePlan },
       signal: controller.signal,
