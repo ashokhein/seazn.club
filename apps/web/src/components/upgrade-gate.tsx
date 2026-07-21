@@ -7,17 +7,32 @@ import { PlanBadge } from "@/components/plan-badge";
 import { formatMinor, passPrice, proPrice } from "@/lib/currency";
 import { routes } from "@/lib/routes";
 
-/** Features an Event Pass lifts (mirror of the event_pass plan_entitlements
- *  column, v3/07 §2) — only these gates offer the per-event path. */
-const PASS_FEATURES = new Set([
+/**
+ * Feature keys an Event Pass lifts — every key whose `event_pass` row in
+ * `plan_entitlements` beats the `community` row. Only these gates offer the
+ * per-event path next to Pro; everything else sends the user to billing.
+ *
+ * ONE key the pass lifts is deliberately absent: `registration.fee_percent`
+ * (8% → 5%). It is a deduction RATE read through `getLimit`
+ * (server/usecases/registrations.ts) and never throws PaymentRequiredError, so
+ * no paywall can ever render for it — listing it would be dead weight, not a
+ * lost sale.
+ *
+ * Do not hand-edit this set against a spec doc: it drifted that way once and
+ * cost the pass five paywalls. `__tests__/upgrade-gate-pass-features.test.ts`
+ * derives the same set from the live matrix and fails if the two disagree.
+ */
+export const PASS_FEATURES = new Set([
   "divisions.per_competition.max",
   "entrants.per_division.max",
   "formats.advanced",
   "formats.double_elim",
-  "registration.paid",
-  "branding",
-  "exports",
   "realtime",
+  "dashboard.player_profiles",
+  "exports.branded",
+  "sponsors.tiers",
+  "sponsors.monetize",
+  "scheduling.ai.runs_per_division.max",
 ]);
 
 interface Props {

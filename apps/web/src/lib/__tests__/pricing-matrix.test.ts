@@ -75,6 +75,22 @@ const DATA: MatrixData = {
     pro: cell(null, true),
     pro_plus: cell(null, true),
   },
+  // Real V307/V308 values. The pass lifts the public player card even though
+  // it does NOT lift stats.player — the two sit side by side in the scoring
+  // domain and the pass column deliberately reads ✓ / — across them.
+  "dashboard.player_profiles": {
+    community: cell(null, false),
+    event_pass: cell(null, true),
+    pro: cell(null, true),
+    pro_plus: cell(null, true),
+  },
+  // Real V302 values: a graded quota on every tier, not an on/off flag.
+  "scheduling.ai.runs_per_division.max": {
+    community: cell(5),
+    event_pass: cell(10),
+    pro: cell(20),
+    pro_plus: cell(50),
+  },
   // W1 Task 11: clubs & teams register caps (real V291 values) render as
   // numbers, ∞ for unlimited — never a bare ✓/— tick.
   "clubs.max": {
@@ -192,11 +208,39 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
     expect(row("pricing.matrix.fees").free).not.toBe("—");
   });
 
+  // Two rows the Event Pass lifts that /pricing used to omit entirely: the AI
+  // run cap fell outside ENTITLEMENT_DOMAINS, and dashboard.player_profiles was
+  // classed as vestigial (see the banned-list test below). Both are live gates,
+  // so the matrix has to price them.
+  it("renders the AI run cap as a graded quota, not a bool tick (V302)", () => {
+    expect(row("pricing.matrix.scheduling.ai.runs_per_division.max")).toMatchObject({
+      free: "5",
+      pass: "10",
+      pro: "20",
+      plus: "50",
+    });
+  });
+
+  it("renders public player profiles with the pass lifting them (V307/V308)", () => {
+    expect(row("pricing.matrix.dashboard.player_profiles")).toMatchObject({
+      free: "—",
+      pass: "✓",
+      pro: "✓",
+      plus: "✓",
+    });
+    // …while the stats behind them stay Pro: the pass column differs between
+    // the two adjacent scoring rows, and that is the honest story.
+    expect(row("pricing.matrix.stats.player")).toMatchObject({ free: "—", pass: "—" });
+  });
+
   it("never renders domains.custom or any D9 vestigial key", () => {
+    // `dashboard.player_profiles` was on this list and is NOT any more. It is
+    // not vestigial: server/public-site/data.ts gates the public player card on
+    // it, and V308 grants it to the Event Pass — so hiding it from /pricing hid
+    // a thing customers pay $29 for. The rest below really are dead keys.
     const banned = [
       "domains.custom",
       "public_pages",
-      "dashboard.player_profiles",
       "eligibility.enforced",
       "stats.club_championship",
     ];

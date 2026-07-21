@@ -64,6 +64,13 @@ const FEATURE_REASONS: Record<string, string> = {
   "registration.enabled": "Online registration is not available on this plan.",
   "registration.paid":
     "Charging entry fees is a Pro feature — free-event registration still works on every plan.",
+  // Sponsors (doc 10 §1). Both are Event Pass-liftable, so <UpgradeGate>
+  // renders these lines above a $29 CTA as well as the Pro one — say what is
+  // still free on Community rather than implying sponsors need a plan at all.
+  "sponsors.tiers":
+    "Sponsor tiers (Title, Gold, Silver) and per-competition placement are a Pro feature — the flat partner strip is free on every plan.",
+  "sponsors.monetize":
+    "Selling priced sponsorship packages is a Pro feature — showing sponsor logos is free on every plan.",
   // Discovery showcase (doc 15 §5)
   "discovery.listed": "Showcasing on seazn.club is not available on this plan.",
   "discovery.featured": "The featured showcase row is a Pro perk.",

@@ -50,7 +50,7 @@
       "key": "event_pass",
       "product": {
         "name": "Seazn Club Event Pass",
-        "description": "One-time upgrade for a single competition: 10 divisions, 32 entrants per division, advanced formats, entry fees, branding, exports and realtime — for the event's lifetime."
+        "description": "One-time upgrade for a single competition: 10 divisions, 64 entrants per division, advanced formats, a 5% entry-fee rate instead of 8%, branded exports, public player profiles, sponsor tiers and paid packages, realtime and 10 AI schedule runs per division — for the event's lifetime."
       },
       "price": {
         "lookup_key": "seazn_event_pass",
