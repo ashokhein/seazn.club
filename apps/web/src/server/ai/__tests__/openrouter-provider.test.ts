@@ -150,10 +150,45 @@ describe("openrouter provider", () => {
     expect(res!.refused).toBe(false);
   });
 
+  // A refusal from a provider that doesn't normalize to content_filter but
+  // does populate the OpenAI-contract message.refusal field.
+  it("flags a refusal via a structured message.refusal field", async () => {
+    const refusal = {
+      ok: true,
+      json: async () => ({
+        model: "xai/other",
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { role: "assistant", content: null, refusal: "I can't help with that." },
+          },
+        ],
+        usage: { prompt_tokens: 62, completion_tokens: 1, cost: 0 },
+      }),
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(refusal));
+    const res = await callOnce();
+    expect(res!.refused).toBe(true);
+    expect(res!.parsed).toBeNull();
+  });
+
   it("throws AiProviderError on a non-2xx response", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({ ok: false, status: 502, text: async () => "bad gateway" }),
+    );
+    await expect(callOnce()).rejects.toBeInstanceOf(AiProviderError);
+  });
+
+  it("throws AiProviderError, not a raw SyntaxError, when a 2xx body is not JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => {
+          throw new SyntaxError("Unexpected token in JSON");
+        },
+      }),
     );
     await expect(callOnce()).rejects.toBeInstanceOf(AiProviderError);
   });
