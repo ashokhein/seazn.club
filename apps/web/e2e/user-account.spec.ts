@@ -43,18 +43,28 @@ test("display name edits persist and the data export downloads", async ({ page }
 test("timezone preference persists and the API rejects a bogus zone", async ({ page }) => {
   await page.goto("/settings?tab=account");
 
-  const select = page.getByRole("combobox", { name: "Your timezone" });
-  await expect(select).toBeVisible();
+  // The picker is a search combobox, not a <select> — 418 zones cannot be
+  // scrolled, so selectOption/toHaveValue no longer apply. Type, then click.
+  const tz = page.getByRole("combobox", { name: "Your timezone" });
+  await expect(tz).toBeVisible();
 
   // Preferences form has its own Save; scope to the innermost div holding BOTH
-  // the timezone select and its Save button (the select now sits in its own
-  // min-w-0 wrapper, so filtering on the select alone lands too narrow).
+  // the timezone picker and its Save button (the picker sits in its own
+  // min-w-0 wrapper, so filtering on the picker alone lands too narrow).
   const tzForm = page
     .locator("div")
-    .filter({ has: select })
+    .filter({ has: tz })
     .filter({ has: page.getByRole("button", { name: /^Sav/ }) })
     .last();
-  await select.selectOption("Asia/Kolkata");
+
+  await tz.click();
+  await tz.fill("Kolkata");
+  // Ranking puts the exact city first; the row carries its country, which is
+  // the whole point of the rewrite.
+  const kolkata = page.getByRole("option", { name: /Kolkata/ }).first();
+  await expect(kolkata).toContainText("India");
+  await kolkata.click();
+
   await Promise.all([
     page.waitForResponse(
       (r) => r.url().includes("/api/users/me") && r.request().method() === "PATCH" && r.ok(),
@@ -63,10 +73,9 @@ test("timezone preference persists and the API rejects a bogus zone", async ({ p
   ]);
 
   await page.reload();
-  await expect(page.getByRole("combobox", { name: "Your timezone" })).toHaveValue(
-    "Asia/Kolkata",
-    { timeout: 20_000 },
-  );
+  await expect(page.getByRole("combobox", { name: "Your timezone" })).toContainText("Kolkata", {
+    timeout: 20_000,
+  });
 
   // The venue-vs-your-time helper copy is present.
   await expect(page.getByText(/venue/i).first()).toBeVisible();

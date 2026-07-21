@@ -27,7 +27,8 @@ The second line only appears when your timezone differs from the venue's.
 
 **Settings → Account → Preferences → Timezone.**
 
-- Pick any zone from the list, or press **Detect** to use your device's.
+- Click the picker and **type a city or country** — "dubai", "india", "UAE" all find the same zone.
+- Or press **Detect** to use your device's.
 - The **Current time here** preview confirms your choice at a glance.
 - Leave it on **Use my browser's timezone** and we follow whatever device you're on.
 
@@ -40,6 +41,14 @@ Your choice is saved to your account, so it follows you across devices. It only 
 - Applies to every competition and division in the organisation.
 - Leave it unset and schedules are shown in **UTC**.
 - Changing it re-labels existing fixtures: the stored instant does not move, but the wall-clock time you see does. Set it before you publish a timetable.
+
+## Finding a zone in the picker
+
+Both pickers work the same way. Click, then **type** — the list narrows as you go, and matches on the city, the country, or the country code. Every row shows the country and the **current local time**, so you can confirm you have the right one before you commit.
+
+With the box empty, zones are grouped under the region you'd actually look under: Dubai sits under **Middle East**, Mumbai under **South Asia**, Singapore under **South-East Asia**. (The underlying timezone database files all three under "Asia", which is why they used to be jumbled together.)
+
+Zones you're likely to want — the one already saved, and the one your browser reports — sit at the top under **Suggested**.
 
 ## Why does a time show an offset like GMT+5:30?
 

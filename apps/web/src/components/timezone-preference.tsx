@@ -3,7 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { fmtTime, fmtZoneAbbrev } from "@/lib/format";
-import { listTimezones, TZ_COOKIE } from "@/lib/tz";
+import { TZ_COOKIE } from "@/lib/tz";
+import { TimezoneCombobox } from "@/components/ui/timezone-combobox";
+import { useMsg } from "@/components/i18n/dict-provider";
 
 /**
  * Account → Preferences timezone picker (spec 2026-07-14). Saves to
@@ -13,7 +15,7 @@ import { listTimezones, TZ_COOKIE } from "@/lib/tz";
  */
 export function TimezonePreference({ current }: { current: string | null }) {
   const router = useRouter();
-  const zones = useMemo(() => listTimezones(), []);
+  const msg = useMsg();
   const browserTz = useMemo(() => {
     try {
       return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
@@ -32,16 +34,6 @@ export function TimezonePreference({ current }: { current: string | null }) {
     const id = setInterval(() => setNow(new Date()), 15_000);
     return () => clearInterval(id);
   }, []);
-
-  // Group the (large) IANA list by region for a scannable <select>.
-  const groups = useMemo(() => {
-    const by = new Map<string, string[]>();
-    for (const z of zones) {
-      const region = z.includes("/") ? z.slice(0, z.indexOf("/")) : "Other";
-      (by.get(region) ?? by.set(region, []).get(region)!).push(z);
-    }
-    return [...by.entries()];
-  }, [zones]);
 
   const previewZone = value || browserTz;
   const preview = `${fmtTime(previewZone, now)} ${fmtZoneAbbrev(previewZone, now)}`;
@@ -75,26 +67,17 @@ export function TimezonePreference({ current }: { current: string | null }) {
     <div className="space-y-3">
       <div className="flex flex-wrap items-end gap-2">
         <div className="min-w-0 flex-1">
-          <select
-            aria-label="Your timezone"
+          <TimezoneCombobox
             value={value}
-            onChange={(e) => {
-              setValue(e.target.value);
+            onChange={(next) => {
+              setValue(next);
               setStatus("idle");
             }}
-            className="input w-full"
-          >
-            <option value="">Use my browser’s timezone ({browserTz})</option>
-            {groups.map(([region, list]) => (
-              <optgroup key={region} label={region}>
-                {list.map((z) => (
-                  <option key={z} value={z}>
-                    {z.replace(/_/g, " ")}
-                  </option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
+            ariaLabel={msg("settings.account.timezone.aria")}
+            emptyLabel={msg("settings.account.timezone.browser", { tz: browserTz })}
+            allowEmpty
+            suggested={[browserTz, current ?? ""].filter(Boolean)}
+          />
         </div>
         <button
           type="button"
@@ -103,9 +86,9 @@ export function TimezonePreference({ current }: { current: string | null }) {
             setStatus("idle");
           }}
           className="btn btn-ghost shrink-0"
-          title={`Detect: ${browserTz}`}
+          title={msg("settings.account.timezone.detectTitle", { tz: browserTz })}
         >
-          ⌖ Detect
+          ⌖ {msg("settings.account.timezone.detect")}
         </button>
         <button
           type="button"
@@ -113,12 +96,14 @@ export function TimezonePreference({ current }: { current: string | null }) {
           disabled={status === "loading" || unchanged}
           className="btn btn-primary shrink-0"
         >
-          {status === "loading" ? "Saving…" : "Save"}
+          {status === "loading" ? msg("settings.saving") : msg("settings.org.save")}
         </button>
       </div>
 
       <div className="flex items-baseline gap-2 rounded-lg bg-[var(--tz-you-soft)] px-3 py-2">
-        <span className="text-xs font-medium text-[var(--tz-you)]">Current time here</span>
+        <span className="text-xs font-medium text-[var(--tz-you)]">
+          {msg("settings.account.timezone.currentTime")}
+        </span>
         <span
           className="text-lg font-bold tabular-nums text-[var(--tz-you)]"
           suppressHydrationWarning
@@ -127,11 +112,10 @@ export function TimezonePreference({ current }: { current: string | null }) {
         </span>
       </div>
 
-      <p className="text-xs text-slate-500">
-        Schedules always show the <strong>venue’s</strong> time; this controls your own times
-        (your schedule, activity, billing) and the local-time hint beside every venue time.
-      </p>
-      {status === "saved" && <p className="text-sm text-emerald-600">Timezone saved.</p>}
+      <p className="text-xs text-slate-500">{msg("settings.account.timezone.lanes")}</p>
+      {status === "saved" && (
+        <p className="text-sm text-emerald-600">{msg("settings.account.timezone.saved")}</p>
+      )}
       {status === "error" && <p className="text-sm text-red-600">{error}</p>}
     </div>
   );

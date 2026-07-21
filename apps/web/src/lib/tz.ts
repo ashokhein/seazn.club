@@ -54,45 +54,11 @@ export function resolveVenueTz(
 // `coalesce(ss.tz, o.timezone, 'UTC')` (a raw string helper cannot be spliced
 // into postgres.js tagged templates — it would be sent as a bind parameter).
 
-/**
- * IANA zone list for the account picker. `Intl.supportedValuesOf` is the source
- * of truth on modern runtimes (~400+ zones); a small static fallback covers
- * older ones so the picker is never empty. Not for validation — that's
- * `isValidIana`.
- *
- * Runtimes still emit legacy zone names (e.g. Node returns "Asia/Calcutta");
- * canonicalize to the modern spelling so an India-based user picks
- * "Asia/Kolkata", not a 40-year-old alias. Both remain isValidIana.
- */
-export function listTimezones(): string[] {
-  let zones: string[] | undefined;
-  try {
-    zones = (
-      Intl as unknown as { supportedValuesOf?: (k: string) => string[] }
-    ).supportedValuesOf?.("timeZone");
-  } catch {
-    /* fall through */
-  }
-  const base = zones && zones.length ? zones : TZ_FALLBACK;
-  const canonical = new Set(base.map((z) => TZ_RENAME[z] ?? z));
-  return [...canonical].sort();
-}
-
-/** Legacy → modern IANA names some ICU builds still return. */
-const TZ_RENAME: Record<string, string> = {
-  "Asia/Calcutta": "Asia/Kolkata",
-  "Asia/Rangoon": "Asia/Yangon",
-  "Asia/Saigon": "Asia/Ho_Chi_Minh",
-  "Asia/Katmandu": "Asia/Kathmandu",
-  "Europe/Kiev": "Europe/Kyiv",
-  "America/Buenos_Aires": "America/Argentina/Buenos_Aires",
-};
-
-const TZ_FALLBACK = [
-  "UTC",
-  "Europe/London", "Europe/Paris", "Europe/Berlin", "Europe/Madrid", "Europe/Amsterdam",
-  "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles",
-  "America/Sao_Paulo", "America/Toronto",
-  "Asia/Kolkata", "Asia/Dubai", "Asia/Singapore", "Asia/Tokyo", "Asia/Shanghai",
-  "Australia/Sydney", "Pacific/Auckland",
-];
+// The zone LIST used to live here as `listTimezones()`, reading
+// Intl.supportedValuesOf with a 19-zone static fallback and canonicalizing six
+// legacy spellings by hand. It now lives in lib/tz-options.ts over the
+// generated lib/tz-data.ts table, which is complete (all 418 zones, all 19
+// aliases — the old six-entry rename table let Córdoba, Mendoza, Jujuy and ten
+// others appear twice in the picker) and carries the country and region every
+// row needs. This module stays dependency-free so the shared zod schemas and
+// the client islands that only need `isValidIana` do not pull that table in.

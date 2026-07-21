@@ -7,7 +7,7 @@
 // zone belongs to the org's venues, not to the person looking at the screen.
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { listTimezones } from "@/lib/tz";
+import { TimezoneCombobox } from "@/components/ui/timezone-combobox";
 import { useMsg } from "@/components/i18n/dict-provider";
 
 export function OrgTimezone({
@@ -19,22 +19,21 @@ export function OrgTimezone({
 }) {
   const msg = useMsg();
   const router = useRouter();
-  const zones = useMemo(() => listTimezones(), []);
   const [value, setValue] = useState(initialTimezone ?? "");
   const [saved, setSaved] = useState(initialTimezone ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // Group the (large) IANA list by region for a scannable <select>, same
-  // treatment as the account picker.
-  const groups = useMemo(() => {
-    const by = new Map<string, string[]>();
-    for (const z of zones) {
-      const region = z.includes("/") ? z.slice(0, z.indexOf("/")) : "Other";
-      (by.get(region) ?? by.set(region, []).get(region)!).push(z);
+  // Safe to read during render, unlike most browser-only values: it is only
+  // ever used inside the picker's popup, which does not exist until the
+  // organiser opens it — so it can never reach the server-rendered markup and
+  // cannot cause a hydration mismatch. Same treatment as the account picker.
+  const browserTz = useMemo(() => {
+    try {
+      return Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    } catch {
+      return "";
     }
-    return [...by.entries()];
-  }, [zones]);
+  }, []);
 
   async function save() {
     setBusy(true);
@@ -63,23 +62,17 @@ export function OrgTimezone({
   return (
     <div className="space-y-2">
       <p className="text-sm text-slate-500">{msg("settings.org.timezone.desc")}</p>
-      <select
-        aria-label={msg("settings.org.timezone.aria")}
+      <TimezoneCombobox
         value={value}
-        onChange={(e) => setValue(e.target.value)}
-        className="input w-full"
-      >
-        <option value="">{msg("settings.org.timezone.notSet")}</option>
-        {groups.map(([region, list]) => (
-          <optgroup key={region} label={region}>
-            {list.map((z) => (
-              <option key={z} value={z}>
-                {z.replace(/_/g, " ")}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </select>
+        onChange={setValue}
+        ariaLabel={msg("settings.org.timezone.aria")}
+        emptyLabel={msg("settings.org.timezone.notSet")}
+        allowEmpty
+        // The zone already saved is worth one click to get back to after an
+        // exploratory search; the browser zone is the common answer for an
+        // organiser who does run events where they live.
+        suggested={[saved, browserTz].filter(Boolean)}
+      />
       <div className="flex items-center gap-3">
         <button
           type="button"
