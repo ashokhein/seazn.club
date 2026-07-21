@@ -150,12 +150,19 @@ async function seedOrg(opts: {
       returning id`;
     await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
     if (opts.plan) {
-      await sql`
+      // V310: the subscription IS the billing group and the org points at it,
+      // rather than the other way round. This seeder builds its org in raw SQL
+      // (bypassing createOrgForUser, which would otherwise make the group), so
+      // both halves of the link have to be written here — a group with no org
+      // pointing at it resolves every entitlement to community.
+      const [group] = await sql<{ id: string }[]>`
         insert into subscriptions
-          (org_id, plan_key, status, stripe_customer_id, stripe_subscription_id, updated_at)
-        values (${orgId}, ${opts.plan}, ${opts.subStatus ?? "active"},
+          (owner_user_id, plan_key, status, stripe_customer_id, stripe_subscription_id, updated_at)
+        values (${ownerId}, ${opts.plan}, ${opts.subStatus ?? "active"},
                 ${opts.customerId ?? null}, ${opts.subscriptionId ?? null},
-                ${opts.subUpdatedAt ?? new Date().toISOString()})`;
+                ${opts.subUpdatedAt ?? new Date().toISOString()})
+        returning id`;
+      await sql`update organizations set subscription_id = ${group.id} where id = ${orgId}`;
     }
     return { orgId, orgSlug, ownerEmail };
   });
@@ -642,7 +649,8 @@ test.describe("T7 · platform disputes truth-up entitlements", () => {
     // Flag set (DB) …
     const [flagged] = await withDb((sql) =>
       sql<{ disputed_at: string | null; dispute_id: string | null; plan_key: string }[]>`
-        select disputed_at, dispute_id, plan_key from subscriptions where org_id = ${org.orgId}`,
+        select disputed_at, dispute_id, plan_key from subscriptions
+         where id = (select subscription_id from organizations where id = ${org.orgId})`,
     );
     expect(flagged.disputed_at).not.toBeNull();
     expect(flagged.dispute_id).toBe(did);
@@ -788,7 +796,8 @@ test.describe("T8 · a stale subscription.deleted never downgrades a re-bought o
 
     const [sub] = await withDb((sql) =>
       sql<{ plan_key: string; status: string }[]>`
-        select plan_key, status from subscriptions where org_id = ${org.orgId}`,
+        select plan_key, status from subscriptions
+         where id = (select subscription_id from organizations where id = ${org.orgId})`,
     );
     expect(sub.plan_key).toBe("pro"); // the replaced sub's late delete is ignored
     expect(sub.status).toBe("active");

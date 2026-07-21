@@ -146,8 +146,37 @@ async function withDb<T>(
 }
 
 /**
+ * The billing group an org bills through, or a loud failure.
+ *
+ * Every fixture below writes the GROUP, so a missing link has to throw rather
+ * than update zero rows. A no-op fixture is the worst kind: the spec runs
+ * against whatever state the row already held and reports on the wrong thing,
+ * which is how the pre-V310 version of these helpers survived a schema change
+ * that had already made them impossible.
+ */
+async function requireGroupId(sql: import("postgres").Sql, orgId: string): Promise<string> {
+  const rows = await sql<{ subscription_id: string | null }[]>`
+    select subscription_id from organizations where id = ${orgId}`;
+  if (rows.length === 0) throw new Error(`no organization ${orgId}`);
+  const groupId = rows[0].subscription_id;
+  if (!groupId) throw new Error(`organization ${orgId} has no billing group (subscription_id)`);
+  return groupId;
+}
+
+/**
  * Set an org's plan directly in the DB (same trick auth.setup.ts uses for the
  * Pro account). Targets by org id or by owner email.
+ *
+ * Writes the org's billing GROUP, because V310 moved the plan there and dropped
+ * `subscriptions.org_id`. Two consequences worth knowing before you call it:
+ *
+ *  - It UPDATES, never inserts. Post-V310 every org points at a group from the
+ *    moment it is created (lib/auth.ts createOrgForUser), so an insert here
+ *    would mint a second, orphaned group that nothing reads.
+ *  - The plan is a property of the group, so on a SHARED group this moves every
+ *    org on the bill, not just the one named. That is the product's actual
+ *    behaviour, not a limitation of the fixture — a spec that wants one org
+ *    changed must put it in a group of its own first.
  */
 export async function setOrgPlanBySql(
   target: { orgId?: string; email?: string },
@@ -155,18 +184,23 @@ export async function setOrgPlanBySql(
 ): Promise<void> {
   await withDb(async (sql) => {
     if (target.orgId) {
-      await sql`
-        insert into subscriptions (org_id, plan_key, status)
-        values (${target.orgId}, ${plan}, 'active')
-        on conflict (org_id) do update set plan_key = ${plan}, status = 'active'`;
+      const groupId = await requireGroupId(sql, target.orgId);
+      await sql`update subscriptions set plan_key = ${plan}, status = 'active'
+                 where id = ${groupId}`;
     } else if (target.email) {
-      await sql`
-        with org as (
-          select m.org_id from org_members m join users u on u.id = m.user_id
-          where u.email = ${target.email} limit 1)
-        insert into subscriptions (org_id, plan_key, status)
-        select org_id, ${plan}, 'active' from org
-        on conflict (org_id) do update set plan_key = ${plan}, status = 'active'`;
+      const res = await sql`
+        update subscriptions set plan_key = ${plan}, status = 'active'
+         where id = (
+           select o.subscription_id from organizations o
+             join org_members m on m.org_id = o.id
+             join users u on u.id = m.user_id
+            where u.email = ${target.email} and o.subscription_id is not null
+            limit 1)`;
+      // auth.setup.ts flips the SHARED Pro account this way, and every project
+      // in the run reads the storageState it produces. Silently matching
+      // nothing would hand all of them a community account and fail somewhere
+      // far from here.
+      if (res.count === 0) throw new Error(`no billing group for owner ${target.email}`);
     } else {
       throw new Error("setOrgPlanBySql: pass orgId or email");
     }
@@ -348,17 +382,23 @@ export async function setOrgSubscriptionSql(
   const used = fields.trial_used_at ?? null;
   const setId = "stripe_subscription_id" in fields;
   await withDb(async (sql) => {
+    // The org's billing GROUP — V310 moved every one of these columns onto it
+    // and dropped subscriptions.org_id. See setOrgPlanBySql for why this
+    // updates rather than inserts, and for the shared-group blast radius.
+    const groupId = await requireGroupId(sql, orgId);
     await sql`
-      insert into subscriptions (org_id, plan_key, status, trial_end, trial_used_at)
-      values (${orgId}, ${fields.plan_key}, ${fields.status}, ${fields.trial_end ?? null}, ${used})
-      on conflict (org_id) do update
-        set plan_key = ${fields.plan_key}, status = ${fields.status},
-            trial_end = ${fields.trial_end ?? null}`;
+      update subscriptions
+         set plan_key = ${fields.plan_key}, status = ${fields.status},
+             trial_end = ${fields.trial_end ?? null}
+       where id = ${groupId}`;
+    // Still separate statements, and still keyed off presence rather than
+    // value: the app only ever coalesces these two columns, so a fixture that
+    // wrote them unconditionally would hand back a trial the product cannot.
     if (burn) {
-      await sql`update subscriptions set trial_used_at = ${used} where org_id = ${orgId}`;
+      await sql`update subscriptions set trial_used_at = ${used} where id = ${groupId}`;
     }
     if (setId) {
-      await sql`update subscriptions set stripe_subscription_id = ${fields.stripe_subscription_id ?? null} where org_id = ${orgId}`;
+      await sql`update subscriptions set stripe_subscription_id = ${fields.stripe_subscription_id ?? null} where id = ${groupId}`;
     }
   });
 }
