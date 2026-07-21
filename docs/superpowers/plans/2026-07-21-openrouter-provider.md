@@ -73,8 +73,13 @@ Expected: `0`, or the line is commented out. `REMOTE_DATABASE_URL` must stay exp
 
 - [ ] **Step 5: Migrate the new schema**
 
-Run: `npm run db:apply`
-Expected: Flyway creates `seazn_openrouter` and applies every migration in order.
+`scripts/flyway.sh` reads `DATABASE_URL` and `DB_SCHEMA` from the **environment** — it does not load `.env.local` itself (`scripts/flyway.sh:16`). Export them for the command:
+
+```bash
+set -a; . ./.env.local; set +a; npm run db:apply
+```
+
+Expected: Flyway creates `seazn_openrouter` and applies every migration in order. Confirm the log names `seazn_openrouter`, not `seazn_club` — if it names the latter, the export did not take and you are about to migrate the main checkout's schema.
 
 If it reports a baseline error, the schema already exists at a version below the migration floor — drop it and re-run rather than baselining, since this schema is disposable.
 
@@ -88,13 +93,18 @@ Expected: every migration `Success`, no `Pending`, no `Ignored` below the curren
 Run: `npm run sync:sports`
 Expected: completes. This is a CI step; without it, sport-dependent suites fail on missing catalogue rows.
 
-- [ ] **Step 8: Seed demo data**
+- [ ] **Step 8: Seed demo data (optional — not required by the gate)**
 
 ```bash
 npm run seed:demo:setup
 npm run seed:demo
 ```
-Expected: both complete. These read `apps/web/.env.local` via `--env-file`, so Step 2 must have run first.
+
+These read `apps/web/.env.local` via `--env-file`, so Step 2 must have run first.
+
+**Known failure on a fresh v305 schema, unrelated to this branch:** `seed:demo` aborts with `402 PAYMENT_REQUIRED — divisions.per_competition.max` when adding a third division to a competition, even though `seed:demo:setup` reports the org as `pro/active`. The demo dataset wants more divisions per competition than the pro entitlement allows.
+
+This does **not** block anything here: `scripts/smoke.ts` provisions its own orgs, competitions and divisions (and lifts the divisions quota itself — see its free-org path), so the smoke gate is independent of the demo seed. Proceed without it. Do not "fix" the seed by raising the org's plan — that would mask whatever entitlement expectation actually drifted, which belongs in its own change.
 
 - [ ] **Step 9: Confirm Stripe test-mode wiring**
 
