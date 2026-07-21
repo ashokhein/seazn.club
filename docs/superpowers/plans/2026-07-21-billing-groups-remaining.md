@@ -133,7 +133,7 @@ affects.
 
 ## 3. UI + visual verification (explicitly requested, not started)
 
-- [ ] **BLOCKER for everything in this section: nothing exposes the group id.**
+- [x] **BLOCKER for everything in this section: nothing exposes the group id.**
       `POST /api/billing/group/attach` requires `subscription_id`, and no endpoint returns it.
       `GET /api/orgs/[id]/subscription` deliberately projects `o.id as org_id` and returns
       plan/status only — it dropped `stripe_customer_id` because ORG_ROLES lets any member of
@@ -141,10 +141,10 @@ affects.
       smoke path below could not test re-attach either. Needs `GET /api/billing/groups` —
       groups the user PAYS for (`groupIdsOwnedBy`), with org count, plan, and seats paid. Gate
       it on the payer, not on org membership.
-- [ ] Place `billing.extra-org` tip beside the attach control
-- [ ] Freed-slot tip now that `quantity_paid` is written
-- [ ] Playwright verification desktop AND mobile
-- [ ] Grep changed UI text across e2e (both phases) before merging; scope assertions to a
+- [x] Place `billing.extra-org` tip beside the attach control
+- [x] Freed-slot tip now that `quantity_paid` is written
+- [x] Playwright verification desktop AND mobile
+- [x] Grep changed UI text across e2e (both phases) before merging; scope assertions to a
       container
 
 ## 4. Closing passes
@@ -166,6 +166,28 @@ affects.
       `CRON_SECRET` + two scheduling options (neither committed; a recurring outbound job is
       the operator's call), verification, and the fact that there is no rollback.
 - [ ] Update `HANDOFF.md`
+
+## 4b. Gaps I know about and have NOT closed
+
+- [ ] **Transfer has no UI at all.** `offer` / `accept` / `revoke` are API-only, so a payer
+      cannot hand a group over from the app — the whole two-phase flow is unreachable by a
+      customer. The biggest functional hole left.
+- [ ] **Nothing about Stripe has been validated against a real account.** Every Stripe call in
+      this branch is mocked, deliberately (standing rule: never call the real API). So the
+      central pricing assumption — a graduated tiered price billing `quantity` = org count,
+      tier 1 base + tier 2 half — has never been observed working. Neither has
+      `assertPriceBillsQuantity`'s 503 against a genuine legacy per_unit price, nor a real
+      proration on attach, nor a renewal invoice cut from a quantity we lowered. First
+      staging deploy is the first evidence.
+- [ ] **`reconcileGroupQuantities` has never run against real data**, only tests.
+- [ ] **No Playwright spec for the group flow.** It was verified by hand (desktop 1440 +
+      mobile 390, attach end to end), but nothing guards it in CI. `e2e.yml` is deliberately
+      disabled, so a spec would only be a local gate — worth writing anyway.
+- [ ] **No component test for `billing-group-panel.tsx`.** Its branching (freed slot vs not,
+      at-cap, no candidates, self-hiding) is copy that decides what a customer believes they
+      will be charged, and only the endpoint underneath it is tested.
+- [ ] **Smoke covers detach but not attach.** Attach is covered by unit tests and one manual
+      browser run; the round trip is not in `scripts/smoke.ts`.
 
 ## 5. Open decisions / deferred
 
