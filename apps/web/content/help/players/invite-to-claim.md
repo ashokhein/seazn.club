@@ -28,3 +28,4 @@ At the top of a fixture page (until the match starts), **Check-in QR** mints a c
 
 - Date of birth stays organiser-side only — it is never shown to anyone, including on the player's own home (it only drives the under-16 consent rule).
 - Unclaimed players are completely unaffected: no public card without consent, no availability chip, nothing new.
+- Claiming never publishes anyone. A public player card needs the player's own *show my name publicly* consent **and** a plan that carries public cards — **Pro or Pro Plus**, or an [Event Pass](/help/billing/event-pass) on the competition. On Community there are no public cards; everything on this page still works.
