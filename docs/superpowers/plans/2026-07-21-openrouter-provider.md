@@ -687,6 +687,13 @@ describe("anthropic provider", () => {
     const res = await callOnce();
     expect(res!.parsed).toBeNull();
   });
+
+  it("reports whether it is configured, so the runner can refuse before calling", async () => {
+    const { anthropicProvider } = await import("../anthropic-provider");
+    expect(anthropicProvider().isConfigured()).toBe(true);
+    delete process.env.ANTHROPIC_API_KEY;
+    expect(anthropicProvider().isConfigured()).toBe(false);
+  });
 });
 ```
 
@@ -759,6 +766,11 @@ export type AiChatResponse<T> = {
 
 export interface AiProvider {
   readonly id: "anthropic" | "openrouter";
+  /** Whether this provider has the credentials it needs. Separate from chat()
+   *  so the runners can refuse with 503 BEFORE any call, which is the contract
+   *  schedule-ai-run.test.ts asserts ("503 before any call"). A missing key
+   *  discovered inside chat() would surface as a 500 instead. */
+  isConfigured(): boolean;
   chat<T>(req: AiChatRequest<T>): Promise<AiChatResponse<T> | null>;
 }
 
@@ -802,6 +814,7 @@ const CLIENT_TIMEOUT_MS = 60 * 60 * 1000;
 export function anthropicProvider(): AiProvider {
   return {
     id: "anthropic",
+    isConfigured: () => Boolean(process.env.ANTHROPIC_API_KEY),
     async chat<T>(req: AiChatRequest<T>): Promise<AiChatResponse<T> | null> {
       const apiKey = process.env.ANTHROPIC_API_KEY;
       if (!apiKey) throw new AiProviderError("ANTHROPIC_API_KEY is not configured");
@@ -907,7 +920,8 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `apps/web/src/server/usecases/schedule-ai.ts:700-760` (reasoning params, client factory), `:925-973` (`assistantTurn`, `callModel`), and every `callModel` call site
-- Test: `apps/web/src/server/usecases/__tests__/schedule-ai-run.test.ts`
+- Create: `apps/web/src/server/usecases/__tests__/schedule-ai-provider.test.ts`
+- Must keep passing unchanged: `apps/web/src/server/usecases/__tests__/schedule-ai-run.test.ts` (it mocks the SDK, so it now exercises the real adapter through the seam)
 
 **Interfaces:**
 - Consumes: `anthropicProvider()`, `AiProvider`, `AiReasoning`, `AiProviderError` from Task 3.
@@ -920,27 +934,92 @@ Note every call site. `callModel` is invoked on the first round and again on eac
 
 - [ ] **Step 2: Write the failing test**
 
-Add to `apps/web/src/server/usecases/__tests__/schedule-ai-run.test.ts`:
+Create a **new** file `apps/web/src/server/usecases/__tests__/schedule-ai-provider.test.ts`. It must be separate from `schedule-ai-run.test.ts`: that suite mocks `@anthropic-ai/sdk` and so exercises the real adapter end to end, which is coverage worth keeping. This file mocks one level higher, at the provider.
+
+Copy the pack and plan fixtures from `schedule-ai-run.test.ts:25-126` (`F1`–`F4`, `makePack`, `assign`, `plan`, `clashingPlan`, `fixedPlan`) — they are module-level consts in that file, so import them if they are exported, and otherwise duplicate the four lines of `clashingPlan`/`fixedPlan` construction verbatim.
 
 ```typescript
-  it("uses one provider for the whole run, including repair rounds", async () => {
-    // A run that needs a repair round must not construct a second provider:
-    // reasoning blocks are provider-specific and are replayed verbatim.
-    const chat = vi.fn();
-    const provider = { id: "anthropic" as const, chat };
-    // …arrange a pack whose first proposal has a blocking conflict, then a
-    // clean second proposal (mirror the existing repair-round test's fixtures).
-    // Assert chat was called twice and both calls came from `provider`.
-    expect(chat).toHaveBeenCalledTimes(2);
-  });
-```
+import { describe, it, expect, vi, beforeEach } from "vitest";
 
-Fill the arrangement from the existing repair-round test in the same file — reuse its fixtures rather than inventing new ones.
+const anthropicProvider = vi.fn();
+vi.mock("@/server/ai/anthropic-provider", () => ({ anthropicProvider }));
+
+// …pack + movableIds + clashingPlan + fixedPlan fixtures, as above…
+
+const round = (parsed: unknown) => ({
+  parsed,
+  assistantTurn: { role: "assistant" as const, content: [] },
+  usage: { inputTokens: 1000, outputTokens: 500, costUsd: null },
+  servedModel: "claude-sonnet-5",
+});
+
+beforeEach(() => {
+  anthropicProvider.mockReset();
+  process.env.ANTHROPIC_API_KEY = "test-key";
+});
+
+describe("schedule runner ↔ provider seam", () => {
+  it("resolves the provider once per run and reuses it across repair rounds", async () => {
+    // Reasoning blocks are provider-specific and replayed verbatim on repair.
+    // A run that resolved a provider per round could send one service's
+    // reasoning to another, so the factory must run once and chat twice.
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce(round(clashingPlan))
+      .mockResolvedValueOnce(round(fixedPlan));
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const { runAiPlan } = await import("../schedule-ai");
+    const out = await runAiPlan(pack, movableIds);
+
+    expect(anthropicProvider).toHaveBeenCalledTimes(1);
+    expect(chat).toHaveBeenCalledTimes(2);
+    expect(out.usage.repair_rounds).toBe(1);
+    expect(out.blocking).toHaveLength(0);
+  });
+
+  it("asks for effort reasoning and the 32k output budget", async () => {
+    const chat = vi.fn().mockResolvedValue(round(fixedPlan));
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const { runAiPlan } = await import("../schedule-ai");
+    await runAiPlan(pack, movableIds);
+
+    const req = chat.mock.calls[0]![0];
+    expect(req.reasoning).toEqual({ kind: "effort", effort: "high" });
+    expect(req.maxTokens).toBe(32_000);
+    expect(req.schema.name).toBe("schedule_plan");
+  });
+
+  it("refuses with 503 before calling when the provider is unconfigured", async () => {
+    const chat = vi.fn();
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => false, chat });
+
+    const { runAiPlan } = await import("../schedule-ai");
+    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 503 });
+    expect(chat).not.toHaveBeenCalled();
+  });
+
+  it("accumulates usage across rounds and prefers the cost the provider reports", async () => {
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({ ...round(clashingPlan), usage: { inputTokens: 1000, outputTokens: 500, costUsd: 0.2 } })
+      .mockResolvedValueOnce({ ...round(fixedPlan), usage: { inputTokens: 1000, outputTokens: 500, costUsd: 0.3 } });
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const { runAiPlan } = await import("../schedule-ai");
+    const out = await runAiPlan(pack, movableIds);
+
+    expect(out.usage.input_tokens).toBe(2000);
+    expect(out.usage.output_tokens).toBe(1000);
+  });
+});
+```
 
 - [ ] **Step 3: Run the test to verify it fails**
 
-Run: `npx vitest run src/server/usecases/__tests__/schedule-ai-run.test.ts -t "one provider for the whole run"`
-Expected: FAIL — `callModel` does not accept a provider.
+Run: `npx vitest run src/server/usecases/__tests__/schedule-ai-provider.test.ts`
+Expected: FAIL — `schedule-ai.ts` does not import `anthropicProvider`, so the mock is never used and `chat` is never called.
 
 - [ ] **Step 4: Change the signature**
 
@@ -997,13 +1076,16 @@ function aiReasoning(model: string): AiReasoning {
 
 - [ ] **Step 6: Thread one provider through the run**
 
-In the run entry point (`runScheduleAi`, around `:977-1000`), construct the provider once:
+In the run entry point (`runScheduleAi`, around `:977-1000`), resolve the provider once and keep the 503-before-any-call contract that `schedule-ai.ts:738` provides today:
 
 ```typescript
   const provider = anthropicProvider();
+  if (!provider.isConfigured()) {
+    throw new HttpError(503, "AI scheduling is not configured", "AI_NOT_CONFIGURED");
+  }
 ```
 
-and pass it to every `callModel` call. Delete the old inline client factory (`:738-750`) and `assistantTurn` (`:925-927`) — the adapter now owns both. Replace `assistantTurn(response)` uses with `response.assistantTurn`.
+Use the exact status, message and code the current guard at `:738` throws — read it and copy them; `schedule-ai-run.test.ts:371` asserts the 503 and that no call was made. Pass `provider` to every `callModel` call. Delete the old inline client factory (`:738-750`) and `assistantTurn` (`:925-927`) — the adapter now owns both. Replace `assistantTurn(response)` uses with `response.assistantTurn`.
 
 - [ ] **Step 7: Update usage reads**
 
@@ -1039,7 +1121,8 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `apps/web/src/server/usecases/officials-ai.ts:589-800` (`officialsAssistantTurn` at `:757`, `callOfficialsModel` at `:762`)
-- Test: `apps/web/src/server/usecases/__tests__/officials-ai-route.test.ts`
+- Create: `apps/web/src/server/usecases/__tests__/officials-ai-provider.test.ts`
+- Must keep passing unchanged: `apps/web/src/server/usecases/__tests__/officials-ai-route.test.ts` (`:187-188` asserts `output_config.effort` through the real adapter)
 
 **Interfaces:**
 - Consumes: everything Task 3 produces, plus the `callModel` pattern from Task 4.
@@ -1047,16 +1130,71 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the failing test**
 
-Add to `apps/web/src/server/usecases/__tests__/officials-ai-route.test.ts` a test asserting the officials runner calls `provider.chat` with `reasoning: {kind: "effort", effort: <OFFICIALS_AI_EFFORT>}` and `maxTokens` matching the current inline value. Read `:769-780` for the current values and assert those exact numbers.
+Create a **new** file `apps/web/src/server/usecases/__tests__/officials-ai-provider.test.ts`, for the same reason as Task 4: `officials-ai-route.test.ts` mocks `@anthropic-ai/sdk` (line 28) and its assertion at `:187-188` that `body.output_config.effort === "high"` must keep passing through the real adapter.
+
+Reuse that suite's pack/fixture helpers (`resp`, `assignAll`, `fixtureIds`, `refA`) by importing them if exported, otherwise duplicating the minimum needed.
+
+```typescript
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const anthropicProvider = vi.fn();
+vi.mock("@/server/ai/anthropic-provider", () => ({ anthropicProvider }));
+
+// …officials pack fixtures, as above…
+
+const round = (parsed: unknown) => ({
+  parsed,
+  assistantTurn: { role: "assistant" as const, content: [] },
+  usage: { inputTokens: 900, outputTokens: 220, costUsd: null },
+  servedModel: "claude-sonnet-5",
+});
+
+beforeEach(() => {
+  anthropicProvider.mockReset();
+  process.env.ANTHROPIC_API_KEY = "test-key";
+  delete process.env.OFFICIALS_AI_EFFORT;
+});
+
+describe("officials runner ↔ provider seam", () => {
+  it("asks for effort reasoning at the officials effort, with the 32k budget", async () => {
+    const chat = vi.fn().mockResolvedValue(round(assignAll(fixtureIds, refA)));
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const { runOfficialsAiPlan } = await import("../officials-ai");
+    await runOfficialsAiPlan(/* …same args the route test passes… */);
+
+    const req = chat.mock.calls[0]![0];
+    // Phase B has no legacy-model branch and must not grow one: it always
+    // asks for effort, never a token budget.
+    expect(req.reasoning).toEqual({ kind: "effort", effort: "high" });
+    expect(req.maxTokens).toBe(32_000);
+    expect(req.schema.name).toBe("officials_plan");
+  });
+
+  it("resolves the provider once per run", async () => {
+    const chat = vi.fn().mockResolvedValue(round(assignAll(fixtureIds, refA)));
+    anthropicProvider.mockReturnValue({ id: "anthropic", isConfigured: () => true, chat });
+
+    const { runOfficialsAiPlan } = await import("../officials-ai");
+    await runOfficialsAiPlan(/* …same args… */);
+
+    expect(anthropicProvider).toHaveBeenCalledTimes(1);
+  });
+});
+```
+
+Read `officials-ai-route.test.ts:173-190` for the exact call signature `runOfficialsAiPlan` takes and substitute it for the `/* … */` comments — do not leave them in the committed test.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
-Run: `npx vitest run src/server/usecases/__tests__/officials-ai-route.test.ts -t "provider"`
-Expected: FAIL.
+Run: `npx vitest run src/server/usecases/__tests__/officials-ai-provider.test.ts`
+Expected: FAIL — `officials-ai.ts` does not import `anthropicProvider`.
 
 - [ ] **Step 3: Apply the same conversion**
 
 Mirror Task 4 exactly: `callOfficialsModel` takes a provider first, builds an `AiChatRequest` with `schema: {name: "officials_plan", zod: AiOfficialsPlan}`, and `reasoning: {kind: "effort", effort: officialsAiEffort()}` — Phase B has no legacy-model branch and does not gain one. Delete `officialsAssistantTurn` (`:757`) and read `response.assistantTurn`. Replace the `Anthropic.APIError` check at `:791` with `AiProviderError`.
+
+Resolve the provider once in the officials run entry point and apply the same `isConfigured()` guard Task 4 added, using whatever status/message/code this file's existing unconfigured path throws — grep for `503` in `officials-ai.ts` and match it. If there is no such guard today, add one throwing the same shape Phase A throws.
 
 - [ ] **Step 4: Run the Phase B suites**
 
@@ -1159,9 +1297,13 @@ Create `apps/web/src/server/ai/openrouter-policy.ts`. Populate `ALLOWED_PROVIDER
 //
 // Reviewed: 2026-07-21. Re-review whenever a provider is added.
 
-/** Upstream providers permitted to serve our traffic. Derived from the
- *  policy probe in design/v4/05-openrouter-candidates.md. */
-export const ALLOWED_PROVIDERS = ["anthropic", "xai"] as const;
+/** Upstream providers permitted to serve our traffic.
+ *
+ *  POPULATE FROM design/v4/05-openrouter-candidates.md — the policy-routable
+ *  rows of the Task 2 probe, and nothing else. Left empty deliberately: the
+ *  "keeps a non-empty allowlist" test fails until it is filled in, so this
+ *  cannot ship as a guess about which providers cleared the policy. */
+export const ALLOWED_PROVIDERS = [] as const satisfies readonly string[];
 
 const POLICY = {
   provider: {
@@ -1518,6 +1660,7 @@ const DEFAULT_BASE = "https://openrouter.ai/api/v1";
 export function openRouterProvider(): AiProvider {
   return {
     id: "openrouter",
+    isConfigured: () => Boolean(process.env.OPENROUTER_API_KEY),
     async chat<T>(req: AiChatRequest<T>): Promise<AiChatResponse<T> | null> {
       const apiKey = process.env.OPENROUTER_API_KEY;
       if (!apiKey) throw new AiProviderError("OPENROUTER_API_KEY is not configured");
@@ -1686,17 +1829,34 @@ Replace `anthropicProvider()` with `selectProvider()` in `schedule-ai.ts` (Task 
 
 - [ ] **Step 6: Generalise the 503 test**
 
-`schedule-ai-run.test.ts:371` currently asserts "missing `ANTHROPIC_API_KEY` → 503 before any call". Keep it and add its sibling:
+`schedule-ai-run.test.ts:371` currently reads:
 
 ```typescript
-  it("missing OPENROUTER_API_KEY → 503 when that provider is selected", async () => {
-    process.env.AI_PROVIDER = "openrouter";
-    delete process.env.OPENROUTER_API_KEY;
-    // …assert the same 503 shape the ANTHROPIC_API_KEY case asserts.
+  it("missing ANTHROPIC_API_KEY → 503 before any call", async () => {
+    delete process.env.ANTHROPIC_API_KEY;
+    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 503 });
+    expect(parse).not.toHaveBeenCalled();
   });
 ```
 
-Mirror the existing test's arrangement and assertions exactly; only the two env vars differ. Reset `AI_PROVIDER` in the suite's `afterEach` so no later test inherits it.
+Keep it and add its sibling immediately after:
+
+```typescript
+  it("missing OPENROUTER_API_KEY → 503 before any call when that provider is selected", async () => {
+    process.env.AI_PROVIDER = "openrouter";
+    delete process.env.OPENROUTER_API_KEY;
+    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 503 });
+    // The Anthropic path must be untouched — a misconfigured OpenRouter run
+    // must not silently fall back to the other provider's credentials.
+    expect(parse).not.toHaveBeenCalled();
+  });
+```
+
+`AI_PROVIDER` leaks into every later test in the file if left set. Add to the suite's `beforeEach` (alongside the existing `process.env.ANTHROPIC_API_KEY = "test-key"` at line 133):
+
+```typescript
+  delete process.env.AI_PROVIDER;
+```
 
 - [ ] **Step 7: Run the affected suites**
 
