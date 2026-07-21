@@ -16,36 +16,19 @@ import { Building2, Plus, X } from "lucide-react";
 import { Tip } from "@/components/ui/tip";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
-
-interface GroupOrg {
-  id: string;
-  name: string;
-  slug: string;
-  status: string;
-  /** Null when the org has lost its owner member — it still bills and still
-   *  shows here, it just cannot receive the group. */
-  owner_user_id: string | null;
-  owner_name: string | null;
-}
-
-interface Group {
-  id: string;
-  plan_key: string;
-  status: string;
-  quantity_paid: number;
-  max_orgs: number | null;
-  has_live_subscription: boolean;
-  orgs: GroupOrg[];
-}
-
-interface Offer {
-  setup_intent_id: string;
-  subscription_id: string;
-  client_secret: string | null;
-  to_user_id: string | null;
-  expires_at: number | null;
-  direction: "made_by_me" | "made_to_me";
-}
+// The decisions live in a pure module so they can be tested. This component's
+// data arrives in an effect and the vitest environment here is `node` with no
+// jsdom, so a render test would assert against the null returned before the
+// fetch lands — see lib/billing-group-view.ts.
+import {
+  attachConfirmKey,
+  groupView,
+  transferConfirmKey,
+  transferExplainerKey,
+  type ViewGroup as Group,
+  type ViewGroupOrg as GroupOrg,
+  type ViewOffer as Offer,
+} from "@/lib/billing-group-view";
 
 async function api(path: string, body: unknown): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(path, {
@@ -90,67 +73,18 @@ export function BillingGroupPanel({
 
   if (groups === null) return null;
 
-  const group = groups.find((g) => g.id === subscriptionId);
-  if (!group) return null;
+  const view = groupView({ groups, offers, subscriptionId, currentUserId });
+  if (!view || view.hidden) return null;
 
-  // Organisations this payer could move ONTO this bill: the ones sitting in
-  // their OTHER groups. An org in a group somebody else pays for is not
-  // listed and could not be attached anyway — attach requires the actor to own
-  // both sides — and an org already on a live subscription of its own is
-  // refused server-side with a message that explains why.
-  const candidates = groups
-    .filter((g) => g.id !== subscriptionId)
-    .flatMap((g) => g.orgs.map((o) => ({ ...o, from: g })));
-
-  const onBill = group.orgs.length;
-  const seatsPaid = group.quantity_paid;
-  // A slot bought, freed, and not yet given up at renewal. The only case where
-  // adding an organisation genuinely costs nothing.
-  const freeSlots = Math.max(0, seatsPaid - onBill);
-  const atCap = group.max_orgs !== null && onBill >= group.max_orgs;
-
-  // Who this bill could be handed to: the owners of the organisations already
-  // on it, minus the payer themselves (the use case 400s on a self-transfer)
-  // and minus organisations whose owner member is gone. Deduped, because one
-  // person owning three clubs in the group is one candidate, not three.
-  //
-  // Someone outside the group is reachable in two steps rather than not at all:
-  // invite them into one of these organisations and hand them THAT
-  // organisation's ownership, which is a separate thing from billing and needs
-  // the current org owner to act. Both sides have then consented before any
-  // money moves. The empty state says so.
-  const recipients = [
-    ...new Map(
-      group.orgs
-        .filter((o) => o.owner_user_id && o.owner_user_id !== currentUserId)
-        .map((o) => [o.owner_user_id!, { id: o.owner_user_id!, name: o.owner_name, via: o.name }]),
-    ).values(),
-  ];
-  const hasLive = group.has_live_subscription;
-  const outgoing = offers.filter(
-    (o) => o.direction === "made_by_me" && o.subscription_id === subscriptionId,
-  );
-
-  // A solo organisation with nothing to add and nothing paid ahead has no
-  // grouping story to tell, and a panel saying "On this bill: 1" on every
-  // Community account is noise. It appears the moment any of the three becomes
-  // true, which is also the moment it starts being useful. An outstanding offer
-  // counts too — it must stay withdrawable even on a group of one.
-  if (onBill <= 1 && candidates.length === 0 && freeSlots === 0 && outgoing.length === 0)
-    return null;
+  const group = groups.find((g) => g.id === subscriptionId)!;
+  const { onBill, seatsPaid, freeSlots, atCap, hasLive, candidates, recipients, outgoing } = view;
 
   async function offer(to: { id: string; name: string | null }) {
     const ok = await confirm({
       title: msg("billing.group.transfer.confirmTitle", { person: to.name ?? "" }),
-      // Two DIFFERENT promises, because two different things happen. With a
-      // live subscription the recipient must confirm a card first and the payer
-      // can withdraw until they do. With nothing to bill there is no invoice to
-      // fail, so offerGroupTransfer hands it over on the spot — telling that
-      // payer "nothing changes until they add a card" would be a plain lie, and
-      // it is the copy they would read right before losing the group.
-      body: hasLive
-        ? msg("billing.group.transfer.confirmBody", { person: to.name ?? "" })
-        : msg("billing.group.transfer.confirmBodyImmediate", { person: to.name ?? "" }),
+      // Two DIFFERENT promises, because two different things happen — see
+      // transferConfirmKey, which is where that choice is tested.
+      body: msg(transferConfirmKey(hasLive), { person: to.name ?? "" }),
       confirmLabel: msg("billing.group.transfer.confirmAction"),
     });
     if (!ok) return;
@@ -179,12 +113,8 @@ export function BillingGroupPanel({
   async function attach(org: GroupOrg & { from: Group }) {
     const ok = await confirm({
       title: msg("billing.group.attach.confirmTitle", { org: org.name }),
-      // The price is stated BEFORE the click, always. Attaching charges
-      // immediately unless a paid slot is free, and a control that spends money
-      // without saying so is the one thing this panel must not be.
-      body: freeSlots > 0
-        ? msg("billing.group.attach.confirmFree", { org: org.name })
-        : msg("billing.group.attach.confirmCharge", { org: org.name }),
+      // The price is stated BEFORE the click, always — see attachConfirmKey.
+      body: msg(attachConfirmKey(freeSlots), { org: org.name }),
       confirmLabel: msg("billing.group.attach.confirmAction"),
     });
     if (!ok) return;
@@ -346,9 +276,7 @@ export function BillingGroupPanel({
         ) : (
           <>
             <p className="mb-2 text-sm text-slate-500">
-              {hasLive
-                ? msg("billing.group.transfer.explainer")
-                : msg("billing.group.transfer.explainerImmediate")}
+              {msg(transferExplainerKey(hasLive))}
             </p>
             <ul className="flex flex-wrap gap-2">
               {recipients.map((r) => (
