@@ -18,8 +18,13 @@ import "server-only";
 // offset, and the solver draft is produced through domain-ranked stand-in ids so
 // the engine's per-(official, fixture) UUID tiebreak can never leak into it. DB
 // reads reuse the officials.ts / schedule.ts loaders — no SQL is re-derived here.
-import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { anthropicProvider } from "@/server/ai/anthropic-provider";
+import {
+  AiProviderError,
+  type AiChatResponse,
+  type AiProvider,
+  type AiTurn,
+} from "@/server/ai/provider";
 import {
   assignOfficials,
   type AssignPolicy,
@@ -36,7 +41,7 @@ import { captureServer, isServerFeatureEnabled } from "@/lib/posthog-server";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import type { AiOfficialsPlanRequest, AiOfficialsPlanResponse } from "@/server/api-v1/schemas";
 import { AiOfficialsPlan, OFFICIALS_SYSTEM_PROMPT } from "./officials-ai-prompt";
-import { anthropicClient, parseAiEffort, schedulingAiModel, zonedIso, type AiEffort } from "./schedule-ai";
+import { parseAiEffort, schedulingAiModel, zonedIso, type AiEffort } from "./schedule-ai";
 import { aiRunCostUsd } from "@/lib/ai-pricing";
 import { divisionFixtures, loadSettings } from "./schedule";
 import {
@@ -586,10 +591,11 @@ export function refereeOfficialsPlan(
 }
 
 // ===========================================================================
-// Phase B runner — the Anthropic structured-output call + referee verify/repair
-// loop (design/v4/03 §2, mirrors the Phase A runner in schedule-ai.ts). Pure
-// over the pack: no DB, no wall clock. Reuses schedule-ai.ts's anthropicClient
-// (503 when unconfigured, SCHEDULING_AI_BASE_URL escape hatch).
+// Phase B runner — the provider-seam structured-output call + referee
+// verify/repair loop (design/v4/03 §2, mirrors the Phase A runner in
+// schedule-ai.ts). Pure over the pack: no DB, no wall clock. Resolves
+// anthropicProvider() itself (503 when unconfigured, SCHEDULING_AI_BASE_URL
+// escape hatch lives in the adapter).
 // ===========================================================================
 
 // Matches schedule-ai's ROUND_TIMEOUT_MS (same env var, same 600s default) —
@@ -726,13 +732,26 @@ function officialsDiff(pack: OfficialsPack, plan: AiOfficialsPlan): AiOfficialsP
   };
 }
 
+/** Internal shape runOfficialsAiPlan returns — same as the public
+ *  AiOfficialsPlanResponse except usage carries cost_usd, for the run ledger
+ *  (mirrors schedule-ai.ts's AiPlanResult). officialsAiPlanForDivision builds
+ *  the public response explicitly so cost_usd never leaks into the API's
+ *  pinned 3-field usage shape (officials-ai-route.test.ts asserts it). */
+export interface OfficialsPlanResult extends Omit<AiOfficialsPlanResponse, "usage"> {
+  usage: AiOfficialsPlanResponse["usage"] & {
+    // cost_usd is the provider-reported cost when available, falling back to
+    // a derived estimate per round; null only when neither is computable.
+    cost_usd: number | null;
+  };
+}
+
 /** Shape a verified plan into the API response: assignments (locked rows flagged),
  *  the referee's conflicts + lazy-unfilled, the prior diff, and usage. */
 function finalizeOfficials(
   pack: OfficialsPack,
   plan: AiOfficialsPlan,
-  usage: AiOfficialsPlanResponse["usage"],
-): AiOfficialsPlanResponse {
+  usage: OfficialsPlanResult["usage"],
+): OfficialsPlanResult {
   const { conflicts, lazyUnfilled } = refereeOfficialsPlan(pack, plan);
   const lockedKeys = new Set(pack.locked.map(rowKey));
   const assignments = plan.assignments.map((a) => ({
@@ -752,43 +771,42 @@ function finalizeOfficials(
   };
 }
 
-/** Echo an assistant turn back into the conversation unchanged (thinking blocks
- *  included). Response ContentBlocks are valid input blocks at runtime. */
-function officialsAssistantTurn(response: { content?: unknown } | null | undefined): Anthropic.MessageParam {
-  return { role: "assistant", content: (response?.content ?? []) as Anthropic.ContentBlockParam[] };
-}
-
+/** Ask `provider` for one round. Thin wrapper: the provider seam owns the
+ *  wire format, the reasoning shape, structured-output parsing, and echoing
+ *  the assistant turn back unchanged on repair — callers just replay
+ *  `response.assistantTurn`. Phase B has no legacy-model branch and does not
+ *  gain one: always effort, never a token budget. */
 async function callOfficialsModel(
-  client: Anthropic,
+  provider: AiProvider,
   model: string,
-  messages: Anthropic.MessageParam[],
-) {
+  messages: AiTurn[],
+): Promise<AiChatResponse<AiOfficialsPlan> | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OFFICIALS_ROUND_TIMEOUT_MS);
   try {
-    return await client.messages.parse(
-      {
-        model,
-        max_tokens: 32_000,
-        thinking: { type: "adaptive" },
-        output_config: { effort: officialsAiEffort(), format: zodOutputFormat(AiOfficialsPlan) },
-        system: [{ type: "text", text: OFFICIALS_SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-        messages: [...messages],
-      },
+    return await provider.chat({
+      model,
+      system: OFFICIALS_SYSTEM_PROMPT,
+      messages,
+      maxTokens: 32_000,
+      reasoning: { kind: "effort", effort: officialsAiEffort(), thinking: "adaptive" },
+      schema: { name: "officials_plan", zod: AiOfficialsPlan },
+      signal: controller.signal,
       // Explicit timeout is load-bearing: without it the SDK refuses
       // non-streaming requests whose max_tokens implies >10 min and throws
       // synchronously ("Streaming is required…"), masked downstream as
       // AI_PLAN_FAILED. The AbortController above is the real deadline.
-      { signal: controller.signal, timeout: 600_000 },
-    );
+      timeoutMs: 600_000,
+    });
   } catch (err) {
     if (controller.signal.aborted) {
       throw new HttpError(422, "AI officials assignment timed out; please retry", "AI_PLAN_TIMEOUT");
     }
-    // Genuine transport/API failures propagate (→ 5xx). The SDK throws on
-    // schema-invalid structured output instead of returning parsed_output: null —
-    // fold that into the null-parsed path so the corrective retry runs.
-    if (err instanceof HttpError || (Anthropic.APIError && err instanceof Anthropic.APIError)) {
+    // Genuine transport/API failures propagate (→ 5xx). The adapter, however,
+    // returns null on schema-invalid structured output instead of throwing —
+    // fold that into the null-parsed path so the corrective retry runs rather
+    // than surfacing a raw 500.
+    if (err instanceof HttpError || err instanceof AiProviderError) {
       throw err;
     }
     return null;
@@ -806,20 +824,32 @@ async function callOfficialsModel(
  * as the proposal with zero LLM calls and all-zero usage (design/v4/03 §2 — the
  * "sensible spread" costs nothing).
  *
- * @throws HttpError 503 (no ANTHROPIC_API_KEY), 422 AI_PLAN_FAILED (model refusal
+ * @throws HttpError 503 (provider unconfigured), 422 AI_PLAN_FAILED (model refusal
  *   or an un-correctable structural violation), 422 AI_PLAN_TIMEOUT.
  */
-export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficialsPlanResponse> {
+export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<OfficialsPlanResult> {
   if (pack.instruction.trim() === "") {
-    return finalizeOfficials(pack, draftAsPlan(pack), { input_tokens: 0, output_tokens: 0, repair_rounds: 0 });
+    return finalizeOfficials(pack, draftAsPlan(pack), {
+      input_tokens: 0,
+      output_tokens: 0,
+      repair_rounds: 0,
+      cost_usd: 0,
+    });
   }
 
-  const client = anthropicClient(); // 503 before any network if unconfigured
+  // One provider per run: reasoning blocks are provider-specific and replayed
+  // verbatim on repair, so a run that resolved a provider per round could send
+  // one service's reasoning to another. 503 before any network if unconfigured.
+  const provider = anthropicProvider();
+  if (!provider.isConfigured()) {
+    throw new HttpError(503, "AI scheduling is not configured on this server");
+  }
   const model = schedulingAiModel();
 
-  const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
+  const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(pack) }];
   let inputTokens = 0;
   let outputTokens = 0;
+  let costUsd: number | null = 0;
   let repairRounds = 0;
   let correctiveUsed = false; // one non-repair retry for a malformed plan
 
@@ -827,16 +857,17 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
   // than round 1, so keep the fewest-blocking plan (ties resolve to the later
   // round) rather than blindly the last round.
   let best: { plan: AiOfficialsPlan; blocking: number } | null = null;
-  const usageNow = (): AiOfficialsPlanResponse["usage"] => ({
+  const usageNow = (): OfficialsPlanResult["usage"] => ({
     input_tokens: inputTokens,
     output_tokens: outputTokens,
     repair_rounds: repairRounds,
+    cost_usd: costUsd,
   });
 
   for (;;) {
     let response: Awaited<ReturnType<typeof callOfficialsModel>>;
     try {
-      response = await callOfficialsModel(client, model, conversation);
+      response = await callOfficialsModel(provider, model, conversation);
     } catch (err) {
       // A timed-out round still spent the earlier rounds' tokens — ride the
       // accumulated usage on the 422 (same contract as AI_PLAN_FAILED).
@@ -845,11 +876,21 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
       }
       throw err;
     }
-    inputTokens += response?.usage?.input_tokens ?? 0;
-    outputTokens += response?.usage?.output_tokens ?? 0;
+    const roundInput = response?.usage?.inputTokens ?? 0;
+    const roundOutput = response?.usage?.outputTokens ?? 0;
+    inputTokens += roundInput;
+    outputTokens += roundOutput;
+    // Prefer the cost the provider reports; fall back to a derived estimate
+    // only when the round produced no reported cost. Never a guess.
+    const roundCost =
+      response?.usage?.costUsd ??
+      (response ? aiRunCostUsd(response.servedModel, roundInput, roundOutput) : 0);
+    costUsd = costUsd === null || roundCost === null ? null : costUsd + roundCost;
 
-    // Refusal: bail before reading content.
-    if (response?.stop_reason === "refusal") {
+    // Refusal: bail before reading content. `stop_reason` is not part of the
+    // provider-neutral response — `refused` is the seam's equivalent, and MUST
+    // stay distinct from a null parse: a refusal spends no corrective retry.
+    if (response?.refused) {
       throw new HttpError(
         422,
         "AI officials assignment could not produce a usable plan; please retry",
@@ -858,7 +899,7 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
       );
     }
 
-    const plan = response?.parsed_output ?? null;
+    const plan = response?.parsed ?? null;
     const structuralError =
       plan === null ? "the model returned no parseable plan" : officialsStructuralCheck(plan, pack);
     if (structuralError !== null) {
@@ -871,7 +912,7 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
         );
       }
       correctiveUsed = true;
-      conversation.push(officialsAssistantTurn(response));
+      conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
       conversation.push({
         role: "user",
         content: JSON.stringify({
@@ -897,7 +938,7 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<AiOfficia
     // Blocking conflicts remain and rounds are left — send the report back and
     // ask for minimal fixes.
     repairRounds++;
-    conversation.push(officialsAssistantTurn(response));
+    conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
     conversation.push({
       role: "user",
       content: JSON.stringify({
@@ -951,7 +992,7 @@ export async function officialsAiPlanForDivision(
   });
 
   const model = schedulingAiModel();
-  let result: AiOfficialsPlanResponse;
+  let result: OfficialsPlanResult;
   try {
     result = await runOfficialsAiPlan(pack);
   } catch (err) {
@@ -964,9 +1005,10 @@ export async function officialsAiPlanForDivision(
         input_tokens?: number;
         output_tokens?: number;
         repair_rounds?: number;
+        cost_usd?: number | null;
       };
       const outcome = err.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
-      const cost_usd = aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
+      const cost_usd = usage.cost_usd ?? aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
       await recordOfficialsRun(auth, divisionId, "schedule.ai_failed", {
         division_id: divisionId,
         phase: "officials",
@@ -1003,7 +1045,8 @@ export async function officialsAiPlanForDivision(
   // stamp it as such so the run ledger never misattributes it to the LLM.
   const usedModel =
     result.usage.input_tokens === 0 && result.usage.output_tokens === 0 ? "solver-draft" : model;
-  const cost_usd = aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
+  const cost_usd =
+    result.usage.cost_usd ?? aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
   await recordOfficialsRun(auth, divisionId, "schedule.ai_officials_generated", {
     division_id: divisionId,
     phase: "officials",
@@ -1030,7 +1073,23 @@ export async function officialsAiPlanForDivision(
     },
   });
 
-  return result;
+  // Public shape is pinned to AiOfficialsPlanResponse.usage in api-v1/schemas.ts
+  // — exactly these three fields. cost_usd lives on OfficialsPlanResult["usage"]
+  // for the ledger (recordOfficialsRun above) but must not leak into the API
+  // response, so it is built explicitly here rather than by spreading result.
+  return {
+    assignments: result.assignments,
+    conflicts: result.conflicts,
+    diff: result.diff,
+    lazy_unfilled: result.lazy_unfilled,
+    explanations: result.explanations,
+    summary: result.summary,
+    usage: {
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      repair_rounds: result.usage.repair_rounds,
+    },
+  };
 }
 
 /** Append one officials architect run to the competition audit ledger. Own

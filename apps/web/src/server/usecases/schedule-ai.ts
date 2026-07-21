@@ -10,7 +10,6 @@ import "server-only";
 // by (display_name, id), and every timestamp is an ISO-8601 string carrying the division
 // timezone offset. DB reads reuse the schedule.ts / officials.ts loaders — no SQL is
 // re-derived here.
-import Anthropic from "@anthropic-ai/sdk";
 import { anthropicProvider } from "@/server/ai/anthropic-provider";
 import {
   AiProviderError,
@@ -752,29 +751,6 @@ export function aiReasoning(model: string): AiReasoning {
     effort: schedulingAiEffort(),
     thinking: schedulingAiThinking() === "disabled" ? "disabled" : "adaptive",
   };
-}
-
-/** Single Anthropic client factory. Rejects early when the server is not
- *  configured (503) and honours the SCHEDULING_AI_BASE_URL escape hatch (Task
- *  17's e2e fixture server points at it).
- *
- *  Phase A (runAiPlan, below) no longer calls this — it resolves
- *  `anthropicProvider()` instead. This stays exported solely because Phase B
- *  (officials-ai.ts) still imports it directly; migrating that call site is
- *  Task 5's job, not this one's. Delete this once officials-ai.ts is off it. */
-export function anthropicClient(): Anthropic {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new HttpError(503, "AI scheduling is not configured on this server");
-  }
-  const baseURL = process.env.SCHEDULING_AI_BASE_URL;
-  // The client-level timeout is load-bearing: when it is unset the SDK
-  // estimates non-streaming duration from max_tokens and throws synchronously
-  // for our 32k calls ("Streaming is required…" — client.mjs
-  // calculateNonstreamingTimeout; the per-request options.timeout spreads in
-  // AFTER that check, so it cannot bypass it). Each round's real deadline is
-  // the AbortController in officials-ai.ts's own call site.
-  return new Anthropic({ apiKey, timeout: 60 * 60 * 1000, ...(baseURL ? { baseURL } : {}) });
 }
 
 export interface AiPlanResult {
