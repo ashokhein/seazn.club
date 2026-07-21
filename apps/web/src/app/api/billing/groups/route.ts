@@ -39,6 +39,7 @@ export async function GET() {
         current_period_end: string | null;
         cancel_at_period_end: boolean;
         trial_end: string | null;
+        has_live_subscription: boolean;
         orgs: {
           id: string;
           name: string;
@@ -51,6 +52,12 @@ export async function GET() {
     >`
       select s.id, s.plan_key, s.status, s.quantity_paid,
              s.current_period_end, s.cancel_at_period_end, s.trial_end,
+             -- Liveness, not mere presence: a cancelled subscription keeps its
+             -- id for ever. This is what tells the UI whether a transfer is the
+             -- two-phase card handover or a one-step move, and the confirm copy
+             -- promises different things in each case.
+             (s.stripe_subscription_id is not null
+              and s.status in ('trialing', 'active', 'past_due')) as has_live_subscription,
              coalesce(
                (select json_agg(json_build_object(
                           'id', o.id, 'name', o.name, 'slug', o.slug, 'status', o.status,

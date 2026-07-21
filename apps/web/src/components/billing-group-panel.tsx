@@ -22,6 +22,10 @@ interface GroupOrg {
   name: string;
   slug: string;
   status: string;
+  /** Null when the org has lost its owner member — it still bills and still
+   *  shows here, it just cannot receive the group. */
+  owner_user_id: string | null;
+  owner_name: string | null;
 }
 
 interface Group {
@@ -30,7 +34,17 @@ interface Group {
   status: string;
   quantity_paid: number;
   max_orgs: number | null;
+  has_live_subscription: boolean;
   orgs: GroupOrg[];
+}
+
+interface Offer {
+  setup_intent_id: string;
+  subscription_id: string;
+  client_secret: string | null;
+  to_user_id: string | null;
+  expires_at: number | null;
+  direction: "made_by_me" | "made_to_me";
 }
 
 async function api(path: string, body: unknown): Promise<{ ok: boolean; error?: string }> {
@@ -43,17 +57,31 @@ async function api(path: string, body: unknown): Promise<{ ok: boolean; error?: 
   return { ok: res.ok && json.ok !== false, error: json.error };
 }
 
-export function BillingGroupPanel({ subscriptionId }: { subscriptionId: string }) {
+export function BillingGroupPanel({
+  subscriptionId,
+  currentUserId,
+}: {
+  subscriptionId: string;
+  currentUserId: string;
+}) {
   const msg = useMsg();
   const confirm = useConfirm();
   const [groups, setGroups] = useState<Group[] | null>(null);
+  const [offers, setOffers] = useState<Offer[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
-    const res = await fetch("/api/billing/groups");
-    const json = (await res.json().catch(() => ({}))) as { ok?: boolean; data?: Group[] };
-    setGroups(json.ok ? (json.data ?? []) : []);
+    const [gRes, oRes] = await Promise.all([
+      fetch("/api/billing/groups"),
+      fetch("/api/billing/group/transfer"),
+    ]);
+    const gJson = (await gRes.json().catch(() => ({}))) as { ok?: boolean; data?: Group[] };
+    const oJson = (await oRes.json().catch(() => ({}))) as { ok?: boolean; data?: Offer[] };
+    setGroups(gJson.ok ? (gJson.data ?? []) : []);
+    // Offers are a Stripe round trip and can fail on their own; a broken offer
+    // list must not blank the organisation list, which is the panel's main job.
+    setOffers(oJson.ok ? (oJson.data ?? []) : []);
   }
 
   useEffect(() => {
@@ -81,11 +109,72 @@ export function BillingGroupPanel({ subscriptionId }: { subscriptionId: string }
   const freeSlots = Math.max(0, seatsPaid - onBill);
   const atCap = group.max_orgs !== null && onBill >= group.max_orgs;
 
+  // Who this bill could be handed to: the owners of the organisations already
+  // on it, minus the payer themselves (the use case 400s on a self-transfer)
+  // and minus organisations whose owner member is gone. Deduped, because one
+  // person owning three clubs in the group is one candidate, not three.
+  //
+  // Someone outside the group is reachable in two steps rather than not at all:
+  // invite them into one of these organisations and hand them THAT
+  // organisation's ownership, which is a separate thing from billing and needs
+  // the current org owner to act. Both sides have then consented before any
+  // money moves. The empty state says so.
+  const recipients = [
+    ...new Map(
+      group.orgs
+        .filter((o) => o.owner_user_id && o.owner_user_id !== currentUserId)
+        .map((o) => [o.owner_user_id!, { id: o.owner_user_id!, name: o.owner_name, via: o.name }]),
+    ).values(),
+  ];
+  const hasLive = group.has_live_subscription;
+  const outgoing = offers.filter(
+    (o) => o.direction === "made_by_me" && o.subscription_id === subscriptionId,
+  );
+
   // A solo organisation with nothing to add and nothing paid ahead has no
   // grouping story to tell, and a panel saying "On this bill: 1" on every
   // Community account is noise. It appears the moment any of the three becomes
-  // true, which is also the moment it starts being useful.
-  if (onBill <= 1 && candidates.length === 0 && freeSlots === 0) return null;
+  // true, which is also the moment it starts being useful. An outstanding offer
+  // counts too — it must stay withdrawable even on a group of one.
+  if (onBill <= 1 && candidates.length === 0 && freeSlots === 0 && outgoing.length === 0)
+    return null;
+
+  async function offer(to: { id: string; name: string | null }) {
+    const ok = await confirm({
+      title: msg("billing.group.transfer.confirmTitle", { person: to.name ?? "" }),
+      // Two DIFFERENT promises, because two different things happen. With a
+      // live subscription the recipient must confirm a card first and the payer
+      // can withdraw until they do. With nothing to bill there is no invoice to
+      // fail, so offerGroupTransfer hands it over on the spot — telling that
+      // payer "nothing changes until they add a card" would be a plain lie, and
+      // it is the copy they would read right before losing the group.
+      body: hasLive
+        ? msg("billing.group.transfer.confirmBody", { person: to.name ?? "" })
+        : msg("billing.group.transfer.confirmBodyImmediate", { person: to.name ?? "" }),
+      confirmLabel: msg("billing.group.transfer.confirmAction"),
+    });
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    const res = await api("/api/billing/group/transfer", {
+      subscription_id: subscriptionId,
+      new_owner_user_id: to.id,
+    });
+    if (!res.ok) setError(res.error ?? msg("billing.group.error"));
+    await load();
+    setBusy(false);
+  }
+
+  async function revoke(setupIntentId: string) {
+    setBusy(true);
+    setError(null);
+    const res = await api("/api/billing/group/transfer/revoke", {
+      setup_intent_id: setupIntentId,
+    });
+    if (!res.ok) setError(res.error ?? msg("billing.group.error"));
+    await load();
+    setBusy(false);
+  }
 
   async function attach(org: GroupOrg & { from: Group }) {
     const ok = await confirm({
@@ -213,6 +302,70 @@ export function BillingGroupPanel({ subscriptionId }: { subscriptionId: string }
               </li>
             ))}
           </ul>
+        )}
+      </div>
+
+      {/* Hand the whole bill to someone else. Separated by a rule because it is
+          a different kind of act from moving one organisation: it changes who
+          pays for all of them, and it is the only control here that leaves the
+          payer with nothing. */}
+      <div className="mt-5 border-t border-slate-100 pt-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {msg("billing.group.transfer.title")}
+        </p>
+
+        {outgoing.length > 0 ? (
+          // An outstanding offer is a live claim on this subscription, so it is
+          // shown and withdrawable rather than left invisible until it lapses.
+          <ul className="flex flex-col gap-2">
+            {outgoing.map((o) => (
+              <li
+                key={o.setup_intent_id}
+                className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900"
+              >
+                <span>
+                  {msg("billing.group.transfer.pending", {
+                    person:
+                      recipients.find((r) => r.id === o.to_user_id)?.name ??
+                      msg("billing.group.transfer.someone"),
+                  })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void revoke(o.setup_intent_id)}
+                  disabled={busy}
+                  className="rounded-lg px-2 py-1 text-sm font-medium text-amber-900 underline underline-offset-2 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {msg("billing.group.transfer.withdraw")}
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : recipients.length === 0 ? (
+          <p className="text-sm text-slate-500">{msg("billing.group.transfer.noRecipients")}</p>
+        ) : (
+          <>
+            <p className="mb-2 text-sm text-slate-500">
+              {hasLive
+                ? msg("billing.group.transfer.explainer")
+                : msg("billing.group.transfer.explainerImmediate")}
+            </p>
+            <ul className="flex flex-wrap gap-2">
+              {recipients.map((r) => (
+                <li key={r.id}>
+                  <button
+                    type="button"
+                    onClick={() => void offer(r)}
+                    disabled={busy}
+                    className="btn btn-ghost text-sm"
+                  >
+                    {r.name}
+                    <span className="ml-1 text-slate-400">· {r.via}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
 

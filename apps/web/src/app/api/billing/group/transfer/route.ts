@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { handler } from "@/lib/http";
-import { offerGroupTransfer } from "@/server/usecases/billing-groups";
+import { listGroupTransferOffers, offerGroupTransfer } from "@/server/usecases/billing-groups";
 
 const schema = z.object({
   subscription_id: z.string().uuid(),
@@ -18,6 +18,25 @@ const schema = z.object({
  * and ownership moves at /api/billing/group/transfer/accept. A group with
  * nothing to bill transfers on this call and answers `status: "transferred"`.
  */
+/**
+ * GET /api/billing/group/transfer — outstanding offers involving the caller,
+ * in both directions.
+ *
+ * Without this an offer could not be WITHDRAWN: the SetupIntent id was returned
+ * once, to the offerer, and stored nowhere, so a page reload left a live claim
+ * on their own subscription that they had no way to cancel. It is also how a
+ * recipient learns an offer exists at all.
+ *
+ * `client_secret` is populated only on offers made TO the caller — see
+ * listGroupTransferOffers.
+ */
+export async function GET() {
+  return handler(async () => {
+    const user = await requireUser();
+    return listGroupTransferOffers(user.id);
+  });
+}
+
 export async function POST(req: Request) {
   return handler(async () => {
     const user = await requireUser();

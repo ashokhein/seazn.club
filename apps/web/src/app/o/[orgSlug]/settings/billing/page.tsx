@@ -315,7 +315,9 @@ export default async function BillingPage({
             hides itself for a solo organisation with nothing to add — see the
             component. Placed directly under the plan because the plan card now
             describes the GROUP, and this is the list that makes that concrete. */}
-        {isPayer && sub?.id && <BillingGroupPanel subscriptionId={sub.id} />}
+        {isPayer && sub?.id && (
+          <BillingGroupPanel subscriptionId={sub.id} currentUserId={user.id} />
+        )}
 
         {/* Payment methods — card entry stays in Stripe's iframe (SAQ A). */}
         {isPayer && overview && (
