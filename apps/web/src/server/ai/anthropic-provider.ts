@@ -61,8 +61,18 @@ export function anthropicProvider(): AiProvider {
         if (Anthropic.APIError && err instanceof Anthropic.APIError) {
           throw new AiProviderError("Anthropic API call failed", err);
         }
-        // The SDK throws on schema-invalid structured output rather than
-        // returning a null parse; fold that into the corrective path.
+        // A well-formed error someone already threw deliberately (carries a
+        // numeric HTTP-style status, e.g. the caller's own timeout/abort
+        // signalling) is not a parse failure — propagate it rather than
+        // folding it into the corrective path. Duck-typed rather than an
+        // `instanceof` check against the app's error type: this adapter must
+        // not depend on the usecase layer's vocabulary.
+        if (err && typeof (err as { status?: unknown }).status === "number") {
+          throw err;
+        }
+        // Otherwise: the SDK throws on schema-invalid structured output
+        // rather than returning a null parse; fold that into the corrective
+        // path.
         return null;
       }
 

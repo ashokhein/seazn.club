@@ -11,7 +11,14 @@ import "server-only";
 // timezone offset. DB reads reuse the schedule.ts / officials.ts loaders — no SQL is
 // re-derived here.
 import Anthropic from "@anthropic-ai/sdk";
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
+import { anthropicProvider } from "@/server/ai/anthropic-provider";
+import {
+  AiProviderError,
+  type AiChatResponse,
+  type AiProvider,
+  type AiReasoning,
+  type AiTurn,
+} from "@/server/ai/provider";
 import { withTenant } from "@/lib/db";
 import { HttpError, PaymentRequiredError } from "@/lib/errors";
 import { requireFeature, withinLimit } from "@/lib/entitlements";
@@ -620,11 +627,6 @@ export async function buildSchedulePack(
 const ROUND_TIMEOUT_MS = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 600_000;
 const MAX_REPAIR_ROUNDS = 2;
 
-/**
- * Single Anthropic client factory. Rejects early when the server is not
- * configured (503) and honours the SCHEDULING_AI_BASE_URL escape hatch (Task
- * 17's e2e fixture server points at it). Other AI tasks (officials) reuse this.
- */
 /** The model every architect run uses (both phases import this — single
  *  source). Default measured live 2026-07-19 (17-fixture pack, adaptive
  *  thinking, effort:high): opus-4-8 could not finish round 1 inside 300s;
@@ -717,7 +719,11 @@ export function schedulingAiThinkingBudget(): number {
 
 /** The reasoning half of the request, shaped for what `model` actually accepts.
  *  Returning the fields rather than mutating a request object keeps the
- *  per-model branching in one place instead of at every call site. */
+ *  per-model branching in one place instead of at every call site.
+ *
+ *  Kept for its own direct test coverage (schedule-ai-run.test.ts asserts the
+ *  Anthropic-shaped params this returns) — `aiReasoning` below is the
+ *  provider-neutral function `callModel` actually uses now. */
 export function aiReasoningParams(model: string): {
   thinking?: { type: "adaptive" } | { type: "disabled" } | { type: "enabled"; budget_tokens: number };
   effort?: AiEffort;
@@ -734,6 +740,34 @@ export function aiReasoningParams(model: string): {
   };
 }
 
+/** Provider-neutral reasoning request, shaped for what `model` actually
+ *  accepts. Same legacy-model list and budget as `aiReasoningParams` — this is
+ *  what `callModel` sends through the provider seam.
+ *
+ *  `effort` rides along even when thinking is disabled — the code this
+ *  replaces (the old inline callModel) sent it unconditionally. Mapping
+ *  "disabled" thinking to `kind: "none"` would silently drop
+ *  SCHEDULING_AI_EFFORT on that path. */
+export function aiReasoning(model: string): AiReasoning {
+  if (LEGACY_REASONING_MODELS.has(model)) {
+    const budget = schedulingAiThinkingBudget();
+    return budget > 0 ? { kind: "budget", tokens: budget } : { kind: "none" };
+  }
+  return {
+    kind: "effort",
+    effort: schedulingAiEffort(),
+    thinking: schedulingAiThinking() === "disabled" ? "disabled" : "adaptive",
+  };
+}
+
+/** Single Anthropic client factory. Rejects early when the server is not
+ *  configured (503) and honours the SCHEDULING_AI_BASE_URL escape hatch (Task
+ *  17's e2e fixture server points at it).
+ *
+ *  Phase A (runAiPlan, below) no longer calls this — it resolves
+ *  `anthropicProvider()` instead. This stays exported solely because Phase B
+ *  (officials-ai.ts) still imports it directly; migrating that call site is
+ *  Task 5's job, not this one's. Delete this once officials-ai.ts is off it. */
 export function anthropicClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
@@ -745,7 +779,7 @@ export function anthropicClient(): Anthropic {
   // for our 32k calls ("Streaming is required…" — client.mjs
   // calculateNonstreamingTimeout; the per-request options.timeout spreads in
   // AFTER that check, so it cannot bypass it). Each round's real deadline is
-  // the AbortController in callModel.
+  // the AbortController in officials-ai.ts's own call site.
   return new Anthropic({ apiKey, timeout: 60 * 60 * 1000, ...(baseURL ? { baseURL } : {}) });
 }
 
@@ -758,7 +792,9 @@ export interface AiPlanResult {
   explanations: { fixture_id: string; note: string }[];
   constraint_suggestions?: Partial<SchedulingConstraints>;
   summary: string;
-  usage: { input_tokens: number; output_tokens: number; repair_rounds: number };
+  // cost_usd is the provider-reported cost when available, falling back to a
+  // derived estimate per round; null only when neither is computable.
+  usage: { input_tokens: number; output_tokens: number; repair_rounds: number; cost_usd: number | null };
 }
 
 // A verifier conflict blocks when it makes the schedule physically impossible —
@@ -920,50 +956,42 @@ function computeDiff(plan: AiSchedulePlan, pack: SchedulePack): AiPlanResult["di
   return diff;
 }
 
-/** Echo an assistant turn back into the conversation unchanged (01 §5 — thinking
- *  blocks included). Response ContentBlocks are valid input blocks at runtime. */
-function assistantTurn(response: { content?: unknown } | null | undefined): Anthropic.MessageParam {
-  return { role: "assistant", content: (response?.content ?? []) as Anthropic.ContentBlockParam[] };
-}
-
+/** Ask `provider` for one round. Thin wrapper: the provider seam owns the
+ *  wire format, the reasoning shape, structured-output parsing, and echoing
+ *  the assistant turn back unchanged on repair (01 §5) — callers just replay
+ *  `response.assistantTurn`. */
 async function callModel(
-  client: Anthropic,
+  provider: AiProvider,
   model: string,
-  messages: Anthropic.MessageParam[],
-) {
+  messages: AiTurn[],
+): Promise<AiChatResponse<AiSchedulePlan> | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ROUND_TIMEOUT_MS);
-  const reasoning = aiReasoningParams(model);
   try {
-    return await client.messages.parse(
-      {
-        model,
-        max_tokens: 32_000,
-        // Reasoning params vary by model — haiku-4-5 400s on adaptive/effort.
-        ...(reasoning.thinking ? { thinking: reasoning.thinking } : {}),
-        output_config: {
-          ...(reasoning.effort ? { effort: reasoning.effort } : {}),
-          format: zodOutputFormat(AiSchedulePlan),
-        },
-        system: [{ type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } }],
-        messages: [...messages],
-      },
-      // The explicit timeout is load-bearing: without it the SDK refuses
-      // non-streaming requests whose max_tokens implies >10 min and throws
-      // synchronously ("Streaming is required…"), which the corrective path
-      // would mask as AI_PLAN_FAILED. The AbortController above remains the
-      // real per-round deadline.
-      { signal: controller.signal, timeout: 600_000 },
-    );
+    return await provider.chat({
+      model,
+      system: SYSTEM_PROMPT,
+      messages,
+      maxTokens: 32_000,
+      reasoning: aiReasoning(model),
+      schema: { name: "schedule_plan", zod: AiSchedulePlan },
+      signal: controller.signal,
+      // The explicit timeout is load-bearing: without it the Anthropic SDK
+      // refuses non-streaming requests whose max_tokens implies >10 min and
+      // throws synchronously ("Streaming is required…"), which the
+      // corrective path would mask as AI_PLAN_FAILED. The AbortController
+      // above remains the real per-round deadline.
+      timeoutMs: 600_000,
+    });
   } catch (err) {
     if (controller.signal.aborted) {
       throw new HttpError(422, "AI scheduling timed out; please retry", "AI_PLAN_TIMEOUT");
     }
-    // Genuine transport/API failures propagate (→ 5xx). The SDK, however, throws
-    // on schema-invalid structured output instead of returning parsed_output:
-    // null — fold that into the null-parsed path so the corrective retry (01 §1)
+    // Genuine transport/API failures propagate (→ 5xx). The adapter, however,
+    // returns null on schema-invalid structured output instead of throwing —
+    // fold that into the null-parsed path so the corrective retry (01 §1)
     // runs rather than surfacing a raw 500.
-    if (err instanceof HttpError || (Anthropic.APIError && err instanceof Anthropic.APIError)) {
+    if (err instanceof HttpError || err instanceof AiProviderError) {
       throw err;
     }
     return null;
@@ -986,16 +1014,23 @@ export async function runAiPlan(
   movableIds: Set<string>,
   modelOverride?: string,
 ): Promise<AiPlanResult> {
-  const client = anthropicClient(); // 503 before any network if unconfigured
+  // One provider per run: reasoning blocks are provider-specific and replayed
+  // verbatim on repair, so a run that resolved a provider per round could send
+  // one service's reasoning to another. 503 before any network if unconfigured.
+  const provider = anthropicProvider();
+  if (!provider.isConfigured()) {
+    throw new HttpError(503, "AI scheduling is not configured on this server");
+  }
   const model = modelOverride ?? schedulingAiModel();
 
-  const conversation: Anthropic.MessageParam[] = [{ role: "user", content: JSON.stringify(pack) }];
+  const conversation: AiTurn[] = [{ role: "user", content: JSON.stringify(pack) }];
   const config = verifyConfig(pack);
   const obstacles = toObstacleAssignments(pack);
   const dependencies = packFeedDependencies(pack);
 
   let inputTokens = 0;
   let outputTokens = 0;
+  let costUsd: number | null = 0;
   let repairRounds = 0;
   let correctiveUsed = false; // one non-repair retry for a malformed plan (01 §1)
 
@@ -1006,12 +1041,17 @@ export async function runAiPlan(
 
   // Accumulated usage rides along on a 422 too, so callers can meter a refused
   // or un-correctable run rather than losing the tokens already spent.
-  const usageNow = () => ({ input_tokens: inputTokens, output_tokens: outputTokens, repair_rounds: repairRounds });
+  const usageNow = () => ({
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    repair_rounds: repairRounds,
+    cost_usd: costUsd,
+  });
 
   for (;;) {
     let response: Awaited<ReturnType<typeof callModel>>;
     try {
-      response = await callModel(client, model, conversation);
+      response = await callModel(provider, model, conversation);
     } catch (err) {
       // A timed-out round still spent the earlier rounds' tokens — ride the
       // accumulated usage on the 422 so callers can meter it (same contract
@@ -1021,11 +1061,22 @@ export async function runAiPlan(
       }
       throw err;
     }
-    inputTokens += response?.usage?.input_tokens ?? 0;
-    outputTokens += response?.usage?.output_tokens ?? 0;
+    const roundInput = response?.usage?.inputTokens ?? 0;
+    const roundOutput = response?.usage?.outputTokens ?? 0;
+    inputTokens += roundInput;
+    outputTokens += roundOutput;
+    // Prefer the cost the provider reports; fall back to a derived estimate
+    // only when the round produced no reported cost. Never a guess.
+    const roundCost =
+      response?.usage?.costUsd ??
+      (response ? aiRunCostUsd(response.servedModel, roundInput, roundOutput) : 0);
+    costUsd = costUsd === null || roundCost === null ? null : costUsd + roundCost;
 
-    // Refusal: bail before reading content (01 §1).
-    if (response?.stop_reason === "refusal") {
+    // Refusal: bail before reading content (01 §1). `stop_reason` is not part
+    // of the provider-neutral response — `refused` is the seam's equivalent,
+    // and MUST stay distinct from a null parse: a refusal spends no
+    // corrective retry.
+    if (response?.refused) {
       throw new HttpError(
         422,
         "AI scheduling could not produce a usable plan; please retry",
@@ -1034,7 +1085,7 @@ export async function runAiPlan(
       );
     }
 
-    const plan = response?.parsed_output ?? null;
+    const plan = response?.parsed ?? null;
     const structuralError =
       plan === null ? "the model returned no parseable plan" : structuralCheck(plan, movableIds, pack);
     if (structuralError !== null) {
@@ -1047,7 +1098,7 @@ export async function runAiPlan(
         );
       }
       correctiveUsed = true;
-      conversation.push(assistantTurn(response));
+      conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
       conversation.push({
         role: "user",
         content: JSON.stringify({
@@ -1086,14 +1137,14 @@ export async function runAiPlan(
           ? { constraint_suggestions: chosen.plan.constraint_suggestions }
           : {}),
         summary: chosen.plan.summary,
-        usage: { input_tokens: inputTokens, output_tokens: outputTokens, repair_rounds: repairRounds },
+        usage: usageNow(),
       };
     }
 
     // Blocking conflicts remain and rounds are left — send the report back and
     // ask for minimal fixes (01 §5).
     repairRounds++;
-    conversation.push(assistantTurn(response));
+    conversation.push(response?.assistantTurn ?? { role: "assistant", content: [] });
     conversation.push({
       role: "user",
       content: JSON.stringify({
@@ -1239,7 +1290,7 @@ async function runAiPlanEscalating(
   // (503 / APIError) still propagate: retrying a different model against a
   // broken provider only burns another call.
   let first: AiPlanResult | null = null;
-  let spent = { input_tokens: 0, output_tokens: 0, repair_rounds: 0 };
+  let spent: AiPlanResult["usage"] = { input_tokens: 0, output_tokens: 0, repair_rounds: 0, cost_usd: 0 };
   try {
     first = await runAiPlan(pack, movableIds, cheap);
     spent = first.usage;
@@ -1249,11 +1300,12 @@ async function runAiPlanEscalating(
       err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT");
     if (!recoverable) throw err;
     // Tokens the failed attempt already spent ride on the error's extra.
-    const u = (err.extra?.usage ?? {}) as Partial<typeof spent>;
+    const u = (err.extra?.usage ?? {}) as Partial<AiPlanResult["usage"]>;
     spent = {
       input_tokens: u.input_tokens ?? 0,
       output_tokens: u.output_tokens ?? 0,
       repair_rounds: u.repair_rounds ?? 0,
+      cost_usd: u.cost_usd ?? 0,
     };
   }
 
@@ -1265,6 +1317,10 @@ async function runAiPlanEscalating(
       input_tokens: spent.input_tokens + second.usage.input_tokens,
       output_tokens: spent.output_tokens + second.usage.output_tokens,
       repair_rounds: spent.repair_rounds + second.usage.repair_rounds,
+      cost_usd:
+        spent.cost_usd === null || second.usage.cost_usd === null
+          ? null
+          : spent.cost_usd + second.usage.cost_usd,
     },
   };
 }
@@ -1357,15 +1413,20 @@ export async function aiPlanForDivision(
     // in analytics or the run ledger. The failure row uses its own event type
     // ('schedule.ai_failed'): the quota above counts 'schedule.ai_generated'
     // only, so failures never consume a generation.
-    // An Anthropic.APIError (billing 400, auth 401, rate-limit 429, overloaded
-    // 529, upstream 5xx) is NOT a planning failure — the provider is unusable
-    // right now. Before 2026-07-20 it matched neither branch below: it was
+    // A provider-level failure (billing 400, auth 401, rate-limit 429,
+    // overloaded 529, upstream 5xx — wrapped as AiProviderError by the
+    // adapter) is NOT a planning failure — the provider is unusable right
+    // now. Before 2026-07-20 it matched neither branch below: it was
     // rethrown raw from callModel, surfaced to the tenant as a 500, and left no
     // ledger row. Observed live during the effort bench, where an exhausted
     // credit balance took AI scheduling down with no diagnostic. Meter it under
     // its own outcome and translate it to a 503 — the provider's message can
     // carry our billing state and must never reach a tenant.
-    const providerErr = Anthropic.APIError && err instanceof Anthropic.APIError ? err : null;
+    const providerErr = err instanceof AiProviderError ? err : null;
+    // The adapter's cause is the raw SDK error (Anthropic.APIError has
+    // `status` + `name`) — read defensively since other providers' causes may
+    // not carry the same shape.
+    const providerCause = providerErr?.cause as { status?: number; name?: string } | undefined;
     const planErr =
       err instanceof HttpError && (err.code === "AI_PLAN_FAILED" || err.code === "AI_PLAN_TIMEOUT") ? err : null;
 
@@ -1374,9 +1435,10 @@ export async function aiPlanForDivision(
         input_tokens?: number;
         output_tokens?: number;
         repair_rounds?: number;
+        cost_usd?: number | null;
       };
       const outcome = providerErr ? "provider_error" : planErr!.code === "AI_PLAN_TIMEOUT" ? "timeout" : "failed";
-      const cost_usd = aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
+      const cost_usd = usage.cost_usd ?? aiRunCostUsd(model, usage.input_tokens ?? 0, usage.output_tokens ?? 0);
       await withTenant(auth.orgId, async (tx) => {
         await tx`
           insert into competition_events (competition_id, org_id, type, payload, actor_id)
@@ -1396,7 +1458,7 @@ export async function aiPlanForDivision(
                     // Provider diagnostics stay server-side (ops needs the real
                     // status; the tenant gets a bare 503).
                     ...(providerErr
-                      ? { provider_status: providerErr.status ?? null, provider_type: providerErr.name }
+                      ? { provider_status: providerCause?.status ?? null, provider_type: providerCause?.name ?? providerErr.name }
                       : {}),
                   } as never)}, ${auth.userId})`;
       });
@@ -1415,7 +1477,7 @@ export async function aiPlanForDivision(
           cost_usd,
           blocking: 0,
           outcome,
-          ...(providerErr ? { provider_status: providerErr.status ?? null } : {}),
+          ...(providerErr ? { provider_status: providerCause?.status ?? null } : {}),
         },
       });
     }
@@ -1427,7 +1489,7 @@ export async function aiPlanForDivision(
 
   // Record this generation against the per-division cap counted above (owner
   // 2026-07-18). Append-only audit; org_id is set explicitly by the insert below.
-  const cost_usd = aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
+  const cost_usd = result.usage.cost_usd ?? aiRunCostUsd(model, result.usage.input_tokens, result.usage.output_tokens);
   await withTenant(auth.orgId, async (tx) => {
     await tx`
       insert into competition_events (competition_id, org_id, type, payload, actor_id)
