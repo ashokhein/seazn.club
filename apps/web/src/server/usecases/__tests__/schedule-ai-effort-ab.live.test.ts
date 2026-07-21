@@ -19,21 +19,84 @@ import { describe, expect, it } from "vitest";
 
 import { runAiPlan, schedulingAiModel } from "../schedule-ai";
 import type { PackFixture, PackPerson, SchedulePack } from "../schedule-ai";
+import { applyPolicy } from "../../ai/openrouter-policy";
 
-// vitest does not read .env.local; load just the key we need if absent.
-if (!process.env.ANTHROPIC_API_KEY) {
+// vitest does not read .env.local; load just the keys we need if absent.
+// OPENROUTER_API_KEY only lives in the worktree ROOT .env.local (not
+// apps/web/.env.local), unlike ANTHROPIC_API_KEY which is in both — so each
+// key independently tries both paths rather than assuming one holds both.
+function loadEnvKeyIfAbsent(name: string) {
+  if (process.env[name]) return;
   for (const rel of ["../../../../.env.local", "../../../../../../.env.local"]) {
     const p = path.resolve(__dirname, rel);
     if (!fs.existsSync(p)) continue;
-    const m = fs.readFileSync(p, "utf8").match(/^ANTHROPIC_API_KEY=(.+)$/m);
+    const m = fs.readFileSync(p, "utf8").match(new RegExp(`^${name}=(.+)$`, "m"));
     if (m) {
-      process.env.ANTHROPIC_API_KEY = m[1].trim().replace(/^["']|["']$/g, "");
+      process.env[name] = m[1].trim().replace(/^["']|["']$/g, "");
       break;
     }
   }
 }
+loadEnvKeyIfAbsent("ANTHROPIC_API_KEY");
+loadEnvKeyIfAbsent("OPENROUTER_API_KEY");
 
 const LIVE = process.env.AI_AB_LIVE === "1";
+
+// --- OpenRouter served-provider probe ---------------------------------------
+// `AiChatResponse` (server/ai/provider.ts) deliberately exposes only
+// `servedModel` and a boolean `refused` — neither says which VENDOR actually
+// served a candidate call (task-11-brief's endpoint/quantisation column) nor
+// preserves the raw finish_reason/native_finish_reason/message.refusal shape
+// (open question 2). A first attempt at this wrapped `globalThis.fetch` to
+// peek at the real bench call's response via a clone; that MISS-FIRED badly —
+// every Anthropic-direct arm (including the pre-existing, previously-working
+// low/no-think and haiku cells, untouched by this task) started failing
+// instantly with zero tokens the moment the wrap was installed, for reasons
+// not worth chasing down against a $25 cap. This does a SEPARATE, minimal,
+// cheap request instead (a few tokens, ~$0.00005 observed 2026-07-21) —
+// same model, same policy, own isolated fetch call — right after the real
+// bench call. It cannot regress runAiPlan's own transport because it never
+// touches global fetch, and it answers the same question (which vendor and,
+// where knowable, which quantisation serves this model under the allowlist)
+// without staking the whole bench on an interception trick.
+type ServedProviderProbe = {
+  provider?: string;
+  finishReason?: string;
+  nativeFinishReason?: string;
+  refusal?: string | null;
+  error?: string;
+};
+
+async function probeServedProvider(model: string): Promise<ServedProviderProbe> {
+  const base = process.env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1";
+  try {
+    const res = await fetch(`${base}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(
+        applyPolicy({
+          model,
+          max_tokens: 8,
+          messages: [{ role: "user", content: "Say OK." }],
+        }),
+      ),
+    });
+    const body = await res.json();
+    if (!res.ok) return { error: `HTTP ${res.status}: ${JSON.stringify(body).slice(0, 300)}` };
+    const choice = body?.choices?.[0];
+    return {
+      provider: typeof body?.provider === "string" ? body.provider : undefined,
+      finishReason: choice?.finish_reason,
+      nativeFinishReason: choice?.native_finish_reason,
+      refusal: choice?.message?.refusal ?? null,
+    };
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
 
 // --- deterministic ids -----------------------------------------------------
 const uuid = (tag: string, n: number) =>
@@ -196,6 +259,23 @@ type Row = {
   unschedulable: number;
   placed: number;
   error: string;
+  /** Transport this arm ran on. */
+  provider: string;
+  /** Vendor name from the raw OpenRouter response body's `provider` field
+   *  (task-11-brief: "capture the serving provider ... record it, with the
+   *  known quantisation"). "anthropic (direct)" for the Anthropic transport,
+   *  where there is no OpenRouter routing to report. */
+  servedProvider: string;
+  /** Real provider-reported cost (AiPlanResult.usage.cost_usd) — OpenRouter's
+   *  `usage.cost` is the actual billed dollar figure per request, not a
+   *  flat-rate estimate, which matters because listUsd/introUsd below assume
+   *  Anthropic's own $3/$15 rate and are WRONG for non-Anthropic candidates.
+   *  Prefer this field for every arm; listUsd/introUsd are kept only for the
+   *  pre-existing Anthropic-only arms' historical comparison. */
+  realUsd: number | null;
+  /** Raw refusal diagnostics (open question 2), JSON-stringified, only when
+   *  the arm ran on OpenRouter and a peek was captured. */
+  rawPeek: string;
 };
 
 const rows: Row[] = [];
@@ -210,6 +290,10 @@ type Arm = {
   /** Cell label — arms must not aggregate together just because they share an
    *  effort value. */
   label: string;
+  /** Transport for this arm. Defaults to "anthropic" — an unset arm behaves
+   *  exactly as before this field existed. Sets AI_PROVIDER, which
+   *  selectProvider() reads once per run. */
+  provider?: "anthropic" | "openrouter";
 };
 
 async function bench(
@@ -217,9 +301,10 @@ async function bench(
   build: () => { pack: SchedulePack; movable: Set<string> },
   arm: Arm,
 ) {
-  const { effort, thinking = "adaptive", model, budget, label: cellEffort } = arm;
+  const { effort, thinking = "adaptive", model, budget, label: cellEffort, provider = "anthropic" } = arm;
   process.env.SCHEDULING_AI_EFFORT = effort;
   process.env.SCHEDULING_AI_THINKING = thinking;
+  process.env.AI_PROVIDER = provider;
   if (model) process.env.SCHEDULING_AI_MODEL = model;
   else delete process.env.SCHEDULING_AI_MODEL;
   if (budget) process.env.SCHEDULING_AI_THINKING_BUDGET = String(budget);
@@ -240,6 +325,10 @@ async function bench(
     unschedulable: -1,
     placed: -1,
     error: "",
+    provider,
+    servedProvider: provider === "anthropic" ? "anthropic (direct)" : "",
+    realUsd: null,
+    rawPeek: "",
   };
   try {
     const res = await runAiPlan(pack, movable);
@@ -250,22 +339,47 @@ async function bench(
     row.warnings = res.warnings.length;
     row.unschedulable = res.unschedulable.length;
     row.placed = res.proposal.length;
+    row.realUsd = res.usage.cost_usd;
   } catch (err) {
     row.error = err instanceof Error ? `${(err as { code?: string }).code ?? ""} ${err.message}`.trim() : String(err);
+    // runAiPlan rides accumulated usage on AI_PLAN_FAILED/AI_PLAN_TIMEOUT
+    // (HttpError.extra.usage — schedule-ai.ts's usageNow()) specifically so a
+    // failed-but-expensive run can still be metered. The pre-existing catch
+    // above never read it, so a real-money round that failed after
+    // generating (e.g. a corrective retry that still didn't parse) silently
+    // reported in=0/out=0/real=$null — looked free, wasn't.
+    const usage = (err as { extra?: { usage?: { input_tokens?: number; output_tokens?: number; cost_usd?: number | null } } })
+      ?.extra?.usage;
+    if (usage) {
+      row.in = usage.input_tokens ?? 0;
+      row.out = usage.output_tokens ?? 0;
+      row.realUsd = usage.cost_usd ?? null;
+    }
   }
   row.secs = Math.round((Date.now() - t0) / 100) / 10;
+  if (provider === "openrouter" && model) {
+    const probe = await probeServedProvider(model);
+    row.servedProvider = probe.provider ?? probe.error ?? "(unknown)";
+    row.rawPeek = JSON.stringify(probe);
+  }
   // Rates per the arm's model. Reconciliation against the real account balance
   // on 2026-07-20 ($15 -> $9 over ~$5.6 of list-rate runs) says this account is
   // billed at LIST, not the introductory sonnet rate — so `listUsd` is the
-  // column to trust and `introUsd` is kept only for comparison.
+  // column to trust and `introUsd` is kept only for comparison. Both assume
+  // Anthropic's own rate table, so they are WRONG for non-Anthropic
+  // candidates — `row.realUsd` (provider-reported) is the authoritative
+  // figure for every arm; these two are kept only for the pre-existing
+  // Anthropic-only cells' historical comparison.
   const [inRate, outRate] = model === "claude-haiku-4-5" ? [1, 5] : [3, 15];
   row.listUsd = usd(row.in, row.out, inRate, outRate);
   row.introUsd = usd(row.in, row.out, model === "claude-haiku-4-5" ? 1 : 2, model === "claude-haiku-4-5" ? 5 : 10);
   rows.push(row);
   process.stdout.write(
     `\n[${name} / effort=${cellEffort}] ${row.secs}s  rounds=${row.rounds}  in=${row.in} out=${row.out}  ` +
-      `list=$${row.listUsd} intro=$${row.introUsd}  blocking=${row.blocking} warnings=${row.warnings} ` +
-      `unsched=${row.unschedulable} placed=${row.placed}${row.error ? `  ERROR: ${row.error}` : ""}\n`,
+      `real=$${row.realUsd ?? "null"} list=$${row.listUsd} intro=$${row.introUsd}  blocking=${row.blocking} ` +
+      `warnings=${row.warnings} unsched=${row.unschedulable} placed=${row.placed} ` +
+      `served=${row.servedProvider}${row.rawPeek ? ` peek=${row.rawPeek}` : ""}` +
+      `${row.error ? `  ERROR: ${row.error}` : ""}\n`,
   );
   // A swallowed error is worse than a red test: it looks like a cheap run.
   expect(row.error, `${name}/${cellEffort} failed`).toBe("");
@@ -328,6 +442,63 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
   cell("teams-15", teamsPack, { ...HAIKU, label: "haiku/budget8k" });
   cell("individuals-50", individualsPack, { ...HAIKU, label: "haiku/budget8k" });
 
+  // --- Task 11: the OpenRouter shootout -----------------------------------
+  // design/v4/06-openrouter-shootout.md is written from this section's
+  // output. Two control arms gate everything: the fidelity arm (same model,
+  // different transport) must reproduce the direct arm before any candidate
+  // number is trusted (task-11-brief step 4). The third control arm answers
+  // open question 1 — does OpenRouter's unified `{effort, enabled:false}`
+  // actually suppress reasoning spend? — by comparing its output tokens
+  // against the adaptive fidelity arm on the same model/transport.
+  const CONTROL_DIRECT: Arm = {
+    model: "claude-sonnet-5",
+    effort: "high",
+    provider: "anthropic",
+    label: "sonnet-5 direct",
+  };
+  const CONTROL_FIDELITY: Arm = {
+    model: "anthropic/claude-sonnet-5",
+    effort: "high",
+    provider: "openrouter",
+    label: "sonnet-5 via openrouter",
+  };
+  const CONTROL_NO_THINK: Arm = {
+    model: "anthropic/claude-sonnet-5",
+    effort: "high",
+    thinking: "disabled",
+    provider: "openrouter",
+    label: "sonnet-5 via openrouter, no-think (enabled:false)",
+  };
+  // Candidates from design/v4/05-openrouter-candidates.md's policy-routable
+  // named entrants. Quantisation per openrouter-policy.ts: z-ai/glm-5.2 and
+  // moonshotai/kimi-k2.6 each have exactly one first-party endpoint
+  // (z-ai/fp8, moonshotai/int4); x-ai/grok-4.5's is not independently pinned
+  // to a single endpoint, only to the xai vendor slug — recorded per-row from
+  // the live response's `provider` field either way (see `servedProvider`).
+  const CANDIDATES: Arm[] = [
+    { model: "x-ai/grok-4.5", effort: "high", provider: "openrouter", label: "grok-4.5" },
+    { model: "z-ai/glm-5.2", effort: "high", provider: "openrouter", label: "glm-5.2" },
+    { model: "moonshotai/kimi-k2.6", effort: "high", provider: "openrouter", label: "kimi-k2.6" },
+  ];
+  const stage1Arms: Arm[] = [CONTROL_DIRECT, CONTROL_FIDELITY, CONTROL_NO_THINK, ...CANDIDATES];
+
+  // Stage 1 — screen. n=1 (set AI_AB_REPEATS=1), teams-15 (dense pack) only.
+  // Enable with AI_AB_SHOOTOUT_STAGE1=1.
+  if (process.env.AI_AB_SHOOTOUT_STAGE1 === "1") {
+    for (const arm of stage1Arms) cell("teams-15", teamsPack, arm);
+  }
+
+  // Stage 2 — full. n=3 (set AI_AB_REPEATS=3), both packs, survivors + both
+  // control arms. Populated after stage 1 determines survivors; empty array
+  // is a deliberate no-op until then. Enable with AI_AB_SHOOTOUT_STAGE2=1.
+  const stage2Arms: Arm[] = [];
+  if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") {
+    for (const arm of stage2Arms) {
+      cell("teams-15", teamsPack, arm);
+      cell("individuals-50", individualsPack, arm);
+    }
+  }
+
   it("summary", () => {
     const roundMs = Number(process.env.SCHEDULING_AI_ROUND_TIMEOUT_MS) || 300_000;
     process.stdout.write(
@@ -344,19 +515,27 @@ describe.skipIf(!LIVE)("effort A/B (live, billed)", () => {
       const c = rows.filter((r) => `${r.pack}|${r.effort}` === k);
       const secs = agg(c, (r) => r.secs);
       const out = agg(c, (r) => r.out);
-      const cost = agg(c, (r) => r.introUsd);
+      // realUsd (provider-reported) is authoritative for every arm — see the
+      // Row type comment. introUsd assumes an Anthropic rate table and is
+      // wrong for non-Anthropic candidates, so it's only a fallback here for
+      // the rare case a round produced no reported cost at all.
+      const cost = agg(c, (r) => r.realUsd ?? r.introUsd);
       const spread = out.min > 0 ? round2(out.max / out.min) : 0;
       const clean = c.filter((r) => r.blocking === 0 && r.warnings === 0 && r.unschedulable === 0).length;
+      const served = [...new Set(c.map((r) => r.servedProvider))].join(", ");
       process.stdout.write(
         `${pack} @ ${effort}: secs mean=${secs.mean} [${secs.min}-${secs.max}] | ` +
           `out mean=${out.mean} [${out.min}-${out.max}] spread=${spread}x | ` +
-          `$intro mean=${cost.mean} [${cost.min}-${cost.max}] | clean ${clean}/${c.length}\n`,
+          `$ mean=${cost.mean} [${cost.min}-${cost.max}] | clean ${clean}/${c.length} | served=${served}\n`,
       );
     }
 
-    const total = rows.reduce((s, r) => s + r.introUsd, 0);
-    process.stdout.write(`\ntotal spend this bench (intro rates): $${Math.round(total * 10000) / 10000}\n`);
-    const expected = (process.env.AI_AB_BASELINE === "1" ? 8 : 4) * REPEATS;
+    const total = rows.reduce((s, r) => s + (r.realUsd ?? r.introUsd), 0);
+    process.stdout.write(`\ntotal spend this bench (real, provider-reported): $${Math.round(total * 10000) / 10000}\n`);
+    let expectedCells = process.env.AI_AB_BASELINE === "1" ? 8 : 4;
+    if (process.env.AI_AB_SHOOTOUT_STAGE1 === "1") expectedCells += stage1Arms.length;
+    if (process.env.AI_AB_SHOOTOUT_STAGE2 === "1") expectedCells += stage2Arms.length * 2;
+    const expected = expectedCells * REPEATS;
     expect(rows.length).toBe(expected);
     expect(rows.every((r) => r.error === "")).toBe(true);
   });
