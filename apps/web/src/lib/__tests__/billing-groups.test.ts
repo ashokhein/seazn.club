@@ -39,7 +39,12 @@ import {
   invalidateGroupEntitlements,
   invalidateOrgEntitlements,
 } from "@/lib/entitlements";
-import { activeOrgCount, assertGroupMayHoldAnotherOrg, groupIdsOwnedBy } from "@/lib/billing-group";
+import {
+  activeOrgCount,
+  assertGroupMayHoldAnotherOrg,
+  groupIdsOwnedBy,
+  groupOrgLimit,
+} from "@/lib/billing-group";
 import { PaymentRequiredError } from "@/lib/errors";
 
 const HAS_DB = !!process.env.DATABASE_URL;
@@ -249,6 +254,28 @@ describe.skipIf(!HAS_DB)("suspension is org-scoped, billing is group-scoped", ()
       expect(await hasFeature(orgId, "api.access")).toBe(true);
       expect(await getLimit(orgId, "members.max")).toBe(15);
     }
+  });
+
+  it("does not let a suspended org shrink the GROUP cap it resolves through", async () => {
+    // groupOrgLimit answered the cap through the OLDEST org, and the entitlement
+    // resolver maps a suspended org to community — so suspending the eldest of a
+    // Pro group made its cap read as 1 (community's orgs.max_owned), the panel
+    // showed "Room for 1", and every attach was refused. The group still pays
+    // for Pro, so its capacity must not move.
+    const { subId, orgIds } = await seedGroup("pro", 3);
+    expect(await groupOrgLimit(subId)).toBe(5); // pro
+
+    await sql`update organizations set status = 'suspended' where id = ${orgIds[0]}`;
+    await invalidateOrgEntitlements(orgIds[0]!);
+    expect(await groupOrgLimit(subId)).toBe(5);
+
+    // Even with EVERY org suspended, the cap is the plan's, not community's —
+    // moderation state cannot set a billing limit.
+    for (const id of orgIds) {
+      await sql`update organizations set status = 'suspended' where id = ${id}`;
+      await invalidateOrgEntitlements(id);
+    }
+    expect(await groupOrgLimit(subId)).toBe(5);
   });
 
   it("keeps counting a suspended org toward the bill, and stops counting a deleted one", async () => {

@@ -127,7 +127,7 @@ export async function assertGroupMayHoldAnotherOrg(subscriptionId: string): Prom
   // group's limit through a deleted org is the wrong org to ask.
   const orgIds = await liveOrgIdsInGroup(subscriptionId);
   if (orgIds.length === 0) return;
-  const limit = await groupOrgLimit(subscriptionId, orgIds);
+  const limit = await groupOrgLimit(subscriptionId);
   assertWithinGroupCap(orgIds.length, limit);
 }
 
@@ -142,14 +142,39 @@ export async function assertGroupMayHoldAnotherOrg(subscriptionId: string): Prom
  * attaches would deadlock the whole process's database access — not just
  * billing. Callers that need the cap under a lock resolve it here first and
  * apply it with assertWithinGroupCap inside the transaction.
+ *
+ * Resolved through a NON-SUSPENDED org, deliberately. The cap is a property of
+ * the GROUP's plan, but `getLimit` runs the org entitlement resolver, and that
+ * resolver maps a suspended org to `community` (moderation, scoped to one org).
+ * Asking the oldest org for the cap therefore let a single suspended club shrink
+ * the WHOLE group to the community cap of 1 — a Pro group with a suspended
+ * eldest read "Room for 1" and refused every attach — which is precisely the
+ * sibling degradation every other path here bends over backwards to avoid. So
+ * the resolving org is the oldest one that is NOT suspended.
  */
-export async function groupOrgLimit(
-  subscriptionId: string,
-  knownOrgIds?: string[],
-): Promise<number | null> {
-  const orgIds = knownOrgIds ?? (await liveOrgIdsInGroup(subscriptionId));
-  if (orgIds.length === 0) return null;
-  return getLimit(orgIds[0], "orgs.max_owned");
+export async function groupOrgLimit(subscriptionId: string): Promise<number | null> {
+  // Oldest non-suspended live org first; a suspended one only if that is all
+  // there is. `status = 'suspended'` orders false (0) before true (1).
+  const [pick] = await sql<{ id: string; status: string }[]>`
+    select id, status from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null
+     order by (status = 'suspended'), created_at
+     limit 1`;
+  if (!pick) return null;
+  if (pick.status !== "suspended") return getLimit(pick.id, "orgs.max_owned");
+
+  // Every live org is suspended: the resolver would answer community for all of
+  // them, so read the group's plan cap straight from plan_entitlements rather
+  // than let moderation state set a billing limit. Per-org overrides are lost in
+  // this degenerate case, but there is no un-suspended org to carry a meaningful
+  // one anyway.
+  const [grp] = await sql<{ plan_key: string }[]>`
+    select plan_key from subscriptions where id = ${subscriptionId}`;
+  if (!grp) return null;
+  const [pe] = await sql<{ int_value: number | null }[]>`
+    select int_value from plan_entitlements
+     where plan_key = ${grp.plan_key} and feature_key = 'orgs.max_owned'`;
+  return pe?.int_value ?? null;
 }
 
 /** Apply a limit resolved by groupOrgLimit to a count read under the lock.

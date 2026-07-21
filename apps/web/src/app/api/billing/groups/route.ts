@@ -94,7 +94,7 @@ export async function GET() {
     return Promise.all(
       rows.map(async (g) => ({
         ...g,
-        max_orgs: await groupOrgLimit(g.id, g.orgs.map((o) => o.id)),
+        max_orgs: await groupOrgLimit(g.id),
       })),
     );
   });
