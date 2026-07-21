@@ -46,13 +46,21 @@ vi.mock("@/lib/cache", () => ({
 // A stateful Stripe double. `cards` is mutated by paymentMethods.detach so the
 // has_payment_method re-derivation after a transfer sees what Stripe would
 // actually report, instead of a canned answer that would pass either way.
+//
+// It also HONOURS the `type` filter. It did not, and that blindness hid a real
+// bug: finishHandover listed `{ type: "card" }`, so a departing payer's SEPA or
+// Bacs mandate survived the handover, and a type-blind double answered as if
+// the filter had matched everything. A double that ignores a filter cannot fail
+// a test about that filter.
 const stripeMock = vi.hoisted(() => {
   const state = {
     itemId: "si_test",
     priceId: "price_tiered_test",
     billingScheme: "tiered" as string,
     quantity: 1,
-    cards: [] as { id: string }[],
+    // `type` is optional so the ~20 existing fixtures that push a bare
+    // `{ id }` keep meaning "a card", which is what they were written to mean.
+    cards: [] as { id: string; type?: string }[],
   };
   const subscriptionsRetrieve = vi.fn(async (id: string) => ({
     id,
@@ -84,7 +92,11 @@ const stripeMock = vi.hoisted(() => {
     deleted: false,
     invoice_settings: { default_payment_method: null },
   }));
-  const listPaymentMethods = vi.fn(async () => ({ data: [...state.cards] }));
+  // Stripe returns every attached method when `type` is omitted, and only the
+  // matching ones when it is given.
+  const listPaymentMethods = vi.fn(async (_customerId: string, params?: { type?: string }) => ({
+    data: state.cards.filter((c) => !params?.type || (c.type ?? "card") === params.type),
+  }));
   const paymentMethodsDetach = vi.fn(async (id: string) => {
     state.cards = state.cards.filter((c) => c.id !== id);
     return {};
@@ -977,6 +989,39 @@ describe.skipIf(!HAS_DB)("transfer a billing group", () => {
     // And nothing about the subscription itself moved.
     expect(stripeMock.subscriptionsUpdate).not.toHaveBeenCalled();
     expect(stripeMock.subscriptionsCancel).not.toHaveBeenCalled();
+  });
+
+  it("takes the departing payer's DIRECT DEBIT off too, not just their card", async () => {
+    // The SetupIntent deliberately does not pin payment_method_types, so a payer
+    // can fund a group by SEPA or Bacs. finishHandover swept `{ type: "card" }`
+    // only, which left that mandate attached: the person who handed the group
+    // over kept paying for it, with no way to see the charges and no control
+    // over the group producing them. Direct debit is the worst case for it — a
+    // mandate keeps pulling until it is revoked at the bank.
+    const payer = await makeUser("payer");
+    const heir = await makeUser("heir");
+    const group = await makeGroup(payer, {
+      stripeSubId: "sub_sepa_" + uniq(),
+      stripeCustomerId: "cus_sepa_" + uniq(),
+    });
+    await makeOrg(group, payer);
+    stripeMock.state.cards = [
+      { id: "pm_old_sepa", type: "sepa_debit" },
+      { id: "pm_old_card", type: "card" },
+    ];
+
+    const offer = await offerGroupTransfer({
+      actorUserId: payer,
+      subscriptionId: group,
+      newOwnerUserId: heir,
+    });
+    confirmIntent(offer.setup_intent_id!, "pm_heir");
+    await acceptGroupTransfer({ actorUserId: heir, setupIntentId: offer.setup_intent_id! });
+
+    expect(stripeMock.paymentMethodsDetach).toHaveBeenCalledWith("pm_old_sepa");
+    expect(stripeMock.paymentMethodsDetach).toHaveBeenCalledWith("pm_old_card");
+    // The heir's method is the only one left funding the group they now own.
+    expect(stripeMock.state.cards).toEqual([{ id: "pm_heir" }]);
   });
 
   it("refuses an acceptance with no card, and one from the wrong person", async () => {

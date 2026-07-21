@@ -1187,11 +1187,18 @@ async function handOverGroup(
 
 /**
  * Everything after the handover has committed: repoint the invoice contact, and
- * only then detach the cards that funded the OLD owner's tenure.
+ * only then detach the payment methods that funded the OLD owner's tenure.
  *
  * Detaching last is the whole safety property — a live subscription is never
  * without a payment method — and it runs for the winner of a race only, because
  * the loser threw inside handOverGroup.
+ *
+ * Lists EVERY method type, not `{ type: "card" }`. The SetupIntent deliberately
+ * does not pin `payment_method_types`, so a payer can hold SEPA or Bacs; a
+ * card-only sweep left the departing payer's direct debit attached and still
+ * funding a group they no longer control, which is the exact property the
+ * two-phase handover exists to guarantee. Omitting `type` returns all types on
+ * the pinned API version.
  */
 async function finishHandover(
   group: GroupRow,
@@ -1206,8 +1213,8 @@ async function finishHandover(
     name: recipient.display_name,
     email: recipient.email,
   });
-  const cards = await stripe.customers.listPaymentMethods(customerId, { type: "card", limit: 100 });
-  for (const pm of cards.data) {
+  const methods = await stripe.customers.listPaymentMethods(customerId, { limit: 100 });
+  for (const pm of methods.data) {
     if (pm.id === newPaymentMethodId) continue;
     // Belt and braces against the outage this design exists to avoid: never
     // strip the last card off a live subscription, whatever the caller asked.
