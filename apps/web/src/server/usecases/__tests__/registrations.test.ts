@@ -262,13 +262,23 @@ const SUBMIT_BASE = {
   players: [],
 };
 
-function fakeSession(regId: string, amount: number): Stripe.Checkout.Session {
+function fakeSession(
+  regId: string,
+  amount: number,
+  feePercent?: number,
+): Stripe.Checkout.Session {
   return {
     id: "cs_test_" + regId.slice(0, 8),
     payment_intent: "pi_test_" + regId.slice(0, 8),
     payment_status: "paid",
     amount_total: amount,
-    metadata: { kind: "registration", registration_id: regId },
+    // The session carries the rate it was billed at, exactly as
+    // createRegistrationCheckout stamps it (V312).
+    metadata: {
+      kind: "registration",
+      registration_id: regId,
+      ...(feePercent === undefined ? {} : { fee_percent: String(feePercent) }),
+    },
   } as unknown as Stripe.Checkout.Session;
 }
 
@@ -1318,6 +1328,31 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     const [after] = await sql<{ fee_percent: number | null }[]>`
       select fee_percent from competitions where id = ${competition.id}`;
     expect(after.fee_percent).toBe(1);
+  });
+
+  it("locks the rate the PAID session was billed at, not a rate a re-mint overwrote", async () => {
+    // The stale-session hole: a checkout minted at 2% while the comp was on
+    // Pro, then the org drops to Community (8%) and the reg is re-minted (resume
+    // / reminder), overwriting reg.fee_percent to 8. The entrant completes the
+    // still-open ORIGINAL 2% session. The competition must lock at what that
+    // session charged (2%), not the overwritten reg.fee_percent (8%).
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    // Simulate the plan drop + re-mint overwriting the reg's frozen rate.
+    await setOrgPlan(orgId, "community");
+    await sql`update registrations set fee_percent = 8 where id = ${res.registration.id}`;
+
+    // Pay the ORIGINAL 2% session (its metadata still says 2).
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500, 2));
+
+    const [c] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(c.fee_percent).toBe(2);
   });
 
   it("an offline paid entry does not lock the rate — no platform fee flowed", async () => {
