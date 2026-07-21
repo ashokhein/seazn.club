@@ -18,7 +18,7 @@ import "server-only";
 // offset, and the solver draft is produced through domain-ranked stand-in ids so
 // the engine's per-(official, fixture) UUID tiebreak can never leak into it. DB
 // reads reuse the officials.ts / schedule.ts loaders — no SQL is re-derived here.
-import { anthropicProvider } from "@/server/ai/anthropic-provider";
+import { selectProvider } from "@/server/ai/select-provider";
 import {
   AiProviderError,
   type AiChatResponse,
@@ -594,7 +594,7 @@ export function refereeOfficialsPlan(
 // Phase B runner — the provider-seam structured-output call + referee
 // verify/repair loop (design/v4/03 §2, mirrors the Phase A runner in
 // schedule-ai.ts). Pure over the pack: no DB, no wall clock. Resolves
-// anthropicProvider() itself (503 when unconfigured, SCHEDULING_AI_BASE_URL
+// selectProvider() itself (503 when unconfigured, SCHEDULING_AI_BASE_URL
 // escape hatch lives in the adapter).
 // ===========================================================================
 
@@ -840,7 +840,7 @@ export async function runOfficialsAiPlan(pack: OfficialsPack): Promise<Officials
   // One provider per run: reasoning blocks are provider-specific and replayed
   // verbatim on repair, so a run that resolved a provider per round could send
   // one service's reasoning to another. 503 before any network if unconfigured.
-  const provider = anthropicProvider();
+  const provider = selectProvider();
   if (!provider.isConfigured()) {
     throw new HttpError(503, "AI scheduling is not configured on this server");
   }

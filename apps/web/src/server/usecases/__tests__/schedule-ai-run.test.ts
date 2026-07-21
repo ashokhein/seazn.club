@@ -131,6 +131,7 @@ function planResponse(p: unknown, usage: unknown = { input_tokens: 1000, output_
 beforeEach(() => {
   parse.mockReset();
   process.env.ANTHROPIC_API_KEY = "test-key";
+  delete process.env.AI_PROVIDER;
 });
 
 describe("runAiPlan (v4/00 §3-4)", () => {
@@ -371,6 +372,15 @@ describe("runAiPlan (v4/00 §3-4)", () => {
   it("missing ANTHROPIC_API_KEY → 503 before any call", async () => {
     delete process.env.ANTHROPIC_API_KEY;
     await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 503 });
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  it("missing OPENROUTER_API_KEY → 503 before any call when that provider is selected", async () => {
+    process.env.AI_PROVIDER = "openrouter";
+    delete process.env.OPENROUTER_API_KEY;
+    await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 503 });
+    // The Anthropic path must be untouched — a misconfigured OpenRouter run
+    // must not silently fall back to the other provider's credentials.
     expect(parse).not.toHaveBeenCalled();
   });
 

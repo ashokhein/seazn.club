@@ -10,7 +10,7 @@ import "server-only";
 // by (display_name, id), and every timestamp is an ISO-8601 string carrying the division
 // timezone offset. DB reads reuse the schedule.ts / officials.ts loaders — no SQL is
 // re-derived here.
-import { anthropicProvider } from "@/server/ai/anthropic-provider";
+import { selectProvider } from "@/server/ai/select-provider";
 import {
   AiProviderError,
   type AiChatResponse,
@@ -987,7 +987,7 @@ export async function runAiPlan(
   // One provider per run: reasoning blocks are provider-specific and replayed
   // verbatim on repair, so a run that resolved a provider per round could send
   // one service's reasoning to another. 503 before any network if unconfigured.
-  const provider = anthropicProvider();
+  const provider = selectProvider();
   if (!provider.isConfigured()) {
     throw new HttpError(503, "AI scheduling is not configured on this server");
   }
