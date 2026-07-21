@@ -653,8 +653,12 @@ and only for two keys. That is why `branding` and `realtime` shipped dead.
 // apps/web/src/lib/__tests__/pass-scoping-guard.test.ts
 import { describe, it, expect } from "vitest";
 import { sql } from "@/lib/db";
-import { readFileSync } from "node:fs";
-import { globSync } from "node:fs";
+import { readFileSync, globSync } from "node:fs";
+import ts from "typescript";
+
+/** The four resolver entry points. `withinLimit` takes the competition id as its
+ *  FOURTH argument, the others as their third — see lib/entitlements.ts. */
+const GATES = new Set(["hasFeature", "requireFeature", "getLimit", "withinLimit"]);
 
 /** Every feature key the Event Pass LIFTS above community must be resolved with
  *  a competitionId at every call site, or the grant is dead on arrival. */
@@ -673,16 +677,39 @@ describe("Event Pass grants are resolved with a competition in scope", () => {
     const files = globSync("src/**/*.{ts,tsx}", { cwd: process.cwd() })
       .filter((f) => !f.includes("__tests__"));
 
+    // Parse with the TypeScript compiler, NOT a regex. Real call sites wrap:
+    // `withinLimit(` at server/usecases/entrants.ts:243 spans four lines, and any
+    // regex anchoring the closing paren to the key string skips every one of
+    // them — a guard that reports clean while missing offenders is worse than
+    // no guard at all. `typescript` is already a dependency.
     const offenders: string[] = [];
     for (const file of files) {
-      const src = readFileSync(file, "utf8");
-      // hasFeature(org, "key")  with no third argument
-      const re =
-        /(hasFeature|requireFeature|getLimit)\(\s*[^,]+,\s*"([^"]+)"\s*\)/g;
-      let m: RegExpExecArray | null;
-      while ((m = re.exec(src))) {
-        if (keys.has(m[2])) offenders.push(`${file}: ${m[1]}(…, "${m[2]}")`);
-      }
+      const src = ts.createSourceFile(
+        file,
+        readFileSync(file, "utf8"),
+        ts.ScriptTarget.Latest,
+        true,
+      );
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node)) {
+          const fn = node.expression.getText(src);
+          const name = fn.split(".").pop() ?? fn;
+          if (GATES.has(name)) {
+            // arg 0 = orgId, arg 1 = feature key, arg 2 = competitionId.
+            // withinLimit takes (orgId, key, wouldBe, competitionId) — 4 args.
+            const keyArg = node.arguments[1];
+            const wants = name === "withinLimit" ? 4 : 3;
+            if (keyArg && ts.isStringLiteral(keyArg) && keys.has(keyArg.text)) {
+              if (node.arguments.length < wants) {
+                const { line } = src.getLineAndCharacterOfPosition(node.getStart(src));
+                offenders.push(`${file}:${line + 1} ${name}("${keyArg.text}")`);
+              }
+            }
+          }
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(src);
     }
     expect(offenders).toEqual([]);
   });
