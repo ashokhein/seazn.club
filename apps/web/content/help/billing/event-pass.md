@@ -43,7 +43,7 @@ The annual club championship, a one-off fundraiser, a school sports day: events 
 
 ## Common questions
 
-**Can I buy a pass on top of Pro?** No need — Pro already covers everything a pass grants, so the purchase is blocked with a note.
+**Can I buy a pass on top of Pro?** No — and you wouldn't want to. Every paid plan grants strictly more than the pass does: Pro allows **256 entrants** per division against the pass's 64, and **20 AI schedule runs** against 10. So while you're on a paid plan, upgrade prompts inside your competitions don't offer the pass at all — they show your plan's next step on its own — and the purchase itself is blocked with a note.
 
 **Do I need a pass to take card entry fees?** No — every plan can charge entry fees, Community included. The pass makes them **cheaper**: 5% instead of 8%. [The fee ladder](/help/billing/plans#the-platform-fee-on-entry-fees).
 

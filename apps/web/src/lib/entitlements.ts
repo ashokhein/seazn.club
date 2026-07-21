@@ -52,14 +52,44 @@ async function resolve(
   return fresh;
 }
 
-async function resolveFromDb(
-  orgId: string,
-  featureKey: string,
-  competitionId?: string,
-): Promise<Resolved | null> {
-  // Plan first: both the pass branch and the override overlay need it, and it
-  // must be resolved exactly once.
-  //
+/**
+ * Does this plan key pay us anything? The ONE predicate for "paid org".
+ *
+ * It is deliberately the same test the pass arm of `resolveFromDb` applies:
+ * under any paid plan the Event Pass is moot, because every key the pass lifts
+ * the paid matrix lifts further. Anything that decides whether to OFFER a pass
+ * must therefore ask exactly this question of exactly this plan key, or it will
+ * offer a $29 downgrade (event_pass grants 10 AI runs per division against
+ * pro's 20, and 64 entrants per division against pro's 256).
+ *
+ * Note what this is NOT: `hasLiveSubscription`. That answers "is Stripe billing
+ * this org", which is false for a staff comp — an org holding the Pro matrix
+ * with no Stripe subscription at all. Paid-ness is about the resolved plan,
+ * never about the presence of a Stripe id.
+ */
+export function isPaidPlan(planKey: string): boolean {
+  return planKey !== "community";
+}
+
+/**
+ * The org's plan AS THE RESOLVER SEES IT — after the read-time degradations,
+ * which is the only version that predicts what an entitlement read will do.
+ *
+ * `subscriptions.plan_key` raw is not this: a lapsed staff comp and a past_due
+ * subscription 14 days into dunning both still carry `plan_key = 'pro'` on the
+ * row while resolving as community. Callers deciding what to SELL need the
+ * resolved answer, or they refuse a pass to an org whose entitlements the pass
+ * would genuinely lift.
+ *
+ * Exported so surfaces outside the entitlement path (the competition layout,
+ * which must tell its gates whether a pass is worth offering) share this
+ * derivation instead of re-writing it. The app has already paid for three
+ * divergent copies of it once — see `__tests__/entitlements-duplicate-resolvers`.
+ *
+ * NOT cached: `resolve()` caches whole entitlement answers a layer above, and a
+ * second TTL here would let a plan change and its entitlements disagree.
+ */
+export async function orgPlanKey(orgId: string): Promise<string> {
   // A comped plan past its end date resolves as community at read time —
   // no scheduler flips it, the resolution does (bounded by the 5-min cache).
   const [orgPlan] = await sql<{ plan_key: string }[]>`
@@ -95,15 +125,29 @@ async function resolveFromDb(
     from organizations o
     left join subscriptions s on s.org_id = o.id
     where o.id = ${orgId}`;
-  const planKey = orgPlan?.plan_key ?? "community";
+  return orgPlan?.plan_key ?? "community";
+}
+
+async function resolveFromDb(
+  orgId: string,
+  featureKey: string,
+  competitionId?: string,
+): Promise<Resolved | null> {
+  // Plan first: both the pass branch and the override overlay need it, and it
+  // must be resolved exactly once.
+  const planKey = await orgPlanKey(orgId);
 
   // Event Pass (v3/07 §3): lifts a single competition for community orgs
   // only — under any paid plan the pass is deliberately moot (Pro's matrix is
   // a strict superset), which is also what lets it survive a later downgrade.
   // Keys missing from the pass matrix fall through to the plan row, so
   // Pro-only features stay Pro on a passed competition.
+  //
+  // `isPaidPlan` is the same predicate the competition layout uses to decide
+  // whether to OFFER a pass, on purpose: "the pass does nothing here" and
+  // "stop selling the pass here" must never be able to disagree.
   let base: Resolved | null = null;
-  if (planKey === "community" && competitionId) {
+  if (!isPaidPlan(planKey) && competitionId) {
     const [pass] = await sql<Resolved[]>`
       select pe.bool_value, pe.int_value
       from competition_passes cp

@@ -13,7 +13,15 @@
 //   pass NOT held, liftable feature   → both paths (unchanged)
 //   pass HELD, liftable feature       → Pro only; the pass is at its ceiling
 //   pass HELD, non-pass feature       → Pro only; "not included in the Event Pass"
+//   PAID PLAN, anything               → Pro only; the pass is moot
 //   no provider (org-level page)      → exactly as before, no pass wording
+//
+// The fourth row is task 17's own deferred follow-up. `usePassActive()` answered
+// only "does a pass ROW exist", so an org already on a paid plan read false and
+// was offered the $29 pass — which for a Pro org is a DOWNGRADE, not a redundant
+// sale: the pass grants 10 AI runs per division against Pro's 20, and 64
+// entrants per division against Pro's 256. The layout now carries the resolved
+// plan alongside the pass row and the gate reads one union.
 //
 // Rendered through react-dom/server, like competition-pass-provider.test.tsx:
 // the suite runs in the node environment and the gate has no effects.
@@ -36,9 +44,30 @@ const UPGRADE_HREF = "/o/riverside/c/summer-league/upgrade";
 const LIFTABLE = "divisions.per_competition.max";
 const NOT_LIFTABLE = "scheduling.multi_division";
 
-function render(node: ReactNode, { passActive = false } = {}) {
+/**
+ * Render the gate with the competition layout's two facts.
+ *
+ * `provider` defaults to "a provider is mounted iff one of the facts is set",
+ * which keeps every pre-existing call site meaning what it meant. Pass it
+ * explicitly for the control arm: a community org with no pass IS inside a
+ * competition, and must still see the $29 path.
+ */
+function render(
+  node: ReactNode,
+  {
+    passActive = false,
+    paidPlan = false,
+    provider = passActive || paidPlan,
+  }: { passActive?: boolean; paidPlan?: boolean; provider?: boolean } = {},
+) {
   return renderToStaticMarkup(
-    passActive ? <CompetitionPassProvider active>{node}</CompetitionPassProvider> : node,
+    provider ? (
+      <CompetitionPassProvider active={passActive} paidPlan={paidPlan}>
+        {node}
+      </CompetitionPassProvider>
+    ) : (
+      node
+    ),
   );
 }
 
@@ -155,6 +184,115 @@ describe("UpgradeGate — pass held (D1: never re-sell a pass the org holds)", (
       passActive: true,
     });
     expect(html).toContain('href="/settings/billing#plans"');
+  });
+});
+
+describe("UpgradeGate — paid plan (D1: any paid plan → Pro path only)", () => {
+  // Every key the pass lifts is one a paid plan lifts FURTHER — that is why
+  // lib/entitlements.ts applies the pass arm only when the resolved plan is
+  // community. Selling the pass to a paid org therefore sells strictly less
+  // than they hold: 10 AI runs per division against Pro's 20, 64 entrants
+  // against Pro's 256.
+  const DOWNGRADE_KEYS = [
+    "scheduling.ai.runs_per_division.max",
+    "entrants.per_division.max",
+  ];
+
+  it("drops the $29 path for a paid org that hits a liftable ceiling", () => {
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { paidPlan: true });
+    expect(html).not.toContain(UPGRADE_HREF);
+    expect(html).not.toContain(PASS_PRICE);
+    expect(html).not.toContain("data-pass-gate");
+    expect(html).not.toContain("data-pass-cta");
+    expect(html).toContain("See plans &amp; upgrade");
+  });
+
+  it("never offers a pass that grants LESS than the plan already held", () => {
+    // The two rows from the live matrix where the pass is a strict downgrade.
+    pathname = "/o/riverside/c/summer-league/d/main";
+    for (const feature of DOWNGRADE_KEYS) {
+      expect(PASS_FEATURES.has(feature), feature).toBe(true);
+      const html = render(<UpgradeGate feature={feature} />, { paidPlan: true });
+      expect(html, feature).not.toContain(UPGRADE_HREF);
+      expect(html, feature).not.toContain(PASS_PRICE);
+    }
+  });
+
+  it("suppresses the pass for EVERY key the pass lifts", () => {
+    // Derived from the live matrix by upgrade-gate-pass-features.test.ts, so a
+    // key added there is covered here with no second list to drift.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    for (const feature of PASS_FEATURES) {
+      const html = render(<UpgradeGate feature={feature} />, { paidPlan: true });
+      expect(html, feature).not.toContain(UPGRADE_HREF);
+      expect(html, feature).not.toContain("data-pass-cta");
+    }
+  });
+
+  it("does not tell a paid org it holds an Event Pass, or promise it a credit", () => {
+    // The pass-owned card explains a block by the PASS's ceiling and offers a
+    // credit for money spent on a pass. A paid org was blocked by its PLAN and
+    // may never have bought a pass at all; both statements would be false.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { paidPlan: true });
+    expect(html).not.toContain("data-pass-owned");
+    expect(html).not.toMatch(/Event Pass/i);
+    expect(html).not.toMatch(/30 days/);
+  });
+
+  it("keeps the paid-plan card identical to the org-level one", () => {
+    // No new state was invented: a paid org inside a competition renders the
+    // same Pro-only card an org-level page has always rendered.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const inComp = render(<UpgradeGate feature={LIFTABLE} />, { paidPlan: true });
+    pathname = "/o/riverside/settings/billing";
+    const orgLevel = render(<UpgradeGate feature={LIFTABLE} />);
+    expect(inComp).toBe(orgLevel);
+  });
+
+  it("sends the compact pill to billing rather than the $29 checkout", () => {
+    pathname = "/o/riverside/c/summer-league/d/main/schedule";
+    const html = render(<UpgradeGate feature={LIFTABLE} compact />, { paidPlan: true });
+    expect(html).not.toContain(UPGRADE_HREF);
+    expect(html).toContain('href="/settings/billing"');
+    expect(html).not.toContain("data-pass-owned");
+  });
+
+  it("beats a pass row the org still holds", () => {
+    // A community org can buy a pass and then upgrade; the row survives. Under
+    // a paid plan lib/entitlements.ts stops consulting the pass entirely, so a
+    // gate firing here is the PLAN's ceiling and the pass explains nothing.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, {
+      passActive: true,
+      paidPlan: true,
+    });
+    expect(html).not.toContain("data-pass-owned");
+    expect(html).not.toContain(PASS_PRICE);
+    expect(html).not.toMatch(/used everything the Event Pass includes/i);
+  });
+
+  it("still offers the $29 path to a community org in the same competition", () => {
+    // The control arm. Without it every assertion above would pass on a gate
+    // that had simply stopped rendering the pass CTA anywhere.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, {
+      provider: true,
+      paidPlan: false,
+    });
+    expect(html).toContain("data-pass-gate");
+    expect(html).toContain(`href="${UPGRADE_HREF}"`);
+    expect(html).toContain(PASS_PRICE);
+  });
+
+  it("leaves the pass-held card untouched for a community org", () => {
+    // The other control arm: task 17's state must survive this change.
+    pathname = "/o/riverside/c/summer-league/d/new";
+    const html = render(<UpgradeGate feature={LIFTABLE} />, { passActive: true });
+    expect(html).toContain("data-pass-owned");
+    expect(html).toMatch(/used everything the Event Pass includes/i);
+    expect(html).not.toContain(PASS_PRICE);
   });
 });
 

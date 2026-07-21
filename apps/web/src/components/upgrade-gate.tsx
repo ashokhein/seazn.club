@@ -4,7 +4,7 @@ import Link from "@/components/ui/console-link";
 import { usePathname } from "next/navigation";
 import { featurePlan, featureReason } from "@/lib/feature-copy";
 import { PlanBadge } from "@/components/plan-badge";
-import { usePassActive } from "@/components/competition-pass-provider";
+import { usePassGateState } from "@/components/competition-pass-provider";
 import { formatMinor, passPrice, proPlusPrice, proPrice } from "@/lib/currency";
 import { routes } from "@/lib/routes";
 
@@ -96,26 +96,39 @@ function paidPlan(feature: string): { name: string; price: string } {
  * derives from the same feature_key the 402 response carries, so a blocked
  * server call and a pre-emptively gated control read identically.
  *
- * Three states (spec 2026-07-21 D1):
+ * Four states (spec 2026-07-21 D1), off ONE signal from the competition layout:
  *
- * | in a competition | pass held | feature liftable | renders                  |
- * |------------------|-----------|------------------|--------------------------|
- * | yes              | no        | yes              | Event Pass + Pro         |
- * | yes              | YES       | yes              | Pro only — pass ceiling  |
- * | yes              | YES       | no               | Pro only — not on pass   |
- * | anything else    |           |                  | Pro only (as before)     |
+ * | pass gate state | feature liftable | renders                              |
+ * |-----------------|------------------|--------------------------------------|
+ * | none            | yes              | Event Pass + Pro                     |
+ * | none            | no               | Pro only (as before)                 |
+ * | held            | yes              | Pro only — pass ceiling              |
+ * | held            | no               | Pro only — not on pass               |
+ * | paid_plan       | either           | Pro only (as before) — pass is moot  |
  *
- * The middle row is the fix: a gate rendering for a key the pass DOES lift,
- * while a pass is active, means the buyer has used everything that $29 bought.
+ * `held` is task 17's fix: a gate rendering for a key the pass DOES lift, while
+ * a pass is active, means the buyer has used everything that $29 bought.
  * Offering it again sells them the same thing twice and leaves them blocked.
+ *
+ * `paid_plan` is the row that fix left open. A paid org has no pass row, so the
+ * old boolean read false and the $29 CTA rendered — selling a DOWNGRADE, since
+ * the pass grants 10 AI runs per division against pro's 20, and 64 entrants per
+ * division against pro's 256. It renders the plain Pro-only card, byte for byte
+ * what an org-level page has always shown: nothing here is a new state, the
+ * pass path is simply not on offer.
+ *
+ * It deliberately does NOT render the pass-owned card even when the org does
+ * hold a pass — see usePassGateState for why the plan wins.
  */
 export function UpgradeGate({ feature, href = "/settings/billing", compact = false }: Props) {
   const reason = featureReason(feature);
   const pathname = usePathname();
-  // False outside a competition (no provider) — org-level gates are untouched.
-  const passOwned = usePassActive();
+  // "none" outside a competition (no provider) — org-level gates are untouched.
+  const gate = usePassGateState();
+  const passOwned = gate === "held";
   const liftable = PASS_FEATURES.has(feature);
-  const passHref = liftable && !passOwned ? passHrefFromPath(pathname) : null;
+  // Only an org that can still BENEFIT from a pass is offered one.
+  const passHref = liftable && gate === "none" ? passHrefFromPath(pathname) : null;
 
   if (compact) {
     return (

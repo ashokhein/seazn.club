@@ -15,14 +15,19 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { sql } from "@/lib/db";
 import { invalidateSlugCache } from "@/server/slug-resolve";
-import { usePassActive } from "@/components/competition-pass-provider";
+import {
+  usePassActive,
+  usePassGateState,
+} from "@/components/competition-pass-provider";
 import CompetitionLayout from "../layout";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
 function Probe() {
-  return <span id="p">{`pass:${usePassActive()}`}</span>;
+  return (
+    <span id="p">{`pass:${usePassActive()} state:${usePassGateState()}`}</span>
+  );
 }
 
 /** Render the layout exactly as Next would: `params` arrives as a PROMISE. */
@@ -114,6 +119,85 @@ describe.skipIf(!HAS_DB)("competition layout provides Event Pass state", () => {
     expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("pass:true");
     expect(await renderLayout(rig.orgSlug, otherSlug)).toContain("pass:false");
     expect(otherId).not.toBe(rig.compId);
+  });
+
+  it("reports 'paid_plan' for a Pro org, so no gate offers it the $29 pass", async () => {
+    // Task 17's deferred row. A Pro org has no pass ROW, so the boolean read
+    // false and the gate sold them a pass granting LESS than they hold (10 AI
+    // runs per division vs Pro's 20; 64 entrants vs 256).
+    const rig = await seed();
+    await sql`update subscriptions set plan_key = 'pro', status = 'active'
+              where org_id = ${rig.orgId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    expect(html).toContain("pass:false");
+    expect(html).toContain("state:paid_plan");
+  });
+
+  it("reports 'paid_plan' for a trialing org — a trial is a paid plan", async () => {
+    // 'trialing' is in LIVE_SUBSCRIPTION_STATUSES and carries the Pro matrix.
+    const rig = await seed();
+    await sql`update subscriptions set plan_key = 'pro', status = 'trialing'
+              where org_id = ${rig.orgId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
+  });
+
+  it("reports 'paid_plan' for a STAFF-COMPED org whose comp has not lapsed", async () => {
+    // A comp conveys the plan with no Stripe subscription at all, so anything
+    // testing stripe_subscription_id (hasLiveSubscription) would call this org
+    // unpaid and keep selling it the pass.
+    const rig = await seed();
+    await sql`update subscriptions
+              set plan_key = 'pro', status = 'active', stripe_subscription_id = null,
+                  comped_until = now() + interval '30 days'
+              where org_id = ${rig.orgId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
+  });
+
+  it("reports 'paid_plan' for past_due INSIDE the 14-day grace", async () => {
+    const rig = await seed();
+    await sql`update subscriptions
+              set plan_key = 'pro', status = 'past_due', status_changed_at = now()
+              where org_id = ${rig.orgId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:paid_plan");
+  });
+
+  it("reports 'none' for a LAPSED comp — the pass genuinely lifts them again", async () => {
+    // The other direction, and why this reads the resolver's plan rather than
+    // subscriptions.plan_key raw: a lapsed comp resolves as community, so the
+    // pass arm in lib/entitlements.ts fires for it and $29 buys real headroom.
+    const rig = await seed();
+    await sql`update subscriptions
+              set plan_key = 'pro', status = 'active', stripe_subscription_id = null,
+                  comped_until = now() - interval '1 day'
+              where org_id = ${rig.orgId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:none");
+  });
+
+  it("reports 'none' for past_due BEYOND the grace window", async () => {
+    const rig = await seed();
+    await sql`update subscriptions
+              set plan_key = 'pro', status = 'past_due',
+                  status_changed_at = now() - interval '20 days'
+              where org_id = ${rig.orgId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:none");
+  });
+
+  it("reports 'none' for an org with no subscriptions row at all", async () => {
+    const rig = await seed();
+    await sql`delete from subscriptions where org_id = ${rig.orgId}`;
+    expect(await renderLayout(rig.orgSlug, rig.compSlug)).toContain("state:none");
+  });
+
+  it("prefers the plan over a pass the org bought before upgrading", async () => {
+    const rig = await seed();
+    await sql`insert into competition_passes (competition_id, org_id)
+              values (${rig.compId}, ${rig.orgId})`;
+    await sql`update subscriptions set plan_key = 'pro_plus', status = 'active'
+              where org_id = ${rig.orgId}`;
+    const html = await renderLayout(rig.orgSlug, rig.compSlug);
+    // The row is still reported honestly; the gate state is not.
+    expect(html).toContain("pass:true");
+    expect(html).toContain("state:paid_plan");
   });
 
   it("is false — and still renders children — for an unresolvable slug", async () => {
