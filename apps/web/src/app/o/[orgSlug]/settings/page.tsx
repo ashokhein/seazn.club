@@ -11,7 +11,7 @@ import { getUserOrgs } from "@/lib/auth";
 import { requireOrgPage } from "@/server/page-auth";
 import { routes } from "@/lib/routes";
 import { sql } from "@/lib/db";
-import { hasFeature } from "@/lib/entitlements";
+import { hasFeature, hasFeatureOnAnyPass } from "@/lib/entitlements";
 import { type OrgMember } from "@/lib/types";
 import { OrgTeam } from "@/components/org-team";
 import { OrgSwitcher } from "@/components/org-switcher";
@@ -142,14 +142,23 @@ export default async function SettingsPage({
 
   // Sponsors tab (v10 PROMPT-56): table rows, not the branding blob. The
   // basic partner strip is free; tiers/per-competition scoping are Pro.
+  //
+  // ORG-LEVEL, so `hasFeatureOnAnyPass` and not `hasFeature` (Phase 2 sweep).
+  // `sponsorCompetitions` below is the composer's PICKER, not this tab's scope
+  // — there is no one competition to thread. Resolving org-wide made an Event
+  // Pass invisible and left a paying org staring at the upsell for something it
+  // owned; picking an arbitrary id off the list would have been a fabrication.
+  // These two flags are AFFORDANCES only: usecases/sponsors.ts still resolves
+  // the competition actually being written, so a pass on one competition opens
+  // the UI without opening the org.
   let sponsorRows: Awaited<ReturnType<typeof listSponsorRows>> = [];
   let hasSponsorTiers = false;
   let hasSponsorMonetize = false;
   let sponsorCompetitions: { id: string; name: string }[] = [];
   if (tab === "sponsors") {
     sponsorRows = await listSponsorRows(active.id);
-    hasSponsorTiers = await hasFeature(active.id, "sponsors.tiers");
-    hasSponsorMonetize = await hasFeature(active.id, "sponsors.monetize");
+    hasSponsorTiers = await hasFeatureOnAnyPass(active.id, "sponsors.tiers");
+    hasSponsorMonetize = await hasFeatureOnAnyPass(active.id, "sponsors.monetize");
     sponsorCompetitions = await sql<{ id: string; name: string }[]>`
       select id, name from competitions
       where org_id = ${active.id}

@@ -158,6 +158,39 @@ export async function hasFeature(
 }
 
 /**
+ * Returns true if the feature is enabled for the org on ANY competition it
+ * holds an Event Pass for (or org-wide, which subsumes every competition).
+ *
+ * For ORG-LEVEL surfaces only — the ones with no single competition in scope,
+ * where a competition list on screen is a PICKER and not a scope. Threading an
+ * arbitrary id off such a list would be a lie; asking `hasFeature` without one
+ * makes a paid pass invisible (the pass arm above only fires with a competition
+ * in hand, which is how `sponsors.tiers` and `sponsors.monetize` shipped as a
+ * permanent upsell for orgs that had already bought them). Neither is right, so
+ * this asks the only question the surface can honestly ask: is this reachable
+ * ANYWHERE?
+ *
+ * Use it for AFFORDANCES, never for enforcement. The write path must still
+ * resolve the competition actually being written — usecases/sponsors.ts does —
+ * or a pass on one competition silently unlocks the whole org, which is the
+ * exact leak the pass-scoping guard exists to prevent.
+ *
+ * Per-competition resolution goes through `hasFeature`, so the override layer
+ * and plan fallback stay identical to every other read (a staff deny beats a
+ * pass, and must beat it here too). The org-wide answer is asked first: it
+ * short-circuits every paid plan without touching competition_passes at all.
+ */
+export async function hasFeatureOnAnyPass(orgId: string, featureKey: string): Promise<boolean> {
+  if (await hasFeature(orgId, featureKey)) return true;
+  const passes = await sql<{ competition_id: string }[]>`
+    select competition_id from competition_passes where org_id = ${orgId}`;
+  for (const { competition_id } of passes) {
+    if (await hasFeature(orgId, featureKey, competition_id)) return true;
+  }
+  return false;
+}
+
+/**
  * Returns the numeric limit for a metric, or null for unlimited.
  * Returns 0 if the feature key is not in the plan's entitlement matrix.
  */

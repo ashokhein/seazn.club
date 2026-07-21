@@ -128,7 +128,12 @@ async function orgBranding(
   orgName: string,
   competitionId: string,
 ): Promise<DocBranding | undefined> {
-  if (!(await hasFeature(orgId, "exports.branded"))) return undefined;
+  // Scoped to the competition being exported — the same id handed to
+  // resolveSponsors on the next line. `exports.branded` is an Event Pass key,
+  // and resolving it org-wide made the pass invisible: a community org that
+  // bought one still got a plain document for the competition it paid to brand
+  // (Phase 2 pass-scoping sweep).
+  if (!(await hasFeature(orgId, "exports.branded", competitionId))) return undefined;
   const sponsors = (await resolveSponsors(orgId, competitionId)).map((s) => ({
     name: s.name,
     tier: s.tier,
