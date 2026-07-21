@@ -9,6 +9,23 @@ import { startAiFixtureServer, type AiFixtureServer } from "../apps/web/e2e/ai-f
 
 const BASE = process.env.SMOKE_BASE ?? "http://localhost:3000";
 
+/**
+ * A REAL Stripe test-mode connected account id (`acct_…`) with charges enabled.
+ *
+ * Holding a secret key is NOT the same as having a usable Connect destination:
+ * `setConnect` fabricates an `acct_smoke_*` id, which satisfies every
+ * "is this org onboarded?" gate in the app but exists in no Stripe account, so
+ * any destination charge against it is rejected with `resource_missing`.
+ * Creating one headlessly does not help either — a fresh Express account has
+ * `charges_enabled: false` until a human finishes onboarding.
+ *
+ * Supply this to exercise the real Connect checkout; without it, smoke skips
+ * (rather than fails) the destination-charge assertion — the check still
+ * counts either way. `organizations.stripe_account_id` is UNIQUE, so it is
+ * handed to exactly one org per run (sponsorSuite's pro org). See `setConnect`.
+ */
+const CONNECT_TEST_ACCOUNT = process.env.STRIPE_CONNECT_TEST_ACCOUNT;
+
 interface Session {
   cookies: Record<string, string>;
 }
@@ -2596,8 +2613,18 @@ async function divisionSettingsSuite(admin: Session): Promise<void> {
 
 /** Flip Stripe Connect readiness (spec 2026-07-12) — Express onboarding can't
  *  run headless; a fake acct id satisfies account-exists checks. Same SQL-flip
- *  convention as setPlan/grantPass. */
-async function setConnect(orgId: string, chargesEnabled: boolean): Promise<void> {
+ *  convention as setPlan/grantPass.
+ *
+ *  Pass `accountId` (i.e. CONNECT_TEST_ACCOUNT) to overwrite the fabricated id
+ *  with a REAL connected account, the only way a destination charge can
+ *  settle. `organizations.stripe_account_id` carries a partial UNIQUE index, so
+ *  hand a real id to at most ONE org per run — every other caller must leave it
+ *  undefined and keep its throwaway acct_smoke_* id. */
+async function setConnect(
+  orgId: string,
+  chargesEnabled: boolean,
+  accountId?: string,
+): Promise<void> {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is required to flip Connect in smoke");
   const isLocal = /@(localhost|127\.0\.0\.1)[:/]/.test(url);
@@ -2608,11 +2635,19 @@ async function setConnect(orgId: string, chargesEnabled: boolean): Promise<void>
     max: 1,
   });
   try {
-    await sql`
-      update organizations
-      set stripe_charges_enabled = ${chargesEnabled},
-          stripe_account_id = coalesce(stripe_account_id, ${"acct_smoke_" + orgId.slice(0, 8)})
-      where id = ${orgId}`;
+    if (accountId) {
+      await sql`
+        update organizations
+        set stripe_charges_enabled = ${chargesEnabled},
+            stripe_account_id = ${accountId}
+        where id = ${orgId}`;
+    } else {
+      await sql`
+        update organizations
+        set stripe_charges_enabled = ${chargesEnabled},
+            stripe_account_id = coalesce(stripe_account_id, ${"acct_smoke_" + orgId.slice(0, 8)})
+        where id = ${orgId}`;
+    }
   } finally {
     await sql.end();
   }
@@ -3438,20 +3473,33 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
     package_id: pkg.id, sponsor_name: "Gate Probe", sponsor_email: `gate_${tag}@example.com`,
   });
   check("sp checkout refused without Connect (409)", gated.status === 409);
-  await setConnect(proOrgId, true);
+  // The one org in the run that gets a REAL connected account, when supplied —
+  // stripe_account_id is UNIQUE, so it can only ever be handed to one.
+  await setConnect(proOrgId, true, CONNECT_TEST_ACCOUNT);
 
   const started = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-orders`, "POST", {
     package_id: pkg.id, sponsor_name: `Acme ${tag}`, sponsor_email: `acme_${tag}@example.com`,
   });
-  if (process.env.STRIPE_SECRET_KEY) {
+  if (!process.env.STRIPE_SECRET_KEY) {
+    // Keyless: the Stripe mint fails AFTER the pending order landed — the
+    // order-before-intent rail is still observable below.
+    check("sp checkout keyless fails after the order insert", started.status >= 500);
+  } else if (!CONNECT_TEST_ACCOUNT) {
+    // Keyed but destination-less. A secret key is NOT a proxy for "Connect is
+    // usable": the checkout sends setConnect's fabricated acct_smoke_* as
+    // transfer_data.destination, which Stripe rejects with resource_missing,
+    // so 201 is unreachable no matter how valid the key is. Skip (counting the
+    // check, same convention as paymentMethodSuite) rather than assert a
+    // failure the fixture — not the app — causes.
+    check(
+      "sp checkout: skipped (no STRIPE_CONNECT_TEST_ACCOUNT — destination charge needs a real connected account)",
+      true,
+    );
+  } else {
     check(
       "sp checkout starts (order + session url)",
       started.status === 201 && !!v1data<{ checkout_url: string }>(started).checkout_url,
     );
-  } else {
-    // Keyless: the Stripe mint fails AFTER the pending order landed — the
-    // order-before-intent rail is still observable below.
-    check("sp checkout keyless fails after the order insert", started.status >= 500);
   }
   const orders = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-orders`);
   check(
