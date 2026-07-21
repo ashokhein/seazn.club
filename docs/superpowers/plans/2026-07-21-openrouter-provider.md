@@ -1502,9 +1502,16 @@ export function buildOpenRouterBody<T>(req: AiChatRequest<T>): Record<string, un
     ...req.messages,
   ];
 
+  // Three-way, and the thinking mode is NOT decorative. The code being
+  // replaced sends effort unconditionally while toggling thinking, so the
+  // disabled case must keep the effort intent rather than collapsing to
+  // "no reasoning" — that collapse has been a real bug on this branch twice.
+  // `{effort, enabled:false}` is accepted by the API (verified live: HTTP 200).
   const reasoning =
     req.reasoning.kind === "effort"
-      ? { effort: req.reasoning.effort }
+      ? req.reasoning.thinking === "disabled"
+        ? { effort: req.reasoning.effort, enabled: false }
+        : { effort: req.reasoning.effort }
       : req.reasoning.kind === "budget"
         ? { max_tokens: req.reasoning.tokens }
         : undefined;
