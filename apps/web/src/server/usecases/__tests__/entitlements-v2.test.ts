@@ -451,10 +451,19 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     expect(await getLimit(auth.orgId, "entrants.per_division.max", comp.id)).toBe(32);
   });
 
-  it("fee percent: pass comps pay 5%, pro orgs 2%, community falls back to env", async () => {
+  // V309 fee ladder (D20): community 8 → pass 5 → pro 2 → pro plus 1. The
+  // community leg is the one that matters. It used to have no row and fell back
+  // to platformFeeDefault() (5), which is EXACTLY the pass rate — so the pass
+  // discounted nothing. The assertion below is deliberately written against the
+  // literal 8 AND against platformFeeDefault(), because a regression that drops
+  // the community row reintroduces the fallback silently.
+  it("fee percent ladder: community 8%, pass comps 5%, pro orgs 2%", async () => {
     const { auth } = await seedOrg("community");
     const comp = await makeCompetition(auth, "Fee");
-    expect(await feePercentFor(auth.orgId, comp.id)).toBe(await platformFeeDefault());
+    expect(await feePercentFor(auth.orgId, comp.id)).toBe(8);
+    expect(await feePercentFor(auth.orgId, comp.id)).not.toBe(await platformFeeDefault());
+    // Org-level too — the community rate is not competition-scoped.
+    expect(await feePercentFor(auth.orgId)).toBe(8);
     await grantPass(auth.orgId, comp.id);
     expect(await feePercentFor(auth.orgId, comp.id)).toBe(5);
     await setPlan(auth.orgId, "pro");
