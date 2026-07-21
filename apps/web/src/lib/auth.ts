@@ -7,6 +7,7 @@ import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
 import { getLimit } from "@/lib/entitlements";
+import { assertGroupMayHoldAnotherOrg, groupIdsOwnedBy } from "@/lib/billing-group";
 import { isReservedSlug } from "@/lib/public-site";
 import { routes } from "@/lib/routes";
 import { slugify, uniqueSlug } from "@/server/usecases/slugs";
@@ -191,9 +192,18 @@ export async function generateOrgSlug(name: string, excludeOrgId?: string): Prom
 }
 
 /**
- * `orgs.max_owned` (doc 13 §5, billing decision (a)): subscriptions stay
- * per-org; the quota only caps CREATION, judged against the creating user's
- * best owned-org plan. A user who owns nothing may always create their first.
+ * `orgs.max_owned` (doc 13 §5, billing decision (a)): the quota caps CREATION,
+ * judged against the creating user's best owned-org plan. A user who owns
+ * nothing may always create their first.
+ *
+ * Unchanged by billing groups (V309), deliberately. `getLimit` now resolves an
+ * org's plan through `organizations.subscription_id`, so this reads the group's
+ * plan for free. And the PER-USER shape stays load-bearing even though the cap
+ * is also enforced per group below: a user holding two community groups of one
+ * org each would pass every group check while owning two free orgs, and free
+ * orgs multiply per-org quota (three of them would mean three active
+ * competitions for nothing). The group check bounds a group; this bounds a
+ * person. Both are needed.
  *
  * @internal — exported for tests; the only production caller is createOrgForUser.
  */
@@ -232,12 +242,33 @@ export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
   if (owned.length + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
 }
 
-/** Create an organization owned by the user, with an auto-generated slug. */
+/**
+ * Create an organization owned by the user, with an auto-generated slug.
+ *
+ * Billing groups (V309): the new org joins the creator's EXISTING group rather
+ * than minting a fresh one. That is what makes the community cap bite — if every
+ * new org got its own group of one, a per-group cap would never be exceeded and
+ * a free user could create orgs for ever. Joining also means the second org on a
+ * paid plan costs the $9 tier immediately, which is the whole point of the
+ * change.
+ *
+ * A user who owns no group yet gets one. A user who owns SEVERAL (only possible
+ * after a detach) gets a new community group rather than an arbitrary pick;
+ * `assertMayOwnAnotherOrg` still bounds their total, and they can attach the org
+ * explicitly afterwards.
+ *
+ * The Stripe quantity is NOT adjusted here. This function is called inside
+ * signup and invite paths that must not depend on a network call to Stripe;
+ * callers that create an org into a paid group reconcile quantity afterwards.
+ */
 export async function createOrgForUser(
   userId: string,
   name: string,
 ): Promise<Organization> {
   await assertMayOwnAnotherOrg(userId);
+  const ownedGroups = await groupIdsOwnedBy(userId);
+  const targetGroupId = ownedGroups.length === 1 ? ownedGroups[0] : null;
+  if (targetGroupId) await assertGroupMayHoldAnotherOrg(targetGroupId);
   // Readable slugs can collide when two same-named orgs sign up concurrently
   // (check-then-insert race) — retry past the unique index, then salt.
   let org: Organization | undefined;
@@ -246,17 +277,22 @@ export async function createOrgForUser(
     const slug = attempt < 2 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`;
     try {
       org = await sql.begin(async (tx) => {
+        // The group must exist before the org, since the org points at it.
+        let groupId = targetGroupId;
+        if (!groupId) {
+          const [s] = await tx<{ id: string }[]>`
+            insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+            values (${userId}, 'community', 'active', 1)
+            returning id`;
+          groupId = s.id;
+        }
         const [o] = await tx<Organization[]>`
-          insert into organizations (name, slug, created_by)
-          values (${name}, ${slug}, ${userId})
+          insert into organizations (name, slug, created_by, subscription_id)
+          values (${name}, ${slug}, ${userId}, ${groupId})
           returning id, name, slug, created_by, created_at, logo_url, logo_storage_path, payment_instructions, default_payment_method, branding, timezone`;
         await tx`
           insert into org_members (org_id, user_id, role)
           values (${o.id}, ${userId}, 'owner')`;
-        await tx`
-          insert into subscriptions (org_id, plan_key, status)
-          values (${o.id}, 'community', 'active')
-          on conflict (org_id) do nothing`;
         return o;
       });
       break;
