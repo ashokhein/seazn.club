@@ -61,6 +61,25 @@ When an organisation leaves, we don't call Stripe to reduce the bill mid-period 
 
 Adding always charges immediately; removing never refunds. Nothing changes at all if you add an organisation back into a slot you're still paying for.
 
+## Handing the group to a new payer
+
+Treasurers change. When they do, the group itself can change hands — you don't have to pull eight clubs out and re-group them, which would lose the group and charge full rate for each one again.
+
+**The card doesn't travel with the group.** Someone who has stopped running a federation should stop funding it, so the incoming payer supplies their own card. That's why a group with a live subscription hands over in two steps rather than one:
+
+1. The current payer offers the group to a named person.
+2. That person adds a card, and only then does the group change hands.
+
+Between those two steps nothing has moved: the group still belongs to the current payer, still bills their card, and the offer can be withdrawn at any point. The old card is removed last of all, after the new one is attached, so the subscription is never left without a way to pay — the failure this two-step exists to prevent is a September handover on an annual plan silently failing its renewal in March and dunning every club in the group down to Community.
+
+Details worth knowing:
+
+- **An offer is for one named person and can only be used once.** It lapses on its own after seven days.
+- **The payer can withdraw an offer** at any time before it's accepted.
+- **Send them the link.** There's no inbox for pending offers yet, so the offer has to reach the recipient the way you'd send anything else. If they lose it, withdraw it and make a new one.
+- **A group with nothing to bill** — Community, or a subscription that has already been cancelled — moves in a single step, because there's no invoice to fail. It can only be handed to someone who already owns an organisation in the group, since there's no acceptance step to serve as their consent.
+- **Nothing about the organisations changes.** Same plan, same limits, same entry-fee rate, same Stripe Connect accounts, same payouts. The only things that move are who is billed and where the invoices and receipts go.
+
 ## Payouts never move
 
 This is the part people worry about, so plainly: **Stripe Connect is per organisation and grouping never touches it.**
@@ -80,3 +99,5 @@ Each organisation keeps its own Stripe account, its own verification, its own ba
 **What currency does the group bill in?** One, fixed at the group's first checkout — organisations that join later are billed in it too, whatever their own entry fees are charged in.
 
 **One organisation was suspended by our team. Do we stop paying for it?** No. Suspension is a moderation action, not a billing one — the slot stays yours and the other organisations in the group are unaffected.
+
+**What if the payer deletes their account?** The group passes to the longest-standing owner of an organisation inside it, so nobody is left paying for organisations they can no longer manage — and nobody loses their plan because someone else closed an account. If there's nobody left who could ever manage it, the subscription is cancelled rather than orphaned. If you're deliberately handing over, do it properly with an offer first: that way the incoming payer's own card is on file before you go.
