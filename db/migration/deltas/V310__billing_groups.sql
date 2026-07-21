@@ -71,6 +71,16 @@ alter table subscriptions add primary key (id);
 
 create index if not exists subscriptions_owner_idx on subscriptions(owner_user_id);
 
+-- One Stripe customer belongs to exactly one billing group. This is not
+-- cosmetic: the webhook fallback chain resolves a group by
+-- `stripe_customer_id` when the metadata stamp is absent (every subscription
+-- created before the stamp existed), and without uniqueness that lookup would
+-- silently take whichever row came first and could write a plan change to the
+-- wrong customer. Partial, because community groups have no Stripe customer at
+-- all and many rows are legitimately null.
+create unique index if not exists subscriptions_stripe_customer_uniq
+  on subscriptions(stripe_customer_id) where stripe_customer_id is not null;
+
 -- ---------------------------------------------------------------------------
 -- 2. Orgs point at the group they bill through
 -- ---------------------------------------------------------------------------

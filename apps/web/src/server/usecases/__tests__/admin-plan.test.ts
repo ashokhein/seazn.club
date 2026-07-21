@@ -530,7 +530,12 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
   // Stripe before this fix); an org with no customer id was never the bug.
   it("planPanel makes no Stripe calls, even for an org with a stripe_customer_id", async () => {
     const { orgId } = await seedOrg();
-    await sql`update subscriptions set stripe_customer_id = 'cus_test123' where id = (select subscription_id from organizations where id = ${orgId})`;
+    // Unique per run: V310 puts a partial unique index on stripe_customer_id
+    // (one Stripe customer belongs to one billing group, which is what makes the
+    // webhook's customer-id fallback safe), and this schema is not torn down
+    // between runs, so a hardcoded id collides with the previous run's row.
+    const customerId = `cus_test_${randomUUID().slice(0, 12)}`;
+    await sql`update subscriptions set stripe_customer_id = ${customerId} where id = (select subscription_id from organizations where id = ${orgId})`;
 
     await planPanel(orgId);
 
