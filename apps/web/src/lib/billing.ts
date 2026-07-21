@@ -398,9 +398,11 @@ export async function linkStripeCustomer(orgId: string, customerId: string): Pro
  * Only syncSubscription used to write this, so a pass-only org kept NULL and
  * preferredCurrency (lib/currency-server.ts) fell through to the switcher
  * cookie and then Accept-Language — someone who paid £25 for an Event Pass
- * could be quoted USD for Pro months later. Same never-overwrite shape as
- * syncSubscription's `coalesce(excluded.currency, subscriptions.currency)`:
- * once set, only Stripe's own subscription object may restate it.
+ * could be quoted USD for Pro months later. Never-overwrite by precedence:
+ * `coalesce(currency, ${new})` keeps the EXISTING value and only fills a null,
+ * so once set, only Stripe's own subscription object may restate it (via
+ * syncSubscription, whose `coalesce(excluded.currency, …)` prefers the incoming
+ * Stripe value — the opposite precedence, and deliberately so).
  *
  * A no-op when the caller has no currency to offer, and (like
  * linkStripeCustomer) when the org has no subscriptions row at all.

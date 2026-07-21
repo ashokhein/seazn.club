@@ -99,11 +99,10 @@ export default async function CompetitionUpgradePage({
       select purchased_at, stripe_payment_intent
       from competition_passes where competition_id = ${compId}`,
     // The resolver's derivation, NOT `subscriptions.plan_key` raw — see
-    // lib/upgrade-page-state.ts. NOTE the known divergence this introduces:
-    // api/billing/pass-checkout/route.ts:36 still tests the raw column, so a
-    // lapsed comp (or a past_due org beyond its 14-day grace) is now correctly
-    // OFFERED a pass here and would be refused by that route. Converging them
-    // is a billing behaviour change and deliberately out of this task's scope.
+    // lib/upgrade-page-state.ts. pass-checkout/route.ts now judges eligibility
+    // through this same `isPaidPlan(orgPlanKey(...))` (bfc9c796), so the page and
+    // the route agree: a lapsed comp or a past_due org beyond its 14-day grace is
+    // both OFFERED a pass here and allowed to buy it there.
     orgPlanKey(orgId),
     preferredCurrency(orgId),
     resolveLocale(),

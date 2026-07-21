@@ -56,7 +56,7 @@ returns boolean
 language sql
 stable
 security definer
-set search_path = seazn_club, pg_temp
+set search_path = ${flyway:defaultSchema}, pg_temp
 as $$
     with plan as (
       select case
