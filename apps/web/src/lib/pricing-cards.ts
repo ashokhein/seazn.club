@@ -6,7 +6,10 @@ export const FREE_FEATURES = [
   "1 active competition, 2 divisions",
   "16 entrants per division",
   "League, groups + knockout & swiss formats",
-  "Free-event online registration",
+  // V309: charging entry fees is no longer gated — every plan can, and what a
+  // plan buys is a smaller cut. The matrix row next to this card renders
+  // "✓ 8%" for community, so the bullet has to say the same thing.
+  "Online registration + entry fees (8% fee)",
   "Live standings & public dashboard",
   "Listed on the seazn.club showcase",
 ];
@@ -15,8 +18,10 @@ export const PASS_FEATURES = [
   "Upgrades ONE competition, forever",
   "10 divisions, 32 entrants each",
   "Advanced formats — double elim, ladders",
-  "Entry fees via Stripe (5% platform fee)",
-  "Custom branding & PDF/XLSX exports",
+  "Entry fees at a 5% platform fee, not 8%",
+  // Not "custom branding": V309 gives event_pass the same `branding` (logo) as
+  // community, and leaves dashboard.branding (the theme colour) denied to both.
+  "PDF/XLSX exports",
   "Realtime scoreboard & slideshow",
 ];
 

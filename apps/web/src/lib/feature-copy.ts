@@ -5,7 +5,11 @@
 const FEATURE_REASONS: Record<string, string> = {
   // Structure & scale
   "embeds.enabled": "Embedding live widgets on your own website is a Pro feature.",
-  "orgs.max_owned": "You've reached the number of clubs your plan can own.",
+  // Billing groups (spec 2026-07-21): the cap belongs to the billing GROUP, so
+  // the way forward is the group's plan — not a per-org purchase. Never says
+  // "clubs", which is a separate in-org entity with its own clubs.max cap.
+  "orgs.max_owned":
+    "Your billing group already holds the most organisations its plan allows. Upgrade the group's plan in Settings → Billing to raise the cap — each extra organisation is half your plan's rate.",
   "members.max": "You've reached your plan's team-member seats.",
   "scorers.max": "You've reached your plan's scorer seats.",
   "competitions.max_active": "Your plan's active-competition limit is reached.",
@@ -62,8 +66,12 @@ const FEATURE_REASONS: Record<string, string> = {
     "Hand-this-device-over scoring links are a Pro feature — your scorer seat still works.",
   // Registration & entry fees (doc 16 §1.1)
   "registration.enabled": "Online registration is not available on this plan.",
+  // V309 seeds registration.paid TRUE on every plan, so no PLAN can deny this
+  // any more — the only surviving 402 path is an org_entitlement_overrides deny
+  // (staff switching entry fees off for one org). The copy has to make sense in
+  // that context, so it must not offer an upgrade that would change nothing.
   "registration.paid":
-    "Charging entry fees is a Pro feature — free-event registration still works on every plan.",
+    "Charging entry fees is switched off for this organisation. Free-event registration still works — contact support to turn card entry fees back on.",
   // Discovery showcase (doc 15 §5)
   "discovery.listed": "Showcasing on seazn.club is not available on this plan.",
   "discovery.featured": "The featured showcase row is a Pro perk.",

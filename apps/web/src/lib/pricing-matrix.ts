@@ -15,6 +15,10 @@ export type MatrixData = Record<string, Record<string, MatrixCell>>;
 
 export interface PricingRow {
   labelKey: string;
+  /** Optional second line under the label, always a dict KEY. Used where a
+   *  bare number would mislead — the orgs row is a price, not an allowance
+   *  (billing-groups spec 2026-07-21 §Surfaces to update). */
+  noteKey?: string;
   free: string;
   pass: string;
   pro: string;
@@ -119,8 +123,29 @@ function feesRow(data: MatrixData): PricingRow {
   };
 }
 
+/**
+ * Since billing groups (spec 2026-07-21) one subscription covers several
+ * organisations, so this row is a PRICE, not an allowance: the count is what
+ * the plan's bill may stretch to, and each organisation past the first costs
+ * half the plan's rate. The number still comes from `orgs.max_owned` in
+ * plan_entitlements — only the framing is added, as a translated note key, so
+ * nothing about the ladder is hardcoded here.
+ */
+function orgsRow(data: MatrixData): PricingRow {
+  const cell = data["orgs.max_owned"];
+  return {
+    labelKey: "pricing.matrix.orgs.max_owned",
+    noteKey: "pricing.matrix.orgs.max_owned.note",
+    free: intCell(cell?.community),
+    pass: passCell(data, "orgs.max_owned", intCell),
+    pro: intCell(cell?.pro),
+    plus: intCell(cell?.pro_plus),
+  };
+}
+
 function buildRow(data: MatrixData, feature: string): PricingRow {
   if (feature === "competitions.max_active") return competitionsRow(data);
+  if (feature === "orgs.max_owned") return orgsRow(data);
   // registration.paid is never rendered bare — it's folded with
   // registration.fee_percent into the honest "fees" row instead.
   if (feature === "registration.paid") return feesRow(data);
