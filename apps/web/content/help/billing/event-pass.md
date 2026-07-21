@@ -15,7 +15,7 @@ For the competition it covers, and every division inside it:
 - **Branded exports** — order of play, match sheets, rotas and posters carry your masthead, logo and sponsor line instead of exporting as plain tables.
 - **Public player cards** — entrants get their public profile pages.
 - **Sponsor tiers and paid packages** — Title / Gold / Silver / Partner grouping, per-competition placement, and selling priced sponsorship by card ([sponsors](/help/sharing/sponsors)).
-- **The realtime scoreboard and slideshow** for the venue screen.
+- **The realtime scoreboard and slideshow** — live scores turn over on the venue screen *and* on the competition's public spectator pages, so your audience follows along live, not just your own noticeboard.
 - **Advanced formats**, including double elimination.
 - **10 AI schedule runs** per division, up from Community's 5 ([AI Schedule](/help/scheduling/ai-scheduling)).
 

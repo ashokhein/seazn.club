@@ -14,7 +14,7 @@ One-time upgrade for a single competition, for that event's lifetime, without a 
 
 ## Pro — $19/month
 
-Unlimited active competitions and divisions, 256 entrants per division, unlimited team members — plus the organiser toolkit: your **brand colour** on public pages and share images (the logo is free everywhere), a **2% platform fee** on entry fees, spreadsheet imports and branded exports, clubs, player stats, advanced formats, read-only API keys and embeds (score & manage keys need Pro Plus), and 20 AI schedule runs per division. Also unlocks automatic suspension tracking, rating your match officials, and auto-drafted result posts. Starts with a 14-day trial, no card required — one trial per organisation, whether you start it yourself or our team sets one up for you; if you come back to Pro later, billing starts from day one.
+Unlimited active competitions and divisions, 256 entrants per division, 15 team members — plus the organiser toolkit: your **brand colour** on public pages and share images (the logo is free everywhere), a **2% platform fee** on entry fees, spreadsheet imports and branded exports, clubs, player stats, advanced formats, read-only API keys and embeds (score & manage keys need Pro Plus), and 20 AI schedule runs per division. Also unlocks automatic suspension tracking, rating your match officials, and auto-drafted result posts. Starts with a 14-day trial, no card required — one trial per organisation, whether you start it yourself or our team sets one up for you; if you come back to Pro later, billing starts from day one.
 
 ## Pro Plus — $39/month
 

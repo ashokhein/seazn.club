@@ -1,64 +1,60 @@
 # HANDOFF
 
 ## Status
-Event Pass + entitlement branch `feat/event-pass-e2e-and-entitlement-gaps`, 36 commits
-off `origin/main` @ `4125922a`. Worktree `.claude/worktrees/event-pass`.
-Suite: 2423 passed / 11 skipped / 1 failed (known global `sweepRegistrations()` flake).
-Migrations V306-V312 applied locally. **Nothing deployed.**
+Branch `feat/event-pass-e2e-and-entitlement-gaps`, worktree `.claude/worktrees/event-pass`.
+Task 24 (help pages + final verification) COMPLETE. **Nothing deployed.**
+Suite: `2622 passed / 0 failed / 11 skipped` (matches baseline @ 92a1c0cd).
+Smoke: `517 passed / 4 failed` (4 pre-existing V310/V311 stale asserts in scripts/smoke.ts).
 
 ## Current task
-Phases 1-3 complete and reviewed. Help articles + chips done. Remaining: Phase 4 (copy
-surfaces), Phase 5 (discovery + upgrade-page UI), Phase 6 (E2E/smoke), Task 25 (test infra).
+Task 24 done. Plan's implementation tasks are finished. Remaining is owner review + the
+two pre-existing test-fixture defects below (both OUT of Task 24 scope).
 
 ## Done
-- V306 `org_has_feature` gains a competition arg + override expiry, `comped_until`,
-  `past_due` grace. 2-arg delegating wrapper retained (drop in Task 25).
-- Deleted two duplicate app-side resolvers (`api/orgs/[id]/entitlements`, `lib/auth.ts`).
-- V307 moved the `public_players_v` entitlement gate to its caller (outside `unstable_cache`).
-- V308 pass grants `dashboard.player_profiles`. V310 community gets `branding` +
-  `registration.paid`, fee ladder 8/5/2/1. V311 community 32 entrants / 5 comps, pass 64.
-  V312 deleted V270's grandfather `competitions.max_active` overrides.
-- `pass-scoping-guard.test.ts` — AST guard, derives lifted keys from the live matrix, plus a
-  counter-rule flagging `hasFeatureOnAnyPass` in enforcement layers. GREEN.
-- Phase 2 swept all 6 remaining unscoped call sites.
-- Pass purchases now link the Stripe customer, create a named Invoice, and pin
-  `subscriptions.currency`. Help articles rewritten (20 files).
+- `apps/web/content/help/billing/plans.md`: Pro "unlimited team members" → "15 team
+  members" (live matrix: Pro `members.max`=15 via V270; only Pro Plus is unlimited).
+- `apps/web/content/help/billing/event-pass.md`: realtime line now affirms the PUBLIC
+  spectator surface (commit 711032d0), not just the venue screen.
+- `apps/web/content/help/billing/downgrade.md`: reviewed against live matrix — no change
+  needed (fee ladder 8/2/1, pass 5%, brand COLOUR Pro-only + logo free, fees run on Community).
+- Verified every number in all three pages against `seazn_club.plan_entitlements` (live).
+- Full report: `.superpowers/sdd/task-24-report.md` (gitignored).
 
 ## In progress
-`track-tips` worktree — in-app help chips for the new pricing model.
+None.
 
 ## Next steps
-1. Merge `track-tips`; **copy its `.superpowers/sdd/*.md` out BEFORE removing the worktree.**
-2. Phase 4 copy: `upgrade-gate.tsx` PASS_FEATURES (3 dead keys, 4 missing), `pricing-cards.ts`,
-   `stripe-plans.json` descriptions + `npm run stripe:sync`, `feature-copy.ts`, dictionaries ×4,
-   add `dashboard.player_profiles` + `scheduling.ai.runs_per_division.max` to
-   `ENTITLEMENT_DOMAINS`, relabel the `/pricing` fee row to "Platform fee on entry fees".
-3. 3 queued Minors in `lib/billing.ts` — see `.superpowers/sdd/progress.md`.
-4. Phase 5 UI, Phase 6 suites, Task 25 (CI/env/Redis/`sweepRegistrations` scoping).
+1. Owner: fix stale e2e assertion `apps/web/e2e/event-pass.spec.ts:374` — anchored regex
+   `/upgrade$` rejects the intended `?feature=` query the pass CTA now carries (added by
+   76020eeb, which updated pricing-v3.spec.ts + upgrade-gate.test.tsx but not this file).
+   U1 desktop+mobile red since then; 12 downstream serial tests cascade. Fix:
+   `new RegExp(\`/c/${rig.compSlug}/upgrade(\\?|$)\`)`.
+2. Owner: reconcile the 4 stale smoke asserts in `scripts/smoke.ts` (lines 578, 2181,
+   3546, 4365) with the V310/V311 packaging, or accept them as known-fail.
+3. Deploy chain V306–V313 (never deployed); Task 25 test-infra (CI/env/Redis/sweepRegistrations).
 
 ## Key decisions
-- See `docs/superpowers/specs/2026-07-21-event-pass-and-entitlement-gaps-design.md` D1-D24.
-- Pre-launch, zero customers: no backfill or grandfathering anywhere.
-- Full review rigour on every task (owner ruling), Opus for every subagent.
+- 2026-07-21 (append-only prior entries preserved below):
+- Task 24: help copy is verified against the LIVE matrix, never the existing prose. Any
+  number the matrix contradicts is a defect even if the V310/V311 repackaging didn't cause
+  it (that is why Pro members 15-not-∞ was corrected).
+- Task 24: did NOT edit `event-pass.spec.ts` / `scripts/smoke.ts` — brief scope is the 3
+  billing help `.md` files only; both stale-fixture defects are reported, not worked around.
+- Prior: see `docs/superpowers/specs/2026-07-21-event-pass-and-entitlement-gaps-design.md`
+  D1-D24. Pre-launch, zero customers: no backfill/grandfathering. Full review rigour +
+  Opus on every task (owner ruling).
 
 ## Gotchas
 - **Env: ONE file, `<root>/.env.local`;** `apps/web/.env.local` is a gitignored symlink to
-  it — recreate with `ln -sf ../../.env.local apps/web/.env.local` in a fresh worktree, or
-  vitest/`db:*` read the root copy and the two diverge. vitest now loads it (no more
-  hand-exporting `DATABASE_URL`), minus the PostHog/Resend/Anthropic keys, which would make
-  unit tests call live vendors.
-- **5s default `testTimeout` flakes under full-suite DB load** — `pass-scoping-guard` and
-  `org-posts` pagination time out in a whole-suite run, pass alone in ~1s.
-- **`REDIS_URL` unset locally** makes the entitlement cache inert; two staleness bugs shipped
-  because of it.
-- **Reports in `.superpowers/sdd/` are gitignored and die with a removed worktree.**
-- `isolation: "worktree"` branches from `origin/main`, NOT your branch HEAD. Same for
-  `git worktree add … HEAD` run from the main repo. Always name the branch.
-- **Migration numbers are claimed in `/tmp/seaznclub/RESERVATIONS.md`** — a concurrent session
-  (`feat/billing-groups`) shares this repo and owns V309. Scanning the tree is not a claim.
-- Stripe Tax: `automatic_tax` enabled with **zero registrations** = silently collects nothing.
-  Owner/advisor decision, untouched.
-- Fresh-database apply of this chain has never been tested (`baselineVersion = "240"`).
+  it. Smoke needs `--env-file=.env.local` from repo root or DATABASE_URL is unset (~28 checks).
+- **Never `pkill -f "next dev"`** — scope to port: `lsof -ti :3021 | xargs kill`. This
+  branch's port is 3021; a prod server may already be running there.
+- **Stale `apps/web/.next` = phantom 404s.** `rm -rf apps/web/.next` before a fresh build.
+- **e2e needs a PROD build** (`next build && next start`) + `E2E_PROD_TARGET=1` +
+  `PLAYWRIGHT_BASE`; `next dev`'s login_url path is not exposed in prod. Do NOT enable
+  `.github/workflows/e2e.yml` (owner disables it deliberately).
+- **Migration numbers claimed in `/tmp/seaznclub/RESERVATIONS.md`** — `feat/billing-groups`
+  owns V309.
 
 ## Verify
-cd apps/web && npm run typecheck && npx vitest run   # typecheck also covers scripts/
+cd apps/web && npx tsc --noEmit && npx vitest run
