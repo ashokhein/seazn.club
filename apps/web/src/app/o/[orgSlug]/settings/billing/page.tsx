@@ -22,6 +22,8 @@ import { EVENTS } from "@/lib/analytics-events";
 import { asCurrency, formatMinor, proPrice, proPlusPrice } from "@/lib/currency";
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
+import { BackLink } from "@/components/back-link";
+import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
 
@@ -123,8 +125,14 @@ export default async function BillingPage({
       />
       {orgId && <BillingBanner orgId={orgId} />}
       <main className="mx-auto max-w-3xl px-4 py-8">
-        {/* No back link here: OrgLayout's breadcrumb already carries a
-            clickable "Settings" crumb — the hand-rolled one duplicated it. */}
+        {/* The apron chevron alone was not found: 16px at 70% opacity on the
+            dark bar, label hidden until hover. #190 removed the labelled link
+            as duplication; reported twice as missing, so it is back. */}
+        <BackLink
+          href={routes.orgSettings(orgSlug)}
+          label={t(dict, "action.settings")}
+          emphasis="button"
+        />
         <div className="mb-6">
           <h1 className="page-title">
             {t(dict, "billing.title")}
