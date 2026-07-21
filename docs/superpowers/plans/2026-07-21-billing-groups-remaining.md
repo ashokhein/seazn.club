@@ -128,21 +128,40 @@ Affected on this branch, verified passing locally (35 tests) but unenforced by C
 Staff actions now hit a GROUP, not an org. Each surface needs to say how many orgs a change
 affects.
 
-- [ ] `/admin/entitlements`
+Checked every surface on this list rather than assuming. Three of the six needed
+nothing, and one of those would have been made WORSE by the change the list asked for.
+
+- [x] `/admin/entitlements` — nothing to do. It edits the PLAN matrix
+      (`plan_entitlements`, plan_key x feature_key) and the count of live per-org overrides.
+      Both are plan-level; grouping changes neither. No org or subscription read on the page.
 - [x] `/admin/orgs` — was a 500 on the dropped `s.org_id`; now joins through
       `organizations.subscription_id` and shows a "group of N" chip beside the plan.
-- [ ] `admin-org-actions.tsx` — still needs the group-size warning on destructive actions
+- [x] `admin-org-actions.tsx` — **the entry was wrong, and acting on it would have made the
+      page lie.** Its only action is suspend/reactivate, and the suspend route was already
+      corrected for V310: it writes `organizations.status` ONLY, deliberately, because stamping
+      `subscriptions.status` would stop billing and degrade entitlements for every other org in
+      the group (`api/admin/orgs/[id]/suspend/route.ts:24`). Suspension is moderation, not
+      billing. A "this affects N organisations" warning would tell staff the opposite of what
+      the code guarantees.
 - [x] `admin-plan-panel.tsx` — a staff plan grant moves every org in the group. `planPanel` now
       returns `group_org_count` + up to ten other names and the panel renders an amber note
       above the actions; silent at 1. Soft-deleted orgs excluded from both.
-- [ ] `/admin/billing-events`
+- [ ] `/admin/billing-events` — **real, and the only one left.** It labels each Stripe event
+      with an org name resolved from the event's `metadata.org_id` (`page.tsx:65`). Since V310 a
+      subscription event belongs to a GROUP, so an invoice covering four organisations is
+      displayed against whichever single org was stamped at checkout — staff reading it will
+      attribute a group's whole bill to one club. Not fixable at the page: it needs the deferred
+      decision in §5 about what `runEvent` stamps. Left open deliberately rather than
+      half-fixed, because a page-level guess would hide the stamping problem instead of
+      surfacing it.
 - [x] `/admin/revenue` — **the entry here was wrong; nothing to fix.** It reports Stripe
       APPLICATION FEES from card entry fees, mapped to orgs via `organizations.stripe_account_id`
       (`platform-revenue.ts:103`). That is Connect, which is per-org and which grouping never
       touches. It was never subscription MRR, so a group holding two orgs changes none of its
       arithmetic. Checked rather than assumed, because "revenue" reading as "MRR" is exactly the
       wrong assumption to carry into an admin fix.
-- [ ] `/admin/coupons`
+- [x] `/admin/coupons` — nothing to do. `lib/coupons.ts` has no org or subscription coupling at
+      all; the page is a catalogue of coupon codes.
 
 ## 3. UI + visual verification (explicitly requested, not started)
 
@@ -199,9 +218,15 @@ affects.
 - [ ] **No Playwright spec for the group flow.** It was verified by hand (desktop 1440 +
       mobile 390, attach end to end), but nothing guards it in CI. `e2e.yml` is deliberately
       disabled, so a spec would only be a local gate — worth writing anyway.
-- [ ] **No component test for `billing-group-panel.tsx`.** Its branching (freed slot vs not,
-      at-cap, no candidates, self-hiding) is copy that decides what a customer believes they
-      will be charged, and only the endpoint underneath it is tested.
+- [x] **`billing-group-panel.tsx` branching — COVERED** (`fdc5ac45`), though not by a render
+      test. Its data arrives in an effect and vitest here is `environment: "node"` with no
+      jsdom, so mounting it asserts against the null it returns before the fetch lands: green
+      whatever the logic does. Adding jsdom would change tooling for every session, so the
+      DECISIONS moved to `lib/billing-group-view.ts` (pure) with 38 cases, and the confirm-copy
+      choice became a function returning `MessageKey` so a typo fails the build. Five mutations
+      checked. Two defects fell out: recipient dedupe was last-wins (the `via` label disagreed
+      with the list right above it), and the never-synced `quantity_paid: 0` case had no test.
+      Still untested: the MARKUP itself.
 - [ ] **Smoke covers detach but not attach.** Attach is covered by unit tests and one manual
       browser run; the round trip is not in `scripts/smoke.ts`.
 
