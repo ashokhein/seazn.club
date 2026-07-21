@@ -4,16 +4,26 @@ import { sql } from "@/lib/db";
 export const dynamic = "force-dynamic";
 
 export default async function AdminOrgsPage() {
+  // Joined through organizations.subscription_id. V310 dropped
+  // subscriptions.org_id and reversed the direction of the relationship — this
+  // page was still joining on the old column, so it was a hard 500.
+  //
+  // `group_orgs` is not decoration: the plan below belongs to a billing GROUP,
+  // and any staff action taken from here reaches every organisation in it. A
+  // page that shows a plan without showing how many organisations share it
+  // invites a one-org change that is really a five-org change.
   const orgs = await sql<{
     id: string; name: string; slug: string; status: string;
-    plan_key: string | null; members: number; created_at: string;
+    plan_key: string | null; group_orgs: number; members: number; created_at: string;
   }[]>`
     select o.id, o.name, o.slug, o.status,
            s.plan_key,
+           (select count(*)::int from organizations g
+             where g.subscription_id = o.subscription_id and g.deleted_at is null) as group_orgs,
            (select count(*)::int from org_members m where m.org_id = o.id) as members,
            o.created_at
     from organizations o
-    left join subscriptions s on s.org_id = o.id
+    left join subscriptions s on s.id = o.subscription_id
     order by o.created_at desc
     limit 100`;
 
@@ -46,7 +56,17 @@ export default async function AdminOrgsPage() {
                   </Link>
                   <span className="ml-2 text-xs text-slate-500">/{o.slug}</span>
                 </td>
-                <td className="px-3 py-2 text-slate-400">{o.plan_key ?? "community"}</td>
+                <td className="px-3 py-2 text-slate-400">
+                  {o.plan_key ?? "community"}
+                  {o.group_orgs > 1 && (
+                    <span
+                      className="ml-2 rounded bg-amber-900/60 px-1.5 py-0.5 text-xs text-amber-200"
+                      title={`Shared billing group — this plan covers ${o.group_orgs} organisations. Changing it changes all of them.`}
+                    >
+                      group of {o.group_orgs}
+                    </span>
+                  )}
+                </td>
                 <td className="px-3 py-2 text-slate-400">{o.members}</td>
                 <td className="px-3 py-2">
                   <span className={`rounded px-2 py-0.5 text-xs ${
