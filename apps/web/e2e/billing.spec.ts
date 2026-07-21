@@ -42,7 +42,9 @@ test.describe.serial("billing", () => {
   test("a fresh org lands on Community with the trial CTA", async ({ page }) => {
     orgA = await createFreshOrg(page);
     await page.goto("/settings/billing");
-    await expect(page.getByText("community", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.locator('[data-tour="billing-plan"]').getByText("Community", { exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
     await expect(page.getByRole("button", { name: /start free trial/i })).toBeVisible();
     // Usage card reflects plan limits ("✓ 2 active competitions" also exists
     // in the plan-comparison card — exact match dodges it).
@@ -106,7 +108,9 @@ test.describe.serial("billing", () => {
     // The return URL lands back on the billing page, which reconciles the
     // session server-side (reconcileCheckout) even without webhooks.
     await page.waitForURL(/settings\/billing\?checkout=success/, { timeout: 120_000 });
-    await expect(page.getByText("pro", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.locator('[data-tour="billing-plan"]').getByText("Pro", { exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
   });
 
   test("comped Pro downgrade freezes over-quota competitions", async ({ page }) => {
@@ -141,13 +145,17 @@ test.describe.serial("billing", () => {
     // Billing page shows the comped Pro plan with the in-app downgrade button
     // (no Stripe subscription on file).
     await page.goto("/settings/billing");
-    await expect(page.getByText("pro", { exact: true })).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.locator('[data-tour="billing-plan"]').getByText("Pro", { exact: true }),
+    ).toBeVisible({ timeout: 20_000 });
 
     // PROMPT-32 moved this to the in-app ConfirmDialog (native confirm is
     // lint-banned) — confirm through the dialog.
     await page.getByRole("button", { name: "Downgrade to Community" }).click();
     await page.getByRole("alertdialog").getByRole("button", { name: "Downgrade" }).click();
-    await expect(page.getByText("community", { exact: true })).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.locator('[data-tour="billing-plan"]').getByText("Community", { exact: true }),
+    ).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("button", { name: /start free trial/i })).toBeVisible();
 
     // The least-recently-active competition (the first created) freezes:
