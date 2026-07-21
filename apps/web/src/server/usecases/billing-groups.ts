@@ -839,6 +839,36 @@ export async function offerGroupTransfer(args: {
   });
 
   if (hasLiveSubscription(group) && group.stripe_customer_id) {
+    // CLAIM THE SLOT FIRST, in the database, before Stripe is touched.
+    //
+    // The row is inserted `pending` with no intent id yet, which takes the
+    // partial unique index on (subscription_id) where status = 'pending'. Two
+    // payers — or one payer clicking twice — cannot both open an offer on the
+    // same group: the second insert violates the index and is refused. Doing
+    // this after the Stripe call would leave a real SetupIntent behind for the
+    // loser of that race, unreferenced and acceptable for its whole TTL.
+    //
+    // An expired-but-still-`pending` row would block new offers for ever, so
+    // lapsed ones are retired here rather than by a sweep nobody has scheduled.
+    await sql`
+      update billing_group_transfers
+         set status = 'expired', resolved_at = now()
+       where subscription_id = ${subscriptionId}
+         and status = 'pending' and expires_at <= now()`;
+
+    const expiresAt = new Date(Date.now() + TRANSFER_OFFER_TTL_SECONDS * 1000);
+    const [claim] = await sql<{ id: string }[]>`
+      insert into billing_group_transfers
+        (subscription_id, from_user_id, to_user_id, expires_at)
+      values (${subscriptionId}, ${actorUserId}, ${recipient.id}, ${expiresAt})
+      on conflict do nothing
+      returning id`;
+    if (!claim)
+      throw new HttpError(
+        409,
+        "This billing group has already been offered to someone. Withdraw that offer before making another.",
+      );
+
     // No `payment_method_types`. Stripe's guidance is to let the account's
     // payment method configuration decide (Terminal excepted): pinning it here
     // turns dynamic payment methods off and silently forecloses every
@@ -846,21 +876,37 @@ export async function offerGroupTransfer(args: {
     // debit payer would simply be unable to accept a transfer. Nothing
     // downstream needs a card specifically: acceptGroupTransfer only makes the
     // confirmed method the customer's default, which is method-agnostic.
-    const si = await getStripe().setupIntents.create({
-      customer: group.stripe_customer_id,
-      usage: "off_session",
-      metadata: {
-        kind: TRANSFER_INTENT_KIND,
-        subscription_id: subscriptionId,
-        from_user_id: actorUserId,
-        to_user_id: recipient.id,
-        // Bounded on purpose: an offer that never expires is a standing claim on
-        // somebody else's subscription. Checked on acceptance, since Stripe will
-        // happily keep the intent for ever.
-        expires_at: String(Math.floor(Date.now() / 1000) + TRANSFER_OFFER_TTL_SECONDS),
-      },
-    });
+    //
+    // The metadata below is now a CONVENIENCE for anyone reading the intent in
+    // the Stripe dashboard. It is no longer load-bearing: nothing in the accept
+    // path trusts it, because dashboard users can edit metadata and an invariant
+    // an admin can edit is not an invariant.
+    let si;
+    try {
+      si = await getStripe().setupIntents.create({
+        customer: group.stripe_customer_id,
+        usage: "off_session",
+        metadata: {
+          kind: TRANSFER_INTENT_KIND,
+          transfer_id: claim.id,
+          subscription_id: subscriptionId,
+          from_user_id: actorUserId,
+          to_user_id: recipient.id,
+          expires_at: String(Math.floor(expiresAt.getTime() / 1000)),
+        },
+      });
+    } catch (err) {
+      // Release the slot. Leaving a `pending` row with no intent would block
+      // every future offer on this group until it lapsed, for a Stripe blip.
+      await sql`
+        update billing_group_transfers
+           set status = 'expired', resolved_at = now()
+         where id = ${claim.id} and status = 'pending'`;
+      throw err;
+    }
     if (!si.client_secret) throw new HttpError(500, "Stripe returned no client secret");
+    await sql`
+      update billing_group_transfers set setup_intent_id = ${si.id} where id = ${claim.id}`;
     return {
       status: "pending_card",
       subscription_id: subscriptionId,
@@ -895,50 +941,62 @@ export async function acceptGroupTransfer(args: {
 }): Promise<{ subscription_id: string; owner_user_id: string }> {
   const { actorUserId, setupIntentId } = args;
   const stripe = getStripe();
-  const si = await stripe.setupIntents.retrieve(setupIntentId);
-  const meta = si.metadata ?? {};
-  if (meta.kind !== TRANSFER_INTENT_KIND || !meta.subscription_id)
-    throw new HttpError(400, "That is not a billing group transfer.");
-  if (meta.to_user_id !== actorUserId)
-    throw new HttpError(403, "This billing group was offered to somebody else.");
-  // One use. Without this an offer is a permanent bearer token: A hands the
-  // group to B, later takes it back, and B replays the same intent to seize a
-  // group full of A's organisations. Only incidentally impossible today, because
-  // B's card happens to have been detached in between.
-  if (meta.consumed_at) throw new HttpError(409, "That transfer has already been used.");
-  if (meta.revoked_at) throw new HttpError(409, "That transfer was withdrawn.");
-  if (meta.expires_at && Number(meta.expires_at) < Math.floor(Date.now() / 1000))
+
+  // THE ROW IS THE OFFER. Stripe metadata is not consulted for any of this, and
+  // that is the point of V311: metadata is editable from the Stripe dashboard,
+  // so `consumed_at` living there made "an offer can only be used once" only as
+  // strong as your dashboard permissions.
+  //
+  // BURN IT FIRST, as a compare-and-swap. `status = 'pending'` in the WHERE is
+  // what makes two concurrent accepts resolve to one winner, and what closes
+  // A -> B -> A: the ownership check in handOverGroup only compares the CURRENT
+  // payer to the one named on the offer, so once a group returns to its original
+  // payer that check passes again and B could replay. A spent row never returns
+  // to `pending`.
+  //
+  // Burning before the handover is deliberate. A handover that then fails leaves
+  // a spent offer and the payer re-offers — a nuisance. Not burning leaves a
+  // live claim on somebody else's subscription — a security property. The
+  // nuisance is the right side to fail on.
+  const [offer] = await sql<
+    { id: string; subscription_id: string; from_user_id: string; to_user_id: string }[]
+  >`
+    update billing_group_transfers
+       set status = 'accepted', resolved_at = now()
+     where setup_intent_id = ${setupIntentId}
+       and status = 'pending'
+       and to_user_id = ${actorUserId}
+       and expires_at > now()
+    returning id, subscription_id, from_user_id, to_user_id`;
+
+  if (!offer) {
+    // Say WHICH of those it was, without becoming an oracle: the diagnostic read
+    // is scoped to offers made to this caller, so a stranger holding an intent id
+    // learns nothing beyond "not for you".
+    const [seen] = await sql<{ status: string }[]>`
+      select status from billing_group_transfers
+       where setup_intent_id = ${setupIntentId} and to_user_id = ${actorUserId}`;
+    if (!seen) throw new HttpError(403, "This billing group was offered to somebody else.");
+    if (seen.status === "accepted") throw new HttpError(409, "That transfer has already been used.");
+    if (seen.status === "revoked") throw new HttpError(409, "That transfer was withdrawn.");
     throw new HttpError(409, "That transfer offer has expired — ask for a new one.");
+  }
+
+  // Only now is Stripe asked anything, and only about the CARD — the one thing
+  // it is authoritative for.
+  const si = await stripe.setupIntents.retrieve(setupIntentId);
   const pmId = typeof si.payment_method === "string" ? si.payment_method : si.payment_method?.id;
-  // The whole point of the second phase: no card, no transfer.
+  // The whole point of the second phase: no card, no transfer. The offer has
+  // already been burned, so an unconfirmed intent costs the payer a re-offer
+  // rather than leaving a replayable claim.
   if (si.status !== "succeeded" || !pmId)
     throw new HttpError(400, "Add a card to take over this billing group.");
 
   const recipient = await transferRecipient(actorUserId);
   const siCustomer = typeof si.customer === "string" ? si.customer : si.customer?.id;
 
-  // BURN THE OFFER FIRST, and treat a failure to burn it as fatal.
-  //
-  // This was a `.catch(log)` after the handover, which made single-use a
-  // best-effort property: a failed stamp left the offer acceptable for the rest
-  // of its 7-day TTL, and a replay was only *incidentally* useless because it
-  // would try to default a payment method that had since been detached.
-  // Incidental is not an invariant.
-  //
-  // Burning first inverts the failure: a handover that then fails leaves a spent
-  // offer and the payer re-offers, which is a nuisance. Not burning it leaves a
-  // live claim on somebody else's subscription, which is a security property.
-  // The nuisance is the right side to fail on.
-  //
-  // A durable local row would be better still — this is Stripe's storage, and
-  // A -> B -> A returns `from_user_id` to matching — but that needs a table, and
-  // the ownership compare-and-swap in handOverGroup covers the same-tenure case.
-  await stripe.setupIntents.update(setupIntentId, {
-    metadata: { ...meta, consumed_at: String(Math.floor(Date.now() / 1000)) },
-  });
-
   const moved = await handOverGroup(
-    { id: meta.subscription_id, expectOwner: meta.from_user_id, expectCustomer: siCustomer },
+    { id: offer.subscription_id, expectOwner: offer.from_user_id, expectCustomer: siCustomer },
     recipient,
     pmId,
   );
@@ -955,25 +1013,43 @@ export async function revokeGroupTransfer(args: {
   actorUserId: string;
   setupIntentId: string;
 }): Promise<{ revoked: boolean }> {
-  const stripe = getStripe();
-  const si = await stripe.setupIntents.retrieve(args.setupIntentId);
-  const meta = si.metadata ?? {};
-  if (meta.kind !== TRANSFER_INTENT_KIND || !meta.subscription_id)
-    throw new HttpError(400, "That is not a billing group transfer.");
-  const group = await groupRow(meta.subscription_id);
-  // The CURRENT payer, not the one who made the offer: if the group has changed
-  // hands, the person holding it now is the one with an interest in killing a
-  // stale claim on it.
-  if (!group || group.owner_user_id !== args.actorUserId)
-    throw new HttpError(403, "Only the person who pays for this billing group can withdraw it.");
-  if (meta.consumed_at) throw new HttpError(409, "That transfer has already been used.");
-  await stripe.setupIntents.update(args.setupIntentId, {
-    metadata: { ...meta, revoked_at: String(Math.floor(Date.now() / 1000)) },
-  });
-  // Belt and braces: a cancelled intent can never be confirmed either.
-  await stripe.setupIntents
-    .cancel(args.setupIntentId)
-    .catch(() => {/* already succeeded/cancelled — the metadata stamp stands */});
+  // One statement, and a compare-and-swap against the CURRENT payer — subquery,
+  // not a separate read — so a revoke racing an accept cannot both win, and a
+  // revoke cannot kill an offer on a group the actor has just stopped paying
+  // for. The current payer is the right authority rather than whoever made the
+  // offer: if the group has changed hands, the person holding it now is the one
+  // with an interest in killing a stale claim on it.
+  const [revoked] = await sql<{ id: string }[]>`
+    update billing_group_transfers t
+       set status = 'revoked', resolved_at = now()
+     where t.setup_intent_id = ${args.setupIntentId}
+       and t.status = 'pending'
+       and exists (select 1 from subscriptions s
+                    where s.id = t.subscription_id
+                      and s.owner_user_id = ${args.actorUserId})
+    returning t.id`;
+
+  if (!revoked) {
+    const [seen] = await sql<{ status: string; mine: boolean }[]>`
+      select t.status,
+             exists (select 1 from subscriptions s
+                      where s.id = t.subscription_id
+                        and s.owner_user_id = ${args.actorUserId}) as mine
+        from billing_group_transfers t
+       where t.setup_intent_id = ${args.setupIntentId}`;
+    if (!seen || !seen.mine)
+      throw new HttpError(403, "Only the person who pays for this billing group can withdraw it.");
+    if (seen.status === "accepted") throw new HttpError(409, "That transfer has already been used.");
+    // Already revoked or lapsed: the caller wanted it gone, and it is gone.
+    return { revoked: true };
+  }
+
+  // Belt and braces, and best-effort by design: the row above is what decides
+  // acceptance, so a failure here cannot resurrect the offer. Cancelling the
+  // intent only stops the recipient wasting a card confirmation on it.
+  await getStripe()
+    .setupIntents.cancel(args.setupIntentId)
+    .catch(() => {/* already succeeded or cancelled — the row is authoritative */});
   return { revoked: true };
 }
 
@@ -989,89 +1065,70 @@ export interface PendingTransferOffer {
 }
 
 /**
- * Outstanding transfer offers involving this user, read back from STRIPE.
+ * Outstanding transfer offers involving this user, in both directions.
  *
- * This closes a hole the offer design had rather than adding the table it
- * avoided. `offerGroupTransfer` returned the SetupIntent id exactly once, to the
- * offerer, and nothing stored it — so after a page reload the payer could no
- * longer REVOKE the offer they had just made. It stood as a live claim on their
- * own subscription for the whole seven-day TTL with no way to withdraw it. The
- * recipient, meanwhile, had no way to find it at all.
+ * A database query since V311. It was a Stripe `setupIntents.list` per customer,
+ * run on a page render, with a 10s client timeout and no retries — to draw a
+ * panel.
  *
- * The fix is to take the design at its word: the SetupIntent IS the record, and
- * Stripe can be asked for it. Offers are listed per customer, which is bounded —
- * a payer has one group, occasionally two after a detach.
+ * The two directions have different authorities. "Made by me" is judged on
+ * `subscriptions.owner_user_id` read LIVE, not on the offer's `from_user_id`: a
+ * payer who has since handed the group on must not keep seeing — or revoking —
+ * offers against a subscription that is no longer theirs, and whoever holds it
+ * now must see them.
  *
- * `client_secret` is returned ONLY to the recipient. They are the one who has to
- * confirm a card against it; the offerer never needs to see it, and handing them
- * a secret to forward is how it ends up in an email thread. That also means
- * nobody has to "send a link" any more — the offer appears on the recipient's
- * own billing page.
- *
- * Spent, withdrawn and lapsed offers are filtered out here rather than shown
- * greyed: an offer that cannot be acted on is not information, it is clutter.
+ * `client_secret` is fetched from Stripe ONLY for offers made TO the caller,
+ * because they are the only party who has to confirm a card against it. The
+ * offerer never needs it, and handing them a secret to forward is how it ends
+ * up in an email thread.
  */
 export async function listGroupTransferOffers(
   userId: string,
 ): Promise<PendingTransferOffer[]> {
-  // Customers to ask about: the groups this user PAYS for (offers they made),
-  // and the groups their organisations sit in (offers made to them). A user is
-  // usually in both sets for the same group; dedupe before calling Stripe.
-  const rows = await sql<{ id: string; stripe_customer_id: string | null; mine: boolean }[]>`
-    select s.id, s.stripe_customer_id, (s.owner_user_id = ${userId}) as mine
-      from subscriptions s
-     where s.stripe_customer_id is not null
-       and (s.owner_user_id = ${userId}
-            or exists (select 1 from organizations o
-                        join org_members m on m.org_id = o.id
-                       where o.subscription_id = s.id
-                         and o.deleted_at is null
-                         and m.user_id = ${userId}
-                         and m.role = 'owner'))`;
+  const rows = await sql<
+    {
+      setup_intent_id: string;
+      subscription_id: string;
+      from_user_id: string;
+      to_user_id: string;
+      expires_at: Date;
+    }[]
+  >`
+    select t.setup_intent_id, t.subscription_id, t.from_user_id, t.to_user_id, t.expires_at
+      from billing_group_transfers t
+     where t.status = 'pending'
+       and t.expires_at > now()
+       and t.setup_intent_id is not null
+       and (t.to_user_id = ${userId}
+            or exists (select 1 from subscriptions s
+                        where s.id = t.subscription_id and s.owner_user_id = ${userId}))
+     order by t.created_at desc`;
 
-  const byCustomer = new Map<string, { subscriptionId: string; mine: boolean }>();
-  for (const r of rows) {
-    if (!r.stripe_customer_id) continue;
-    const seen = byCustomer.get(r.stripe_customer_id);
-    // `mine` wins if either row says so — being the payer is what decides
-    // whether an offer on this customer is one you made.
-    byCustomer.set(r.stripe_customer_id, {
-      subscriptionId: r.id,
-      mine: (seen?.mine ?? false) || r.mine,
-    });
-  }
-
-  const now = Math.floor(Date.now() / 1000);
   const offers: PendingTransferOffer[] = [];
-  for (const [customerId, ctx] of byCustomer) {
-    // One broken customer must not blank the whole list — a payer with two
-    // groups still deserves to see the offers on the other one.
-    const list = await getStripe()
-      .setupIntents.list({ customer: customerId, limit: 100 })
-      .catch((err) => {
-        console.error(`[billing] could not list transfer offers for ${customerId}`, err);
-        return null;
-      });
-    if (!list) continue;
-    for (const si of list.data) {
-      const meta = si.metadata ?? {};
-      if (meta.kind !== TRANSFER_INTENT_KIND || !meta.subscription_id) continue;
-      if (meta.consumed_at || meta.revoked_at) continue;
-      if (meta.expires_at && Number(meta.expires_at) < now) continue;
-      const toMe = meta.to_user_id === userId;
-      // Neither party: an offer on a customer whose group this user merely owns
-      // an org in, made to somebody else. Not theirs to see.
-      if (!toMe && !ctx.mine) continue;
-      offers.push({
-        setup_intent_id: si.id,
-        subscription_id: meta.subscription_id,
-        client_secret: toMe ? si.client_secret : null,
-        from_user_id: meta.from_user_id ?? null,
-        to_user_id: meta.to_user_id ?? null,
-        expires_at: meta.expires_at ? Number(meta.expires_at) : null,
-        direction: toMe ? "made_to_me" : "made_by_me",
-      });
+  for (const r of rows) {
+    const toMe = r.to_user_id === userId;
+    let clientSecret: string | null = null;
+    if (toMe) {
+      // Best-effort: an offer whose secret cannot be fetched is still worth
+      // showing — the recipient can see it exists and ask for a new one — and a
+      // Stripe outage must not blank the list.
+      clientSecret = await getStripe()
+        .setupIntents.retrieve(r.setup_intent_id)
+        .then((si) => si.client_secret)
+        .catch((err) => {
+          console.error(`[billing] could not load transfer intent ${r.setup_intent_id}`, err);
+          return null;
+        });
     }
+    offers.push({
+      setup_intent_id: r.setup_intent_id,
+      subscription_id: r.subscription_id,
+      client_secret: clientSecret,
+      from_user_id: r.from_user_id,
+      to_user_id: r.to_user_id,
+      expires_at: Math.floor(new Date(r.expires_at).getTime() / 1000),
+      direction: toMe ? "made_to_me" : "made_by_me",
+    });
   }
   return offers;
 }

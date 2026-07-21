@@ -1306,15 +1306,35 @@ async function raceUnderGroupLock<T>(
 }
 
 describe.skipIf(!HAS_DB)("concurrent transfers", () => {
-  it("cannot both hand the same group away, and the loser detaches nothing", async () => {
-    // Two live offers, both accepted at once. Both read owner = A and both pass
-    // a gate checked in a transaction that has already committed; then B's
-    // detach loop removes every card except B's — deleting C's, which is by then
-    // the live subscription's default. That is the federation-wide dunning
-    // outage the two-phase design exists to prevent, with no crash involved.
+  it("refuses a second live offer on the same group", async () => {
+    // Stronger than the race it replaces. Two live offers used to be possible,
+    // and the design relied on whoever confirmed a card first winning while the
+    // other got a 409 — after both had been told an offer was outstanding. The
+    // partial unique index (V311) makes a second live claim impossible instead,
+    // which is what the UI has always implied.
     const payer = await makeUser("payer");
     const b = await makeUser("heirb");
     const c = await makeUser("heirc");
+    const group = await makeGroup(payer, {
+      stripeSubId: "sub_race_" + uniq(),
+      stripeCustomerId: "cus_race_" + uniq(),
+    });
+    await makeOrg(group, payer);
+
+    await offerGroupTransfer({ actorUserId: payer, subscriptionId: group, newOwnerUserId: b });
+    await expect(
+      offerGroupTransfer({ actorUserId: payer, subscriptionId: group, newOwnerUserId: c }),
+    ).rejects.toThrow(/already been offered/i);
+  });
+
+  it("lets exactly one of two simultaneous accepts win, and the loser detaches nothing", async () => {
+    // The failure this guards is not a crash. Both accepts read owner = A and
+    // both pass a gate checked in a transaction that has already committed; then
+    // the loser's detach loop removes every card except its own — including the
+    // winner's, which is by then the live subscription's default. That is a
+    // federation-wide dunning outage with nothing thrown anywhere.
+    const payer = await makeUser("payer");
+    const heir = await makeUser("heir");
     const customerId = "cus_race_" + uniq();
     const group = await makeGroup(payer, {
       stripeSubId: "sub_race_" + uniq(),
@@ -1323,34 +1343,22 @@ describe.skipIf(!HAS_DB)("concurrent transfers", () => {
     await makeOrg(group, payer);
     stripeMock.state.cards = [{ id: "pm_payer" }];
 
-    const offerB = await offerGroupTransfer({
+    const offer = await offerGroupTransfer({
       actorUserId: payer,
       subscriptionId: group,
-      newOwnerUserId: b,
+      newOwnerUserId: heir,
     });
-    const offerC = await offerGroupTransfer({
-      actorUserId: payer,
-      subscriptionId: group,
-      newOwnerUserId: c,
-    });
-    confirmIntent(offerB.setup_intent_id!, "pm_b");
-    confirmIntent(offerC.setup_intent_id!, "pm_c");
+    confirmIntent(offer.setup_intent_id!, "pm_heir");
 
     const results = await raceUnderGroupLock(group, () => [
-      acceptGroupTransfer({ actorUserId: b, setupIntentId: offerB.setup_intent_id! }),
-      acceptGroupTransfer({ actorUserId: c, setupIntentId: offerC.setup_intent_id! }),
+      acceptGroupTransfer({ actorUserId: heir, setupIntentId: offer.setup_intent_id! }),
+      acceptGroupTransfer({ actorUserId: heir, setupIntentId: offer.setup_intent_id! }),
     ]);
-    // Exactly one may win; the other must have been refused, not silently
-    // applied on top.
+    // The compare-and-swap on status decides this before Stripe is touched.
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-
-    const owner = (await readGroup(group)).owner_user_id;
-    expect([b, c]).toContain(owner);
-    // The winner's card is the one still on file, and it is the customer
-    // default. The loser must have detached nothing.
-    const winnerCard = owner === b ? "pm_b" : "pm_c";
-    expect(stripeMock.state.cards.map((x) => x.id)).toContain(winnerCard);
-    expect(stripeMock.paymentMethodsDetach).not.toHaveBeenCalledWith(winnerCard);
+    expect((await readGroup(group)).owner_user_id).toBe(heir);
+    expect(stripeMock.state.cards.map((x) => x.id)).toContain("pm_heir");
+    expect(stripeMock.paymentMethodsDetach).not.toHaveBeenCalledWith("pm_heir");
     // Above all: a live subscription is never left with no card at all.
     expect(stripeMock.state.cards.length).toBeGreaterThan(0);
   });
@@ -1660,13 +1668,59 @@ describe.skipIf(!HAS_DB)("a transfer offer is not a bearer token", () => {
   it("lapses on its own", async () => {
     const { heir, offer } = await liveOfferedGroup();
     confirmIntent(offer.setup_intent_id!, "pm_heir");
-    const si = stripeMock.intents.get(offer.setup_intent_id!)!;
-    (si.metadata as Record<string, string>).expires_at = String(
-      Math.floor(Date.now() / 1000) - 60,
-    );
+    // Age the ROW, not the Stripe metadata. Since V311 the row is what decides
+    // acceptance; metadata is a convenience for anyone reading the intent in
+    // the dashboard.
+    await sql`
+      update billing_group_transfers set expires_at = now() - interval '1 minute'
+       where setup_intent_id = ${offer.setup_intent_id!}`;
     await expect(
       acceptGroupTransfer({ actorUserId: heir, setupIntentId: offer.setup_intent_id! }),
     ).rejects.toThrow(/expired/i);
+  });
+
+  it("cannot be un-expired by editing Stripe metadata", async () => {
+    // The reason V311 exists. Stripe metadata is editable by anyone with
+    // dashboard access, so while `consumed_at`/`expires_at` lived there, "an
+    // offer can only be used once" was worth exactly what the dashboard
+    // permissions were worth. Here the offer is dead in the row and healthy in
+    // metadata — the strongest form of the attack — and it must still refuse.
+    const { heir, group, offer } = await liveOfferedGroup();
+    confirmIntent(offer.setup_intent_id!, "pm_heir");
+    await sql`
+      update billing_group_transfers set status = 'revoked', resolved_at = now()
+       where setup_intent_id = ${offer.setup_intent_id!}`;
+    const si = stripeMock.intents.get(offer.setup_intent_id!)!;
+    (si.metadata as Record<string, string>).expires_at = String(
+      Math.floor(Date.now() / 1000) + 86_400,
+    );
+    delete (si.metadata as Record<string, string>).consumed_at;
+    delete (si.metadata as Record<string, string>).revoked_at;
+
+    await expect(
+      acceptGroupTransfer({ actorUserId: heir, setupIntentId: offer.setup_intent_id! }),
+    ).rejects.toThrow(/withdrawn/i);
+    expect((await readGroup(group)).owner_user_id).not.toBe(heir);
+  });
+
+  it("cannot be replayed after the group returns to its original payer", async () => {
+    // A -> B -> A. The ownership compare-and-swap in handOverGroup compares the
+    // CURRENT payer against the one named on the offer, so once the group comes
+    // back to A that check passes again and B could replay their old offer to
+    // seize it. Only a spent ROW closes this, which is why single-use cannot
+    // live in Stripe metadata that the accept path merely reads.
+    const { payer, heir, group, offer } = await liveOfferedGroup();
+    confirmIntent(offer.setup_intent_id!, "pm_heir");
+    await acceptGroupTransfer({ actorUserId: heir, setupIntentId: offer.setup_intent_id! });
+    expect((await readGroup(group)).owner_user_id).toBe(heir);
+
+    // The group goes back to A by any route — here, directly.
+    await sql`update subscriptions set owner_user_id = ${payer} where id = ${group}`;
+
+    await expect(
+      acceptGroupTransfer({ actorUserId: heir, setupIntentId: offer.setup_intent_id! }),
+    ).rejects.toThrow(/already been used/i);
+    expect((await readGroup(group)).owner_user_id).toBe(payer);
   });
 
   it("can be withdrawn by the payer, and only by the payer", async () => {
