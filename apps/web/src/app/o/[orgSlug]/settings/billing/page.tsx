@@ -14,7 +14,8 @@ import {
   ResumeSubscriptionButton,
   RetryPaymentButton,
 } from "@/components/billing-manage";
-import { getBillingOverview } from "@/server/usecases/billing-manage";
+import { BillingPassPurchases } from "@/components/billing-pass-purchases";
+import { getBillingOverview, getPassPurchases } from "@/server/usecases/billing-manage";
 import { type Subscription } from "@/lib/types";
 import { getLimit } from "@/lib/entitlements";
 import { TrackOnMount } from "@/components/analytics-track-mount";
@@ -74,7 +75,14 @@ export default async function BillingPage({
   // Live Stripe read for the manage sections (owner only). Runs BEFORE the
   // subscription select because it also performs the lazy renewal re-sync
   // (missed webhook / past_due self-heal) that may rewrite the row.
-  const overview = isOwner ? await getBillingOverview(orgId) : null;
+  //
+  // Event Pass purchases ride ALONGSIDE it, not inside it: getBillingOverview
+  // returns null for an org with no Stripe customer or an unreachable Stripe,
+  // and passes are local rows — an org that holds one must see it either way.
+  const [overview, passes] = await Promise.all([
+    isOwner ? getBillingOverview(orgId) : null,
+    isOwner ? getPassPurchases(orgId) : [],
+  ]);
 
   const [sub] = await sql<Subscription[]>`
     select * from subscriptions where org_id = ${orgId}`;
@@ -300,6 +308,17 @@ export default async function BillingPage({
             />
           </section>
         )}
+
+        {/* Event Pass purchases — which competition each one-time charge was
+            for. Not gated on `overview`: these are local rows (renders itself
+            away when the org holds no pass). */}
+        <BillingPassPurchases
+          rows={passes}
+          orgSlug={orgSlug}
+          locale={locale}
+          dict={dict}
+          invoicesListed={!!overview && overview.invoices.length > 0}
+        />
 
         {/* Invoices — Stripe-hosted view/PDF links; we never render documents. */}
         {isOwner && overview && overview.invoices.length > 0 && (
