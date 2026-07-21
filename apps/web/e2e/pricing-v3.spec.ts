@@ -26,10 +26,12 @@ test.describe("pricing page v3", () => {
         await expect(matrix.locator("thead")).toContainText(col);
       }
       await expect(matrix.locator("tbody")).toContainText("Entrants per division");
-      // The v3 numbers, straight from the seed: 16 / 32 / 256.
+      // Straight from plan_entitlements: 32 / 64 / 256. V311 raised Community
+      // 16 → 32 and the Event Pass 32 → 64, so the old 16 appears nowhere in
+      // this row — asserting it fails against the live matrix.
       const entrantsRow = matrix.locator("tr", { hasText: "Entrants per division" });
-      await expect(entrantsRow).toContainText("16");
       await expect(entrantsRow).toContainText("32");
+      await expect(entrantsRow).toContainText("64");
       await expect(entrantsRow).toContainText("256");
 
       // The dark Business plan never surfaces on marketing pages (v3/03 §6).
