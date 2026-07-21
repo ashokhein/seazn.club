@@ -24,6 +24,7 @@ import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
 import { Tip } from "@/components/ui/tip";
+import { BillingGroupPanel } from "@/components/billing-group-panel";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
@@ -309,6 +310,12 @@ export default async function BillingPage({
             </div>
           )}
         </section>
+
+        {/* The organisations this subscription covers. Payer-only, and it
+            hides itself for a solo organisation with nothing to add — see the
+            component. Placed directly under the plan because the plan card now
+            describes the GROUP, and this is the list that makes that concrete. */}
+        {isPayer && sub?.id && <BillingGroupPanel subscriptionId={sub.id} />}
 
         {/* Payment methods — card entry stays in Stripe's iframe (SAQ A). */}
         {isPayer && overview && (

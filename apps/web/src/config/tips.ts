@@ -61,6 +61,14 @@ export const TIPS = {
     body: "Each organisation after the first is half your plan's rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
     helpSlug: "billing/groups",
   },
+  // Held back when the tips landed, because quantity_paid was written by
+  // nothing and a chip promising a free slot would have been a lie. It is
+  // written now (syncGroupQuantity), and the reconcile sweep keeps it honest.
+  "billing.freed-slot": {
+    title: "You have a slot you have already paid for",
+    body: "When an organisation leaves, we do not lower the bill mid-period — the slot stays yours until the subscription renews. Adding another organisation into it costs nothing until then.",
+    helpSlug: "billing/groups",
+  },
   "billing.billed-by": {
     title: "Why the plan is managed elsewhere",
     body: "This organisation is covered by someone else's subscription. The card and the invoices sit with whoever pays, because one subscription can cover several organisations.",
