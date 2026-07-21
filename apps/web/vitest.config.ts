@@ -37,8 +37,24 @@ const fileOnly = (k: string) => !preexisting.has(k) && k in process.env;
 //               (schedule-ai-effort-ab.live.test.ts, AI_AB_LIVE=1) reads
 //               .env.local itself, so it is unaffected.
 //
-// STRIPE_SECRET_KEY deliberately stays: the live billing suites (BILLING_LIVE=1)
-// take it from the ambient environment, and the rest mock the Stripe module.
+//   STRIPE_SECRET_KEY — "the rest mock the Stripe module" is not true. Five
+//               suites reference Stripe unmocked, and two use KEYLESSNESS ITSELF
+//               as the mechanism under test:
+//                 sponsor-dispute.test.ts        — "the keyless test env makes
+//                   getStripe() throw, so recovery takes its audited failure path"
+//                 sponsor-order-delete-guards.test.ts — "a clean 409 also proves
+//                   the guard fired before any Stripe call"
+//               With a key present, dispute-recovery.ts:63-64 constructs a client
+//               and awaits stripe.charges.retrieve() on a fabricated id — a real
+//               HTTPS call per run. It throws, the catch at :100 writes the same
+//               `dispute_recovery_failed` audit the test asserts, and the suite
+//               stays green for entirely the wrong reason. The delete-guard test
+//               is worse: if that guard ever regressed it would now attempt a
+//               REAL refund instead of throwing a config error.
+//               Kept only under BILLING_LIVE=1, because billing-proration.live
+//               documents an invocation that sources the key from this file.
+const wantsLiveBilling = process.env.BILLING_LIVE === "1";
+
 // Anything exported by hand survives this — it's only the file's values we drop.
 for (const key of [
   "POSTHOG_KEY",
@@ -47,6 +63,7 @@ for (const key of [
   "NEXT_PUBLIC_POSTHOG_HOST",
   "RESEND_API_KEY",
   "ANTHROPIC_API_KEY",
+  ...(wantsLiveBilling ? [] : ["STRIPE_SECRET_KEY"]),
 ]) {
   if (fileOnly(key)) delete process.env[key];
 }
