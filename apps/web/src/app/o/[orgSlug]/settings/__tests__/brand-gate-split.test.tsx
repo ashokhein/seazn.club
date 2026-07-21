@@ -20,19 +20,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { prerender } from "react-dom/static";
 
-const { hasFeature, requireOrgPage, getUserOrgs, resolveLocale } = vi.hoisted(() => ({
-  hasFeature: vi.fn(),
-  requireOrgPage: vi.fn(),
-  getUserOrgs: vi.fn(),
-  resolveLocale: vi.fn(),
-}));
+const { hasFeature, hasFeatureOnAnyPass, requireOrgPage, getUserOrgs, resolveLocale } = vi.hoisted(
+  () => ({
+    hasFeature: vi.fn(),
+    hasFeatureOnAnyPass: vi.fn(),
+    requireOrgPage: vi.fn(),
+    getUserOrgs: vi.fn(),
+    resolveLocale: vi.fn(),
+  }),
+);
 
 // The organisation tab issues one `select about from organizations` — the
 // tagged-template call has to return an awaitable array, not a query builder.
 vi.mock("@/lib/db", () => ({
   sql: vi.fn(async () => [{ about: null }]),
 }));
-vi.mock("@/lib/entitlements", () => ({ hasFeature }));
+// The whole module is replaced, so every binding page.tsx imports has to be
+// listed. `hasFeatureOnAnyPass` (the sponsors tab's org-level affordance) is
+// only reached with `?tab=sponsors`, which these cases never pass — but an
+// unmocked export is `undefined`, so the day someone adds a sponsors case it
+// would fail as "hasFeatureOnAnyPass is not a function" instead of on the
+// assertion. Default it to a deny so the omission is never load-bearing.
+vi.mock("@/lib/entitlements", () => ({ hasFeature, hasFeatureOnAnyPass }));
 vi.mock("@/server/page-auth", () => ({ requireOrgPage }));
 vi.mock("@/lib/auth", () => ({ getUserOrgs }));
 vi.mock("@/lib/resolve-locale", () => ({ resolveLocale }));
@@ -97,6 +106,9 @@ beforeEach(() => {
   });
   getUserOrgs.mockResolvedValue([ORG]);
   resolveLocale.mockResolvedValue("en");
+  // Deny by default. These cases render the branding tab, which never asks;
+  // stating it keeps the sponsors tab from inheriting an `undefined` answer.
+  hasFeatureOnAnyPass.mockResolvedValue(false);
 });
 
 describe("settings → organisation: logo and brand colour are gated separately (D23)", () => {

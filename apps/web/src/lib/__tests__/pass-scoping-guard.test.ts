@@ -16,11 +16,12 @@
 // file to find resolver calls that drop the competition id.
 //
 // ===========================================================================
-// THIS TEST IS EXPECTED TO FAIL until the pass-scoping sweep (Phase 2, Task 11)
-// lands. Its failure list IS that work queue. If you found it red: fix the
-// listed call sites. Do NOT weaken the assertion, narrow the lifted set, add a
-// suppression list, or `.skip` it to get a green run — that is exactly how
-// `branding` and `realtime` stayed dead for a whole release.
+// THE PASS-SCOPING SWEEP HAS LANDED AND THIS GUARD IS GREEN. It stays as the
+// standing regression: if you found it red, a new call site dropped the
+// competition id. Fix the listed call sites. Do NOT weaken the assertion,
+// narrow the lifted set, add a suppression list, or `.skip` it to get a green
+// run — that is exactly how `branding` and `realtime` stayed dead for a whole
+// release.
 // ===========================================================================
 //
 // Real Postgres required; skipped without DATABASE_URL (CI sets it, see
@@ -55,6 +56,29 @@ const GATES: Record<string, number> = {
   withinLimit: 4,
 };
 
+/**
+ * The counter-rule. `hasFeatureOnAnyPass(orgId, featureKey)` is the FIFTH
+ * resolver name, and it deliberately takes no competition: it answers "is this
+ * reachable on ANY pass this org holds?". That is the honest question for an
+ * ORG-LEVEL AFFORDANCE (the settings tab that decides whether to render the
+ * sponsor controls at all) and it is the WRONG question for enforcement — an
+ * org-wide yes means a pass bought for one competition unlocks every
+ * competition, which is the same $29 hole in the other direction.
+ *
+ * The four rules above cannot see that misuse: the call has no competition
+ * argument to be missing, so it is invisible to them. Worse, swapping an
+ * offending `hasFeature(orgId, key)` for `hasFeatureOnAnyPass(orgId, key)` is
+ * the one-token edit that makes this guard go quiet while widening the leak.
+ * A docstring on the helper is not a control; this is.
+ *
+ * So: flag it anywhere under the enforcement layers. Pages and components are
+ * affordances and stay allowed — they only decide what to draw, and every
+ * write they lead to lands in a usecase or a route handler, which re-resolves
+ * with the competition actually being written.
+ */
+const ANY_PASS_GATE = "hasFeatureOnAnyPass";
+const ENFORCEMENT_DIRS = ["src/server/usecases/", "src/app/api/"];
+
 /** Source files to scan. Tests are excluded deliberately — they call the
  *  resolver both ways on purpose, which is the point of a resolver test. */
 function sourceFiles(): string[] {
@@ -86,6 +110,70 @@ function isExplicitUndefined(node: TS.Node | undefined): boolean {
   return !!node && ts.isIdentifier(node) && node.text === "undefined";
 }
 
+/** Enforcement layers: the usecases that perform writes and the route handlers
+ *  that front them. Path prefixes, not a file list — a new usecase is covered
+ *  the moment it is created. */
+function isEnforcementPath(file: string): boolean {
+  return ENFORCEMENT_DIRS.some((dir) => file.startsWith(dir));
+}
+
+/**
+ * The single walk. Both rules ride the same AST traversal — one parse per
+ * file, one visitor — so the counter-rule costs nothing and cannot drift out
+ * of sync with the file list the first rule scans.
+ *
+ * Parse with the TypeScript compiler, NOT a regex. Real call sites wrap:
+ * `withinLimit(` at server/usecases/entrants.ts spans four lines, and any
+ * regex anchoring the closing paren to the key string skips every one of them
+ * — a guard that reports clean while missing offenders is worse than no guard
+ * at all.
+ *
+ * Exported shape is a plain (file, text) pair so a fixture string can be run
+ * through the exact code that scans the tree, rather than a parallel
+ * re-implementation that could pass while the real one is broken.
+ */
+function scanSource(file: string, text: string, liftedKeys: Set<string>): string[] {
+  const offenders: string[] = [];
+  const src = ts.createSourceFile(
+    file,
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  const lineOf = (node: TS.Node): number =>
+    src.getLineAndCharacterOfPosition(node.getStart(src)).line + 1;
+
+  const visit = (node: TS.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const fn = node.expression.getText(src);
+      const name = fn.split(".").pop() ?? fn;
+      const wants = GATES[name];
+      if (wants) {
+        const key = literalText(node.arguments[1]);
+        if (key && liftedKeys.has(key)) {
+          const scopeArg = node.arguments[wants - 1];
+          if (node.arguments.length < wants || isExplicitUndefined(scopeArg)) {
+            offenders.push(`${file}:${lineOf(node)} ${name}("${key}")`);
+          }
+        }
+      } else if (name === ANY_PASS_GATE && isEnforcementPath(file)) {
+        // No key filter: the helper exists only to answer pass questions, and
+        // an org-wide answer is wrong at an enforcement site for every key it
+        // could be asked about, lifted or not.
+        const key = literalText(node.arguments[1]);
+        offenders.push(
+          `${file}:${lineOf(node)} ${ANY_PASS_GATE}("${key ?? "?"}") in an enforcement layer` +
+            ` — resolve the competition being written with hasFeature() instead`,
+        );
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(src);
+  return offenders;
+}
+
 describe("Event Pass grants are resolved with a competition in scope", () => {
   it.skipIf(!HAS_DB)("has no enforcement site that drops the competition id", async () => {
     // The lifted set is computed, never hard-coded: a key whose event_pass
@@ -106,48 +194,46 @@ describe("Event Pass grants are resolved with a competition in scope", () => {
     const keys = new Set(lifted.map((r) => r.feature_key));
     expect(keys.size).toBeGreaterThan(0);
 
-    // Parse with the TypeScript compiler, NOT a regex. Real call sites wrap:
-    // `withinLimit(` at server/usecases/entrants.ts spans four lines, and any
-    // regex anchoring the closing paren to the key string skips every one of
-    // them — a guard that reports clean while missing offenders is worse than
-    // no guard at all.
     const offenders: string[] = [];
     const files = sourceFiles();
     // A guard that scans nothing reports clean. Vitest runs with cwd=apps/web;
     // if that ever changes, fail loudly rather than pass vacuously.
     expect(files.length).toBeGreaterThan(500);
     for (const file of files) {
-      const src = ts.createSourceFile(
-        file,
-        readFileSync(file, "utf8"),
-        ts.ScriptTarget.Latest,
-        true,
-        file.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
-      );
-      const visit = (node: TS.Node): void => {
-        if (ts.isCallExpression(node)) {
-          const fn = node.expression.getText(src);
-          const name = fn.split(".").pop() ?? fn;
-          const wants = GATES[name];
-          if (wants) {
-            const key = literalText(node.arguments[1]);
-            if (key && keys.has(key)) {
-              const scopeArg = node.arguments[wants - 1];
-              if (node.arguments.length < wants || isExplicitUndefined(scopeArg)) {
-                const { line } = src.getLineAndCharacterOfPosition(node.getStart(src));
-                offenders.push(`${file}:${line + 1} ${name}("${key}")`);
-              }
-            }
-          }
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(src);
+      offenders.push(...scanSource(file, readFileSync(file, "utf8"), keys));
     }
 
     // DO NOT WEAKEN THIS ASSERTION AND DO NOT ADD A SUPPRESSION LIST.
-    // If this is red, a paid Event Pass feature is unreachable at the listed
-    // sites. Fix the call sites; thread the competition id through.
+    // If this is red, either a paid Event Pass feature is unreachable at the
+    // listed sites (thread the competition id through), or an enforcement site
+    // is asking the org-wide `hasFeatureOnAnyPass` question (resolve the
+    // competition being written instead).
     expect(offenders).toEqual([]);
+  });
+
+  // No database: the counter-rule does not consult the lifted set, and the
+  // point of the test is the RULE, not the tree. A fixture string run through
+  // `scanSource` — the same function, the same visitor the real scan uses — is
+  // the only honest way to prove it fires without committing a call site that
+  // re-opens the hole to prove the alarm works.
+  it("flags hasFeatureOnAnyPass in an enforcement layer, not in a page", () => {
+    const src = `
+      import { hasFeatureOnAnyPass } from "@/lib/entitlements";
+      export async function saveSponsor(orgId: string) {
+        if (!(await hasFeatureOnAnyPass(orgId, "sponsors.tiers"))) throw new Error("402");
+      }`;
+
+    const inUsecase = scanSource("src/server/usecases/sponsors.ts", src, new Set());
+    expect(inUsecase).toHaveLength(1);
+    expect(inUsecase[0]).toContain("hasFeatureOnAnyPass(\"sponsors.tiers\")");
+    expect(inUsecase[0]).toContain("src/server/usecases/sponsors.ts:4");
+
+    // Route handlers are enforcement too.
+    expect(scanSource("src/app/api/sponsors/route.ts", src, new Set())).toHaveLength(1);
+
+    // The real call site's layer. An affordance may ask the org-wide question;
+    // if this ever starts flagging, the settings tab goes red for no reason.
+    expect(scanSource("src/app/o/[orgSlug]/settings/page.tsx", src, new Set())).toEqual([]);
+    expect(scanSource("src/components/sponsor-form.tsx", src, new Set())).toEqual([]);
   });
 });

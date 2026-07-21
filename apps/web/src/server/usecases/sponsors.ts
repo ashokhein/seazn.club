@@ -80,7 +80,19 @@ export type ReorderSponsorsInput = z.infer<typeof ReorderSponsorsInput>;
 
 /** Tiers above `partner` and per-competition scoping are Pro
  *  (`sponsors.tiers`). Passing the competition lets an Event Pass lift the
- *  gate for its own competition, mirroring entry fees. */
+ *  gate for its own competition, mirroring entry fees.
+ *
+ *  NOTE the asymmetry, which is intended and newly reachable: a non-partner
+ *  tier with a NULL `competition_id` resolves ORG-WIDE. There is no competition
+ *  to hand the resolver, so a pass holder gets the community answer and a 402 —
+ *  the pass buys a tier ON ITS OWN COMPETITION, not org-wide sponsor tiers, and
+ *  granting it here would be the leak the pass-scoping guard exists to stop.
+ *
+ *  This used to be unreachable: the settings tab hid the control from pass
+ *  holders entirely. It now offers it (page.tsx asks `hasFeatureOnAnyPass`, an
+ *  affordance question), so a pass holder CAN save an unscoped tiered sponsor
+ *  and be refused. That surfaces as an error toast, not a silent no-op, so the
+ *  failure is legible — pick the competition and it saves. */
 async function assertTierAllowed(
   orgId: string,
   tier: SponsorTier | undefined,

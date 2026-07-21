@@ -51,11 +51,17 @@ describe("pricing cards", () => {
 //
 // Real Postgres required; skipped without DATABASE_URL (CI sets it).
 describe.skipIf(!HAS_DB)("plan-card copy quotes the numbers the matrix enforces", () => {
+  // The row must EXIST. `int_value` is legitimately null on this column (it
+  // means unlimited), so `row?.int_value ?? null` cannot distinguish "no row"
+  // from "unlimited" — and a missing row would sail on to assert the copy
+  // contains the literal string "null entrants per division", which reads as a
+  // copy bug rather than the matrix gap it actually is. Fail at the source.
   const capFor = async (feature: string, plan: string): Promise<number | null> => {
     const [row] = await sql<{ int_value: number | null }[]>`
       select int_value from plan_entitlements
       where plan_key = ${plan} and feature_key = ${feature}`;
-    return row?.int_value ?? null;
+    expect(row, `plan_entitlements has no ${plan}/${feature} row`).toBeDefined();
+    return row!.int_value;
   };
 
   const dict = (locale: string): Record<string, string> =>
