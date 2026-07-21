@@ -1,9 +1,17 @@
 // v4 AI Schedule Architect — Phase A prompt module.
 //
-// The system prompt below is VERBATIM from `design/v4/01-llm-contract.md` §4, with the
-// single approved amendment: a Coverage soft goal (d) inserted after Fairness (c), and the
-// prior Stability goal relettered (d) -> (e). Any edit must be deliberate — the golden
-// snapshot test (`__tests__/schedule-ai-prompt.test.ts`) will fail otherwise.
+// The system prompt below is VERBATIM from `design/v4/01-llm-contract.md` §4, with these
+// deliberate deviations from the source document:
+//   (a) a Coverage soft goal (S4) inserted after Fairness (S3), with the prior Stability
+//       goal renumbered S4 -> S5;
+//   (b) hard rules relabelled `1.`-`7.` -> `H1.`-`H7.` and soft goals relabelled `a.`-`e.`
+//       -> `S1.`-`S5.`;
+//   (c) the OUTPUT sentence for unschedulable fixtures now requires the reason to cite the
+//       blocking hard rule id (H1-H7);
+//   (d) an `assumptions` field, populated when the instruction was ambiguous in a way that
+//       changed the schedule.
+// Any edit must be deliberate — the golden snapshot test
+// (`__tests__/schedule-ai-prompt.test.ts`) will fail otherwise.
 //
 // Pure module: no DB, no network. Shapes are reused, never redeclared —
 // `AiConstraintDelta` is a partial of the engine's `SchedulingConstraints`.

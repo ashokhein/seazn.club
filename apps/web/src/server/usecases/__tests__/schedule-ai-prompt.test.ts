@@ -37,6 +37,7 @@ describe("schedule-ai prompt contract", () => {
 
   it("requires unschedulable reasons to cite the blocking rule id", () => {
     expect(SYSTEM_PROMPT).toContain("citing the hard rule id");
+    expect(SYSTEM_PROMPT).toContain("(H1-H7)");
   });
 
   it("plan schema accepts an assumptions array and rejects a non-string entry", () => {
