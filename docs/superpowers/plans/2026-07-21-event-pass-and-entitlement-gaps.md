@@ -571,10 +571,44 @@ the gate inward would change its meaning to "*some* competition this person
 appears in is entitled" — one Event Pass would expose that person across every
 unpaid competition in the org.
 
+**Verified facts — read these before writing (checked against the tree 2026-07-21):**
+
+`V237__view_public_players.sql:6-20` filters on THREE conditions: `public_name`
+consent, the org holding `dashboard.player_profiles`, and an `exists(...)` proving
+the person is rostered in a publicly visible competition. **Only the middle one
+moves.** Consent and visibility stay in the view.
+
+**Exactly one production consumer:** `data.ts:417`, reached from
+`app/(public)/shared/[orgSlug]/[competitionSlug]/players/[personId]/page.tsx`. So
+there is a single place to re-gate. `V239__v2_grants.sql:14` grants select on the
+view — unchanged.
+
+**Trap 1 — the cache boundary.** The query at `:417` sits inside an
+`unstable_cache` keyed with `{ tags: [competitionTag(shell.competition.id)],
+revalidate: REVALIDATE_SLOW }`. Entitlement changes do **not** bust a competition
+tag, so a gate placed INSIDE that closure would be frozen at whatever the
+entitlement was when the page was first cached — a lapsed org would keep serving
+player cards for a full revalidate window. **Put the gate OUTSIDE the
+`unstable_cache`,** before or after the cached call, so it is evaluated per request.
+`hasFeature` has its own 5-minute cache, which is the bounded staleness we accept
+everywhere else.
+
+**Trap 2 — `consent.test.ts` asserts the OLD view contract.**
+`apps/web/src/server/public-site/__tests__/consent.test.ts:135,149,206` query
+`public_players_v` directly and assert entitlement-driven filtering. Removing the
+gate from the view WILL break them, and that is correct — the view's contract is
+changing by design. Do not delete those assertions to make the suite green. Instead:
+re-point them at the view's new, narrower contract (consent + visibility), and add a
+caller-level test proving the entitlement gate still denies. Coverage must not
+shrink: the number of things asserted about entitlement gating should stay the same
+or grow.
+
 - [ ] **Step 1: Write the failing test**
 
-Assert that a pass on competition A does **not** make a person's card visible via
-competition B, and that it **does** via competition A.
+Two assertions, at the CALLER level (`getPublicPlayer`), not the view:
+a passed competition surfaces the player card; a second, unpassed competition in the
+same org does not. A one-sided test would pass even if the gate leaked org-wide,
+which is the exact failure this task exists to prevent.
 
 - [ ] **Step 2: Run it, confirm it fails**
 
@@ -584,10 +618,13 @@ cd apps/web && npx vitest run src/server/__tests__/public-players-gate.test.ts
 
 - [ ] **Step 3: Remove the gate from the view, add it to the caller**
 
-V307 recreates `public_players_v` without the `org_has_feature` predicate.
-`data.ts:417` then gates on
-`hasFeature(org.id, "dashboard.player_profiles", shell.competition.id)` before
-returning the row.
+V307 recreates `public_players_v` without the `org_has_feature` predicate, keeping
+the consent and `exists(...)` clauses byte-identical. `data.ts` then gates on
+`hasFeature(org.id, "dashboard.player_profiles", shell.competition.id)` outside the
+cached closure.
+
+- [ ] **Step 3b: Update `consent.test.ts` to the new view contract** and confirm the
+      entitlement assertions live on at the caller level.
 
 - [ ] **Step 4: Apply, test, commit**
 
