@@ -718,26 +718,20 @@ export function schedulingAiThinkingBudget(): number {
 }
 
 /** The reasoning half of the request, shaped for what `model` actually accepts.
- *  Returning the fields rather than mutating a request object keeps the
- *  per-model branching in one place instead of at every call site.
+ *  Anthropic-shaped: schedule-ai-run.test.ts asserts these fields directly.
  *
- *  Kept for its own direct test coverage (schedule-ai-run.test.ts asserts the
- *  Anthropic-shaped params this returns) — `aiReasoning` below is the
- *  provider-neutral function `callModel` actually uses now. */
+ *  Derived from `aiReasoning` below (the provider-neutral function `callModel`
+ *  actually uses) rather than duplicating the per-model branching, so there is
+ *  one source of truth for reasoning policy — a bug in `aiReasoning` fails
+ *  this function's tests too instead of shipping silently. */
 export function aiReasoningParams(model: string): {
   thinking?: { type: "adaptive" } | { type: "disabled" } | { type: "enabled"; budget_tokens: number };
   effort?: AiEffort;
 } {
-  if (LEGACY_REASONING_MODELS.has(model)) {
-    const budget = schedulingAiThinkingBudget();
-    // No adaptive, no effort. A budget or nothing — omitting `thinking`
-    // entirely is how these models run without reasoning.
-    return budget > 0 ? { thinking: { type: "enabled", budget_tokens: budget } } : {};
-  }
-  return {
-    thinking: schedulingAiThinking() === "disabled" ? { type: "disabled" } : { type: "adaptive" },
-    effort: schedulingAiEffort(),
-  };
+  const r = aiReasoning(model);
+  if (r.kind === "none") return {};
+  if (r.kind === "budget") return { thinking: { type: "enabled", budget_tokens: r.tokens } };
+  return { thinking: { type: r.thinking }, effort: r.effort };
 }
 
 /** Provider-neutral reasoning request, shaped for what `model` actually
@@ -1305,7 +1299,11 @@ async function runAiPlanEscalating(
       input_tokens: u.input_tokens ?? 0,
       output_tokens: u.output_tokens ?? 0,
       repair_rounds: u.repair_rounds ?? 0,
-      cost_usd: u.cost_usd ?? 0,
+      // `??` would collapse a real `null` (cost unknown — model has no
+      // PRICING entry) down to `0` (asserts free), silently undercounting
+      // the escalated total below. Only a genuinely-absent `undefined`
+      // defaults to 0; `null` must survive to stay "unknown".
+      cost_usd: u.cost_usd === undefined ? 0 : u.cost_usd,
     };
   }
 
@@ -1547,7 +1545,16 @@ export async function aiPlanForDivision(
       ? { constraint_suggestions: isoConstraintSuggestions(result.constraint_suggestions, pack.division.tz) }
       : {}),
     summary: result.summary,
-    usage: result.usage,
+    // Public shape is pinned to AiPlanResponse.usage in api-v1/schemas.ts —
+    // exactly these three fields. cost_usd lives on AiPlanResult["usage"] for
+    // the ledger (competition_events insert above) but must not leak into the
+    // API response, so it is built explicitly here rather than by spreading
+    // result.usage.
+    usage: {
+      input_tokens: result.usage.input_tokens,
+      output_tokens: result.usage.output_tokens,
+      repair_rounds: result.usage.repair_rounds,
+    },
     officials_coverage,
   };
 }

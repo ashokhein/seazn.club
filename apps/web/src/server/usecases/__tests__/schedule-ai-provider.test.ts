@@ -4,7 +4,7 @@
 // its own file); this one mocks anthropicProvider() itself, so it proves
 // runAiPlan talks to the AiProvider interface — not to Anthropic — without
 // caring how the adapter fills that interface in.
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const anthropicProvider = vi.fn();
 vi.mock("@/server/ai/anthropic-provider", () => ({ anthropicProvider }));
@@ -167,5 +167,26 @@ describe("schedule runner ↔ provider seam", () => {
     const { runAiPlan } = await import("../schedule-ai");
     await expect(runAiPlan(pack, movableIds)).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
     expect(chat).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("aiReasoning — the provider-neutral function callModel actually sends", () => {
+  // aiReasoningParams (Anthropic-shaped, tested in schedule-ai-run.test.ts) is
+  // now derived from this function, but that derivation only proves the two
+  // agree — it does not by itself prove `aiReasoning` gets the "disabled
+  // thinking still carries effort" case right. Direct coverage here closes
+  // that gap: a regression that collapses disabled-thinking to `kind:"none"`
+  // must fail a test that calls `aiReasoning` itself.
+  afterEach(() => {
+    delete process.env.SCHEDULING_AI_THINKING;
+    delete process.env.SCHEDULING_AI_EFFORT;
+  });
+
+  it("keeps effort present when thinking is disabled", async () => {
+    process.env.SCHEDULING_AI_THINKING = "disabled";
+    process.env.SCHEDULING_AI_EFFORT = "medium";
+
+    const { aiReasoning } = await import("../schedule-ai");
+    expect(aiReasoning("claude-sonnet-5")).toEqual({ kind: "effort", effort: "medium", thinking: "disabled" });
   });
 });
