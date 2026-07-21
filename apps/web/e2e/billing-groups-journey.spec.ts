@@ -1,7 +1,13 @@
 import { test, expect, type Page, type Locator } from "@playwright/test";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { TAG, apiJson, setEntitlementOverrideSql, setGroupSeatsPaidSql } from "./helpers";
+import {
+  TAG,
+  apiJson,
+  setEntitlementOverrideSql,
+  setGroupSeatsPaidSql,
+  splitOrgIntoOwnGroupSql,
+} from "./helpers";
 
 // The multi-org billing workflow, walked end to end and photographed at every
 // step (spec 2026-07-21 billing-groups).
@@ -107,6 +113,15 @@ test.describe.serial("billing groups — visual workflow", () => {
     });
     expect(b.status).toBeLessThan(300);
     otherOrg = b.data!.id;
+
+    // A new org JOINS its creator's existing group (lib/auth.ts
+    // createOrgForUser, `ownedGroups.length === 1`). So these two arrive on ONE
+    // bill together with the shared fixture's own org, and the walkthrough
+    // would open on a group of three with nothing to move in — no candidate
+    // button, no attach, no story. Break them apart so the journey starts where
+    // a real customer starts: separate organisations, separate bills.
+    await splitOrgIntoOwnGroupSql(payerOrg);
+    await splitOrgIntoOwnGroupSql(otherOrg);
 
     // The payer's group goes Pro by SQL — buying a plan is checkout's job and
     // that DOES need Stripe. Everything after this point is the real product.
