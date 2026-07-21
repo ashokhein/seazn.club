@@ -638,7 +638,11 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
   });
 
   it("capacity above the plan's entrant quota is rejected at save", async () => {
-    const { orgId, ownerId } = await seedOrg("community"); // entrants.per_division.max = 16
+    // community entrants.per_division.max = 32 (V311, was 16); the capacity
+    // below is 64 — over the community cap, and deliberately equal to the
+    // EVENT PASS value so a pass leaking into an unpassed org would show up
+    // here as a missing rejection rather than a silently larger allowance.
+    const { orgId, ownerId } = await seedOrg("community");
     const owner = asOwner(orgId, ownerId);
     const { division } = await rig(owner);
     await expect(

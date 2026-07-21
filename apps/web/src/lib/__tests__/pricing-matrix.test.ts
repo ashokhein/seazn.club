@@ -22,10 +22,12 @@ const cell = (int: number | null = null, bool: boolean | null = null) => ({
   bool_value: bool,
 });
 
-// Mirrors the real V290 local-DB values for the rows under test.
+// Mirrors the real local-DB values for the rows under test (V290 + V310 + V311).
 const DATA: MatrixData = {
   "competitions.max_active": {
-    community: cell(1),
+    // V311: community 1 → 5. Still no event_pass row — a passed competition
+    // leaves the active count instead of raising the org-wide cap.
+    community: cell(5),
     pro: cell(null),
     pro_plus: cell(null),
   },
@@ -36,8 +38,9 @@ const DATA: MatrixData = {
     pro_plus: cell(null),
   },
   "entrants.per_division.max": {
-    community: cell(16),
-    event_pass: cell(32),
+    // V311: 32 / 64 / 256 / ∞.
+    community: cell(32),
+    event_pass: cell(64),
     pro: cell(256),
     pro_plus: cell(null),
   },
@@ -117,7 +120,7 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
 
   it("renders the prose quota row for competitions.max_active", () => {
     expect(row("pricing.matrix.competitions.max_active")).toMatchObject({
-      free: "1",
+      free: "5",
       pass: "pricing.matrix.passedEvent",
       pro: "∞",
       plus: "∞",
@@ -132,8 +135,8 @@ describe("buildPricingSections (spec 2026-07-18 pro-plus-tier §5)", () => {
       plus: "∞",
     });
     expect(row("pricing.matrix.entrants.per_division.max")).toMatchObject({
-      free: "16",
-      pass: "32",
+      free: "32",
+      pass: "64",
       pro: "256",
       plus: "∞",
     });
@@ -270,5 +273,55 @@ describe.skipIf(!HAS_DB)("V310 packaging: logos + paid entry for everyone", () =
     expect(keys).not.toContain("branding");
     expect(keys).not.toContain("registration.paid");
     expect(keys).toContain("registration.fee_percent");
+  });
+});
+
+// V311 (D22) — the scale caps. /pricing and the help pages have advertised
+// "32 players" and "5 seasons" since the v3 rewrite while the matrix said 16
+// and 1; the marketing was the intent, the matrix was the bug. These assert the
+// intent against the live matrix, because a fixture can be edited to say
+// anything and the resolver reads the table.
+//
+// Real Postgres required; skipped without DATABASE_URL (CI sets it).
+describe.skipIf(!HAS_DB)("V311 scale caps: community 32 entrants, 5 competitions", () => {
+  const load = async (key: string) => {
+    const rows = await sql<{ plan_key: string; bool_value: boolean | null; int_value: number | null }[]>`
+      select plan_key, bool_value, int_value from plan_entitlements where feature_key = ${key}`;
+    return (plan: string) => rows.find((r) => r.plan_key === plan);
+  };
+
+  it("ladders entrants.per_division.max 32 / 64 / 256 / ∞", async () => {
+    const get = await load("entrants.per_division.max");
+    expect(get("community")?.int_value).toBe(32);
+    // The pass MUST rise too. With community at 32 a pass still stuck on 32
+    // would lift nothing — the key would drop out of the pass-lifted set and
+    // the $29 purchase would buy no extra entrants at all.
+    expect(get("event_pass")?.int_value).toBe(64);
+    expect(get("pro")?.int_value).toBe(256);
+    expect(get("pro_plus"), "pro_plus must keep a row").toBeDefined();
+    expect(get("pro_plus")?.int_value, "null int_value is unlimited").toBeNull();
+  });
+
+  it("keeps entrants.per_division.max in the pass-lifted set (32 vs 64)", async () => {
+    const get = await load("entrants.per_division.max");
+    expect(get("event_pass")?.int_value).not.toBe(get("community")?.int_value);
+  });
+
+  it("raises community competitions.max_active to 5, pro/pro_plus stay unlimited", async () => {
+    const get = await load("competitions.max_active");
+    expect(get("community")?.int_value).toBe(5);
+    expect(get("pro"), "pro must keep a row").toBeDefined();
+    expect(get("pro")?.int_value).toBeNull();
+    expect(get("pro_plus"), "pro_plus must keep a row").toBeDefined();
+    expect(get("pro_plus")?.int_value).toBeNull();
+  });
+
+  // Deliberate absence, not an oversight. A passed competition is already
+  // excluded from the active count (server/usecases/competitions.ts) — that is
+  // the mechanism. An event_pass row here would additionally raise the ORG-WIDE
+  // cap for any org holding one pass, which is not what the pass sells.
+  it("adds no event_pass row for competitions.max_active", async () => {
+    const get = await load("competitions.max_active");
+    expect(get("event_pass")).toBeUndefined();
   });
 });

@@ -155,7 +155,8 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
     });
     // Boolean keys still report { enabled }, numeric keys still { limit }.
     expect(data.entitlements["exports"]).toEqual({ enabled: true });
-    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 1 });
+    // V311 (D22): community's active-competition cap is 5, was 1.
+    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 5 });
   });
 
   it("degrades a lapsed comp instead of promising the Pro matrix", async () => {
@@ -167,9 +168,9 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
       where org_id = ${orgId}`;
     const data = await readPanel(orgId);
     // The raw plan_key is still reported (contract), but every VALUE resolves
-    // as community: pro is unlimited here, community caps at 1.
+    // as community: pro is unlimited here, community caps at 5 (V311).
     expect(data.plan_key).toBe("pro");
-    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 1 });
+    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 5 });
     expect(data.entitlements["api.access"]).toEqual({ enabled: false });
   });
 
@@ -184,7 +185,7 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
 
   it("does not demote an unlimited override to the plan's number", async () => {
     const { orgId } = await seedOwnerWithOneOrg();
-    // community competitions.max_active = 1; a null int_value is UNLIMITED,
+    // community competitions.max_active = 5 (V311); a null int_value is UNLIMITED,
     // and coalescing it against the plan row silently took the grant away.
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, int_value)

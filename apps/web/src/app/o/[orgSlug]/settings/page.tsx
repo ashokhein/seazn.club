@@ -112,9 +112,27 @@ export default async function SettingsPage({
   const { tab: rawTab, email_change } = await searchParams;
   const tab: Tab = (NAV_ITEMS.some((n) => n.tab === rawTab) ? rawTab : "organization") as Tab;
 
-  // Per-tab lazy data loading
-  const canBrand =
-    tab === "organization" ? await hasFeature(active.id, "branding") : false;
+  // Per-tab lazy data loading.
+  //
+  // TWO KEYS, NOT ONE (D23). They are different products and the resolver has
+  // always treated them that way:
+  //
+  //   branding            org LOGO upload + display  → free on every plan (V310)
+  //   dashboard.branding  org THEME COLOUR           → Pro / Pro Plus only
+  //
+  // One `canBrand` flag drove both gates. That was harmless while `branding`
+  // was Pro-only, and became a real bug the moment V310 made it free: a
+  // Community org was handed a working colour picker whose value is stripped on
+  // the way out — server/public-site/data.ts wraps o.branding in
+  // `case when org_has_feature(o.id, 'dashboard.branding') then … else '{}' end`.
+  // Save a colour, see nothing change, anywhere, ever.
+  const [canBrandLogo, canBrandColor] =
+    tab === "organization"
+      ? await Promise.all([
+          hasFeature(active.id, "branding"),
+          hasFeature(active.id, "dashboard.branding"),
+        ])
+      : [false, false];
   let orgAbout: string | null = null;
   if (tab === "organization") {
     const [row] = await sql<{ about: string | null }[]>`
@@ -277,7 +295,7 @@ export default async function SettingsPage({
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
                     <SubSection icon={ImageIcon} label={t(dict, "settings.org.logo")} />
-                    {canBrand ? (
+                    {canBrandLogo ? (
                       <OrgLogo
                         orgId={active.id}
                         initialLogoUrl={
@@ -301,11 +319,11 @@ export default async function SettingsPage({
                 {canEdit && (
                   <div className="mt-5 border-t border-slate-100 pt-5">
                     <SubSection icon={Palette} label={t(dict, "settings.org.brandColor")} />
-                    {canBrand ? (
+                    {canBrandColor ? (
                       <OrgBrandColor orgId={active.id} initialBranding={active.branding} />
                     ) : (
                       <p className="flex items-center gap-2 text-sm text-slate-500">
-                        <PlanBadge feature="branding" />
+                        <PlanBadge feature="dashboard.branding" />
                         {t(dict, "settings.upgrade.brandColor")}{" "}
                         <Link href={routes.billing(orgSlug)} className="text-purple-600 underline">
                           {t(dict, "settings.upgrade.link")}
