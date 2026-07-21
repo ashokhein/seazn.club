@@ -34,6 +34,8 @@ export async function invalidateOrgEntitlements(orgId: string): Promise<void> {
  * Resolve a single entitlement for an org (cache-aside).
  * Priority (v3/07 §3): org_entitlement_overrides → competition pass (community
  * orgs only, when a competition is in scope) → plan_entitlements → null (deny).
+ * The override wins FIELD BY FIELD, not wholesale: a null column is no answer,
+ * not a deny, and falls through — same as the SQL resolver's coalesce.
  * Falls back to 'community' plan when no subscription row exists.
  */
 async function resolve(
@@ -55,15 +57,9 @@ async function resolveFromDb(
   featureKey: string,
   competitionId?: string,
 ): Promise<Resolved | null> {
-  // Expired overrides are dead (v3/08 §1 admin expiry) — ignored here; the
-  // admin panel shows and sweeps them.
-  const [ov] = await sql<Resolved[]>`
-    select bool_value, int_value
-    from org_entitlement_overrides
-    where org_id = ${orgId} and feature_key = ${featureKey}
-      and (expires_at is null or expires_at > now())`;
-  if (ov) return ov;
-
+  // Plan first: both the pass branch and the override overlay need it, and it
+  // must be resolved exactly once.
+  //
   // A comped plan past its end date resolves as community at read time —
   // no scheduler flips it, the resolution does (bounded by the 5-min cache).
   const [orgPlan] = await sql<{ plan_key: string }[]>`
@@ -106,6 +102,7 @@ async function resolveFromDb(
   // a strict superset), which is also what lets it survive a later downgrade.
   // Keys missing from the pass matrix fall through to the plan row, so
   // Pro-only features stay Pro on a passed competition.
+  let base: Resolved | null = null;
   if (planKey === "community" && competitionId) {
     const [pass] = await sql<Resolved[]>`
       select pe.bool_value, pe.int_value
@@ -113,14 +110,41 @@ async function resolveFromDb(
       join plan_entitlements pe
         on pe.plan_key = cp.pass_key and pe.feature_key = ${featureKey}
       where cp.competition_id = ${competitionId} and cp.org_id = ${orgId}`;
-    if (pass) return pass;
+    base = pass ?? null;
+  }
+  if (!base) {
+    const [pe] = await sql<Resolved[]>`
+      select bool_value, int_value
+      from plan_entitlements
+      where plan_key = ${planKey} and feature_key = ${featureKey}`;
+    base = pe ?? null;
   }
 
-  const [pe] = await sql<Resolved[]>`
+  // A live override wins — but a null `bool_value` is NO ANSWER, not a deny, so
+  // it falls through to the base. That is exactly the SQL resolver's coalesce
+  // (org_has_feature, V306), and it is what stops an int-only override (say a
+  // raised quota) from silently switching the feature itself off.
+  //
+  // `int_value` is NOT coalesced, deliberately. A null int_value is a real,
+  // load-bearing answer on this column: it means UNLIMITED (lib/auth.ts:216,
+  // and the admin route writes `int_value ?? null` for exactly that grant).
+  // Falling a null int through to the plan row would turn every staff
+  // "unlimited" grant back into the plan's number. The asymmetry is the schema's,
+  // not ours: only bool_value overloads null as "unset". org_has_feature returns
+  // a boolean and never reads int_value, so nothing here can drift from SQL.
+  //
+  // Expired overrides are dead (v3/08 §1 admin expiry) — ignored here; the
+  // admin panel shows and sweeps them.
+  const [ov] = await sql<Resolved[]>`
     select bool_value, int_value
-    from plan_entitlements
-    where plan_key = ${planKey} and feature_key = ${featureKey}`;
-  return pe ?? null;
+    from org_entitlement_overrides
+    where org_id = ${orgId} and feature_key = ${featureKey}
+      and (expires_at is null or expires_at > now())`;
+  if (!ov) return base;
+  return {
+    bool_value: ov.bool_value ?? base?.bool_value ?? null,
+    int_value: ov.int_value,
+  };
 }
 
 /** Returns true if the org has a boolean feature enabled. */
