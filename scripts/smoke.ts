@@ -658,8 +658,11 @@ async function smokePlanMatrix(): Promise<void> {
   // plan_entitlements live for the KEY LIST only; every VALUE now comes from the
   // cache-aside resolver (300s TTL), so a read here CAN serve pre-flip answers.
   // What keeps it honest is setPlan: it busts `ent:{org}:*` after its raw-SQL
-  // write, so the flip is visible to the very next read. Never reintroduce a
-  // plan flip that writes subscriptions directly and skips setPlan.
+  // write, so the flip is visible to the very next read. The rule is broader
+  // than plans — EVERY raw-SQL write that changes what the resolver would
+  // answer must bust. Never reintroduce a plan flip that writes subscriptions
+  // directly and skips setPlan, nor an override write that touches
+  // org_entitlement_overrides directly and skips insertEntitlementOverride.
   const readEnt = async (s: Session, orgId: string) =>
     (await call(s, `/api/orgs/${orgId}/entitlements`)) as {
       plan_key: string;
@@ -2768,21 +2771,37 @@ function smokeDb() {
   });
 }
 
-/** Raise (or grant) an org-wide entitlement override to `intValue` — the same
- *  row /admin/entitlements writes. Relies on the fail-open entitlement cache
- *  (no REDIS_URL locally → reads hit Postgres fresh), mirroring v1Suite's
- *  api.access override. */
-async function insertEntitlementOverride(orgId: string, featureKey: string, intValue: number): Promise<void> {
+/** Grant an org-wide entitlement override — the same row /admin/entitlements
+ *  writes. A boolean `value` lands in bool_value (a flag grant, e.g.
+ *  api.access), a number in int_value (a graded cap, e.g.
+ *  scheduling.ai.runs_per_division.max).
+ *
+ *  This is a raw-SQL write behind the resolver's back, exactly like setPlan's,
+ *  so it busts the org's entitlement cache afterwards for the same reason: both
+ *  call sites resolve (and therefore CACHE) the very key they are about to lift
+ *  in the 402 check immediately above, so on any Redis-backed target the
+ *  follow-up assertion would read the cached deny for up to 300s. `owner` is
+ *  required, not optional — the bust needs a live owner session, and an
+ *  optional parameter is an invitation for a future call site to skip it. */
+async function insertEntitlementOverride(
+  owner: Session,
+  orgId: string,
+  featureKey: string,
+  value: number | boolean,
+): Promise<void> {
+  const boolValue = typeof value === "boolean" ? value : null;
+  const intValue = typeof value === "number" ? value : null;
   const sql = smokeDb();
   try {
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value, int_value)
-      values (${orgId}, ${featureKey}, null, ${intValue})
+      values (${orgId}, ${featureKey}, ${boolValue}, ${intValue})
       on conflict (org_id, feature_key) do update
-        set bool_value = null, int_value = ${intValue}, expires_at = null`;
+        set bool_value = ${boolValue}, int_value = ${intValue}, expires_at = null`;
   } finally {
     await sql.end();
   }
+  await bustOrgEntitlements(owner, orgId);
 }
 
 /** The most recent competition_events payload of a given type, or null. */
@@ -2891,7 +2910,7 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
     );
 
     // ---- Admin override lifts the cap → the next run is admitted (needs model) ----
-    await insertEntitlementOverride(freeOrg, "scheduling.ai.runs_per_division.max", 6);
+    await insertEntitlementOverride(free, freeOrg, "scheduling.ai.runs_per_division.max", 6);
     if (fixture) {
       const lifted = await v1(free, `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`, "POST", {
         instruction: "spread the fixtures across both courts",
@@ -4160,9 +4179,7 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   check("v1 API keys 402-gated on api.access", denied.status === 402 && denied.json.error?.code === "PAYMENT_REQUIRED");
 
   if (db) {
-    await db`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
-             values (${orgId}, 'api.access', true)
-             on conflict (org_id, feature_key) do update set bool_value = true`;
+    await insertEntitlementOverride(admin, orgId, "api.access", true);
     const minted = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
     const secret = v1data<{ id: string; secret: string }>(minted).secret;
     check("v1 API key minted once (sc_)", minted.status === 201 && secret.startsWith("sc_"));
@@ -5163,12 +5180,13 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
 }
 
 /**
- * Drop an org's server-side entitlement cache (`ent:{org}:*`) after a SQL flip.
- * lib/entitlements resolves cache-aside with a 300s TTL, so on any Redis-backed
- * target (staging, a prod smoke run) an entitlement resolved BEFORE the flip
- * stays cached and the flip never lands inside the run. Locally and in CI
- * REDIS_URL is normally unset — the cache layer is inert there and this is a
- * cheap no-op round-trip.
+ * Drop an org's server-side entitlement cache (`ent:{org}:*`) after a raw-SQL
+ * write that the resolver cannot see — a plan flip (setPlan) or an override
+ * grant (insertEntitlementOverride). lib/entitlements resolves cache-aside with
+ * a 300s TTL, so on any Redis-backed target (staging, a prod smoke run) an
+ * entitlement resolved BEFORE the write stays cached and the write never lands
+ * inside the run. Locally and in CI REDIS_URL is normally unset — the cache
+ * layer is inert there and this is a cheap no-op round-trip.
  *
  * There is no public invalidation endpoint, so this rides the superadmin
  * entitlement-override route (its POST and DELETE both call
@@ -5196,13 +5214,36 @@ async function bustOrgEntitlements(owner: Session, orgId: string): Promise<void>
   };
   const KEY = "smoke.cache.bust";
   const path = `/api/admin/orgs/${orgId}/entitlement-override`;
-  await setOwnerStaff(true);
+  // The elevate is INSIDE the try: its update commits before the call returns,
+  // so anything that throws between the commit and the try entering would leave
+  // the org owner a live superadmin with nothing to restore it. `finally` runs
+  // whether or not the elevate itself succeeded, and demoting an already-plain
+  // user is a harmless no-op.
   try {
-    await raw(owner, path, "POST", {
+    await setOwnerStaff(true);
+    // Both calls THROW on non-2xx rather than check(). raw() returns a status
+    // and never throws, so an unasserted 401/404 here is a silent no-op: no
+    // invalidation, no override row, run still green — the exact bug this
+    // function exists to fix, with no signal. A throw is stronger than a check
+    // because it stops the run at the cause instead of letting every later
+    // assertion read a stale cache; it also surfaces a failed DELETE, which is
+    // the only thing standing between this and a stranded override row.
+    const posted = await raw(owner, path, "POST", {
       feature_key: KEY,
-      reason: "smoke: drop cached entitlements after a SQL plan flip",
+      reason: "smoke: drop cached entitlements after a raw entitlement write",
     });
-    await raw(owner, path, "DELETE", { feature_key: KEY });
+    if (posted.status < 200 || posted.status >= 300) {
+      throw new Error(
+        `entitlement-cache bust POST failed (${posted.status}): ${JSON.stringify(posted.json)}`,
+      );
+    }
+    const deleted = await raw(owner, path, "DELETE", { feature_key: KEY });
+    if (deleted.status < 200 || deleted.status >= 300) {
+      throw new Error(
+        `entitlement-cache bust DELETE failed (${deleted.status}) — the ${KEY} override is stranded: ` +
+          JSON.stringify(deleted.json),
+      );
+    }
   } finally {
     await setOwnerStaff(false);
   }
@@ -5307,10 +5348,22 @@ async function cleanup(tag: string): Promise<void> {
     // while the trigger only fires `before insert`, so an UPDATE breaks the
     // chain just as permanently. Nothing repairs it afterwards. A handful of
     // leftover user rows per run is the cheaper cost by a wide margin.
-    // Currently that is oneTrialSuite's staff account and platformRevenueSuite's
-    // admin (the revenue page logs revenue_report_viewed); the subquery keeps it
-    // correct for any suite that becomes a staff writer later. Their ORGS are
-    // still removed — the org purge above keys on the same `emails` list.
+    // That set is no longer two accounts. It is oneTrialSuite's staff account,
+    // platformRevenueSuite's admin (the revenue page logs
+    // revenue_report_viewed), AND the OWNER of every org that went through
+    // setPlan or insertEntitlementOverride — both bust the entitlement cache
+    // through the superadmin override route, which logs an
+    // entitlement_override + entitlement_override_removed pair under that
+    // owner's id. Measured on a full local run: 16 distinct owners become bust
+    // actors (26 override/override_removed pairs), 19 distinct staff actors in
+    // total — so ~19 retained user rows per run, up from ~2. It is the
+    // accepted price of a bust that actually works: the alternative is a
+    // dedicated staff account, which needs its own signIn, and
+    // /api/auth/magic-link is rate limited to 5 per 300s per IP and fails
+    // CLOSED wherever Redis is set. Do not engineer around the residue — the
+    // subquery keeps this correct for any suite that becomes a staff writer
+    // later, and their ORGS are still removed (the org purge above keys on the
+    // same `emails` list).
     const users = await sql`
       delete from users
       where email = any(${emails})
