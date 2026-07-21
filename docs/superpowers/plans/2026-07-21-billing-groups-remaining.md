@@ -3,8 +3,9 @@
 Branch `feat/billing-groups`, rebased on `feat/event-pass-e2e-and-entitlement-gaps` (134beecf).
 Spec: `docs/superpowers/specs/2026-07-21-billing-groups-design.md`. Migration: V310.
 
-Status 2026-07-21: rounds 3+4 committed (`ffb16eaf`). Round-5 review in flight — three findings
-listed under §1.
+Status 2026-07-21: rounds 3+4+5 committed (through `5262c6e9`). Vitest **2521 passed / 1 failed
+/ 9 skipped** (the 1 is base's deliberate `pass-scoping-guard`). Smoke **500 passed / 3 failed**
+(all 3 base's — see §1c).
 
 ## Verification baseline (reproduce before trusting any green)
 
@@ -24,9 +25,9 @@ rtk proxy npx vitest run
 - `pass-scoping-guard.test.ts` is deliberately red on the base branch; its 6 sites are all
   base's. Do not weaken it.
 
-## 1. In flight — round-5 findings
+## 1. Round-5 findings — ALL FIXED in `6906ba7e`
 
-- [ ] **Blocker: `cancelGroupIfEmpty` still has the race its comment claims to close**
+- [x] **`cancelGroupIfEmpty` still had the race its comment claimed to close**
       (`billing-groups.ts:348`). Its "emptiness test and status flip are ONE statement, so
       there is no window" is false. In READ COMMITTED the statement snapshot is taken at
       statement START; the CTE's `for update` blocks on the group lock attach holds, and when
@@ -37,14 +38,19 @@ rtk proxy npx vitest run
       live org in it. Fix (also verified: `UPDATE 0`): transaction, `for update` as statement
       one, org count as a SEPARATE statement — a new statement gets a new snapshot. Keep
       claim-before-Stripe, rollback-on-refusal, `not_empty`, and Stripe outside the txn.
-- [ ] **Major: account deletion discards `cancelBillingGroup`'s new `false`**
-      (`app/api/users/me/route.ts:130`). On a failed Stripe cancel the subscription stays live
-      and the user is anonymised anyway, so `owner_user_id` points at a deleted user, every
-      billing route 403s, and nobody can ever cancel it — the exact outcome the comment above
-      that loop says the code prevents. The sweep cannot see it either (its predicate is
-      `quantity_paid <> org count`). Fail the deletion rather than destroy the data.
-- [ ] Minor: `payment_method_types: ["card"]` on the transfer SetupIntent
-      (`billing-groups.ts:815`) — Stripe guidance is to omit it. Drop it or justify it.
+- [x] **Account deletion discarded `cancelBillingGroup`'s `false`**
+      (`app/api/users/me/route.ts`). On a failed Stripe cancel the subscription stayed live and
+      the user was anonymised anyway, so `owner_user_id` pointed at a deleted user, every
+      billing route 403s, and nobody could ever cancel it — the exact outcome the comment above
+      that loop says the code prevents. The sweep could not see it either (predicate is
+      `quantity_paid <> org count`). Now 503s before the anonymise; every prior step is
+      idempotent, so a retry completes the deletion.
+- [x] `payment_method_types: ["card"]` dropped from the transfer SetupIntent — it disabled
+      dynamic payment methods and would have left a SEPA/Bacs payer unable to accept at all.
+      **Loose end:** `finishHandover` still lists and detaches `{ type: "card" }` only, so a
+      departing payer's NON-card method survives the handover and keeps funding a group they no
+      longer control. Narrow (needs the old payer to have paid by SEPA/Bacs), but it is exactly
+      the property the two-phase design exists to guarantee.
 
 Done in `ffb16eaf`: renewal records the INVOICED seats (invoice line, pre-write item as
 fallback); renewal true-up moved under `syncGroupQuantity`'s lock so `quantity_paid` is never
@@ -54,6 +60,39 @@ group lock and syncs quantity; Stripe `apiVersion` pinned + `timeout: 10_000` +
 `maxNetworkRetries: 0` (a retried item update is a retried charge) + `lock_timeout`/
 `statement_timeout` on both lock-over-network transactions; transfer offer burned before the
 handover.
+
+## 1c. Smoke — what running it found (2026-07-21)
+
+Recipe: prod build, server on a port **you have checked is free** (3100 is another session's —
+verify with `lsof -nP -iTCP:<port> -sTCP:LISTEN`, a health check will happily answer from
+theirs), throwaway schema, then:
+
+```bash
+psql "$URL" -c 'drop schema if exists seazn_smokeverify cascade'
+DB_SCHEMA=seazn_smokeverify npm run db:apply && npm run sync:sports
+SMOKE_BASE=http://127.0.0.1:3111 DB_SCHEMA=seazn_smokeverify npm run test:smoke
+```
+
+Now **500 passed / 3 failed**. Fixed here (`ef6ca36a`, `5262c6e9`):
+
+- Four `subscriptions.org_id` reads left over from V310 — the first threw, `main()` caught it,
+  and the run printed a tally having silently skipped 22 later checks.
+- Teardown aborted on `subscriptions_owner_fk`: groups outlive their orgs, and
+  `owner_user_id -> users(id)` has no ON DELETE. **If a hard user-purge job is ever written it
+  hits this too** — today nothing hard-deletes users, the account route soft-deletes.
+- `/admin/orgs` was a hard 500 on `s.org_id`.
+
+The remaining 3 are the BASE branch's, not this one:
+
+- [ ] `pay card method is Pro-gated on community (402)`
+- [ ] `plg free page carries the 'Powered by' attribution CTA`
+- [ ] `p72: community card division reads payments_unavailable (P2-10)`
+
+All three are V309 (`134beecf`, base) making `branding` and `registration.paid` free for
+community and re-monetising by fee ladder. Its smoke expectations were never updated — smoke
+had not been run since. Deliberately NOT changed here: whether each is a stale assertion or
+genuinely unfinished V309 work (its own header defers a `stripe-connect.ts` gate simplification
+to "a later task") is that change's owner's call, and guessing would mask the difference.
 
 ## 1b. CI gap (found 2026-07-21, wider than this branch)
 
@@ -84,7 +123,9 @@ Staff actions now hit a GROUP, not an org. Each surface needs to say how many or
 affects.
 
 - [ ] `/admin/entitlements`
-- [ ] `/admin/orgs` + `admin-org-actions.tsx`
+- [x] `/admin/orgs` — was a 500 on the dropped `s.org_id`; now joins through
+      `organizations.subscription_id` and shows a "group of N" chip beside the plan.
+- [ ] `admin-org-actions.tsx` — still needs the group-size warning on destructive actions
 - [ ] `admin-plan-panel.tsx` — a staff plan grant now moves every org in the group
 - [ ] `/admin/billing-events`
 - [ ] `/admin/revenue` — **per-org revenue arithmetic breaks once a group holds two orgs**
