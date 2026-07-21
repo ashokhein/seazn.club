@@ -2,9 +2,10 @@
 
 import Link from "@/components/ui/console-link";
 import { usePathname } from "next/navigation";
-import { featureReason } from "@/lib/feature-copy";
+import { featurePlan, featureReason } from "@/lib/feature-copy";
 import { PlanBadge } from "@/components/plan-badge";
-import { formatMinor, passPrice, proPrice } from "@/lib/currency";
+import { usePassActive } from "@/components/competition-pass-provider";
+import { formatMinor, passPrice, proPlusPrice, proPrice } from "@/lib/currency";
 import { routes } from "@/lib/routes";
 
 /**
@@ -55,31 +56,117 @@ function passHrefFromPath(pathname: string | null): string | null {
 }
 
 /**
+ * The credit an owned pass earns against Pro, phrased to match what
+ * `server/usecases/pass-credit.ts` will actually do.
+ *
+ * Every qualifier in this sentence is load-bearing:
+ * - "bought" — a staff-granted / comped pass has a null
+ *   `stripe_payment_intent` and returns `unpaid_pass`. Nobody paid, so nothing
+ *   is credited, and the copy must not say otherwise to a comped org.
+ * - "in the last 30 days" — `PASS_CREDIT_WINDOW_DAYS`, inclusive.
+ * - "your first Pro invoice" — it is a customer BALANCE credit, applied by
+ *   Stripe to the next invoice, not a discount on the checkout total.
+ *
+ * Refund, currency mismatch and already-credited also decline, but each of
+ * those is a state the buyer either caused or cannot act on, and naming them
+ * here would turn a goodwill line into terms and conditions.
+ */
+const creditLine = (plan: string) =>
+  `An Event Pass bought in the last 30 days comes off your first ${plan} invoice in full.`;
+
+/**
+ * Name and monthly price of the plan that actually unlocks a key.
+ *
+ * The two-path card can hardcode Pro — every key in PASS_FEATURES is a Pro
+ * key — but the pass-owned card also renders for features the pass never
+ * covered, and some of those (officials.auto, api.write, domains.custom …)
+ * are Pro Plus. Reading the plan from the same helper <PlanBadge> uses keeps
+ * the button from saying "Go Pro" directly beneath a PRO PLUS badge.
+ */
+function paidPlan(feature: string): { name: string; price: string } {
+  const plus = featurePlan(feature) === "pro_plus";
+  const minor = plus ? proPlusPrice("monthly", "usd") : proPrice("monthly", "usd");
+  return { name: plus ? "Pro Plus" : "Pro", price: `${formatMinor(minor, "usd")}/mo` };
+}
+
+/**
  * THE upgrade-moment component (doc 10 §3): one contextual paywall, rendered
  * exactly where a limit bites — adding a division, toggling ball-by-ball,
  * publishing a 2nd dashboard, enabling DLS, creating an API key. The copy
  * derives from the same feature_key the 402 response carries, so a blocked
  * server call and a pre-emptively gated control read identically.
  *
- * Inside a competition, pass-liftable gates offer BOTH paths (v3/07 §3):
- * a one-time Event Pass for this competition, or Pro for the whole org.
+ * Three states (spec 2026-07-21 D1):
+ *
+ * | in a competition | pass held | feature liftable | renders                  |
+ * |------------------|-----------|------------------|--------------------------|
+ * | yes              | no        | yes              | Event Pass + Pro         |
+ * | yes              | YES       | yes              | Pro only — pass ceiling  |
+ * | yes              | YES       | no               | Pro only — not on pass   |
+ * | anything else    |           |                  | Pro only (as before)     |
+ *
+ * The middle row is the fix: a gate rendering for a key the pass DOES lift,
+ * while a pass is active, means the buyer has used everything that $29 bought.
+ * Offering it again sells them the same thing twice and leaves them blocked.
  */
 export function UpgradeGate({ feature, href = "/settings/billing", compact = false }: Props) {
   const reason = featureReason(feature);
   const pathname = usePathname();
-  const passHref = PASS_FEATURES.has(feature) ? passHrefFromPath(pathname) : null;
+  // False outside a competition (no provider) — org-level gates are untouched.
+  const passOwned = usePassActive();
+  const liftable = PASS_FEATURES.has(feature);
+  const passHref = liftable && !passOwned ? passHrefFromPath(pathname) : null;
 
   if (compact) {
     return (
       <Link
         href={passHref ?? href}
         data-feature={feature}
+        data-pass-owned={passOwned || undefined}
         className="inline-flex items-center gap-1.5 rounded-full bg-purple-50 px-3 py-1 text-xs font-medium text-purple-700 hover:bg-purple-100"
       >
         <LockIcon />
         <PlanBadge feature={feature} />
         {reason} <span className="font-semibold underline">Upgrade →</span>
       </Link>
+    );
+  }
+
+  // The org already holds this competition's pass. One path out, and an
+  // acknowledgement that they have already paid us once for this competition.
+  if (passOwned) {
+    const plan = paidPlan(feature);
+    return (
+      <div
+        data-feature={feature}
+        data-pass-owned
+        className="rounded-lg border border-purple-200 bg-purple-50 p-4 text-sm text-purple-900"
+      >
+        {/* The console's floodlit signal for "this is on" (globals.css
+            .app-eyebrow: condensed caps, lime tick). Same device as a LIVE
+            fixture — the state is read before the refusal is. */}
+        <p className="app-eyebrow">Event Pass active</p>
+        <p className="mt-2 flex items-center gap-2 font-medium">
+          <LockIcon />
+          <PlanBadge feature={feature} />
+          {reason}
+        </p>
+        {/* The eyebrow above already says the pass is on, so this line does
+            one job: why the pass they own cannot clear THIS gate. */}
+        <p className="mt-2">
+          {liftable
+            ? "You've used everything the Event Pass includes here."
+            : "This one is not included in the Event Pass."}
+        </p>
+        <div className="mt-3">
+          <Link href={href} className="btn btn-primary px-4 py-2 text-sm">
+            Go {plan.name} — {plan.price}
+          </Link>
+        </div>
+        <p className="mt-2 text-xs text-purple-700">
+          {plan.name} covers every competition in your organization. {creditLine(plan.name)}
+        </p>
+      </div>
     );
   }
 

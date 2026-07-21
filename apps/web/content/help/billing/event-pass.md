@@ -47,6 +47,10 @@ The annual club championship, a one-off fundraiser, a school sports day: events 
 
 **Do I need a pass to take card entry fees?** No — every plan can charge entry fees, Community included. The pass makes them **cheaper**: 5% instead of 8%. [The fee ladder](/help/billing/plans#the-platform-fee-on-entry-fees).
 
+**I own the pass and I've hit a limit again — will it offer me another one?** No. Once a competition holds a pass, every upgrade prompt inside it drops the $29 button and shows Pro on its own: either you've used everything the pass includes, or the feature was never on the pass. You can't buy the same competition a second pass.
+
+**Does the pass count toward Pro if I upgrade later?** Yes. A pass **bought** in the last 30 days comes off your first Pro (or Pro Plus) invoice in full, as an account credit — you'll see it applied on the invoice, not as a discount at checkout. Passes we granted you carry no credit, because nothing was charged.
+
 **What happens to the passed competition if my Pro subscription lapses?** It keeps everything the pass grants — the pass is bought outright for that event and survives a downgrade. Only the rest of your org falls back to Community limits ([what downgrading freezes](/help/billing/downgrade)).
 
 **Where do I buy one?** On the competition's settings page, next to the features it unlocks.

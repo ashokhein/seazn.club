@@ -130,6 +130,17 @@ test.describe.serial("event pass gate (community org)", () => {
     await page.goto(passHref!);
     await expect(page.locator("[data-pass-active]")).toBeVisible({ timeout: 20_000 });
 
+    // …and from here on, no gate under this competition offers the pass a
+    // second time (spec D1). The competition-wide schedule board is Pro-only
+    // and the pass never lifted it, so the paywall still renders — but as the
+    // pass-owned card: one Pro path, no $29 button.
+    await page.goto(passHref!.replace(/\/upgrade$/, "/schedule"));
+    const owned = page.locator("[data-pass-owned]").first();
+    await expect(owned).toBeVisible({ timeout: 20_000 });
+    await expect(owned).toContainText("Event Pass active");
+    await expect(owned).not.toContainText("$29");
+    await expect(page.locator("[data-pass-cta]")).toHaveCount(0);
+
     const sibling = await apiJson<{ id: string }>(request, "/api/v1/competitions", "POST", {
       name: `Pass Gate Sibling ${TAG}`,
       visibility: "private",
