@@ -247,8 +247,23 @@ active_org_count = count(*) from organizations
 
 - **Increment** — update quantity now, `proration_behavior: 'create_prorations'`,
   charge immediately. Set `quantity_paid` to the new value.
-- **Decrement** — no Stripe call. Let renewal true it up, and reset
-  `quantity_paid` to the actual count on `invoice.paid`.
+- **Decrement** — update quantity with `proration_behavior: 'none'`, so no credit
+  is issued and the customer keeps the slot they paid for this period, but
+  future invoices come down. Reset `quantity_paid` to the actual count on a
+  `subscription_cycle` invoice.
+
+> **Correction, 2026-07-21.** This originally said "decrement makes no Stripe
+> call; renewal trues it up." **That was wrong and it shipped into an
+> implementation before review caught it.** Renewal invoices are cut from
+> Stripe's subscription ITEM QUANTITY; Stripe never recomputes anything from our
+> database at cycle time. Leaving the item alone meant a group that shrank from
+> eight orgs to three kept paying for eight for ever. The decrement must reach
+> Stripe — `proration_behavior: 'none'` is what preserves the no-refunds intent
+> while still lowering the next invoice.
+>
+> Corollary: `quantity_paid` is a local record of what has been PAID FOR this
+> period, used to keep a freed slot reusable at no charge. It is not, and never
+> was, what Stripe bills from.
 
 A removed org therefore frees a paid slot reusable at no charge until the period
 ends — worth up to eleven months on annual, and worth saying out loud in the UI.
