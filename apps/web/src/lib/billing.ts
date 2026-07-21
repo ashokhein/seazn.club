@@ -301,27 +301,37 @@ export async function downgradeToCommunity(orgId: string): Promise<void> {
  * even if Stripe is unreachable; the subscription.deleted webhook converges the
  * two either way.
  */
-export async function cancelBillingGroup(subscriptionId: string): Promise<void> {
+export async function cancelBillingGroup(subscriptionId: string): Promise<boolean> {
   const [sub] = await sql<{ stripe_subscription_id: string | null; status: string | null }[]>`
     select stripe_subscription_id, status from subscriptions where id = ${subscriptionId}`;
-  if (!sub) return;
+  if (!sub) return false;
   if (hasLiveSubscription(sub) && sub.stripe_subscription_id) {
     try {
       await getStripe().subscriptions.cancel(sub.stripe_subscription_id);
     } catch (err) {
-      // Loud, not silent: this is the one path where a failed cancel means the
-      // customer keeps being charged with no one able to stop it.
+      // Loud, and NOT followed by a local write. Marking the row `canceled` when
+      // Stripe refused is the worst of both: the customer keeps being charged,
+      // and the row drops out of every "live subscription" filter — including
+      // the reconcile sweep's — so nothing ever retries. Leaving it live is what
+      // keeps it visible and retryable.
       console.error("cancelBillingGroup: Stripe cancel failed", subscriptionId, err);
+      return false;
     }
   }
   await sql`
     update subscriptions
     set plan_key = 'community', status = 'canceled', cancel_at_period_end = false,
         comped_until = null, updated_at = now(),
+        -- Paid slots die with the subscription. A new subscription cannot
+        -- inherit the old one's seats, so leaving quantity_paid at 8 would make
+        -- billedQuantity quote 8 seats on the re-buy checkout of a group that
+        -- now holds three orgs.
+        quantity_paid = 1,
         status_changed_at = case when status is distinct from 'canceled'
                                  then now() else status_changed_at end
     where id = ${subscriptionId}`;
   await invalidateGroupEntitlements(subscriptionId);
+  return true;
 }
 
 /** Map a Stripe subscription status to our subscription status enum. */

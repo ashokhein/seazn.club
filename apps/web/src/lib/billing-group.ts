@@ -22,7 +22,7 @@ export async function subscriptionIdForOrg(orgId: string): Promise<string | null
 
 /**
  * The group an org bills through. Throws rather than returning null: every org
- * gets a group at creation (V309 backfilled the rest), so a missing one is a
+ * gets a group at creation (V310 backfilled the rest), so a missing one is a
  * broken invariant, not a state a caller should branch on.
  */
 export async function requireSubscriptionIdForOrg(orgId: string): Promise<string> {
@@ -35,6 +35,16 @@ export async function requireSubscriptionIdForOrg(orgId: string): Promise<string
 export async function orgIdsInGroup(subscriptionId: string): Promise<string[]> {
   const rows = await sql<{ id: string }[]>`
     select id from organizations where subscription_id = ${subscriptionId} order by created_at`;
+  return rows.map((r) => r.id);
+}
+
+/** Orgs that still exist — the set the bill, the cap and the plan all resolve
+ *  against. Same predicate as activeOrgCount, which is the point. */
+export async function liveOrgIdsInGroup(subscriptionId: string): Promise<string[]> {
+  const rows = await sql<{ id: string }[]>`
+    select id from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null
+     order by created_at`;
   return rows.map((r) => r.id);
 }
 
@@ -54,17 +64,18 @@ export async function activeOrgCount(subscriptionId: string): Promise<number> {
 }
 
 /**
- * The quantity Stripe should be on:
+ * Seats to BUY at checkout: `max(active_org_count, quantity_paid)`.
  *
- *     stripe_quantity = max(active_org_count, quantity_paid)
+ * Note this is not the same number as the live subscription's item quantity,
+ * which syncGroupQuantity keeps on the plain active count (Stripe cuts renewal
+ * invoices from that item, so a quantity we never lower is a quantity that never
+ * comes down). The two differ only inside a period where a slot has been paid
+ * for and freed, and the difference is deliberate: a re-add costs nothing, but a
+ * NEW subscription cannot inherit the old one's paid slots, so a re-buy quotes
+ * the higher of the two and `quantity_paid` is reset when a subscription dies.
  *
- * Increments prorate and charge immediately. Decrements make no Stripe call and
- * let renewal true them up, which is what makes a removed org's slot reusable at
- * no charge until the period ends — worth up to eleven months on an annual plan.
- *
- * It also removes every refund path: because the quantity never drops mid
- * period, add/remove cycling can only ever cost the customer money it has
- * already agreed to, and can never produce a credit to farm.
+ * Direction of travel is where the money is; see syncGroupQuantity for the
+ * proration rules that keep add/remove cycling from ever producing a credit.
  */
 export async function billedQuantity(subscriptionId: string): Promise<number> {
   const [row] = await sql<{ quantity_paid: number }[]>`
@@ -74,18 +85,12 @@ export async function billedQuantity(subscriptionId: string): Promise<number> {
   return Math.max(active, paid);
 }
 
-/**
- * Whether adding one more org to this group would need a Stripe quantity bump.
- * False when a previously-freed slot is still paid for, which is exactly the
- * case that must not be charged twice.
- */
-export async function needsQuantityIncrease(subscriptionId: string): Promise<boolean> {
-  const [row] = await sql<{ quantity_paid: number }[]>`
-    select quantity_paid from subscriptions where id = ${subscriptionId}`;
-  const paid = row?.quantity_paid ?? 1;
-  const active = await activeOrgCount(subscriptionId);
-  return active + 1 > paid;
-}
+// `needsQuantityIncrease` lived here and was deleted rather than kept "for the
+// UI": it had no callers and it answered `active + 1 > quantity_paid`, which is
+// not the test syncGroupQuantity actually applies (that also weighs what Stripe
+// currently holds). A second, unused statement of the pricing rule is a trap —
+// whoever wires up an "adding this org will cost you $9" label would have got a
+// different answer from the one the charge uses.
 
 /** Groups a user pays for. Usually one; several only after a detach. */
 export async function groupIdsOwnedBy(userId: string): Promise<string[]> {
@@ -96,7 +101,7 @@ export async function groupIdsOwnedBy(userId: string): Promise<string[]> {
 
 /**
  * Refuse to put another org into a group that is already at its plan's
- * `orgs.max_owned` — community 1, Pro 5, Pro Plus 10 (V309).
+ * `orgs.max_owned` — community 1, Pro 5, Pro Plus 10 (V310).
  *
  * The limit is resolved through a member org because entitlements are
  * org-addressed; every org in the group resolves the same plan, so any of them
@@ -106,21 +111,52 @@ export async function groupIdsOwnedBy(userId: string): Promise<string[]> {
  * enforced: a user holding two community groups would satisfy this check twice
  * over while owning two free orgs.
  *
- * `knownOrgIds` lets a caller that is already inside a transaction holding
- * `select ... for update` on the group pass the membership it read THERE, so
- * the cap is counted against the same snapshot the lock protects. Two
- * concurrent attaches would otherwise both count through this module's own
- * connection and could both see the pre-move state.
+ * NOT callable from inside a transaction — see groupOrgLimit.
+ *
+ * Has no production caller left: both real call sites (attach, createOrgForUser)
+ * need the count taken under a row lock, so they use groupOrgLimit +
+ * assertWithinGroupCap directly. It survives because it is a pure COMPOSITION of
+ * those same two primitives rather than a second statement of the rule — unlike
+ * the deleted `needsQuantityIncrease`, it cannot drift from what production
+ * enforces — and because it keeps the cap independently testable.
  */
-export async function assertGroupMayHoldAnotherOrg(
+export async function assertGroupMayHoldAnotherOrg(subscriptionId: string): Promise<void> {
+  // LIVE orgs only, matching activeOrgCount. A soft-deleted org bills nothing
+  // and holds no quota, so counting it would refuse a Pro group its fifth real
+  // org because two dead ones still carry the pointer — and resolving the
+  // group's limit through a deleted org is the wrong org to ask.
+  const orgIds = await liveOrgIdsInGroup(subscriptionId);
+  if (orgIds.length === 0) return;
+  const limit = await groupOrgLimit(subscriptionId, orgIds);
+  assertWithinGroupCap(orgIds.length, limit);
+}
+
+/**
+ * The group's `orgs.max_owned`, resolved WITHOUT a transaction. null means
+ * unlimited, or that there is no member org to resolve a plan through.
+ *
+ * Split out because `getLimit` queries through this module's own pool
+ * connection (and Redis), and calling it from inside a `sql.begin` acquires a
+ * SECOND connection while the first holds row locks. `DB_POOL_MAX` defaults to
+ * 5 and postgres.js queues acquisitions with no timeout, so five concurrent
+ * attaches would deadlock the whole process's database access — not just
+ * billing. Callers that need the cap under a lock resolve it here first and
+ * apply it with assertWithinGroupCap inside the transaction.
+ */
+export async function groupOrgLimit(
   subscriptionId: string,
   knownOrgIds?: string[],
-): Promise<void> {
-  const orgIds = knownOrgIds ?? (await orgIdsInGroup(subscriptionId));
-  if (orgIds.length === 0) return;
-  const limit = await getLimit(orgIds[0], "orgs.max_owned");
+): Promise<number | null> {
+  const orgIds = knownOrgIds ?? (await liveOrgIdsInGroup(subscriptionId));
+  if (orgIds.length === 0) return null;
+  return getLimit(orgIds[0], "orgs.max_owned");
+}
+
+/** Apply a limit resolved by groupOrgLimit to a count read under the lock.
+ *  Pure, so it is safe to call from inside a transaction. */
+export function assertWithinGroupCap(currentOrgCount: number, limit: number | null): void {
   // null is UNLIMITED; 0 means the plan has no row for the key at all, and both
   // that and a real 1 correctly refuse a group that already holds one org.
   if (limit === null) return;
-  if (orgIds.length + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
+  if (currentOrgCount + 1 > limit) throw new PaymentRequiredError("orgs.max_owned");
 }

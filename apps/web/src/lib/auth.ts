@@ -7,7 +7,7 @@ import { cacheGet, cacheSet, cacheDelPattern } from "@/lib/cache";
 import type { Organization, OrgMembership, OrgRole, User } from "@/lib/types";
 import { AuthError, PaymentRequiredError } from "@/lib/errors";
 import { getLimit } from "@/lib/entitlements";
-import { assertGroupMayHoldAnotherOrg, groupIdsOwnedBy } from "@/lib/billing-group";
+import { assertWithinGroupCap, groupIdsOwnedBy, groupOrgLimit } from "@/lib/billing-group";
 import { isReservedSlug } from "@/lib/public-site";
 import { routes } from "@/lib/routes";
 import { slugify, uniqueSlug } from "@/server/usecases/slugs";
@@ -257,9 +257,12 @@ export async function assertMayOwnAnotherOrg(userId: string): Promise<void> {
  * `assertMayOwnAnotherOrg` still bounds their total, and they can attach the org
  * explicitly afterwards.
  *
- * The Stripe quantity is NOT adjusted here. This function is called inside
- * signup and invite paths that must not depend on a network call to Stripe;
- * callers that create an org into a paid group reconcile quantity afterwards.
+ * The Stripe quantity IS adjusted, but best-effort: this function runs inside
+ * signup and invite paths that must not fail because Stripe is unreachable, so
+ * the sync is attempted, logged on failure, and never allowed to throw. Without
+ * it a new org joining an existing PAID group is a seat nobody is billed for —
+ * the old comment here said callers reconcile afterwards, and none ever did.
+ * `reconcileGroupQuantities` (cron) is the backstop for the failures.
  */
 export async function createOrgForUser(
   userId: string,
@@ -268,7 +271,12 @@ export async function createOrgForUser(
   await assertMayOwnAnotherOrg(userId);
   const ownedGroups = await groupIdsOwnedBy(userId);
   const targetGroupId = ownedGroups.length === 1 ? ownedGroups[0] : null;
-  if (targetGroupId) await assertGroupMayHoldAnotherOrg(targetGroupId);
+  // Resolved OUTSIDE the transaction below, and applied INSIDE it. getLimit
+  // queries through this module's pool connection, so calling it while the
+  // transaction holds a row lock would acquire a second connection and can
+  // deadlock the pool (DB_POOL_MAX defaults to 5, and postgres.js queues
+  // acquisitions with no timeout).
+  const capLimit = targetGroupId ? await groupOrgLimit(targetGroupId) : null;
   // Readable slugs can collide when two same-named orgs sign up concurrently
   // (check-then-insert race) — retry past the unique index, then salt.
   let org: Organization | undefined;
@@ -279,6 +287,18 @@ export async function createOrgForUser(
       org = await sql.begin(async (tx) => {
         // The group must exist before the org, since the org points at it.
         let groupId = targetGroupId;
+        if (groupId) {
+          // Same lock-then-count as attachOrgToGroup, and for the same reason.
+          // Checking the cap before the transaction and inserting without the
+          // lock let two concurrent creations both pass and land a Pro group
+          // with six orgs — walking straight around the design that exists to
+          // stop exactly that on the attach path.
+          await tx`select id from subscriptions where id = ${groupId} for update`;
+          const [held] = await tx<{ n: string }[]>`
+            select count(*)::text as n from organizations
+             where subscription_id = ${groupId} and deleted_at is null`;
+          assertWithinGroupCap(Number(held?.n ?? 0), capLimit);
+        }
         if (!groupId) {
           const [s] = await tx<{ id: string }[]>`
             insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
@@ -303,6 +323,21 @@ export async function createOrgForUser(
     }
   }
   await invalidateUserOrgs(userId);
+  // Only when the org joined an EXISTING group — a freshly minted one has no
+  // Stripe subscription, so there is nothing to sync and no reason to pay for
+  // the import. Dynamic, to keep the Stripe SDK out of the auth module's static
+  // graph (this file is imported by nearly every request path).
+  if (targetGroupId) {
+    try {
+      const { syncGroupQuantity } = await import("@/server/usecases/billing-groups");
+      await syncGroupQuantity(targetGroupId);
+    } catch (err) {
+      console.error(
+        `[billing] createOrgForUser: org ${org.id} joined group ${targetGroupId} but the quantity sync failed`,
+        err,
+      );
+    }
+  }
   return org;
 }
 

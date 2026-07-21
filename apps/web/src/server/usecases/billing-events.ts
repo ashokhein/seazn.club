@@ -20,6 +20,7 @@ import {
   invalidateOrgEntitlements,
 } from "@/lib/entitlements";
 import { orgIdsInGroup, subscriptionIdForOrg } from "@/lib/billing-group";
+import { syncGroupQuantity } from "@/server/usecases/billing-groups";
 import { getStripe } from "@/lib/stripe";
 import {
   sendPassRevokedEmail,
@@ -347,6 +348,9 @@ async function handleSubscriptionDeleted(stripeSub: Stripe.Subscription) {
   await sql`
     update subscriptions
     set plan_key = 'community', status = 'canceled', updated_at = now(),
+        -- Paid slots die with the subscription: a re-buy starts from the real
+        -- org count, never from what the dead subscription had been billed for.
+        quantity_paid = 1,
         status_changed_at = case when status is distinct from 'canceled'
                                  then now() else status_changed_at end
     where id = ${subscriptionId}`;
@@ -428,14 +432,27 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
 }
 
 /**
- * The deferred decrement, settled.
+ * Seats this invoice was actually cut for.
  *
- * `stripe_quantity = max(active_org_count, quantity_paid)` only keeps its
- * promise — "a removed org frees a paid slot you can reuse at no charge until
- * the period ends" — if `quantity_paid` eventually comes back DOWN. Nothing but
- * a renewal may lower it: at that moment Stripe has just billed the new period
- * at the true count, so the slots the customer paid for last period are spent
- * and the count is the truth again.
+ * The subscription item can have moved on by the time we handle the event —
+ * `sweepStuckEvents` replays ten minutes late by design, and a detach in between
+ * lowers it — so the invoice line is the only truthful record of what the period
+ * was billed at. Undefined when the line carries no quantity, which the caller
+ * treats as "fall back to what the item held before we touched it".
+ */
+function invoicedSeats(invoice: Stripe.Invoice): number | undefined {
+  const q = invoice.lines?.data?.[0]?.quantity;
+  return typeof q === "number" ? q : undefined;
+}
+
+/**
+ * Renewal: the one moment `quantity_paid` may come back DOWN.
+ *
+ * "A removed org frees a paid slot you can reuse at no charge until the period
+ * ends" only keeps its promise if the paid-for count is eventually released, and
+ * only a renewal may release it: Stripe has just cut an invoice from the
+ * subscription item, so last period's slots are spent and what the item holds is
+ * by definition what has now been paid for.
  *
  * Gated on `billing_reason`, not merely on "an invoice was paid". A mid-period
  * PRORATION invoice is also `invoice.payment_succeeded`, and lowering
@@ -448,13 +465,25 @@ async function handleInvoicePaymentSucceeded(invoice: Stripe.Invoice) {
 async function trueUpQuantityPaid(invoice: Stripe.Invoice, subId: string): Promise<void> {
   const reason = invoice.billing_reason;
   if (reason !== "subscription_cycle" && reason !== "subscription_create") return;
-  await sql`
-    update subscriptions s
-       set quantity_paid = greatest(1, (
-             select count(*) from organizations o
-              where o.subscription_id = s.id and o.deleted_at is null)),
-           updated_at = now()
-     where s.stripe_subscription_id = ${subId}`;
+  const [row] = await sql<{ id: string }[]>`
+    select id from subscriptions where stripe_subscription_id = ${subId}`;
+  if (!row) return;
+  // The whole true-up, including the quantity_paid write, is syncGroupQuantity's
+  // job under its lock. This must NOT set quantity_paid = count(*) itself: doing
+  // that and then failing the Stripe call left the item wrong while the ledger
+  // said it agreed, which is exactly the predicate reconcileGroupQuantities
+  // selects on — so the drift became permanently invisible and every later
+  // renewal re-billed the wrong seat count and re-armed the equality.
+  //
+  // `renewal: true` is what allows quantity_paid to come DOWN here: the cycle
+  // invoice has just been cut from the item, so last period's paid-for slots are
+  // spent. Best-effort — a webhook must still ACK — and a failure now leaves the
+  // two disagreeing, which is what keeps the sweep able to see it.
+  try {
+    await syncGroupQuantity(row.id, { renewal: true, invoicedQuantity: invoicedSeats(invoice) });
+  } catch (err) {
+    console.error(`[billing] renewal quantity sync failed for group ${row.id}`, err);
+  }
 }
 
 /** Current owner's email via org_members — NOT organizations.created_by, which
