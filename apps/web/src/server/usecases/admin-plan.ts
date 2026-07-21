@@ -55,6 +55,19 @@ interface SubRow {
 export interface PlanPanel extends SubRow {
   /** Where the plan comes from: a Stripe subscription or an admin comp. */
   source: "stripe" | "comped" | "none";
+  /** How many live organisations bill through this group, INCLUDING the one
+   *  staff is looking at. 1 for the ordinary case, 0 when there is no group.
+   *
+   *  Every action on this panel writes the shared subscriptions row, so a comp,
+   *  a downgrade or a trial extension applied from one org's page moves all of
+   *  them. The usecases have always done this correctly and said so in their
+   *  comments; the PANEL said nothing, so staff comping "one club" could hand
+   *  free Pro to a federation of twelve without a hint on screen. */
+  group_org_count: number;
+  /** The OTHER orgs on the bill, for the warning. Capped — the warning needs to
+   *  be specific, not complete, and a 40-org federation should not render 40
+   *  names into an admin page. `group_org_count` carries the true total. */
+  group_other_orgs: { id: string; name: string }[];
 }
 
 /** Best-effort card list for the admin org page (Task 6C). Only reads Stripe
@@ -87,9 +100,19 @@ export async function cardsForCustomer(customerId: string | null): Promise<Payme
  *  share with other orgs. Every staff action below therefore moves the plan for
  *  every org in that group; the invalidations are group-wide to match. */
 export async function planPanel(orgId: string): Promise<PlanPanel> {
-  const [sub] = await sql<SubRow[]>`
+  const [sub] = await sql<(SubRow & { group_org_count: number; group_other_orgs: unknown })[]>`
     select s.plan_key, s.status, s.trial_end, s.comped_until, s.current_period_end,
-           s.stripe_customer_id, s.stripe_subscription_id, s.trial_used_at
+           s.stripe_customer_id, s.stripe_subscription_id, s.trial_used_at,
+           -- Counted over the whole group, then the OTHERS listed separately, so
+           -- the count stays true even when the name list is capped.
+           (select count(*)::int from organizations g
+             where g.subscription_id = s.id and g.deleted_at is null) as group_org_count,
+           coalesce((select json_agg(x)
+                       from (select g.id, g.name from organizations g
+                              where g.subscription_id = s.id and g.deleted_at is null
+                                and g.id <> ${orgId}
+                              order by g.created_at limit 10) x),
+                    '[]'::json) as group_other_orgs
     from subscriptions s
     join organizations o on o.subscription_id = s.id
     where o.id = ${orgId}`;
@@ -99,6 +122,9 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
       current_period_end: null, stripe_customer_id: null, stripe_subscription_id: null,
       trial_used_at: null,
       source: "none",
+      // No group row at all, so nothing shared and nothing to warn about.
+      group_org_count: 0,
+      group_other_orgs: [],
     };
   }
   // Liveness, not mere presence: a cancelled subscription keeps its id for
@@ -110,7 +136,11 @@ export async function planPanel(orgId: string): Promise<PlanPanel> {
     : sub.plan_key === "pro" || sub.plan_key === "pro_plus"
       ? "comped"
       : "none";
-  return { ...sub, source };
+  return {
+    ...sub,
+    source,
+    group_other_orgs: sub.group_other_orgs as { id: string; name: string }[],
+  };
 }
 
 /** Comp an org to Pro until a date (or forever). Refuses Stripe-billed orgs —

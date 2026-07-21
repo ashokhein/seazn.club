@@ -26,6 +26,11 @@ interface Plan {
   // including the default, which the customer-facing surface refuses on
   // purpose (billing-manage.ts). Empty for an org with no Stripe customer.
   cards: PaymentMethodRow[];
+  // How many live orgs bill through this group, and who the others are. Every
+  // control here writes the shared subscriptions row, so these drive the
+  // blast-radius warning above the actions.
+  group_org_count: number;
+  group_other_orgs: { id: string; name: string }[];
 }
 
 interface Override {
@@ -238,6 +243,26 @@ export function AdminPlanPanel({
             </a>
           )}
         </div>
+
+        {/* Every control on this page writes the SHARED subscriptions row, so a
+            comp, a downgrade or a trial extension applied here moves the plan
+            for every org on the bill. The usecases have always been group-wide
+            (their invalidations fan out); the panel said nothing, so staff
+            comping "one club" could hand free Pro to a federation without a
+            hint on screen. Amber, not red: this is correct behaviour that has
+            to be seen, not an error. */}
+        {plan.group_org_count > 1 && (
+          <p className="mt-3 rounded border border-amber-500/40 bg-amber-950/40 px-3 py-2 text-xs text-amber-200">
+            <span className="font-semibold">
+              This bill covers {plan.group_org_count} organisations.
+            </span>{" "}
+            Every plan change below applies to all of them, not just this one — including{" "}
+            {plan.group_other_orgs.map((o) => o.name).join(", ")}
+            {plan.group_other_orgs.length < plan.group_org_count - 1 &&
+              ` and ${plan.group_org_count - 1 - plan.group_other_orgs.length} more`}
+            .
+          </p>
+        )}
       </div>
 
       {/* Payment methods (Task 6C): staff-only removal of the DEFAULT card —

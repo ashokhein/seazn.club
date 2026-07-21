@@ -523,6 +523,47 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(departed.trial_used_at).toEqual(stamped);
   });
 
+  // Blast radius (V310). Every staff action on the plan panel writes the SHARED
+  // subscriptions row, so a comp applied from one org's page moves the plan for
+  // every org on that bill. The usecases were group-wide from the start; what
+  // was missing was any way for staff to SEE it, and the panel can only warn
+  // with numbers planPanel actually selects.
+  it("planPanel counts the whole billing group, and names the other orgs on the bill", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const alone = await planPanel(orgId);
+    expect(alone.group_org_count).toBe(1);
+    expect(alone.group_other_orgs).toEqual([]);
+
+    // Two more orgs onto the same bill, plus one SOFT DELETED. A deleted org is
+    // not billed and must not inflate the warning — staff told "3 organisations"
+    // when two are live would go looking for an org that isn't there.
+    const groupId = (
+      await sql<{ subscription_id: string }[]>`
+        select subscription_id from organizations where id = ${orgId}`
+    )[0].subscription_id;
+    const mk = async (name: string, deleted: boolean) => {
+      const s = randomUUID().slice(0, 8);
+      const [{ id }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id, deleted_at)
+        values (${name}, ${"g-" + s}, ${ownerId}, ${groupId},
+                ${deleted ? sql`now()` : null})
+        returning id`;
+      return id;
+    };
+    await mk("Northside FC", false);
+    await mk("Eastvale United", false);
+    await mk("Closed Down FC", true);
+
+    const shared = await planPanel(orgId);
+    expect(shared.group_org_count).toBe(3);
+    expect(shared.group_other_orgs.map((o) => o.name).sort()).toEqual([
+      "Eastvale United",
+      "Northside FC",
+    ]);
+    // The org staff is looking at is counted but never listed as an "other".
+    expect(shared.group_other_orgs.map((o) => o.id)).not.toContain(orgId);
+  });
+
   // planPanel is ALSO the shared "before" snapshot read by compToPro,
   // adminDowngrade and extendTrial on every single invocation — none of them
   // ever look at cards, so planPanel must stay a pure DB reader. Proven with
