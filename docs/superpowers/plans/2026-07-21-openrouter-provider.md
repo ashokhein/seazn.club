@@ -1763,6 +1763,15 @@ export function openRouterProvider(): AiProvider {
 
       return {
         parsed,
+        // Required by AiChatResponse. A refusal must fail fast and spend no
+        // corrective retry, so it cannot be inferred from `parsed: null`.
+        // OpenRouter is OpenAI-shaped: determine the actual signal from its
+        // docs and the live API (candidates include choices[0].finish_reason,
+        // native_finish_reason, and an OpenAI-style message.refusal), then
+        // document the choice and pin it with a test. Do not guess — getting
+        // this wrong routes a refusal into the retry path, which is the exact
+        // bug already fixed for the Anthropic adapter.
+        refused: /* determined signal */ false,
         assistantTurn,
         usage: {
           inputTokens: usage.prompt_tokens ?? 0,
