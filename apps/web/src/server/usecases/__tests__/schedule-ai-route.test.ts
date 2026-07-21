@@ -9,32 +9,33 @@ import { randomUUID } from "node:crypto";
 
 // Hoisted mock handles — referenced from vi.mock factories (which hoist above
 // imports), so they must be created with vi.hoisted.
-const { parse, isServerFeatureEnabled, captureServer, incrWindow, rlCounts, MockAPIError } = vi.hoisted(() => {
-  const rlCounts = new Map<string, number>();
-  // The real SDK exposes `Anthropic.APIError`; schedule-ai.ts branches on it to
-  // tell a provider outage (billing/rate-limit/overload) from a planning
-  // failure. The mock must carry it or that branch is unreachable under test.
-  class MockAPIError extends Error {
-    status: number;
-    constructor(status: number, message: string) {
-      super(message);
-      this.name = "APIError";
-      this.status = status;
+const { parse, isServerFeatureEnabled, captureServer, incrWindow, rlCounts, MockAPIError } =
+  vi.hoisted(() => {
+    const rlCounts = new Map<string, number>();
+    // The real SDK exposes `Anthropic.APIError`; schedule-ai.ts branches on it to
+    // tell a provider outage (billing/rate-limit/overload) from a planning
+    // failure. The mock must carry it or that branch is unreachable under test.
+    class MockAPIError extends Error {
+      status: number;
+      constructor(status: number, message: string) {
+        super(message);
+        this.name = "APIError";
+        this.status = status;
+      }
     }
-  }
-  return {
-    MockAPIError,
-    parse: vi.fn(),
-    isServerFeatureEnabled: vi.fn(),
-    captureServer: vi.fn(),
-    incrWindow: vi.fn(async (key: string) => {
-      const n = (rlCounts.get(key) ?? 0) + 1;
-      rlCounts.set(key, n);
-      return n;
-    }),
-    rlCounts,
-  };
-});
+    return {
+      MockAPIError,
+      parse: vi.fn(),
+      isServerFeatureEnabled: vi.fn(),
+      captureServer: vi.fn(),
+      incrWindow: vi.fn(async (key: string) => {
+        const n = (rlCounts.get(key) ?? 0) + 1;
+        rlCounts.set(key, n);
+        return n;
+      }),
+      rlCounts,
+    };
+  });
 
 vi.mock("@anthropic-ai/sdk", () => ({
   default: Object.assign(
@@ -44,7 +45,10 @@ vi.mock("@anthropic-ai/sdk", () => ({
     { APIError: MockAPIError },
   ),
 }));
-vi.mock("@/lib/posthog-server", () => ({ isServerFeatureEnabled, captureServer }));
+vi.mock("@/lib/posthog-server", () => ({
+  isServerFeatureEnabled,
+  captureServer,
+}));
 // Keep the real cache-aside helpers (entitlements resolution) but drive the
 // fixed-window rate limiter off an in-memory counter so the 429 path is real.
 vi.mock("@/lib/cache", async (importOriginal) => {
@@ -62,6 +66,7 @@ import { createStages, generateStageFixtures } from "../stages";
 import { aiPlanForDivision } from "../schedule-ai";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const TZ = "Europe/London";
 const MIN = 60_000;
@@ -94,10 +99,7 @@ async function setSettings(divisionId: string): Promise<void> {
 /** community org promoted to pro_plus directly (seedOrg only knows pro/community). */
 async function seedPlusOrg(): Promise<AuthCtx> {
   const { auth } = await seedOrg("community");
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${auth.orgId}, 'pro_plus', 'active')
-    on conflict (org_id) do update set plan_key = 'pro_plus'`;
+  await setOrgPlan(auth.orgId, "pro_plus");
   await invalidateOrgEntitlements(auth.orgId);
   return auth;
 }
@@ -108,20 +110,36 @@ async function seedPlannable(
   auth: AuthCtx,
   opts: { officials?: boolean } = {},
 ): Promise<{ divisionId: string; fixtureIds: string[] }> {
-  const comp = await createCompetition(auth, { name: "AI Arch", visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, {
+    name: "AI Arch",
+    visibility: "public",
+    branding: {},
+  });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: `open-${randomUUID().slice(0, 6)}`, sport_key: "generic",
-    variant_key: "score", config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: `open-${randomUUID().slice(0, 6)}`,
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   await createEntrants(
     auth,
     division.id,
     Array.from({ length: 4 }, (_, i) => ({
-      kind: "individual" as const, display_name: `E${i + 1}`, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: `E${i + 1}`,
+      seed: i + 1,
+      members: [],
     })),
   );
   await setSettings(division.id);
-  const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "League", config: {} });
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1,
+    kind: "league",
+    name: "League",
+    config: {},
+  });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   if (opts.officials) {
     await sql`
@@ -133,13 +151,26 @@ async function seedPlannable(
 
 // Direct-insert bulk seeder to trip the >500 movable limit.
 async function seedBigDivision(auth: AuthCtx, n: number): Promise<string> {
-  const comp = await createCompetition(auth, { name: `Big ${randomUUID().slice(0, 6)}`, visibility: "public", branding: {} });
+  const comp = await createCompetition(auth, {
+    name: `Big ${randomUUID().slice(0, 6)}`,
+    visibility: "public",
+    branding: {},
+  });
   const division = await createDivision(auth, comp.id, {
-    name: "Big", slug: `big-${randomUUID().slice(0, 6)}`, sport_key: "generic",
-    variant_key: "score", config: GENERIC_CONFIG, eligibility: [],
+    name: "Big",
+    slug: `big-${randomUUID().slice(0, 6)}`,
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   await setSettings(division.id);
-  const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
+  });
   await sql`
     insert into fixtures (stage_id, division_id, org_id, round_no, seq_in_round, ext_key, status)
     select ${stage!.id}, ${division.id}, ${auth.orgId}, (g / 20)::int, (g % 20)::int, 'big-' || g, 'scheduled'
@@ -172,8 +203,13 @@ function planResponse(p: unknown, usage: unknown = { input_tokens: 1000, output_
 }
 
 const POLICY = {
-  roles: ["referee"], poolLock: false, blockStay: false, fairness: "tournament" as const,
-  teamRefKeepDivision: false, restMinMinutes: 0, blockGapMinutes: 30,
+  roles: ["referee"],
+  poolLock: false,
+  blockStay: false,
+  fairness: "tournament" as const,
+  teamRefKeepDivision: false,
+  restMinMinutes: 0,
+  blockGapMinutes: 30,
 };
 
 afterAll(async () => {
@@ -210,11 +246,20 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     const { divisionId, fixtureIds } = await seedPlannable(auth);
     await seedRuns(auth, divisionId, 4);
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
-    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" });
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan it",
+      mode: "generate",
+    });
     expect(out.proposal).toHaveLength(fixtureIds.length);
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai.runs_per_division.max" });
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan it",
+        mode: "generate",
+      }),
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scheduling.ai.runs_per_division.max",
+    });
     expect(parse).toHaveBeenCalledTimes(1); // over-quota never reaches the LLM
   });
 
@@ -224,7 +269,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     parse.mockResolvedValue(planResponse(legalPlan(fixtureIds)));
     // Two real generations append schedule.ai_generated events…
     for (let i = 0; i < 2; i++) {
-      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+      const out = await aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      });
       expect(out.proposal).toHaveLength(fixtureIds.length);
     }
     const [{ n }] = await sql<{ n: number }[]>`
@@ -236,8 +284,14 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     // BEFORE the LLM is called → 402 on the run-cap key.
     await seedRuns(auth, divisionId, 18);
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai.runs_per_division.max" });
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      }),
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scheduling.ai.runs_per_division.max",
+    });
     expect(parse).toHaveBeenCalledTimes(2);
     // A blocked run is never recorded (still twenty).
     const [{ n: after }] = await sql<{ n: number }[]>`
@@ -252,7 +306,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
 
     // Success: audit payload + capture both stamp model, usage and cost_usd.
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
-    await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+    await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan",
+      mode: "generate",
+    });
     const [ok] = await sql<{ payload: Record<string, unknown> }[]>`
       select payload from competition_events
       where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}`;
@@ -266,9 +323,16 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     expect(typeof okCall.properties.cost_usd).toBe("number");
 
     // Failure (refusal → 422 AI_PLAN_FAILED): metered as schedule.ai_failed…
-    parse.mockResolvedValueOnce({ parsed_output: null, stop_reason: "refusal", usage: { input_tokens: 700, output_tokens: 40 } });
+    parse.mockResolvedValueOnce({
+      parsed_output: null,
+      stop_reason: "refusal",
+      usage: { input_tokens: 700, output_tokens: 40 },
+    });
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      }),
     ).rejects.toMatchObject({ code: "AI_PLAN_FAILED" });
     const [failed] = await sql<{ payload: Record<string, unknown> }[]>`
       select payload from competition_events
@@ -287,11 +351,20 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     const { divisionId, fixtureIds } = await seedPlannable(auth);
     await seedRuns(auth, divisionId, 49);
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
-    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan",
+      mode: "generate",
+    });
     expect(out.proposal).toHaveLength(fixtureIds.length); // 50th run still fine
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai.runs_per_division.max" });
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      }),
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scheduling.ai.runs_per_division.max",
+    });
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
@@ -307,11 +380,20 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     await invalidateOrgEntitlements(auth.orgId);
     await seedRuns(auth, divisionId, 9);
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
-    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan",
+      mode: "generate",
+    });
     expect(out.proposal).toHaveLength(fixtureIds.length); // 10th run — beyond free's 5
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai.runs_per_division.max" });
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      }),
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scheduling.ai.runs_per_division.max",
+    });
     expect(parse).toHaveBeenCalledTimes(1);
   });
 
@@ -325,12 +407,21 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     await invalidateOrgEntitlements(auth.orgId);
     await seedRuns(auth, divisionId, 6);
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
-    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" });
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan it",
+      mode: "generate",
+    });
     expect(out.proposal).toHaveLength(fixtureIds.length); // 7th run, above the plan's 5
     expect(out.blocking).toHaveLength(0);
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai.runs_per_division.max" });
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan it",
+        mode: "generate",
+      }),
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scheduling.ai.runs_per_division.max",
+    });
   });
 
   it("override bool_value=false kills a pro_plus org → 402", async () => {
@@ -341,7 +432,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
       values (${auth.orgId}, 'scheduling.ai', false)`;
     await invalidateOrgEntitlements(auth.orgId);
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan it",
+        mode: "generate",
+      }),
     ).rejects.toMatchObject({ status: 402, featureKey: "scheduling.ai" });
     expect(parse).not.toHaveBeenCalled();
   });
@@ -351,7 +445,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     const auth = await seedPlusOrg();
     const { divisionId } = await seedPlannable(auth);
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan it",
+        mode: "generate",
+      }),
     ).rejects.toMatchObject({ status: 403, code: "FEATURE_DISABLED" });
     expect(parse).not.toHaveBeenCalled();
   });
@@ -366,7 +463,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     await sql`update divisions set schedule_locked = true where id = ${divisionId}`;
 
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" }),
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan it",
+        mode: "generate",
+      }),
     ).rejects.toMatchObject({ status: 409, code: "SCHEDULE_LOCKED" });
 
     // No model call, no generation consumed, no rate-limit slot burned.
@@ -381,7 +481,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     // Unfreezing restores the normal path — the guard gates on state, not identity.
     await sql`update divisions set schedule_locked = false where id = ${divisionId}`;
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
-    const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan it", mode: "generate" });
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan it",
+      mode: "generate",
+    });
     expect(out.proposal.length).toBeGreaterThan(0);
   });
 
@@ -406,7 +509,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
       const { divisionId, fixtureIds } = await seedPlannable(auth);
       parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
 
-      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+      const out = await aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      });
 
       expect(parse).toHaveBeenCalledTimes(1);
       expect((parse.mock.calls[0][0] as { model: string }).model).toBe("claude-haiku-4-5");
@@ -423,17 +529,35 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
 
       // Refusal → runAiPlan throws 422 AI_PLAN_FAILED carrying usage.
       parse.mockResolvedValueOnce({
-        parsed_output: null, stop_reason: "refusal", usage: { input_tokens: 100, output_tokens: 50 }, content: [],
+        parsed_output: null,
+        stop_reason: "refusal",
+        usage: { input_tokens: 100, output_tokens: 50 },
+        content: [],
       });
-      parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds), { input_tokens: 700, output_tokens: 300 }));
+      parse.mockResolvedValueOnce(
+        planResponse(legalPlan(fixtureIds), {
+          input_tokens: 700,
+          output_tokens: 300,
+        }),
+      );
 
-      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+      const out = await aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      });
       expect(out.proposal.length).toBe(fixtureIds.length);
 
       const models = parse.mock.calls.map((c) => (c[0] as { model: string }).model);
       expect(models).toEqual(["claude-haiku-4-5", "claude-sonnet-5"]);
 
-      const [row] = await sql<{ payload: { usage: { input_tokens: number; output_tokens: number }; escalated_from?: string } }[]>`
+      const [row] = await sql<
+        {
+          payload: {
+            usage: { input_tokens: number; output_tokens: number };
+            escalated_from?: string;
+          };
+        }[]
+      >`
         select payload from competition_events
         where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}
         order by created_at desc limit 1`;
@@ -452,11 +576,23 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
       // onto fixture[0]'s exact slot and court. Structurally valid (every
       // movable id appears once) so it reaches the verifier, which reports a
       // blocking court conflict — the condition escalation exists for.
-      const legal = legalPlan(fixtureIds) as { assignments: { fixture_id: string; scheduled_at: string; court_label: string }[] };
+      const legal = legalPlan(fixtureIds) as {
+        assignments: {
+          fixture_id: string;
+          scheduled_at: string;
+          court_label: string;
+        }[];
+      };
       const clash = {
         ...legal,
         assignments: legal.assignments.map((a, i) =>
-          i === 1 ? { ...a, scheduled_at: legal.assignments[0].scheduled_at, court_label: legal.assignments[0].court_label } : a,
+          i === 1
+            ? {
+                ...a,
+                scheduled_at: legal.assignments[0].scheduled_at,
+                court_label: legal.assignments[0].court_label,
+              }
+            : a,
         ),
       };
       // Persistent fallback is the clean plan; the first three calls (the cheap
@@ -468,9 +604,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
         parse.mockResolvedValueOnce(planResponse(clash, { input_tokens: 100, output_tokens: 50 }));
       }
 
-      const out = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }).catch(
-        () => null,
-      );
+      const out = await aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      }).catch(() => null);
 
       // Both models were tried: cheap first, primary second.
       const models = parse.mock.calls.map((c) => (c[0] as { model: string }).model);
@@ -480,7 +617,14 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
       // A wasted cheap attempt is real spend. If the ledger only counted the
       // winning half it would under-report every escalated run.
       if (out) {
-        const [row] = await sql<{ payload: { usage: { input_tokens: number }; escalated_from?: string } }[]>`
+        const [row] = await sql<
+          {
+            payload: {
+              usage: { input_tokens: number };
+              escalated_from?: string;
+            };
+          }[]
+        >`
           select payload from competition_events
           where type = 'schedule.ai_generated' and payload->>'division_id' = ${divisionId}
           order by created_at desc limit 1`;
@@ -495,7 +639,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
       const { divisionId, fixtureIds } = await seedPlannable(auth);
       parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
 
-      await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+      await aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      });
 
       expect(parse).toHaveBeenCalledTimes(1);
       expect((parse.mock.calls[0][0] as { model: string }).model).toBe("claude-sonnet-5");
@@ -507,10 +654,16 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     const { divisionId, fixtureIds } = await seedPlannable(auth);
     parse.mockResolvedValue(planResponse(legalPlan(fixtureIds)));
     for (let i = 0; i < 5; i++) {
-      await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+      await aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      });
     }
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      }),
     ).rejects.toMatchObject({ status: 429 });
   });
 
@@ -531,7 +684,11 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
     // repair scope naming a court the division does not have → 400
     const { divisionId } = await seedPlannable(auth);
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "x", mode: "repair", scope: { courts: ["Court 9"] } }),
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "x",
+        mode: "repair",
+        scope: { courts: ["Court 9"] },
+      }),
     ).rejects.toMatchObject({ status: 400 });
 
     expect(parse).not.toHaveBeenCalled();
@@ -541,11 +698,15 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision gates (v4/00 §5, quotas V302)", () 
 describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 §5)", () => {
   it("officials_policy present → officials_coverage populated; absent → null", async () => {
     const auth = await seedPlusOrg();
-    const { divisionId, fixtureIds } = await seedPlannable(auth, { officials: true });
+    const { divisionId, fixtureIds } = await seedPlannable(auth, {
+      officials: true,
+    });
 
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
     const withPolicy = await aiPlanForDivision(auth, divisionId, {
-      instruction: "cover it", mode: "generate", officials_policy: POLICY,
+      instruction: "cover it",
+      mode: "generate",
+      officials_policy: POLICY,
     });
     expect(withPolicy.officials_coverage).not.toBeNull();
     const cov = withPolicy.officials_coverage!;
@@ -554,7 +715,10 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 
     expect(Array.isArray(cov.unfilled)).toBe(true);
 
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds)));
-    const noPolicy = await aiPlanForDivision(auth, divisionId, { instruction: "no cover", mode: "generate" });
+    const noPolicy = await aiPlanForDivision(auth, divisionId, {
+      instruction: "no cover",
+      mode: "generate",
+    });
     expect(noPolicy.officials_coverage).toBeNull();
   });
 
@@ -566,11 +730,19 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 
     const suggestions = {
       constraint_suggestions: {
         noBackToBack: true,
-        startWindows: [{ target: { kind: "division", id: divisionId }, notBefore: notBeforeMs }],
+        startWindows: [
+          {
+            target: { kind: "division", id: divisionId },
+            notBefore: notBeforeMs,
+          },
+        ],
       },
     };
     parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds, suggestions)));
-    const out = await aiPlanForDivision(auth, divisionId, { instruction: "juniors before 2pm", mode: "generate" });
+    const out = await aiPlanForDivision(auth, divisionId, {
+      instruction: "juniors before 2pm",
+      mode: "generate",
+    });
     const cs = out.constraint_suggestions!;
     expect(cs.noBackToBack).toBe(true);
     // Europe/London is +01:00 in August: epoch → ISO-with-offset in the division tz.
@@ -580,16 +752,29 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 
   it("telemetry: ai_plan_run fires on success with usage + blocking count", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedPlannable(auth);
-    parse.mockResolvedValueOnce(planResponse(legalPlan(fixtureIds), { input_tokens: 1200, output_tokens: 340 }));
-    await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" });
+    parse.mockResolvedValueOnce(
+      planResponse(legalPlan(fixtureIds), {
+        input_tokens: 1200,
+        output_tokens: 340,
+      }),
+    );
+    await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan",
+      mode: "generate",
+    });
     expect(captureServer).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "ai_plan_run",
         distinctId: auth.userId,
         orgId: auth.orgId,
         properties: expect.objectContaining({
-          phase: "schedule", mode: "generate", fixtures: fixtureIds.length,
-          input_tokens: 1200, output_tokens: 340, blocking: 0, outcome: "ok",
+          phase: "schedule",
+          mode: "generate",
+          fixtures: fixtureIds.length,
+          input_tokens: 1200,
+          output_tokens: 340,
+          blocking: 0,
+          outcome: "ok",
         }),
       }),
     );
@@ -600,15 +785,25 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 
     const { divisionId } = await seedPlannable(auth);
     // Refusal → runAiPlan throws 422 AI_PLAN_FAILED with usage on the extra.
     parse.mockResolvedValueOnce({
-      parsed_output: null, stop_reason: "refusal", usage: { input_tokens: 100, output_tokens: 50 }, content: [],
+      parsed_output: null,
+      stop_reason: "refusal",
+      usage: { input_tokens: 100, output_tokens: 50 },
+      content: [],
     });
     await expect(
-      aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }),
+      aiPlanForDivision(auth, divisionId, {
+        instruction: "plan",
+        mode: "generate",
+      }),
     ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
     expect(captureServer).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "ai_plan_run",
-        properties: expect.objectContaining({ input_tokens: 100, output_tokens: 50, outcome: "failed" }),
+        properties: expect.objectContaining({
+          input_tokens: 100,
+          output_tokens: 50,
+          outcome: "failed",
+        }),
       }),
     );
     // A failed run never consumes quota — no schedule.ai_generated event lands.
@@ -629,17 +824,24 @@ describe.skipIf(!HAS_DB)("aiPlanForDivision coverage + telemetry (v4/03 §2, 00 
     const providerMessage = "Your credit balance is too low to access the Anthropic API.";
     parse.mockRejectedValueOnce(new MockAPIError(400, providerMessage));
 
-    const err = await aiPlanForDivision(auth, divisionId, { instruction: "plan", mode: "generate" }).catch(
-      (e: unknown) => e,
-    );
-    expect(err).toMatchObject({ status: 503, code: "AI_PROVIDER_UNAVAILABLE" });
+    const err = await aiPlanForDivision(auth, divisionId, {
+      instruction: "plan",
+      mode: "generate",
+    }).catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      status: 503,
+      code: "AI_PROVIDER_UNAVAILABLE",
+    });
     // Billing state is ours, not the tenant's.
     expect((err as Error).message).not.toContain("credit balance");
 
     expect(captureServer).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "ai_plan_run",
-        properties: expect.objectContaining({ outcome: "provider_error", provider_status: 400 }),
+        properties: expect.objectContaining({
+          outcome: "provider_error",
+          provider_status: 400,
+        }),
       }),
     );
     // The outage is auditable, and it never consumes a generation.

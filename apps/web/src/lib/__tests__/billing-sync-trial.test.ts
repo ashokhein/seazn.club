@@ -9,6 +9,7 @@ import type Stripe from "stripe";
 import { sql } from "@/lib/db";
 import { checkoutTrialDays, syncSubscription } from "@/lib/billing";
 
+import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seedOrg(): Promise<string> {
@@ -19,8 +20,7 @@ async function seedOrg(): Promise<string> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug, created_by)
     values (${"Trial Org " + suffix}, ${"trial-org-" + suffix}, ${ownerId}) returning id`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'community', 'active')`;
+  await setOrgPlan(orgId, "community");
   return orgId;
 }
 
@@ -61,7 +61,7 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     const readSub = async () =>
       (
         await sql<{ trial_used_at: string | null }[]>`
-          select trial_used_at from subscriptions where org_id = ${orgId}`
+          select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0];
 
     // Fresh org: no stamp → a checkout would carry the 14-day trial.
@@ -71,7 +71,11 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     // Trial starts (reconcile/webhook path).
     await syncSubscription(
       orgId,
-      stripeSub({ id: "sub_trial1", status: "trialing", trial_end: Math.floor(Date.now() / 1000) + 14 * 86_400 }),
+      stripeSub({
+        id: "sub_trial1",
+        status: "trialing",
+        trial_end: Math.floor(Date.now() / 1000) + 14 * 86_400,
+      }),
     );
     const stamped = (await readSub()).trial_used_at;
     expect(stamped).not.toBeNull();
@@ -96,7 +100,7 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     const orgId = await seedOrg();
     await syncSubscription(orgId, stripeSub({ id: "sub_paid", status: "active" }));
     const [row] = await sql<{ trial_end: string | null; trial_used_at: string | null }[]>`
-      select trial_end, trial_used_at from subscriptions where org_id = ${orgId}`;
+      select trial_end, trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.trial_end).toBeNull();
     expect(row.trial_used_at).not.toBeNull();
   });
@@ -109,7 +113,7 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     const readStamp = async () =>
       (
         await sql<{ trial_used_at: string | null }[]>`
-          select trial_used_at from subscriptions where org_id = ${orgId}`
+          select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0].trial_used_at;
 
     await syncSubscription(orgId, stripeSub({ id: "sub_notrial", status: "active" }));
@@ -123,7 +127,7 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     const readStamp = async () =>
       (
         await sql<{ trial_used_at: string | null }[]>`
-          select trial_used_at from subscriptions where org_id = ${orgId}`
+          select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0].trial_used_at;
 
     await syncSubscription(orgId, stripeSub({ id: "sub_replay", status: "active" }));
@@ -142,7 +146,7 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     const readStamp = async () =>
       (
         await sql<{ trial_used_at: string | null }[]>`
-          select trial_used_at from subscriptions where org_id = ${orgId}`
+          select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0].trial_used_at;
 
     await syncSubscription(orgId, stripeSub({ id: "sub_first", status: "active" }));
@@ -150,7 +154,7 @@ describe.skipIf(!HAS_DB)("trial_used_at stamping (one trial per org)", () => {
     // Guard: without this, a regression that stops stamping entirely leaves
     // both sides null and the toEqual below passes vacuously.
     expect(first).not.toBeNull();
-    await sql`update subscriptions set status = 'canceled' where org_id = ${orgId}`;
+    await sql`update subscriptions set status = 'canceled' where id = (select subscription_id from organizations where id = ${orgId})`;
     await syncSubscription(orgId, stripeSub({ id: "sub_second", status: "active" }));
     expect(await readStamp()).toEqual(first);
   });

@@ -14,6 +14,7 @@ import { createDivision } from "../divisions";
 import { createEntrants, syncEntrantRosterFromSquad } from "../entrants";
 import { listEntrantLogoUrls, setTeamSquad } from "../teams";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 // publicStorageUrl returns "" without this — the logo-map assertions below
@@ -24,7 +25,10 @@ if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
 }
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
 async function seedOrg(): Promise<{ auth: AuthCtx }> {
@@ -32,10 +36,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Sq " + suffix}, ${"sq-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -45,16 +46,24 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
-    name: "Sq Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {},
+    name: "Sq Cup " + randomUUID().slice(0, 6),
+    visibility: "private",
+    branding: {},
   });
   return createDivision(auth, comp.id, {
-    name: "Sq Div", slug: "sq-div", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Sq Div",
+    slug: "sq-div",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
 }
 
@@ -101,21 +110,31 @@ describe.skipIf(!HAS_DB)("enroll-existing-team seeding (clubs W1)", () => {
     if (!entrant) throw new Error("no entrant created");
     expect(entrant.display_name).toContain("Seed U12");
 
-    const members = await sql<{ person_id: string; default_position_key: string | null; roles: unknown }[]>`
+    const members = await sql<
+      {
+        person_id: string;
+        default_position_key: string | null;
+        roles: unknown;
+      }[]
+    >`
       select person_id, default_position_key, roles from entrant_members
       where entrant_id = ${entrant.id} order by squad_number`;
     // Both squad members carried over — the sport filter strips unknown
     // position/role KEYS but must never drop a person.
     expect(members.map((m) => m.person_id)).toEqual(persons);
     expect(members[0]!.default_position_key).toBeNull(); // ghost_position stripped
-    expect(members.every((m) => Array.isArray(m.roles) && (m.roles as unknown[]).length === 0)).toBe(true);
+    expect(
+      members.every((m) => Array.isArray(m.roles) && (m.roles as unknown[]).length === 0),
+    ).toBe(true);
   });
 
   it("logo map falls through to the club crest for a team with no own badge", async () => {
     const { auth } = await seedOrg();
     const division = await seedDivision(auth);
     const { teamId } = await seedClubTeamSquad(auth);
-    const [entrant] = await createEntrants(auth, division.id, [{ kind: "team", team_id: teamId, members: [] }]);
+    const [entrant] = await createEntrants(auth, division.id, [
+      { kind: "team", team_id: teamId, members: [] },
+    ]);
 
     const map = await listEntrantLogoUrls(auth, division.id);
     const url = map[entrant!.id];
@@ -130,7 +149,9 @@ describe.skipIf(!HAS_DB)("enroll-existing-team seeding (clubs W1)", () => {
     const division = await seedDivision(auth);
     const { teamId } = await seedClubTeamSquad(auth);
     await sql`update teams set logo_path = 'orgs/x/teams/own.png' where id = ${teamId}`;
-    const [entrant] = await createEntrants(auth, division.id, [{ kind: "team", team_id: teamId, members: [] }]);
+    const [entrant] = await createEntrants(auth, division.id, [
+      { kind: "team", team_id: teamId, members: [] },
+    ]);
 
     const map = await listEntrantLogoUrls(auth, division.id);
     expect(map[entrant!.id]).toContain("orgs/x/teams/own.png");
@@ -157,7 +178,13 @@ describe.skipIf(!HAS_DB)("enroll-existing-team seeding (clubs W1)", () => {
       insert into persons (org_id, full_name, consent)
       values (${auth.orgId}, 'Late Joiner', '{}') returning id`;
     await setTeamSquad(auth, teamId, [
-      { person_id: personId, squad_number: 9, default_position_key: null, is_captain: true, roles: [] },
+      {
+        person_id: personId,
+        squad_number: 9,
+        default_position_key: null,
+        is_captain: true,
+        roles: [],
+      },
     ]);
     const still = await sql<{ n: number }[]>`
       select count(*)::int as n from entrant_members where entrant_id = ${entrant!.id}`;

@@ -22,9 +22,10 @@ vi.mock("@/lib/stripe", () => ({
   getStripe: () => ({
     checkout: {
       sessions: {
-        create: vi
-          .fn()
-          .mockResolvedValue({ id: "cs_test_intake", url: "https://checkout.stripe.test/s" }),
+        create: vi.fn().mockResolvedValue({
+          id: "cs_test_intake",
+          url: "https://checkout.stripe.test/s",
+        }),
       },
     },
   }),
@@ -41,6 +42,7 @@ import {
   submitRegistration,
 } from "../registrations";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function makeUser(name: string): Promise<string> {
@@ -52,7 +54,11 @@ async function makeUser(name: string): Promise<string> {
 }
 
 /** A Pro org (so the Stripe division can be saved) with Connect live. */
-async function seedProOrg(): Promise<{ orgId: string; orgSlug: string; ownerId: string }> {
+async function seedProOrg(): Promise<{
+  orgId: string;
+  orgSlug: string;
+  ownerId: string;
+}> {
   const suffix = randomUUID().slice(0, 8);
   const ownerId = await makeUser("owner");
   const orgSlug = "intake-org-" + suffix;
@@ -60,9 +66,7 @@ async function seedProOrg(): Promise<{ orgId: string; orgSlug: string; ownerId: 
     insert into organizations (name, slug, created_by)
     values (${"Intake Org " + suffix}, ${orgSlug}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'pro', 'active')
-            on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
+  await setOrgPlan(orgId);
   await sql`update organizations
             set stripe_charges_enabled = true, stripe_account_id = ${"acct_" + suffix}
             where id = ${orgId}`;
@@ -149,7 +153,7 @@ async function revokedStripeRig() {
   // charges_enabled is deliberately left true: the point of this suite is that
   // the Connect flag alone is not the gate.
   await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
-            where org_id = ${orgId}`;
+            where id = (select subscription_id from organizations where id = ${orgId})`;
   await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
             values (${orgId}, 'registration.paid', false)
             on conflict (org_id, feature_key) do update set bool_value = false`;
@@ -169,7 +173,7 @@ async function downgradedStripeRig() {
     fee_cents: 500,
   });
   await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
-            where org_id = ${orgId}`;
+            where id = (select subscription_id from organizations where id = ${orgId})`;
   await invalidateOrgEntitlements(orgId);
   return { orgId, orgSlug, ownerId, owner, competition, division };
 }
@@ -239,7 +243,7 @@ describe.skipIf(!HAS_DB)("revoked card intake gate (P2-10)", () => {
       fee_cents: 1500,
     });
     await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
               values (${orgId}, 'registration.paid', false)
               on conflict (org_id, feature_key) do update set bool_value = false`;

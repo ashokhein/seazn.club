@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { hasFeature, invalidateOrgEntitlements } from "@/lib/entitlements";
 
+import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
@@ -28,9 +29,7 @@ async function seedOrg(): Promise<string> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug, created_by)
     values (${"Parity " + s}, ${"parity-" + s}, ${ownerId}) returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'community', 'active')`;
+  await setOrgPlan(orgId, "community");
   return orgId;
 }
 
@@ -85,7 +84,7 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
       update subscriptions
       set plan_key = 'pro', comped_until = now() - interval '1 day',
           stripe_subscription_id = null, status = 'active'
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations where id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);
@@ -97,7 +96,7 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
       set plan_key = 'pro', status = 'past_due',
           status_changed_at = now() - interval '15 days',
           stripe_subscription_id = 'sub_test'
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations where id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "realtime")).toBe(false);
     expect(await sqlHasFeature(orgId, "realtime")).toBe(false);

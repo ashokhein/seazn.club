@@ -25,13 +25,17 @@ import { assertMayOwnAnotherOrg } from "@/lib/auth";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { GET as entitlementsGET } from "@/app/api/orgs/[id]/entitlements/route";
 
+import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
 /** A user owning exactly one org, with an explicit subscriptions row.
  *  Returns both ids. Same local-helper convention as
  *  entitlements-comp-liveness.test.ts:26-45 — there is no factories module. */
-async function seedOwnerWithOneOrg(): Promise<{ userId: string; orgId: string }> {
+async function seedOwnerWithOneOrg(): Promise<{
+  userId: string;
+  orgId: string;
+}> {
   const s = uniq();
   const [{ id: userId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, email_verified)
@@ -40,9 +44,7 @@ async function seedOwnerWithOneOrg(): Promise<{ userId: string; orgId: string }>
     insert into organizations (name, slug, created_by)
     values (${"Dup " + s}, ${"dup-" + s}, ${userId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'community', 'active')`;
+  await setOrgPlan(orgId, "community");
   return { userId, orgId };
 }
 
@@ -86,7 +88,7 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
       update subscriptions
       set plan_key = 'pro', comped_until = now() - interval '1 day',
           stripe_subscription_id = null
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations where id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     // community orgs.max_owned = 1, and they already own one.
     await expect(assertMayOwnAnotherOrg(userId)).rejects.toThrow();
@@ -96,7 +98,7 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
     const { userId, orgId } = await seedOwnerWithOneOrg();
     await sql`
       update subscriptions set plan_key = 'pro', status = 'active'
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations where id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     // pro orgs.max_owned = 3 (V112 seeded 5; V270__pricing_v3_matrix.sql:9
     // dropped it to 3, which is why the grandfathering overrides exist).
@@ -155,7 +157,9 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
     });
     // Boolean keys still report { enabled }, numeric keys still { limit }.
     expect(data.entitlements["exports"]).toEqual({ enabled: true });
-    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 1 });
+    expect(data.entitlements["competitions.max_active"]).toEqual({
+      limit: 1,
+    });
   });
 
   it("degrades a lapsed comp instead of promising the Pro matrix", async () => {
@@ -164,12 +168,14 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
       update subscriptions
       set plan_key = 'pro', comped_until = now() - interval '1 day',
           stripe_subscription_id = null
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations where id = ${orgId})`;
     const data = await readPanel(orgId);
     // The raw plan_key is still reported (contract), but every VALUE resolves
     // as community: pro is unlimited here, community caps at 1.
     expect(data.plan_key).toBe("pro");
-    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: 1 });
+    expect(data.entitlements["competitions.max_active"]).toEqual({
+      limit: 1,
+    });
     expect(data.entitlements["api.access"]).toEqual({ enabled: false });
   });
 
@@ -190,6 +196,8 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
       insert into org_entitlement_overrides (org_id, feature_key, int_value)
       values (${orgId}, 'competitions.max_active', null)`;
     const data = await readPanel(orgId);
-    expect(data.entitlements["competitions.max_active"]).toEqual({ limit: null });
+    expect(data.entitlements["competitions.max_active"]).toEqual({
+      limit: null,
+    });
   });
 });

@@ -23,6 +23,7 @@ import {
 } from "../org-posts";
 import { scoreEvent } from "../scoring";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 // Full parsed football config — the module's fold needs it to initialize state
 // (an empty {} makes applyForfeit read undefined score fields).
@@ -46,9 +47,7 @@ async function seedOrg(plan: "pro" | "community" = "pro"): Promise<Ctx> {
     values (${"News " + suffix}, ${orgSlug}, ${userId}, 'en') returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
   if (plan === "pro") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'pro', 'active')
-      on conflict (org_id) do update set plan_key = 'pro'`;
+    await setOrgPlan(orgId);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -101,7 +100,13 @@ async function seedDivision(
 async function seedDecidedFixture(
   ctx: Ctx,
   div: DivCtx,
-  opts: { round?: number; homeLine?: string; awayLine?: string; status?: string; stageId?: string } = {},
+  opts: {
+    round?: number;
+    homeLine?: string;
+    awayLine?: string;
+    status?: string;
+    stageId?: string;
+  } = {},
 ): Promise<string> {
   const round = opts.round ?? 1;
   const stageId = opts.stageId ?? div.stageId;
@@ -133,8 +138,12 @@ async function draft(ctx: Ctx, fixtureId: string): Promise<void> {
 describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
   it("slugifies the title and suffixes -2 on collision", async () => {
     const ctx = await seedOrg();
-    const a = await createPost(ctx.auth, ctx.orgId, { title: "Match Day Report" });
-    const b = await createPost(ctx.auth, ctx.orgId, { title: "Match Day Report" });
+    const a = await createPost(ctx.auth, ctx.orgId, {
+      title: "Match Day Report",
+    });
+    const b = await createPost(ctx.auth, ctx.orgId, {
+      title: "Match Day Report",
+    });
     expect(a.slug).toBe("match-day-report");
     expect(b.slug).toBe("match-day-report-2");
     expect(a.status).toBe("draft");
@@ -143,8 +152,12 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
 
   it("slug-collision posts are both independently publishable with distinct public URLs", async () => {
     const ctx = await seedOrg();
-    const a = await createPost(ctx.auth, ctx.orgId, { title: "Match Day Report" });
-    const b = await createPost(ctx.auth, ctx.orgId, { title: "Match Day Report" });
+    const a = await createPost(ctx.auth, ctx.orgId, {
+      title: "Match Day Report",
+    });
+    const b = await createPost(ctx.auth, ctx.orgId, {
+      title: "Match Day Report",
+    });
     await updatePost(ctx.auth, a.id, { action: "publish" });
     await updatePost(ctx.auth, b.id, { action: "publish" });
 
@@ -161,21 +174,31 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
 
   it("publish stamps published_at and freezes the slug across title edits", async () => {
     const ctx = await seedOrg();
-    const post = await createPost(ctx.auth, ctx.orgId, { title: "Opening Weekend" });
-    const published = await updatePost(ctx.auth, post.id, { action: "publish" });
+    const post = await createPost(ctx.auth, ctx.orgId, {
+      title: "Opening Weekend",
+    });
+    const published = await updatePost(ctx.auth, post.id, {
+      action: "publish",
+    });
     expect(published.status).toBe("published");
     expect(published.publishedAt).not.toBeNull();
     expect(published.slug).toBe("opening-weekend");
     // A title edit AFTER publish keeps the URL frozen (SPEC-2 invariant).
-    const renamed = await updatePost(ctx.auth, post.id, { title: "Totally New Headline" });
+    const renamed = await updatePost(ctx.auth, post.id, {
+      title: "Totally New Headline",
+    });
     expect(renamed.title).toBe("Totally New Headline");
     expect(renamed.slug).toBe("opening-weekend");
   });
 
   it("regenerates the slug on a title edit while still a draft", async () => {
     const ctx = await seedOrg();
-    const post = await createPost(ctx.auth, ctx.orgId, { title: "First Draft" });
-    const edited = await updatePost(ctx.auth, post.id, { title: "Second Draft" });
+    const post = await createPost(ctx.auth, ctx.orgId, {
+      title: "First Draft",
+    });
+    const edited = await updatePost(ctx.auth, post.id, {
+      title: "Second Draft",
+    });
     expect(edited.slug).toBe("second-draft");
   });
 
@@ -185,12 +208,16 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
     const archived = await updatePost(ctx.auth, post.id, { action: "archive" });
     expect(archived.status).toBe("archived");
     await deletePost(ctx.auth, post.id);
-    await expect(getPost(ctx.auth, post.id)).rejects.toMatchObject({ status: 404 });
+    await expect(getPost(ctx.auth, post.id)).rejects.toMatchObject({
+      status: 404,
+    });
   });
 
   it("archiving a PUBLISHED post removes it from publicPosts but keeps it in the console with a frozen slug", async () => {
     const ctx = await seedOrg();
-    const post = await createPost(ctx.auth, ctx.orgId, { title: "Season Wrap-Up" });
+    const post = await createPost(ctx.auth, ctx.orgId, {
+      title: "Season Wrap-Up",
+    });
     await updatePost(ctx.auth, post.id, { action: "publish" });
     const { posts: before } = await publicPosts(ctx.orgSlug);
     expect(before.map((p) => p.slug)).toContain("season-wrap-up");
@@ -205,13 +232,20 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
 
     // The console read still lists it, status archived, slug unchanged.
     const consoleRow = (await listPosts(ctx.auth, ctx.orgId)).find((p) => p.id === post.id)!;
-    expect(consoleRow).toMatchObject({ status: "archived", slug: "season-wrap-up" });
+    expect(consoleRow).toMatchObject({
+      status: "archived",
+      slug: "season-wrap-up",
+    });
   });
 
   it("manual posts succeed on a community org (ungated PLG surface)", async () => {
     const ctx = await seedOrg("community");
-    const post = await createPost(ctx.auth, ctx.orgId, { title: "Free Club News" });
-    const published = await updatePost(ctx.auth, post.id, { action: "publish" });
+    const post = await createPost(ctx.auth, ctx.orgId, {
+      title: "Free Club News",
+    });
+    const published = await updatePost(ctx.auth, post.id, {
+      action: "publish",
+    });
     expect(published.status).toBe("published");
   });
 
@@ -252,9 +286,13 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
     const pub = await seedDivision(ctx, { visibility: "public" });
     const priv = await seedDivision(ctx, { visibility: "private" });
 
-    const orgPost = await createPost(ctx.auth, ctx.orgId, { title: "Org Wide" });
+    const orgPost = await createPost(ctx.auth, ctx.orgId, {
+      title: "Org Wide",
+    });
     await updatePost(ctx.auth, orgPost.id, { action: "publish" });
-    const draftPost = await createPost(ctx.auth, ctx.orgId, { title: "Hidden Draft" });
+    const draftPost = await createPost(ctx.auth, ctx.orgId, {
+      title: "Hidden Draft",
+    });
     void draftPost;
     const pubScoped = await createPost(ctx.auth, ctx.orgId, {
       title: "Public Comp Post",
@@ -275,7 +313,9 @@ describe.skipIf(!HAS_DB)("org-posts CRUD", () => {
     expect(slugs).not.toContain("private-comp-post");
     // Direct fetch of a draft / private-scoped post 404s.
     await expect(publicPost(ctx.orgSlug, "hidden-draft")).rejects.toMatchObject({ status: 404 });
-    await expect(publicPost(ctx.orgSlug, "private-comp-post")).rejects.toMatchObject({ status: 404 });
+    await expect(publicPost(ctx.orgSlug, "private-comp-post")).rejects.toMatchObject({
+      status: 404,
+    });
   });
 
   it("paginates public posts 20/page with hasMore", async () => {
@@ -324,7 +364,10 @@ describe.skipIf(!HAS_DB)("org-posts auto-drafts", () => {
   it("drafts one result post for a decided fixture in an opted-in pro division", async () => {
     const ctx = await seedOrg();
     const div = await seedDivision(ctx, { autoPosts: true });
-    const fx = await seedDecidedFixture(ctx, div, { homeLine: "3", awayLine: "1" });
+    const fx = await seedDecidedFixture(ctx, div, {
+      homeLine: "3",
+      awayLine: "1",
+    });
     await draft(ctx, fx);
 
     const posts = await listPosts(ctx.auth, ctx.orgId);
@@ -387,22 +430,51 @@ describe.skipIf(!HAS_DB)("org-posts auto-drafts", () => {
   it("drafts a round recap when the last fixture of a round is decided", async () => {
     const ctx = await seedOrg();
     const div = await seedDivision(ctx, { autoPosts: true });
-    const fx1 = await seedDecidedFixture(ctx, div, { round: 1, homeLine: "3", awayLine: "1" });
-    const fx2 = await seedDecidedFixture(ctx, div, { round: 1, homeLine: "0", awayLine: "0" });
+    const fx1 = await seedDecidedFixture(ctx, div, {
+      round: 1,
+      homeLine: "3",
+      awayLine: "1",
+    });
+    const fx2 = await seedDecidedFixture(ctx, div, {
+      round: 1,
+      homeLine: "0",
+      awayLine: "0",
+    });
     void fx1;
     await sql`
       insert into standings_snapshots (stage_id, org_id, pool_id, rows, computed_through_seq)
       values (${div.stageId}, ${ctx.orgId}, null,
         ${sql.json([
-          { entrantId: div.entrantA, played: 1, won: 1, drawn: 0, lost: 0, points: 3, metrics: {}, rank: 1 },
-          { entrantId: div.entrantB, played: 1, won: 0, drawn: 0, lost: 1, points: 0, metrics: {}, rank: 2 },
+          {
+            entrantId: div.entrantA,
+            played: 1,
+            won: 1,
+            drawn: 0,
+            lost: 0,
+            points: 3,
+            metrics: {},
+            rank: 1,
+          },
+          {
+            entrantId: div.entrantB,
+            played: 1,
+            won: 0,
+            drawn: 0,
+            lost: 1,
+            points: 0,
+            metrics: {},
+            rank: 2,
+          },
         ])}, 2)`;
     await draft(ctx, fx2);
 
     const posts = await listPosts(ctx.auth, ctx.orgId);
     const recap = posts.filter((p) => p.kind === "round_recap");
     expect(recap).toHaveLength(1);
-    expect(recap[0]!.autoSource).toMatchObject({ trigger: "round_complete", round_no: 1 });
+    expect(recap[0]!.autoSource).toMatchObject({
+      trigger: "round_complete",
+      round_no: 1,
+    });
     expect(recap[0]!.bodyMd).toContain("Riverside");
   });
 
@@ -424,8 +496,16 @@ describe.skipIf(!HAS_DB)("org-posts auto-drafts", () => {
 
     // Stage A round 1: two decided fixtures → its recap should fire even though
     // stage B's round 1 is still open.
-    const a1 = await seedDecidedFixture(ctx, div, { round: 1, homeLine: "3", awayLine: "1" });
-    const a2 = await seedDecidedFixture(ctx, div, { round: 1, homeLine: "0", awayLine: "0" });
+    const a1 = await seedDecidedFixture(ctx, div, {
+      round: 1,
+      homeLine: "3",
+      awayLine: "1",
+    });
+    const a2 = await seedDecidedFixture(ctx, div, {
+      round: 1,
+      homeLine: "0",
+      awayLine: "0",
+    });
     void a1;
     await draft(ctx, a2);
 

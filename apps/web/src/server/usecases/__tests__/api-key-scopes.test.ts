@@ -9,6 +9,7 @@ import { requireOrgAuth } from "@/server/api-v1/auth";
 import { createApiKey } from "@/server/usecases/api-keys";
 import type { AuthCtx } from "@/server/api-v1/auth";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 interface Seed {
@@ -27,10 +28,7 @@ async function seedOrg(): Promise<Seed> {
   // is about scope authorization at the auth door, not entitlement gating
   // (that's covered by the api.write matrix row, V290), so manage/write
   // scopes are unblocked here via override.
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'community', 'active')
-    on conflict (org_id) do update set plan_key = 'community'`;
+  await setOrgPlan(orgId, "community");
   await sql`
     insert into org_entitlement_overrides (org_id, feature_key, bool_value, reason)
     values (${orgId}, 'api.access', true, 'test')
@@ -47,7 +45,13 @@ async function seedOrg(): Promise<Seed> {
   };
   const compA = await mk("Alpha");
   const compB = await mk("Beta");
-  const session: AuthCtx = { orgId, via: "session", userId: null, role: "owner", keyId: null };
+  const session: AuthCtx = {
+    orgId,
+    via: "session",
+    userId: null,
+    role: "owner",
+    keyId: null,
+  };
   return { orgId, compA, compB, session };
 }
 
@@ -69,32 +73,43 @@ afterAll(async () => {
 describe.skipIf(!HAS_DB)("scoped API keys at the auth door", () => {
   it("read key: GET passes, manage-scoped POST is 403 with an actionable message", async () => {
     const { orgId, session } = await seedOrg();
-    const { secret } = await createApiKey(session, { name: "reader", scopes: ["read"] });
+    const { secret } = await createApiKey(session, {
+      name: "reader",
+      scopes: ["read"],
+    });
 
     const ctx = await requireOrgAuth(keyedRequest(secret, "GET", "/competitions"), orgId, "read");
     expect(ctx.via).toBe("api_key");
 
     await expect(
       requireOrgAuth(keyedRequest(secret, "POST", "/competitions"), orgId, "write"),
-    ).rejects.toMatchObject({ status: 403, message: expect.stringContaining("'manage' scope") });
+    ).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining("'manage' scope"),
+    });
   });
 
   it("unlisted route is default-denied even for a manage key", async () => {
     const { orgId, session } = await seedOrg();
-    const { secret } = await createApiKey(session, { name: "manager", scopes: ["manage"] });
+    const { secret } = await createApiKey(session, {
+      name: "manager",
+      scopes: ["manage"],
+    });
     await expect(
       requireOrgAuth(keyedRequest(secret, "POST", "/orgs/x/api-keys"), orgId, "write"),
-    ).rejects.toMatchObject({ status: 403, message: expect.stringContaining("cannot access") });
+    ).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining("cannot access"),
+    });
   });
 
   it("legacy write scope still authenticates as manage", async () => {
     const { orgId, session } = await seedOrg();
-    const { secret } = await createApiKey(session, { name: "legacy", scopes: ["write"] });
-    const ctx = await requireOrgAuth(
-      keyedRequest(secret, "POST", "/competitions"),
-      orgId,
-      "write",
-    );
+    const { secret } = await createApiKey(session, {
+      name: "legacy",
+      scopes: ["write"],
+    });
+    const ctx = await requireOrgAuth(keyedRequest(secret, "POST", "/competitions"), orgId, "write");
     expect(ctx.via).toBe("api_key");
   });
 
@@ -115,12 +130,18 @@ describe.skipIf(!HAS_DB)("scoped API keys at the auth door", () => {
 
     await expect(
       requireOrgAuth(keyedRequest(secret, "GET", `/competitions/${compB}`), orgId, "read"),
-    ).rejects.toMatchObject({ status: 403, message: expect.stringContaining("pinned") });
+    ).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining("pinned"),
+    });
 
     // Org-wide collection: unpinnable → 403.
     await expect(
       requireOrgAuth(keyedRequest(secret, "GET", "/competitions"), orgId, "read"),
-    ).rejects.toMatchObject({ status: 403, message: expect.stringContaining("org-wide") });
+    ).rejects.toMatchObject({
+      status: 403,
+      message: expect.stringContaining("org-wide"),
+    });
   });
 
   it.skipIf(!!process.env.REDIS_URL)(
@@ -133,11 +154,7 @@ describe.skipIf(!HAS_DB)("scoped API keys at the auth door", () => {
         competition_id: compA,
       });
       for (let i = 0; i < 60; i++) {
-        await requireOrgAuth(
-          keyedRequest(secret, "GET", `/competitions/${compA}`),
-          orgId,
-          "read",
-        );
+        await requireOrgAuth(keyedRequest(secret, "GET", `/competitions/${compA}`), orgId, "read");
       }
       await expect(
         requireOrgAuth(keyedRequest(secret, "GET", `/competitions/${compA}`), orgId, "read"),

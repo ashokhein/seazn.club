@@ -9,6 +9,7 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 export const GENERIC_CONFIG = {
   resultMode: "score",
   allowDraws: true,
@@ -33,10 +34,7 @@ export async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth
     values (${"V11 " + suffix}, ${"v11-" + suffix}, ${owner.id}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${owner.id}, 'owner')`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -47,28 +45,48 @@ export async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: owner.id, role: "owner", keyId: null } };
+  return {
+    auth: {
+      orgId,
+      via: "session",
+      userId: owner.id,
+      role: "owner",
+      keyId: null,
+    },
+  };
 }
 
 /** Division with FUTURE fixtures — the /me lane and re-accept both filter on
  *  matchday, so dates must be ahead of now. */
 export async function seedFutureDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
-    name: "V11 Cup", visibility: "public", branding: {},
+    name: "V11 Cup",
+    visibility: "public",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   await createEntrants(
     auth,
     division.id,
     ["A", "B", "C", "D"].map((name, i) => ({
-      kind: "individual" as const, display_name: name, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: name,
+      seed: i + 1,
+      members: [],
     })),
   );
   const [stage] = await createStages(auth, division.id, {
-    seq: 1, kind: "league", name: "League", config: {},
+    seq: 1,
+    kind: "league",
+    name: "League",
+    config: {},
   });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   const t0 = Date.now() + 7 * 86_400_000;

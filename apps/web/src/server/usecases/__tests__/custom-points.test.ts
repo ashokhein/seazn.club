@@ -19,10 +19,14 @@ import {
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
 async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthCtx }> {
@@ -31,10 +35,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into organizations (name, slug) values (${"Pts " + suffix}, ${"pts-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -45,28 +46,48 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx, names: string[]) {
-  const comp = await createCompetition(auth, { name: "Pts Cup", visibility: "private", branding: {} });
+  const comp = await createCompetition(auth, {
+    name: "Pts Cup",
+    visibility: "private",
+    branding: {},
+  });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const entrants = await createEntrants(
-    auth, division.id,
+    auth,
+    division.id,
     names.map((name, i) => ({
-      kind: "individual" as const, display_name: name, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: name,
+      seed: i + 1,
+      members: [],
     })),
   );
   return { comp, division, entrants };
 }
 
 async function decide(auth: AuthCtx, fixtureId: string, hs: number, as_: number) {
-  await scoreEvent(auth, fixtureId, { expected_seq: 0, type: "core.start", payload: {} });
+  await scoreEvent(auth, fixtureId, {
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
+  });
   return scoreEvent(auth, fixtureId, {
-    expected_seq: 1, type: "generic.result", payload: { p1Score: hs, p2Score: as_ },
+    expected_seq: 1,
+    type: "generic.result",
+    payload: { p1Score: hs, p2Score: as_ },
   });
 }
 
@@ -83,7 +104,9 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
     const { auth } = await seedOrg();
     const { division, entrants } = await seedDivision(auth, ["A", "B"]);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "league", name: "L",
+      seq: 1,
+      kind: "league",
+      name: "L",
       config: {
         points: {
           base: { win: 5, draw: 3, loss: 0 },
@@ -105,21 +128,36 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
     const { auth } = await seedOrg();
     const { division, entrants } = await seedDivision(auth, ["A", "B"]);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "league", name: "L",
+      seq: 1,
+      kind: "league",
+      name: "L",
       config: {
-        points: { base: { win: 3, draw: 1, loss: 0 }, bonuses: [], forfeit: { winnerPoints: 3, loserPoints: -1 } },
+        points: {
+          base: { win: 3, draw: 1, loss: 0 },
+          bonuses: [],
+          forfeit: { winnerPoints: 3, loserPoints: -1 },
+        },
       },
     });
     const { fixtures } = await generateStageFixtures(auth, stage!.id);
     await startDivision(auth, division.id);
     const f = fixtures[0]!;
-    await scoreEvent(auth, f.id, { expected_seq: 0, type: "core.start", payload: {} });
     await scoreEvent(auth, f.id, {
-      expected_seq: 1, type: "core.forfeit",
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
+    await scoreEvent(auth, f.id, {
+      expected_seq: 1,
+      type: "core.forfeit",
       payload: { by: f.away_entrant_id, reason: "no-show" },
     });
     const standings = await getStandings(auth, stage!.id);
-    const rows = standings.rows as { entrantId: string; points: number; metrics: Record<string, number> }[];
+    const rows = standings.rows as {
+      entrantId: string;
+      points: number;
+      metrics: Record<string, number>;
+    }[];
     const byName = new Map(entrants.map((e) => [e.display_name, e.id]));
     const a = rows.find((r) => r.entrantId === byName.get("A"))!;
     const b = rows.find((r) => r.entrantId === byName.get("B"))!;
@@ -131,7 +169,12 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
   it("two teams tied through the whole cascade carry the tie_unbroken alert", async () => {
     const { auth } = await seedOrg();
     const { division } = await seedDivision(auth, ["A", "B"]);
-    const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+    const [stage] = await createStages(auth, division.id, {
+      seq: 1,
+      kind: "league",
+      name: "L",
+      config: {},
+    });
     const { fixtures } = await generateStageFixtures(auth, stage!.id);
     await startDivision(auth, division.id);
     await decide(auth, fixtures[0]!.id, 2, 2); // draw — equal on everything
@@ -143,7 +186,12 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
   it("manual override pins 3rd/4th and survives recompute; Community 402s", async () => {
     const { auth } = await seedOrg();
     const { division, entrants } = await seedDivision(auth, ["A", "B", "C", "D"]);
-    const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+    const [stage] = await createStages(auth, division.id, {
+      seq: 1,
+      kind: "league",
+      name: "L",
+      config: {},
+    });
     const { fixtures } = await generateStageFixtures(auth, stage!.id);
     await startDivision(auth, division.id);
     // A beats everyone; B beats C,D; C beats D → order A,B,C,D
@@ -162,7 +210,11 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
       ],
     });
     const standings = await getStandings(auth, stage!.id);
-    const rows = standings.rows as { entrantId: string; rank: number; rankLocked?: boolean }[];
+    const rows = standings.rows as {
+      entrantId: string;
+      rank: number;
+      rankLocked?: boolean;
+    }[];
     const rank = (name: string) => rows.find((r) => r.entrantId === byId.get(name))!.rank;
     expect([rank("A"), rank("B"), rank("D"), rank("C")]).toEqual([1, 2, 3, 4]);
     expect(rows.find((r) => r.entrantId === byId.get("D"))!.rankLocked).toBe(true);
@@ -173,7 +225,12 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
 
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv, entrants: freeEntrants } = await seedDivision(freeAuth, ["A", "B"]);
-    const [freeStage] = await createStages(freeAuth, freeDiv.id, { seq: 1, kind: "league", name: "L", config: {} });
+    const [freeStage] = await createStages(freeAuth, freeDiv.id, {
+      seq: 1,
+      kind: "league",
+      name: "L",
+      config: {},
+    });
     await generateStageFixtures(freeAuth, freeStage!.id);
     await expect(
       overrideStandings(freeAuth, freeStage!.id, {
@@ -188,7 +245,10 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
     const [g, final] = await createStages(auth, division.id, [
       { seq: 1, kind: "league", name: "Phase 1", config: {} },
       {
-        seq: 2, kind: "league", name: "Super pool", config: {},
+        seq: 2,
+        kind: "league",
+        name: "Super pool",
+        config: {},
         qualification: { topN: 3, carry: "points" } as never,
       },
     ]);
@@ -202,7 +262,9 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
       await decide(auth, f.id, homeWins ? 2 : 0, homeWins ? 0 : 2);
     }
     await completeStage(auth, g!.id);
-    const [next] = await sql<{ config: { carry_deltas?: { entrantId: string; points: number }[] } }[]>`
+    const [next] = await sql<
+      { config: { carry_deltas?: { entrantId: string; points: number }[] } }[]
+    >`
       select config from stages where id = ${final!.id}`;
     expect(next!.config.carry_deltas).toBeDefined();
     const carried = next!.config.carry_deltas!;
@@ -218,14 +280,27 @@ describe.skipIf(!HAS_DB)("custom points & rank control (Jul3/05)", () => {
     const { division: freeDiv } = await seedDivision(freeAuth, ["A", "B"]);
     await expect(
       createStages(freeAuth, freeDiv.id, {
-        seq: 1, kind: "league", name: "L",
-        config: { points: { base: { win: 5, draw: 3, loss: 0 }, bonuses: [{ when: "draw", points: 1 }] } },
+        seq: 1,
+        kind: "league",
+        name: "L",
+        config: {
+          points: {
+            base: { win: 5, draw: 3, loss: 0 },
+            bonuses: [{ when: "draw", points: 1 }],
+          },
+        },
       }),
     ).rejects.toMatchObject({ featureKey: "standings.custom_points" });
     await expect(
       createStages(freeAuth, freeDiv.id, [
         { seq: 1, kind: "league", name: "L", config: {} },
-        { seq: 2, kind: "league", name: "S", config: {}, qualification: { topN: 1, carry: "points" } as never },
+        {
+          seq: 2,
+          kind: "league",
+          name: "S",
+          config: {},
+          qualification: { topN: 1, carry: "points" } as never,
+        },
       ]),
     ).rejects.toMatchObject({ featureKey: "standings.carry_over" });
   });

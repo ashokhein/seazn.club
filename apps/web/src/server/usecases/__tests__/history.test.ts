@@ -27,6 +27,7 @@ import {
   setDivisionLocks,
 } from "../history";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
@@ -36,18 +37,13 @@ const GENERIC_CONFIG = {
   progressScore: false,
 };
 
-async function seedOrg(
-  plan: "community" | "pro" | "pro_plus" = "pro",
-): Promise<{ auth: AuthCtx }> {
+async function seedOrg(plan: "community" | "pro" | "pro_plus" = "pro"): Promise<{ auth: AuthCtx }> {
   const suffix = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"His " + suffix}, ${"his-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -58,27 +54,40 @@ async function seedOrg(
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx, stageCfg: Record<string, unknown> = {}) {
   const comp = await createCompetition(auth, {
-    name: "Undo Cup", visibility: "private", branding: {},
+    name: "Undo Cup",
+    visibility: "private",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const entrants = await createEntrants(
     auth,
     division.id,
     ["A", "B", "C", "D", "E", "F", "G", "H"].map((name, i) => ({
-      kind: "individual" as const, display_name: name, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: name,
+      seed: i + 1,
+      members: [],
     })),
   );
   const [stage] = await createStages(auth, division.id, {
-    seq: 1, kind: stageCfg.kind === undefined ? "league" : (stageCfg.kind as "group"),
-    name: "Main", config: stageCfg,
+    seq: 1,
+    kind: stageCfg.kind === undefined ? "league" : (stageCfg.kind as "group"),
+    name: "Main",
+    config: stageCfg,
   });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   return { comp, division, stage: stage!, fixtures, entrants };
@@ -96,18 +105,30 @@ afterAll(async () => {
 
 describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
   it("move ×3 → undo ×3 = original → redo ×3 = moved (golden)", async () => {
-    const { auth, } = await seedOrg();
+    const { auth } = await seedOrg();
     const { division, fixtures } = await seedDivision(auth);
     const three = fixtures.slice(0, 3);
     // place them first (baseline), then move them (3 edits)
     for (let i = 0; i < 3; i++) {
-      await patchFixture(auth, three[i]!.id, { scheduled_at: at(9 + i), court_label: "C1" });
+      await patchFixture(auth, three[i]!.id, {
+        scheduled_at: at(9 + i),
+        court_label: "C1",
+      });
     }
     for (let i = 0; i < 3; i++) {
-      await patchFixture(auth, three[i]!.id, { scheduled_at: at(14 + i), court_label: "C2" });
+      await patchFixture(auth, three[i]!.id, {
+        scheduled_at: at(14 + i),
+        court_label: "C2",
+      });
     }
     const placed = async () =>
-      sql<{ id: string; scheduled_at: string | null; court_label: string | null }[]>`
+      sql<
+        {
+          id: string;
+          scheduled_at: string | null;
+          court_label: string | null;
+        }[]
+      >`
         select id, scheduled_at::text as scheduled_at, court_label from fixtures
         where id in ${sql(three.map((f) => f.id))} order by id`;
     const moved = await placed();
@@ -130,10 +151,16 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
 
   it("scoped clear of pool A leaves pool B and locked fixtures intact; undo restores", async () => {
     const { auth } = await seedOrg();
-    const { division, fixtures } = await seedDivision(auth, { kind: "group", pools: { count: 2 } });
+    const { division, fixtures } = await seedDivision(auth, {
+      kind: "group",
+      pools: { count: 2 },
+    });
     // schedule everything
     for (let i = 0; i < fixtures.length; i++) {
-      await patchFixture(auth, fixtures[i]!.id, { scheduled_at: at(9 + i), court_label: "C1" });
+      await patchFixture(auth, fixtures[i]!.id, {
+        scheduled_at: at(9 + i),
+        court_label: "C1",
+      });
     }
     const pools = await sql<{ id: string; key: string }[]>`
       select id, key from pools where stage_id = ${fixtures[0]!.stage_id} order by key`;
@@ -165,7 +192,10 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
 
   it("clear-entrants keeps the pool, blocks after a result; two-site scope lock blocks edits", async () => {
     const { auth } = await seedOrg();
-    const { division, fixtures } = await seedDivision(auth, { kind: "group", pools: { count: 2 } });
+    const { division, fixtures } = await seedDivision(auth, {
+      kind: "group",
+      pools: { count: 2 },
+    });
     const pools = await sql<{ id: string }[]>`
       select id from pools where stage_id = ${fixtures[0]!.stage_id} order by key`;
     const poolA = pools[0]!.id;
@@ -182,10 +212,18 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     expect(restored!.n).toBe(cleared.removed);
 
     // scope lock site B (court C2): edits inside the scope are refused
-    await patchFixture(auth, fixtures[0]!.id, { scheduled_at: at(9), court_label: "C2" });
-    await setDivisionLocks(auth, division.id, { locked_scopes: [{ courts: ["C2"] }] });
+    await patchFixture(auth, fixtures[0]!.id, {
+      scheduled_at: at(9),
+      court_label: "C2",
+    });
+    await setDivisionLocks(auth, division.id, {
+      locked_scopes: [{ courts: ["C2"] }],
+    });
     await expect(
-      patchFixture(auth, fixtures[0]!.id, { scheduled_at: at(10), court_label: "C2" }),
+      patchFixture(auth, fixtures[0]!.id, {
+        scheduled_at: at(10),
+        court_label: "C2",
+      }),
     ).resolves.toBeTruthy(); // moveFixture path is separate; board apply path enforces scope
   });
 
@@ -194,7 +232,11 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     const { division, fixtures } = await seedDivision(auth);
     await startDivision(auth, division.id);
     const f = fixtures[0]!;
-    await scoreEvent(auth, f.id, { expected_seq: 0, type: "core.start", payload: {} });
+    await scoreEvent(auth, f.id, {
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
     await scoreEvent(auth, f.id, {
       expected_seq: 1,
       type: "generic.result",
@@ -208,10 +250,19 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
   it("checkpoints: restore rewinds; second checkpoint is Pro", async () => {
     const { auth } = await seedOrg();
     const { division, fixtures } = await seedDivision(auth);
-    await patchFixture(auth, fixtures[0]!.id, { scheduled_at: at(9), court_label: "C1" });
+    await patchFixture(auth, fixtures[0]!.id, {
+      scheduled_at: at(9),
+      court_label: "C1",
+    });
     const cp = await createCheckpoint(auth, division.id, "before reshuffle");
-    await patchFixture(auth, fixtures[0]!.id, { scheduled_at: at(15), court_label: "C2" });
-    await patchFixture(auth, fixtures[1]!.id, { scheduled_at: at(16), court_label: "C2" });
+    await patchFixture(auth, fixtures[0]!.id, {
+      scheduled_at: at(15),
+      court_label: "C2",
+    });
+    await patchFixture(auth, fixtures[1]!.id, {
+      scheduled_at: at(16),
+      court_label: "C2",
+    });
 
     const restored = await restoreCheckpoint(auth, division.id, cp.id, true);
     expect(restored.steps).toBe(2);
@@ -242,9 +293,15 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     });
 
     // AI applies still work — repeatedly — and never touch that quota.
-    await expect(createCheckpoint(auth, division.id, "Before AI · run 1", "ai")).resolves.toBeTruthy();
-    await expect(createCheckpoint(auth, division.id, "Before AI · run 2", "ai")).resolves.toBeTruthy();
-    await expect(createCheckpoint(auth, division.id, "Before AI · run 3", "ai")).resolves.toBeTruthy();
+    await expect(
+      createCheckpoint(auth, division.id, "Before AI · run 1", "ai"),
+    ).resolves.toBeTruthy();
+    await expect(
+      createCheckpoint(auth, division.id, "Before AI · run 2", "ai"),
+    ).resolves.toBeTruthy();
+    await expect(
+      createCheckpoint(auth, division.id, "Before AI · run 3", "ai"),
+    ).resolves.toBeTruthy();
 
     // …and the manual quota is still exactly as spent: one used, none free.
     await expect(createCheckpoint(auth, division.id, "yet another")).rejects.toMatchObject({
@@ -306,7 +363,9 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
     const cp = await createCheckpoint(auth, a.id, "belongs to A");
 
     // Right id, wrong division — must not delete by guessing an id.
-    await expect(deleteCheckpoint(auth, b.id, cp.id)).rejects.toMatchObject({ status: 404 });
+    await expect(deleteCheckpoint(auth, b.id, cp.id)).rejects.toMatchObject({
+      status: 404,
+    });
     expect(await listCheckpoints(auth, a.id)).toHaveLength(1);
 
     await expect(
@@ -334,7 +393,10 @@ describe.skipIf(!HAS_DB)("schedule undo & versioning (Jul3/03)", () => {
   it("stale optimistic token → SEQ_CONFLICT 409 contract", async () => {
     const { auth } = await seedOrg();
     const { division, fixtures } = await seedDivision(auth);
-    await patchFixture(auth, fixtures[0]!.id, { scheduled_at: at(9), court_label: "C1" });
+    await patchFixture(auth, fixtures[0]!.id, {
+      scheduled_at: at(9),
+      court_label: "C1",
+    });
     await expect(undoDivision(auth, division.id, 1)).rejects.toSatisfy((err: unknown) =>
       EngineError.is(err, "SEQ_CONFLICT"),
     );

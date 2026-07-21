@@ -36,8 +36,19 @@ const SKIP_KNOCKOUT = process.env.SEED_SKIP_KNOCKOUT === "1";
 const GROUPS = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L"];
 
 // ───────────────────────── data types ──────────────────────────
-interface Player { n: number; pos: string; name: string }
-interface GroupMatch { group: string; date: string; home: string; away: string; hs: number; as: number }
+interface Player {
+  n: number;
+  pos: string;
+  name: string;
+}
+interface GroupMatch {
+  group: string;
+  date: string;
+  home: string;
+  away: string;
+  hs: number;
+  as: number;
+}
 interface Data {
   teams: Record<string, { code: string; iso2: string; group: string }>;
   groupMatches: GroupMatch[];
@@ -47,17 +58,32 @@ interface Data {
 // ───────────────── pure helpers (exported for tests) ─────────────────
 
 /** League points for a played match: win 3, draw 1. */
-export interface StandRow { code: string; pts: number; gd: number; gf: number; ga: number }
+export interface StandRow {
+  code: string;
+  pts: number;
+  gd: number;
+  gf: number;
+  ga: number;
+}
 
 /** Rank the four teams of one group from its played matches (pts, gd, gf). */
 export function groupStandings(codes: string[], matches: GroupMatch[]): StandRow[] {
-  const t = new Map<string, StandRow>(codes.map((c) => [c, { code: c, pts: 0, gd: 0, gf: 0, ga: 0 }]));
+  const t = new Map<string, StandRow>(
+    codes.map((c) => [c, { code: c, pts: 0, gd: 0, gf: 0, ga: 0 }]),
+  );
   for (const m of matches) {
-    const h = t.get(m.home)!, a = t.get(m.away)!;
-    h.gf += m.hs; h.ga += m.as; a.gf += m.as; a.ga += m.hs;
+    const h = t.get(m.home)!,
+      a = t.get(m.away)!;
+    h.gf += m.hs;
+    h.ga += m.as;
+    a.gf += m.as;
+    a.ga += m.hs;
     if (m.hs > m.as) h.pts += 3;
     else if (m.hs < m.as) a.pts += 3;
-    else { h.pts += 1; a.pts += 1; }
+    else {
+      h.pts += 1;
+      a.pts += 1;
+    }
   }
   for (const r of t.values()) r.gd = r.gf - r.ga;
   return [...t.values()].sort((x, y) => y.pts - x.pts || y.gd - x.gd || y.gf - x.gf);
@@ -67,13 +93,18 @@ export function groupStandings(codes: string[], matches: GroupMatch[]): StandRow
 export function bestThirdGroups(data: Data): string[] {
   const thirds: { group: string; row: StandRow }[] = [];
   for (const g of GROUPS) {
-    const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
+    const codes = Object.values(data.teams)
+      .filter((t) => t.group === g)
+      .map((t) => t.code);
     const ms = data.groupMatches.filter((m) => m.group === g);
     const row = groupStandings(codes, ms)[2];
     thirds.push({ group: g, row });
   }
   thirds.sort((x, y) => y.row.pts - x.row.pts || y.row.gd - x.row.gd || y.row.gf - x.row.gf);
-  return thirds.slice(0, 8).map((t) => t.group).sort();
+  return thirds
+    .slice(0, 8)
+    .map((t) => t.group)
+    .sort();
 }
 
 /** Seed value that snake-distributes team `slot` (0..3) of group `gi` (0..11)
@@ -105,15 +136,23 @@ export function flagUrl(iso2: string): string {
  *  meet best-thirds; the other four meet runners-up; remaining runners-up
  *  cross-pair. Valid permutation of 1..32 (engine-validated). */
 export const DEMO_SLOT_ORDER: number[] = [
-  1, 28, 8, 25, 5, 32, 4, 29, 9, 17, 12, 24, 13, 21, 16, 20,
-  2, 27, 7, 26, 6, 31, 3, 30, 10, 18, 11, 23, 14, 22, 15, 19,
+  1, 28, 8, 25, 5, 32, 4, 29, 9, 17, 12, 24, 13, 21, 16, 20, 2, 27, 7, 26, 6, 31, 3, 30, 10, 18, 11,
+  23, 14, 22, 15, 19,
 ];
 
 /** Football event stream for a final scoreline (goals attributed by entrant id). */
 export function goalEvents(homeId: string, awayId: string, hs: number, as: number) {
   const ev: { type: string; payload: unknown }[] = [{ type: "core.start", payload: {} }];
-  for (let i = 0; i < hs; i++) ev.push({ type: "football.goal", payload: { by: homeId, minute: 5 + i * 7 } });
-  for (let i = 0; i < as; i++) ev.push({ type: "football.goal", payload: { by: awayId, minute: 9 + i * 7 } });
+  for (let i = 0; i < hs; i++)
+    ev.push({
+      type: "football.goal",
+      payload: { by: homeId, minute: 5 + i * 7 },
+    });
+  for (let i = 0; i < as; i++)
+    ev.push({
+      type: "football.goal",
+      payload: { by: awayId, minute: 9 + i * 7 },
+    });
   ev.push({ type: "football.period", payload: { phase: "HT" } });
   ev.push({ type: "football.period", payload: { phase: "FT" } });
   return ev;
@@ -122,15 +161,22 @@ export function goalEvents(homeId: string, awayId: string, hs: number, as: numbe
 /** Deterministic small int from a string (stable knockout scorelines). */
 export function hashInt(s: string, mod: number): number {
   let h = 2166136261;
-  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
   return Math.abs(h) % mod;
 }
 
 // ─────────────────────── HTTP client (cookie jar) ───────────────────────
 const cookies = new Map<string, string>();
-function cookieHeader(): string { return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; "); }
+function cookieHeader(): string {
+  return [...cookies.entries()].map(([k, v]) => `${k}=${v}`).join("; ");
+}
 /** Unwrap a v1 list response: bare array or a paginated { items }. */
-function asList<T>(x: any): T[] { return Array.isArray(x) ? x : (x?.items ?? []); }
+function asList<T>(x: any): T[] {
+  return Array.isArray(x) ? x : (x?.items ?? []);
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function call<T = any>(path: string, method = "GET", body?: unknown): Promise<T> {
   for (let attempt = 0; ; attempt++) {
@@ -153,7 +199,9 @@ async function call<T = any>(path: string, method = "GET", body?: unknown): Prom
     const text = await res.text();
     const json = text ? JSON.parse(text) : ({} as any);
     if (!res.ok || json?.ok === false)
-      throw new Error(`${method} ${path} → ${res.status} ${JSON.stringify(json?.error ?? json).slice(0, 300)}`);
+      throw new Error(
+        `${method} ${path} → ${res.status} ${JSON.stringify(json?.error ?? json).slice(0, 300)}`,
+      );
     return (json?.data ?? json) as T;
   }
 }
@@ -170,16 +218,23 @@ async function ensureOwnerAndLogin() {
   // then password-login. A password is set ONLY when the account has none
   // (additive for OAuth/magic-link accounts) — an existing password is never
   // overwritten, so a real account is only touched if it had no password.
-  const existing = await sql<{ password_hash: string | null }[]>`select password_hash from users where email = ${EMAIL}`;
+  const existing = await sql<
+    { password_hash: string | null }[]
+  >`select password_hash from users where email = ${EMAIL}`;
   if (existing.length === 0) {
     try {
-      await call("/api/auth/signup", "POST", { email: EMAIL, password: PASSWORD });
+      await call("/api/auth/signup", "POST", {
+        email: EMAIL,
+        password: PASSWORD,
+      });
     } catch (e) {
       if (!/exists|registered|taken|in use|already/i.test(String(e))) throw e;
     }
   }
   await sql`update users set email_verified = true where email = ${EMAIL}`;
-  const [u] = await sql<{ password_hash: string | null }[]>`select password_hash from users where email = ${EMAIL}`;
+  const [u] = await sql<
+    { password_hash: string | null }[]
+  >`select password_hash from users where email = ${EMAIL}`;
   if (!u?.password_hash) {
     await sql`update users set password_hash = ${await bcrypt.hash(PASSWORD, 10)} where email = ${EMAIL}`;
     console.log(`Set an additive password on ${EMAIL} (account had none) for seeder login.`);
@@ -188,10 +243,27 @@ async function ensureOwnerAndLogin() {
 }
 
 async function setPro(orgId: string) {
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
+  // Billing lives on the GROUP (V310): the org points at a subscription, which
+  // ensureOrg's org already has (createOrgForUser mints a community one).
+  const [org] = await sql<{ subscription_id: string | null }[]>`
+    select subscription_id from organizations where id = ${orgId}`;
+  if (org?.subscription_id) {
+    await sql`
+      update subscriptions set plan_key = 'pro', status = 'active', updated_at = now()
+       where id = ${org.subscription_id}`;
+    return;
+  }
+  const [group] = await sql<{ id: string }[]>`
+    insert into subscriptions (owner_user_id, plan_key, status)
+    select coalesce(
+             (select m.user_id from org_members m
+               where m.org_id = o.id and m.role = 'owner'
+               order by m.created_at limit 1),
+             o.created_by),
+           'pro', 'active'
+      from organizations o where o.id = ${orgId}
+    returning id`;
+  await sql`update organizations set subscription_id = ${group!.id} where id = ${orgId}`;
 }
 
 async function ensureOrg(): Promise<string> {
@@ -205,7 +277,8 @@ async function ensureOrg(): Promise<string> {
       // owned-org plan). Lift the cap non-destructively via an entitlement
       // override on an existing owned org (does NOT change its plan), then retry.
       if (/max_owned|402/.test(String(e)) && orgs[0]) {
-        const has = await sql`select 1 from org_entitlement_overrides where org_id = ${orgs[0].id} and feature_key = 'orgs.max_owned'`;
+        const has =
+          await sql`select 1 from org_entitlement_overrides where org_id = ${orgs[0].id} and feature_key = 'orgs.max_owned'`;
         if (has.length === 0) {
           await sql`insert into org_entitlement_overrides (org_id, feature_key, int_value, reason)
                     values (${orgs[0].id}, 'orgs.max_owned', 20, 'FIFA WC 2026 demo seed')`;
@@ -215,23 +288,43 @@ async function ensureOrg(): Promise<string> {
     }
   }
   await setPro(org!.id);
-  await call("/api/orgs/active", "POST", { org_id: org!.id }).catch(() => call("/api/orgs/active", "POST", { id: org!.id }));
+  await call("/api/orgs/active", "POST", { org_id: org!.id }).catch(() =>
+    call("/api/orgs/active", "POST", { id: org!.id }),
+  );
   return org!.id;
 }
 
-async function ensureCompetitionDivision(): Promise<{ compId: string; divId: string; fresh: boolean }> {
+async function ensureCompetitionDivision(): Promise<{
+  compId: string;
+  divId: string;
+  fresh: boolean;
+}> {
   const comps = asList<{ id: string; name: string }>(await call("/api/v1/competitions?limit=200"));
   let comp = comps.find((c) => c.name === COMP_NAME);
   if (!comp) comp = await call("/api/v1/competitions", "POST", { name: COMP_NAME });
-  const divs = asList<{ id: string; name: string }>(await call(`/api/v1/competitions/${comp!.id}/divisions`));
+  const divs = asList<{ id: string; name: string }>(
+    await call(`/api/v1/competitions/${comp!.id}/divisions`),
+  );
   let div = divs.find((d) => d.name === DIV_NAME);
   let fresh = false;
   if (!div) {
     div = await call(`/api/v1/competitions/${comp!.id}/divisions`, "POST", {
-      name: DIV_NAME, sport_key: "football", variant_key: "11-a-side", config: {}, // FOOTBALL_TIEBREAKERS.fifa2026 EXPANDED — "fifa2026" is a preset NAME, not a
+      name: DIV_NAME,
+      sport_key: "football",
+      variant_key: "11-a-side",
+      config: {}, // FOOTBALL_TIEBREAKERS.fifa2026 EXPANDED — "fifa2026" is a preset NAME, not a
       // cascade key; passing it literally no-ops every comparison and standings
       // silently fall back to seed order (found on stg, F5 follow-up).
-      tiebreakers: ["points", "h2h_points", "h2h_diff", "h2h_for", "diff", "for", "fair_play", "lots"],
+      tiebreakers: [
+        "points",
+        "h2h_points",
+        "h2h_diff",
+        "h2h_for",
+        "diff",
+        "for",
+        "fair_play",
+        "lots",
+      ],
     });
     fresh = true;
   }
@@ -256,7 +349,9 @@ async function main() {
   const { divId } = await ensureCompetitionDivision();
 
   // 1) Entrants + rosters (skip if already enrolled).
-  const existing = asList<{ id: string; display_name: string }>(await call(`/api/v1/divisions/${divId}/entrants`));
+  const existing = asList<{ id: string; display_name: string }>(
+    await call(`/api/v1/divisions/${divId}/entrants`),
+  );
   const codeToEntrant = new Map<string, string>();
   if (existing.length >= 48) {
     console.log(`Entrants already present (${existing.length}); reusing.`);
@@ -266,51 +361,85 @@ async function main() {
     }
   } else {
     for (const g of GROUPS) {
-      const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
+      const codes = Object.values(data.teams)
+        .filter((t) => t.group === g)
+        .map((t) => t.code);
       for (let slot = 0; slot < codes.length; slot++) {
         const code = codes[slot];
         const squad = process.env.SEED_SKIP_SQUADS ? [] : (data.squads[code] ?? []);
         const members = [];
         for (const p of squad) {
-          const person = await call<{ id: string }>("/api/v1/persons", "POST", { full_name: p.name, consent: {} });
-          members.push({ person_id: person.id, squad_number: p.n, default_position_key: p.pos, is_captain: false, roles: [] });
+          const person = await call<{ id: string }>("/api/v1/persons", "POST", {
+            full_name: p.name,
+            consent: {},
+          });
+          members.push({
+            person_id: person.id,
+            squad_number: p.n,
+            default_position_key: p.pos,
+            is_captain: false,
+            roles: [],
+          });
         }
         const entrant = await call<{ id: string }>(`/api/v1/divisions/${divId}/entrants`, "POST", {
-          kind: "team", display_name: nameFor(code), seed: seedForGroup(GROUPS.indexOf(g), slot), members,
+          kind: "team",
+          display_name: nameFor(code),
+          seed: seedForGroup(GROUPS.indexOf(g), slot),
+          members,
           badge_url: flagUrl(data.teams[code]!.iso2), // v13: national flag as the entrant badge
         });
         codeToEntrant.set(code, entrant.id);
-        console.log(`  enrolled ${code} (${members.length} squad) seed=${seedForGroup(GROUPS.indexOf(g), slot)}`);
+        console.log(
+          `  enrolled ${code} (${members.length} squad) seed=${seedForGroup(GROUPS.indexOf(g), slot)}`,
+        );
       }
     }
   }
 
   // 2) Stages: group (12 pools) → knockout (32 via TakePicks).
-  const stages = await call<{ id: string; kind: string; seq: number }[]>(`/api/v1/divisions/${divId}/stages`);
+  const stages = await call<{ id: string; kind: string; seq: number }[]>(
+    `/api/v1/divisions/${divId}/stages`,
+  );
   let groupStage = stages.find((s) => s.kind === "group");
   let koStage = stages.find((s) => s.kind === "knockout");
   if (!groupStage || !koStage) {
     const created = await call<any>(`/api/v1/divisions/${divId}/stages`, "POST", [
-      { seq: 1, kind: "group", name: "Group stage", config: { legs: 1, pools: { count: 12 } }, qualification: null },
+      {
+        seq: 1,
+        kind: "group",
+        name: "Group stage",
+        config: { legs: 1, pools: { count: 12 } },
+        qualification: null,
+      },
       // v13: the canonical cup shape as ONE spec — the engine computes the best
       // thirds itself (normaliseUnequalPools) instead of hand-flattened picks —
       // plus an explicit round-one slot map (see DEMO_SLOT_ORDER's caveat).
-      { seq: 2, kind: "knockout", name: "Knockout",
+      {
+        seq: 2,
+        kind: "knockout",
+        name: "Knockout",
         config: { shootout: true, slotOrder: DEMO_SLOT_ORDER },
-        qualification: { combine: [
-          { take: GROUPS.map((g) => ({ pool: g, rank: 1 })) },
-          { take: GROUPS.map((g) => ({ pool: g, rank: 2 })) },
-          // FIFA 2026: equal pools — thirds rank on FULL results (no UEFA drop-bottom).
-          { bestOfRank: { rank: 3, count: 8 } },
-        ] } },
+        qualification: {
+          combine: [
+            { take: GROUPS.map((g) => ({ pool: g, rank: 1 })) },
+            { take: GROUPS.map((g) => ({ pool: g, rank: 2 })) },
+            // FIFA 2026: equal pools — thirds rank on FULL results (no UEFA drop-bottom).
+            { bestOfRank: { rank: 3, count: 8 } },
+          ],
+        },
+      },
     ]);
-    const arr: { id: string; kind: string; seq: number }[] = Array.isArray(created) ? created : [created];
+    const arr: { id: string; kind: string; seq: number }[] = Array.isArray(created)
+      ? created
+      : [created];
     groupStage = arr.find((s) => s.kind === "group")!;
     koStage = arr.find((s) => s.kind === "knockout")!;
   }
 
   // 3) Start + generate group fixtures.
-  await call(`/api/v1/divisions/${divId}/start`, "POST").catch((e) => { if (!/already|started/i.test(String(e))) throw e; });
+  await call(`/api/v1/divisions/${divId}/start`, "POST").catch((e) => {
+    if (!/already|started/i.test(String(e))) throw e;
+  });
   const gen = await call<{ fixtures: any[] }>(`/api/v1/stages/${groupStage!.id}/generate`, "POST");
 
   // 4) Apply real group scores + dates. Map each real match to its fixture by
@@ -324,15 +453,28 @@ async function main() {
   }
   let applied = 0;
   for (const m of data.groupMatches) {
-    const hId = codeToEntrant.get(m.home), aId = codeToEntrant.get(m.away);
+    const hId = codeToEntrant.get(m.home),
+      aId = codeToEntrant.get(m.away);
     if (!hId || !aId) continue;
     const f = fxByPair.get([hId, aId].sort().join("|"));
-    if (!f) { console.log(`  ⚠ no fixture for ${m.home}-${m.away}`); continue; }
-    if (f.status && f.status !== "scheduled") { applied++; continue; } // rerun: already scored
-    await call(`/api/v1/fixtures/${f.id}`, "PATCH", { scheduled_at: `${m.date}T18:00:00+00:00` }).catch(() => {});
+    if (!f) {
+      console.log(`  ⚠ no fixture for ${m.home}-${m.away}`);
+      continue;
+    }
+    if (f.status && f.status !== "scheduled") {
+      applied++;
+      continue;
+    } // rerun: already scored
+    await call(`/api/v1/fixtures/${f.id}`, "PATCH", {
+      scheduled_at: `${m.date}T18:00:00+00:00`,
+    }).catch(() => {});
     let seq = 0;
     for (const ev of goalEvents(hId, aId, m.hs, m.as)) {
-      const r = await call<{ seq: number }>(`/api/v1/fixtures/${f.id}/events`, "POST", { expected_seq: seq, type: ev.type, payload: ev.payload });
+      const r = await call<{ seq: number }>(`/api/v1/fixtures/${f.id}/events`, "POST", {
+        expected_seq: seq,
+        type: ev.type,
+        payload: ev.payload,
+      });
       seq = r.seq;
     }
     applied++;
@@ -340,18 +482,27 @@ async function main() {
   console.log(`Applied ${applied}/${data.groupMatches.length} real group results.`);
 
   if (SKIP_KNOCKOUT) {
-    console.log(`\n✅ Seeded "${COMP_NAME}" / "${DIV_NAME}" — group matches decided, group stage NOT completed and knockout left untouched (yours to drive). Open ${BASE}.`);
+    console.log(
+      `\n✅ Seeded "${COMP_NAME}" / "${DIV_NAME}" — group matches decided, group stage NOT completed and knockout left untouched (yours to drive). Open ${BASE}.`,
+    );
     return;
   }
 
   // 5) Complete group stage → knockout bracket seeds from real standings.
-  await call(`/api/v1/stages/${groupStage!.id}/complete`, "POST").catch((e) => { if (!/complete/i.test(String(e))) throw e; });
+  await call(`/api/v1/stages/${groupStage!.id}/complete`, "POST").catch((e) => {
+    if (!/complete/i.test(String(e))) throw e;
+  });
 
   // 6) Simulate knockout round by round: higher seed (lower seed number) wins.
   const seedOf = new Map<string, number>();
   for (const g of GROUPS) {
-    const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
-    codes.forEach((c, slot) => { const id = codeToEntrant.get(c); if (id) seedOf.set(id, seedForGroup(GROUPS.indexOf(g), slot)); });
+    const codes = Object.values(data.teams)
+      .filter((t) => t.group === g)
+      .map((t) => t.code);
+    codes.forEach((c, slot) => {
+      const id = codeToEntrant.get(c);
+      if (id) seedOf.set(id, seedForGroup(GROUPS.indexOf(g), slot));
+    });
   }
   const kgen = await call<{ fixtures: any[] }>(`/api/v1/stages/${koStage!.id}/generate`, "POST");
   let koFixtures: any[] = kgen.fixtures;
@@ -361,16 +512,30 @@ async function main() {
   // (winners/runners of A..L from the local standings replica); thirds slots
   // (25-32) assert membership — the engine's own ranking orders them.
   {
-    const winners: string[] = [], runners: string[] = [];
+    const winners: string[] = [],
+      runners: string[] = [];
     for (const g of GROUPS) {
-      const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
-      const rows = groupStandings(codes, data.groupMatches.filter((m) => m.group === g));
-      winners.push(rows[0].code); runners.push(rows[1].code);
+      const codes = Object.values(data.teams)
+        .filter((t) => t.group === g)
+        .map((t) => t.code);
+      const rows = groupStandings(
+        codes,
+        data.groupMatches.filter((m) => m.group === g),
+      );
+      winners.push(rows[0].code);
+      runners.push(rows[1].code);
     }
-    const thirdSet = new Set(bestThirdGroups(data).map((g) => {
-      const codes = Object.values(data.teams).filter((t) => t.group === g).map((t) => t.code);
-      return groupStandings(codes, data.groupMatches.filter((m) => m.group === g))[2].code;
-    }));
+    const thirdSet = new Set(
+      bestThirdGroups(data).map((g) => {
+        const codes = Object.values(data.teams)
+          .filter((t) => t.group === g)
+          .map((t) => t.code);
+        return groupStandings(
+          codes,
+          data.groupMatches.filter((m) => m.group === g),
+        )[2].code;
+      }),
+    );
     const codeOf = (id: string | null) => entrantToCodeGlobal.get(id ?? "") ?? "?";
     const r0 = koFixtures
       .filter((f) => f.round_no === Math.min(...koFixtures.map((x) => x.round_no)))
@@ -378,13 +543,18 @@ async function main() {
     if (r0.length !== 16) throw new Error(`R32 verify: expected 16 fixtures, got ${r0.length}`);
     let ok = 0;
     r0.forEach((f, i) => {
-      for (const [side, id] of [["home", f.home_entrant_id], ["away", f.away_entrant_id]] as const) {
+      for (const [side, id] of [
+        ["home", f.home_entrant_id],
+        ["away", f.away_entrant_id],
+      ] as const) {
         const seed = DEMO_SLOT_ORDER[2 * i + (side === "home" ? 0 : 1)];
         const code = codeOf(id);
-        const expected =
-          seed <= 12 ? winners[seed - 1] : seed <= 24 ? runners[seed - 13] : null;
+        const expected = seed <= 12 ? winners[seed - 1] : seed <= 24 ? runners[seed - 13] : null;
         const pass = expected !== null ? code === expected : thirdSet.has(code);
-        if (!pass) throw new Error(`R32 verify: slot ${2 * i + (side === "home" ? 1 : 2)} seed ${seed} → ${code}, expected ${expected ?? "a best-third"}`);
+        if (!pass)
+          throw new Error(
+            `R32 verify: slot ${2 * i + (side === "home" ? 1 : 2)} seed ${seed} → ${code}, expected ${expected ?? "a best-third"}`,
+          );
         ok++;
       }
     });
@@ -396,14 +566,19 @@ async function main() {
     for (const f of koFixtures.filter((x) => (x.round_no ?? 0) === round)) {
       const cur = await call<any>(`/api/v1/fixtures/${f.id}`);
       if (!cur.home_entrant_id || !cur.away_entrant_id || cur.status !== "scheduled") continue;
-      const hSeed = seedOf.get(cur.home_entrant_id) ?? 99, aSeed = seedOf.get(cur.away_entrant_id) ?? 99;
+      const hSeed = seedOf.get(cur.home_entrant_id) ?? 99,
+        aSeed = seedOf.get(cur.away_entrant_id) ?? 99;
       const homeWins = hSeed <= aSeed;
       const winMargin = 1 + hashInt(f.id, 2); // 1..2
       const hs = homeWins ? 1 + winMargin : hashInt(f.id + "a", 2);
       const as = homeWins ? hashInt(f.id + "a", 2) : 1 + winMargin; // loser 0..1, always < winner
       let seq = 0;
       for (const ev of goalEvents(cur.home_entrant_id, cur.away_entrant_id, hs, as)) {
-        const r = await call<{ seq: number }>(`/api/v1/fixtures/${f.id}/events`, "POST", { expected_seq: seq, type: ev.type, payload: ev.payload });
+        const r = await call<{ seq: number }>(`/api/v1/fixtures/${f.id}/events`, "POST", {
+          expected_seq: seq,
+          type: ev.type,
+          payload: ev.payload,
+        });
         seq = r.seq;
       }
       koPlayed++;
@@ -418,21 +593,63 @@ function nameFor(code: string): string {
 }
 // Display names (from the real draw).
 const NAMES: Record<string, string> = {
-  MEX: "Mexico", RSA: "South Africa", KOR: "South Korea", CZE: "Czech Republic",
-  SUI: "Switzerland", CAN: "Canada", BIH: "Bosnia and Herzegovina", QAT: "Qatar",
-  BRA: "Brazil", MAR: "Morocco", SCO: "Scotland", HAI: "Haiti",
-  USA: "United States", AUS: "Australia", PAR: "Paraguay", TUR: "Turkey",
-  GER: "Germany", CIV: "Ivory Coast", ECU: "Ecuador", CUW: "Curaçao",
-  NED: "Netherlands", JPN: "Japan", SWE: "Sweden", TUN: "Tunisia",
-  BEL: "Belgium", EGY: "Egypt", IRN: "Iran", NZL: "New Zealand",
-  ESP: "Spain", CPV: "Cape Verde", URU: "Uruguay", KSA: "Saudi Arabia",
-  FRA: "France", NOR: "Norway", SEN: "Senegal", IRQ: "Iraq",
-  ARG: "Argentina", AUT: "Austria", ALG: "Algeria", JOR: "Jordan",
-  COL: "Colombia", POR: "Portugal", COD: "DR Congo", UZB: "Uzbekistan",
-  ENG: "England", CRO: "Croatia", GHA: "Ghana", PAN: "Panama",
+  MEX: "Mexico",
+  RSA: "South Africa",
+  KOR: "South Korea",
+  CZE: "Czech Republic",
+  SUI: "Switzerland",
+  CAN: "Canada",
+  BIH: "Bosnia and Herzegovina",
+  QAT: "Qatar",
+  BRA: "Brazil",
+  MAR: "Morocco",
+  SCO: "Scotland",
+  HAI: "Haiti",
+  USA: "United States",
+  AUS: "Australia",
+  PAR: "Paraguay",
+  TUR: "Turkey",
+  GER: "Germany",
+  CIV: "Ivory Coast",
+  ECU: "Ecuador",
+  CUW: "Curaçao",
+  NED: "Netherlands",
+  JPN: "Japan",
+  SWE: "Sweden",
+  TUN: "Tunisia",
+  BEL: "Belgium",
+  EGY: "Egypt",
+  IRN: "Iran",
+  NZL: "New Zealand",
+  ESP: "Spain",
+  CPV: "Cape Verde",
+  URU: "Uruguay",
+  KSA: "Saudi Arabia",
+  FRA: "France",
+  NOR: "Norway",
+  SEN: "Senegal",
+  IRQ: "Iraq",
+  ARG: "Argentina",
+  AUT: "Austria",
+  ALG: "Algeria",
+  JOR: "Jordan",
+  COL: "Colombia",
+  POR: "Portugal",
+  COD: "DR Congo",
+  UZB: "Uzbekistan",
+  ENG: "England",
+  CRO: "Croatia",
+  GHA: "Ghana",
+  PAN: "Panama",
 };
 
 // Run only when executed directly (not when imported by a test).
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  main().then(() => sql?.end()).catch(async (e) => { console.error(e); await sql?.end(); process.exit(1); });
+  main()
+    .then(() => sql?.end())
+    .catch(async (e) => {
+      console.error(e);
+      await sql?.end();
+      process.exit(1);
+    });
 }

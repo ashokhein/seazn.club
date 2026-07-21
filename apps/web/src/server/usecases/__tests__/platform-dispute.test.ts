@@ -19,7 +19,9 @@ import type Stripe from "stripe";
 
 // Observe the staff alert without touching the rest of the email module (send()
 // is a no-op without RESEND_API_KEY either way).
-const emailMock = vi.hoisted(() => ({ staff: vi.fn().mockResolvedValue(true) }));
+const emailMock = vi.hoisted(() => ({
+  staff: vi.fn().mockResolvedValue(true),
+}));
 vi.mock("@/lib/email", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email")>()),
   sendStaffDisputeAlertEmail: emailMock.staff,
@@ -47,17 +49,30 @@ const uniq = () => randomUUID().slice(0, 12);
 async function seedSubOrg(plan = "pro"): Promise<{ orgId: string; customer: string }> {
   const suffix = uniq();
   const customer = `cus_${suffix}`;
+  const [{ id: payerId }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name)
+    values (${"payer-" + suffix + "@test.local"}, 'Payer') returning id`;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
-    insert into organizations (name, slug)
-    values (${"Sub Org " + suffix}, ${"sub-org-" + suffix}) returning id`;
+    insert into organizations (name, slug, created_by)
+    values (${"Sub Org " + suffix}, ${"sub-org-" + suffix}, ${payerId}) returning id`;
   await sql`
-    insert into subscriptions (org_id, plan_key, status, stripe_customer_id, stripe_subscription_id)
-    values (${orgId}, ${plan}, 'active', ${customer}, ${"sub_" + suffix})`;
+    with s as (
+      insert into subscriptions
+        (owner_user_id, plan_key, status, stripe_customer_id, stripe_subscription_id)
+      select o.created_by, ${plan}, 'active', ${customer}, ${"sub_" + suffix}
+        from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations o set subscription_id = s.id from s where o.id = ${orgId}`;
   return { orgId, customer };
 }
 
 // A community org that bought an Event Pass for one competition.
-async function seedPassOrg(): Promise<{ orgId: string; compId: string; intent: string }> {
+async function seedPassOrg(): Promise<{
+  orgId: string;
+  compId: string;
+  intent: string;
+}> {
   const suffix = uniq();
   const intent = `pi_pass_${suffix}`;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
@@ -140,7 +155,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     const did = "dp_" + uniq();
     await processStripeEvent(subDisputeEvent("created", customer, did));
     const [s] = await sql<{ disputed_at: Date | null; dispute_id: string; plan_key: string }[]>`
-      select disputed_at, dispute_id, plan_key from subscriptions where org_id = ${orgId}`;
+      select disputed_at, dispute_id, plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.dispute_id).toBe(did);
     expect(s.disputed_at).not.toBeNull();
     expect(s.plan_key).toBe("pro"); // created only flags — money is still contested
@@ -156,7 +171,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     await processStripeEvent(subDisputeEvent("created", customer, did));
     await processStripeEvent(subDisputeEvent("closed", customer, did, "lost"));
     const [s] = await sql<{ plan_key: string; status: string }[]>`
-      select plan_key, status from subscriptions where org_id = ${orgId}`;
+      select plan_key, status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.plan_key).toBe("community");
     expect(s.status).toBe("canceled");
     // Entitlement cache invalidated → the Pro feature is denied on the next probe.
@@ -169,7 +184,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     await processStripeEvent(subDisputeEvent("created", customer, did));
     await processStripeEvent(subDisputeEvent("closed", customer, did, "won"));
     const [s] = await sql<{ disputed_at: Date | null; plan_key: string }[]>`
-      select disputed_at, plan_key from subscriptions where org_id = ${orgId}`;
+      select disputed_at, plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.disputed_at).toBeNull();
     expect(s.plan_key).toBe("pro");
   });
@@ -179,11 +194,11 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     const did = "dp_" + uniq();
     await processStripeEvent(subDisputeEvent("created", customer, did));
     const [first] = await sql<{ disputed_at: Date }[]>`
-      select disputed_at from subscriptions where org_id = ${orgId}`;
+      select disputed_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(first.disputed_at).not.toBeNull();
     await processStripeEvent(subDisputeEvent("created", customer, did)); // replay
     const [s] = await sql<{ dispute_id: string; disputed_at: Date; plan_key: string }[]>`
-      select dispute_id, disputed_at, plan_key from subscriptions where org_id = ${orgId}`;
+      select dispute_id, disputed_at, plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.dispute_id).toBe(did);
     // coalesce(disputed_at, now()) keeps the FIRST stamp — a re-stamp would move it.
     expect(s.disputed_at).toEqual(first.disputed_at);
@@ -198,7 +213,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     await processStripeEvent(lost);
     await processStripeEvent(lost); // replay converges, never toggles back
     const [s] = await sql<{ plan_key: string; status: string }[]>`
-      select plan_key, status from subscriptions where org_id = ${orgId}`;
+      select plan_key, status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.plan_key).toBe("community");
     expect(s.status).toBe("canceled");
   });
@@ -213,7 +228,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
       processStripeEvent(subDisputeEvent("closed", customer, did, "lost")),
     ).resolves.toBeUndefined();
     const [s] = await sql<{ plan_key: string; status: string }[]>`
-      select plan_key, status from subscriptions where org_id = ${orgId}`;
+      select plan_key, status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.plan_key).toBe("community");
     expect(s.status).toBe("canceled");
   });
@@ -237,15 +252,15 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     const flagged = "dp_old_" + uniq();
     const other = "dp_new_" + uniq();
     await sql`update subscriptions set dispute_id = ${flagged}, disputed_at = now()
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     await processStripeEvent(subDisputeEvent("closed", customer, other, "lost"));
     const [mismatch] = await sql<{ plan_key: string; status: string }[]>`
-      select plan_key, status from subscriptions where org_id = ${orgId}`;
+      select plan_key, status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(mismatch.plan_key).toBe("pro"); // unrelated loss left the sub alone
     expect(mismatch.status).toBe("active");
     await processStripeEvent(subDisputeEvent("closed", customer, flagged, "lost"));
     const [match] = await sql<{ plan_key: string; status: string }[]>`
-      select plan_key, status from subscriptions where org_id = ${orgId}`;
+      select plan_key, status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(match.plan_key).toBe("community");
     expect(match.status).toBe("canceled");
   });
@@ -255,17 +270,17 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     const flagged = "dp_old_" + uniq();
     const other = "dp_new_" + uniq();
     await sql`update subscriptions set dispute_id = ${flagged}, disputed_at = now()
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     // A win for an UNRELATED dispute leaves the existing flag intact.
     await processStripeEvent(subDisputeEvent("closed", customer, other, "won"));
     const [kept] = await sql<{ disputed_at: Date | null; dispute_id: string | null }[]>`
-      select disputed_at, dispute_id from subscriptions where org_id = ${orgId}`;
+      select disputed_at, dispute_id from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(kept.disputed_at).not.toBeNull();
     expect(kept.dispute_id).toBe(flagged);
     // The win for the flagged dispute clears both disputed_at AND dispute_id.
     await processStripeEvent(subDisputeEvent("closed", customer, flagged, "won"));
     const [cleared] = await sql<{ disputed_at: Date | null; dispute_id: string | null }[]>`
-      select disputed_at, dispute_id from subscriptions where org_id = ${orgId}`;
+      select disputed_at, dispute_id from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(cleared.disputed_at).toBeNull();
     expect(cleared.dispute_id).toBeNull();
   });
@@ -276,7 +291,9 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     // prove the branch flags the sub — this FAILS if the retrieve path breaks.
     vi.stubEnv("STRIPE_SECRET_KEY", "sk_test_dummy");
     const { orgId, customer } = await seedSubOrg("pro");
-    stripeMock.retrieve.mockResolvedValue({ customer } as unknown as Stripe.Charge);
+    stripeMock.retrieve.mockResolvedValue({
+      customer,
+    } as unknown as Stripe.Charge);
     const did = "dp_" + uniq();
     const ev = {
       type: "charge.dispute.created",
@@ -294,7 +311,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — subscription", () => {
     await processStripeEvent(ev);
     expect(stripeMock.retrieve).toHaveBeenCalledTimes(1);
     const [s] = await sql<{ disputed_at: Date | null; dispute_id: string }[]>`
-      select disputed_at, dispute_id from subscriptions where org_id = ${orgId}`;
+      select disputed_at, dispute_id from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.dispute_id).toBe(did); // customer resolved off the retrieved charge → flagged
     expect(s.disputed_at).not.toBeNull();
   });
@@ -343,7 +360,9 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — Event Pass", () => {
     const { intent } = await seedPassOrg();
     await processStripeEvent(passDisputeEvent("closed", intent, "dp_" + uniq(), "lost"));
     expect(emailMock.staff).toHaveBeenCalledTimes(1);
-    expect(emailMock.staff.mock.calls[0]![0]).toMatchObject({ kind: "event_pass" });
+    expect(emailMock.staff.mock.calls[0]![0]).toMatchObject({
+      kind: "event_pass",
+    });
   });
 });
 
@@ -387,7 +406,7 @@ describe.skipIf(!HAS_DB)("platform-charge disputes — routing", () => {
     } as unknown as Stripe.Event;
     await expect(processStripeEvent(ev)).rejects.toThrow(/matched no/);
     const [s] = await sql<{ disputed_at: Date | null; plan_key: string }[]>`
-      select disputed_at, plan_key from subscriptions where org_id = ${orgId}`;
+      select disputed_at, plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.disputed_at).toBeNull(); // untouched — couldn't be identified
     expect(s.plan_key).toBe("pro");
   });

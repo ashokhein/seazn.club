@@ -14,29 +14,25 @@ import { patchFixture } from "../fixtures";
 import { putScheduleSettings } from "../schedule";
 import { PutScheduleSettings } from "@/server/api-v1/schemas";
 import { undoDivision } from "../history";
-import {
-  shiftDivisionSchedule,
-  divisionScheduleReport,
-} from "../schedule-plus";
+import { shiftDivisionSchedule, divisionScheduleReport } from "../schedule-plus";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
-async function seedOrg(
-  plan: "community" | "pro" | "pro_plus" = "pro",
-): Promise<{ auth: AuthCtx }> {
+async function seedOrg(plan: "community" | "pro" | "pro_plus" = "pro"): Promise<{ auth: AuthCtx }> {
   const suffix = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"C2 " + suffix}, ${"c2-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -47,22 +43,41 @@ async function seedOrg(
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx) {
-  const comp = await createCompetition(auth, { name: "C2 Cup", visibility: "private", branding: {} });
+  const comp = await createCompetition(auth, {
+    name: "C2 Cup",
+    visibility: "private",
+    branding: {},
+  });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const entrants = await createEntrants(
-    auth, division.id,
+    auth,
+    division.id,
     ["A", "B", "C", "D"].map((name, i) => ({
-      kind: "individual" as const, display_name: name, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: name,
+      seed: i + 1,
+      members: [],
     })),
   );
-  const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
+  });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   return { division, stage: stage!, fixtures, entrants };
 }
@@ -81,12 +96,20 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
   it("bulk-shift +15m moves all in scope, skips locked, and is undoable (PROMPT-23)", async () => {
     const { auth } = await seedOrg();
     const { division, fixtures } = await seedDivision(auth);
-    await patchFixture(auth, fixtures[0]!.id, { scheduled_at: at(0), court_label: "C1" });
-    await patchFixture(auth, fixtures[1]!.id, { scheduled_at: at(30), court_label: "C1" });
+    await patchFixture(auth, fixtures[0]!.id, {
+      scheduled_at: at(0),
+      court_label: "C1",
+    });
+    await patchFixture(auth, fixtures[1]!.id, {
+      scheduled_at: at(30),
+      court_label: "C1",
+    });
     await patchFixture(auth, fixtures[1]!.id, { schedule_locked: true });
 
     const result = await shiftDivisionSchedule(auth, {
-      division_id: division.id, scope: { excludeLocked: true }, delta_minutes: 15,
+      division_id: division.id,
+      scope: { excludeLocked: true },
+      delta_minutes: 15,
     });
     expect(result.shifted).toBe(1);
     expect(result.skipped.locked).toBe(1);
@@ -108,10 +131,19 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
       (f: { home_entrant_id: string | null; away_entrant_id: string | null }) =>
         f.home_entrant_id === entrants[0]!.id || f.away_entrant_id === entrants[0]!.id,
     );
-    await patchFixture(auth, aGames[0]!.id, { scheduled_at: at(0), court_label: "C1" });
-    await patchFixture(auth, aGames[1]!.id, { scheduled_at: at(300), court_label: "C1" });
+    await patchFixture(auth, aGames[0]!.id, {
+      scheduled_at: at(0),
+      court_label: "C1",
+    });
+    await patchFixture(auth, aGames[1]!.id, {
+      scheduled_at: at(300),
+      court_label: "C1",
+    });
     const report = await divisionScheduleReport(auth, division.id);
-    expect(report.worst[0]).toMatchObject({ display_name: "A", maxGapMinutes: 270 });
+    expect(report.worst[0]).toMatchObject({
+      display_name: "A",
+      maxGapMinutes: 270,
+    });
   });
 
   it("constraint fields on schedule-settings are Pro", async () => {
@@ -122,7 +154,10 @@ describe.skipIf(!HAS_DB)("scheduling constraints v2 (Jul3/04)", () => {
         freeAuth,
         freeDiv.id,
         PutScheduleSettings.parse({
-          config: { courts: ["Court 1"], constraints: { crossPersonClash: "hard" } },
+          config: {
+            courts: ["Court 1"],
+            constraints: { crossPersonClash: "hard" },
+          },
           tz: "UTC",
         }),
       ),

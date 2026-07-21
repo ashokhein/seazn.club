@@ -12,7 +12,12 @@ import { cricket } from "@seazn/engine/sports/cricket";
 import { sql } from "@/lib/db";
 import { getLimit, invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import { createCompetition, patchCompetition, listCompetitions, getCompetition } from "../competitions";
+import {
+  createCompetition,
+  patchCompetition,
+  listCompetitions,
+  getCompetition,
+} from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createStages, generateStageFixtures } from "../stages";
@@ -22,6 +27,7 @@ import { createApiKey } from "../api-keys";
 import { feePercentFor } from "../registrations";
 import { platformFeeDefault } from "@/lib/platform-settings";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 type Plan = "community" | "pro" | "pro_plus";
@@ -40,10 +46,7 @@ async function seedOrg(plan: Plan): Promise<{ auth: AuthCtx }> {
     returning id`;
   // No subscription row = community (the resolver's fallback).
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await sql`
     insert into sports (key, name, module_version, position_catalog) values
@@ -57,14 +60,13 @@ async function seedOrg(plan: Plan): Promise<{ auth: AuthCtx }> {
       ('football', 'default', 'Default', ${sql.json({})}, true),
       ('cricket',  't20',     'T20',     ${sql.json(cricket.variants.t20 as never)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function setPlan(orgId: string, plan: Plan): Promise<void> {
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, ${plan}, 'active')
-    on conflict (org_id) do update set plan_key = ${plan}`;
+  await setOrgPlan(orgId, plan);
   await invalidateOrgEntitlements(orgId);
 }
 
@@ -98,7 +100,10 @@ async function makeFixture(auth: AuthCtx, competitionId: string, sport: string, 
     { kind, display_name: "B", seed: 2, members: [] },
   ] as never);
   const [stage] = await createStages(auth, division.id, {
-    seq: 1, kind: "league", name: "L", config: {},
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
   } as never);
   const { fixtures } = await generateStageFixtures(auth, stage.id);
   // Scoring opens only after start (doc 12 §1, PROMPT-17).
@@ -112,28 +117,32 @@ async function makeFixture(auth: AuthCtx, competitionId: string, sport: string, 
 // exactly this feature_key (the UpgradeGate contract, doc 10 §3).
 // ---------------------------------------------------------------------------
 const MATRIX: { feature: string; plan: Plan; allowed: boolean }[] = [
-  { feature: "competitions.max_active",       plan: "community", allowed: false },
-  { feature: "competitions.max_active",       plan: "pro",       allowed: true },
-  { feature: "dashboard.public.max",          plan: "community", allowed: false },
-  { feature: "dashboard.public.max",          plan: "pro",       allowed: true },
-  { feature: "divisions.per_competition.max", plan: "community", allowed: false },
-  { feature: "divisions.per_competition.max", plan: "pro",       allowed: true },
-  { feature: "stages.per_division.max",       plan: "community", allowed: false },
-  { feature: "stages.per_division.max",       plan: "pro",       allowed: true },
-  { feature: "entrants.per_division.max",     plan: "community", allowed: false },
-  { feature: "entrants.per_division.max",     plan: "pro",       allowed: true },
-  { feature: "formats.double_elim",           plan: "community", allowed: false },
-  { feature: "formats.double_elim",           plan: "pro",       allowed: true },
-  { feature: "scoring.match_timeline",        plan: "community", allowed: false },
-  { feature: "scoring.match_timeline",        plan: "pro",       allowed: true },
-  { feature: "cricket.dls",                   plan: "community", allowed: false },
-  { feature: "cricket.dls",                   plan: "pro",       allowed: true },
-  { feature: "api.access",                    plan: "community", allowed: false },
-  { feature: "api.access",                    plan: "pro",       allowed: true },
+  { feature: "competitions.max_active", plan: "community", allowed: false },
+  { feature: "competitions.max_active", plan: "pro", allowed: true },
+  { feature: "dashboard.public.max", plan: "community", allowed: false },
+  { feature: "dashboard.public.max", plan: "pro", allowed: true },
+  {
+    feature: "divisions.per_competition.max",
+    plan: "community",
+    allowed: false,
+  },
+  { feature: "divisions.per_competition.max", plan: "pro", allowed: true },
+  { feature: "stages.per_division.max", plan: "community", allowed: false },
+  { feature: "stages.per_division.max", plan: "pro", allowed: true },
+  { feature: "entrants.per_division.max", plan: "community", allowed: false },
+  { feature: "entrants.per_division.max", plan: "pro", allowed: true },
+  { feature: "formats.double_elim", plan: "community", allowed: false },
+  { feature: "formats.double_elim", plan: "pro", allowed: true },
+  { feature: "scoring.match_timeline", plan: "community", allowed: false },
+  { feature: "scoring.match_timeline", plan: "pro", allowed: true },
+  { feature: "cricket.dls", plan: "community", allowed: false },
+  { feature: "cricket.dls", plan: "pro", allowed: true },
+  { feature: "api.access", plan: "community", allowed: false },
+  { feature: "api.access", plan: "pro", allowed: true },
   // V290 re-arms api.write above Pro: score/manage keys need Pro Plus (a
   // community org's write-key attempt still 402s on api.access first, above).
-  { feature: "api.write",                     plan: "pro",       allowed: false },
-  { feature: "api.write",                     plan: "pro_plus",  allowed: true },
+  { feature: "api.write", plan: "pro", allowed: false },
+  { feature: "api.write", plan: "pro_plus", allowed: true },
 ];
 
 async function probe(feature: string, auth: AuthCtx): Promise<() => Promise<unknown>> {
@@ -168,8 +177,14 @@ async function probe(feature: string, auth: AuthCtx): Promise<() => Promise<unkn
         { seq: 1, kind: "league", name: "S1", config: {} },
         { seq: 2, kind: "knockout", name: "S2", config: {} },
       ] as never);
-      return () => // 3rd stage
-        createStages(auth, division.id, { seq: 3, kind: "knockout", name: "S3", config: {} } as never);
+      return () =>
+        // 3rd stage
+        createStages(auth, division.id, {
+          seq: 3,
+          kind: "knockout",
+          name: "S3",
+          config: {},
+        } as never);
     }
     case "entrants.per_division.max": {
       const comp = await makeCompetition(auth, "E");
@@ -178,10 +193,14 @@ async function probe(feature: string, auth: AuthCtx): Promise<() => Promise<unkn
         auth,
         division.id,
         Array.from({ length: 16 }, (_, i) => ({
-          kind: "individual" as const, display_name: `E${i}`, seed: i + 1, members: [],
+          kind: "individual" as const,
+          display_name: `E${i}`,
+          seed: i + 1,
+          members: [],
         })) as never,
       );
-      return () => // 17th entrant
+      return () =>
+        // 17th entrant
         createEntrants(auth, division.id, [
           { kind: "individual", display_name: "E17", seed: 17, members: [] },
         ] as never);
@@ -190,12 +209,18 @@ async function probe(feature: string, auth: AuthCtx): Promise<() => Promise<unkn
       const comp = await makeCompetition(auth, "DE");
       const division = await makeDivision(auth, comp.id, "generic", GENERIC_CONFIG);
       return () =>
-        createStages(auth, division.id, { seq: 1, kind: "double_elim", name: "DE", config: {} } as never);
+        createStages(auth, division.id, {
+          seq: 1,
+          kind: "double_elim",
+          name: "DE",
+          config: {},
+        } as never);
     }
     case "scoring.match_timeline": {
       const comp = await makeCompetition(auth, "F");
       const { entrants, fixtureId } = await makeFixture(auth, comp.id, "football", {});
-      return () => // Tier-2 attributed event (a card, valid pre-kickoff)
+      return () =>
+        // Tier-2 attributed event (a card, valid pre-kickoff)
         scoreEvent(auth, fixtureId, {
           expected_seq: 0,
           type: "football.card",
@@ -207,7 +232,8 @@ async function probe(feature: string, auth: AuthCtx): Promise<() => Promise<unkn
       const { fixtureId } = await makeFixture(auth, comp.id, "cricket", {
         dls: { enabled: true, edition: "standard" },
       });
-      return () => // revise WITHOUT a manual target ⇒ fold computes DLS
+      return () =>
+        // revise WITHOUT a manual target ⇒ fold computes DLS
         scoreEvent(auth, fixtureId, {
           expected_seq: 0,
           type: "cricket.revise",
@@ -238,7 +264,10 @@ describe.skipIf(!HAS_DB)("entitlements v2 matrix (doc 10 §1/§2)", () => {
     if (allowed) {
       await expect(act()).resolves.toBeDefined();
     } else {
-      await expect(act()).rejects.toMatchObject({ status: 402, featureKey: feature });
+      await expect(act()).rejects.toMatchObject({
+        status: 402,
+        featureKey: feature,
+      });
     }
   });
 
@@ -260,7 +289,11 @@ describe.skipIf(!HAS_DB)("entitlements v2 matrix (doc 10 §1/§2)", () => {
     const { auth } = await seedOrg("community");
     const comp = await makeCompetition(auth, "FG");
     const { entrants, fixtureId } = await makeFixture(auth, comp.id, "football", {});
-    await scoreEvent(auth, fixtureId, { expected_seq: 0, type: "core.start", payload: {} });
+    await scoreEvent(auth, fixtureId, {
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
     const out = await scoreEvent(auth, fixtureId, {
       expected_seq: 1,
       type: "football.goal",
@@ -289,7 +322,9 @@ describe.skipIf(!HAS_DB)("downgrade simulation (doc 10 §2.4)", () => {
       payload: { by: rigFootball.entrants[0].id, color: "yellow" },
     });
     await scoreEvent(auth, rigGeneric.fixtureId, {
-      expected_seq: 0, type: "core.start", payload: {},
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
     });
 
     // Deterministic activity order: A oldest, C newer, B newest (score events).
@@ -310,10 +345,12 @@ describe.skipIf(!HAS_DB)("downgrade simulation (doc 10 §2.4)", () => {
 
     // Frozen = read-only: no new structure, no renames…
     await expect(makeDivision(auth, compA.id, "generic", GENERIC_CONFIG)).rejects.toMatchObject({
-      status: 402, featureKey: "competitions.max_active",
+      status: 402,
+      featureKey: "competitions.max_active",
     });
     await expect(patchCompetition(auth, compA.id, { name: "Alpha 2" })).rejects.toMatchObject({
-      status: 402, featureKey: "competitions.max_active",
+      status: 402,
+      featureKey: "competitions.max_active",
     });
 
     // …but coarse scoring in the surviving competitions still works,
@@ -329,7 +366,10 @@ describe.skipIf(!HAS_DB)("downgrade simulation (doc 10 §2.4)", () => {
         type: "football.card",
         payload: { by: rigFootball.entrants[1].id, color: "yellow" },
       }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scoring.match_timeline" });
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scoring.match_timeline",
+    });
 
     // Retiring frozen competitions is the sanctioned way back under quota.
     await patchCompetition(auth, compA.id, { status: "archived" });
@@ -372,9 +412,10 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     // …which stays on community caps: 3rd division 402s.
     await makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG);
     await makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG);
-    await expect(
-      makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG),
-    ).rejects.toMatchObject({ status: 402, featureKey: "divisions.per_competition.max" });
+    await expect(makeDivision(auth, sibling.id, "generic", GENERIC_CONFIG)).rejects.toMatchObject({
+      status: 402,
+      featureKey: "divisions.per_competition.max",
+    });
   });
 
   it("entrants: 32 on the passed comp, 33rd still 402s with the same key", async () => {
@@ -386,14 +427,20 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
       auth,
       division.id,
       Array.from({ length: 32 }, (_, i) => ({
-        kind: "individual" as const, display_name: `E${i}`, seed: i + 1, members: [],
+        kind: "individual" as const,
+        display_name: `E${i}`,
+        seed: i + 1,
+        members: [],
       })) as never,
     );
     await expect(
       createEntrants(auth, division.id, [
         { kind: "individual", display_name: "E33", seed: 33, members: [] },
       ] as never),
-    ).rejects.toMatchObject({ status: 402, featureKey: "entrants.per_division.max" });
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "entrants.per_division.max",
+    });
   });
 
   it("unlocks advanced formats on the passed comp; Pro-only features stay Pro", async () => {
@@ -403,7 +450,10 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
     const division = await makeDivision(auth, comp.id, "generic", GENERIC_CONFIG);
     await expect(
       createStages(auth, division.id, {
-        seq: 1, kind: "double_elim", name: "DE", config: {},
+        seq: 1,
+        kind: "double_elim",
+        name: "DE",
+        config: {},
       } as never),
     ).resolves.toBeDefined();
 
@@ -416,7 +466,10 @@ describe.skipIf(!HAS_DB)("event pass (v3/07 §3)", () => {
         type: "football.card",
         payload: { by: rig.entrants[0].id, color: "yellow" },
       }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "scoring.match_timeline" });
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "scoring.match_timeline",
+    });
   });
 
   it("is moot under Pro and revives after a downgrade", async () => {

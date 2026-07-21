@@ -14,6 +14,7 @@ import { createDivision } from "../divisions";
 import { createImport, getImport, commitImport } from "../imports";
 import { listClubs, participantRows } from "../clubs";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthCtx }> {
@@ -22,10 +23,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into organizations (name, slug) values (${"Imp " + suffix}, ${"imp-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -36,16 +34,24 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('football', 'default', 'Default', ${sql.json({})}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx, slug = "u12") {
   const comp = await createCompetition(auth, {
-    name: "Import Cup", visibility: "private", branding: {},
+    name: "Import Cup",
+    visibility: "private",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: slug.toUpperCase(), slug, sport_key: "football", variant_key: "default",
-    config: {}, eligibility: [],
+    name: slug.toUpperCase(),
+    slug,
+    sport_key: "football",
+    variant_key: "default",
+    config: {},
+    eligibility: [],
   });
   return { comp, division };
 }
@@ -53,7 +59,11 @@ async function seedDivision(auth: AuthCtx, slug = "u12") {
 const GK = football.positions.groups[0]!.key;
 
 function csvUpload(csv: string) {
-  return { filename: "import.csv", contentType: "text/csv", buffer: Buffer.from(csv, "utf8") };
+  return {
+    filename: "import.csv",
+    contentType: "text/csv",
+    buffer: Buffer.from(csv, "utf8"),
+  };
 }
 
 const GOLDEN_CSV = [
@@ -83,8 +93,17 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
 
     const preview = await createImport(auth, csvUpload(GOLDEN_CSV));
     expect(preview.plan.issues).toEqual([]);
-    expect(preview.plan.stats).toEqual({ clubs: 3, teams: 3, persons: 6, entrants: 3, rosters: 6 });
-    expect(preview.mapping).toMatchObject({ Club: "clubName", Player: "playerFullName" });
+    expect(preview.plan.stats).toEqual({
+      clubs: 3,
+      teams: 3,
+      persons: 6,
+      entrants: 3,
+      rosters: 6,
+    });
+    expect(preview.mapping).toMatchObject({
+      Club: "clubName",
+      Player: "playerFullName",
+    });
 
     const result = await commitImport(auth, preview.importId, "key-1");
     expect(result.stats).toEqual(preview.plan.stats);
@@ -143,12 +162,12 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
   it("unknown division stays an error through the API surface", async () => {
     const { auth } = await seedOrg();
     await seedDivision(auth);
-    const preview = await createImport(
-      auth,
-      csvUpload("Team,Division\nGhosts,not-a-division"),
-    );
+    const preview = await createImport(auth, csvUpload("Team,Division\nGhosts,not-a-division"));
     expect(preview.plan.issues).toEqual([
-      expect.objectContaining({ code: "DIVISION_NOT_FOUND", severity: "error" }),
+      expect.objectContaining({
+        code: "DIVISION_NOT_FOUND",
+        severity: "error",
+      }),
     ]);
   });
 
@@ -169,10 +188,7 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
   it("Community commit with club columns succeeds under the clubs cap (hierarchy opened, V291)", async () => {
     const { auth } = await seedOrg("community");
     await seedDivision(auth);
-    const preview = await createImport(
-      auth,
-      csvUpload("Club,Team,Division\nAcme SC,Acme U12,u12"),
-    );
+    const preview = await createImport(auth, csvUpload("Club,Team,Division\nAcme SC,Acme U12,u12"));
     // clubs.hierarchy is granted to community/event_pass (V291); the cap is the
     // brake now, and 1 club/1 team is under the community 2/2 limits.
     const result = await commitImport(auth, preview.importId, null);
@@ -228,7 +244,13 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
       buffer,
     });
     expect(preview.plan.issues).toEqual([]);
-    expect(preview.plan.stats).toEqual({ clubs: 1, teams: 1, persons: 2, entrants: 1, rosters: 2 });
+    expect(preview.plan.stats).toEqual({
+      clubs: 1,
+      teams: 1,
+      persons: 2,
+      entrants: 1,
+      rosters: 2,
+    });
     const person = preview.plan.ops.find((o) => o.kind === "person.create");
     expect(person).toMatchObject({ after: { dob: "2014-01-01" } });
   });
@@ -259,8 +281,16 @@ describe.skipIf(!HAS_DB)("bulk import (Jul3/01)", () => {
     // export: club column present, the playerless entrant still gets a row
     const rows = await participantRows(auth, {});
     expect(rows).toEqual([
-      expect.objectContaining({ club: "Acme SC", team: "Acme Empty", player: "" }),
-      expect.objectContaining({ club: "Acme SC", team: "Acme U12", player: "Ada One" }),
+      expect.objectContaining({
+        club: "Acme SC",
+        team: "Acme Empty",
+        player: "",
+      }),
+      expect.objectContaining({
+        club: "Acme SC",
+        team: "Acme U12",
+        player: "Ada One",
+      }),
     ]);
   });
 

@@ -20,6 +20,7 @@ import {
 import { createEntrants } from "@/server/usecases/entrants";
 import { scoreEvent } from "@/server/usecases/scoring";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
@@ -35,10 +36,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into organizations (name, slug) values (${"Del " + suffix}, ${"del-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -49,7 +47,9 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx, name = "Open") {
@@ -85,7 +85,11 @@ async function seedDecidedDivision(auth: AuthCtx) {
     values (${stageId}, ${division.id}, 1, 1, ${list[0]!.id}, ${list[1]!.id})
     returning id`;
   await sql`update divisions set status = 'active' where id = ${division.id}`;
-  await scoreEvent(auth, fixtureId, { expected_seq: 0, type: "core.start", payload: {} });
+  await scoreEvent(auth, fixtureId, {
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
+  });
   await scoreEvent(auth, fixtureId, {
     expected_seq: 1,
     type: "generic.result",
@@ -156,7 +160,10 @@ describe.skipIf(!HAS_DB)("division delete (v3/09 §4)", () => {
     await sql`
       insert into registration_settings (division_id, enabled)
       values (${division.id}, true)`;
-    for (const action of [() => deleteDivision(auth, division.id), () => archiveDivision(auth, division.id)]) {
+    for (const action of [
+      () => deleteDivision(auth, division.id),
+      () => archiveDivision(auth, division.id),
+    ]) {
       try {
         await action();
         expect.unreachable("expected 409 REGISTRATION_OPEN");

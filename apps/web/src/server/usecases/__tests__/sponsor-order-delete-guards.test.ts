@@ -20,20 +20,28 @@ import {
   refundSponsorOrder,
 } from "@/server/usecases/sponsors";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 
-async function seedOrgWithComp(): Promise<{ auth: AuthCtx; orgId: string; compId: string }> {
+async function seedOrgWithComp(): Promise<{
+  auth: AuthCtx;
+  orgId: string;
+  compId: string;
+}> {
   const suffix = uniq();
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug)
     values (${"Restrict " + suffix}, ${"restrict-" + suffix}) returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
-  const auth: AuthCtx = { orgId, via: "session", userId: null, role: "owner", keyId: null };
+  const auth: AuthCtx = {
+    orgId,
+    via: "session",
+    userId: null,
+    role: "owner",
+    keyId: null,
+  };
   const comp = await createCompetition(auth, {
     name: `Cup ${uniq()}`,
     visibility: "private",
@@ -80,24 +88,27 @@ describe.skipIf(!HAS_DB)("sponsor order delete protection (V299)", () => {
     const { orgId } = await seedOrgWithComp();
     const pkg = await seedPackage(orgId, null);
     await seedOrder(orgId, pkg);
-    await expect(
-      sql`delete from organizations where id = ${orgId}`,
-    ).rejects.toMatchObject({ code: "23503" });
+    await expect(sql`delete from organizations where id = ${orgId}`).rejects.toMatchObject({
+      code: "23503",
+    });
   });
 
   it("raw package delete with a paid sponsor order is refused by the DB", async () => {
     const { orgId } = await seedOrgWithComp();
     const pkg = await seedPackage(orgId, null);
     await seedOrder(orgId, pkg);
-    await expect(
-      sql`delete from sponsor_packages where id = ${pkg}`,
-    ).rejects.toMatchObject({ code: "23503" });
+    await expect(sql`delete from sponsor_packages where id = ${pkg}`).rejects.toMatchObject({
+      code: "23503",
+    });
   });
 
   it("deleteCompetition sweeps intent-less orders along with its packages", async () => {
     const { auth, orgId, compId } = await seedOrgWithComp();
     const pkg = await seedPackage(orgId, compId);
-    const orderId = await seedOrder(orgId, pkg, { status: "pending", intent: null });
+    const orderId = await seedOrder(orgId, pkg, {
+      status: "pending",
+      intent: null,
+    });
     await deleteCompetition(auth, compId);
     const [comp] = await sql`select 1 from competitions where id = ${compId}`;
     expect(comp).toBeUndefined();
@@ -109,14 +120,18 @@ describe.skipIf(!HAS_DB)("sponsor order delete protection (V299)", () => {
     const { auth, orgId, compId } = await seedOrgWithComp();
     const pkg = await seedPackage(orgId, compId);
     await seedOrder(orgId, pkg, { status: "refunded" });
-    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({ status: 409 });
+    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it("deleteCompetition 409s while a disputed order exists", async () => {
     const { auth, orgId, compId } = await seedOrgWithComp();
     const pkg = await seedPackage(orgId, compId);
     await seedOrder(orgId, pkg, { status: "refunded", disputedAt: new Date() });
-    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({ status: 409 });
+    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it("a dispute-parked placement reads dispute_parked and refuses manual re-activation", async () => {
@@ -128,7 +143,9 @@ describe.skipIf(!HAS_DB)("sponsor order delete protection (V299)", () => {
     await sql`update sponsor_orders set sponsor_id = ${sponsorId}
               where id = ${await seedOrder(orgId, pkg, { disputedAt: new Date() })}`;
     const rows = await listSponsorRows(orgId);
-    expect(rows.find((r) => r.id === sponsorId)).toMatchObject({ dispute_parked: true });
+    expect(rows.find((r) => r.id === sponsorId)).toMatchObject({
+      dispute_parked: true,
+    });
     await expect(patchSponsor(auth, sponsorId, { status: "active" })).rejects.toMatchObject({
       status: 409,
       message: expect.stringContaining("dispute"),
@@ -145,7 +162,10 @@ describe.skipIf(!HAS_DB)("sponsor order delete protection (V299)", () => {
     const [{ id: sponsorId }] = await sql<{ id: string }[]>`
       insert into sponsors (org_id, competition_id, name, tier, status)
       values (${orgId}, ${compId}, 'Lost Co', 'gold', 'inactive') returning id`;
-    const orderId = await seedOrder(orgId, pkg, { status: "refunded", disputedAt: new Date() });
+    const orderId = await seedOrder(orgId, pkg, {
+      status: "refunded",
+      disputedAt: new Date(),
+    });
     await sql`update sponsor_orders set sponsor_id = ${sponsorId}, dispute_id = 'dp_lost_test'
               where id = ${orderId}`;
     const rows = await listSponsorRows(orgId);

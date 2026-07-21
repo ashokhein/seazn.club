@@ -52,7 +52,13 @@ vi.mock("@/lib/auth", () => ({
   requireUser: vi.fn(),
 }));
 vi.mock("@/lib/posthog-server", () => ({ captureServer: vi.fn() }));
-vi.mock("@/lib/entitlements", () => ({ invalidateOrgEntitlements: vi.fn() }));
+// Whole-module mock: every invalidator billing.ts reaches for must be present,
+// or the reconcile path throws into its own catch and silently returns false.
+vi.mock("@/lib/entitlements", () => ({
+  invalidateOrgEntitlements: vi.fn(),
+  invalidateGroupEntitlements: vi.fn(),
+  invalidateEntitlementsForOrgGroup: vi.fn(),
+}));
 
 import { sql } from "@/lib/db";
 import {
@@ -87,24 +93,29 @@ async function seedOrg(opts: { trialDays?: number; hasFlag?: boolean } = {}): Pr
       ? null
       : new Date(Date.now() + opts.trialDays * 86_400_000 - 3_600_000).toISOString();
   await sql`
-    insert into subscriptions
-      (org_id, plan_key, status, stripe_customer_id, stripe_subscription_id,
-       trial_end, has_payment_method)
-    values (${orgId}, 'pro', ${opts.trialDays === undefined ? "active" : "trialing"},
-            ${CUSTOMER + "_" + suffix}, ${"sub_" + suffix},
-            ${trialEnd}, ${opts.hasFlag ?? false})`;
+    with s as (
+      insert into subscriptions
+        (owner_user_id, plan_key, status, stripe_customer_id, stripe_subscription_id,
+         trial_end, has_payment_method)
+      select o.created_by, 'pro', ${opts.trialDays === undefined ? "active" : "trialing"},
+             ${CUSTOMER + "_" + suffix}, ${"sub_" + suffix},
+             ${trialEnd}, ${opts.hasFlag ?? false}
+        from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations o set subscription_id = s.id from s where o.id = ${orgId}`;
   return orgId;
 }
 
 async function flagOf(orgId: string): Promise<boolean | null> {
   const [row] = await sql<{ has_payment_method: boolean }[]>`
-    select has_payment_method from subscriptions where org_id = ${orgId}`;
+    select has_payment_method from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
   return row ? row.has_payment_method : null;
 }
 
 async function customerOf(orgId: string): Promise<string> {
   const [row] = await sql<{ stripe_customer_id: string }[]>`
-    select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+    select stripe_customer_id from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
   return row.stripe_customer_id;
 }
 
@@ -327,7 +338,9 @@ const WRITERS: WriterCase[] = [
         type: "customer.updated",
         data: {
           object: { id: await customerOf(orgId) },
-          previous_attributes: { invoice_settings: { default_payment_method: null } },
+          previous_attributes: {
+            invoice_settings: { default_payment_method: null },
+          },
         },
       } as unknown as Stripe.Event);
     },
@@ -443,7 +456,9 @@ describe.skipIf(!HAS_DB)("customer.updated is gated on invoice_settings", () => 
       type: "customer.updated",
       data: {
         object: { id: await customerOf(orgId) },
-        previous_attributes: { invoice_settings: { default_payment_method: "pm_old" } },
+        previous_attributes: {
+          invoice_settings: { default_payment_method: "pm_old" },
+        },
       },
     } as unknown as Stripe.Event);
     expect(stripeMock.retrieveCustomer).toHaveBeenCalled();
@@ -461,35 +476,38 @@ describe.skipIf(!HAS_DB)("customer.updated is gated on invoice_settings", () => 
   });
 });
 
-describe.skipIf(!HAS_DB)("syncPaymentMethodFlag (the one writer everything funnels through)", () => {
-  it("writes true from a live Stripe read and false when the cards are gone", async () => {
-    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
-    const customerId = await customerOf(orgId);
+describe.skipIf(!HAS_DB)(
+  "syncPaymentMethodFlag (the one writer everything funnels through)",
+  () => {
+    it("writes true from a live Stripe read and false when the cards are gone", async () => {
+      const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+      const customerId = await customerOf(orgId);
 
-    stripeHasCards(customerId, 1);
-    expect(await syncPaymentMethodFlag(orgId)).toBe(true);
-    expect(await flagOf(orgId)).toBe(true);
+      stripeHasCards(customerId, 1);
+      expect(await syncPaymentMethodFlag(orgId)).toBe(true);
+      expect(await flagOf(orgId)).toBe(true);
 
-    stripeHasCards(customerId, 0);
-    expect(await syncPaymentMethodFlag(orgId)).toBe(false);
-    expect(await flagOf(orgId)).toBe(false);
-  });
+      stripeHasCards(customerId, 0);
+      expect(await syncPaymentMethodFlag(orgId)).toBe(false);
+      expect(await flagOf(orgId)).toBe(false);
+    });
 
-  it("counts an attached card even with no customer default set", async () => {
-    const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
-    stripeHasCards(await customerOf(orgId), 1, /* withDefault */ false);
-    expect(await syncPaymentMethodFlag(orgId)).toBe(true);
-    expect(await flagOf(orgId)).toBe(true);
-  });
+    it("counts an attached card even with no customer default set", async () => {
+      const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
+      stripeHasCards(await customerOf(orgId), 1, /* withDefault */ false);
+      expect(await syncPaymentMethodFlag(orgId)).toBe(true);
+      expect(await flagOf(orgId)).toBe(true);
+    });
 
-  it("leaves the mirror alone when Stripe is unreachable", async () => {
-    const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
-    stripeMock.retrieveCustomer.mockRejectedValue(new Error("stripe down"));
-    stripeMock.listPaymentMethods.mockRejectedValue(new Error("stripe down"));
-    expect(await syncPaymentMethodFlag(orgId)).toBeNull();
-    expect(await flagOf(orgId)).toBe(true);
-  });
-});
+    it("leaves the mirror alone when Stripe is unreachable", async () => {
+      const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
+      stripeMock.retrieveCustomer.mockRejectedValue(new Error("stripe down"));
+      stripeMock.listPaymentMethods.mockRejectedValue(new Error("stripe down"));
+      expect(await syncPaymentMethodFlag(orgId)).toBeNull();
+      expect(await flagOf(orgId)).toBe(true);
+    });
+  },
+);
 
 // ---------------------------------------------------------------------------
 // syncSubscription (webhook + reconcile) derives the flag from the Stripe object
@@ -509,7 +527,10 @@ describe.skipIf(!HAS_DB)("syncSubscription derives has_payment_method", () => {
       stripeSub({
         id: "sub_pm2",
         defaultPaymentMethod: null,
-        customer: { id: "cus_x", invoice_settings: { default_payment_method: "pm_cust" } },
+        customer: {
+          id: "cus_x",
+          invoice_settings: { default_payment_method: "pm_cust" },
+        },
       }),
     );
     expect(await flagOf(orgId)).toBe(true);
@@ -527,7 +548,10 @@ describe.skipIf(!HAS_DB)("syncSubscription derives has_payment_method", () => {
       stripeSub({
         id: "sub_pm3",
         defaultPaymentMethod: null,
-        customer: { id: "cus_x", invoice_settings: { default_payment_method: null } },
+        customer: {
+          id: "cus_x",
+          invoice_settings: { default_payment_method: null },
+        },
       }),
     );
     expect(await flagOf(orgId)).toBe(true);
@@ -541,7 +565,10 @@ describe.skipIf(!HAS_DB)("syncSubscription derives has_payment_method", () => {
       stripeSub({
         id: "sub_pm3b",
         defaultPaymentMethod: null,
-        customer: { id: "cus_x", invoice_settings: { default_payment_method: null } },
+        customer: {
+          id: "cus_x",
+          invoice_settings: { default_payment_method: null },
+        },
       }),
     );
     expect(await flagOf(orgId)).toBe(false);
@@ -567,7 +594,7 @@ describe.skipIf(!HAS_DB)("syncSubscription derives has_payment_method", () => {
 
 async function updatedAtOf(orgId: string): Promise<string> {
   const [row] = await sql<{ updated_at: string }[]>`
-    select updated_at from subscriptions where org_id = ${orgId}`;
+    select updated_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
   return new Date(row.updated_at).toISOString();
 }
 
@@ -575,7 +602,7 @@ async function updatedAtOf(orgId: string): Promise<string> {
 async function cancelSubscription(orgId: string) {
   await sql`
     update subscriptions set status = 'canceled', trial_end = null
-    where org_id = ${orgId}`;
+    where id = (select subscription_id from organizations where id = ${orgId})`;
 }
 
 describe.skipIf(!HAS_DB)("cancel → re-buy lands on a NEW Stripe customer", () => {
@@ -613,7 +640,10 @@ describe.skipIf(!HAS_DB)("cancel → re-buy lands on a NEW Stripe customer", () 
       id: "cs_rebuy",
       customer: customerB,
       metadata: { org_id: orgId },
-      subscription: stripeSub({ id: "sub_reconcile", defaultPaymentMethod: null }),
+      subscription: stripeSub({
+        id: "sub_reconcile",
+        defaultPaymentMethod: null,
+      }),
     });
 
     expect(await reconcileCheckout(orgId, "cs_rebuy")).toBe(true);
@@ -641,7 +671,7 @@ describe.skipIf(!HAS_DB)("cancel → re-buy lands on a NEW Stripe customer", () 
     // A renewal must not disturb the flag or the sibling timestamp.
     const orgId = await seedOrg({ trialDays: 4, hasFlag: true });
     const customerA = await customerOf(orgId);
-    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where org_id = ${orgId}`;
+    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where id = (select subscription_id from organizations where id = ${orgId})`;
     stripeHasCards(customerA, 0); // would clear the flag if we re-derived
     await processStripeEvent({
       type: "checkout.session.completed",
@@ -662,7 +692,7 @@ describe.skipIf(!HAS_DB)("cancel → re-buy lands on a NEW Stripe customer", () 
 describe.skipIf(!HAS_DB)("has_payment_method writes and updated_at", () => {
   it("does NOT touch updated_at when the value is unchanged", async () => {
     const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
-    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where org_id = ${orgId}`;
+    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where id = (select subscription_id from organizations where id = ${orgId})`;
     stripeHasCards(await customerOf(orgId), 0);
     expect(await syncPaymentMethodFlag(orgId)).toBe(false);
     expect(await updatedAtOf(orgId)).toBe("2020-01-01T00:00:00.000Z");
@@ -670,7 +700,7 @@ describe.skipIf(!HAS_DB)("has_payment_method writes and updated_at", () => {
 
   it("DOES bump updated_at when the value actually changes", async () => {
     const orgId = await seedOrg({ trialDays: 4, hasFlag: false });
-    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where org_id = ${orgId}`;
+    await sql`update subscriptions set updated_at = '2020-01-01T00:00:00Z' where id = (select subscription_id from organizations where id = ${orgId})`;
     stripeHasCards(await customerOf(orgId), 1);
     expect(await syncPaymentMethodFlag(orgId)).toBe(true);
     expect(await updatedAtOf(orgId)).not.toBe("2020-01-01T00:00:00.000Z");

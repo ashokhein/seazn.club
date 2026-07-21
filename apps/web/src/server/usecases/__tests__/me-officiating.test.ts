@@ -31,6 +31,7 @@ import {
   setMyOfficiatingResponse,
 } from "../me-officiating";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
@@ -57,10 +58,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     values (${"V11 " + suffix}, ${"v11-" + suffix}, ${owner.id}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${owner.id}, 'owner')`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -71,28 +69,48 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: owner.id, role: "owner", keyId: null } };
+  return {
+    auth: {
+      orgId,
+      via: "session",
+      userId: owner.id,
+      role: "owner",
+      keyId: null,
+    },
+  };
 }
 
 /** Division with FUTURE fixtures — the /me lane and re-accept both filter on
  *  matchday, so dates must be ahead of now. */
 async function seedFutureDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
-    name: "V11 Cup", visibility: "public", branding: {},
+    name: "V11 Cup",
+    visibility: "public",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   await createEntrants(
     auth,
     division.id,
     ["A", "B", "C", "D"].map((name, i) => ({
-      kind: "individual" as const, display_name: name, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: name,
+      seed: i + 1,
+      members: [],
     })),
   );
   const [stage] = await createStages(auth, division.id, {
-    seq: 1, kind: "league", name: "League", config: {},
+    seq: 1,
+    kind: "league",
+    name: "League",
+    config: {},
   });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   const t0 = Date.now() + 7 * 86_400_000;
@@ -118,7 +136,10 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
   it("invite mints through the shared person-claim rail and claim links the login", async () => {
     const { auth } = await seedOrg();
     const ref = await makeUser("ref");
-    const official = await createOfficial(auth, { display_name: "Priya", role_keys: ["referee"] });
+    const official = await createOfficial(auth, {
+      display_name: "Priya",
+      role_keys: ["referee"],
+    });
     expect(official.person_id).toBeNull();
 
     const invited = await inviteOfficial(auth, official.id, ref.email);
@@ -149,7 +170,10 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     const { auth } = await seedOrg();
     const ref = await makeUser("ref");
     const { fixtures } = await seedFutureDivision(auth);
-    const official = await createOfficial(auth, { display_name: "Ref R", role_keys: ["referee"] });
+    const official = await createOfficial(auth, {
+      display_name: "Ref R",
+      role_keys: ["referee"],
+    });
     const invited = await inviteOfficial(auth, official.id, ref.email);
     await claimPerson(invited.secret, ref.id, ref.email);
 
@@ -187,7 +211,10 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     const ref = await makeUser("ref");
     const stranger = await makeUser("stranger");
     const { fixtures } = await seedFutureDivision(auth);
-    const official = await createOfficial(auth, { display_name: "Ref R", role_keys: ["referee"] });
+    const official = await createOfficial(auth, {
+      display_name: "Ref R",
+      role_keys: ["referee"],
+    });
     const invited = await inviteOfficial(auth, official.id, ref.email);
     await claimPerson(invited.secret, ref.id, ref.email);
 
@@ -203,7 +230,9 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
 
     // a stranger may not write
     await expect(
-      setMyOfficiatingResponse(stranger.id, fixtureId, { response: "accepted" }),
+      setMyOfficiatingResponse(stranger.id, fixtureId, {
+        response: "accepted",
+      }),
     ).rejects.toMatchObject({ status: 403 });
 
     // pending → declined (+reason)
@@ -211,7 +240,10 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
       response: "declined",
       decline_reason: "family wedding",
     });
-    expect(declined).toMatchObject({ response: "declined", decline_reason: "family wedding" });
+    expect(declined).toMatchObject({
+      response: "declined",
+      decline_reason: "family wedding",
+    });
     // the flag reaches the organiser's read cache
     const [cached] = await sql<{ officials: { response: string; decline_reason: string }[] }[]>`
       select officials from fixtures where id = ${fixtureId}`;
@@ -240,7 +272,10 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
   it("blackouts are unique per (official, date) and delete clears them", async () => {
     const { auth } = await seedOrg();
     const ref = await makeUser("ref");
-    const official = await createOfficial(auth, { display_name: "Ref B", role_keys: ["referee"] });
+    const official = await createOfficial(auth, {
+      display_name: "Ref B",
+      role_keys: ["referee"],
+    });
     const invited = await inviteOfficial(auth, official.id, ref.email);
     await claimPerson(invited.secret, ref.id, ref.email);
 
@@ -267,7 +302,10 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     const { auth } = await seedOrg();
     const ref = await makeUser("ref");
     const { fixtures } = await seedFutureDivision(auth);
-    const official = await createOfficial(auth, { display_name: "Ref M", role_keys: ["referee"] });
+    const official = await createOfficial(auth, {
+      display_name: "Ref M",
+      role_keys: ["referee"],
+    });
     const invited = await inviteOfficial(auth, official.id, ref.email);
     await claimPerson(invited.secret, ref.id, ref.email);
     const fixtureId = fixtures[0]!.id;
@@ -308,8 +346,14 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
       select name from organizations where id = ${orgB.auth.orgId}`;
     const ref = await makeUser("multiorg-ref");
 
-    const officialA = await createOfficial(orgA.auth, { display_name: "Ref A-side", role_keys: ["referee"] });
-    const officialB = await createOfficial(orgB.auth, { display_name: "Ref B-side", role_keys: ["umpire"] });
+    const officialA = await createOfficial(orgA.auth, {
+      display_name: "Ref A-side",
+      role_keys: ["referee"],
+    });
+    const officialB = await createOfficial(orgB.auth, {
+      display_name: "Ref B-side",
+      role_keys: ["umpire"],
+    });
     const invitedA = await inviteOfficial(orgA.auth, officialA.id, ref.email);
     const invitedB = await inviteOfficial(orgB.auth, officialB.id, ref.email);
 
@@ -348,7 +392,10 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
 
     // accept org A by id — links + consumes ONLY that claim; org B stays pending.
     const acceptedA = await acceptMyOfficiatingClaim(invitedA.claim.id, ref.id, ref.email);
-    expect(acceptedA).toMatchObject({ org_name: orgNameA, official_name: "Ref A-side" });
+    expect(acceptedA).toMatchObject({
+      org_name: orgNameA,
+      official_name: "Ref A-side",
+    });
     const afterA = await listPendingOfficiatingClaims(ref.email);
     expect(afterA).toHaveLength(1);
     expect(afterA[0]!.org_name).toBe(orgNameB);
@@ -373,19 +420,27 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     expect(await listPendingOfficiatingClaims(ref.email)).toHaveLength(0);
     const consoleA = await listOfficialsForConsole(orgA.auth);
     const consoleB = await listOfficialsForConsole(orgB.auth);
-    expect(consoleA.find((o) => o.id === officialA.id)).toMatchObject({ claimed: true });
-    expect(consoleB.find((o) => o.id === officialB.id)).toMatchObject({ claimed: true });
+    expect(consoleA.find((o) => o.id === officialA.id)).toMatchObject({
+      claimed: true,
+    });
+    expect(consoleB.find((o) => o.id === officialB.id)).toMatchObject({
+      claimed: true,
+    });
 
     // a bare player claim (no officials row), accepted by its real owner,
     // 404s with its OWN code — that flow stays on the token-based /claim
     // page, not the officiating accept-by-id route.
-    await expect(
-      acceptMyOfficiatingClaim(playerClaimId, ref.id, ref.email),
-    ).rejects.toMatchObject({ status: 404, code: "CLAIM_NOT_OFFICIATING" });
+    await expect(acceptMyOfficiatingClaim(playerClaimId, ref.id, ref.email)).rejects.toMatchObject({
+      status: 404,
+      code: "CLAIM_NOT_OFFICIATING",
+    });
 
     // expired claims never surface as pending, and their real owner is
     // refused with CLAIM_EXPIRED (ownership proven, state may differentiate)…
-    const officialC = await createOfficial(orgA.auth, { display_name: "Ref Expired", role_keys: ["referee"] });
+    const officialC = await createOfficial(orgA.auth, {
+      display_name: "Ref Expired",
+      role_keys: ["referee"],
+    });
     const invitedC = await inviteOfficial(orgA.auth, officialC.id, "expired@example.com");
     await sql`update person_claims set expires_at = now() - interval '1 minute' where id = ${invitedC.claim.id}`;
     const expiredUser = await makeUser("expired-ref");
@@ -401,13 +456,19 @@ describe.skipIf(!HAS_DB)("official onboarding (PROMPT-57)", () => {
     ).rejects.toMatchObject({ status: 404, code: "CLAIM_INVALID" });
 
     // revoked claims never surface as pending either.
-    const officialE = await createOfficial(orgA.auth, { display_name: "Ref Revoked", role_keys: ["referee"] });
+    const officialE = await createOfficial(orgA.auth, {
+      display_name: "Ref Revoked",
+      role_keys: ["referee"],
+    });
     const invitedE = await inviteOfficial(orgA.auth, officialE.id, "revoked@example.com");
     await sql`update person_claims set revoked_at = now() where id = ${invitedE.claim.id}`;
     expect(await listPendingOfficiatingClaims("revoked@example.com")).toHaveLength(0);
 
     // the token flow still works after the shared-core refactor.
-    const officialD = await createOfficial(orgA.auth, { display_name: "Ref Token", role_keys: ["referee"] });
+    const officialD = await createOfficial(orgA.auth, {
+      display_name: "Ref Token",
+      role_keys: ["referee"],
+    });
     const invitedD = await inviteOfficial(orgA.auth, officialD.id, "token-ref@example.com");
     const tokenUser = await makeUser("token-ref");
     await claimPerson(invitedD.secret, tokenUser.id, "token-ref@example.com");

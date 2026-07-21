@@ -21,15 +21,15 @@ import { randomUUID } from "node:crypto";
 // stay frozen for a whole REVALIDATE_SLOW window and keep serving player cards
 // for an org that just lost the feature. A memoising double is what makes that
 // failure observable from a test.
-const { cacheStore } = vi.hoisted(() => ({ cacheStore: new Map<string, unknown>() }));
+const { cacheStore } = vi.hoisted(() => ({
+  cacheStore: new Map<string, unknown>(),
+}));
 vi.mock("next/cache", () => ({
-  unstable_cache:
-    (fn: () => Promise<unknown>, keyParts: string[]) =>
-    async () => {
-      const k = JSON.stringify(keyParts);
-      if (!cacheStore.has(k)) cacheStore.set(k, await fn());
-      return cacheStore.get(k);
-    },
+  unstable_cache: (fn: () => Promise<unknown>, keyParts: string[]) => async () => {
+    const k = JSON.stringify(keyParts);
+    if (!cacheStore.has(k)) cacheStore.set(k, await fn());
+    return cacheStore.get(k);
+  },
   revalidateTag: vi.fn(),
   // public-site/revalidate.ts (reached via usecases/competitions.ts) imports
   // revalidatePath too. Omitting it only looked harmless because those call
@@ -45,6 +45,7 @@ import { createDivision } from "@/server/usecases/divisions";
 import { createEntrants } from "@/server/usecases/entrants";
 import { getPublicPlayer } from "@/server/public-site/data";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const DIVISION_CONFIG = {
@@ -97,9 +98,7 @@ async function seedScene(): Promise<Scene> {
     values (${"Gate " + suffix}, ${"gate-" + suffix}) returning id, slug`;
   // A raw org insert creates no subscriptions row; seed community explicitly so
   // the plan under test is stated, not inferred from a missing row.
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'community', 'active')`;
+  await setOrgPlan(orgId, "community");
   // Two active competitions exceed the community cap (competitions.max_active);
   // the cap is not what is under test — lift it for this org only.
   await sql`
@@ -123,7 +122,13 @@ async function seedScene(): Promise<Scene> {
             ${sql.json({ public_name: true, public_photo: true })})
     returning id`;
 
-  const auth: AuthCtx = { orgId, via: "session", userId: null, role: "owner", keyId: null };
+  const auth: AuthCtx = {
+    orgId,
+    via: "session",
+    userId: null,
+    role: "owner",
+    keyId: null,
+  };
   const slugs: { id: string; slug: string }[] = [];
   for (const name of ["Passed Cup " + suffix, "Unpassed Cup " + suffix]) {
     const comp = await createCompetition(auth, {
@@ -144,7 +149,13 @@ async function seedScene(): Promise<Scene> {
         display_name: personName,
         seed: 1,
         members: [
-          { person_id: personId, squad_number: 7, default_position_key: null, is_captain: true, roles: [] },
+          {
+            person_id: personId,
+            squad_number: 7,
+            default_position_key: null,
+            is_captain: true,
+            roles: [],
+          },
         ],
       },
     ]);

@@ -16,6 +16,7 @@ import {
   breadcrumbNames,
 } from "@/server/slug-resolve";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
@@ -31,9 +32,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx; orgSlug: string }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Res " + suffix}, ${orgSlug})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)

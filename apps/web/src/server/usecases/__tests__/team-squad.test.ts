@@ -14,16 +14,21 @@ import { createCompetition } from "../competitions";
 import { createDivision } from "../divisions";
 import { createEntrants, getEntrant } from "../entrants";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
-const GENERIC = { resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false };
+const GENERIC = {
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
+};
 
 async function seedOrg(plan: "community" | "pro"): Promise<AuthCtx> {
   const s = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Sq " + s}, ${"sq-" + s}) returning id`;
   if (plan !== "community") {
-    await sql`insert into subscriptions (org_id, plan_key, status) values (${orgId}, ${plan}, 'active')
-              on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await sql`
     insert into sports (key, name, module_version, position_catalog) values
@@ -62,7 +67,10 @@ describe.skipIf(!HAS_DB)("team squad", () => {
   it("creates a team under a club (Pro) and standalone (community, spec 3/7)", async () => {
     const pro = await seedOrg("pro");
     const club = await createClub(pro, { name: "Riverside FC" });
-    const team = await createTeam(pro, { name: "Riverside U12", club_id: club.id });
+    const team = await createTeam(pro, {
+      name: "Riverside U12",
+      club_id: club.id,
+    });
     expect(team.name).toBe("Riverside U12");
     expect(team.club_id).toBe(club.id);
 
@@ -77,20 +85,53 @@ describe.skipIf(!HAS_DB)("team squad", () => {
   it("stores and replaces the squad", async () => {
     const auth = await seedOrg("pro");
     const club = await createClub(auth, { name: "Harbour FC" });
-    const team = await createTeam(auth, { name: "Harbour U16", club_id: club.id });
-    const p1 = await createPerson(auth, { full_name: "Ada", consent: {}, dob: null, gender: null, external_ref: null });
-    const p2 = await createPerson(auth, { full_name: "Bea", consent: {}, dob: null, gender: null, external_ref: null });
+    const team = await createTeam(auth, {
+      name: "Harbour U16",
+      club_id: club.id,
+    });
+    const p1 = await createPerson(auth, {
+      full_name: "Ada",
+      consent: {},
+      dob: null,
+      gender: null,
+      external_ref: null,
+    });
+    const p2 = await createPerson(auth, {
+      full_name: "Bea",
+      consent: {},
+      dob: null,
+      gender: null,
+      external_ref: null,
+    });
 
     const saved = await setTeamSquad(auth, team.id, [
-      { person_id: p1.id, squad_number: 7, is_captain: true, roles: [], default_position_key: null },
-      { person_id: p2.id, squad_number: 9, is_captain: false, roles: [], default_position_key: null },
+      {
+        person_id: p1.id,
+        squad_number: 7,
+        is_captain: true,
+        roles: [],
+        default_position_key: null,
+      },
+      {
+        person_id: p2.id,
+        squad_number: 9,
+        is_captain: false,
+        roles: [],
+        default_position_key: null,
+      },
     ]);
     expect(saved.members).toHaveLength(2);
     expect(saved.members.find((m) => m.person_id === p1.id)!.is_captain).toBe(true);
 
     // Full replace: drop p2.
     await setTeamSquad(auth, team.id, [
-      { person_id: p1.id, squad_number: 7, is_captain: true, roles: [], default_position_key: null },
+      {
+        person_id: p1.id,
+        squad_number: 7,
+        is_captain: true,
+        roles: [],
+        default_position_key: null,
+      },
     ]);
     const after = await getTeamSquad(auth, team.id);
     expect(after.members.map((m) => m.person_id)).toEqual([p1.id]);
@@ -100,27 +141,65 @@ describe.skipIf(!HAS_DB)("team squad", () => {
     const auth = await seedOrg("pro");
     const club = await createClub(auth, { name: "Seed FC" });
     const team = await createTeam(auth, { name: "Seed U18", club_id: club.id });
-    const p1 = await createPerson(auth, { full_name: "Keeper", consent: {}, dob: null, gender: null, external_ref: null });
-    const p2 = await createPerson(auth, { full_name: "Back", consent: {}, dob: null, gender: null, external_ref: null });
+    const p1 = await createPerson(auth, {
+      full_name: "Keeper",
+      consent: {},
+      dob: null,
+      gender: null,
+      external_ref: null,
+    });
+    const p2 = await createPerson(auth, {
+      full_name: "Back",
+      consent: {},
+      dob: null,
+      gender: null,
+      external_ref: null,
+    });
     await setTeamSquad(auth, team.id, [
-      { person_id: p1.id, squad_number: 1, is_captain: true, roles: ["captain"], default_position_key: "GK" },
-      { person_id: p2.id, squad_number: 2, is_captain: false, roles: [], default_position_key: "DF" },
+      {
+        person_id: p1.id,
+        squad_number: 1,
+        is_captain: true,
+        roles: ["captain"],
+        default_position_key: "GK",
+      },
+      {
+        person_id: p2.id,
+        squad_number: 2,
+        is_captain: false,
+        roles: [],
+        default_position_key: "DF",
+      },
     ]);
 
-    const comp = await createCompetition(auth, { name: "Seed Cup", visibility: "private", branding: {} });
+    const comp = await createCompetition(auth, {
+      name: "Seed Cup",
+      visibility: "private",
+      branding: {},
+    });
 
     // Football division: squad seeds with its keys intact.
     const foot = await makeDivision(auth, comp.id, "football");
-    const [inFoot] = await createEntrants(auth, foot.id, [{ kind: "team", team_id: team.id, members: [] }]);
-    const footRoster = (await getEntrant(auth, inFoot!.id)).members as { person_id: string; default_position_key: string | null }[];
+    const [inFoot] = await createEntrants(auth, foot.id, [
+      { kind: "team", team_id: team.id, members: [] },
+    ]);
+    const footRoster = (await getEntrant(auth, inFoot!.id)).members as {
+      person_id: string;
+      default_position_key: string | null;
+    }[];
     expect(footRoster).toHaveLength(2); // seeded from squad
     expect(footRoster.find((m) => m.person_id === p1.id)!.default_position_key).toBe("GK");
 
     // Cricket division: members seed, GK (not a cricket position) dropped.
     const crick = await makeDivision(auth, comp.id, "cricket");
-    const [inCrick] = await createEntrants(auth, crick.id, [{ kind: "team", team_id: team.id, members: [] }]);
+    const [inCrick] = await createEntrants(auth, crick.id, [
+      { kind: "team", team_id: team.id, members: [] },
+    ]);
     expect(inCrick!.roster_keys_dropped).toBeGreaterThanOrEqual(1);
-    const crickRoster = (await getEntrant(auth, inCrick!.id)).members as { person_id: string; default_position_key: string | null }[];
+    const crickRoster = (await getEntrant(auth, inCrick!.id)).members as {
+      person_id: string;
+      default_position_key: string | null;
+    }[];
     expect(crickRoster).toHaveLength(2);
     expect(crickRoster.find((m) => m.person_id === p1.id)!.default_position_key).toBeNull();
   });

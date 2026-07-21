@@ -40,7 +40,10 @@ async function raw(
   path: string,
   method = "GET",
   body?: unknown,
-): Promise<{ status: number; json: { ok: boolean; data?: unknown; error?: string } }> {
+): Promise<{
+  status: number;
+  json: { ok: boolean; data?: unknown; error?: string };
+}> {
   const res = await fetch(BASE + path, {
     method,
     headers: {
@@ -117,7 +120,9 @@ async function main() {
   const org = { id: ver.org_id };
 
   // --- Competition lifecycle guards (v2 service layer) ---
-  const comp = await v1(admin, "/api/v1/competitions", "POST", { name: `Perm Probe ${tag}` });
+  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Perm Probe ${tag}`,
+  });
   check("owner creates competition", comp.status === 201);
   const compId = v1data<{ id: string }>(comp).id;
 
@@ -127,7 +132,9 @@ async function main() {
   check("deleted competition gone", gone.status === 404);
 
   // A competition to probe viewer permissions against.
-  const probe = await v1(admin, "/api/v1/competitions", "POST", { name: `Viewer Probe ${tag}` });
+  const probe = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Viewer Probe ${tag}`,
+  });
   const probeId = v1data<{ id: string }>(probe).id;
 
   // =====================================================================
@@ -135,12 +142,10 @@ async function main() {
   // =====================================================================
 
   // Create a viewer invite and a second user that joins with it.
-  const viewerInvite = (await call(
-    admin,
-    `/api/orgs/${org.id}/invites`,
-    "POST",
-    { role: "viewer", max_uses: 1 },
-  )) as { token: string };
+  const viewerInvite = (await call(admin, `/api/orgs/${org.id}/invites`, "POST", {
+    role: "viewer",
+    max_uses: 1,
+  })) as { token: string };
   check("viewer invite created", !!viewerInvite.token);
 
   const viewer = newSession();
@@ -159,23 +164,30 @@ async function main() {
   await call(viewer, "/api/auth/magic-link/consume", "POST", { token: vtoken });
   check("session created after consuming link", !!viewer.cookies["seazn_session"]);
   await expectFail("magic link is single-use", () =>
-    call(newSession(), "/api/auth/magic-link/consume", "POST", { token: vtoken }),
+    call(newSession(), "/api/auth/magic-link/consume", "POST", {
+      token: vtoken,
+    }),
   );
 
-  const accept = (await call(
-    viewer,
-    `/api/invites/${viewerInvite.token}/accept`,
-    "POST",
-  )) as { role: string };
+  const accept = (await call(viewer, `/api/invites/${viewerInvite.token}/accept`, "POST")) as {
+    role: string;
+  };
   check("viewer joined as viewer", accept.role === "viewer");
   check("viewer active org set", viewer.cookies["seazn_org"] === org.id);
 
   // Viewer can read but cannot write (doc 08 §2: write needs an editor role).
   const viewerRead = await v1(viewer, `/api/v1/competitions/${probeId}`);
   check("viewer can read competitions", viewerRead.status === 200);
-  const viewerWrite = await v1(viewer, "/api/v1/competitions", "POST", { name: "Nope" });
-  check("viewer cannot create competition", viewerWrite.status === 401 || viewerWrite.status === 403);
-  const viewerPatch = await v1(viewer, `/api/v1/competitions/${probeId}`, "PATCH", { name: "Nope" });
+  const viewerWrite = await v1(viewer, "/api/v1/competitions", "POST", {
+    name: "Nope",
+  });
+  check(
+    "viewer cannot create competition",
+    viewerWrite.status === 401 || viewerWrite.status === 403,
+  );
+  const viewerPatch = await v1(viewer, `/api/v1/competitions/${probeId}`, "PATCH", {
+    name: "Nope",
+  });
   check("viewer cannot edit competition", viewerPatch.status === 401 || viewerPatch.status === 403);
   // The single-use invite is now spent.
   await expectFail("single-use invite is spent", () =>
@@ -186,12 +198,15 @@ async function main() {
   // address stored; email_sent reports the Resend outcome (false with a blank
   // key — the UI then offers the personal link for manual sharing).
   const emailInvitee = `emailinvitee_${tag}@example.com`;
-  const emailInvite = (await call(
-    admin,
-    `/api/orgs/${org.id}/invites`,
-    "POST",
-    { role: "viewer", email: emailInvitee },
-  )) as { token: string; email: string | null; max_uses: number; email_sent?: boolean };
+  const emailInvite = (await call(admin, `/api/orgs/${org.id}/invites`, "POST", {
+    role: "viewer",
+    email: emailInvitee,
+  })) as {
+    token: string;
+    email: string | null;
+    max_uses: number;
+    email_sent?: boolean;
+  };
   check("email invite stores address", emailInvite.email === emailInvitee);
   check("email invite forced single-use", emailInvite.max_uses === 1);
   check("email invite reports send status", typeof emailInvite.email_sent === "boolean");
@@ -203,12 +218,11 @@ async function main() {
 
   // Invite-by-link (team settings): multi-use with a 24-hour expiry — it must
   // outlive the tab that created it and stay listed for later copying.
-  const linkInvite = (await call(
-    admin,
-    `/api/orgs/${org.id}/invites`,
-    "POST",
-    { role: "viewer", max_uses: 0, expires_in_days: 1 },
-  )) as { token: string; expires_at: string | null };
+  const linkInvite = (await call(admin, `/api/orgs/${org.id}/invites`, "POST", {
+    role: "viewer",
+    max_uses: 0,
+    expires_in_days: 1,
+  })) as { token: string; expires_at: string | null };
   const linkTtlMs = new Date(linkInvite.expires_at ?? 0).getTime() - Date.now();
   check("link invite lives ~24 hours", linkTtlMs > 0.9 * 864e5 && linkTtlMs < 1.1 * 864e5);
   const teamInvites = (await call(admin, `/api/orgs/${org.id}/invites`)) as {
@@ -224,17 +238,19 @@ async function main() {
   // Admin invite -> a second user joins and CAN create a competition. Retire
   // the viewer probe first: the check is about the ROLE, and the v3 free cap
   // (1 active competition) would 402 the create on quota instead.
-  await v1(admin, `/api/v1/competitions/${probeId}`, "PATCH", { status: "archived" });
-  const adminInvite = (await call(
-    admin,
-    `/api/orgs/${org.id}/invites`,
-    "POST",
-    { role: "admin", max_uses: 0 },
-  )) as { token: string };
+  await v1(admin, `/api/v1/competitions/${probeId}`, "PATCH", {
+    status: "archived",
+  });
+  const adminInvite = (await call(admin, `/api/orgs/${org.id}/invites`, "POST", {
+    role: "admin",
+    max_uses: 0,
+  })) as { token: string };
   const member = newSession();
   await signIn(member, `member_${tag}@example.com`);
   await call(member, `/api/invites/${adminInvite.token}/accept`, "POST");
-  const memberComp = await v1(member, "/api/v1/competitions", "POST", { name: `Member Made ${tag}` });
+  const memberComp = await v1(member, "/api/v1/competitions", "POST", {
+    name: `Member Made ${tag}`,
+  });
   check("invited admin can create competition", memberComp.status === 201);
 
   // Members listing reflects 3 people (owner + viewer + admin).
@@ -267,11 +283,15 @@ async function main() {
     name: `Renamed Org ${tag}`,
   })) as { name: string; slug: string };
   check("org renamed", renamed.name === `Renamed Org ${tag}`);
-  check("rename regenerates slug", renamed.slug !== org2.slug && renamed.slug.startsWith("renamed-org"));
+  check(
+    "rename regenerates slug",
+    renamed.slug !== org2.slug && renamed.slug.startsWith("renamed-org"),
+  );
   const oldConsole = await pageRedirect(admin, `/o/${org2.slug}`);
   check(
     "old org slug 301s on the console",
-    oldConsole.status >= 301 && oldConsole.status <= 308 &&
+    oldConsole.status >= 301 &&
+      oldConsole.status <= 308 &&
       (oldConsole.location ?? "").includes(`/o/${renamed.slug}`),
   );
 
@@ -376,8 +396,8 @@ async function main() {
   // --- PROMPT-40 marketing redesign (design/v3/12).
   await marketingSuite();
 
-// --- v5 i18n: marketing [lang] routing + translated copy.
-await i18nSuite();
+  // --- v5 i18n: marketing [lang] routing + translated copy.
+  await i18nSuite();
 
   // --- Growth-wave gaps (device links, scorer seats, discovery, registration,
   // ownership transfer, downgrade freeze) — pro paths on org2, free paths on a
@@ -495,12 +515,17 @@ async function p72Suite(): Promise<void> {
 
   const makeComp = async (name: string) =>
     v1data<{ id: string; slug: string }>(
-      await v1(owner, "/api/v1/competitions", "POST", { name: `${name} ${tag}`, visibility: "public" }),
+      await v1(owner, "/api/v1/competitions", "POST", {
+        name: `${name} ${tag}`,
+        visibility: "public",
+      }),
     );
   const makeDiv = async (compId: string) =>
     v1data<{ id: string; slug: string }>(
       await v1(owner, `/api/v1/competitions/${compId}/divisions`, "POST", {
-        name: "Open", sport_key: "generic", variant_key: "score",
+        name: "Open",
+        sport_key: "generic",
+        variant_key: "score",
         config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
       }),
     );
@@ -539,34 +564,54 @@ async function p72Suite(): Promise<void> {
   // A read key is enough to prove the door, and — unlike a write-capable key,
   // which V290 made Pro Plus only — it mints on a plain Pro org. ===
   const mkKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
-    name: "p72 probe", scopes: ["read"],
+    name: "p72 probe",
+    scopes: ["read"],
   });
   check("p72: read key minted for the NEVER_KEY probe", mkKey.status === 201);
-  const keyAuth = { Authorization: `Bearer ${v1data<{ secret: string }>(mkKey).secret}` };
+  const keyAuth = {
+    Authorization: `Bearer ${v1data<{ secret: string }>(mkKey).secret}`,
+  };
   const cleanComp = await makeComp("P72 Key Delete Cup"); // no money — would otherwise delete
-  const keyDelete = await v1(newSession(), `/api/v1/competitions/${cleanComp.id}`, "DELETE", undefined, keyAuth);
+  const keyDelete = await v1(
+    newSession(),
+    `/api/v1/competitions/${cleanComp.id}`,
+    "DELETE",
+    undefined,
+    keyAuth,
+  );
   check("p72: a key cannot DELETE a competition (403 NEVER_KEY)", keyDelete.status === 403);
   // Prove the door, not the data: the same delete over the session succeeds.
   const sessionDelete = await v1(owner, `/api/v1/competitions/${cleanComp.id}`, "DELETE");
-  check("p72: the owner session still deletes a money-free comp", sessionDelete.status === 200 || sessionDelete.status === 204);
+  check(
+    "p72: the owner session still deletes a money-free comp",
+    sessionDelete.status === 200 || sessionDelete.status === 204,
+  );
 
   // === COMMUNITY PATH: card division closed as payments_unavailable, but an
   // Event-Pass comp with the same settings stays open (P2-10 entitlement). ===
   const comm = newSession();
   const commWho = await signIn(comm, `p72comm_${tag}@example.com`);
   const commOrgId = commWho.org_id;
-  const commOrgs = (await call(comm, "/api/orgs")) as { id: string; slug: string }[];
+  const commOrgs = (await call(comm, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const commSlug = commOrgs.find((o) => o.id === commOrgId)!.slug;
   await setConnect(commOrgId, true); // Connect LIVE → isolate the entitlement dimension
 
   // Unlisted (still served by the public register panel) sidesteps the
   // community dashboard.public.max = 1 quota so both probe comps can coexist.
   const brokeComp = v1data<{ id: string; slug: string }>(
-    await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Card Cup ${tag}`, visibility: "unlisted" }),
+    await v1(comm, "/api/v1/competitions", "POST", {
+      name: `P72 Card Cup ${tag}`,
+      visibility: "unlisted",
+    }),
   );
   const brokeDiv = v1data<{ id: string }>(
     await v1(comm, `/api/v1/competitions/${brokeComp.id}/divisions`, "POST", {
-      name: "Card", sport_key: "generic", variant_key: "score",
+      name: "Card",
+      sport_key: "generic",
+      variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   );
@@ -575,7 +620,9 @@ async function p72Suite(): Promise<void> {
     newSession(),
     `/api/v1/public/orgs/${commSlug}/competitions/${brokeComp.slug}/registration`,
   );
-  const brokeDivs = v1data<{ divisions: { open: boolean; closed_reason: string | null }[] }>(brokeInfo).divisions;
+  const brokeDivs = v1data<{
+    divisions: { open: boolean; closed_reason: string | null }[];
+  }>(brokeInfo).divisions;
   check(
     "p72: community card division reads payments_unavailable (P2-10)",
     brokeInfo.status === 200 &&
@@ -587,13 +634,20 @@ async function p72Suite(): Promise<void> {
   // Free the community org's single active-competition slot (its read is done)
   // so the pass comp can be created — then the pass grants THAT comp's paid
   // entitlement independently.
-  await v1(comm, `/api/v1/competitions/${brokeComp.id}`, "PATCH", { status: "archived" });
+  await v1(comm, `/api/v1/competitions/${brokeComp.id}`, "PATCH", {
+    status: "archived",
+  });
   const passInfoComp = v1data<{ id: string; slug: string }>(
-    await v1(comm, "/api/v1/competitions", "POST", { name: `P72 Pass Card Cup ${tag}`, visibility: "unlisted" }),
+    await v1(comm, "/api/v1/competitions", "POST", {
+      name: `P72 Pass Card Cup ${tag}`,
+      visibility: "unlisted",
+    }),
   );
   const passInfoDiv = v1data<{ id: string }>(
     await v1(comm, `/api/v1/competitions/${passInfoComp.id}/divisions`, "POST", {
-      name: "Card", sport_key: "generic", variant_key: "score",
+      name: "Card",
+      sport_key: "generic",
+      variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   );
@@ -603,7 +657,9 @@ async function p72Suite(): Promise<void> {
     newSession(),
     `/api/v1/public/orgs/${commSlug}/competitions/${passInfoComp.slug}/registration`,
   );
-  const passDivs = v1data<{ divisions: { open: boolean; closed_reason: string | null }[] }>(passInfo).divisions;
+  const passDivs = v1data<{
+    divisions: { open: boolean; closed_reason: string | null }[];
+  }>(passInfo).divisions;
   check(
     "p72: an Event-Pass comp keeps its card division open (P2-10 scoped)",
     passInfo.status === 200 &&
@@ -714,16 +770,28 @@ async function smokePlanMatrix(): Promise<void> {
       }),
     );
     const person = v1data<{ id: string }>(
-      await v1(owner, "/api/v1/persons", "POST", { full_name: `Feed Player ${key} ${tag}`, consent: {} }),
+      await v1(owner, "/api/v1/persons", "POST", {
+        full_name: `Feed Player ${key} ${tag}`,
+        consent: {},
+      }),
     );
     await v1(owner, `/api/v1/divisions/${feedDiv.id}/entrants`, "POST", [
-      { kind: "individual", display_name: `Feed Solo ${key}`, seed: 1, members: [{ person_id: person.id }] },
+      {
+        kind: "individual",
+        display_name: `Feed Solo ${key}`,
+        seed: 1,
+        members: [{ person_id: person.id }],
+      },
       { kind: "individual", display_name: `Feed Solo2 ${key}`, seed: 2 },
       { kind: "team", display_name: `Feed Team ${key}`, seed: 3 },
       { kind: "pair", display_name: `Feed Pair ${key}`, seed: 4 },
     ]);
     const feedStage = v1data<{ id: string }>(
-      await v1(owner, `/api/v1/divisions/${feedDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+      await v1(owner, `/api/v1/divisions/${feedDiv.id}/stages`, "POST", {
+        seq: 1,
+        kind: "league",
+        name: "League",
+      }),
     );
     const feedFixtures = v1data<{ fixtures: { id: string }[] }>(
       await v1(owner, `/api/v1/stages/${feedStage.id}/generate`, "POST"),
@@ -742,28 +810,44 @@ async function smokePlanMatrix(): Promise<void> {
     const officialSession = newSession();
     await signIn(officialSession, officialEmail);
     const official = v1data<{ id: string }>(
-      await v1(owner, "/api/v1/officials", "POST", { display_name: `Feed Ref ${key} ${tag}`, role_keys: ["referee"] }),
+      await v1(owner, "/api/v1/officials", "POST", {
+        display_name: `Feed Ref ${key} ${tag}`,
+        role_keys: ["referee"],
+      }),
     );
     await v1(owner, `/api/v1/fixtures/${feedFixtures[0]!.id}/officials`, "PATCH", {
       set: [{ official_id: official.id, role_key: "referee", locked: false }],
     });
-    const offInvite = await v1(owner, `/api/v1/officials/${official.id}/invite`, "POST", { email: officialEmail });
-    const offToken = (v1data<{ claim_url: string }>(offInvite).claim_url ?? "").split("/claim/")[1] ?? "";
-    await call(officialSession, `/api/claims/${offToken}/accept`, "POST");
-    const offAccept = await v1(officialSession, `/api/v1/me/assigned-fixtures/${feedFixtures[0]!.id}/response`, "PATCH", {
-      response: "accepted",
+    const offInvite = await v1(owner, `/api/v1/officials/${official.id}/invite`, "POST", {
+      email: officialEmail,
     });
+    const offToken =
+      (v1data<{ claim_url: string }>(offInvite).claim_url ?? "").split("/claim/")[1] ?? "";
+    await call(officialSession, `/api/claims/${offToken}/accept`, "POST");
+    const offAccept = await v1(
+      officialSession,
+      `/api/v1/me/assigned-fixtures/${feedFixtures[0]!.id}/response`,
+      "PATCH",
+      {
+        response: "accepted",
+      },
+    );
     const offDuties = v1data<unknown[]>(await v1(officialSession, "/api/v1/me/assigned-fixtures"));
     check(
       `matrix/${key}: the official sees their duty in the officiating lane`,
       offAccept.status === 200 && Array.isArray(offDuties) && offDuties.length > 0,
     );
     const offState = await v1(officialSession, `/api/v1/fixtures/${feedFixtures[0]!.id}/state`);
-    const offScore = await v1(officialSession, `/api/v1/fixtures/${feedFixtures[0]!.id}/events`, "POST", {
-      expected_seq: v1data<{ last_seq: number }>(offState).last_seq,
-      type: "generic.result",
-      payload: { p1Score: 2, p2Score: 1 },
-    });
+    const offScore = await v1(
+      officialSession,
+      `/api/v1/fixtures/${feedFixtures[0]!.id}/events`,
+      "POST",
+      {
+        expected_seq: v1data<{ last_seq: number }>(offState).last_seq,
+        type: "generic.result",
+        payload: { p1Score: 2, p2Score: 1 },
+      },
+    );
     check(`matrix/${key}: the accepted official records a result`, offScore.status === 201);
 
     // --- User 3 (member/scorer): a division-scoped scorer invite seats a
@@ -778,13 +862,20 @@ async function smokePlanMatrix(): Promise<void> {
       default_scope: { type: "division", id: feedDiv.id },
     })) as { token: string };
     await call(scorerSession, `/api/invites/${scorerInvite.token}/accept`, "POST", {});
-    const scorerAssigned = v1data<unknown[]>(await v1(scorerSession, "/api/v1/me/assigned-fixtures"));
+    const scorerAssigned = v1data<unknown[]>(
+      await v1(scorerSession, "/api/v1/me/assigned-fixtures"),
+    );
     const scorerState = await v1(scorerSession, `/api/v1/fixtures/${feedFixtures[1]!.id}/state`);
-    const scorerScore = await v1(scorerSession, `/api/v1/fixtures/${feedFixtures[1]!.id}/events`, "POST", {
-      expected_seq: v1data<{ last_seq: number }>(scorerState).last_seq,
-      type: "generic.result",
-      payload: { p1Score: 1, p2Score: 3 },
-    });
+    const scorerScore = await v1(
+      scorerSession,
+      `/api/v1/fixtures/${feedFixtures[1]!.id}/events`,
+      "POST",
+      {
+        expected_seq: v1data<{ last_seq: number }>(scorerState).last_seq,
+        type: "generic.result",
+        payload: { p1Score: 1, p2Score: 3 },
+      },
+    );
     check(
       `matrix/${key}: the scorer seats via invite and scores via assignment`,
       Array.isArray(scorerAssigned) && scorerAssigned.length > 0 && scorerScore.status === 201,
@@ -796,12 +887,15 @@ async function smokePlanMatrix(): Promise<void> {
     const playerEmail = `player_${key}_${tag}@example.com`;
     const playerSession = newSession();
     await signIn(playerSession, playerEmail);
-    const claimInvite = await v1(owner, `/api/v1/persons/${person.id}/claim-invites`, "POST", { email: playerEmail });
-    const claimToken = (v1data<{ claim_url: string }>(claimInvite).claim_url ?? "").split("/claim/")[1] ?? "";
+    const claimInvite = await v1(owner, `/api/v1/persons/${person.id}/claim-invites`, "POST", {
+      email: playerEmail,
+    });
+    const claimToken =
+      (v1data<{ claim_url: string }>(claimInvite).claim_url ?? "").split("/claim/")[1] ?? "";
     await call(playerSession, `/api/claims/${claimToken}/accept`, "POST");
-    const upcoming = v1data<{ upcoming: { id: string }[] }>(
-      await v1(playerSession, "/api/v1/me/fixtures"),
-    ).upcoming ?? [];
+    const upcoming =
+      v1data<{ upcoming: { id: string }[] }>(await v1(playerSession, "/api/v1/me/fixtures"))
+        .upcoming ?? [];
     check(`matrix/${key}: the claimed player sees their own fixtures`, upcoming.length > 0);
 
     // --- Populated standings: the two results above make the snapshot
@@ -858,17 +952,27 @@ async function smokePlanMatrix(): Promise<void> {
 
   // A scored-through division so a real export renders.
   const cComp = v1data<{ id: string; slug: string }>(
-    await v1(comm, "/api/v1/competitions", "POST", { name: `Matrix Community ${tag}`, visibility: "unlisted" }),
+    await v1(comm, "/api/v1/competitions", "POST", {
+      name: `Matrix Community ${tag}`,
+      visibility: "unlisted",
+    }),
   );
   const cDiv = v1data<{ id: string }>(
-    await v1(comm, `/api/v1/competitions/${cComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+    await v1(comm, `/api/v1/competitions/${cComp.id}/divisions`, "POST", {
+      name: "Open",
+      ...genericDiv,
+    }),
   );
   await v1(comm, `/api/v1/divisions/${cDiv.id}/entrants`, "POST", [
     { kind: "individual", display_name: "A", seed: 1 },
     { kind: "individual", display_name: "B", seed: 2 },
   ]);
   const cStage = v1data<{ id: string }>(
-    await v1(comm, `/api/v1/divisions/${cDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    await v1(comm, `/api/v1/divisions/${cDiv.id}/stages`, "POST", {
+      seq: 1,
+      kind: "league",
+      name: "League",
+    }),
   );
   await v1(comm, `/api/v1/stages/${cStage.id}/generate`, "POST");
   await v1(comm, `/api/v1/divisions/${cDiv.id}/start`, "POST");
@@ -929,10 +1033,15 @@ async function smokePlanMatrix(): Promise<void> {
   // Behavioural proof of the cap: seed 20 prior AI runs on a division, the 21st
   // 402s at the cap (fires before the LLM → keyless-safe).
   const proComp = v1data<{ id: string }>(
-    await v1(pro, "/api/v1/competitions", "POST", { name: `Matrix Pro ${tag}` }),
+    await v1(pro, "/api/v1/competitions", "POST", {
+      name: `Matrix Pro ${tag}`,
+    }),
   );
   const proDiv = v1data<{ id: string }>(
-    await v1(pro, `/api/v1/competitions/${proComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+    await v1(pro, `/api/v1/competitions/${proComp.id}/divisions`, "POST", {
+      name: "Open",
+      ...genericDiv,
+    }),
   );
   await seedAiRuns(proOrg, proComp.id, proDiv.id, 20);
   const proCapped = await v1(pro, `/api/v1/divisions/${proDiv.id}/schedule/ai-plan`, "POST", {
@@ -940,7 +1049,8 @@ async function smokePlanMatrix(): Promise<void> {
   });
   check(
     "matrix/pro: the 21st AI run/division 402s at the cap (scheduling.ai.runs_per_division.max)",
-    proCapped.status === 402 && featureKey(proCapped).feature_key === "scheduling.ai.runs_per_division.max",
+    proCapped.status === 402 &&
+      featureKey(proCapped).feature_key === "scheduling.ai.runs_per_division.max",
   );
 
   // === PERSONA 3 — pro_plus ============================================
@@ -961,7 +1071,8 @@ async function smokePlanMatrix(): Promise<void> {
   // api.write grants: a write-capable (manage) key mints on Pro Plus — the same
   // key 402s on a plain Pro org (proPlusSuite covers the negative).
   const plusKey = await v1(plus, `/api/v1/orgs/${plusOrg}/api-keys`, "POST", {
-    name: `matrix plus ${tag}`, scopes: ["manage"],
+    name: `matrix plus ${tag}`,
+    scopes: ["manage"],
   });
   check("matrix/pro_plus: api.write grants a manage-scope key (201)", plusKey.status === 201);
 
@@ -969,25 +1080,46 @@ async function smokePlanMatrix(): Promise<void> {
   // org now 402s on (see jul3Suite) succeeds on Pro Plus — coverage of the
   // feature moves to the right tier instead of vanishing.
   const plusComp = v1data<{ id: string }>(
-    await v1(plus, "/api/v1/competitions", "POST", { name: `Matrix Plus ${tag}` }),
+    await v1(plus, "/api/v1/competitions", "POST", {
+      name: `Matrix Plus ${tag}`,
+    }),
   );
   const plusDiv = v1data<{ id: string }>(
-    await v1(plus, `/api/v1/competitions/${plusComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+    await v1(plus, `/api/v1/competitions/${plusComp.id}/divisions`, "POST", {
+      name: "Open",
+      ...genericDiv,
+    }),
   );
-  await v1(plus, `/api/v1/divisions/${plusDiv.id}/entrants`, "POST",
-    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })));
+  await v1(
+    plus,
+    `/api/v1/divisions/${plusDiv.id}/entrants`,
+    "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({
+      kind: "individual",
+      display_name: n,
+      seed: i + 1,
+    })),
+  );
   const plusStage = v1data<{ id: string }>(
-    await v1(plus, `/api/v1/divisions/${plusDiv.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    await v1(plus, `/api/v1/divisions/${plusDiv.id}/stages`, "POST", {
+      seq: 1,
+      kind: "league",
+      name: "League",
+    }),
   );
   await v1(plus, `/api/v1/stages/${plusStage.id}/generate`, "POST");
   await v1(plus, `/api/v1/divisions/${plusDiv.id}/start`, "POST");
-  await v1(plus, "/api/v1/officials", "POST", { display_name: `Matrix Ref ${tag}`, role_keys: ["referee"] });
+  await v1(plus, "/api/v1/officials", "POST", {
+    display_name: `Matrix Ref ${tag}`,
+    role_keys: ["referee"],
+  });
   const plusAuto = await v1(plus, `/api/v1/divisions/${plusDiv.id}/officials/auto`, "POST", {
     policy: { roles: ["referee"] },
   });
   check(
     "matrix/pro_plus: officials.auto is allowed (200, assignments proposed)",
-    plusAuto.status === 200 && Array.isArray(v1data<{ assignments: unknown[] }>(plusAuto).assignments),
+    plusAuto.status === 200 &&
+      Array.isArray(v1data<{ assignments: unknown[] }>(plusAuto).assignments),
   );
 
   // === PERSONA 4 — event_pass (community org + a single-comp pass) ======
@@ -997,17 +1129,26 @@ async function smokePlanMatrix(): Promise<void> {
   // Passed comp: create, then grant its pass. Unlisted sidesteps the public
   // dashboard cap; the pass frees the active-comp slot for the sibling below.
   const passedComp = v1data<{ id: string; slug: string }>(
-    await v1(passer, "/api/v1/competitions", "POST", { name: `Matrix Passed ${tag}`, visibility: "unlisted" }),
+    await v1(passer, "/api/v1/competitions", "POST", {
+      name: `Matrix Passed ${tag}`,
+      visibility: "unlisted",
+    }),
   );
   const passedDiv = v1data<{ id: string }>(
-    await v1(passer, `/api/v1/competitions/${passedComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+    await v1(passer, `/api/v1/competitions/${passedComp.id}/divisions`, "POST", {
+      name: "Open",
+      ...genericDiv,
+    }),
   );
   await grantPass(passOrg, passedComp.id);
 
   // A comp-scoped Pro feature (formats.advanced) resolves TRUE inside the passed
   // comp — an advanced (americano) stage is accepted.
   const passedAdv = await v1(passer, `/api/v1/divisions/${passedDiv.id}/stages`, "POST", {
-    seq: 1, kind: "americano", name: "Padel", config: { mode: "americano", courtCount: 2, rounds: 3 },
+    seq: 1,
+    kind: "americano",
+    name: "Padel",
+    config: { mode: "americano", courtCount: 2, rounds: 3 },
   });
   check(
     "matrix/event_pass: formats.advanced is granted INSIDE the passed comp (201)",
@@ -1017,13 +1158,22 @@ async function smokePlanMatrix(): Promise<void> {
   // A second, unpassed comp in the SAME org denies the same feature (the pass is
   // strictly comp-scoped).
   const siblingComp = v1data<{ id: string }>(
-    await v1(passer, "/api/v1/competitions", "POST", { name: `Matrix Sibling ${tag}`, visibility: "unlisted" }),
+    await v1(passer, "/api/v1/competitions", "POST", {
+      name: `Matrix Sibling ${tag}`,
+      visibility: "unlisted",
+    }),
   );
   const siblingDiv = v1data<{ id: string }>(
-    await v1(passer, `/api/v1/competitions/${siblingComp.id}/divisions`, "POST", { name: "Open", ...genericDiv }),
+    await v1(passer, `/api/v1/competitions/${siblingComp.id}/divisions`, "POST", {
+      name: "Open",
+      ...genericDiv,
+    }),
   );
   const siblingAdv = await v1(passer, `/api/v1/divisions/${siblingDiv.id}/stages`, "POST", {
-    seq: 1, kind: "americano", name: "Padel", config: { mode: "americano", courtCount: 2, rounds: 3 },
+    seq: 1,
+    kind: "americano",
+    name: "Padel",
+    config: { mode: "americano", courtCount: 2, rounds: 3 },
   });
   check(
     "matrix/event_pass: the sibling (unpassed) comp denies formats.advanced (402)",
@@ -1071,7 +1221,9 @@ async function clubsSuite(): Promise<void> {
   const proVer = await signIn(pro, `clubpro_${tag}@example.com`);
   await setPlan(proVer.org_id, "pro", pro);
 
-  const club = await v1(pro, "/api/v1/clubs", "POST", { name: `Riverside SC ${tag}` });
+  const club = await v1(pro, "/api/v1/clubs", "POST", {
+    name: `Riverside SC ${tag}`,
+  });
   check("clubs pro: club created (201)", club.status === 201);
   const clubId = v1data<{ id: string }>(club).id;
 
@@ -1094,7 +1246,8 @@ async function clubsSuite(): Promise<void> {
   check("clubs pro: committee contact added (201)", contact.status === 201);
   // The contact surfaces on the hub read (getClub feeds the Overview tab).
   const detail = await v1(pro, `/api/v1/clubs/${clubId}`);
-  const contacts = v1data<{ contacts: { full_name: string; is_primary: boolean }[] }>(detail).contacts ?? [];
+  const contacts =
+    v1data<{ contacts: { full_name: string; is_primary: boolean }[] }>(detail).contacts ?? [];
   check(
     "clubs pro: contact is primary on the hub read",
     contacts.some((c) => c.full_name === `Sam Secretary ${tag}` && c.is_primary),
@@ -1102,26 +1255,39 @@ async function clubsSuite(): Promise<void> {
 
   // Standalone team (club_id omitted) — the directory ladder step 2 — then move
   // it under the club, exactly as the hub Teams-tab detach/attach does.
-  const team = await v1(pro, "/api/v1/teams", "POST", { name: `Riverside U12 ${tag}` });
+  const team = await v1(pro, "/api/v1/teams", "POST", {
+    name: `Riverside U12 ${tag}`,
+  });
   check(
     "clubs pro: standalone team created (no club)",
     team.status === 201 && v1data<{ club_id: string | null }>(team).club_id === null,
   );
   const teamId = v1data<{ id: string }>(team).id;
-  const moved = await v1(pro, `/api/v1/teams/${teamId}`, "PATCH", { club_id: clubId });
+  const moved = await v1(pro, `/api/v1/teams/${teamId}`, "PATCH", {
+    club_id: clubId,
+  });
   check(
     "clubs pro: team moved under the club",
     moved.status === 200 && v1data<{ club_id: string | null }>(moved).club_id === clubId,
   );
 
   // Quick-add a person (squad editor inline create), then full-replace the squad.
-  const person = await v1(pro, "/api/v1/persons", "POST", { full_name: `Quinn Quickadd ${tag}` });
+  const person = await v1(pro, "/api/v1/persons", "POST", {
+    full_name: `Quinn Quickadd ${tag}`,
+  });
   check("clubs pro: quick-add person created (201)", person.status === 201);
   const personId = v1data<{ id: string }>(person).id;
   const squad = await v1(pro, `/api/v1/teams/${teamId}/squad`, "PUT", {
     members: [{ person_id: personId, squad_number: 7, is_captain: true }],
   });
-  const members = v1data<{ members: { person_id: string; is_captain: boolean; squad_number: number | null }[] }>(squad).members ?? [];
+  const members =
+    v1data<{
+      members: {
+        person_id: string;
+        is_captain: boolean;
+        squad_number: number | null;
+      }[];
+    }>(squad).members ?? [];
   check(
     "clubs pro: squad saved with the quick-added captain (#7)",
     squad.status === 200 &&
@@ -1137,13 +1303,23 @@ async function clubsSuite(): Promise<void> {
     name: `Sync Cup ${tag}`,
     visibility: "private",
   });
-  const syncDiv = await v1(pro, `/api/v1/competitions/${v1data<{ id: string }>(syncComp).id}/divisions`, "POST", {
-    name: "Sync Div",
-    sport_key: "generic",
-    variant_key: "score",
-    config: { resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false },
-    eligibility: [],
-  });
+  const syncDiv = await v1(
+    pro,
+    `/api/v1/competitions/${v1data<{ id: string }>(syncComp).id}/divisions`,
+    "POST",
+    {
+      name: "Sync Div",
+      sport_key: "generic",
+      variant_key: "score",
+      config: {
+        resultMode: "score",
+        allowDraws: true,
+        points: { w: 3, d: 1, l: 0 },
+        progressScore: false,
+      },
+      eligibility: [],
+    },
+  );
   const syncDivId = v1data<{ id: string }>(syncDiv).id;
   const enrolled = await v1(pro, `/api/v1/divisions/${syncDivId}/entrants`, "POST", [
     { kind: "team", team_id: teamId, members: [] },
@@ -1152,11 +1328,12 @@ async function clubsSuite(): Promise<void> {
   const seeded = await v1(pro, `/api/v1/entrants/${entrantId}`);
   check(
     "clubs pro: enrollment seeded the roster from the squad (snapshot of 1)",
-    enrolled.status === 201 &&
-      (v1data<{ members: unknown[] }>(seeded).members ?? []).length === 1,
+    enrolled.status === 201 && (v1data<{ members: unknown[] }>(seeded).members ?? []).length === 1,
   );
 
-  const late = await v1(pro, "/api/v1/persons", "POST", { full_name: `Lena Late ${tag}` });
+  const late = await v1(pro, "/api/v1/persons", "POST", {
+    full_name: `Lena Late ${tag}`,
+  });
   const lateId = v1data<{ id: string }>(late).id;
   await v1(pro, `/api/v1/teams/${teamId}/squad`, "PUT", {
     members: [
@@ -1172,8 +1349,7 @@ async function clubsSuite(): Promise<void> {
   const synced = await v1(pro, `/api/v1/entrants/${entrantId}/roster/sync`, "POST", {});
   check(
     "clubs pro: roster/sync replaces the entry roster with the current squad (2)",
-    synced.status === 200 &&
-      (v1data<{ members: unknown[] }>(synced).members ?? []).length === 2,
+    synced.status === 200 && (v1data<{ members: unknown[] }>(synced).members ?? []).length === 2,
   );
   const solo = await v1(pro, `/api/v1/divisions/${syncDivId}/entrants`, "POST", [
     { kind: "individual", display_name: `Solo ${tag}`, members: [] },
@@ -1190,10 +1366,16 @@ async function clubsSuite(): Promise<void> {
   // the third 402s with the feature key that drives the paywall.
   const free = newSession();
   await signIn(free, `clubfree_${tag}@example.com`);
-  const c1 = await v1(free, "/api/v1/clubs", "POST", { name: `Free Club One ${tag}` });
-  const c2 = await v1(free, "/api/v1/clubs", "POST", { name: `Free Club Two ${tag}` });
+  const c1 = await v1(free, "/api/v1/clubs", "POST", {
+    name: `Free Club One ${tag}`,
+  });
+  const c2 = await v1(free, "/api/v1/clubs", "POST", {
+    name: `Free Club Two ${tag}`,
+  });
   check("clubs free: first two clubs allowed on community", c1.status === 201 && c2.status === 201);
-  const c3 = await v1(free, "/api/v1/clubs", "POST", { name: `Free Club Three ${tag}` });
+  const c3 = await v1(free, "/api/v1/clubs", "POST", {
+    name: `Free Club Three ${tag}`,
+  });
   check(
     "clubs free: third club 402s with the clubs.max feature key",
     c3.status === 402 &&
@@ -1211,7 +1393,10 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   const playerVer = await signIn(player, `player_${tag}@example.com`);
 
   admin.cookies["seazn_org"] = orgId; // active-org cookie targets the v1 calls
-  const orgs = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const orgs = (await call(admin, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const orgSlug = orgs.find((o) => o.id === orgId)!.slug;
 
   const comp = await v1(admin, "/api/v1/competitions", "POST", {
@@ -1227,21 +1412,39 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   });
   const divData = v1data<{ id: string; slug: string }>(div);
   const pa = await v1(admin, "/api/v1/persons", "POST", {
-    full_name: `Pat Claimer ${tag}`, consent: {},
+    full_name: `Pat Claimer ${tag}`,
+    consent: {},
   });
   const pb = await v1(admin, "/api/v1/persons", "POST", {
-    full_name: `Uma Unclaimed ${tag}`, consent: {},
+    full_name: `Uma Unclaimed ${tag}`,
+    consent: {},
   });
   const personId = v1data<{ id: string }>(pa).id;
   const unclaimedId = v1data<{ id: string }>(pb).id;
   await v1(admin, `/api/v1/divisions/${divData.id}/entrants`, "POST", [
-    { kind: "individual", display_name: "Pat", seed: 1, members: [{ person_id: personId }] },
-    { kind: "individual", display_name: "Uma", seed: 2, members: [{ person_id: unclaimedId }] },
+    {
+      kind: "individual",
+      display_name: "Pat",
+      seed: 1,
+      members: [{ person_id: personId }],
+    },
+    {
+      kind: "individual",
+      display_name: "Uma",
+      seed: 2,
+      members: [{ person_id: unclaimedId }],
+    },
   ]);
   const stage = await v1(admin, `/api/v1/divisions/${divData.id}/stages`, "POST", {
-    seq: 1, kind: "league", name: "League",
+    seq: 1,
+    kind: "league",
+    name: "League",
   });
-  const gen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`, "POST");
+  const gen = await v1(
+    admin,
+    `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`,
+    "POST",
+  );
   const fixture = v1data<{ fixtures: { id: string; fixture_no: number }[] }>(gen).fixtures[0]!;
   await v1(admin, `/api/v1/divisions/${divData.id}/start`, "POST");
   const fixturePath = `/o/${orgSlug}/c/${compData.slug}/d/${divData.slug}/f/${fixture.fixture_no}`;
@@ -1252,7 +1455,11 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   });
   const claimUrl = v1data<{ claim_url: string }>(invite).claim_url ?? "";
   check("pa claim invite minted", invite.status === 201 && claimUrl.includes("/claim/pc_"));
-  const accepted = (await call(player, `/api/claims/${claimUrl.split("/claim/")[1]}/accept`, "POST")) as {
+  const accepted = (await call(
+    player,
+    `/api/claims/${claimUrl.split("/claim/")[1]}/accept`,
+    "POST",
+  )) as {
     person_id?: string;
   };
   check("pa player claimed the profile", accepted.person_id === personId);
@@ -1260,7 +1467,10 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   // /me carries the fixture; RSVP out with a note.
   const mine = await v1(player, "/api/v1/me/fixtures");
   const upcoming = v1data<{ upcoming: { id: string }[] }>(mine).upcoming ?? [];
-  check("pa /me/fixtures lists the claimed fixture", upcoming.some((f) => f.id === fixture.id));
+  check(
+    "pa /me/fixtures lists the claimed fixture",
+    upcoming.some((f) => f.id === fixture.id),
+  );
   const rsvp = await v1(player, `/api/v1/me/fixtures/${fixture.id}/availability`, "PUT", {
     status: "out",
     note: "smoke note",
@@ -1269,10 +1479,17 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
 
   // Organiser grid: ✗ chip with the note; unclaimed teammate shows "—".
   const gridRes = await fetch(`${BASE}${fixturePath}`, {
-    headers: { cookie: Object.entries(admin.cookies).map(([k, v]) => `${k}=${v}`).join("; ") },
+    headers: {
+      cookie: Object.entries(admin.cookies)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("; "),
+    },
   });
   const html = await gridRes.text();
-  check("pa grid shows the unavailable chip", gridRes.status === 200 && html.includes("unavailable — smoke note"));
+  check(
+    "pa grid shows the unavailable chip",
+    gridRes.status === 200 && html.includes("unavailable — smoke note"),
+  );
   check("pa unclaimed teammate shows no-answer chip", html.includes("no availability answer"));
 
   // QR check-in: organiser mints, player taps; presence keeps the RSVP.
@@ -1283,7 +1500,10 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
     checked_in?: boolean;
     status?: string;
   };
-  check("pa QR check-in keeps the explicit RSVP", checkedIn.checked_in === true && checkedIn.status === "out");
+  check(
+    "pa QR check-in keeps the explicit RSVP",
+    checkedIn.checked_in === true && checkedIn.status === "out",
+  );
 
   // Unclaimed person untouched: no public card without consent.
   const card = await fetch(`${BASE}/shared/${orgSlug}/${compData.slug}/players/${unclaimedId}`);
@@ -1298,7 +1518,8 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
   // Free path: the player's own org is a fresh COMMUNITY org — claim
   // invites must mint there too (all plans, no requireFeature gate).
   const freePerson = await v1(player, "/api/v1/persons", "POST", {
-    full_name: `Free Player ${tag}`, consent: {},
+    full_name: `Free Player ${tag}`,
+    consent: {},
   });
   const freeInvite = await v1(
     player,
@@ -1320,7 +1541,11 @@ async function playerAccountsSuite(admin: Session, orgId: string): Promise<void>
  *  device-mint — accepted officials pass the score-write gate). The free
  *  path proves the portal has no plan gate: an invite mints on the ref's own
  *  auto-provisioned COMMUNITY org. */
-async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: string): Promise<void> {
+async function officialOnboardingSuite(
+  admin: Session,
+  orgId: string,
+  orgSlug: string,
+): Promise<void> {
   const refEmail = `ref_${tag}@example.com`;
   const ref = newSession();
   const refVer = await signIn(ref, refEmail);
@@ -1339,15 +1564,41 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   });
   const divData = v1data<{ id: string; slug: string }>(div);
   await v1(admin, `/api/v1/divisions/${divData.id}/entrants`, "POST", [
-    { kind: "individual", display_name: `Whistle A ${tag}`, seed: 1, members: [] },
-    { kind: "individual", display_name: `Whistle B ${tag}`, seed: 2, members: [] },
-    { kind: "individual", display_name: `Whistle C ${tag}`, seed: 3, members: [] },
-    { kind: "individual", display_name: `Whistle D ${tag}`, seed: 4, members: [] },
+    {
+      kind: "individual",
+      display_name: `Whistle A ${tag}`,
+      seed: 1,
+      members: [],
+    },
+    {
+      kind: "individual",
+      display_name: `Whistle B ${tag}`,
+      seed: 2,
+      members: [],
+    },
+    {
+      kind: "individual",
+      display_name: `Whistle C ${tag}`,
+      seed: 3,
+      members: [],
+    },
+    {
+      kind: "individual",
+      display_name: `Whistle D ${tag}`,
+      seed: 4,
+      members: [],
+    },
   ]);
   const stage = await v1(admin, `/api/v1/divisions/${divData.id}/stages`, "POST", {
-    seq: 1, kind: "league", name: "League",
+    seq: 1,
+    kind: "league",
+    name: "League",
   });
-  const gen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`, "POST");
+  const gen = await v1(
+    admin,
+    `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`,
+    "POST",
+  );
   const fixtures = v1data<{ fixtures: { id: string }[] }>(gen).fixtures;
   await v1(admin, `/api/v1/divisions/${divData.id}/start`, "POST");
   // Future kickoff: the /me lane only lists today-or-later fixtures. Pinned
@@ -1358,12 +1609,14 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   kickoffDate.setUTCHours(10, 0, 0, 0);
   const kickoff = kickoffDate.toISOString();
   await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}`, "PATCH", {
-    scheduled_at: kickoff, court_label: "Court 9",
+    scheduled_at: kickoff,
+    court_label: "Court 9",
   });
 
   // Create + assign BEFORE the invite: the fresh assignment must be pending.
   const off = await v1(admin, "/api/v1/officials", "POST", {
-    display_name: `Ria Ref ${tag}`, role_keys: ["referee"],
+    display_name: `Ria Ref ${tag}`,
+    role_keys: ["referee"],
   });
   const offId = v1data<{ id: string }>(off).id;
   await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}/officials`, "PATCH", {
@@ -1371,51 +1624,87 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   });
 
   // Invite through the SHARED person-claim rail (pc_ token, officiating copy).
-  const invite = await v1(admin, `/api/v1/officials/${offId}/invite`, "POST", { email: refEmail });
+  const invite = await v1(admin, `/api/v1/officials/${offId}/invite`, "POST", {
+    email: refEmail,
+  });
   const claimUrl = v1data<{ claim_url: string }>(invite).claim_url ?? "";
-  check("off invite mints through the person-claim rail", invite.status === 201 && claimUrl.includes("/claim/pc_"));
+  check(
+    "off invite mints through the person-claim rail",
+    invite.status === 201 && claimUrl.includes("/claim/pc_"),
+  );
   const token = claimUrl.split("/claim/")[1]!;
   const claimPage = await fetch(`${BASE}/claim/${token}`);
   const claimHtml = await claimPage.text();
-  check("off claim page shows officiating copy", claimPage.status === 200 && claimHtml.includes("Claim your officiating profile"));
+  check(
+    "off claim page shows officiating copy",
+    claimPage.status === 200 && claimHtml.includes("Claim your officiating profile"),
+  );
 
-  const accepted = (await call(ref, `/api/claims/${token}/accept`, "POST")) as { person_id?: string };
+  const accepted = (await call(ref, `/api/claims/${token}/accept`, "POST")) as {
+    person_id?: string;
+  };
   check("off claim links the official's login", !!accepted.person_id);
 
   // /me carries the assignment card (assert on the unique fixture label, not
   // dict copy — the /me DictProvider serialises every ui string into the HTML).
   const meRes = await fetch(`${BASE}/me`, {
-    headers: { cookie: Object.entries(ref.cookies).map(([k, v]) => `${k}=${v}`).join("; ") },
+    headers: {
+      cookie: Object.entries(ref.cookies)
+        .map(([k, v]) => `${k}=${v}`)
+        .join("; "),
+    },
   });
   const meHtml = await meRes.text();
-  check("off /me lists the assigned fixture", meRes.status === 200 && meHtml.includes(`Whistle A ${tag}`));
+  check(
+    "off /me lists the assigned fixture",
+    meRes.status === 200 && meHtml.includes(`Whistle A ${tag}`),
+  );
 
   // Accept; then decline a second assignment with a reason → organiser flag.
-  const acceptRes = await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/response`, "PATCH", {
-    response: "accepted",
-  });
-  check("off accept lands", acceptRes.status === 200 && v1data<{ response: string }>(acceptRes).response === "accepted");
+  const acceptRes = await v1(
+    ref,
+    `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/response`,
+    "PATCH",
+    {
+      response: "accepted",
+    },
+  );
+  check(
+    "off accept lands",
+    acceptRes.status === 200 && v1data<{ response: string }>(acceptRes).response === "accepted",
+  );
   await v1(admin, `/api/v1/fixtures/${fixtures[1]!.id}/officials`, "PATCH", {
     set: [{ official_id: offId, role_key: "referee", locked: false }],
   });
   await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[1]!.id}/response`, "PATCH", {
-    response: "declined", decline_reason: "smoke clash",
+    response: "declined",
+    decline_reason: "smoke clash",
   });
   const flagged = await v1(admin, `/api/v1/fixtures/${fixtures[1]!.id}`);
-  const flaggedOfficials = v1data<{ officials: { response?: string; decline_reason?: string }[] }>(flagged).officials ?? [];
+  const flaggedOfficials =
+    v1data<{ officials: { response?: string; decline_reason?: string }[] }>(flagged).officials ??
+    [];
   check(
     "off decline flags on the organiser read (no auto-reassign)",
-    flaggedOfficials.length === 1 && flaggedOfficials[0]!.response === "declined" && flaggedOfficials[0]!.decline_reason === "smoke clash",
+    flaggedOfficials.length === 1 &&
+      flaggedOfficials[0]!.response === "declined" &&
+      flaggedOfficials[0]!.decline_reason === "smoke clash",
   );
   // accepted → declined is refused (ask the organiser)
-  const illegal = await v1(ref, `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/response`, "PATCH", {
-    response: "declined",
-  });
+  const illegal = await v1(
+    ref,
+    `/api/v1/me/assigned-fixtures/${fixtures[0]!.id}/response`,
+    "PATCH",
+    {
+      response: "declined",
+    },
+  );
   check("off accepted assignment cannot be self-declined", illegal.status === 422);
 
   // Blackout date: set (upsert) then clear.
   const blackout = await v1(ref, "/api/v1/me/availability/officiating", "POST", {
-    date: "2027-03-07", note: "away",
+    date: "2027-03-07",
+    note: "away",
   });
   check("off blackout date saved", blackout.status === 201);
   const cleared = await v1(ref, "/api/v1/me/availability/officiating?date=2027-03-07", "DELETE");
@@ -1447,7 +1736,10 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   const offFixNo = v1data<{ fixture_no: number }>(
     await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}`),
   ).fixture_no;
-  const offConsole = await html(ref, `/o/${orgSlug}/c/${compData.slug}/d/${divData.slug}/f/${offFixNo}`);
+  const offConsole = await html(
+    ref,
+    `/o/${orgSlug}/c/${compData.slug}/d/${divData.slug}/f/${offFixNo}`,
+  );
   check(
     "off accepted official opens the fixture console PAGE (non-member layout door)",
     offConsole.status === 200 && offConsole.body.includes(`Whistle A ${tag}`),
@@ -1458,10 +1750,13 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   // without ever touching the emailed token (the claim id from the invite
   // response is enough; the session's verified email does the rest).
   const off2 = await v1(admin, "/api/v1/officials", "POST", {
-    display_name: `Ria Ref Two ${tag}`, role_keys: ["referee"],
+    display_name: `Ria Ref Two ${tag}`,
+    role_keys: ["referee"],
   });
   const off2Id = v1data<{ id: string }>(off2).id;
-  const invite2 = await v1(admin, `/api/v1/officials/${off2Id}/invite`, "POST", { email: refEmail });
+  const invite2 = await v1(admin, `/api/v1/officials/${off2Id}/invite`, "POST", {
+    email: refEmail,
+  });
   const claim2Id = v1data<{ id: string }>(invite2).id ?? "";
   check("off second org invite mints its own claim id", invite2.status === 201 && !!claim2Id);
 
@@ -1469,8 +1764,16 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   // can't even learn the claim exists (review fix 2026-07-17).
   const stranger = newSession();
   await signIn(stranger, `stranger_${tag}@example.com`);
-  const wrongAccept = await v1(stranger, `/api/v1/me/officiating-claims/${claim2Id}/accept`, "POST");
-  const bogusAccept = await v1(stranger, `/api/v1/me/officiating-claims/${crypto.randomUUID()}/accept`, "POST");
+  const wrongAccept = await v1(
+    stranger,
+    `/api/v1/me/officiating-claims/${claim2Id}/accept`,
+    "POST",
+  );
+  const bogusAccept = await v1(
+    stranger,
+    `/api/v1/me/officiating-claims/${crypto.randomUUID()}/accept`,
+    "POST",
+  );
   check(
     "off accept-by-id refuses a non-matching email with the generic 404",
     wrongAccept.status === 404 && bogusAccept.status === 404,
@@ -1483,11 +1786,17 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   // Free path: the ref's own org is a fresh COMMUNITY org — the officiating
   // portal must have no plan gate on invite/claim.
   const freeOff = await v1(ref, "/api/v1/officials", "POST", {
-    display_name: `Free Ref ${tag}`, role_keys: ["referee"],
+    display_name: `Free Ref ${tag}`,
+    role_keys: ["referee"],
   });
-  const freeInvite = await v1(ref, `/api/v1/officials/${v1data<{ id: string }>(freeOff).id}/invite`, "POST", {
-    email: `else_${tag}@example.com`,
-  });
+  const freeInvite = await v1(
+    ref,
+    `/api/v1/officials/${v1data<{ id: string }>(freeOff).id}/invite`,
+    "POST",
+    {
+      email: `else_${tag}@example.com`,
+    },
+  );
   check(
     "off invite mints on a community org (portal is free)",
     refVer.has_org === true && freeInvite.status === 201,
@@ -1497,40 +1806,61 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   // claimed official (offId, this org) also holds a scheduled assignment in
   // a DIFFERENT org (the account's own first org from signup) — the schedule's
   // Officials tab must warn with a time, never the other org's identity.
-  const myOrgs = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const myOrgs = (await call(admin, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const busyOrg = myOrgs.find((o) => o.id !== orgId)!;
   admin.cookies["seazn_org"] = busyOrg.id;
   const busyOff = await v1(admin, "/api/v1/officials", "POST", {
-    display_name: `Ria Ref Busy ${tag}`, role_keys: ["referee"],
+    display_name: `Ria Ref Busy ${tag}`,
+    role_keys: ["referee"],
   });
   const busyOffId = v1data<{ id: string }>(busyOff).id;
-  const busyInvite = await v1(admin, `/api/v1/officials/${busyOffId}/invite`, "POST", { email: refEmail });
+  const busyInvite = await v1(admin, `/api/v1/officials/${busyOffId}/invite`, "POST", {
+    email: refEmail,
+  });
   const busyClaimId = v1data<{ id: string }>(busyInvite).id ?? "";
   await v1(ref, `/api/v1/me/officiating-claims/${busyClaimId}/accept`, "POST");
 
   const busyComp = await v1(admin, "/api/v1/competitions", "POST", {
-    name: `Busy Cup ${tag}`, visibility: "public",
+    name: `Busy Cup ${tag}`,
+    visibility: "public",
   });
-  const busyDiv = await v1(admin, `/api/v1/competitions/${v1data<{ id: string }>(busyComp).id}/divisions`, "POST", {
-    name: "Open", sport_key: "generic", variant_key: "score",
-    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
-  });
+  const busyDiv = await v1(
+    admin,
+    `/api/v1/competitions/${v1data<{ id: string }>(busyComp).id}/divisions`,
+    "POST",
+    {
+      name: "Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
   const busyDivId = v1data<{ id: string }>(busyDiv).id;
   await v1(admin, `/api/v1/divisions/${busyDivId}/entrants`, "POST", [
     { kind: "individual", display_name: `Busy A ${tag}`, seed: 1, members: [] },
     { kind: "individual", display_name: `Busy B ${tag}`, seed: 2, members: [] },
   ]);
   const busyStage = await v1(admin, `/api/v1/divisions/${busyDivId}/stages`, "POST", {
-    seq: 1, kind: "league", name: "League",
+    seq: 1,
+    kind: "league",
+    name: "League",
   });
-  const busyGen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(busyStage).id}/generate`, "POST");
+  const busyGen = await v1(
+    admin,
+    `/api/v1/stages/${v1data<{ id: string }>(busyStage).id}/generate`,
+    "POST",
+  );
   const busyFixtures = v1data<{ fixtures: { id: string }[] }>(busyGen).fixtures;
   await v1(admin, `/api/v1/divisions/${busyDivId}/start`, "POST");
   // Same calendar day as this org's fixtures[0] kickoff, a few hours later —
   // the warning is a same-day match, not an exact-instant one.
   const busyKickoff = new Date(new Date(kickoff).getTime() + 3 * 3_600_000).toISOString();
   await v1(admin, `/api/v1/fixtures/${busyFixtures[0]!.id}`, "PATCH", {
-    scheduled_at: busyKickoff, court_label: "Court 5",
+    scheduled_at: busyKickoff,
+    court_label: "Court 5",
   });
   await v1(admin, `/api/v1/fixtures/${busyFixtures[0]!.id}/officials`, "PATCH", {
     set: [{ official_id: busyOffId, role_key: "referee", locked: false }],
@@ -1541,7 +1871,10 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
   // flagged busy with a real time — the raw {time} template lives in the
   // page's embedded dict regardless, so only a substituted HH:MM counts.
   admin.cookies["seazn_org"] = orgId;
-  const sched = await html(admin, `/o/${orgSlug}/c/${compData.slug}/d/${divData.slug}/schedule?tab=officials`);
+  const sched = await html(
+    admin,
+    `/o/${orgSlug}/c/${compData.slug}/d/${divData.slug}/schedule?tab=officials`,
+  );
   check(
     "off booked-elsewhere warns with a real time, not the raw {time} template",
     sched.status === 200 && /booked elsewhere ·\s*\d{1,2}:\d{2}/.test(sched.body),
@@ -1563,7 +1896,11 @@ async function officialOnboardingSuite(admin: Session, orgId: string, orgSlug: s
  *  community owner): the same decided-fixture setup, then the mark PUT is
  *  gated 402 while the report still files. Seeds the assignment + decided
  *  fixture BEFORE asserting (empty-data false-green lesson). */
-async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+async function marksReportsSuite(
+  admin: Session,
+  proOrgId: string,
+  proOrgSlug: string,
+): Promise<void> {
   // The fixture_officials surrogate id is never exposed by the API (the
   // console reads it server-side); the smoke reads it over its own connection,
   // same ad-hoc convention as checkOfficialClaimed.
@@ -1596,27 +1933,49 @@ async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: s
   ): Promise<{ fx: string; offId: string; ref: Session }> {
     owner.cookies["seazn_org"] = ownerOrgId;
     const comp = v1data<{ id: string; slug: string }>(
-      await v1(owner, "/api/v1/competitions", "POST", { name: `Marks ${label} ${tag}`, visibility: "public" }),
+      await v1(owner, "/api/v1/competitions", "POST", {
+        name: `Marks ${label} ${tag}`,
+        visibility: "public",
+      }),
     );
     const div = v1data<{ id: string; slug: string }>(
       await v1(owner, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
-        name: "Open", sport_key: "generic", variant_key: "score",
+        name: "Open",
+        sport_key: "generic",
+        variant_key: "score",
         config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
       }),
     );
     await v1(owner, `/api/v1/divisions/${div.id}/entrants`, "POST", [
-      { kind: "individual", display_name: `MA ${label} ${tag}`, seed: 1, members: [] },
-      { kind: "individual", display_name: `MB ${label} ${tag}`, seed: 2, members: [] },
+      {
+        kind: "individual",
+        display_name: `MA ${label} ${tag}`,
+        seed: 1,
+        members: [],
+      },
+      {
+        kind: "individual",
+        display_name: `MB ${label} ${tag}`,
+        seed: 2,
+        members: [],
+      },
     ]);
     const stage = v1data<{ id: string }>(
-      await v1(owner, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+      await v1(owner, `/api/v1/divisions/${div.id}/stages`, "POST", {
+        seq: 1,
+        kind: "league",
+        name: "League",
+      }),
     );
     const fx = v1data<{ fixtures: { id: string }[] }>(
       await v1(owner, `/api/v1/stages/${stage.id}/generate`, "POST"),
     ).fixtures[0]!.id;
     await v1(owner, `/api/v1/divisions/${div.id}/start`, "POST");
     const offId = v1data<{ id: string }>(
-      await v1(owner, "/api/v1/officials", "POST", { display_name: `Mark Ref ${label} ${tag}`, role_keys: ["referee"] }),
+      await v1(owner, "/api/v1/officials", "POST", {
+        display_name: `Mark Ref ${label} ${tag}`,
+        role_keys: ["referee"],
+      }),
     ).id;
     await v1(owner, `/api/v1/fixtures/${fx}/officials`, "PATCH", {
       set: [{ official_id: offId, role_key: "referee", locked: false }],
@@ -1624,15 +1983,21 @@ async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: s
     const refEmail = `marksref_${label}_${tag}@example.com`;
     const ref = newSession();
     await signIn(ref, refEmail);
-    const inv = await v1(owner, `/api/v1/officials/${offId}/invite`, "POST", { email: refEmail });
+    const inv = await v1(owner, `/api/v1/officials/${offId}/invite`, "POST", {
+      email: refEmail,
+    });
     const token = (v1data<{ claim_url: string }>(inv).claim_url ?? "").split("/claim/")[1]!;
     await call(ref, `/api/claims/${token}/accept`, "POST");
-    await v1(ref, `/api/v1/me/assigned-fixtures/${fx}/response`, "PATCH", { response: "accepted" });
+    await v1(ref, `/api/v1/me/assigned-fixtures/${fx}/response`, "PATCH", {
+      response: "accepted",
+    });
     // The accepted official scores a generic result → the fixture decides
     // (engine-db integration: generic.result → status 'decided').
     const st = v1data<{ last_seq: number }>(await v1(ref, `/api/v1/fixtures/${fx}/state`));
     await v1(ref, `/api/v1/fixtures/${fx}/events`, "POST", {
-      expected_seq: st.last_seq, type: "generic.result", payload: { p1Score: 2, p2Score: 1 },
+      expected_seq: st.last_seq,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
     });
     return { fx, offId, ref };
   }
@@ -1647,17 +2012,32 @@ async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: s
   const summary = v1data<{ average: number | null; count: number }>(
     await v1(admin, `/api/v1/officials/${pro.offId}/marks-summary`),
   );
-  check("marks pro: profile summary average reflects the mark", summary.count === 1 && summary.average === 4);
+  check(
+    "marks pro: profile summary average reflects the mark",
+    summary.count === 1 && summary.average === 4,
+  );
 
   // Report (free portal, ungated even on a Pro org): the official files + submits.
   const draft = await v1(pro.ref, `/api/v1/me/officiating/${proFoId}/report`, "PUT", {
-    body: "tidy game", incidents: [{ kind: "other", note: "smoke note" }],
+    body: "tidy game",
+    incidents: [{ kind: "other", note: "smoke note" }],
   });
-  check("report: draft saves (free portal)", draft.status === 200 && v1data<{ status: string }>(draft).status === "draft");
+  check(
+    "report: draft saves (free portal)",
+    draft.status === 200 && v1data<{ status: string }>(draft).status === "draft",
+  );
   const submitted = await v1(pro.ref, `/api/v1/me/officiating/${proFoId}/report/submit`, "POST");
-  check("report: submit is final", submitted.status === 200 && v1data<{ status: string }>(submitted).status === "submitted");
-  const fixReports = v1data<{ status: string }[]>(await v1(admin, `/api/v1/fixtures/${pro.fx}/reports`));
-  check("report: organiser console reads the submitted report", Array.isArray(fixReports) && fixReports.length === 1);
+  check(
+    "report: submit is final",
+    submitted.status === 200 && v1data<{ status: string }>(submitted).status === "submitted",
+  );
+  const fixReports = v1data<{ status: string }[]>(
+    await v1(admin, `/api/v1/fixtures/${pro.fx}/reports`),
+  );
+  check(
+    "report: organiser console reads the submitted report",
+    Array.isArray(fixReports) && fixReports.length === 1,
+  );
 
   // ---- Free path (fresh community owner) ----
   const commOwner = newSession();
@@ -1666,13 +2046,20 @@ async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: s
   const free = await decidedFixtureWithOfficial(commOwner, commOrgId, "Free");
   const freeFoId = await foId(free.fx, free.offId);
   commOwner.cookies["seazn_org"] = commOrgId;
-  const freeMark = await v1(commOwner, `/api/v1/fixture-officials/${freeFoId}/mark`, "PUT", { mark: 3 });
+  const freeMark = await v1(commOwner, `/api/v1/fixture-officials/${freeFoId}/mark`, "PUT", {
+    mark: 3,
+  });
   check("marks free: rating is gated 402 (Pro officials.marks)", freeMark.status === 402);
-  const freeDraft = await v1(free.ref, `/api/v1/me/officiating/${freeFoId}/report`, "PUT", { body: "community game", incidents: [] });
+  const freeDraft = await v1(free.ref, `/api/v1/me/officiating/${freeFoId}/report`, "PUT", {
+    body: "community game",
+    incidents: [],
+  });
   const freeSubmit = await v1(free.ref, `/api/v1/me/officiating/${freeFoId}/report/submit`, "POST");
   check(
     "report free: files + submits on a community org (portal is free)",
-    freeDraft.status === 200 && freeSubmit.status === 200 && v1data<{ status: string }>(freeSubmit).status === "submitted",
+    freeDraft.status === 200 &&
+      freeSubmit.status === 200 &&
+      v1data<{ status: string }>(freeSubmit).status === "submitted",
   );
 }
 
@@ -1686,15 +2073,22 @@ async function marksReportsSuite(admin: Session, proOrgId: string, proOrgSlug: s
 async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
   admin.cookies["seazn_org"] = proOrgId;
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", { name: `News ${tag}`, visibility: "public" }),
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `News ${tag}`,
+      visibility: "public",
+    }),
   );
   const div = v1data<{ id: string; slug: string }>(
     await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
-      name: "News Prem", sport_key: "generic", variant_key: "score",
+      name: "News Prem",
+      sport_key: "generic",
+      variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   );
-  const toggle = await v1(admin, `/api/v1/divisions/${div.id}`, "PATCH", { auto_posts: true });
+  const toggle = await v1(admin, `/api/v1/divisions/${div.id}`, "PATCH", {
+    auto_posts: true,
+  });
   check("news pro: auto_posts toggle allowed (news.auto)", toggle.status === 200);
 
   await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
@@ -1702,7 +2096,11 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
     { kind: "individual", display_name: `NAway ${tag}`, seed: 2, members: [] },
   ]);
   const stage = v1data<{ id: string }>(
-    await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1,
+      kind: "league",
+      name: "League",
+    }),
   );
   const fx = v1data<{ fixtures: { id: string }[] }>(
     await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST"),
@@ -1710,7 +2108,9 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
   await v1(admin, `/api/v1/divisions/${div.id}/start`, "POST");
   const st = v1data<{ last_seq: number }>(await v1(admin, `/api/v1/fixtures/${fx}/state`));
   await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
-    expected_seq: st.last_seq, type: "generic.result", payload: { p1Score: 3, p2Score: 1 },
+    expected_seq: st.last_seq,
+    type: "generic.result",
+    payload: { p1Score: 3, p2Score: 1 },
   });
 
   const drafts = v1data<{ id: string; kind: string; auto_source: unknown | null }[]>(
@@ -1719,13 +2119,21 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
   const auto = drafts.find((d) => d.kind === "result" && d.auto_source);
   check("news pro: a result post auto-drafted on the decided seam", !!auto);
 
-  const pub = await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", { action: "publish" });
+  const pub = await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", {
+    action: "publish",
+  });
   const pubData = v1data<{ status: string; slug: string }>(pub);
   check("news pro: draft publishes", pub.status === 200 && pubData.status === "published");
 
   const feed = await html(newSession(), `/shared/${proOrgSlug}/news`);
-  check("news pro: public feed 200 + shows a post card", feed.status === 200 && feed.body.includes("news-card"));
-  check("news pro: feed carries the back-to-org link", feed.body.includes('data-testid="news-back"'));
+  check(
+    "news pro: public feed 200 + shows a post card",
+    feed.status === 200 && feed.body.includes("news-card"),
+  );
+  check(
+    "news pro: feed carries the back-to-org link",
+    feed.body.includes('data-testid="news-back"'),
+  );
   const postPage = await html(newSession(), `/shared/${proOrgSlug}/news/${pubData.slug}`);
   check("news pro: public post page 200", postPage.status === 200);
   const story = await fetch(`${BASE}/shared/${proOrgSlug}/news/${pubData.slug}/story.png`);
@@ -1736,7 +2144,9 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
 
   // Archive round-trip: off the public page, kept in ?status=archived, and
   // republish restores the same frozen slug (console Archived disclosure).
-  const arch = await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", { action: "archive" });
+  const arch = await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", {
+    action: "archive",
+  });
   check(
     "news pro: publish\u2192archive flips status",
     arch.status === 200 && v1data<{ status: string }>(arch).status === "archived",
@@ -1746,9 +2156,14 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
   const archList = v1data<{ id: string }[]>(
     await v1(admin, `/api/v1/orgs/${proOrgId}/posts?status=archived`),
   );
-  check("news pro: ?status=archived lists it", archList.some((x) => x.id === auto!.id));
+  check(
+    "news pro: ?status=archived lists it",
+    archList.some((x) => x.id === auto!.id),
+  );
   const repub = v1data<{ status: string; slug: string }>(
-    await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", { action: "publish" }),
+    await v1(admin, `/api/v1/posts/${auto!.id}`, "PATCH", {
+      action: "publish",
+    }),
   );
   check(
     "news pro: republish restores published at the frozen slug",
@@ -1764,26 +2179,37 @@ async function newsSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
   commOwner.cookies["seazn_org"] = commOrg.id;
 
   const manual = await v1(commOwner, `/api/v1/orgs/${commOrg.id}/posts`, "POST", {
-    title: `Free news ${tag}`, body_md: "Hello **world**.", kind: "announcement",
+    title: `Free news ${tag}`,
+    body_md: "Hello **world**.",
+    kind: "announcement",
   });
   check("news free: manual post create (free on every plan)", manual.status === 201);
   const manualPub = v1data<{ slug: string; status: string }>(
-    await v1(commOwner, `/api/v1/posts/${v1data<{ id: string }>(manual).id}`, "PATCH", { action: "publish" }),
+    await v1(commOwner, `/api/v1/posts/${v1data<{ id: string }>(manual).id}`, "PATCH", {
+      action: "publish",
+    }),
   );
   check("news free: manual post publishes", manualPub.status === "published");
   const freePost = await html(newSession(), `/shared/${commOrg.slug}/news/${manualPub.slug}`);
   check("news free: manual post public page 200", freePost.status === 200);
 
   const freeComp = v1data<{ id: string }>(
-    await v1(commOwner, "/api/v1/competitions", "POST", { name: `Free news comp ${tag}`, visibility: "public" }),
+    await v1(commOwner, "/api/v1/competitions", "POST", {
+      name: `Free news comp ${tag}`,
+      visibility: "public",
+    }),
   );
   const freeDiv = v1data<{ id: string }>(
     await v1(commOwner, `/api/v1/competitions/${freeComp.id}/divisions`, "POST", {
-      name: "Div", sport_key: "generic", variant_key: "score",
+      name: "Div",
+      sport_key: "generic",
+      variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   );
-  const freeToggle = await v1(commOwner, `/api/v1/divisions/${freeDiv.id}`, "PATCH", { auto_posts: true });
+  const freeToggle = await v1(commOwner, `/api/v1/divisions/${freeDiv.id}`, "PATCH", {
+    auto_posts: true,
+  });
   check("news free: auto_posts toggle gated 402 (Pro news.auto)", freeToggle.status === 402);
 }
 
@@ -1819,7 +2245,10 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
   // attribution CTA and the fan ShareBar.
   const free = newSession();
   const freeVer = await signIn(free, `plg_free_${tag}@example.com`);
-  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrgs = (await call(free, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const freeComp = v1data<{ id: string; slug: string }>(
     await v1(free, "/api/v1/competitions", "POST", {
@@ -1855,7 +2284,10 @@ async function plgGrowthSuite(admin: Session, proOrgId: string, proOrgSlug: stri
     email: `plg_player_${tag}@example.com`,
   })) as { login_url?: string };
   const plgTok = new URL(plgReq.login_url ?? "").searchParams.get("token");
-  await call(playerOnly, "/api/auth/magic-link/consume", "POST", { token: plgTok, next: "/me" });
+  await call(playerOnly, "/api/auth/magic-link/consume", "POST", {
+    token: plgTok,
+    next: "/me",
+  });
   const meRunPlayer = await html(playerOnly, "/me");
   check(
     "plg /me renders run-your-own for an org-less player",
@@ -1885,12 +2317,20 @@ async function v6SportsSuite(admin: Session): Promise<void> {
   if (dbUrl) {
     const db = postgres(dbUrl, {
       connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
-      ssl: process.env.DATABASE_SSL === "disable" ? false : /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl) ? false : "require",
+      ssl:
+        process.env.DATABASE_SSL === "disable"
+          ? false
+          : /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl)
+            ? false
+            : "require",
       prepare: !dbUrl.includes(":6543"),
       max: 1,
     });
     const empty = { groups: [], lineup: { size: 1, benchMax: 1 } };
-    for (const [key, name] of [["tennis", "Tennis"], ["icehockey", "Ice Hockey"]] as const) {
+    for (const [key, name] of [
+      ["tennis", "Tennis"],
+      ["icehockey", "Ice Hockey"],
+    ] as const) {
       await db`insert into sports (key, name, module_version, position_catalog)
                values (${key}, ${name}, '1.0.0', ${db.json(empty)})
                on conflict (key) do nothing`;
@@ -1913,7 +2353,9 @@ async function v6SportsSuite(admin: Session): Promise<void> {
 
   // --- Tennis (PROMPT-48): one set scored rally-mode, then a summary set ---
   const tdiv = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Tennis", sport_key: "tennis", variant_key: "tour",
+    name: "Tennis",
+    sport_key: "tennis",
+    variant_key: "tour",
   });
   check("v6 tennis division created from catalog", tdiv.status === 201);
   const tdivId = v1data<{ id: string }>(tdiv).id;
@@ -1924,27 +2366,36 @@ async function v6SportsSuite(admin: Session): Promise<void> {
     ]),
   );
   const tstage = await v1(admin, `/api/v1/divisions/${tdivId}/stages`, "POST", {
-    seq: 1, kind: "league", name: "League",
+    seq: 1,
+    kind: "league",
+    name: "League",
   });
-  const tgen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(tstage).id}/generate`, "POST");
+  const tgen = await v1(
+    admin,
+    `/api/v1/stages/${v1data<{ id: string }>(tstage).id}/generate`,
+    "POST",
+  );
   const tfx = v1data<{ fixtures: { id: string }[] }>(tgen).fixtures[0]!.id;
   await v1(admin, `/api/v1/divisions/${tdivId}/start`, "POST");
   let seq = v1data<{ seq: number }>(
     await v1(admin, `/api/v1/fixtures/${tfx}/events`, "POST", {
-      expected_seq: 0, type: "core.start", payload: {},
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
     }),
   ).seq;
   // 24 straight points = a 6–0 set in rally mode.
   for (let i = 0; i < 24; i++) {
     seq = v1data<{ seq: number }>(
       await v1(admin, `/api/v1/fixtures/${tfx}/events`, "POST", {
-        expected_seq: seq, type: "tennis.point", payload: { by: tents[0]!.id },
+        expected_seq: seq,
+        type: "tennis.point",
+        payload: { by: tents[0]!.id },
       }),
     ).seq;
   }
   const midState = await v1(admin, `/api/v1/fixtures/${tfx}/state`);
-  const midHeadline =
-    v1data<{ summary: { headline: string } }>(midState).summary.headline;
+  const midHeadline = v1data<{ summary: { headline: string } }>(midState).summary.headline;
   check("v6 tennis rally set banked (1 — 0 · 6–0)", midHeadline.startsWith("1 — 0"));
   // Undo the last point and re-score it — the fold reopens cleanly.
   const events = await v1(admin, `/api/v1/fixtures/${tfx}/events`);
@@ -1954,7 +2405,9 @@ async function v6SportsSuite(admin: Session): Promise<void> {
   if (lastPoint) {
     seq = v1data<{ seq: number }>(
       await v1(admin, `/api/v1/fixtures/${tfx}/events`, "POST", {
-        expected_seq: seq, type: "core.void", payload: { event_id: lastPoint.id },
+        expected_seq: seq,
+        type: "core.void",
+        payload: { event_id: lastPoint.id },
       }),
     ).seq;
     const reopened = await v1(admin, `/api/v1/fixtures/${tfx}/state`);
@@ -1964,14 +2417,18 @@ async function v6SportsSuite(admin: Session): Promise<void> {
     );
     seq = v1data<{ seq: number }>(
       await v1(admin, `/api/v1/fixtures/${tfx}/events`, "POST", {
-        expected_seq: seq, type: "tennis.point", payload: { by: tents[0]!.id },
+        expected_seq: seq,
+        type: "tennis.point",
+        payload: { by: tents[0]!.id },
       }),
     ).seq;
   }
   // Second set as a tier-0 summary; the match decides.
   seq = v1data<{ seq: number }>(
     await v1(admin, `/api/v1/fixtures/${tfx}/events`, "POST", {
-      expected_seq: seq, type: "tennis.set_summary", payload: { home: 6, away: 0 },
+      expected_seq: seq,
+      type: "tennis.set_summary",
+      payload: { home: 6, away: 0 },
     }),
   ).seq;
   const tdone = await v1(admin, `/api/v1/fixtures/${tfx}/state`);
@@ -1982,7 +2439,9 @@ async function v6SportsSuite(admin: Session): Promise<void> {
 
   // --- Ice hockey (PROMPT-49/50): OT points + PP goal + strength chip ---
   const idiv = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
-    name: "Ice", sport_key: "icehockey", variant_key: "iihf",
+    name: "Ice",
+    sport_key: "icehockey",
+    variant_key: "iihf",
   });
   check("v6 icehockey division created from catalog", idiv.status === 201);
   const idivId = v1data<{ id: string }>(idiv).id;
@@ -1993,7 +2452,9 @@ async function v6SportsSuite(admin: Session): Promise<void> {
     ]),
   );
   const istage = await v1(admin, `/api/v1/divisions/${idivId}/stages`, "POST", {
-    seq: 1, kind: "league", name: "League",
+    seq: 1,
+    kind: "league",
+    name: "League",
   });
   const istageId = v1data<{ id: string }>(istage).id;
   const igen = await v1(admin, `/api/v1/stages/${istageId}/generate`, "POST");
@@ -2002,7 +2463,9 @@ async function v6SportsSuite(admin: Session): Promise<void> {
   const iceSend = async (type: string, payload: unknown) => {
     iceSeq = v1data<{ seq: number }>(
       await v1(admin, `/api/v1/fixtures/${ifx}/events`, "POST", {
-        expected_seq: iceSeq, type, payload,
+        expected_seq: iceSeq,
+        type,
+        payload,
       }),
     ).seq;
   };
@@ -2010,13 +2473,19 @@ async function v6SportsSuite(admin: Session): Promise<void> {
   await iceSend("core.start", {});
   // Power play: minor on the Kings → 5v4 chip visible to an anonymous
   // public read (PROMPT-50 free path), PP goal, scorer releases the minor.
-  await iceSend("icehockey.suspension.start", { by: ients[1]!.id, class: "minor" });
+  await iceSend("icehockey.suspension.start", {
+    by: ients[1]!.id,
+    class: "minor",
+  });
   const anon = newSession();
   const pub = await v1(anon, `/api/v1/public/fixtures/${ifx}`);
   const pubDetail = v1data<{ summary: { detail?: { strength?: string } } }>(pub).summary.detail;
   check("v6 public scorebug carries the 5v4 strength chip", pubDetail?.strength === "5v4");
   await iceSend("icehockey.goal", { by: ients[0]!.id, kind: "pp" });
-  await iceSend("icehockey.suspension.end", { by: ients[1]!.id, class: "minor" });
+  await iceSend("icehockey.suspension.end", {
+    by: ients[1]!.id,
+    class: "minor",
+  });
   // Level it, run out regulation, win in sudden-death OT.
   await iceSend("icehockey.goal", { by: ients[1]!.id });
   await iceSend("icehockey.period.advance", { to: "P2" });
@@ -2044,8 +2513,13 @@ async function v6SportsSuite(admin: Session): Promise<void> {
 async function regQueueSuite(admin: Session): Promise<void> {
   // v1 writes land on the session's ACTIVE org (earlier suites switch it) —
   // resolve that org's slug, not the sign-in default's.
-  const me = (await call(admin, "/api/users/me")) as { org: { id: string } | null };
-  const orgs = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const me = (await call(admin, "/api/users/me")) as {
+    org: { id: string } | null;
+  };
+  const orgs = (await call(admin, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const orgSlug = orgs.find((o) => o.id === me.org?.id)!.slug;
 
   const comp = v1data<{ id: string; slug: string }>(
@@ -2064,17 +2538,26 @@ async function regQueueSuite(admin: Session): Promise<void> {
     }),
   );
   await v1(admin, `/api/v1/divisions/${div.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "gbp",
-    capacity: 1, form_fields: [],
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 0,
+    currency: "gbp",
+    capacity: 1,
+    form_fields: [],
   });
 
   const submit = async (name: string) => {
-    const res = await v1(newSession(), `/api/v1/public/orgs/${orgSlug}/competitions/${comp.slug}/register`, "POST", {
-      division_id: div.id,
-      display_name: name,
-      contact_email: `${name.replace(/ /g, "").toLowerCase()}_${tag}@example.com`,
-      privacy_consent: true,
-    });
+    const res = await v1(
+      newSession(),
+      `/api/v1/public/orgs/${orgSlug}/competitions/${comp.slug}/register`,
+      "POST",
+      {
+        division_id: div.id,
+        display_name: name,
+        contact_email: `${name.replace(/ /g, "").toLowerCase()}_${tag}@example.com`,
+        privacy_consent: true,
+      },
+    );
     if (res.status !== 201) {
       console.log(`queue submit "${name}" failed:`, res.status, JSON.stringify(res.json));
     }
@@ -2083,7 +2566,11 @@ async function regQueueSuite(admin: Session): Promise<void> {
   const holder = await submit("Queue Holder"); // takes the only spot
   check("queue holder takes the spot", holder.status === 201);
   const w1res = await submit("Queue First");
-  const w1 = v1data<{ registration_id: string; access_token: string; status: string }>(w1res);
+  const w1 = v1data<{
+    registration_id: string;
+    access_token: string;
+    status: string;
+  }>(w1res);
   check("queue overflow waitlists", w1res.status === 201 && w1?.status === "waitlisted");
   await submit("Queue Second");
 
@@ -2092,10 +2579,7 @@ async function regQueueSuite(admin: Session): Promise<void> {
     `/api/v1/public/registrations/${w1.registration_id}?token=${encodeURIComponent(w1.access_token)}`,
   );
   const view = v1data<{ status: string; position: number | null }>(status);
-  check(
-    "waitlist status carries #1 position",
-    view.status === "waitlisted" && view.position === 1,
-  );
+  check("waitlist status carries #1 position", view.status === "waitlisted" && view.position === 1);
 
   const registerPage = await html(newSession(), `/shared/${orgSlug}/${comp.slug}/register`);
   check(
@@ -2122,7 +2606,10 @@ async function checkOfficialClaimed(officialId: string, expected: boolean): Prom
       select (p.user_id is not null) as claimed
       from officials o join persons p on p.id = o.person_id
       where o.id = ${officialId}`;
-    check(`off official ${officialId.slice(0, 8)} claimed=${expected}`, (row?.claimed ?? false) === expected);
+    check(
+      `off official ${officialId.slice(0, 8)} claimed=${expected}`,
+      (row?.claimed ?? false) === expected,
+    );
   } finally {
     await sql.end();
   }
@@ -2182,7 +2669,11 @@ async function platformRevenueSuite(admin: Session, staffEmail: string): Promise
     if (res.status === 503) {
       check("revenue 503s without Stripe key", res.json.error === "Stripe is not configured");
     } else {
-      const data = res.json.data as { byMonth?: unknown; byOrg?: unknown; rows?: unknown[] };
+      const data = res.json.data as {
+        byMonth?: unknown;
+        byOrg?: unknown;
+        rows?: unknown[];
+      };
       check(
         "revenue JSON rollups",
         res.status === 200 && !!data.byMonth && !!data.byOrg && Array.isArray(data.rows),
@@ -2194,7 +2685,8 @@ async function platformRevenueSuite(admin: Session, staffEmail: string): Promise
       check(
         "revenue CSV header",
         csv.status === 200 &&
-          firstLine === "month,org,org_slug,currency,gross_minor,refunded_minor,net_minor,fee_count",
+          firstLine ===
+            "month,org,org_slug,currency,gross_minor,refunded_minor,net_minor,fee_count",
       );
     }
     const bad = await raw(admin, "/api/admin/revenue?from=notadate");
@@ -2294,8 +2786,9 @@ async function oneTrialSuite(): Promise<void> {
   // === FREE PATH — a fresh community owner ==============================
   const free = newSession();
   const freeOrg = (await signIn(free, `trial_free_${tag}@example.com`)).org_id;
-  const freeSlug = ((await call(free, "/api/orgs")) as { id: string; slug: string }[])
-    .find((o) => o.id === freeOrg)!.slug;
+  const freeSlug = ((await call(free, "/api/orgs")) as { id: string; slug: string }[]).find(
+    (o) => o.id === freeOrg,
+  )!.slug;
 
   // A community org's upgrade card composes its CTA label as
   // `${startTrial|goPro} — <price>/mo billed yearly`. Match the label as the
@@ -2496,8 +2989,12 @@ async function paymentMethodSuite(): Promise<void> {
   const owner = newSession();
   const ownerOrg = (await signIn(owner, `pm_owner_${tag}@example.com`)).org_id;
 
-  const customer = await stripe.customers.create({ email: `pm_owner_${tag}@example.com` });
-  const pm = await stripe.paymentMethods.attach("pm_card_visa", { customer: customer.id });
+  const customer = await stripe.customers.create({
+    email: `pm_owner_${tag}@example.com`,
+  });
+  const pm = await stripe.paymentMethods.attach("pm_card_visa", {
+    customer: customer.id,
+  });
   await stripe.customers.update(customer.id, {
     invoice_settings: { default_payment_method: pm.id },
   });
@@ -2542,7 +3039,10 @@ async function paymentMethodSuite(): Promise<void> {
       staff,
       `/api/admin/orgs/${ownerOrg}/remove-payment-method`,
       "POST",
-      { payment_method_id: pm.id, reason: "smoke: staff can remove the default card" },
+      {
+        payment_method_id: pm.id,
+        reason: "smoke: staff can remove the default card",
+      },
     );
     check(
       "pm/staff: staff removes the default card (200) and has_payment_method re-mirrors false",
@@ -2557,7 +3057,9 @@ async function paymentMethodSuite(): Promise<void> {
  *  PATCH rejects with FORMAT_LOCKED; the logo upload URL mints for editors. */
 async function divisionSettingsSuite(admin: Session): Promise<void> {
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", { name: `V8 Probe ${tag}` }),
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `V8 Probe ${tag}`,
+    }),
   );
   const div = v1data<{ id: string }>(
     await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
@@ -2590,15 +3092,21 @@ async function divisionSettingsSuite(admin: Session): Promise<void> {
   ]);
   const stage = v1data<{ id: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
-      seq: 1, kind: "league", name: "L", config: {},
+      seq: 1,
+      kind: "league",
+      name: "L",
+      config: {},
     }),
   );
   await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST");
 
-  const post = await raw(admin, `/api/v1/divisions/${div.id}`, "PATCH", { variant_key: "score" });
+  const post = await raw(admin, `/api/v1/divisions/${div.id}`, "PATCH", {
+    variant_key: "score",
+  });
   check(
     "v8 format 409s once fixtures exist",
-    post.status === 409 && (post.json.error as { code?: string } | undefined)?.code === "FORMAT_LOCKED",
+    post.status === 409 &&
+      (post.json.error as { code?: string } | undefined)?.code === "FORMAT_LOCKED",
   );
 
   const structSwap = await raw(admin, `/api/v1/divisions/${div.id}/stages`, "PUT", [
@@ -2843,10 +3351,30 @@ async function insertEntitlementOverride(
 async function latestCompetitionEvent(
   competitionId: string,
   type: string,
-): Promise<{ model?: string; cost_usd?: number; usage?: { input_tokens: number; output_tokens: number; repair_rounds: number } } | null> {
+): Promise<{
+  model?: string;
+  cost_usd?: number;
+  usage?: {
+    input_tokens: number;
+    output_tokens: number;
+    repair_rounds: number;
+  };
+} | null> {
   const sql = smokeDb();
   try {
-    const [row] = await sql<{ payload: { model?: string; cost_usd?: number; usage?: { input_tokens: number; output_tokens: number; repair_rounds: number } } }[]>`
+    const [row] = await sql<
+      {
+        payload: {
+          model?: string;
+          cost_usd?: number;
+          usage?: {
+            input_tokens: number;
+            output_tokens: number;
+            repair_rounds: number;
+          };
+        };
+      }[]
+    >`
       select payload from competition_events
       where competition_id = ${competitionId} and type = ${type}
       order by created_at desc limit 1`;
@@ -2873,15 +3401,32 @@ async function seedPlannableAiDivision(
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   );
-  await v1(s, `/api/v1/divisions/${div.id}/entrants`, "POST",
-    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: `${n}${tag}`, seed: i + 1 })));
+  await v1(
+    s,
+    `/api/v1/divisions/${div.id}/entrants`,
+    "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({
+      kind: "individual",
+      display_name: `${n}${tag}`,
+      seed: i + 1,
+    })),
+  );
   const stage = v1data<{ id: string }>(
-    await v1(s, `/api/v1/divisions/${div.id}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    await v1(s, `/api/v1/divisions/${div.id}/stages`, "POST", {
+      seq: 1,
+      kind: "league",
+      name: "League",
+    }),
   );
   await v1(s, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
     config: {
-      startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
-      courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      startAt: "2026-10-01T09:00:00.000Z",
+      matchMinutes: 30,
+      gapMinutes: 0,
+      courts: ["A", "B"],
+      perEntrantMinRest: 0,
+      blackouts: [],
+      sessionWindows: [],
     },
     tz: "UTC",
   });
@@ -2915,17 +3460,23 @@ interface AiPlanResponseLite {
  *  402 is keyless-safe and always runs. officials.auto is Pro Plus (V290), so the
  *  happy path uses its own fresh pro_plus org rather than the passed pro org. */
 async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
-  void admin; void proOrgId; void proOrgSlug;
+  void admin;
+  void proOrgId;
+  void proOrgSlug;
   const aiConfigured = !!process.env.SCHEDULING_AI_BASE_URL;
   let fixture: AiFixtureServer | null = null;
   if (aiConfigured) {
     try {
       fixture = await startAiFixtureServer();
     } catch (e) {
-      console.log(`v4 AI: fixture server failed to start (${(e as Error).message}); model paths skipped`);
+      console.log(
+        `v4 AI: fixture server failed to start (${(e as Error).message}); model paths skipped`,
+      );
     }
   } else {
-    console.log("v4 AI: SCHEDULING_AI_BASE_URL unset — model-dependent AI checks skipped (the cap 402 still runs)");
+    console.log(
+      "v4 AI: SCHEDULING_AI_BASE_URL unset — model-dependent AI checks skipped (the cap 402 still runs)",
+    );
   }
 
   try {
@@ -2934,9 +3485,14 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
     const freeOrg = (await signIn(free, `smoke-ai-free-${tag}@example.com`)).org_id;
     const freeDivIds = await seedPlannableAiDivision(free, "AI Free");
     await seedAiRuns(freeOrg, freeDivIds.compId, freeDivIds.divId, 5);
-    const capped = await v1(free, `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`, "POST", {
-      instruction: "spread the fixtures across both courts",
-    });
+    const capped = await v1(
+      free,
+      `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`,
+      "POST",
+      {
+        instruction: "spread the fixtures across both courts",
+      },
+    );
     check(
       "v4 AI/free: the 6th run/division 402s at the graded cap (scheduling.ai.runs_per_division.max)",
       capped.status === 402 &&
@@ -2947,9 +3503,14 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
     // ---- Admin override lifts the cap → the next run is admitted (needs model) ----
     await insertEntitlementOverride(free, freeOrg, "scheduling.ai.runs_per_division.max", 6);
     if (fixture) {
-      const lifted = await v1(free, `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`, "POST", {
-        instruction: "spread the fixtures across both courts",
-      });
+      const lifted = await v1(
+        free,
+        `/api/v1/divisions/${freeDivIds.divId}/schedule/ai-plan`,
+        "POST",
+        {
+          instruction: "spread the fixtures across both courts",
+        },
+      );
       check(
         "v4 AI/override: an entitlement override lifts the cap → the next run is admitted (200 + proposal)",
         lifted.status === 200 && Array.isArray(v1data<AiPlanResponseLite>(lifted).proposal),
@@ -2962,19 +3523,27 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       const plusOrg = (await signIn(plus, `smoke-ai-plus-${tag}@example.com`)).org_id;
       await setPlan(plusOrg, "pro_plus", plus);
       const { compId, divId, stageId } = await seedPlannableAiDivision(plus, "AI Plus");
-      await v1(plus, "/api/v1/officials", "POST", { display_name: `AI Ref ${tag}`, role_keys: ["referee"] });
+      await v1(plus, "/api/v1/officials", "POST", {
+        display_name: `AI Ref ${tag}`,
+        role_keys: ["referee"],
+      });
 
       const instruction = "finish by 6pm, keep both courts busy";
       const planRes = await v1(plus, `/api/v1/divisions/${divId}/schedule/ai-plan`, "POST", {
-        instruction, mode: "generate", officials_policy: { roles: ["referee"] },
+        instruction,
+        mode: "generate",
+        officials_policy: { roles: ["referee"] },
       });
       const plan = v1data<AiPlanResponseLite>(planRes);
       check(
         "v4 AI/plus: schedule ai-plan returns a verified proposal (proposal + diff + usage + coverage)",
         planRes.status === 200 &&
-          Array.isArray(plan.proposal) && plan.proposal.length > 0 &&
-          !!plan.diff && typeof plan.summary === "string" &&
-          !!plan.usage && plan.officials_coverage !== undefined,
+          Array.isArray(plan.proposal) &&
+          plan.proposal.length > 0 &&
+          !!plan.diff &&
+          typeof plan.summary === "string" &&
+          !!plan.usage &&
+          plan.officials_coverage !== undefined,
       );
       check(
         "v4 AI/plus: the fixture model served the schedule phase",
@@ -2984,15 +3553,25 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
       const genEvent = await latestCompetitionEvent(compId, "schedule.ai_generated");
       check(
         "v4 AI/plus: schedule.ai_generated ledger row stamps model + usage + cost_usd",
-        !!genEvent && typeof genEvent.model === "string" && !!genEvent.usage && typeof genEvent.cost_usd === "number",
+        !!genEvent &&
+          typeof genEvent.model === "string" &&
+          !!genEvent.usage &&
+          typeof genEvent.cost_usd === "number",
       );
 
       const applied = await v1(plus, `/api/v1/stages/${stageId}/schedule/apply`, "POST", {
         assignments: plan.proposal.map((a) => ({
-          fixture_id: a.fixture_id, scheduled_at: a.scheduled_at, court_label: a.court_label,
+          fixture_id: a.fixture_id,
+          scheduled_at: a.scheduled_at,
+          court_label: a.court_label,
         })),
         source: "ai",
-        ai: { instruction, summary: plan.summary, model: "claude-sonnet-5", repair_rounds: plan.usage.repair_rounds },
+        ai: {
+          instruction,
+          summary: plan.summary,
+          model: "claude-sonnet-5",
+          repair_rounds: plan.usage.repair_rounds,
+        },
       });
       check(
         "v4 AI/plus: applying the AI proposal writes the schedule (source ai)",
@@ -3017,14 +3596,25 @@ async function v4AiSuite(admin: Session, proOrgId: string, proOrgSlug: string): 
         instruction: "",
         policy: { roles: ["referee"] },
         schedule: plan.proposal.map((a) => ({
-          fixture_id: a.fixture_id, scheduled_at: a.scheduled_at, court_label: a.court_label,
+          fixture_id: a.fixture_id,
+          scheduled_at: a.scheduled_at,
+          court_label: a.court_label,
         })),
       });
-      const off = v1data<{ usage: { input_tokens: number; output_tokens: number; repair_rounds: number }; assignments: unknown[] }>(offRes);
+      const off = v1data<{
+        usage: {
+          input_tokens: number;
+          output_tokens: number;
+          repair_rounds: number;
+        };
+        assignments: unknown[];
+      }>(offRes);
       check(
         "v4 AI/plus: officials ai-plan (empty instruction) returns a zero-token solver draft",
         offRes.status === 200 &&
-          off.usage.input_tokens === 0 && off.usage.output_tokens === 0 && off.usage.repair_rounds === 0,
+          off.usage.input_tokens === 0 &&
+          off.usage.output_tokens === 0 &&
+          off.usage.repair_rounds === 0,
       );
       check(
         "v4 AI/plus: the empty-instruction officials run made NO model call",
@@ -3055,7 +3645,9 @@ async function proPlusSuite(): Promise<void> {
   const orgId = who.org_id;
 
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(owner, "/api/v1/competitions", "POST", { name: `Plus Probe ${tag}` }),
+    await v1(owner, "/api/v1/competitions", "POST", {
+      name: `Plus Probe ${tag}`,
+    }),
   );
   const div = v1data<{ id: string; slug: string }>(
     await v1(owner, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
@@ -3071,7 +3663,9 @@ async function proPlusSuite(): Promise<void> {
   ]);
   const stage = v1data<{ id: string }>(
     await v1(owner, `/api/v1/divisions/${div.id}/stages`, "POST", {
-      seq: 1, kind: "league", name: "League",
+      seq: 1,
+      kind: "league",
+      name: "League",
     }),
   );
   const gen = await v1(owner, `/api/v1/stages/${stage.id}/generate`, "POST");
@@ -3082,12 +3676,14 @@ async function proPlusSuite(): Promise<void> {
   // (Jul3/02 §5) — a 2nd distinct official on the SAME fixture 402s.
   const offA = v1data<{ id: string }>(
     await v1(owner, "/api/v1/officials", "POST", {
-      display_name: `Plus Ref A ${tag}`, role_keys: ["referee"],
+      display_name: `Plus Ref A ${tag}`,
+      role_keys: ["referee"],
     }),
   );
   const offB = v1data<{ id: string }>(
     await v1(owner, "/api/v1/officials", "POST", {
-      display_name: `Plus Ref B ${tag}`, role_keys: ["referee"],
+      display_name: `Plus Ref B ${tag}`,
+      role_keys: ["referee"],
     }),
   );
   const setTwoOfficials = () =>
@@ -3116,7 +3712,8 @@ async function proPlusSuite(): Promise<void> {
   check(
     "pp: community 402s a 2nd save point (schedule.checkpoints.max)",
     cp2.status === 402 &&
-      (cp2.json.error as { feature_key?: string } | undefined)?.feature_key === "schedule.checkpoints.max",
+      (cp2.json.error as { feature_key?: string } | undefined)?.feature_key ===
+        "schedule.checkpoints.max",
   );
 
   // (b) Pro: read-only keys stay free (api.access), but a score- or
@@ -3124,7 +3721,8 @@ async function proPlusSuite(): Promise<void> {
   // (api.write).
   await setPlan(orgId, "pro", owner);
   const proScoreKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
-    name: "plus score", scopes: ["score"],
+    name: "plus score",
+    scopes: ["score"],
   });
   check(
     "pp: pro 402s a score-scope key (api.write is Pro Plus only)",
@@ -3132,12 +3730,14 @@ async function proPlusSuite(): Promise<void> {
       (proScoreKey.json.error as { feature_key?: string } | undefined)?.feature_key === "api.write",
   );
   const proManageKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
-    name: "plus manage", scopes: ["manage"],
+    name: "plus manage",
+    scopes: ["manage"],
   });
   check(
     "pp: pro 402s a manage-scope key (api.write is Pro Plus only)",
     proManageKey.status === 402 &&
-      (proManageKey.json.error as { feature_key?: string } | undefined)?.feature_key === "api.write",
+      (proManageKey.json.error as { feature_key?: string } | undefined)?.feature_key ===
+        "api.write",
   );
 
   // (c) Pro Plus: both quota gates lift and both write-capable key scopes mint.
@@ -3149,7 +3749,8 @@ async function proPlusSuite(): Promise<void> {
   });
   check("pp: pro_plus lifts schedule.checkpoints.max", cp3.status === 201);
   const plusManageKey = await v1(owner, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
-    name: "plus manage", scopes: ["manage"],
+    name: "plus manage",
+    scopes: ["manage"],
   });
   check("pp: pro_plus mints a manage-scope key", plusManageKey.status === 201);
 
@@ -3189,7 +3790,9 @@ async function pricingV3Suite(): Promise<void> {
 
   // Free caps (v3 matrix): 1 active competition, 2 divisions inside it.
   const compA = v1data<{ id: string; slug: string }>(
-    await v1(buyer, "/api/v1/competitions", "POST", { name: `Pass Cup ${tag}` }),
+    await v1(buyer, "/api/v1/competitions", "POST", {
+      name: `Pass Cup ${tag}`,
+    }),
   );
   const blockedComp = await v1(buyer, "/api/v1/competitions", "POST", {
     name: `Second Cup ${tag}`,
@@ -3216,7 +3819,9 @@ async function pricingV3Suite(): Promise<void> {
   });
   check("p36: pass lifts division cap on the passed comp", div3.status === 201);
   const compB = v1data<{ id: string }>(
-    await v1(buyer, "/api/v1/competitions", "POST", { name: `Sibling Cup ${tag}` }),
+    await v1(buyer, "/api/v1/competitions", "POST", {
+      name: `Sibling Cup ${tag}`,
+    }),
   );
   check("p36: passed comp leaves the active-comp quota", !!compB.id);
 
@@ -3254,7 +3859,10 @@ async function pricingV3Suite(): Promise<void> {
   check("p36: pass survives downgrade (comp A still lifted)", afterDowngrade.status === 201);
 
   // The upgrade page reflects the pass state.
-  const [orgRow] = (await call(buyer, "/api/orgs")) as { id: string; slug: string }[];
+  const [orgRow] = (await call(buyer, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const upgradePage = await html(buyer, `/o/${orgRow.slug}/c/${compA.slug}/upgrade`);
   check(
     "p36: upgrade page shows pass active",
@@ -3370,7 +3978,9 @@ async function funnelSuite(): Promise<void> {
   check("funnel: draft created with dev claim_url", !!started.claim_url);
 
   const token = new URL(started.claim_url ?? "").searchParams.get("token");
-  const claimed = (await call(visitor, "/api/funnel/claim", "POST", { token })) as {
+  const claimed = (await call(visitor, "/api/funnel/claim", "POST", {
+    token,
+  })) as {
     redirect: string;
   };
   check(
@@ -3423,12 +4033,16 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
     }),
   );
   const gold = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`, "POST", {
-    name: `Goldco ${tag}`, tier: "gold", url: "https://goldco.example",
+    name: `Goldco ${tag}`,
+    tier: "gold",
+    url: "https://goldco.example",
   });
   check("sp pro creates a gold sponsor", gold.status === 201);
   const goldId = v1data<{ id: string }>(gold).id;
   const scoped = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`, "POST", {
-    name: `Cup Title ${tag}`, tier: "title", competition_id: comp.id,
+    name: `Cup Title ${tag}`,
+    tier: "title",
+    competition_id: comp.id,
   });
   check("sp pro creates a competition-scoped title sponsor", scoped.status === 201);
 
@@ -3462,7 +4076,10 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
 
   // --- Monetization: package + order-first Connect checkout.
   const pkgRes = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-packages`, "POST", {
-    name: `Gold Package ${tag}`, price_cents: 25_000, currency: "gbp", tier: "gold",
+    name: `Gold Package ${tag}`,
+    price_cents: 25_000,
+    currency: "gbp",
+    tier: "gold",
   });
   check("sp pro creates a package", pkgRes.status === 201);
   const pkg = v1data<{ id: string }>(pkgRes);
@@ -3470,7 +4087,9 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
   // Connect gate: same refusal as entry fees, before any order row exists.
   await setConnect(proOrgId, false);
   const gated = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-orders`, "POST", {
-    package_id: pkg.id, sponsor_name: "Gate Probe", sponsor_email: `gate_${tag}@example.com`,
+    package_id: pkg.id,
+    sponsor_name: "Gate Probe",
+    sponsor_email: `gate_${tag}@example.com`,
   });
   check("sp checkout refused without Connect (409)", gated.status === 409);
   // The one org in the run that gets a REAL connected account, when supplied —
@@ -3478,7 +4097,9 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
   await setConnect(proOrgId, true, CONNECT_TEST_ACCOUNT);
 
   const started = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsor-orders`, "POST", {
-    package_id: pkg.id, sponsor_name: `Acme ${tag}`, sponsor_email: `acme_${tag}@example.com`,
+    package_id: pkg.id,
+    sponsor_name: `Acme ${tag}`,
+    sponsor_email: `acme_${tag}@example.com`,
   });
   if (!process.env.STRIPE_SECRET_KEY) {
     // Keyless: the Stripe mint fails AFTER the pending order landed — the
@@ -3513,7 +4134,10 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
   // --- Free path: flat partner strip stays free; tiers + packages are 402.
   const free = newSession();
   const freeVer = await signIn(free, `sponsor_free_${tag}@example.com`);
-  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrgs = (await call(free, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const freeComp = v1data<{ id: string; slug: string }>(
     await v1(free, "/api/v1/competitions", "POST", {
@@ -3522,11 +4146,13 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
     }),
   );
   const partner = await v1(free, `/api/v1/orgs/${freeOrg.id}/sponsors`, "POST", {
-    name: `Corner Shop ${tag}`, url: "https://corner.example",
+    name: `Corner Shop ${tag}`,
+    url: "https://corner.example",
   });
   check("sp free adds a partner sponsor", partner.status === 201);
   const freeGold = await v1(free, `/api/v1/orgs/${freeOrg.id}/sponsors`, "POST", {
-    name: "Blocked Gold", tier: "gold",
+    name: "Blocked Gold",
+    tier: "gold",
   });
   check("sp free tiering gated (402)", freeGold.status === 402);
   const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
@@ -3537,7 +4163,10 @@ async function sponsorsSuite(admin: Session, proOrgId: string, proOrgSlug: strin
       !freeShared.body.includes("Presented by"),
   );
   const freePkg = await v1(free, `/api/v1/orgs/${freeOrg.id}/sponsor-packages`, "POST", {
-    name: "Blocked Package", price_cents: 1_000, currency: "gbp", tier: "partner",
+    name: "Blocked Package",
+    price_cents: 1_000,
+    currency: "gbp",
+    tier: "partner",
   });
   check("sp free packages gated (402)", freePkg.status === 402);
 }
@@ -3578,7 +4207,10 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   // Free path: fresh community owner, same flow.
   const free = newSession();
   const freeVer = await signIn(free, `ui_free_${tag}@example.com`);
-  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrgs = (await call(free, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const freeComp = v1data<{ id: string; slug: string }>(
     await v1(free, "/api/v1/competitions", "POST", {
@@ -3599,7 +4231,10 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   });
   check("visibility flips to Link only (free)", freeFlip.status === 200);
   const freeShared = await html(newSession(), `/shared/${freeOrg.slug}/${freeComp.slug}`);
-  check("link-only page serves + noindex (free)", freeShared.status === 200 && freeShared.body.includes("noindex"));
+  check(
+    "link-only page serves + noindex (free)",
+    freeShared.status === 200 && freeShared.body.includes("noindex"),
+  );
 
   // --- v3/11 in-app billing: the portal is dead by default, the manage
   // endpoints exist behind owner auth and degrade cleanly without a Stripe
@@ -3618,10 +4253,16 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   // the OpenAPI surface. A Bearer token without a session is a plain 401.
   const bearerOnly = await fetch(`${BASE}/api/billing/setup-intent`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", authorization: "Bearer sc_smoke_fake_key" },
+    headers: {
+      "Content-Type": "application/json",
+      authorization: "Bearer sc_smoke_fake_key",
+    },
     body: "{}",
   });
-  check("v3/11 API keys can't touch billing routes (401, header ignored)", bearerOnly.status === 401);
+  check(
+    "v3/11 API keys can't touch billing routes (401, header ignored)",
+    bearerOnly.status === 401,
+  );
   const proBilling = await html(admin, `/o/${proOrgSlug}/settings/billing`);
   check(
     "v3/11 billing page renders without the portal button (pro)",
@@ -3657,10 +4298,17 @@ async function uiSystemSuite(admin: Session, proOrgSlug: string): Promise<void> 
   const freeCancel = await raw(free, "/api/billing/cancel", "POST", {});
   check("v3/11 cancel wants a Stripe customer first (free)", freeCancel.status === 400);
   const proAddress = await raw(admin, "/api/billing/address", "POST", {
-    address: { line1: "1 Test Way", city: "London", postal_code: "SW1A 1AA", country: "GB" },
+    address: {
+      line1: "1 Test Way",
+      city: "London",
+      postal_code: "SW1A 1AA",
+      country: "GB",
+    },
   });
   check("v3/11 address update wants a Stripe customer first (pro)", proAddress.status === 400);
-  const freePromo = await raw(free, "/api/billing/promo", "POST", { code: "NOPE" });
+  const freePromo = await raw(free, "/api/billing/promo", "POST", {
+    code: "NOPE",
+  });
   check("v3/11 promo apply wants a Stripe customer first (free)", freePromo.status === 400);
   const freeBilling = await html(free, `/o/${freeOrg.slug}/settings/billing`);
   check(
@@ -3706,15 +4354,22 @@ async function schedRegV3Suite(
   ]);
   const stage = v1data<{ id: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
-      seq: 1, kind: "league", name: "League",
+      seq: 1,
+      kind: "league",
+      name: "League",
     }),
   );
   // V305: no `tz` in the body — the console never sends one. The venue zone
   // comes from the ORGANISATION and is inherited by every division.
   await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
     config: {
-      startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
-      courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      startAt: "2026-10-01T09:00:00.000Z",
+      matchMinutes: 30,
+      gapMinutes: 0,
+      courts: ["A", "B"],
+      perEntrantMinRest: 0,
+      blackouts: [],
+      sessionWindows: [],
     },
   });
 
@@ -3722,23 +4377,35 @@ async function schedRegV3Suite(
   // that stores no tz of its own reports it. Then pin the division explicitly
   // and prove a tz-less save no longer moves it (pre-V305 divisions keep
   // their zone forever), before restoring inheritance with an explicit null.
-  await call(admin, `/api/orgs/${proOrgId}`, "PATCH", { timezone: "Europe/Madrid" });
+  await call(admin, `/api/orgs/${proOrgId}`, "PATCH", {
+    timezone: "Europe/Madrid",
+  });
   const inherited = v1data<{ tz: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`),
   );
   check("division inherits the org scheduling timezone (V305)", inherited.tz === "Europe/Madrid");
   await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
     config: {
-      startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
-      courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+      startAt: "2026-10-01T09:00:00.000Z",
+      matchMinutes: 30,
+      gapMinutes: 0,
+      courts: ["A", "B"],
+      perEntrantMinRest: 0,
+      blackouts: [],
+      sessionWindows: [],
     },
     tz: "Asia/Kolkata",
   });
   const kept = v1data<{ tz: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
       config: {
-        startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
-        courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+        startAt: "2026-10-01T09:00:00.000Z",
+        matchMinutes: 30,
+        gapMinutes: 0,
+        courts: ["A", "B"],
+        perEntrantMinRest: 0,
+        blackouts: [],
+        sessionWindows: [],
       },
     }),
   );
@@ -3746,8 +4413,13 @@ async function schedRegV3Suite(
   const recleared = v1data<{ tz: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/schedule-settings`, "PUT", {
       config: {
-        startAt: "2026-10-01T09:00:00.000Z", matchMinutes: 30, gapMinutes: 0,
-        courts: ["A", "B"], perEntrantMinRest: 0, blackouts: [], sessionWindows: [],
+        startAt: "2026-10-01T09:00:00.000Z",
+        matchMinutes: 30,
+        gapMinutes: 0,
+        courts: ["A", "B"],
+        perEntrantMinRest: 0,
+        blackouts: [],
+        sessionWindows: [],
       },
       tz: null,
     }),
@@ -3793,7 +4465,8 @@ async function schedRegV3Suite(
   // suite: POST /officials → PATCH the fixture's officials.
   const docOfficial = v1data<{ id: string }>(
     await v1(admin, "/api/v1/officials", "POST", {
-      display_name: `Doc Umpire ${tag}`, role_keys: ["referee"],
+      display_name: `Doc Umpire ${tag}`,
+      role_keys: ["referee"],
     }),
   );
   const assignDocOfficial = await v1(admin, `/api/v1/fixtures/${fixture}/officials`, "PATCH", {
@@ -3834,15 +4507,28 @@ async function schedRegV3Suite(
 
   // Registration → SZ ref → public /r/[ref] page (pro org).
   await v1(admin, `/api/v1/divisions/${div.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "gbp", form_fields: [],
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 0,
+    currency: "gbp",
+    form_fields: [],
   });
-  const reg = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
-    division_id: div.id,
-    display_name: `Ref Probe ${tag}`,
-    contact_email: `refprobe_${tag}@example.com`,
-    privacy_consent: true,
-  });
-  const regData = v1data<{ registration_id: string; status: string; ref_code: string }>(reg);
+  const reg = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`,
+    "POST",
+    {
+      division_id: div.id,
+      display_name: `Ref Probe ${tag}`,
+      contact_email: `refprobe_${tag}@example.com`,
+      privacy_consent: true,
+    },
+  );
+  const regData = v1data<{
+    registration_id: string;
+    status: string;
+    ref_code: string;
+  }>(reg);
   check(
     "reg issues an SZ ref (pro)",
     reg.status === 201 && /^SZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/.test(regData.ref_code ?? ""),
@@ -3864,7 +4550,12 @@ async function schedRegV3Suite(
   // status = 'confirmed') — the fresh submission above is still 'pending',
   // so confirm it first, then hit the export to exercise the real
   // ticket/QR/masked-name render path, not just the empty masthead.
-  const confirmRegForTicket = await v1(admin, `/api/v1/registrations/${regData.registration_id}/confirm`, "POST", {});
+  const confirmRegForTicket = await v1(
+    admin,
+    `/api/v1/registrations/${regData.registration_id}/confirm`,
+    "POST",
+    {},
+  );
   check(
     "reg confirmed ahead of the tickets export (pro)",
     confirmRegForTicket.status === 200 || confirmRegForTicket.status === 201,
@@ -3883,20 +4574,30 @@ async function schedRegV3Suite(
   );
 
   // Honeypot: a filled `website` field is rejected before any work.
-  const honey = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
-    division_id: div.id,
-    display_name: "Bot Entry",
-    contact_email: `bot_${tag}@example.com`,
-    website: "https://spam.example",
-  });
+  const honey = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`,
+    "POST",
+    {
+      division_id: div.id,
+      display_name: "Bot Entry",
+      contact_email: `bot_${tag}@example.com`,
+      website: "https://spam.example",
+    },
+  );
   check("reg honeypot rejects bots (400)", honey.status === 400);
 
   // GDPR (spec 2026-07-14): a submission without privacy consent is refused.
-  const noConsent = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
-    division_id: div.id,
-    display_name: `No Consent ${tag}`,
-    contact_email: `noconsent_${tag}@example.com`,
-  });
+  const noConsent = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`,
+    "POST",
+    {
+      division_id: div.id,
+      display_name: `No Consent ${tag}`,
+      contact_email: `noconsent_${tag}@example.com`,
+    },
+  );
   check("reg without privacy consent refused (422)", noConsent.status === 422);
 
   // --- Dual payments (spec 2026-07-12): offline mark-paid + card gates (pro) ---
@@ -3909,53 +4610,106 @@ async function schedRegV3Suite(
     }),
   );
   await v1(admin, `/api/v1/divisions/${payDiv.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 1500, currency: "gbp",
-    form_fields: [], payment_method: "offline",
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 1500,
+    currency: "gbp",
+    form_fields: [],
+    payment_method: "offline",
     payment_instructions: `Cash desk ${tag}`,
   });
-  const offReg = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
-    division_id: payDiv.id,
-    display_name: `Cash Payer ${tag}`,
-    contact_email: `cash_${tag}@example.com`,
-    privacy_consent: true,
-  });
-  const offRegData = v1data<{ registration_id: string; checkout_url: string | null }>(offReg);
+  const offReg = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`,
+    "POST",
+    {
+      division_id: payDiv.id,
+      display_name: `Cash Payer ${tag}`,
+      contact_email: `cash_${tag}@example.com`,
+      privacy_consent: true,
+    },
+  );
+  const offRegData = v1data<{
+    registration_id: string;
+    checkout_url: string | null;
+  }>(offReg);
   check(
     "pay offline submit: pending, no checkout",
     offReg.status === 201 && offRegData.checkout_url === null,
   );
-  const confirmEarly = await v1(admin, `/api/v1/registrations/${offRegData.registration_id}/confirm`, "POST", {});
+  const confirmEarly = await v1(
+    admin,
+    `/api/v1/registrations/${offRegData.registration_id}/confirm`,
+    "POST",
+    {},
+  );
   check("pay unpaid confirm blocked (422)", confirmEarly.status === 422);
-  const markPaid = await v1(admin, `/api/v1/registrations/${offRegData.registration_id}/mark-paid`, "POST", {});
-  const markPaidData = v1data<{ status: string; offline_marked_paid_at: string | null }>(markPaid);
+  const markPaid = await v1(
+    admin,
+    `/api/v1/registrations/${offRegData.registration_id}/mark-paid`,
+    "POST",
+    {},
+  );
+  const markPaidData = v1data<{
+    status: string;
+    offline_marked_paid_at: string | null;
+  }>(markPaid);
   check(
     "pay mark-paid confirms entry",
-    markPaid.status === 200 && markPaidData.status === "confirmed" && !!markPaidData.offline_marked_paid_at,
+    markPaid.status === 200 &&
+      markPaidData.status === "confirmed" &&
+      !!markPaidData.offline_marked_paid_at,
   );
 
   // Card method gates: rejected without Connect, accepted once flipped.
-  const cardPutNoConnect = await v1(admin, `/api/v1/divisions/${payDiv.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
-    form_fields: [], payment_method: "stripe",
-  });
+  const cardPutNoConnect = await v1(
+    admin,
+    `/api/v1/divisions/${payDiv.id}/registration-settings`,
+    "PUT",
+    {
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 500,
+      currency: "gbp",
+      form_fields: [],
+      payment_method: "stripe",
+    },
+  );
   check("pay card method needs Connect (422)", cardPutNoConnect.status === 422);
   await setConnect(proOrgId, true);
   const cardPut = await v1(admin, `/api/v1/divisions/${payDiv.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
-    form_fields: [], payment_method: "stripe",
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 500,
+    currency: "gbp",
+    form_fields: [],
+    payment_method: "stripe",
   });
   check("pay card method saves with Connect", cardPut.status === 200);
-  const cardReg = await v1(newSession(), `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`, "POST", {
-    division_id: payDiv.id,
-    display_name: `Card Payer ${tag}`,
-    contact_email: `card_${tag}@example.com`,
-    privacy_consent: true,
-  });
+  const cardReg = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${proOrgSlug}/competitions/${comp.slug}/register`,
+    "POST",
+    {
+      division_id: payDiv.id,
+      display_name: `Card Payer ${tag}`,
+      contact_email: `card_${tag}@example.com`,
+      privacy_consent: true,
+    },
+  );
   const cardRegData = v1data<{ registration_id: string; status: string }>(cardReg);
   // No Stripe key in smoke: the session mint fails gracefully — the row still
   // lands pending with a 48h window (pay-later from the status page).
-  check("pay card submit holds a pending spot", cardReg.status === 201 && cardRegData.status === "pending");
-  const waived = await v1(admin, `/api/v1/registrations/${cardRegData.registration_id}/waive`, "POST", {});
+  check(
+    "pay card submit holds a pending spot",
+    cardReg.status === 201 && cardRegData.status === "pending",
+  );
+  const waived = await v1(
+    admin,
+    `/api/v1/registrations/${cardRegData.registration_id}/waive`,
+    "POST",
+    {},
+  );
   check(
     "pay waive confirms without payment",
     waived.status === 200 && v1data<{ status: string }>(waived).status === "confirmed",
@@ -3965,10 +4719,16 @@ async function schedRegV3Suite(
   // --- Free path: fresh community owner, registration + ref lookup ---
   const free = newSession();
   const freeVer = await signIn(free, `sched_free_${tag}@example.com`);
-  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrgs = (await call(free, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const freeOrg = freeOrgs.find((o) => o.id === freeVer.org_id)!;
   const fComp = v1data<{ id: string; slug: string }>(
-    await v1(free, "/api/v1/competitions", "POST", { name: `Sched Free ${tag}`, visibility: "public" }),
+    await v1(free, "/api/v1/competitions", "POST", {
+      name: `Sched Free ${tag}`,
+      visibility: "public",
+    }),
   );
   const fDiv = v1data<{ id: string; slug: string }>(
     await v1(free, `/api/v1/competitions/${fComp.id}/divisions`, "POST", {
@@ -3979,14 +4739,23 @@ async function schedRegV3Suite(
     }),
   );
   await v1(free, `/api/v1/divisions/${fDiv.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "gbp", form_fields: [],
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 0,
+    currency: "gbp",
+    form_fields: [],
   });
-  const fReg = await v1(newSession(), `/api/v1/public/orgs/${freeOrg.slug}/competitions/${fComp.slug}/register`, "POST", {
-    division_id: fDiv.id,
-    display_name: `Free Ref ${tag}`,
-    contact_email: `freeref_${tag}@example.com`,
-    privacy_consent: true,
-  });
+  const fReg = await v1(
+    newSession(),
+    `/api/v1/public/orgs/${freeOrg.slug}/competitions/${fComp.slug}/register`,
+    "POST",
+    {
+      division_id: fDiv.id,
+      display_name: `Free Ref ${tag}`,
+      contact_email: `freeref_${tag}@example.com`,
+      privacy_consent: true,
+    },
+  );
   const fRegData = v1data<{ ref_code: string }>(fReg);
   check(
     "reg issues an SZ ref (free)",
@@ -3998,20 +4767,31 @@ async function schedRegV3Suite(
     fRefPage.status === 200 && fRefPage.body.includes(fRegData.ref_code),
   );
   // Community sees the division fixtures page (schedule list) fine.
-  const fFixtures = await html(free, `/o/${freeOrg.slug}/c/${fComp.slug}/d/${fDiv.slug}?tab=fixtures`);
+  const fFixtures = await html(
+    free,
+    `/o/${freeOrg.slug}/c/${fComp.slug}/d/${fDiv.slug}?tab=fixtures`,
+  );
   check("division fixtures page renders (free)", fFixtures.status === 200);
 
   // Dual payments on community (spec 2026-07-12): offline fees stay plan-free;
   // the card method is the paid layer even with Connect flipped on.
   const fOffline = await v1(free, `/api/v1/divisions/${fDiv.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
-    form_fields: [], payment_method: "offline",
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 500,
+    currency: "gbp",
+    form_fields: [],
+    payment_method: "offline",
   });
   check("pay offline fee allowed on community", fOffline.status === 200);
   await setConnect(freeVer.org_id, true);
   const fCard = await v1(free, `/api/v1/divisions/${fDiv.id}/registration-settings`, "PUT", {
-    enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "gbp",
-    form_fields: [], payment_method: "stripe",
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 500,
+    currency: "gbp",
+    form_fields: [],
+    payment_method: "stripe",
   });
   check("pay card method is Pro-gated on community (402)", fCard.status === 402);
   await setConnect(freeVer.org_id, false);
@@ -4061,7 +4841,12 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   const db = dbUrl
     ? postgres(dbUrl, {
         connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
-        ssl: process.env.DATABASE_SSL === "disable" ? false : /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl) ? false : "require",
+        ssl:
+          process.env.DATABASE_SSL === "disable"
+            ? false
+            : /@(localhost|127\.0\.0\.1)[:/]/.test(dbUrl)
+              ? false
+              : "require",
         prepare: !dbUrl.includes(":6543"),
         max: 1,
       })
@@ -4086,12 +4871,18 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
     name: `V1 Cup ${tag}`,
     visibility: "public",
   });
-  check("v1 create competition → 201 + envelope", comp.status === 201 && comp.json.ok === true && !!comp.json.requestId);
+  check(
+    "v1 create competition → 201 + envelope",
+    comp.status === 201 && comp.json.ok === true && !!comp.json.requestId,
+  );
   const compId = v1data<{ id: string; slug: string }>(comp).id;
   const compSlug = v1data<{ id: string; slug: string }>(comp).slug;
 
   const list = await v1(admin, "/api/v1/competitions?limit=1");
-  check("v1 list paginates", list.status === 200 && Array.isArray(v1data<{ items: unknown[] }>(list).items));
+  check(
+    "v1 list paginates",
+    list.status === 200 && Array.isArray(v1data<{ items: unknown[] }>(list).items),
+  );
 
   const div = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
     name: "Open",
@@ -4100,23 +4891,42 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
     // The 'score' preset is partial; the module schema requires the rest.
     config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
   });
-  check("v1 create division pins module version", div.status === 201 && !!v1data<{ module_version: string }>(div).module_version);
+  check(
+    "v1 create division pins module version",
+    div.status === 201 && !!v1data<{ module_version: string }>(div).module_version,
+  );
   const divId = v1data<{ id: string; slug: string }>(div).id;
   const divSlug = v1data<{ id: string; slug: string }>(div).slug;
 
-  const entrants = await v1(admin, `/api/v1/divisions/${divId}/entrants`, "POST",
-    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })));
-  check("v1 bulk entrants registered", entrants.status === 201 && v1data<unknown[]>(entrants).length === 4);
+  const entrants = await v1(
+    admin,
+    `/api/v1/divisions/${divId}/entrants`,
+    "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({
+      kind: "individual",
+      display_name: n,
+      seed: i + 1,
+    })),
+  );
+  check(
+    "v1 bulk entrants registered",
+    entrants.status === 201 && v1data<unknown[]>(entrants).length === 4,
+  );
 
   const stage = await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", {
-    seq: 1, kind: "league", name: "League",
+    seq: 1,
+    kind: "league",
+    name: "League",
   });
   const stageId = v1data<{ id: string }>(stage).id;
 
   const gen1 = await v1(admin, `/api/v1/stages/${stageId}/generate`, "POST");
   const gen2 = await v1(admin, `/api/v1/stages/${stageId}/generate`, "POST");
   check("v1 generate creates 6 RR fixtures", v1data<{ created: number }>(gen1).created === 6);
-  check("v1 generate is idempotent", v1data<{ created: number; existing: number }>(gen2).created === 0);
+  check(
+    "v1 generate is idempotent",
+    v1data<{ created: number; existing: number }>(gen2).created === 0,
+  );
   const fixtures = v1data<{ fixtures: { id: string }[] }>(gen1).fixtures;
 
   // --- PROMPT-30: slug console routes + legacy 301s ---
@@ -4127,7 +4937,8 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   const legacy = await pageRedirect(admin, `/divisions/${divId}`);
   check(
     "legacy /divisions/[id] 301s to the slug chain",
-    legacy.status >= 301 && legacy.status <= 308 &&
+    legacy.status >= 301 &&
+      legacy.status <= 308 &&
       (legacy.location ?? "").includes(`/o/${orgSlug}/c/${compSlug}/d/${divSlug}`),
   );
 
@@ -4135,23 +4946,44 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   // explicit start; auto pass proposes without persisting; start opens scoring.
   const fx = fixtures[0].id;
   const early = await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
-    expected_seq: 0, type: "core.start", payload: {},
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
   });
-  check("v1 scoring before start → 422 WRONG_PHASE", early.status === 422 && early.json.error?.code === "WRONG_PHASE");
+  check(
+    "v1 scoring before start → 422 WRONG_PHASE",
+    early.status === 422 && early.json.error?.code === "WRONG_PHASE",
+  );
   const auto = await v1(admin, `/api/v1/stages/${stageId}/schedule/auto`, "POST", {});
-  check("v1 schedule/auto proposes all fixtures", v1data<{ assignments: unknown[] }>(auto).assignments.length === 6);
+  check(
+    "v1 schedule/auto proposes all fixtures",
+    v1data<{ assignments: unknown[] }>(auto).assignments.length === 6,
+  );
   const startRes = await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
   check("v1 division start → active", v1data<{ status: string }>(startRes).status === "active");
 
   // Scoring: append, optimistic-concurrency 409 (parallel scorers), void.
   const started = await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
-    expected_seq: 0, type: "core.start", payload: {},
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
   });
-  check("v1 scoring append → 201 with seq", started.status === 201 && v1data<{ seq: number }>(started).seq === 1);
+  check(
+    "v1 scoring append → 201 with seq",
+    started.status === 201 && v1data<{ seq: number }>(started).seq === 1,
+  );
 
   const race = await Promise.all([
-    v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", { expected_seq: 1, type: "core.note", payload: { text: "a" } }),
-    v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", { expected_seq: 1, type: "core.note", payload: { text: "b" } }),
+    v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
+      expected_seq: 1,
+      type: "core.note",
+      payload: { text: "a" },
+    }),
+    v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
+      expected_seq: 1,
+      type: "core.note",
+      payload: { text: "b" },
+    }),
   ]);
   const won = race.filter((r) => r.status === 201);
   const lost = race.filter((r) => r.status === 409);
@@ -4161,38 +4993,66 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
 
   // Losing scorer resyncs from its seq and replays.
   const resync = await v1(admin, `/api/v1/fixtures/${fx}/events?since_seq=1`);
-  check("v1 events since_seq resyncs", resync.status === 200 && v1data<unknown[]>(resync).length === 1);
+  check(
+    "v1 events since_seq resyncs",
+    resync.status === 200 && v1data<unknown[]>(resync).length === 1,
+  );
 
   // Undo: void the note through the same path.
-  const events = v1data<{ id: string; seq: number }[]>(await v1(admin, `/api/v1/fixtures/${fx}/events`));
+  const events = v1data<{ id: string; seq: number }[]>(
+    await v1(admin, `/api/v1/fixtures/${fx}/events`),
+  );
   const note = events.find((e) => e.seq === 2);
   const voided = await v1(admin, `/api/v1/fixtures/${fx}/events`, "POST", {
-    expected_seq: 2, type: "core.void", payload: { event_id: note?.id },
+    expected_seq: 2,
+    type: "core.void",
+    payload: { event_id: note?.id },
   });
-  check("v1 undo via core.void", voided.status === 201 && v1data<{ seq: number }>(voided).seq === 3);
+  check(
+    "v1 undo via core.void",
+    voided.status === 201 && v1data<{ seq: number }>(voided).seq === 3,
+  );
 
   // Decide every fixture, read authed standings, then the public dashboard.
   for (const f of fixtures) {
     const state = await v1(admin, `/api/v1/fixtures/${f.id}/state`);
     const seq = v1data<{ last_seq: number }>(state).last_seq;
     await v1(admin, `/api/v1/fixtures/${f.id}/events`, "POST", {
-      expected_seq: seq, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+      expected_seq: seq,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 0 },
     });
   }
   const standings = await v1(admin, `/api/v1/stages/${stageId}/standings`);
   check("v1 standings ranked", v1data<{ rows: unknown[] }>(standings).rows.length === 4);
 
   const anon = newSession();
-  const pubStandings = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}/divisions/${divSlug}/standings`);
+  const pubStandings = await v1(
+    anon,
+    `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}/divisions/${divSlug}/standings`,
+  );
   // Flaked once in CI (2026-07-13, 404) with no body in the log — keep the
   // response visible so a recurrence is diagnosable.
   if (pubStandings.status !== 200) {
-    console.log("public standings response:", pubStandings.status, JSON.stringify(pubStandings.json));
+    console.log(
+      "public standings response:",
+      pubStandings.status,
+      JSON.stringify(pubStandings.json),
+    );
   }
-  check("v1 public standings (no auth)", pubStandings.status === 200 && pubStandings.json.ok === true);
-  check("v1 public reads are cacheable", (pubStandings.headers.get("cache-control") ?? "").includes("s-maxage"));
+  check(
+    "v1 public standings (no auth)",
+    pubStandings.status === 200 && pubStandings.json.ok === true,
+  );
+  check(
+    "v1 public reads are cacheable",
+    (pubStandings.headers.get("cache-control") ?? "").includes("s-maxage"),
+  );
   const pubComp = await v1(anon, `/api/v1/public/orgs/${orgSlug}/competitions/${compSlug}`);
-  check("v1 public competition lists divisions", v1data<{ divisions: unknown[] }>(pubComp).divisions.length === 1);
+  check(
+    "v1 public competition lists divisions",
+    v1data<{ divisions: unknown[] }>(pubComp).divisions.length === 1,
+  );
 
   // Public-page theming, free path (public redesign): the branding write is
   // accepted, but the public view empties it for orgs without
@@ -4203,7 +5063,10 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   check("v1 branding patch accepted", branded.status === 200);
   const freePage = await fetch(`${BASE}/shared/${orgSlug}/${compSlug}`);
   const freeHtml = await freePage.text();
-  check("public competition page renders (community)", freePage.status === 200 && freeHtml.includes("V1 Cup"));
+  check(
+    "public competition page renders (community)",
+    freePage.status === 200 && freeHtml.includes("V1 Cup"),
+  );
   check("community public page keeps default theme", !freeHtml.includes("--ps-accent:#0f766e"));
   // Slideshow shares the courtside theme layer, gated the same way: on
   // Community the board must keep the default violet, not the brand color.
@@ -4223,12 +5086,21 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   check("community org landing keeps default theme", !freeOrgHtml.includes("--ps-accent:#0f766e"));
 
   // Entitlement gate: community org → 402; Pro override → key works via Bearer.
-  const denied = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
-  check("v1 API keys 402-gated on api.access", denied.status === 402 && denied.json.error?.code === "PAYMENT_REQUIRED");
+  const denied = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
+    name: "ci",
+    scopes: ["read"],
+  });
+  check(
+    "v1 API keys 402-gated on api.access",
+    denied.status === 402 && denied.json.error?.code === "PAYMENT_REQUIRED",
+  );
 
   if (db) {
     await insertEntitlementOverride(admin, orgId, "api.access", true);
-    const minted = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", { name: "ci", scopes: ["read"] });
+    const minted = await v1(admin, `/api/v1/orgs/${orgId}/api-keys`, "POST", {
+      name: "ci",
+      scopes: ["read"],
+    });
     const secret = v1data<{ id: string; secret: string }>(minted).secret;
     check("v1 API key minted once (sc_)", minted.status === 201 && secret.startsWith("sc_"));
 
@@ -4236,9 +5108,15 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
       Authorization: `Bearer ${secret}`,
     });
     check("v1 Bearer key authenticates reads", keyed.status === 200 && keyed.json.ok === true);
-    const keyedWrite = await v1(newSession(), "/api/v1/competitions", "POST", { name: "Nope" }, {
-      Authorization: `Bearer ${secret}`,
-    });
+    const keyedWrite = await v1(
+      newSession(),
+      "/api/v1/competitions",
+      "POST",
+      { name: "Nope" },
+      {
+        Authorization: `Bearer ${secret}`,
+      },
+    );
     check("v1 read-scoped key cannot write", keyedWrite.status === 403);
 
     const keyId = v1data<{ id: string }>(minted).id;
@@ -4253,21 +5131,23 @@ async function v1Suite(admin: Session, orgId: string, orgSlug: string): Promise<
   }
 
   // Spec is served and matches the implemented surface.
-  const spec = await fetch(BASE + "/api/v1/openapi.json").then((r) => r.json()) as {
-    openapi: string; paths: Record<string, unknown>;
+  const spec = (await fetch(BASE + "/api/v1/openapi.json").then((r) => r.json())) as {
+    openapi: string;
+    paths: Record<string, unknown>;
   };
-  check("v1 openapi served", spec.openapi === "3.1.0" && !!spec.paths["/api/v1/fixtures/{id}/events"]);
+  check(
+    "v1 openapi served",
+    spec.openapi === "3.1.0" && !!spec.paths["/api/v1/fixtures/{id}/events"],
+  );
 }
 
 // Multipart POST for the file-upload endpoints (imports, logos).
-async function v1Multipart(
-  s: Session,
-  path: string,
-  form: FormData,
-): Promise<V1Res> {
+async function v1Multipart(s: Session, path: string, form: FormData): Promise<V1Res> {
   const res = await fetch(BASE + path, {
     method: "POST",
-    headers: { ...(Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {}) },
+    headers: {
+      ...(Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {}),
+    },
     body: form,
   });
   const json = (await res.json().catch(() => ({ ok: false }))) as V1Res["json"];
@@ -4283,7 +5163,10 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
   // Fresh competition + football division (football has the richest surface:
   // scorers, cards, MOTM, scoresheets).
   const comp = v1data<{ id: string; slug: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", { name: `Jul3 Cup ${tag}`, visibility: "public" }),
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `Jul3 Cup ${tag}`,
+      visibility: "public",
+    }),
   );
 
   // Public-page theming, pro path (public redesign): dashboard.branding lets
@@ -4295,7 +5178,9 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
   const themedHtml = await (await fetch(`${BASE}/shared/${orgSlug}/${comp.slug}`)).text();
   check("pro public page carries the org accent theme", themedHtml.includes("--ps-accent:#0f766e"));
   const div = await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
-    name: "Open", sport_key: "generic", variant_key: "score",
+    name: "Open",
+    sport_key: "generic",
+    variant_key: "score",
     config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
   });
   const divId = v1data<{ id: string }>(div).id;
@@ -4320,35 +5205,62 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
   check("competition color overrides the org color", overrideHtml.includes("--ps-accent:#0f766e"));
 
   // -- PROMPT-21: clubs + bulk import ------------------------------------
-  const club = await v1(admin, "/api/v1/clubs", "POST", { name: `Acme ${tag}`, short_name: "ACM" });
+  const club = await v1(admin, "/api/v1/clubs", "POST", {
+    name: `Acme ${tag}`,
+    short_name: "ACM",
+  });
   check("jul3 clubs create (Pro clubs.hierarchy)", club.status === 201);
   const clubs = await v1(admin, "/api/v1/clubs");
   check("jul3 clubs list", clubs.status === 200 && v1data<unknown[]>(clubs).length >= 1);
 
-  const csv = ["Team,Player,Division", `Acme U12,Ada One,${v1data<{ slug: string }>(div).slug}`].join("\n");
+  const csv = [
+    "Team,Player,Division",
+    `Acme U12,Ada One,${v1data<{ slug: string }>(div).slug}`,
+  ].join("\n");
   const form = new FormData();
   form.append("file", new Blob([csv], { type: "text/csv" }), "import.csv");
   const imp = await v1Multipart(admin, "/api/v1/imports", form);
-  check("jul3 import dry-run → plan", imp.status === 201 && Array.isArray(v1data<{ plan: { ops: unknown[] } }>(imp).plan.ops));
+  check(
+    "jul3 import dry-run → plan",
+    imp.status === 201 && Array.isArray(v1data<{ plan: { ops: unknown[] } }>(imp).plan.ops),
+  );
   const importId = v1data<{ importId: string }>(imp).importId;
   const committed = await v1(admin, `/api/v1/imports/${importId}/commit`, "POST", undefined, {
     "Idempotency-Key": `smoke-${tag}`,
   });
-  check("jul3 import commit", committed.status === 201 && v1data<{ stats: { teams: number } }>(committed).stats.teams === 1);
+  check(
+    "jul3 import commit",
+    committed.status === 201 && v1data<{ stats: { teams: number } }>(committed).stats.teams === 1,
+  );
 
   // -- PROMPT-22: officials ---------------------------------------------
-  const official = await v1(admin, "/api/v1/officials", "POST", { display_name: `Ref ${tag}`, role_keys: ["referee"] });
+  const official = await v1(admin, "/api/v1/officials", "POST", {
+    display_name: `Ref ${tag}`,
+    role_keys: ["referee"],
+  });
   check("jul3 officials create", official.status === 201);
   const officials = await v1(admin, "/api/v1/officials");
   check("jul3 officials list", officials.status === 200);
 
   // Build a scored-through division to exercise the rest.
   const entrants = v1data<{ id: string }[]>(
-    await v1(admin, `/api/v1/divisions/${divId}/entrants`, "POST",
-      ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 }))),
+    await v1(
+      admin,
+      `/api/v1/divisions/${divId}/entrants`,
+      "POST",
+      ["A", "B", "C", "D"].map((n, i) => ({
+        kind: "individual",
+        display_name: n,
+        seed: i + 1,
+      })),
+    ),
   );
   const stageId = v1data<{ id: string }>(
-    await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", { seq: 1, kind: "league", name: "League" }),
+    await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", {
+      seq: 1,
+      kind: "league",
+      name: "League",
+    }),
   ).id;
   const fixtures = v1data<{ fixtures: { id: string }[] }>(
     await v1(admin, `/api/v1/stages/${stageId}/generate`, "POST"),
@@ -4375,31 +5287,47 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
 
   // -- PROMPT-24: bulk shift + wait report ------------------------------
   await v1(admin, `/api/v1/fixtures/${fixtures[0]!.id}`, "PATCH", {
-    scheduled_at: "2026-07-20T09:00:00.000Z", court_label: "C1",
+    scheduled_at: "2026-07-20T09:00:00.000Z",
+    court_label: "C1",
   });
   const shift = await v1(admin, "/api/v1/schedule/shift", "POST", {
-    division_id: divId, scope: { excludeLocked: true }, delta_minutes: 15,
+    division_id: divId,
+    scope: { excludeLocked: true },
+    delta_minutes: 15,
   });
   check("jul3 bulk shift", shift.status === 200 && v1data<{ shifted: number }>(shift).shifted >= 1);
   const report = await v1(admin, `/api/v1/divisions/${divId}/schedule/report`);
-  check("jul3 wait report", report.status === 200 && Array.isArray(v1data<{ perEntrant: unknown[] }>(report).perEntrant));
+  check(
+    "jul3 wait report",
+    report.status === 200 && Array.isArray(v1data<{ perEntrant: unknown[] }>(report).perEntrant),
+  );
 
   // -- PROMPT-23: undo/redo/history/checkpoints -------------------------
   const undo = await v1(admin, `/api/v1/divisions/${divId}/undo`, "POST", {});
-  check("jul3 undo appends inverse", undo.status === 200 && typeof v1data<{ watermark: number }>(undo).watermark === "number");
+  check(
+    "jul3 undo appends inverse",
+    undo.status === 200 && typeof v1data<{ watermark: number }>(undo).watermark === "number",
+  );
   const redo = await v1(admin, `/api/v1/divisions/${divId}/redo`, "POST", {});
   check("jul3 redo", redo.status === 200);
-  const cp = await v1(admin, `/api/v1/divisions/${divId}/checkpoints`, "POST", { label: `smoke ${tag}` });
+  const cp = await v1(admin, `/api/v1/divisions/${divId}/checkpoints`, "POST", {
+    label: `smoke ${tag}`,
+  });
   check("jul3 checkpoint saved", cp.status === 201);
   const history = await v1(admin, `/api/v1/divisions/${divId}/history`);
-  check("jul3 history slice", history.status === 200 && Array.isArray(v1data<{ events: unknown[] }>(history).events));
+  check(
+    "jul3 history slice",
+    history.status === 200 && Array.isArray(v1data<{ events: unknown[] }>(history).events),
+  );
 
   // Decide every fixture for stats/standings/export.
   for (const f of fixtures) {
     const state = await v1(admin, `/api/v1/fixtures/${f.id}/state`);
     const seq = v1data<{ last_seq: number }>(state).last_seq;
     await v1(admin, `/api/v1/fixtures/${f.id}/events`, "POST", {
-      expected_seq: seq, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+      expected_seq: seq,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 0 },
     });
   }
 
@@ -4417,31 +5345,56 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
     headers: { cookie: cookieHeader(admin) },
   });
   const pdfBytes = Buffer.from(await pdf.arrayBuffer());
-  check("jul3 timetable PDF bytes", pdf.status === 200 && pdfBytes.subarray(0, 5).toString() === "%PDF-");
+  check(
+    "jul3 timetable PDF bytes",
+    pdf.status === 200 && pdfBytes.subarray(0, 5).toString() === "%PDF-",
+  );
   const xlsx = await fetch(`${BASE}/api/v1/divisions/${divId}/exports/participants?format=xlsx`, {
     headers: { cookie: cookieHeader(admin) },
   });
-  check("jul3 participants XLSX bytes", xlsx.status === 200 && (await xlsx.arrayBuffer()).byteLength > 500);
+  check(
+    "jul3 participants XLSX bytes",
+    xlsx.status === 200 && (await xlsx.arrayBuffer()).byteLength > 500,
+  );
 
   // -- PROMPT-27: player stats ------------------------------------------
   const stats = await v1(admin, `/api/v1/divisions/${divId}/stats/players`);
-  check("jul3 player stats leaderboard (Pro stats.player)", stats.status === 200 && Array.isArray(v1data<{ rows: unknown[] }>(stats).rows));
+  check(
+    "jul3 player stats leaderboard (Pro stats.player)",
+    stats.status === 200 && Array.isArray(v1data<{ rows: unknown[] }>(stats).rows),
+  );
 
   // -- PROMPT-28: format extensions (triple RR + ladder challenge) ------
   const tripleComp = v1data<{ id: string }>(
-    await v1(admin, "/api/v1/competitions", "POST", { name: `Triple ${tag}`, visibility: "private" }),
+    await v1(admin, "/api/v1/competitions", "POST", {
+      name: `Triple ${tag}`,
+      visibility: "private",
+    }),
   );
   const tripleDiv = v1data<{ id: string }>(
     await v1(admin, `/api/v1/competitions/${tripleComp.id}/divisions`, "POST", {
-      name: "T", sport_key: "generic", variant_key: "score",
+      name: "T",
+      sport_key: "generic",
+      variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   ).id;
-  await v1(admin, `/api/v1/divisions/${tripleDiv}/entrants`, "POST",
-    ["A", "B", "C", "D"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })));
+  await v1(
+    admin,
+    `/api/v1/divisions/${tripleDiv}/entrants`,
+    "POST",
+    ["A", "B", "C", "D"].map((n, i) => ({
+      kind: "individual",
+      display_name: n,
+      seed: i + 1,
+    })),
+  );
   const tripleStage = v1data<{ id: string }>(
     await v1(admin, `/api/v1/divisions/${tripleDiv}/stages`, "POST", {
-      seq: 1, kind: "league", name: "Triple", config: { legs: 3 },
+      seq: 1,
+      kind: "league",
+      name: "Triple",
+      config: { legs: 3 },
     }),
   ).id;
   const tripleGen = await v1(admin, `/api/v1/stages/${tripleStage}/generate`, "POST");
@@ -4449,7 +5402,10 @@ async function jul3Suite(admin: Session, orgId: string, orgSlug: string): Promis
 
   // Ladder challenge (formats.advanced): a stage + an in-range challenge.
   const ladderStage = await v1(admin, `/api/v1/divisions/${tripleDiv}/stages`, "POST", {
-    seq: 2, kind: "ladder", name: "Ladder", config: { challengeRange: 2 },
+    seq: 2,
+    kind: "ladder",
+    name: "Ladder",
+    config: { challengeRange: 2 },
   });
   check("jul3 ladder stage (Pro formats.advanced)", ladderStage.status === 201);
 }
@@ -4474,7 +5430,9 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   // divisions.per_competition quota is 2 (v3 matrix), and DELETE frees a
   // slot. Creating the org switches the active-org cookie onto it.
   await call(admin, "/api/orgs", "POST", { name: `Del Org ${tag}` });
-  const comp = await v1(admin, "/api/v1/competitions", "POST", { name: `Del Cup ${tag}` });
+  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Del Cup ${tag}`,
+  });
   const compId = v1data<{ id: string }>(comp).id;
   const first = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
     name: "First",
@@ -4524,7 +5482,9 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   // --- Pro path: a resulted division 409s with the archive hint, archives,
   // hides from the console list, then restores with results intact.
   await raw(admin, "/api/orgs/active", "POST", { org_id: proOrgId });
-  const proComp = await v1(admin, "/api/v1/competitions", "POST", { name: `Arch Cup ${tag}` });
+  const proComp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Arch Cup ${tag}`,
+  });
   const proCompId = v1data<{ id: string }>(proComp).id;
   const div = await v1(admin, `/api/v1/competitions/${proCompId}/divisions`, "POST", {
     name: "Resulted",
@@ -4536,14 +5496,22 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
     admin,
     `/api/v1/divisions/${divId}/entrants`,
     "POST",
-    ["DA", "DB"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })),
+    ["DA", "DB"].map((n, i) => ({
+      kind: "individual",
+      display_name: n,
+      seed: i + 1,
+    })),
   );
   const stage = await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", {
     seq: 1,
     kind: "league",
     name: "League",
   });
-  const gen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`, "POST");
+  const gen = await v1(
+    admin,
+    `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`,
+    "POST",
+  );
   const fixtureId = v1data<{ fixtures: { id: string }[] }>(gen).fixtures[0]!.id;
   await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
   await v1(admin, `/api/v1/fixtures/${fixtureId}/events`, "POST", {
@@ -4567,7 +5535,8 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   const archived = await v1(admin, `/api/v1/divisions/${divId}/archive`, "POST");
   check(
     "arch: archive succeeds on pro",
-    archived.status === 200 && v1data<{ archived_at: string | null }>(archived).archived_at !== null,
+    archived.status === 200 &&
+      v1data<{ archived_at: string | null }>(archived).archived_at !== null,
   );
   const listed = await v1(admin, `/api/v1/competitions/${proCompId}/divisions`);
   check(
@@ -4577,7 +5546,8 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
   const restored = await v1(admin, `/api/v1/divisions/${divId}/archive`, "DELETE");
   check(
     "arch: restore round-trips",
-    restored.status === 200 && v1data<{ archived_at: string | null }>(restored).archived_at === null,
+    restored.status === 200 &&
+      v1data<{ archived_at: string | null }>(restored).archived_at === null,
   );
   const fixture = await v1(admin, `/api/v1/fixtures/${fixtureId}`);
   check(
@@ -4588,7 +5558,9 @@ async function divisionLifecycleSuite(admin: Session, proOrgId: string): Promise
 
 async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promise<void> {
   // A dedicated started division in the Pro org for device links + scorers.
-  const comp = await v1(admin, "/api/v1/competitions", "POST", { name: `Gap Cup ${tag}` });
+  const comp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Gap Cup ${tag}`,
+  });
   const compId = v1data<{ id: string }>(comp).id;
   const div = await v1(admin, `/api/v1/competitions/${compId}/divisions`, "POST", {
     name: "Gap",
@@ -4601,14 +5573,22 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     admin,
     `/api/v1/divisions/${divId}/entrants`,
     "POST",
-    ["GA", "GB", "GC", "GD"].map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1 })),
+    ["GA", "GB", "GC", "GD"].map((n, i) => ({
+      kind: "individual",
+      display_name: n,
+      seed: i + 1,
+    })),
   );
   const stage = await v1(admin, `/api/v1/divisions/${divId}/stages`, "POST", {
     seq: 1,
     kind: "league",
     name: "League",
   });
-  const gen = await v1(admin, `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`, "POST");
+  const gen = await v1(
+    admin,
+    `/api/v1/stages/${v1data<{ id: string }>(stage).id}/generate`,
+    "POST",
+  );
   const fixtureId = v1data<{ fixtures: { id: string }[] }>(gen).fixtures[0]!.id;
   await v1(admin, `/api/v1/divisions/${divId}/start`, "POST");
 
@@ -4628,7 +5608,9 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     await v1(admin, `/api/v1/fixtures/${fixtureId}`, "GET"),
   );
   const padPerson = v1data<{ id: string }>(
-    await v1(admin, "/api/v1/persons", "POST", { full_name: `Pad Lineup ${tag}` }),
+    await v1(admin, "/api/v1/persons", "POST", {
+      full_name: `Pad Lineup ${tag}`,
+    }),
   );
   await v1(admin, `/api/v1/entrants/${fx0.home_entrant_id}`, "PATCH", {
     members: [{ person_id: padPerson.id }],
@@ -4652,7 +5634,11 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     bare,
     `/api/v1/fixtures/${fixtureId}/events`,
     "POST",
-    { expected_seq: dlSeq, type: "generic.result", payload: { p1Score: 2, p2Score: 1 } },
+    {
+      expected_seq: dlSeq,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
+    },
     { Authorization: `Bearer ${dlSecret}` },
   );
   check("gap device-link bearer can score", dlEvent.status === 201);
@@ -4669,7 +5655,12 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   })) as { token: string };
   const scorer = newSession();
   await signIn(scorer, `scorer_${tag}@example.com`);
-  const accepted = (await call(scorer, `/api/invites/${scorerInvite.token}/accept`, "POST", {})) as {
+  const accepted = (await call(
+    scorer,
+    `/api/invites/${scorerInvite.token}/accept`,
+    "POST",
+    {},
+  )) as {
     landing: string;
   };
   check("gap scorer lands on my-matches", accepted.landing === "/my-matches");
@@ -4720,7 +5711,8 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   };
   check(
     "gap viewer umpire invite: scope added, role kept",
-    vAccept.outcome === "scope_added" && vAccept.role === "viewer" &&
+    vAccept.outcome === "scope_added" &&
+      vAccept.role === "viewer" &&
       vAccept.landing === "/my-matches",
   );
   const vAssigned = await v1(gapViewer, "/api/v1/me/assigned-fixtures");
@@ -4739,14 +5731,19 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
 
   // --- Discovery: public + discoverable (started division passes the quality
   // floor); discoverable without public visibility is rejected ---
-  const pub = await v1(admin, `/api/v1/competitions/${compId}`, "PATCH", { visibility: "public" });
+  const pub = await v1(admin, `/api/v1/competitions/${compId}`, "PATCH", {
+    visibility: "public",
+  });
   check("gap competition made public", pub.status === 200);
   const disc = await v1(admin, `/api/v1/competitions/${compId}`, "PATCH", {
     discoverable: true,
     discovery: { country: "GB" },
   });
   check("gap discoverable set", disc.status === 200);
-  const discovery = await v1(bare, `/api/v1/public/discovery?q=${encodeURIComponent(`Gap Cup ${tag}`)}`);
+  const discovery = await v1(
+    bare,
+    `/api/v1/public/discovery?q=${encodeURIComponent(`Gap Cup ${tag}`)}`,
+  );
   check(
     "gap discovery lists the competition",
     discovery.status === 200 &&
@@ -4758,9 +5755,14 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     name: `Gap Hidden ${tag}`,
     visibility: "private",
   });
-  const badDisc = await v1(admin, `/api/v1/competitions/${v1data<{ id: string }>(privComp).id}`, "PATCH", {
-    discoverable: true,
-  });
+  const badDisc = await v1(
+    admin,
+    `/api/v1/competitions/${v1data<{ id: string }>(privComp).id}`,
+    "PATCH",
+    {
+      discoverable: true,
+    },
+  );
   check("gap discoverable requires public (422)", badDisc.status === 422);
 
   // --- Public registration: open free signup → pending + access token →
@@ -4774,39 +5776,65 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     form_fields: [],
   });
   check("gap registration opened", regSettings.status === 200);
-  const orgs = (await call(admin, "/api/orgs")) as { id: string; slug: string }[];
+  const orgs = (await call(admin, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const proSlug = orgs.find((o) => o.id === proOrgId)!.slug;
   const compSlug = v1data<{ slug: string }>(await v1(admin, `/api/v1/competitions/${compId}`)).slug;
-  const reg = await v1(bare, `/api/v1/public/orgs/${proSlug}/competitions/${compSlug}/register`, "POST", {
-    division_id: divId,
-    display_name: `Walk In ${tag}`,
-    contact_email: `walkin_${tag}@example.com`,
-    privacy_consent: true,
-  });
-  const regData = v1data<{ registration_id: string; status: string; access_token: string }>(reg);
+  const reg = await v1(
+    bare,
+    `/api/v1/public/orgs/${proSlug}/competitions/${compSlug}/register`,
+    "POST",
+    {
+      division_id: divId,
+      display_name: `Walk In ${tag}`,
+      contact_email: `walkin_${tag}@example.com`,
+      privacy_consent: true,
+    },
+  );
+  const regData = v1data<{
+    registration_id: string;
+    status: string;
+    access_token: string;
+  }>(reg);
   check(
     "gap public registration pending + tokened",
     reg.status === 201 && regData.status === "pending" && regData.access_token.length > 0,
   );
-  const confirmed = await v1(admin, `/api/v1/registrations/${regData.registration_id}/confirm`, "POST", {});
+  const confirmed = await v1(
+    admin,
+    `/api/v1/registrations/${regData.registration_id}/confirm`,
+    "POST",
+    {},
+  );
   check("gap registration confirmed", confirmed.status === 200 || confirmed.status === 201);
   const gapEntrants = await v1(admin, `/api/v1/divisions/${divId}/entrants`);
   check(
     "gap confirmed registration is an entrant",
-    v1data<{ display_name: string }[]>(gapEntrants).some((e) => e.display_name === `Walk In ${tag}`),
+    v1data<{ display_name: string }[]>(gapEntrants).some(
+      (e) => e.display_name === `Walk In ${tag}`,
+    ),
   );
 
   // --- Free paths on a fresh community owner: device links 402, offline
   // entry fees allowed without Stripe ---
   const free = newSession();
   await signIn(free, `free_${tag}@example.com`);
-  const fComp = await v1(free, "/api/v1/competitions", "POST", { name: `Free Gap ${tag}` });
-  const fDiv = await v1(free, `/api/v1/competitions/${v1data<{ id: string }>(fComp).id}/divisions`, "POST", {
-    name: "Free",
-    sport_key: "generic",
-    variant_key: "score",
-    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+  const fComp = await v1(free, "/api/v1/competitions", "POST", {
+    name: `Free Gap ${tag}`,
   });
+  const fDiv = await v1(
+    free,
+    `/api/v1/competitions/${v1data<{ id: string }>(fComp).id}/divisions`,
+    "POST",
+    {
+      name: "Free",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    },
+  );
   const fDivId = v1data<{ id: string }>(fDiv).id;
   await v1(free, `/api/v1/divisions/${fDivId}/entrants`, "POST", [
     { kind: "individual", display_name: "F1", seed: 1 },
@@ -4817,7 +5845,11 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
     kind: "league",
     name: "League",
   });
-  const fGen = await v1(free, `/api/v1/stages/${v1data<{ id: string }>(fStage).id}/generate`, "POST");
+  const fGen = await v1(
+    free,
+    `/api/v1/stages/${v1data<{ id: string }>(fStage).id}/generate`,
+    "POST",
+  );
   const fFixture = v1data<{ fixtures: { id: string }[] }>(fGen).fixtures[0]!.id;
   const fDl = await v1(free, `/api/v1/fixtures/${fFixture}/device-links`, "POST", { label: "X" });
   check(
@@ -4837,9 +5869,12 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   // a community org — tables upgrade for every plan, only the masthead/
   // sponsor chrome differs (a visual difference the Task 18 gallery proves,
   // not a byte-level one).
-  const freeDocPdf = await fetch(`${BASE}/api/v1/divisions/${fDivId}/exports/timetable?format=pdf`, {
-    headers: { cookie: cookieHeader(free) },
-  });
+  const freeDocPdf = await fetch(
+    `${BASE}/api/v1/divisions/${fDivId}/exports/timetable?format=pdf`,
+    {
+      headers: { cookie: cookieHeader(free) },
+    },
+  );
   const freeDocPdfBytes = Buffer.from(await freeDocPdf.arrayBuffer());
   check(
     "exports timetable PDF renders a valid plain PDF (free)",
@@ -4857,8 +5892,13 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   }[];
   const owner = members.find((m) => m.role === "owner")!;
   const target = members.find((m) => m.role !== "owner" && m.role !== "scorer")!;
-  await call(admin, `/api/orgs/${org1Id}/transfer-owner`, "POST", { new_owner_id: target.user_id });
-  const mid = (await call(admin, `/api/orgs/${org1Id}/members`)) as { user_id: string; role: string }[];
+  await call(admin, `/api/orgs/${org1Id}/transfer-owner`, "POST", {
+    new_owner_id: target.user_id,
+  });
+  const mid = (await call(admin, `/api/orgs/${org1Id}/members`)) as {
+    user_id: string;
+    role: string;
+  }[];
   check(
     "gap ownership transferred",
     mid.find((m) => m.user_id === target.user_id)?.role === "owner" &&
@@ -4880,7 +5920,9 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   check("gap ownership restored", after.find((m) => m.user_id === owner.user_id)?.role === "owner");
 
   // --- Account: display-name edit + GDPR export ---
-  const renamedMe = await raw(admin, "/api/users/me", "PATCH", { display_name: `Gap Admin ${tag}` });
+  const renamedMe = await raw(admin, "/api/users/me", "PATCH", {
+    display_name: `Gap Admin ${tag}`,
+  });
   check("gap display name updated", renamedMe.status === 200);
   const exported = await fetch(`${BASE}/api/users/me/export`, {
     headers: { cookie: cookieHeader(admin) },
@@ -4898,7 +5940,11 @@ async function gapSuite(admin: Session, org1Id: string, proOrgId: string): Promi
   const comps = v1data<{ items: { id: string }[] } | { id: string }[]>(list);
   const ids = (Array.isArray(comps) ? comps : comps.items).map((c) => c.id);
   const probes = await Promise.all(
-    ids.map((id) => v1(admin, `/api/v1/competitions/${id}`, "PATCH", { description: "probe" })),
+    ids.map((id) =>
+      v1(admin, `/api/v1/competitions/${id}`, "PATCH", {
+        description: "probe",
+      }),
+    ),
   );
   const blocked = probes.filter((p) => p.status === 402).length;
   const writable = probes.filter((p) => p.status === 200).length;
@@ -4931,7 +5977,11 @@ async function v3ContentApiSuite(
       headers: s && Object.keys(s.cookies).length ? { cookie: cookieHeader(s) } : {},
     });
     const buf = new Uint8Array(await res.arrayBuffer());
-    return { status: res.status, type: res.headers.get("content-type") ?? "", buf };
+    return {
+      status: res.status,
+      type: res.headers.get("content-type") ?? "",
+      buf,
+    };
   };
 
   // ---- PRO PATH -------------------------------------------------------
@@ -4974,9 +6024,17 @@ async function v3ContentApiSuite(
   const helpHome = await html(newSession(), "/help");
   check("v3: /help renders", helpHome.status === 200 && helpHome.body.includes("Getting started"));
   const helpFormats = await html(newSession(), "/help/formats/league");
-  check("v3: format explainer renders", helpFormats.status === 200 && helpFormats.body.includes("Round robin"));
-  const helpIndex = (await (await fetch(BASE + "/api/help-index")).json()) as { slug: string }[];
-  check("v3: help search index has waitlist", helpIndex.some((d) => d.slug === "registration/waitlist"));
+  check(
+    "v3: format explainer renders",
+    helpFormats.status === 200 && helpFormats.body.includes("Round robin"),
+  );
+  const helpIndex = (await (await fetch(BASE + "/api/help-index")).json()) as {
+    slug: string;
+  }[];
+  check(
+    "v3: help search index has waitlist",
+    helpIndex.some((d) => d.slug === "registration/waitlist"),
+  );
   const dev = await html(newSession(), "/developers");
   check("v3: /developers renders", dev.status === 200 && dev.body.includes("scope"));
   const pubSpec = (await (await fetch(BASE + "/api/v1/openapi.json?published=1")).json()) as {
@@ -4990,7 +6048,8 @@ async function v3ContentApiSuite(
   // Scoped API keys (PROMPT-37): read key reads with rate headers, 403s on
   // writes; pinned key stays inside its competition.
   const mkKey = await v1(admin, `/api/v1/orgs/${proOrgId}/api-keys`, "POST", {
-    name: "smoke read", scopes: ["read"],
+    name: "smoke read",
+    scopes: ["read"],
   });
   check("v3: read key minted", mkKey.status === 201);
   const keySecret = v1data<{ secret: string }>(mkKey).secret;
@@ -4998,18 +6057,42 @@ async function v3ContentApiSuite(
   const keyRead = await v1(newSession(), "/api/v1/competitions", "GET", undefined, keyAuth);
   check("v3: read key GETs competitions", keyRead.status === 200);
   check("v3: rate-limit headers present", !!keyRead.headers.get("X-RateLimit-Limit"));
-  const keyWrite = await v1(newSession(), "/api/v1/competitions", "POST", { name: "Nope" }, keyAuth);
+  const keyWrite = await v1(
+    newSession(),
+    "/api/v1/competitions",
+    "POST",
+    { name: "Nope" },
+    keyAuth,
+  );
   check("v3: read key 403 on manage route", keyWrite.status === 403);
 
-  const otherComp = await v1(admin, "/api/v1/competitions", "POST", { name: `Pin Other ${tag}` });
+  const otherComp = await v1(admin, "/api/v1/competitions", "POST", {
+    name: `Pin Other ${tag}`,
+  });
   const otherId = v1data<{ id: string }>(otherComp).id;
   const mkPinned = await v1(admin, `/api/v1/orgs/${proOrgId}/api-keys`, "POST", {
-    name: "smoke pinned", scopes: ["read"], competition_id: compData.id,
+    name: "smoke pinned",
+    scopes: ["read"],
+    competition_id: compData.id,
   });
-  const pinnedAuth = { Authorization: `Bearer ${v1data<{ secret: string }>(mkPinned).secret}` };
-  const pinnedOk = await v1(newSession(), `/api/v1/competitions/${compData.id}`, "GET", undefined, pinnedAuth);
+  const pinnedAuth = {
+    Authorization: `Bearer ${v1data<{ secret: string }>(mkPinned).secret}`,
+  };
+  const pinnedOk = await v1(
+    newSession(),
+    `/api/v1/competitions/${compData.id}`,
+    "GET",
+    undefined,
+    pinnedAuth,
+  );
   check("v3: pinned key reads its competition", pinnedOk.status === 200);
-  const pinnedOut = await v1(newSession(), `/api/v1/competitions/${otherId}`, "GET", undefined, pinnedAuth);
+  const pinnedOut = await v1(
+    newSession(),
+    `/api/v1/competitions/${otherId}`,
+    "GET",
+    undefined,
+    pinnedAuth,
+  );
   check("v3: pinned key 403 outside its competition", pinnedOut.status === 403);
 
   // OG share card + QR poster (PROMPT-39 #1/#3). Next serves dynamic
@@ -5024,7 +6107,10 @@ async function v3ContentApiSuite(
   check(
     "v3: QR poster is a PDF",
     poster.status === 200 &&
-      poster.buf[0] === 0x25 && poster.buf[1] === 0x50 && poster.buf[2] === 0x44 && poster.buf[3] === 0x46,
+      poster.buf[0] === 0x25 &&
+      poster.buf[1] === 0x50 &&
+      poster.buf[2] === 0x44 &&
+      poster.buf[3] === 0x46,
   );
 
   // Embeds (PROMPT-39 #4): pro renders, and sponsors (#5) reach the dashboard.
@@ -5037,18 +6123,25 @@ async function v3ContentApiSuite(
   // v10: the blob is a read shim only — once the org has sponsors table rows
   // (sponsorsSuite created them), public pages render rows, not the blob.
   const stripRow = await v1(admin, `/api/v1/orgs/${proOrgId}/sponsors`, "POST", {
-    name: `Strip ${tag}`, url: "https://strip.example",
+    name: `Strip ${tag}`,
+    url: "https://strip.example",
   });
   check("v3: sponsor row created for strip", stripRow.status === 201);
   const compPage2 = await html(newSession(), `/shared/${proOrgSlug}/${compData.slug}`);
   check("v3: sponsor strip on pro dashboard", compPage2.body.includes(`Strip ${tag}`));
-  check("v3: blob sponsor stays shim-only once rows exist", !compPage2.body.includes(`Acme ${tag}`));
+  check(
+    "v3: blob sponsor stays shim-only once rows exist",
+    !compPage2.body.includes(`Acme ${tag}`),
+  );
 
   // ---- FREE PATH ------------------------------------------------------
   const free = newSession();
   const freeVer = await signIn(free, `content_free_${tag}@example.com`);
   const freeOrgId = freeVer.org_id as string;
-  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrgs = (await call(free, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const freeSlug = freeOrgs.find((o) => o.id === freeOrgId)?.slug ?? "";
 
   const freeComp = await v1(free, "/api/v1/competitions", "POST", {
@@ -5059,7 +6152,9 @@ async function v3ContentApiSuite(
   check("v3: free org markdown competition", freeComp.status === 201);
   const freeCompData = v1data<{ id: string; slug: string }>(freeComp);
   const freeDiv = await v1(free, `/api/v1/competitions/${freeCompData.id}/divisions`, "POST", {
-    name: "Free Div", sport_key: "generic", variant_key: "score",
+    name: "Free Div",
+    sport_key: "generic",
+    variant_key: "score",
     config: {
       resultMode: "score",
       allowDraws: true,
@@ -5072,10 +6167,14 @@ async function v3ContentApiSuite(
   const freePage = await html(newSession(), `/shared/${freeSlug}/${freeCompData.slug}`);
   check("v3: free public page renders markdown", freePage.body.includes("<h2>Free words</h2>"));
   const freeOg = await bin(ogUrl(freePage.body) ?? "/missing");
-  check("v3: free OG card renders (violet)", freeOg.status === 200 && freeOg.type.includes("image/png"));
+  check(
+    "v3: free OG card renders (violet)",
+    freeOg.status === 200 && freeOg.type.includes("image/png"),
+  );
 
   const freeKey = await v1(free, `/api/v1/orgs/${freeOrgId}/api-keys`, "POST", {
-    name: "nope", scopes: ["read"],
+    name: "nope",
+    scopes: ["read"],
   });
   check("v3: key creation 402 on free", freeKey.status === 402);
   const freeEmbed = await html(newSession(), `/embed/divisions/${freeDivId}/standings`);
@@ -5098,7 +6197,11 @@ async function v3ContentApiSuite(
  *  organiser confirms (→ active + public strip); a free org gets 402 on the
  *  rules PUT and a PlusReveal on the Discipline tab. Cards must be seeded
  *  BEFORE checking (empty-doc false-green lesson). */
-async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: string): Promise<void> {
+async function disciplineSuite(
+  admin: Session,
+  proOrgId: string,
+  proOrgSlug: string,
+): Promise<void> {
   admin.cookies["seazn_org"] = proOrgId;
 
   const comp = v1data<{ id: string; slug: string }>(
@@ -5124,7 +6227,12 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
   );
   const ents = v1data<{ id: string }[]>(
     await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", [
-      { kind: "team", display_name: `Rovers ${tag}`, seed: 1, members: [{ person_id: player.id }] },
+      {
+        kind: "team",
+        display_name: `Rovers ${tag}`,
+        seed: 1,
+        members: [{ person_id: player.id }],
+      },
       { kind: "team", display_name: `City ${tag}`, seed: 2 },
     ]),
   );
@@ -5144,7 +6252,10 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
       ],
     },
   });
-  check("disc: pro enables rules", put.status === 200 && v1data<{ enabled: boolean }>(put).enabled === true);
+  check(
+    "disc: pro enables rules",
+    put.status === 200 && v1data<{ enabled: boolean }>(put).enabled === true,
+  );
 
   // League with 5 legs → 5 Rovers-vs-City fixtures.
   const stageId = v1data<{ id: string }>(
@@ -5164,7 +6275,15 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
   // Seed one yellow per fixture — lineup must carry the player for the card.
   for (const fx of fixtures) {
     await v1(admin, `/api/v1/fixtures/${fx.id}/lineups/${rovers}`, "PUT", {
-      slots: [{ person_id: player.id, slot: "starting", position_key: "FW", order_no: 1, roles: [] }],
+      slots: [
+        {
+          person_id: player.id,
+          slot: "starting",
+          position_key: "FW",
+          order_no: 1,
+          roles: [],
+        },
+      ],
     });
     const started = await v1(admin, `/api/v1/fixtures/${fx.id}/events`, "POST", {
       expected_seq: 0,
@@ -5186,8 +6305,13 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
   check("disc: 5 yellows raise a pending accumulation ban", !!auto);
 
   if (auto) {
-    const confirmed = await v1(admin, `/api/v1/suspensions/${auto.id}`, "PATCH", { kind: "confirm" });
-    check("disc: confirm activates the ban", v1data<{ status: string }>(confirmed).status === "active");
+    const confirmed = await v1(admin, `/api/v1/suspensions/${auto.id}`, "PATCH", {
+      kind: "confirm",
+    });
+    check(
+      "disc: confirm activates the ban",
+      v1data<{ status: string }>(confirmed).status === "active",
+    );
   }
   const active = v1data<{ status: string }[]>(
     await v1(admin, `/api/v1/divisions/${div.id}/suspensions?status=active`),
@@ -5203,10 +6327,16 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
   // --- Free path: 402 on the rules PUT + PlusReveal on the Discipline tab ---
   const free = newSession();
   await signIn(free, `disc_free_${tag}@example.com`);
-  const freeOrgs = (await call(free, "/api/orgs")) as { id: string; slug: string }[];
+  const freeOrgs = (await call(free, "/api/orgs")) as {
+    id: string;
+    slug: string;
+  }[];
   const freeOrg = freeOrgs[0]!;
   const freeComp = v1data<{ id: string; slug: string }>(
-    await v1(free, "/api/v1/competitions", "POST", { name: `Free Disc ${tag}`, visibility: "public" }),
+    await v1(free, "/api/v1/competitions", "POST", {
+      name: `Free Disc ${tag}`,
+      visibility: "public",
+    }),
   );
   const freeDiv = v1data<{ id: string; slug: string }>(
     await v1(free, `/api/v1/competitions/${freeComp.id}/divisions`, "POST", {
@@ -5220,7 +6350,10 @@ async function disciplineSuite(admin: Session, proOrgId: string, proOrgSlug: str
     rules: { accumulation: [], dismissal: [] },
   });
   check("disc: free rules PUT → 402", freePut.status === 402);
-  const freeTab = await html(free, `/o/${freeOrg.slug}/c/${freeComp.slug}/d/${freeDiv.slug}?tab=discipline`);
+  const freeTab = await html(
+    free,
+    `/o/${freeOrg.slug}/c/${freeComp.slug}/d/${freeDiv.slug}?tab=discipline`,
+  );
   check(
     "disc: free Discipline tab shows the PlusReveal",
     freeTab.status === 200 && freeTab.body.includes("discipline.enforced"),
@@ -5313,11 +6446,28 @@ async function setPlan(orgId: string, plan: string, owner: Session): Promise<voi
     max: 1,
   });
   try {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update
-        set plan_key = ${plan}, status = 'active', updated_at = now()`;
+    // Billing lives on the GROUP (V310): reprice the group the org already bills
+    // through, and only mint one — with the org's owner as payer — if it has none.
+    const [org] = await sql<{ subscription_id: string | null }[]>`
+      select subscription_id from organizations where id = ${orgId}`;
+    if (org?.subscription_id) {
+      await sql`
+        update subscriptions
+           set plan_key = ${plan}, status = 'active', updated_at = now()
+         where id = ${org.subscription_id}`;
+    } else {
+      const [group] = await sql<{ id: string }[]>`
+        insert into subscriptions (owner_user_id, plan_key, status)
+        select coalesce(
+                 (select m.user_id from org_members m
+                   where m.org_id = o.id and m.role = 'owner'
+                   order by m.created_at limit 1),
+                 o.created_by),
+               ${plan}, 'active'
+          from organizations o where o.id = ${orgId}
+        returning id`;
+      await sql`update organizations set subscription_id = ${group!.id} where id = ${orgId}`;
+    }
   } finally {
     await sql.end();
   }
@@ -5500,20 +6650,28 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
     ],
   });
   check("v13 entrant carries badge_url + inline members (201)", badged.status === 201);
-  const badgedRow = v1data<{ badge_url: string | null; id: string }[] | { badge_url: string | null; id: string }>(badged);
+  const badgedRow = v1data<
+    { badge_url: string | null; id: string }[] | { badge_url: string | null; id: string }
+  >(badged);
   const badgedOne = Array.isArray(badgedRow) ? badgedRow[0]! : badgedRow;
-  check("v13 badge_url echoed on the created entrant", badgedOne.badge_url === "https://flags.example/mex.png");
+  check(
+    "v13 badge_url echoed on the created entrant",
+    badgedOne.badge_url === "https://flags.example/mex.png",
+  );
   // --- PROMPT-66: league stage takes an ad-hoc match; it scores + counts.
   const others: string[] = [];
   for (const name of ["B", "C", "D"]) {
     const row = await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST", {
-      kind: "team", display_name: `${name} ${tag}`,
+      kind: "team",
+      display_name: `${name} ${tag}`,
     });
     const data = v1data<{ id: string }[] | { id: string }>(row);
     others.push(Array.isArray(data) ? data[0]!.id : data.id);
   }
   const league = await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
-    seq: 1, kind: "league", name: "League",
+    seq: 1,
+    kind: "league",
+    name: "League",
   });
   const leagueId = v1data<{ id: string }>(league).id;
   await v1(admin, `/api/v1/stages/${leagueId}/generate`, "POST");
@@ -5525,10 +6683,14 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
   check("v13 addFixture on a league stage (201)", adhoc.status === 201);
   const adhocId = v1data<{ fixture_id: string }>(adhoc).fixture_id;
   await v1(admin, `/api/v1/fixtures/${adhocId}/events`, "POST", {
-    expected_seq: 0, type: "core.start", payload: {},
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
   });
   const adhocScore = await v1(admin, `/api/v1/fixtures/${adhocId}/events`, "POST", {
-    expected_seq: 1, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+    expected_seq: 1,
+    type: "generic.result",
+    payload: { p1Score: 2, p2Score: 0 },
   });
   check("v13 ad-hoc match scores like any other", adhocScore.status === 201);
 
@@ -5543,32 +6705,40 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
   );
   for (const name of ["KA", "KB", "KC", "KD"]) {
     await v1(admin, `/api/v1/divisions/${kdiv.id}/entrants`, "POST", {
-      kind: "team", display_name: `${name} ${tag}`,
+      kind: "team",
+      display_name: `${name} ${tag}`,
     });
   }
   const ko = await v1(admin, `/api/v1/divisions/${kdiv.id}/stages`, "POST", {
-    seq: 1, kind: "knockout", name: "KO",
+    seq: 1,
+    kind: "knockout",
+    name: "KO",
   });
   const koId = v1data<{ id: string }>(ko).id;
   const kgen = await v1(admin, `/api/v1/stages/${koId}/generate`, "POST");
   const kf = v1data<{ fixtures: { id: string }[] }>(kgen).fixtures[0]!;
   await v1(admin, `/api/v1/divisions/${kdiv.id}/start`, "POST");
   await v1(admin, `/api/v1/fixtures/${kf.id}/events`, "POST", {
-    expected_seq: 0, type: "core.start", payload: {},
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
   });
   const level = await v1(admin, `/api/v1/fixtures/${kf.id}/events`, "POST", {
-    expected_seq: 1, type: "generic.result", payload: { p1Score: 1, p2Score: 1 },
+    expected_seq: 1,
+    type: "generic.result",
+    payload: { p1Score: 1, p2Score: 1 },
   });
   check("v13 knockout refuses a level result (422 DRAW_NOT_ALLOWED)", level.status === 422);
   const decided = await v1(admin, `/api/v1/fixtures/${kf.id}/events`, "POST", {
-    expected_seq: 1, type: "generic.result", payload: { p1Score: 2, p2Score: 1 },
+    expected_seq: 1,
+    type: "generic.result",
+    payload: { p1Score: 2, p2Score: 1 },
   });
   check("v13 decisive knockout result lands", decided.status === 201);
 
-  const poster = await fetch(
-    `${BASE}/api/v1/divisions/${kdiv.id}/exports/bracket?format=pdf`,
-    { headers: { cookie: cookieHeader(admin) } },
-  );
+  const poster = await fetch(`${BASE}/api/v1/divisions/${kdiv.id}/exports/bracket?format=pdf`, {
+    headers: { cookie: cookieHeader(admin) },
+  });
   const posterBytes = Buffer.from(await poster.arrayBuffer());
   check(
     "v13 bracket poster exports a PDF",
@@ -5578,9 +6748,19 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
   // --- PROMPT-63: audit trail — Pro 200 (verified + signature field), free 402.
   const audit = await v1(admin, `/api/v1/fixtures/${kf.id}/audit`, "GET");
   check("v13 audit trail downloads on Pro", audit.status === 200);
-  const auditData = v1data<{ verified: boolean; head_hash: string | null; signature: unknown }>(audit);
-  check("v13 audit chain verifies with a head hash", auditData.verified === true && auditData.head_hash !== null);
-  check("v13 audit carries the signature field (null without a key, never absent)", "signature" in auditData);
+  const auditData = v1data<{
+    verified: boolean;
+    head_hash: string | null;
+    signature: unknown;
+  }>(audit);
+  check(
+    "v13 audit chain verifies with a head hash",
+    auditData.verified === true && auditData.head_hash !== null,
+  );
+  check(
+    "v13 audit carries the signature field (null without a key, never absent)",
+    "signature" in auditData,
+  );
   await setPlan(proOrgId, "community", admin);
   const gated = await v1(admin, `/api/v1/fixtures/${kf.id}/audit`, "GET");
   check("v13 audit is Pro-gated (402 on community)", gated.status === 402);
@@ -5605,7 +6785,12 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
     // the division create below resolves its sport + variant.
     const esDb = postgres(esDbUrl, {
       connection: { search_path: process.env.DB_SCHEMA ?? "seazn_club" },
-      ssl: process.env.DATABASE_SSL === "disable" ? false : /@(localhost|127\.0\.0\.1)[:/]/.test(esDbUrl) ? false : "require",
+      ssl:
+        process.env.DATABASE_SSL === "disable"
+          ? false
+          : /@(localhost|127\.0\.0\.1)[:/]/.test(esDbUrl)
+            ? false
+            : "require",
       prepare: !esDbUrl.includes(":6543"),
       max: 1,
     });
@@ -5622,7 +6807,10 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
   const bgConfig = { colors: true };
   const bgDiv = v1data<{ id: string }>(
     await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
-      name: "Chess", sport_key: "boardgame", variant_key: "classical", config: bgConfig,
+      name: "Chess",
+      sport_key: "boardgame",
+      variant_key: "classical",
+      config: bgConfig,
     }),
   );
   // A 2-person roster overflows the structural individual cap of 1.
@@ -5664,7 +6852,10 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
   // Settings → Entrants override: widen kinds to allow teams. The config is
   // written wholesale, so re-send the full config with the entrants block.
   const esWiden = await v1(admin, `/api/v1/divisions/${bgDiv.id}`, "PATCH", {
-    config: { ...bgConfig, entrants: { kinds: ["individual", "team"], defaultKind: "individual" } },
+    config: {
+      ...bgConfig,
+      entrants: { kinds: ["individual", "team"], defaultKind: "individual" },
+    },
   });
   check("entrant-shapes: widening kinds via config PATCH (200)", esWiden.status === 200);
   const esTeamOk = await v1(admin, `/api/v1/divisions/${bgDiv.id}/entrants`, "POST", {
@@ -5676,7 +6867,10 @@ async function v13Suite(admin: Session, proOrgId: string, proOrgSlug: string): P
   // Guard: narrowing kinds back to individual-only while that team entrant is
   // live is refused — organisers must withdraw it first.
   const esNarrow = await v1(admin, `/api/v1/divisions/${bgDiv.id}`, "PATCH", {
-    config: { ...bgConfig, entrants: { kinds: ["individual"], defaultKind: "individual" } },
+    config: {
+      ...bgConfig,
+      entrants: { kinds: ["individual"], defaultKind: "individual" },
+    },
   });
   check(
     "entrant-shapes: narrowing under a live team refused (422 ENTRANT_KIND_IN_USE)",
@@ -5692,20 +6886,41 @@ async function pagePlayoffSuite(admin: Session): Promise<void> {
   );
   const div = v1data<{ id: string; slug: string }>(
     await v1(admin, `/api/v1/competitions/${comp.id}/divisions`, "POST", {
-      name: "Playoffs", sport_key: "generic", variant_key: "score",
+      name: "Playoffs",
+      sport_key: "generic",
+      variant_key: "score",
       config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
     }),
   );
   const seeds = ["PP One", "PP Two", "PP Three", "PP Four"];
-  await v1(admin, `/api/v1/divisions/${div.id}/entrants`, "POST",
-    seeds.map((n, i) => ({ kind: "individual", display_name: n, seed: i + 1, members: [] })));
+  await v1(
+    admin,
+    `/api/v1/divisions/${div.id}/entrants`,
+    "POST",
+    seeds.map((n, i) => ({
+      kind: "individual",
+      display_name: n,
+      seed: i + 1,
+      members: [],
+    })),
+  );
   const stage = v1data<{ id: string }>(
     await v1(admin, `/api/v1/divisions/${div.id}/stages`, "POST", {
-      seq: 1, kind: "page_playoff", name: "Playoffs",
+      seq: 1,
+      kind: "page_playoff",
+      name: "Playoffs",
     }),
   );
   const gen = await v1(admin, `/api/v1/stages/${stage.id}/generate`, "POST");
-  const fixtures = v1data<{ fixtures: { id: string; round_no: number; seq_in_round: number; home_entrant_id: string | null; away_entrant_id: string | null }[] }>(gen).fixtures;
+  const fixtures = v1data<{
+    fixtures: {
+      id: string;
+      round_no: number;
+      seq_in_round: number;
+      home_entrant_id: string | null;
+      away_entrant_id: string | null;
+    }[];
+  }>(gen).fixtures;
   check("pp generates the four playoff fixtures", fixtures.length === 4);
   await v1(admin, `/api/v1/divisions/${div.id}/start`, "POST");
 
@@ -5715,24 +6930,36 @@ async function pagePlayoffSuite(admin: Session): Promise<void> {
   const byName = new Map(entrants.map((e) => [e.display_name, e.id]));
   const q1 = fixtures.find((f) => f.round_no === 1 && f.seq_in_round === 1)!;
   const elim = fixtures.find((f) => f.round_no === 1 && f.seq_in_round === 2)!;
-  check("pp Q1 is 1 v 2", q1.home_entrant_id === byName.get("PP One") && q1.away_entrant_id === byName.get("PP Two"));
-  check("pp Eliminator is 3 v 4", elim.home_entrant_id === byName.get("PP Three") && elim.away_entrant_id === byName.get("PP Four"));
+  check(
+    "pp Q1 is 1 v 2",
+    q1.home_entrant_id === byName.get("PP One") && q1.away_entrant_id === byName.get("PP Two"),
+  );
+  check(
+    "pp Eliminator is 3 v 4",
+    elim.home_entrant_id === byName.get("PP Three") &&
+      elim.away_entrant_id === byName.get("PP Four"),
+  );
 
   // Decide Q1 (Two beats One) + the Eliminator (Three wins) → Q2 must pair
   // One (Q1 loser) with Three (Eliminator winner); the Final holds Two.
   const decide = async (fid: string, a: number, b: number) => {
     const st = v1data<{ last_seq: number }>(await v1(admin, `/api/v1/fixtures/${fid}/state`));
     return v1(admin, `/api/v1/fixtures/${fid}/events`, "POST", {
-      expected_seq: st.last_seq ?? 0, type: "generic.result", payload: { p1Score: a, p2Score: b },
+      expected_seq: st.last_seq ?? 0,
+      type: "generic.result",
+      payload: { p1Score: a, p2Score: b },
     });
   };
   await decide(q1.id, 1, 2);
   await decide(elim.id, 3, 0);
-  const q2f = v1data<{ home_entrant_id: string | null; away_entrant_id: string | null }>(
-    await v1(admin, `/api/v1/fixtures/${fixtures.find((f) => f.round_no === 2)!.id}`),
+  const q2f = v1data<{
+    home_entrant_id: string | null;
+    away_entrant_id: string | null;
+  }>(await v1(admin, `/api/v1/fixtures/${fixtures.find((f) => f.round_no === 2)!.id}`));
+  check(
+    "pp Q2 = Q1 loser vs Eliminator winner",
+    q2f.home_entrant_id === byName.get("PP One") && q2f.away_entrant_id === byName.get("PP Three"),
   );
-  check("pp Q2 = Q1 loser vs Eliminator winner",
-    q2f.home_entrant_id === byName.get("PP One") && q2f.away_entrant_id === byName.get("PP Three"));
   const finF = v1data<{ home_entrant_id: string | null }>(
     await v1(admin, `/api/v1/fixtures/${fixtures.find((f) => f.round_no === 3)!.id}`),
   );

@@ -16,6 +16,7 @@ import {
   submitRegistration,
 } from "../registrations";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function makeUser(name: string): Promise<string> {
@@ -26,7 +27,11 @@ async function makeUser(name: string): Promise<string> {
   return id;
 }
 
-async function seedOrg(): Promise<{ orgId: string; orgSlug: string; ownerId: string }> {
+async function seedOrg(): Promise<{
+  orgId: string;
+  orgSlug: string;
+  ownerId: string;
+}> {
   const suffix = randomUUID().slice(0, 8);
   const ownerId = await makeUser("owner");
   const orgSlug = "p52-org-" + suffix;
@@ -34,9 +39,7 @@ async function seedOrg(): Promise<{ orgId: string; orgSlug: string; ownerId: str
     insert into organizations (name, slug, created_by)
     values (${"P52 Org " + suffix}, ${orgSlug}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'pro', 'active')
-            on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
+  await setOrgPlan(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
     values ('generic', 'Generic', '1.0.0', ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
@@ -74,8 +77,15 @@ async function rig(owner: AuthCtx, capacity: number | null) {
     eligibility: [],
   });
   await putRegistrationSettings(owner, division.id, {
-    enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-    form_fields: [], opens_at: null, closes_at: null, capacity, refund_lock_at: null,
+    enabled: true,
+    entrant_kind: "individual",
+    fee_cents: 0,
+    currency: "usd",
+    form_fields: [],
+    opens_at: null,
+    closes_at: null,
+    capacity,
+    refund_lock_at: null,
   });
   return { competition, division };
 }
@@ -93,10 +103,17 @@ const SUBMIT_BASE = {
 };
 
 const submit = (orgSlug: string, compSlug: string, divisionId: string, name: string) =>
-  submitRegistration(orgSlug, compSlug, {
-    ...SUBMIT_BASE, division_id: divisionId, display_name: name,
-    contact_email: `${name.toLowerCase().replace(/ /g, ".")}@test.local`,
-  }, "http://test.local");
+  submitRegistration(
+    orgSlug,
+    compSlug,
+    {
+      ...SUBMIT_BASE,
+      division_id: divisionId,
+      display_name: name,
+      contact_email: `${name.toLowerCase().replace(/ /g, ".")}@test.local`,
+    },
+    "http://test.local",
+  );
 
 describe.skipIf(!HAS_DB)("PROMPT-52 public waitlist reads", () => {
   it("exposes waitlisted count on PublicDivisionInfo and #N on the status page", async () => {

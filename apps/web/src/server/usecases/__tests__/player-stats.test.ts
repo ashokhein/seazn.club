@@ -17,6 +17,7 @@ import { scoreEvent } from "../scoring";
 import { getLineup, putLineup } from "../fixtures";
 import { divisionPlayerStats, personStats, publicDivisionStats } from "../player-stats";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthCtx }> {
@@ -25,10 +26,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into organizations (name, slug) values (${"Sta " + suffix}, ${"sta-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -39,22 +37,35 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('football', 'default', 'Default', ${sql.json({})}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 // two 7-a-side teams with numbered players
 async function seedDivision(auth: AuthCtx, visibility: "private" | "public" = "public") {
-  const comp = await createCompetition(auth, { name: "Stats Cup", visibility, branding: {} });
+  const comp = await createCompetition(auth, {
+    name: "Stats Cup",
+    visibility,
+    branding: {},
+  });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "football", variant_key: "default",
-    config: {}, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "football",
+    variant_key: "default",
+    config: {},
+    eligibility: [],
   });
   const mkPeople = async (names: string[]) =>
     Promise.all(
       names.map((full_name) =>
         createPerson(auth, {
-          full_name, consent: { public_name: full_name !== "Minor Hidden" },
-          dob: null, gender: null, external_ref: null,
+          full_name,
+          consent: { public_name: full_name !== "Minor Hidden" },
+          dob: null,
+          gender: null,
+          external_ref: null,
         }),
       ),
     );
@@ -62,21 +73,36 @@ async function seedDivision(auth: AuthCtx, visibility: "private" | "public" = "p
   const teamB = await mkPeople(["Cy Keeper", "Dee Back", "Eve Mid"]);
   const entrants = await createEntrants(auth, division.id, [
     {
-      kind: "team" as const, display_name: "Reds", seed: 1,
+      kind: "team" as const,
+      display_name: "Reds",
+      seed: 1,
       members: teamA.map((p, i) => ({
-        person_id: p.id, squad_number: i + 7, is_captain: i === 0, roles: [],
+        person_id: p.id,
+        squad_number: i + 7,
+        is_captain: i === 0,
+        roles: [],
         default_position_key: null,
       })),
     },
     {
-      kind: "team" as const, display_name: "Blues", seed: 2,
+      kind: "team" as const,
+      display_name: "Blues",
+      seed: 2,
       members: teamB.map((p, i) => ({
-        person_id: p.id, squad_number: i + 1, is_captain: i === 0, roles: [],
+        person_id: p.id,
+        squad_number: i + 1,
+        is_captain: i === 0,
+        roles: [],
         default_position_key: null,
       })),
     },
   ]);
-  const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
+  });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   await startDivision(auth, division.id);
   // scorer attribution validates against the on-pitch lineup — set both sides
@@ -90,8 +116,11 @@ async function seedDivision(auth: AuthCtx, visibility: "private" | "public" = "p
       const people = rosters.get(entrantId)!;
       await putLineup(auth, f.id, entrantId, {
         slots: people.map((p, i) => ({
-          person_id: p.id, slot: "starting" as const, position_key: null,
-          order_no: i + 1, roles: [],
+          person_id: p.id,
+          slot: "starting" as const,
+          position_key: null,
+          order_no: i + 1,
+          roles: [],
         })),
       });
     }
@@ -113,20 +142,34 @@ describe.skipIf(!HAS_DB)("player statistics (Jul3/07)", () => {
     const { division, fixtures, teamA, entrants } = await seedDivision(auth);
     const f = fixtures[0]!;
     const redsHome = f.home_entrant_id === entrants[0]!.id;
-    await scoreEvent(auth, f.id, { expected_seq: 0, type: "core.start", payload: {} });
+    await scoreEvent(auth, f.id, {
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
     const goal = await scoreEvent(auth, f.id, {
-      expected_seq: 1, type: "football.goal",
-      payload: { by: entrants[0]!.id, scorer: teamA[0]!.id, assist: teamA[1]!.id },
+      expected_seq: 1,
+      type: "football.goal",
+      payload: {
+        by: entrants[0]!.id,
+        scorer: teamA[0]!.id,
+        assist: teamA[1]!.id,
+      },
     });
     await scoreEvent(auth, f.id, {
-      expected_seq: 2, type: "football.goal",
+      expected_seq: 2,
+      type: "football.goal",
       payload: { by: entrants[0]!.id, scorer: teamA[0]!.id },
     });
     await scoreEvent(auth, f.id, {
-      expected_seq: 3, type: "core.award", payload: { person: teamA[0]!.id, key: "motm" },
+      expected_seq: 3,
+      type: "core.award",
+      payload: { person: teamA[0]!.id, key: "motm" },
     });
 
-    const table = await divisionPlayerStats(auth, division.id, { metric: "goals" });
+    const table = await divisionPlayerStats(auth, division.id, {
+      metric: "goals",
+    });
     expect(table.requires_detailed_scoring).toBe(false);
     const ada = table.rows.find((r) => r.full_name === "Ada Striker")!;
     expect(ada.stats).toMatchObject({ goals: 2, points: 2, motm_awards: 1 });
@@ -139,9 +182,13 @@ describe.skipIf(!HAS_DB)("player statistics (Jul3/07)", () => {
     const [goalRow] = await sql<{ id: string }[]>`
       select id from score_events where fixture_id = ${f.id} and seq = ${goal.seq}`;
     await scoreEvent(auth, f.id, {
-      expected_seq: 4, type: "core.void", payload: { event_id: goalRow!.id },
+      expected_seq: 4,
+      type: "core.void",
+      payload: { event_id: goalRow!.id },
     });
-    const after = await divisionPlayerStats(auth, division.id, { metric: "goals" });
+    const after = await divisionPlayerStats(auth, division.id, {
+      metric: "goals",
+    });
     expect(after.rows.find((r) => r.full_name === "Ada Striker")!.stats.goals).toBe(1);
     expect(after.rows.find((r) => r.full_name === "Bea Winger")).toBeUndefined();
     void redsHome;
@@ -169,9 +216,14 @@ describe.skipIf(!HAS_DB)("player statistics (Jul3/07)", () => {
     const { comp, division, fixtures, teamA, entrants } = await seedDivision(auth, "public");
     void division;
     const f = fixtures[0]!;
-    await scoreEvent(auth, f.id, { expected_seq: 0, type: "core.start", payload: {} });
     await scoreEvent(auth, f.id, {
-      expected_seq: 1, type: "football.goal",
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
+    await scoreEvent(auth, f.id, {
+      expected_seq: 1,
+      type: "football.goal",
       payload: { by: entrants[0]!.id, scorer: teamA[2]!.id }, // the no-consent minor
     });
     const [org] = await sql<{ slug: string }[]>`
@@ -183,8 +235,8 @@ describe.skipIf(!HAS_DB)("player statistics (Jul3/07)", () => {
 
     const { auth: freeAuth } = await seedOrg("community");
     const { division: freeDiv } = await seedDivision(freeAuth, "private");
-    await expect(
-      divisionPlayerStats(freeAuth, freeDiv.id, {}),
-    ).rejects.toMatchObject({ featureKey: "stats.player" });
+    await expect(divisionPlayerStats(freeAuth, freeDiv.id, {})).rejects.toMatchObject({
+      featureKey: "stats.player",
+    });
   });
 });

@@ -24,10 +24,14 @@ import { createDivision } from "../divisions";
 import { createEntrants, setEntrantBadge } from "../entrants";
 import { createPerson } from "../persons";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
 async function seedOrg(): Promise<{ auth: AuthCtx }> {
@@ -35,10 +39,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Bk " + suffix}, ${"bk-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -48,16 +49,24 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
-    name: "Bk Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {},
+    name: "Bk Cup " + randomUUID().slice(0, 6),
+    visibility: "private",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   return division;
 }
@@ -80,26 +89,50 @@ describe.skipIf(!HAS_DB)("inline new-person members + badge upload (PROMPT-60 §
   it("creates new persons in the same tx and links them beside existing members", async () => {
     const { auth } = await seedOrg();
     const division = await seedDivision(auth);
-    const existing = await createPerson(auth, { full_name: "Keeper", consent: {} } as never);
+    const existing = await createPerson(auth, {
+      full_name: "Keeper",
+      consent: {},
+    } as never);
 
     const [entrant] = await createEntrants(auth, division.id, [
       {
         kind: "team",
         display_name: "Mexico",
         members: [
-          { person_id: existing.id, squad_number: 1, is_captain: true, roles: [] },
-          { new_person: { full_name: "Striker Nine" }, squad_number: 9, is_captain: false, roles: [] },
-          { new_person: { full_name: "Winger Seven" }, squad_number: 7, is_captain: false, roles: [] },
+          {
+            person_id: existing.id,
+            squad_number: 1,
+            is_captain: true,
+            roles: [],
+          },
+          {
+            new_person: { full_name: "Striker Nine" },
+            squad_number: 9,
+            is_captain: false,
+            roles: [],
+          },
+          {
+            new_person: { full_name: "Winger Seven" },
+            squad_number: 7,
+            is_captain: false,
+            roles: [],
+          },
         ],
       } as never,
     ]);
 
-    const members = await sql<{ person_id: string; squad_number: number | null; full_name: string }[]>`
+    const members = await sql<
+      { person_id: string; squad_number: number | null; full_name: string }[]
+    >`
       select em.person_id, em.squad_number, p.full_name
       from entrant_members em join persons p on p.id = em.person_id
       where em.entrant_id = ${entrant!.id} order by em.squad_number`;
     expect(members).toHaveLength(3);
-    expect(members.map((m) => m.full_name).sort()).toEqual(["Keeper", "Striker Nine", "Winger Seven"]);
+    expect(members.map((m) => m.full_name).sort()).toEqual([
+      "Keeper",
+      "Striker Nine",
+      "Winger Seven",
+    ]);
     expect(await personCount(auth.orgId)).toBe(3); // 1 existing + 2 inline
   });
 
@@ -113,7 +146,11 @@ describe.skipIf(!HAS_DB)("inline new-person members + badge upload (PROMPT-60 §
           kind: "team",
           display_name: "Broken",
           members: [
-            { new_person: { full_name: "Orphan Risk" }, is_captain: false, roles: [] },
+            {
+              new_person: { full_name: "Orphan Risk" },
+              is_captain: false,
+              roles: [],
+            },
             { person_id: randomUUID(), is_captain: false, roles: [] }, // unknown
           ],
         } as never,

@@ -12,10 +12,14 @@ import type Stripe from "stripe";
 // Spy on the invalidation without touching the rest of the resolver — this is
 // the exact call the regression guards. (Sibling convention: billing-pass-revoke
 // mocks @/lib/email the same way.)
-const entMock = vi.hoisted(() => ({ invalidate: vi.fn().mockResolvedValue(undefined) }));
+// V310: the reconcile path drops the cache for the whole billing GROUP, so the
+// call it makes is invalidateEntitlementsForOrgGroup — still keyed by the org.
+const entMock = vi.hoisted(() => ({
+  invalidate: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock("@/lib/entitlements", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/entitlements")>()),
-  invalidateOrgEntitlements: entMock.invalidate,
+  invalidateEntitlementsForOrgGroup: entMock.invalidate,
 }));
 
 // checkout.sessions.retrieve is the only Stripe call reconcileCheckout makes;
@@ -29,19 +33,23 @@ vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 import { sql } from "@/lib/db";
 import { reconcileCheckout } from "@/lib/billing";
 
+import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 const tempPlanKeys: string[] = [];
 
 /** A fresh org + a community subscription row (the pre-checkout state) and a
  *  temp plan whose monthly price id the reconcile will map to. */
-async function seedOrgAwaitingReconcile(): Promise<{ orgId: string; planKey: string; priceId: string }> {
+async function seedOrgAwaitingReconcile(): Promise<{
+  orgId: string;
+  planKey: string;
+  priceId: string;
+}> {
   const suffix = uniq();
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug)
     values (${"Reconcile Org " + suffix}, ${"reconcile-org-" + suffix}) returning id`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'community', 'active')`;
+  await setOrgPlan(orgId, "community");
   const planKey = `tmp_plan_${suffix}`;
   const priceId = `price_reconcile_${suffix}`;
   await sql`insert into plans (key, name, stripe_price_id_monthly)
@@ -63,7 +71,12 @@ function subscriptionSession(orgId: string, priceId: string): Stripe.Checkout.Se
       cancel_at_period_end: false,
       currency: "usd",
       items: {
-        data: [{ price: { id: priceId }, current_period_end: Math.floor(Date.now() / 1000) + 86_400 }],
+        data: [
+          {
+            price: { id: priceId },
+            current_period_end: Math.floor(Date.now() / 1000) + 86_400,
+          },
+        ],
       },
     },
   } as unknown as Stripe.Checkout.Session;
@@ -78,7 +91,12 @@ afterAll(async () => {
   if (!HAS_DB) return;
   if (tempPlanKeys.length) {
     // Subscriptions seeded onto the temp plans must go first — plans.key is
-    // referenced by subscriptions_plan_key_fkey.
+    // referenced by subscriptions_plan_key_fkey. Their orgs must let go of the
+    // group first, or organizations_subscription_fk (V310) blocks the delete.
+    await sql`
+      update organizations set subscription_id = null
+       where subscription_id in (select id from subscriptions
+                                  where plan_key = any(${tempPlanKeys}))`;
     await sql`delete from subscriptions where plan_key = any(${tempPlanKeys})`;
     await sql`delete from plans where key = any(${tempPlanKeys})`;
   }
@@ -98,7 +116,7 @@ describe.skipIf(!HAS_DB)("reconcileCheckout → entitlement invalidation", () =>
     // The plan landed AND the stale cache was dropped — this second assertion is
     // what fails without the invalidation call added on the reconcile path.
     const [s] = await sql<{ plan_key: string }[]>`
-      select plan_key from subscriptions where org_id = ${orgId}`;
+      select plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(s.plan_key).toBe(planKey);
     expect(entMock.invalidate).toHaveBeenCalledTimes(1);
     expect(entMock.invalidate).toHaveBeenCalledWith(orgId);

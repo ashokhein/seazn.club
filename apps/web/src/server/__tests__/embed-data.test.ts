@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
 import { embedDivisionData } from "@/server/embed-data";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seed(visibility: string, plan: string) {
@@ -16,9 +17,7 @@ async function seed(visibility: string, plan: string) {
     values ('generic', 'Generic', '1.0.0', '{}') on conflict (key) do nothing`;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Emb " + s}, ${"emb-" + s}) returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, ${plan}, 'active') on conflict (org_id) do nothing`;
+  await setOrgPlan(orgId, plan);
   const [{ id: compId }] = await sql<{ id: string }[]>`
     insert into competitions (org_id, name, slug, visibility)
     values (${orgId}, ${"Comp " + s}, ${"comp-" + s}, ${visibility}) returning id`;
@@ -39,7 +38,10 @@ afterAll(async () => {
 describe.skipIf(!HAS_DB)("embedDivisionData", () => {
   it("private division → not_found (never a side door)", async () => {
     const { divId } = await seed("private", "pro");
-    expect(await embedDivisionData(divId)).toEqual({ ok: false, reason: "not_found" });
+    expect(await embedDivisionData(divId)).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
   });
 
   it("link-only division on Pro → ok", async () => {
@@ -50,10 +52,16 @@ describe.skipIf(!HAS_DB)("embedDivisionData", () => {
 
   it("public division on Community → not_entitled", async () => {
     const { divId } = await seed("public", "community");
-    expect(await embedDivisionData(divId)).toEqual({ ok: false, reason: "not_entitled" });
+    expect(await embedDivisionData(divId)).toEqual({
+      ok: false,
+      reason: "not_entitled",
+    });
   });
 
   it("garbage id → not_found", async () => {
-    expect(await embedDivisionData("nope")).toEqual({ ok: false, reason: "not_found" });
+    expect(await embedDivisionData("nope")).toEqual({
+      ok: false,
+      reason: "not_found",
+    });
   });
 });

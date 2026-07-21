@@ -25,6 +25,7 @@ vi.mock("@/server/public-site/revalidate", () => ({
 }));
 import { fireDivisionRevalidate } from "@/server/public-site/revalidate";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const DIVISION_CONFIG = {
@@ -49,8 +50,7 @@ async function seedOrg(tag: string): Promise<{ orgId: string; ownerId: string; o
     insert into organizations (name, slug, created_by)
     values (${`Me ${tag} ${suffix}`}, ${`me-${tag}-${suffix}`}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
-  await sql`insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'pro', 'active')
-            on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
+  await setOrgPlan(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
     values ('generic', 'Generic', '1.0.0', ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
@@ -59,41 +59,63 @@ async function seedOrg(tag: string): Promise<{ orgId: string; ownerId: string; o
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(DIVISION_CONFIG)}, true)
     on conflict do nothing`;
-  const owner: AuthCtx = { orgId, via: "session", userId: ownerId, role: "owner", keyId: null };
+  const owner: AuthCtx = {
+    orgId,
+    via: "session",
+    userId: ownerId,
+    role: "owner",
+    keyId: null,
+  };
   return { orgId, ownerId, owner };
 }
 
 /** Division of 4 individual entrants, each backed by a person; fixtures generated + started. */
 async function rig(owner: AuthCtx, opts: { dob?: string | null } = {}) {
   const competition = await createCompetition(owner, {
-    name: "Me Cup " + randomUUID().slice(0, 6), visibility: "public", branding: {},
+    name: "Me Cup " + randomUUID().slice(0, 6),
+    visibility: "public",
+    branding: {},
   });
   const division = await createDivision(owner, competition.id, {
-    name: "Open", sport_key: "generic", variant_key: "score",
-    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    name: "Open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    eligibility: [],
   });
   const persons = [];
   for (const n of ["Ada", "Ben", "Cal", "Dee"]) {
     persons.push(
       await createPerson(owner, {
-        full_name: n, consent: {}, dob: opts.dob ?? null,
+        full_name: n,
+        consent: {},
+        dob: opts.dob ?? null,
       } as never),
     );
   }
   const entrants = await createEntrants(
-    owner, division.id,
+    owner,
+    division.id,
     persons.map((p, i) => ({
       kind: "individual" as const,
       display_name: p.full_name,
       seed: i + 1,
-      members: [{
-        person_id: p.id, squad_number: null, default_position_key: null,
-        is_captain: false, roles: [],
-      }],
+      members: [
+        {
+          person_id: p.id,
+          squad_number: null,
+          default_position_key: null,
+          is_captain: false,
+          roles: [],
+        },
+      ],
     })),
   );
   const [stage] = await createStages(owner, division.id, {
-    seq: 1, kind: "league", name: "L", config: {},
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
   });
   const { fixtures } = await generateStageFixtures(owner, stage.id);
   await startDivision(owner, division.id);
@@ -140,7 +162,11 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
   it("hasPhotoFeature is false for a person only linked as an official — officials have no photo upload", async () => {
     const { owner, orgId } = await seedOrg("official-photo");
     const { persons } = await rig(owner);
-    const refPerson = await createPerson(owner, { full_name: "Ref Sam", consent: {}, dob: null } as never);
+    const refPerson = await createPerson(owner, {
+      full_name: "Ref Sam",
+      consent: {},
+      dob: null,
+    } as never);
     const [official] = await sql<{ id: string }[]>`
       insert into officials (org_id, person_id, display_name, role_keys)
       values (${orgId}, ${refPerson.id}, ${refPerson.full_name}, ${sql.json(["referee"])})
@@ -175,10 +201,13 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
     await sql`update persons set user_id = ${player} where id = ${persons[0].id}`;
     const myFixture = (await listMyFixtures(player)).upcoming[0];
 
-    const first = await setMyAvailability(player, myFixture.id, { status: "in" });
+    const first = await setMyAvailability(player, myFixture.id, {
+      status: "in",
+    });
     expect(first.status).toBe("in");
     const second = await setMyAvailability(player, myFixture.id, {
-      status: "out", note: "away that weekend",
+      status: "out",
+      note: "away that weekend",
     });
     expect(second.status).toBe("out");
     expect(second.note).toBe("away that weekend");
@@ -263,13 +292,12 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
     await sql`update persons set user_id = ${player} where id = ${adult.persons[0].id}`;
 
     vi.mocked(fireDivisionRevalidate).mockClear();
-    const updated = await setMyConsent(player, adult.persons[0].id, { public_name: true });
+    const updated = await setMyConsent(player, adult.persons[0].id, {
+      public_name: true,
+    });
     expect(updated.consent.public_name).toBe(true);
     expect(updated.consent_locked).toBe(false);
-    expect(fireDivisionRevalidate).toHaveBeenCalledWith(
-      adult.division.id,
-      adult.competition.id,
-    );
+    expect(fireDivisionRevalidate).toHaveBeenCalledWith(adult.division.id, adult.competition.id);
 
     // Under-16: read shows locked, write 403s, organiser values hold.
     const minor = await rig(owner, { dob: "2013-01-01" });
@@ -277,13 +305,17 @@ describe.skipIf(!HAS_DB)("player home /me (PROMPT-53)", () => {
     await sql`update persons set user_id = ${kid} where id = ${minor.persons[0].id}`;
     const [kidPerson] = await listMyPersons(kid);
     expect(kidPerson.consent_locked).toBe(true);
-    await expect(setMyConsent(kid, minor.persons[0].id, { public_name: true })).rejects.toMatchObject({
+    await expect(
+      setMyConsent(kid, minor.persons[0].id, { public_name: true }),
+    ).rejects.toMatchObject({
       status: 403,
       code: "CONSENT_LOCKED",
     });
 
     // Not my person → 404 (no oracle about other users' persons).
-    await expect(setMyConsent(player, minor.persons[0].id, { public_name: true })).rejects.toMatchObject({
+    await expect(
+      setMyConsent(player, minor.persons[0].id, { public_name: true }),
+    ).rejects.toMatchObject({
       status: 404,
     });
   });

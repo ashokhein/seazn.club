@@ -15,6 +15,7 @@ import { createDivision } from "../divisions";
 import { createEntrants, patchEntrant } from "../entrants";
 import { createPerson } from "../persons";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seedOrg(): Promise<{ auth: AuthCtx }> {
@@ -22,10 +23,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Es " + suffix}, ${"es-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   // Shared-DB rule: seed the REAL module catalog (positions + a real variant),
   // never an empty stub — an empty catalog would poison other suites.
@@ -37,22 +35,34 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('boardgame', 'classical', 'Classical', ${sql.json(boardgame.variants.classical as never)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedBoardgameDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
-    name: "Chess Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {},
+    name: "Chess Cup " + randomUUID().slice(0, 6),
+    visibility: "private",
+    branding: {},
   });
   return createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "boardgame", variant_key: "classical",
-    config: {}, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "boardgame",
+    variant_key: "classical",
+    config: {},
+    eligibility: [],
   } as never);
 }
 
 async function seedPerson(auth: AuthCtx, name: string): Promise<{ id: string }> {
   return createPerson(auth, {
-    full_name: name, consent: {}, dob: null, gender: null, external_ref: null,
+    full_name: name,
+    consent: {},
+    dob: null,
+    gender: null,
+    external_ref: null,
   } as never);
 }
 
@@ -71,8 +81,13 @@ describe.skipIf(!HAS_DB)("entrant shapes: write-path validation (G-entrant-shape
 
     // 1) kind not allowed — boardgame's model is individual-only.
     await expect(
-      createEntrants(auth, division.id, [{ kind: "team", display_name: "Blunders FC", members: [] }]),
-    ).rejects.toMatchObject({ status: 422, code: "ENTRANT_KIND_NOT_ALLOWED" });
+      createEntrants(auth, division.id, [
+        { kind: "team", display_name: "Blunders FC", members: [] },
+      ]),
+    ).rejects.toMatchObject({
+      status: 422,
+      code: "ENTRANT_KIND_NOT_ALLOWED",
+    });
 
     // 2) roster too big for an individual (structural cap = 1, not configurable).
     const m1 = await seedPerson(auth, "Head One");
