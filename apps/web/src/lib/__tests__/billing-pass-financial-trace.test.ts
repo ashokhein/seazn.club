@@ -166,6 +166,35 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (reconcile-on-retu
     expect(sub.currency).toBeNull();
   });
 
+  it("still reports success when the money-trace write hiccups on an already-recorded pass", async () => {
+    // The pass is recorded and live the moment recordPassPurchase returns; the
+    // trace writes (linkStripeCustomer / pinBillingCurrency) run AFTER it and
+    // are best-effort. A DB hiccup on the trace must not flip the return to
+    // false for a pass that already exists (issue #210). Force a real hiccup:
+    // another subscription already owns this customer id, so linkStripeCustomer's
+    // UPDATE trips V314's partial unique index on stripe_customer_id and throws.
+    const { orgId, compId } = await seedPassBuyer();
+    const cid = "cus_pass_hiccup_" + uniq();
+    await sql`
+      with _owner as (
+        insert into users (email, display_name, email_verified)
+        values ('conflict-' || gen_random_uuid() || '@test.local', 'Conflict Owner', true)
+        returning id
+      )
+      insert into subscriptions (owner_user_id, plan_key, status, stripe_customer_id)
+      select id, 'community', 'active', ${cid} from _owner`;
+    stripeMock.retrieve.mockResolvedValue(passSession(orgId, compId, { customer: cid }));
+
+    // Before the fix the trace fault propagated to the function-wide catch and
+    // returned false — a lie, since the pass is already recorded below.
+    expect(await reconcilePassCheckout(orgId, "cs_pass_hiccup")).toBe(true);
+
+    const [pass] = await sql<{ competition_id: string }[]>`
+      select competition_id from competition_passes
+      where competition_id = ${compId} and org_id = ${orgId}`;
+    expect(pass?.competition_id).toBe(compId);
+  });
+
   it("does not link the customer of a session that is not paid", async () => {
     const { orgId, compId } = await seedPassBuyer();
     stripeMock.retrieve.mockResolvedValue({

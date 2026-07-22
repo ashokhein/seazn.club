@@ -869,12 +869,22 @@ export async function reconcilePassCheckout(
     // are idempotent — linkStripeCustomer touches nothing on a same-customer
     // link, and the currency pin never overwrites — and re-running is what
     // heals a first attempt that died between the insert and these writes.
-    if (session.customer) {
-      // Not a bare UPDATE: a re-buy lands on a NEW customer and the
-      // has_payment_method mirror describes the OLD one. See linkStripeCustomer.
-      await linkStripeCustomer(orgId, session.customer as string);
+    //
+    // Best-effort, like the refund above: the pass is ALREADY recorded and live
+    // once recordPassPurchase returned, so a DB hiccup on either trace write
+    // must NOT flip this reconcile to a failure — the return value would then
+    // lie about a pass that exists. Logged, not rethrown; the webhook re-runs
+    // both idempotently and heals the trace. (issue #210)
+    try {
+      if (session.customer) {
+        // Not a bare UPDATE: a re-buy lands on a NEW customer and the
+        // has_payment_method mirror describes the OLD one. See linkStripeCustomer.
+        await linkStripeCustomer(orgId, session.customer as string);
+      }
+      await pinBillingCurrency(orgId, session.currency);
+    } catch (err) {
+      logReconcileFailure("reconcilePassCheckout", orgId, sessionId, err);
     }
-    await pinBillingCurrency(orgId, session.currency);
     return true;
   } catch (err) {
     logReconcileFailure("reconcilePassCheckout", orgId, sessionId, err);
