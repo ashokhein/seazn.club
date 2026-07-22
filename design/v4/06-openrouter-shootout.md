@@ -697,15 +697,36 @@ pack, not the models — exactly what the user suspected.
 
 1. **`grok-4.5` rep 2 = a transport failure, not a scheduling failure.** "OpenRouter returned
    an unparsable response body" (in=0/out=0) is our OpenRouter adapter unable to parse what
-   xAI returned; rep 1 with the byte-identical pack placed 14/14 cleanly. grok-via-OpenRouter
-   has now shown this intermittent parse flake more than once. It is a **reliability** signal
-   against grok *on this transport*, independent of plan quality. A grok-only disambiguation
-   re-run (`AI_AB_ONLY_ARM="grok-4.5"`) follows to size whether 1/2 was bad luck or a real
-   ~50% flake; its numbers will be appended here.
+   xAI returned; rep 1 with the byte-identical pack placed 14/14 cleanly. It is a
+   **reliability** signal against grok *on this transport*, independent of plan quality — and
+   the disambiguation below shows it is not the only failure mode.
 2. **`grok-4.5` rep 1 emitted 33,998 output tokens — above the 32,000 `max_tokens`** — yet
    finished `stop`/`completed` and parsed cleanly. So `max_tokens` does not hard-bound grok's
    total output on OpenRouter the way it does the Anthropic transport (§3). It passed; the
    note is that grok's cost is not ceiling-capped.
+
+### 14d-bis. Grok disambiguation re-run (`AI_AB_ONLY_ARM="grok-4.5"`, n=2, 32k default)
+
+Re-ran `bracket-16 / grok-4.5` alone to size the reliability question. Result: rep 1
+**`AI_PLAN_TIMEOUT`** at the 600s round wall (in=0/out=0, $0 — no tokens metered); rep 2 did
+not run (the `it()` loop aborts after rep 1 throws). A **third** distinct outcome, on top of
+§14b's clean pass and unparsable-body failure.
+
+**Consolidated `grok-4.5` record on `bracket-16` with the realistic draft (3 attempts):**
+
+| attempt | source | outcome | secs |
+|---|---|---|---|
+| 1 | §14b rep 1 | **clean** — 14/14, 0/0/0, $0.2161824 | 519.8 |
+| 2 | §14b rep 2 | FAIL — "unparsable response body" (transport) | 494.8 |
+| 3 | §14d-bis rep 1 | FAIL — `AI_PLAN_TIMEOUT` (600s round wall) | 600.0 |
+
+**1 clean / 3.** This is not a "retry and it'll pass" flake. `grok-4.5` on this
+dependency-chained pack runs at **~500–600s** — right against the round-timeout ceiling — so
+a run that goes a little slower times out, and separately the transport sometimes returns a
+body the adapter can't parse. Two independent failure modes, both tied to how long and how
+awkwardly grok streams this workload. The one success took 8.7 minutes; `gemini-3.6-flash`
+cleaned the same pack in ~1 minute. Total disambiguation spend: **$0** (timeout metered
+nothing).
 
 ### 14e. How this changes §12d
 
@@ -720,9 +741,14 @@ narrowed reading:
   cold-start handicap, now removed.
 - **`gemini-3.6-flash` is the clean, cheap, fast candidate on this pack** — 2/2 clean, ~$0.18
   mean, ~80s mean, comfortably under ceiling.
-- **`grok-4.5` can solve it but is slower (~500s) and flaked once on transport.** Whether it
-  is production-viable on OpenRouter turns on that parse-reliability question, not on
-  scheduling capability.
+- **`grok-4.5` can produce a correct plan but is not reliable on this pack via OpenRouter** —
+  1 clean / 3 attempts (§14d-bis), ~500–600s per run right against the round-timeout wall,
+  with two independent failure modes (unparsable body, timeout). Its scheduling *capability*
+  is not in doubt — the one clean run was a correct 14/14 — but its *reliability and latency*
+  on hard, dependency-chained schedules are. At ~8.7 min for the run that worked, it is 6–9×
+  slower than gemini on the identical pack.
 - **The default-model decision is still a product call, not made here.** But the evidence base
-  is now sound: the correction removes the single biggest reason §12 gave for caution (an
-  outright hard-pack failure that was really a test artifact).
+  is now sound. The correction removes the single biggest reason §12 gave for caution (an
+  outright hard-pack failure that was really a test artifact), and it re-locates grok's
+  problem: not "can't schedule" but "slow and flaky on this transport." On this pack,
+  `gemini-3.6-flash` is the only candidate that is both correct and reliable.
