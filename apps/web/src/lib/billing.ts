@@ -3,7 +3,12 @@ import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import {
+  invalidateEntitlementsForOrgGroup,
+  invalidateGroupEntitlements,
+  invalidateOrgEntitlements,
+} from "@/lib/entitlements";
+import { requireSubscriptionIdForOrg, subscriptionIdForOrg } from "@/lib/billing-group";
 import { LIVE_SUBSCRIPTION_STATUSES, hasLiveSubscription } from "@/lib/subscription-status";
 
 /**
@@ -22,6 +27,45 @@ export const CHECKOUT_BRANDING = {
   font_family: "inter",
   display_name: "Seazn Club",
 } as const satisfies Stripe.Checkout.SessionCreateParams.BrandingSettings;
+
+/** Thrown when a quantity > 1 is asked of a price that cannot bill it fairly.
+ *  Named so callers and tests can match it without string-sniffing. */
+export const PRICE_NOT_TIERED = "BILLING_GROUP_PRICE_NOT_TIERED";
+
+/**
+ * Refuse to bill a multi-org group against a FLAT (per_unit) price.
+ *
+ * Stripe prices are immutable, so converting the plan prices from flat to
+ * graduated tiers mints NEW prices and archives the old ones — every existing
+ * subscription stays on the archived flat one. A per_unit price bills
+ * `quantity x base`, so the moment quantity rises above 1 on a legacy price the
+ * customer is charged N x the full rate instead of base + half per extra org: a
+ * two-org Pro group would pay $38 where it owes $28.
+ *
+ * Fail closed. Refusing to charge is recoverable — the group is migrated to the
+ * tiered price (stripe-sync mints it) and retries. Silently overcharging is
+ * not. Quantity 1 is always allowed on any scheme: a single-org group and the
+ * one-time Event Pass are legitimate flat, quantity-1 purchases.
+ */
+export function assertPriceBillsQuantity(args: {
+  priceId: string;
+  billingScheme: Stripe.Price.BillingScheme | null | undefined;
+  quantity: number;
+  /** Only for the log line — the operator needs to know WHICH group is stuck. */
+  subscriptionId?: string;
+}): void {
+  if (args.quantity <= 1) return;
+  if (args.billingScheme === "tiered") return;
+  console.error(
+    `[billing] group ${args.subscriptionId ?? "?"} on flat price ${args.priceId}: ` +
+      `refusing quantity ${args.quantity} — migrate to the tiered price first`,
+  );
+  throw new HttpError(
+    503,
+    "This subscription is on an older price that cannot bill more than one organisation. " +
+      `Please contact support (${PRICE_NOT_TIERED}).`,
+  );
+}
 
 /**
  * Sent with EVERY checkout that reuses an EXISTING Stripe customer, because
@@ -69,6 +113,29 @@ export function buildEmbeddedCheckoutParams(args: {
   /** ISO currency picking one of the price's currency_options (v3/07 §4);
    *  defaults to usd, and is ALWAYS sent — see the note on the field below. */
   currency?: string;
+  /** Seats to buy: one per org in the BILLING GROUP this checkout pays for
+   *  (billing-groups spec — `max(active_org_count, quantity_paid)`, resolved by
+   *  billedQuantity). Resolved by the caller, not here, so this stays pure.
+   *  Defaults to 1, which is what a brand-new single-org group asks for. */
+  quantity?: number;
+  /** The resolved price's `billing_scheme`. REQUIRED whenever quantity > 1 —
+   *  see assertPriceBillsQuantity. Never read for quantity 1. */
+  billingScheme?: Stripe.Price.BillingScheme | null;
+  /** The BILLING GROUP (subscriptions.id) this checkout pays for — stamped into
+   *  the Stripe metadata as `subscription_id` and the durable answer to "which
+   *  row does a webhook for this subscription write?".
+   *
+   *  `org_id` alone cannot answer that any more: many orgs share one group, and
+   *  an org can move between groups (detach), after which its stamp names a
+   *  group it no longer bills through — resolving through it would overwrite a
+   *  DIFFERENT customer's plan/status/period end. See resolveGroupForStripeSub
+   *  in server/usecases/billing-events.ts.
+   *
+   *  Optional only so the pure-params unit tests can omit it; every real caller
+   *  has it (api/billing/checkout gets it from requireBillingOwner, and every
+   *  org has had a group since creation). org_id stays alongside it — attribution
+   *  and the subscription.created analytics event still key off the buying org. */
+  subscriptionId?: string;
   /**
    * Collect a card even when a trial is running (v3/07, D13). Set by the
    * checkout route for an org that holds an Event Pass: that org has already
@@ -78,6 +145,20 @@ export function buildEmbeddedCheckoutParams(args: {
    */
   requireCard?: boolean;
 }): Stripe.Checkout.SessionCreateParams {
+  const quantity = Math.max(1, args.quantity ?? 1);
+  assertPriceBillsQuantity({
+    priceId: args.priceId,
+    billingScheme: args.billingScheme,
+    quantity,
+  });
+  // Both the session and the subscription carry it: the session metadata is what
+  // the reconcile-on-return path reads, the SUBSCRIPTION metadata is what every
+  // later customer.subscription.* webhook carries (Stripe does not copy session
+  // metadata onto the subscription).
+  const metadata = {
+    org_id: args.orgId,
+    ...(args.subscriptionId ? { subscription_id: args.subscriptionId } : {}),
+  };
   return {
     // stripe-node v22 names the embedded UI mode "embedded_page".
     ui_mode: "embedded_page",
@@ -100,7 +181,7 @@ export function buildEmbeddedCheckoutParams(args: {
     // explicitly usd, so setting `currency` alone does NOT stop it. Only this
     // flag does. We quote in one currency; we must charge in that currency.
     adaptive_pricing: { enabled: false },
-    metadata: { org_id: args.orgId },
+    metadata: { ...metadata },
     ...(args.trialDays > 0 && !args.requireCard
       ? { payment_method_collection: "if_required" as const }
       : {}),
@@ -111,9 +192,9 @@ export function buildEmbeddedCheckoutParams(args: {
             trial_settings: { end_behavior: { missing_payment_method: "cancel" as const } },
           }
         : {}),
-      metadata: { org_id: args.orgId },
+      metadata: { ...metadata },
     },
-    line_items: [{ price: args.priceId, quantity: 1 }],
+    line_items: [{ price: args.priceId, quantity }],
     return_url: args.returnUrl,
     allow_promotion_codes: true,
     branding_settings: { ...CHECKOUT_BRANDING },
@@ -223,8 +304,11 @@ export function buildPassCheckoutParams(args: {
  * means for ever) — so `status` is selected and hasLiveSubscription decides.
  */
 export async function downgradeToCommunity(orgId: string): Promise<void> {
+  // The plan lives on the GROUP now, so this downgrades every org billing
+  // through it — which is what a downgrade of a shared subscription means.
+  const subscriptionId = await requireSubscriptionIdForOrg(orgId);
   const [sub] = await sql<{ stripe_subscription_id: string | null; status: string | null }[]>`
-    select stripe_subscription_id, status from subscriptions where org_id = ${orgId}`;
+    select stripe_subscription_id, status from subscriptions where id = ${subscriptionId}`;
   if (hasLiveSubscription(sub)) {
     throw new HttpError(
       400,
@@ -244,8 +328,60 @@ export async function downgradeToCommunity(orgId: string): Promise<void> {
         status_changed_at = case when stripe_subscription_id is null
                                       and status is distinct from 'active'
                                  then now() else status_changed_at end
-    where org_id = ${orgId}`;
-  await invalidateOrgEntitlements(orgId);
+    where id = ${subscriptionId}`;
+  // Group-wide: plan_key just moved for every org in the group, and a per-org
+  // invalidation would leave the siblings serving Pro for the 300s TTL.
+  await invalidateGroupEntitlements(subscriptionId);
+}
+
+/**
+ * End a billing group that has no one left to manage it (account deletion with
+ * no heir).
+ *
+ * Every billing route gates on `subscriptions.owner_user_id`, so a group whose
+ * payer deletes their account and has no successor becomes unmanageable: nobody
+ * can cancel it, and Stripe keeps charging the card indefinitely. Leaving that
+ * behind is worse than losing the plan, so the subscription is cancelled
+ * outright and the group drops to Community.
+ *
+ * Cancels IMMEDIATELY at Stripe rather than at period end: cancel_at_period_end
+ * would still need someone to be able to change their mind, and there is by
+ * definition nobody. The Stripe call is best-effort and swallows its own error —
+ * the local row must still be truthful (and the deletion must still complete)
+ * even if Stripe is unreachable; the subscription.deleted webhook converges the
+ * two either way.
+ */
+export async function cancelBillingGroup(subscriptionId: string): Promise<boolean> {
+  const [sub] = await sql<{ stripe_subscription_id: string | null; status: string | null }[]>`
+    select stripe_subscription_id, status from subscriptions where id = ${subscriptionId}`;
+  if (!sub) return false;
+  if (hasLiveSubscription(sub) && sub.stripe_subscription_id) {
+    try {
+      await getStripe().subscriptions.cancel(sub.stripe_subscription_id);
+    } catch (err) {
+      // Loud, and NOT followed by a local write. Marking the row `canceled` when
+      // Stripe refused is the worst of both: the customer keeps being charged,
+      // and the row drops out of every "live subscription" filter — including
+      // the reconcile sweep's — so nothing ever retries. Leaving it live is what
+      // keeps it visible and retryable.
+      console.error("cancelBillingGroup: Stripe cancel failed", subscriptionId, err);
+      return false;
+    }
+  }
+  await sql`
+    update subscriptions
+    set plan_key = 'community', status = 'canceled', cancel_at_period_end = false,
+        comped_until = null, updated_at = now(),
+        -- Paid slots die with the subscription. A new subscription cannot
+        -- inherit the old one's seats, so leaving quantity_paid at 8 would make
+        -- billedQuantity quote 8 seats on the re-buy checkout of a group that
+        -- now holds three orgs.
+        quantity_paid = 1,
+        status_changed_at = case when status is distinct from 'canceled'
+                                 then now() else status_changed_at end
+    where id = ${subscriptionId}`;
+  await invalidateGroupEntitlements(subscriptionId);
+  return true;
 }
 
 /** Map a Stripe subscription status to our subscription status enum. */
@@ -299,12 +435,25 @@ export function billingCtaLabel(status: string, hasPaymentMethod: boolean): stri
  * added a card to add one again.
  */
 export async function syncPaymentMethodFlag(orgId: string): Promise<boolean | null> {
+  const subscriptionId = await subscriptionIdForOrg(orgId);
+  if (!subscriptionId) return null;
+  return syncPaymentMethodFlagForSubscription(subscriptionId);
+}
+
+/**
+ * Same sync, addressed by GROUP. The card lives on the group's Stripe customer,
+ * so the webhook path (which resolves a customer id, not an org) writes here
+ * directly instead of picking an arbitrary member org to route through.
+ */
+export async function syncPaymentMethodFlagForSubscription(
+  subscriptionId: string,
+): Promise<boolean | null> {
   const [sub] = await sql<{ stripe_customer_id: string | null }[]>`
-    select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+    select stripe_customer_id from subscriptions where id = ${subscriptionId}`;
   if (!sub) return null;
   // No Stripe customer at all means no card, and that is knowable without a
   // round trip.
-  if (!sub.stripe_customer_id) return writePaymentMethodFlag(orgId, false);
+  if (!sub.stripe_customer_id) return writePaymentMethodFlag(subscriptionId, false);
 
   try {
     const stripe = getStripe();
@@ -315,7 +464,7 @@ export async function syncPaymentMethodFlag(orgId: string): Promise<boolean | nu
     const rawDefault = customer.deleted
       ? null
       : (customer.invoice_settings?.default_payment_method ?? null);
-    return syncPaymentMethodFlagFromCards(orgId, {
+    return writeCardsFlag(subscriptionId, {
       cardCount: pms.data.length,
       hasCustomerDefault: !!rawDefault,
     });
@@ -340,12 +489,25 @@ export async function syncPaymentMethodFlagFromCards(
   orgId: string,
   args: { cardCount: number; hasCustomerDefault: boolean },
 ): Promise<boolean | null> {
+  const subscriptionId = await subscriptionIdForOrg(orgId);
+  if (!subscriptionId) return null;
+  return writeCardsFlag(subscriptionId, args, orgId);
+}
+
+/** The card-list → flag write, addressed by group. Shared by both entry points
+ *  above so the "attached counts even before default" rule lives in one place. */
+async function writeCardsFlag(
+  subscriptionId: string,
+  args: { cardCount: number; hasCustomerDefault: boolean },
+  logOrgId?: string,
+): Promise<boolean | null> {
   // An attached card counts even before it is made the customer default: the
   // add-card flow promotes it a moment later, and the banner must not flap.
   const has = args.cardCount > 0 || args.hasCustomerDefault;
   try {
-    return await writePaymentMethodFlag(orgId, has);
+    return await writePaymentMethodFlag(subscriptionId, has);
   } catch (err) {
+    const orgId = logOrgId ?? subscriptionId;
     // Swallowed on purpose (render path), but NOT silent: a persistently
     // failing mirror write would otherwise be invisible — every caller just
     // sees the same null it gets for "Stripe was unreachable".
@@ -376,8 +538,30 @@ export async function syncPaymentMethodFlagFromCards(
  * touches nothing, so a renewal never disturbs the mirror or updated_at.
  */
 export async function linkStripeCustomer(orgId: string, customerId: string): Promise<void> {
+  // The Stripe customer belongs to the GROUP the org bills through, not to the
+  // org: two orgs in one group share one customer and one card.
+  const subscriptionId = await subscriptionIdForOrg(orgId);
+  if (!subscriptionId) return;
+  await linkStripeCustomerForGroup(subscriptionId, customerId);
+}
+
+/**
+ * The same link, addressed by GROUP.
+ *
+ * org → group is the hop that goes wrong once orgs can move between groups: the
+ * checkout that created this customer paid for ONE group, and by the time its
+ * webhook arrives the org named in the metadata may bill through another one —
+ * at which point writing through the org stamps the payer's customer id onto a
+ * different customer's row. V310's partial unique index on stripe_customer_id
+ * turns that into a raised error rather than silent corruption, which is a
+ * safety net, not a licence to keep resolving through the org.
+ */
+export async function linkStripeCustomerForGroup(
+  subscriptionId: string,
+  customerId: string,
+): Promise<void> {
   const [before] = await sql<{ stripe_customer_id: string | null }[]>`
-    select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+    select stripe_customer_id from subscriptions where id = ${subscriptionId}`;
   if (!before) return;
   // The clear is decided in SQL from the row's own value, so it is correct even
   // if another writer moved the id since the select above.
@@ -388,8 +572,9 @@ export async function linkStripeCustomer(orgId: string, customerId: string): Pro
         updated_at = case when stripe_customer_id is distinct from ${customerId}
                           then now() else updated_at end,
         stripe_customer_id = ${customerId}
-    where org_id = ${orgId}`;
-  if (before.stripe_customer_id !== customerId) await syncPaymentMethodFlag(orgId);
+    where id = ${subscriptionId}`;
+  if (before.stripe_customer_id !== customerId)
+    await syncPaymentMethodFlagForSubscription(subscriptionId);
 }
 
 /**
@@ -416,18 +601,18 @@ export async function pinBillingCurrency(
     update subscriptions
     set currency   = coalesce(currency, ${currency}),
         updated_at = case when currency is null then now() else updated_at end
-    where org_id = ${orgId}`;
+    where id = (select subscription_id from organizations where id = ${orgId})`;
 }
 
 /** Persist the flag. Private on purpose — go through syncPaymentMethodFlag so
  *  the value always comes from Stripe. */
-async function writePaymentMethodFlag(orgId: string, has: boolean): Promise<boolean> {
+async function writePaymentMethodFlag(subscriptionId: string, has: boolean): Promise<boolean> {
   await sql`
     update subscriptions
     set has_payment_method = ${has},
         updated_at = case when has_payment_method is distinct from ${has}
                           then now() else updated_at end
-    where org_id = ${orgId}`;
+    where id = ${subscriptionId}`;
   return has;
 }
 
@@ -466,11 +651,33 @@ export async function planKeyForPrice(priceId: string): Promise<string | null> {
 }
 
 /**
- * Upsert an org's subscription row from a Stripe Subscription object. Shared by
+ * Write an org's BILLING GROUP row from a Stripe Subscription object. Shared by
  * the webhook handler and the reconcile-on-return path so both stay in sync.
+ *
+ * Formerly an `insert … on conflict (org_id)` upsert. There is nothing to
+ * insert any more: every org is created pointing at a group and V310 backfilled
+ * the rest, so the row always exists and this is a plain UPDATE by group id. The
+ * old ON CONFLICT clause is preserved verbatim as the SET list — in Postgres an
+ * UPDATE's right-hand side reads the OLD row, so each `case when <col> is
+ * distinct from <new>` keeps exactly the `subscriptions.x` vs `excluded.x`
+ * meaning it had.
  */
 export async function syncSubscription(
   orgId: string,
+  stripeSub: Stripe.Subscription,
+): Promise<void> {
+  await syncSubscriptionForGroup(await requireSubscriptionIdForOrg(orgId), stripeSub);
+}
+
+/**
+ * The same write, addressed by GROUP. The webhook path resolves a subscription
+ * (group) id directly — from the Stripe metadata stamp, the stored
+ * stripe_subscription_id, or the customer — and must NOT round-trip through an
+ * org to get back here: an org's `subscription_id` can move (detach), so
+ * org → group is exactly the hop that can land on the wrong row.
+ */
+export async function syncSubscriptionForGroup(
+  subscriptionId: string,
   stripeSub: Stripe.Subscription,
 ): Promise<void> {
   const priceId = stripeSub.items.data[0]?.price?.id ?? null;
@@ -486,37 +693,21 @@ export async function syncSubscription(
   const hasPm = paymentMethodFromStripeSubscription(stripeSub);
 
   await sql`
-    insert into subscriptions
-      (org_id, plan_key, status, stripe_subscription_id,
-       current_period_end, trial_end, trial_used_at, cancel_at_period_end, currency,
-       has_payment_method, updated_at, status_changed_at)
-    values
-      (${orgId}, ${knownPlanKey ?? "community"}, ${status},
-       ${stripeSub.id},
-       ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
-       ${stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null},
-       ${new Date().toISOString()},
-       ${stripeSub.cancel_at_period_end},
-       ${stripeSub.currency ?? null},
-       ${hasPm ?? false},
-       now(), now())
-    on conflict (org_id) do update set
-      -- Unknown price keeps the org's current plan (never mass-downgrade on drift).
+    update subscriptions set
+      -- Unknown price keeps the group's current plan (never mass-downgrade on drift).
       plan_key               = coalesce(${knownPlanKey}, subscriptions.plan_key, 'community'),
-      status                 = excluded.status,
-      stripe_subscription_id = excluded.stripe_subscription_id,
-      current_period_end     = excluded.current_period_end,
-      trial_end              = excluded.trial_end,
-      -- One trial per org — and "trial" means "has had Pro". Any subscription
+      status                 = ${status},
+      stripe_subscription_id = ${stripeSub.id},
+      current_period_end     = ${periodEnd ? new Date(periodEnd * 1000).toISOString() : null},
+      trial_end              = ${
+        stripeSub.trial_end ? new Date(stripeSub.trial_end * 1000).toISOString() : null
+      },
+      -- One trial per group — and "trial" means "has had Pro". Any subscription
       -- reaching us counts, including a dashboard-created one that never
       -- carried a trial_end (V277's backfill always assumed this; the code
       -- did not). Never cleared except by the staff Restore trial action.
-      -- excluded.trial_used_at is always non-null (the insert stamps it
-      -- unconditionally); now() is a backstop should that ever become
-      -- conditional again.
-      trial_used_at          = coalesce(subscriptions.trial_used_at,
-                                        excluded.trial_used_at, now()),
-      cancel_at_period_end   = excluded.cancel_at_period_end,
+      trial_used_at          = coalesce(subscriptions.trial_used_at, now()),
+      cancel_at_period_end   = ${stripeSub.cancel_at_period_end},
       -- Card on file: only OVERWRITE when this Stripe object could actually
       -- answer. A trialing subscription created by the no-card checkout never
       -- carries its own default_payment_method, so an unexpanded webhook
@@ -525,21 +716,22 @@ export async function syncSubscription(
       -- (the 2026-07-20 report). The in-app and payment_method webhook
       -- writers keep the mirror honest in that case.
       has_payment_method     = coalesce(${hasPm}::boolean, subscriptions.has_payment_method),
-      currency               = coalesce(excluded.currency, subscriptions.currency),
+      currency               = coalesce(${stripeSub.currency ?? null}, subscriptions.currency),
       -- Task 7 fold-in: a re-buy (new sub id) clears any stale dispute flags so an
       -- old dispute's late loss can't downgrade the fresh sub; a renewal (same id)
       -- leaves an in-flight dispute's flags intact.
       disputed_at            = case when subscriptions.stripe_subscription_id
-                                      is distinct from excluded.stripe_subscription_id
+                                      is distinct from ${stripeSub.id}
                                     then null else subscriptions.disputed_at end,
       dispute_id             = case when subscriptions.stripe_subscription_id
-                                      is distinct from excluded.stripe_subscription_id
+                                      is distinct from ${stripeSub.id}
                                     then null else subscriptions.dispute_id end,
       -- Grace anchor: stamp only on a real status TRANSITION — a same-status
       -- re-sync (webhook replay, dunning retry) must not move it.
-      status_changed_at      = case when subscriptions.status is distinct from excluded.status
+      status_changed_at      = case when subscriptions.status is distinct from ${status}
                                     then now() else subscriptions.status_changed_at end,
-      updated_at             = now()`;
+      updated_at             = now()
+    where id = ${subscriptionId}`;
 }
 
 /**
@@ -616,6 +808,32 @@ export async function revokePassForRefundedCharge(charge: Stripe.Charge): Promis
 }
 
 /**
+ * Both reconcile paths return `false` for two very different things: "this
+ * session legitimately has nothing to reconcile" and "something blew up".
+ * Callers are render paths that must not throw, so the catch stays — but a
+ * discarded exception is indistinguishable from an ordinary miss, and that is
+ * exactly the failure this branch exists to remove.
+ *
+ * Not narrowed to a specific expected error on purpose: the try covers a Stripe
+ * retrieve (unreachable, revoked key, bogus session id from a hand-edited URL)
+ * AND our own DB writes, and only the first family is expected. Narrowing to it
+ * would let a DB or cache fault propagate out of a page render and blank the
+ * billing page for a customer who has just paid. So everything is still caught,
+ * and everything is now VISIBLE — which is what was actually missing. A real
+ * fault (2026-07-21: a partially-mocked entitlements module made
+ * invalidateEntitlementsForOrgGroup a TypeError) now shows up in the logs
+ * instead of looking like a normal negative result.
+ */
+function logReconcileFailure(
+  fn: string,
+  orgId: string,
+  sessionId: string,
+  err: unknown,
+): void {
+  console.error(`${fn}: failed for org ${orgId} session ${sessionId}`, err);
+}
+
+/**
  * Reconcile a completed Event Pass checkout directly from Stripe (same
  * webhook-optional contract as reconcileCheckout). Returns true once the pass
  * is recorded. Best-effort and idempotent; never throws.
@@ -658,7 +876,8 @@ export async function reconcilePassCheckout(
     }
     await pinBillingCurrency(orgId, session.currency);
     return true;
-  } catch {
+  } catch (err) {
+    logReconcileFailure("reconcilePassCheckout", orgId, sessionId, err);
     return false;
   }
 }
@@ -691,14 +910,16 @@ export async function reconcileCheckout(
     const subObj = session.subscription;
     if (subObj && typeof subObj !== "string") {
       await syncSubscription(orgId, subObj);
-      // The plan just changed in `subscriptions`; drop the cached entitlement
-      // resolver so a missed-webhook reconcile takes effect immediately instead
-      // of waiting out the TTL (mirrors recordPassPurchase on the pass path).
-      await invalidateOrgEntitlements(orgId);
+      // The plan just changed on the GROUP; drop the cached entitlements of
+      // every org billing through it so a missed-webhook reconcile takes effect
+      // immediately instead of waiting out the TTL, and no sibling org keeps
+      // serving the old plan.
+      await invalidateEntitlementsForOrgGroup(orgId);
       return true;
     }
     return false;
-  } catch {
+  } catch (err) {
+    logReconcileFailure("reconcileCheckout", orgId, sessionId, err);
     return false;
   }
 }

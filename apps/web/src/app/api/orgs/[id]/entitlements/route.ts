@@ -27,8 +27,10 @@ export async function GET(
       trial_end: string | null;
       current_period_end: string | null;
     }[]>`
-      select plan_key, status, trial_end, current_period_end
-      from subscriptions where org_id = ${orgId}`;
+      select s.plan_key, s.status, s.trial_end, s.current_period_end
+      from subscriptions s
+      join organizations o on o.subscription_id = s.id
+      where o.id = ${orgId}`;
 
     const planKey = sub?.plan_key ?? "community";
     const status = sub?.status ?? "active";

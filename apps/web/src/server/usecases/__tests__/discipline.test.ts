@@ -36,6 +36,7 @@ import {
 } from "../discipline";
 import { scoreEvent } from "../scoring";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 // Full football config snapshot (createDivision would store this) — needed so
@@ -75,9 +76,7 @@ async function seedFootballDivision(plan: "pro" | "community" = "pro"): Promise<
     values (${"Disc " + suffix}, ${"disc-" + suffix}, ${userId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
   if (plan === "pro") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'pro', 'active')
-      on conflict (org_id) do update set plan_key = 'pro'`;
+    await setOrgPlan(orgId);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -106,7 +105,14 @@ async function seedFootballDivision(plan: "pro" | "community" = "pro"): Promise<
   await sql`insert into entrant_members (entrant_id, person_id, org_id) values (${entrantB}, ${personY}, ${orgId})`;
   return {
     auth: { orgId, via: "session", userId, role: "owner", keyId: null },
-    orgId, userId, divisionId, entrantA, entrantB, personX, personY, stageId,
+    orgId,
+    userId,
+    divisionId,
+    entrantA,
+    entrantB,
+    personX,
+    personY,
+    stageId,
   };
 }
 
@@ -140,7 +146,7 @@ async function setRules(ctx: Ctx, rules: unknown = RULES, enabled = true): Promi
     on conflict (division_id) do update set enabled = excluded.enabled, rules = excluded.rules`;
 }
 
-let seqByFixture = new Map<string, number>();
+const seqByFixture = new Map<string, number>();
 function nextSeq(fixtureId: string): number {
   const n = (seqByFixture.get(fixtureId) ?? 0) + 1;
   seqByFixture.set(fixtureId, n);
@@ -253,19 +259,26 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     const ids: string[] = [];
     for (let i = 0; i < 5; i++) ids.push(await insertCard(a, fxA, a.entrantA, a.personX, "yellow"));
     await detect(a);
-    expect((await listSuspensions(a.auth, a.divisionId)).filter((r) => r.source === "auto_accumulation")).toHaveLength(1);
+    expect(
+      (await listSuspensions(a.auth, a.divisionId)).filter((r) => r.source === "auto_accumulation"),
+    ).toHaveLength(1);
     await voidEvent(a, fxA, ids[0]!);
     await detect(a);
-    expect((await listSuspensions(a.auth, a.divisionId)).filter((r) => r.source === "auto_accumulation")).toHaveLength(0);
+    expect(
+      (await listSuspensions(a.auth, a.divisionId)).filter((r) => r.source === "auto_accumulation"),
+    ).toHaveLength(0);
 
     // confirmed path: confirm the row, THEN void a trigger → row stays, flagged.
     const b = await seedFootballDivision();
     await setRules(b);
     const fxB = await makeFixture(b, 1, b.entrantA, b.entrantB);
     const bIds: string[] = [];
-    for (let i = 0; i < 5; i++) bIds.push(await insertCard(b, fxB, b.entrantA, b.personX, "yellow"));
+    for (let i = 0; i < 5; i++)
+      bIds.push(await insertCard(b, fxB, b.entrantA, b.personX, "yellow"));
     await detect(b);
-    const pending = (await listSuspensions(b.auth, b.divisionId)).find((r) => r.source === "auto_accumulation")!;
+    const pending = (await listSuspensions(b.auth, b.divisionId)).find(
+      (r) => r.source === "auto_accumulation",
+    )!;
     await decideSuspension(b.auth, pending.id, { kind: "confirm" });
     await voidEvent(b, fxB, bIds[0]!);
     await detect(b);
@@ -293,13 +306,22 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     const cardFx = await makeFixture(ctx, 1, ctx.entrantA, ctx.entrantB);
     for (let i = 0; i < 5; i++) await insertCard(ctx, cardFx, ctx.entrantA, ctx.personX, "yellow");
     await detect(ctx);
-    const pending = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.source === "auto_accumulation")!;
-    const confirmed = await decideSuspension(ctx.auth, pending.id, { kind: "confirm" });
+    const pending = (await listSuspensions(ctx.auth, ctx.divisionId)).find(
+      (r) => r.source === "auto_accumulation",
+    )!;
+    const confirmed = await decideSuspension(ctx.auth, pending.id, {
+      kind: "confirm",
+    });
     expect(confirmed.status).toBe("active");
     expect(confirmed.entrantId).toBe(ctx.entrantA);
 
     // Stamp a fixture's deciding event; "after"/"before" the ban's decided_at.
-    const stamp = async (fixtureId: string, type: string, payload: object, when: "after" | "before") => {
+    const stamp = async (
+      fixtureId: string,
+      type: string,
+      payload: object,
+      when: "after" | "before",
+    ) => {
       await sql`
         insert into score_events (fixture_id, org_id, seq, type, payload, recorded_at)
         values (${fixtureId}, ${ctx.orgId}, ${nextSeq(fixtureId)}, ${type}, ${sql.json(payload as never)},
@@ -319,7 +341,9 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     const fx6 = await makeFixture(ctx, 7, ctx.entrantA, ctx.entrantB, "forfeited");
     await stamp(fx6, "core.forfeit", { by: ctx.entrantB, reason: "walkover" }, "after");
 
-    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.id === pending.id)!;
+    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find(
+      (r) => r.id === pending.id,
+    )!;
     expect(served.matchesServed).toBe(3); // fx1 + fx2 + fx3 (forfeit-by-A)
     expect(served.status).toBe("served");
   });
@@ -354,17 +378,24 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     expect(got0!.enabled).toBe(false);
     expect(got0!.sportColors.map((c) => c.key)).toContain("yellow");
 
-    await putDisciplineRules(ctx.auth, ctx.divisionId, { enabled: true, rules: RULES });
+    await putDisciplineRules(ctx.auth, ctx.divisionId, {
+      enabled: true,
+      rules: RULES,
+    });
     const got1 = await getDisciplineRules(ctx.auth, ctx.divisionId);
     expect(got1!.enabled).toBe(true);
     expect(got1!.rules.accumulation).toHaveLength(2);
 
     const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
-      personId: ctx.personX, matchesTotal: 2, reason: "violent conduct",
+      personId: ctx.personX,
+      matchesTotal: 2,
+      reason: "violent conduct",
     });
     expect(manual.status).toBe("pending");
     expect(manual.source).toBe("manual");
-    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    const active = await decideSuspension(ctx.auth, manual.id, {
+      kind: "confirm",
+    });
     expect(active.status).toBe("active");
     expect(active.entrantId).toBe(ctx.entrantA);
   });
@@ -405,7 +436,9 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     // any insert, even though personX is a valid org-A person.
     await expect(
       createManualSuspension(a.auth, b.divisionId, {
-        personId: a.personX, matchesTotal: 1, reason: "x",
+        personId: a.personX,
+        matchesTotal: 1,
+        reason: "x",
       }),
     ).rejects.toMatchObject({ status: 404 });
   });
@@ -418,14 +451,19 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
       PaymentRequiredError,
     );
     await expect(
-      putDisciplineRules(ctx.auth, ctx.divisionId, { enabled: true, rules: RULES }),
+      putDisciplineRules(ctx.auth, ctx.divisionId, {
+        enabled: true,
+        rules: RULES,
+      }),
     ).rejects.toBeInstanceOf(PaymentRequiredError);
     await expect(listSuspensions(ctx.auth, ctx.divisionId)).rejects.toBeInstanceOf(
       PaymentRequiredError,
     );
     await expect(
       createManualSuspension(ctx.auth, ctx.divisionId, {
-        personId: ctx.personX, matchesTotal: 1, reason: "x",
+        personId: ctx.personX,
+        matchesTotal: 1,
+        reason: "x",
       }),
     ).rejects.toBeInstanceOf(PaymentRequiredError);
   });
@@ -435,10 +473,14 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     const email = `claim-${randomUUID().slice(0, 8)}@test.local`;
     await claimPerson(ctx.personX, email);
     const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
-      personId: ctx.personX, matchesTotal: 2, reason: "violent conduct",
+      personId: ctx.personX,
+      matchesTotal: 2,
+      reason: "violent conduct",
     });
 
-    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    const active = await decideSuspension(ctx.auth, manual.id, {
+      kind: "confirm",
+    });
     expect(active.status).toBe("active");
     // The confirmed sender fired exactly once, to this player's inbox. Remove the
     // `await emailConfirmed(...)` wiring in decideSuspension and this goes to 0.
@@ -452,9 +494,13 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     const email = `claim-${randomUUID().slice(0, 8)}@test.local`;
     await claimPerson(ctx.personX, email);
     const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
-      personId: ctx.personX, matchesTotal: 1, reason: "violent conduct",
+      personId: ctx.personX,
+      matchesTotal: 1,
+      reason: "violent conduct",
     });
-    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    const active = await decideSuspension(ctx.auth, manual.id, {
+      kind: "confirm",
+    });
     expect(active.entrantId).toBe(ctx.entrantA);
 
     // A decided fixture for the banned entrant, stamped after the ban's decided_at,
@@ -466,7 +512,9 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
               now() + interval '1 hour')`;
 
     emailMock.served.mockClear();
-    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.id === manual.id)!;
+    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find(
+      (r) => r.id === manual.id,
+    )!;
     expect(served.status).toBe("served");
     // The served sender fired exactly once on the flip. Remove `await emailServed(...)`
     // and this goes to 0; a second read must not re-fire it.
@@ -481,13 +529,19 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     const email = `claim-${randomUUID().slice(0, 8)}@test.local`;
     await claimPerson(ctx.personX, email);
     const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
-      personId: ctx.personX, matchesTotal: 1, reason: "dissent",
+      personId: ctx.personX,
+      matchesTotal: 1,
+      reason: "dissent",
     });
-    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    const active = await decideSuspension(ctx.auth, manual.id, {
+      kind: "confirm",
+    });
     expect(active.status).toBe("active");
     emailMock.served.mockClear();
 
-    const waived = await decideSuspension(ctx.auth, manual.id, { kind: "waive" });
+    const waived = await decideSuspension(ctx.auth, manual.id, {
+      kind: "waive",
+    });
     expect(waived.status).toBe("waived");
 
     const byEntrant = await withTenant(ctx.orgId, (tx) =>
@@ -495,9 +549,15 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     );
     expect(byEntrant.get(ctx.entrantA) ?? []).toHaveLength(0);
 
-    const [org] = await sql<{ slug: string }[]>`select slug from organizations where id = ${ctx.orgId}`;
-    const [comp] = await sql<{ slug: string }[]>`select slug from competitions where org_id = ${ctx.orgId}`;
-    const [division] = await sql<{ slug: string }[]>`select slug from divisions where id = ${ctx.divisionId}`;
+    const [org] = await sql<
+      { slug: string }[]
+    >`select slug from organizations where id = ${ctx.orgId}`;
+    const [comp] = await sql<
+      { slug: string }[]
+    >`select slug from competitions where org_id = ${ctx.orgId}`;
+    const [division] = await sql<
+      { slug: string }[]
+    >`select slug from divisions where id = ${ctx.divisionId}`;
     const pub = await publicSuspensions(org!.slug, comp!.slug, division!.slug);
     expect(pub).toEqual([]); // waived is neither active nor listed publicly
 
@@ -536,9 +596,13 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
   it("multi-match serving: a 2-match ban is served across two decided fixtures", async () => {
     const ctx = await seedFootballDivision();
     const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
-      personId: ctx.personX, matchesTotal: 2, reason: "violent conduct",
+      personId: ctx.personX,
+      matchesTotal: 2,
+      reason: "violent conduct",
     });
-    const active = await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
+    const active = await decideSuspension(ctx.auth, manual.id, {
+      kind: "confirm",
+    });
     expect(active.entrantId).toBe(ctx.entrantA);
     expect(active.status).toBe("active");
 
@@ -550,12 +614,16 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
                 now() + interval '1 hour')`;
     };
     await stampDecided(2);
-    const partial = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.id === manual.id)!;
+    const partial = (await listSuspensions(ctx.auth, ctx.divisionId)).find(
+      (r) => r.id === manual.id,
+    )!;
     expect(partial.matchesServed).toBe(1);
     expect(partial.status).toBe("active");
 
     await stampDecided(3);
-    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find((r) => r.id === manual.id)!;
+    const served = (await listSuspensions(ctx.auth, ctx.divisionId)).find(
+      (r) => r.id === manual.id,
+    )!;
     expect(served.matchesServed).toBe(2);
     expect(served.status).toBe("served");
   });
@@ -565,13 +633,21 @@ describe.skipIf(!HAS_DB)("discipline fold (SPEC-1, PROMPT-78)", () => {
     // personX carries the default consent '{}' from seedFootballDivision — no
     // public_name grant, so public_person_name masks to initials.
     const manual = await createManualSuspension(ctx.auth, ctx.divisionId, {
-      personId: ctx.personX, matchesTotal: 1, reason: "x",
+      personId: ctx.personX,
+      matchesTotal: 1,
+      reason: "x",
     });
     await decideSuspension(ctx.auth, manual.id, { kind: "confirm" });
 
-    const [org] = await sql<{ slug: string }[]>`select slug from organizations where id = ${ctx.orgId}`;
-    const [comp] = await sql<{ slug: string }[]>`select slug from competitions where org_id = ${ctx.orgId}`;
-    const [division] = await sql<{ slug: string }[]>`select slug from divisions where id = ${ctx.divisionId}`;
+    const [org] = await sql<
+      { slug: string }[]
+    >`select slug from organizations where id = ${ctx.orgId}`;
+    const [comp] = await sql<
+      { slug: string }[]
+    >`select slug from competitions where org_id = ${ctx.orgId}`;
+    const [division] = await sql<
+      { slug: string }[]
+    >`select slug from divisions where id = ${ctx.divisionId}`;
     const pub = await publicSuspensions(org!.slug, comp!.slug, division!.slug);
     expect(pub).toHaveLength(1); // masked, not omitted
     expect(pub[0]!.name).not.toContain("Xavier");

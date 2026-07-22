@@ -22,14 +22,15 @@ const HAS_DB = !!process.env.DATABASE_URL;
 const uniq = () => randomUUID().slice(0, 8);
 const tempPlanKeys: string[] = [];
 
-async function seedOrg(over: {
-  plan?: string;
-  subId?: string | null;
-  status?: string;
-  disputed?: boolean;
-  disputeId?: string | null;
-  noSub?: boolean;
-} = {}): Promise<string> {
+async function seedOrg(
+  over: {
+    plan?: string;
+    subId?: string | null;
+    status?: string;
+    disputed?: boolean;
+    disputeId?: string | null;
+  } = {},
+): Promise<string> {
   const suffix = uniq();
   const [{ id: ownerId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, email_verified)
@@ -37,16 +38,18 @@ async function seedOrg(over: {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug, created_by)
     values (${"Sync Org " + suffix}, ${"sync-org-" + suffix}, ${ownerId}) returning id`;
-  if (!over.noSub) {
-    await sql`
-      insert into subscriptions
-        (org_id, plan_key, status, stripe_subscription_id, disputed_at, dispute_id)
-      values
-        (${orgId}, ${over.plan ?? "community"}, ${over.status ?? "active"},
-         ${over.subId ?? null},
-         ${over.disputed ? new Date().toISOString() : null},
-         ${over.disputeId ?? null})`;
-  }
+  await sql`
+      with s as (
+        insert into subscriptions
+          (owner_user_id, plan_key, status, stripe_subscription_id, disputed_at, dispute_id)
+        select o.created_by, ${over.plan ?? "community"}, ${over.status ?? "active"},
+               ${over.subId ?? null},
+               ${over.disputed ? new Date().toISOString() : null},
+               ${over.disputeId ?? null}
+          from organizations o where o.id = ${orgId}
+        returning id
+      )
+    update organizations o set subscription_id = s.id from s where o.id = ${orgId}`;
   return orgId;
 }
 
@@ -102,14 +105,19 @@ const readSub = async (orgId: string) =>
         dispute_id: string | null;
       }[]
     >`select plan_key, status, disputed_at, dispute_id
-        from subscriptions where org_id = ${orgId}`
+        from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
   )[0];
 
 afterAll(async () => {
   if (!HAS_DB) return;
   if (tempPlanKeys.length) {
     // Subscriptions seeded onto the temp plans must go first — plans.key is
-    // referenced by subscriptions_plan_key_fkey.
+    // referenced by subscriptions_plan_key_fkey. Their orgs must let go of the
+    // group first, or organizations_subscription_fk (V310) blocks the delete.
+    await sql`
+      update organizations set subscription_id = null
+       where subscription_id in (select id from subscriptions
+                                  where plan_key = any(${tempPlanKeys}))`;
     await sql`delete from subscriptions where plan_key = any(${tempPlanKeys})`;
     await sql`delete from plans where key = any(${tempPlanKeys})`;
   }
@@ -129,7 +137,10 @@ describe.skipIf(!HAS_DB)("handleSubscriptionDeleted — stale-event guard (P1-5)
   });
 
   it("ignores a stale delete for a pro_plus org just the same", async () => {
-    const orgId = await seedOrg({ plan: "pro_plus", subId: "sub_new_" + uniq() });
+    const orgId = await seedOrg({
+      plan: "pro_plus",
+      subId: "sub_new_" + uniq(),
+    });
     await processStripeEvent(deletedEvent(orgId, "sub_old_" + uniq()));
     const s = await readSub(orgId);
     expect(s.plan_key).toBe("pro_plus");
@@ -183,9 +194,15 @@ describe.skipIf(!HAS_DB)("syncSubscription — unknown-price guard (P1-5)", () =
     expect(s.plan_key).toBe("pro_plus");
   });
 
-  it("a brand-new subscription row with an unknown price still lands community", async () => {
-    const orgId = await seedOrg({ noSub: true });
-    await syncSubscription(orgId, stripeSub({ id: "sub_" + uniq(), priceId: "price_unknown_" + uniq() }));
+  // V310: an org ALWAYS has a group (createOrgForUser mints one, the migration
+  // backfilled the rest), so "no row yet" is now "a never-synced community
+  // group" — the shape a first checkout syncs onto.
+  it("a never-synced community group with an unknown price still lands community", async () => {
+    const orgId = await seedOrg({ plan: "community", subId: null });
+    await syncSubscription(
+      orgId,
+      stripeSub({ id: "sub_" + uniq(), priceId: "price_unknown_" + uniq() }),
+    );
     const s = await readSub(orgId);
     expect(s.plan_key).toBe("community");
   });
@@ -200,28 +217,36 @@ describe.skipIf(!HAS_DB)("syncSubscription — unknown-price guard (P1-5)", () =
   });
 });
 
-describe.skipIf(!HAS_DB)("syncSubscription — dispute flags on re-buy vs renewal (Task 7 fold-in)", () => {
-  it("a re-buy (synced sub id DIFFERS) clears stale disputed_at + dispute_id", async () => {
-    const orgId = await seedOrg({
-      plan: "pro",
-      subId: "sub_old_" + uniq(),
-      disputed: true,
-      disputeId: "dp_stale_" + uniq(),
+describe.skipIf(!HAS_DB)(
+  "syncSubscription — dispute flags on re-buy vs renewal (Task 7 fold-in)",
+  () => {
+    it("a re-buy (synced sub id DIFFERS) clears stale disputed_at + dispute_id", async () => {
+      const orgId = await seedOrg({
+        plan: "pro",
+        subId: "sub_old_" + uniq(),
+        disputed: true,
+        disputeId: "dp_stale_" + uniq(),
+      });
+      await syncSubscription(orgId, stripeSub({ id: "sub_new_" + uniq() }));
+      const s = await readSub(orgId);
+      expect(s.disputed_at).toBeNull();
+      expect(s.dispute_id).toBeNull();
+      expect(s.plan_key).toBe("pro"); // unknown price kept the plan; only flags cleared
     });
-    await syncSubscription(orgId, stripeSub({ id: "sub_new_" + uniq() }));
-    const s = await readSub(orgId);
-    expect(s.disputed_at).toBeNull();
-    expect(s.dispute_id).toBeNull();
-    expect(s.plan_key).toBe("pro"); // unknown price kept the plan; only flags cleared
-  });
 
-  it("a renewal (same sub id) leaves an in-flight dispute's flags intact", async () => {
-    const subId = "sub_same_" + uniq();
-    const did = "dp_live_" + uniq();
-    const orgId = await seedOrg({ plan: "pro", subId, disputed: true, disputeId: did });
-    await syncSubscription(orgId, stripeSub({ id: subId }));
-    const s = await readSub(orgId);
-    expect(s.disputed_at).not.toBeNull();
-    expect(s.dispute_id).toBe(did);
-  });
-});
+    it("a renewal (same sub id) leaves an in-flight dispute's flags intact", async () => {
+      const subId = "sub_same_" + uniq();
+      const did = "dp_live_" + uniq();
+      const orgId = await seedOrg({
+        plan: "pro",
+        subId,
+        disputed: true,
+        disputeId: did,
+      });
+      await syncSubscription(orgId, stripeSub({ id: subId }));
+      const s = await readSub(orgId);
+      expect(s.disputed_at).not.toBeNull();
+      expect(s.dispute_id).toBe(did);
+    });
+  },
+);

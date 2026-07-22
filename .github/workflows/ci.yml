@@ -199,6 +199,18 @@ jobs:
       - name: Engine-db + service-layer + lib integration tests (real Postgres)
         run: npm test --workspace apps/web -- run src/server src/lib
 
+      # The DB-gated suites under src/app. src/lib is NOT repeated here: the
+      # Engine-db step above already runs it, and running it in both steps shares
+      # one migrated schema across two passes — a suite that writes a fixed
+      # stripe_customer_id (billing-pass-financial-trace) then collides with its
+      # own first pass under V314's partial unique index. src/app is the only
+      # DB-gated tree that step does not cover.
+      #
+      # pass-scoping-guard.test.ts is no longer excluded: the Event Pass scoping
+      # sweep it tracked has landed, so it passes and runs with the rest.
+      - name: Service-layer integration tests outside src/server (real Postgres)
+        run: npm test --workspace apps/web -- run src/app
+
       # REDIS_URL is scoped to this step only. Setting it job-wide would switch
       # the entitlement cache (lib/entitlements.ts) on for the src/server suite,
       # whose tests mutate entitlements via raw SQL without invalidating the

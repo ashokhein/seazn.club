@@ -90,10 +90,17 @@ describe.skipIf(!HAS_DB)("pass-checkout eligibility uses the resolver, not raw p
     await givePrice();
     // The row still reads 'pro'. `comped_until` is in the past, so the resolver
     // degrades the org to community — and a community org may buy a pass.
-    await sql`insert into subscriptions (org_id, plan_key, status, currency, comped_until)
-              values (${orgId}, 'pro', 'active', 'usd', now() - interval '1 day')
-              on conflict (org_id) do update set plan_key = 'pro',
-                currency = 'usd', comped_until = now() - interval '1 day'`;
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status, currency, comped_until)
+      select coalesce(o.created_by, (select id from _owner)), 'pro', 'active', 'usd', now() - interval '1 day' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
     authState.orgId = orgId;
 
     const res = await passCheckoutPOST(req(compId));
@@ -104,10 +111,17 @@ describe.skipIf(!HAS_DB)("pass-checkout eligibility uses the resolver, not raw p
   it("still refuses an org on a genuinely live paid plan", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     await givePrice();
-    await sql`insert into subscriptions (org_id, plan_key, status, currency)
-              values (${orgId}, 'pro', 'active', 'usd')
-              on conflict (org_id) do update set plan_key = 'pro',
-                status = 'active', currency = 'usd', comped_until = null`;
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status, currency)
+      select coalesce(o.created_by, (select id from _owner)), 'pro', 'active', 'usd' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
     authState.orgId = orgId;
 
     const res = await passCheckoutPOST(req(compId));
@@ -118,9 +132,17 @@ describe.skipIf(!HAS_DB)("pass-checkout eligibility uses the resolver, not raw p
   it("still lets a plain community org buy", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     await givePrice();
-    await sql`insert into subscriptions (org_id, plan_key, status, currency)
-              values (${orgId}, 'community', 'active', 'usd')
-              on conflict (org_id) do update set plan_key = 'community', currency = 'usd'`;
+    await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status, currency)
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active', 'usd' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
     authState.orgId = orgId;
 
     const res = await passCheckoutPOST(req(compId));

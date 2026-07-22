@@ -27,3 +27,5 @@ Invites never change an existing member's role — accepting a second invite add
 **Someone's invite email didn't arrive?** Open the pending invite in the Team panel and use **Copy link** to send their personal link over any channel.
 
 **Can I cut off a link I shared too widely?** Yes — press **Revoke** next to it. Everyone who already joined stays; nobody new can use it.
+
+**Do members carry across organisations?** No. Membership is always per organisation, so someone who helps with two of them needs an invite to each — even when both organisations are paid for by the same [billing group](/help/billing/groups). Joining an organisation and paying for one are separate things: a member never sees the group's card or invoices, and whoever pays doesn't become a member of anything.

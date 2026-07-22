@@ -11,19 +11,18 @@ import { createCompetition } from "../competitions";
 import { createDivision, patchDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { createPerson } from "../persons";
-import {
-  createStages,
-  generateStageFixtures,
-  getStandings,
-  issueChallenge,
-} from "../stages";
+import { createStages, generateStageFixtures, getStandings, issueChallenge } from "../stages";
 import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
 async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthCtx }> {
@@ -32,10 +31,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into organizations (name, slug) values (${"Fmt " + suffix}, ${"fmt-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -46,29 +42,49 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{ auth: AuthC
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx, names: string[], individualsWithPersons = false) {
-  const comp = await createCompetition(auth, { name: "Fmt Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {} });
+  const comp = await createCompetition(auth, {
+    name: "Fmt Cup " + randomUUID().slice(0, 6),
+    visibility: "private",
+    branding: {},
+  });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const entrants = await createEntrants(
-    auth, division.id,
+    auth,
+    division.id,
     await Promise.all(
       names.map(async (name, i) => ({
-        kind: "individual" as const, display_name: name, seed: i + 1,
+        kind: "individual" as const,
+        display_name: name,
+        seed: i + 1,
         members: individualsWithPersons
           ? [
               {
                 person_id: (
                   await createPerson(auth, {
-                    full_name: name, consent: {}, dob: null, gender: null, external_ref: null,
+                    full_name: name,
+                    consent: {},
+                    dob: null,
+                    gender: null,
+                    external_ref: null,
                   })
                 ).id,
-                is_captain: false, roles: [], default_position_key: null, squad_number: null,
+                is_captain: false,
+                roles: [],
+                default_position_key: null,
+                squad_number: null,
               },
             ]
           : [],
@@ -79,9 +95,15 @@ async function seedDivision(auth: AuthCtx, names: string[], individualsWithPerso
 }
 
 async function decide(auth: AuthCtx, fixtureId: string, hs: number, as_: number) {
-  await scoreEvent(auth, fixtureId, { expected_seq: 0, type: "core.start", payload: {} });
+  await scoreEvent(auth, fixtureId, {
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
+  });
   return scoreEvent(auth, fixtureId, {
-    expected_seq: 1, type: "generic.result", payload: { p1Score: hs, p2Score: as_ },
+    expected_seq: 1,
+    type: "generic.result",
+    payload: { p1Score: hs, p2Score: as_ },
   });
 }
 
@@ -98,7 +120,10 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
     const { auth } = await seedOrg();
     const { division } = await seedDivision(auth, ["A", "B", "C", "D"]);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "league", name: "Triple", config: { legs: 3 },
+      seq: 1,
+      kind: "league",
+      name: "Triple",
+      config: { legs: 3 },
     });
     const { created } = await generateStageFixtures(auth, stage!.id);
     expect(created).toBe(18); // 4·3/2 · 3
@@ -107,10 +132,14 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
   it("americano creates pair entrants on the fly; Community 402s on the kind", async () => {
     const { auth } = await seedOrg();
     const { division } = await seedDivision(
-      auth, ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"], true,
+      auth,
+      ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"],
+      true,
     );
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "americano" as never, name: "Padel",
+      seq: 1,
+      kind: "americano" as never,
+      name: "Padel",
       config: { mode: "americano", courtCount: 2, rounds: 3 },
     });
     const { created, fixtures } = await generateStageFixtures(auth, stage!.id);
@@ -127,7 +156,10 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
     const { division: freeDiv } = await seedDivision(freeAuth, ["A", "B", "C", "D"], true);
     await expect(
       createStages(freeAuth, freeDiv.id, {
-        seq: 1, kind: "americano" as never, name: "P", config: {},
+        seq: 1,
+        kind: "americano" as never,
+        name: "P",
+        config: {},
       }),
     ).rejects.toMatchObject({ featureKey: "formats.advanced" });
   });
@@ -137,10 +169,18 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
     const { division, entrants } = await seedDivision(auth, ["A", "B", "C", "D"]);
     const [cl, el] = await createStages(auth, division.id, [
       {
-        seq: 1, kind: "knockout", name: "CL",
+        seq: 1,
+        kind: "knockout",
+        name: "CL",
         config: {
           cross_feeds: [
-            { from_ext_key: "se-r0-i0", side: "loser", to_stage_seq: 2, to_ext_key: "se-r0-i0", slot: 1 },
+            {
+              from_ext_key: "se-r0-i0",
+              side: "loser",
+              to_stage_seq: 2,
+              to_ext_key: "se-r0-i0",
+              slot: 1,
+            },
           ],
         },
       },
@@ -174,17 +214,25 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
     const { auth } = await seedOrg();
     const { division } = await seedDivision(auth, ["A", "B"]);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "league", name: "Placement",
+      seq: 1,
+      kind: "league",
+      name: "Placement",
       config: { placements: { "rr-r1-c1": [1, 2] } },
     });
     const { fixtures } = await generateStageFixtures(auth, stage!.id);
     await startDivision(auth, division.id);
     await decide(auth, fixtures[0]!.id, 0, 2); // away wins → away rank 1
-    const [cfg] = await sql<{ config: { rank_overrides?: { entrant_id: string; rank: number }[] } }[]>`
+    const [cfg] = await sql<
+      { config: { rank_overrides?: { entrant_id: string; rank: number }[] } }[]
+    >`
       select config from stages where id = ${stage!.id}`;
     expect(cfg!.config.rank_overrides).toHaveLength(2);
     const standings = await getStandings(auth, stage!.id);
-    const rows = standings.rows as { entrantId: string; rank: number; rankLocked?: boolean }[];
+    const rows = standings.rows as {
+      entrantId: string;
+      rank: number;
+      rankLocked?: boolean;
+    }[];
     const winner = rows.find((r) => r.entrantId === fixtures[0]!.away_entrant_id)!;
     expect(winner).toMatchObject({ rank: 1, rankLocked: true });
   });
@@ -195,16 +243,30 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
     await patchDivision(auth, division.id, { auto_progress: true });
     const [group, ko] = await createStages(auth, division.id, [
       { seq: 1, kind: "league", name: "Group", config: {} },
-      { seq: 2, kind: "knockout", name: "Final", config: {}, qualification: { topN: 2 } as never },
+      {
+        seq: 2,
+        kind: "knockout",
+        name: "Final",
+        config: {},
+        qualification: { topN: 2 } as never,
+      },
     ]);
     const { fixtures } = await generateStageFixtures(auth, group!.id);
     await startDivision(auth, division.id);
     for (const f of fixtures) {
-      const seq = (await sql<{ n: number }[]>`
-        select count(*)::int as n from score_events where fixture_id = ${f.id}`)[0]!.n;
-      await scoreEvent(auth, f.id, { expected_seq: seq, type: "core.start", payload: {} });
+      const seq = (
+        await sql<{ n: number }[]>`
+        select count(*)::int as n from score_events where fixture_id = ${f.id}`
+      )[0]!.n;
       await scoreEvent(auth, f.id, {
-        expected_seq: seq + 1, type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+        expected_seq: seq,
+        type: "core.start",
+        payload: {},
+      });
+      await scoreEvent(auth, f.id, {
+        expected_seq: seq + 1,
+        type: "generic.result",
+        payload: { p1Score: 2, p2Score: 0 },
       });
     }
     const [next] = await sql<{ n: number }[]>`
@@ -220,18 +282,23 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
     const { auth } = await seedOrg();
     const { division, entrants } = await seedDivision(auth, ["L1", "L2", "L3", "L4", "L5"]);
     const [ladder] = await createStages(auth, division.id, {
-      seq: 1, kind: "ladder" as never, name: "Club ladder", config: { challengeRange: 2 },
+      seq: 1,
+      kind: "ladder" as never,
+      name: "Club ladder",
+      config: { challengeRange: 2 },
     });
     await generateStageFixtures(auth, ladder!.id); // no-op: fixtures on demand
     await startDivision(auth, division.id).catch(() => null); // ladder may not need start
     const challenge = await issueChallenge(auth, ladder!.id, {
-      challenger_id: entrants[2]!.id, opponent_id: entrants[0]!.id,
+      challenger_id: entrants[2]!.id,
+      opponent_id: entrants[0]!.id,
     });
     expect(challenge.ladder_order[0]).toBe(entrants[0]!.id);
     // out-of-range refused
     await expect(
       issueChallenge(auth, ladder!.id, {
-        challenger_id: entrants[4]!.id, opponent_id: entrants[0]!.id,
+        challenger_id: entrants[4]!.id,
+        opponent_id: entrants[0]!.id,
       }),
     ).rejects.toThrow(/at most 2 places/);
     // challenger wins → takes the position
@@ -244,8 +311,38 @@ describe.skipIf(!HAS_DB)("format extensions (Jul3/08)", () => {
     const { division: d2 } = await seedDivision(auth, ["X", "Y"]);
     await expect(
       createStages(auth, d2.id, [
-        { seq: 1, kind: "knockout", name: "A", config: { cross_feeds: [{ from_ext_key: "x", side: "loser", to_stage_seq: 2, to_ext_key: "y", slot: 1 }] } },
-        { seq: 2, kind: "knockout", name: "B", config: { cross_feeds: [{ from_ext_key: "y", side: "loser", to_stage_seq: 1, to_ext_key: "x", slot: 1 }] } },
+        {
+          seq: 1,
+          kind: "knockout",
+          name: "A",
+          config: {
+            cross_feeds: [
+              {
+                from_ext_key: "x",
+                side: "loser",
+                to_stage_seq: 2,
+                to_ext_key: "y",
+                slot: 1,
+              },
+            ],
+          },
+        },
+        {
+          seq: 2,
+          kind: "knockout",
+          name: "B",
+          config: {
+            cross_feeds: [
+              {
+                from_ext_key: "y",
+                side: "loser",
+                to_stage_seq: 1,
+                to_ext_key: "x",
+                slot: 1,
+              },
+            ],
+          },
+        },
       ]),
     ).rejects.toSatisfy((err: unknown) => EngineError.is(err, "CONFIG_INVALID"));
   });

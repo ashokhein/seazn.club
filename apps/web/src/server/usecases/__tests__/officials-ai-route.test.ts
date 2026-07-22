@@ -30,7 +30,10 @@ vi.mock("@anthropic-ai/sdk", () => ({
     messages = { parse };
   },
 }));
-vi.mock("@/lib/posthog-server", () => ({ isServerFeatureEnabled, captureServer }));
+vi.mock("@/lib/posthog-server", () => ({
+  isServerFeatureEnabled,
+  captureServer,
+}));
 // Keep the real cache-aside helpers (entitlements resolution) but drive the
 // fixed-window rate limiter off an in-memory counter so the 429 path is real.
 vi.mock("@/lib/cache", async (importOriginal) => {
@@ -49,6 +52,7 @@ import { patchFixtureOfficials } from "../officials";
 import { officialsAiPlanForDivision } from "../officials-ai";
 import { GENERIC_CONFIG, seedOrg } from "./_seed";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const TZ = "Europe/London";
 const MIN = 60_000;
@@ -65,8 +69,13 @@ const SETTINGS_CONFIG = {
 };
 
 const POLICY = {
-  roles: ["referee"], poolLock: false, blockStay: false, fairness: "tournament" as const,
-  teamRefKeepDivision: false, restMinMinutes: 0, blockGapMinutes: 30,
+  roles: ["referee"],
+  poolLock: false,
+  blockStay: false,
+  fairness: "tournament" as const,
+  teamRefKeepDivision: false,
+  restMinMinutes: 0,
+  blockGapMinutes: 30,
 };
 
 async function setSettings(divisionId: string): Promise<void> {
@@ -80,10 +89,7 @@ async function setSettings(divisionId: string): Promise<void> {
  *  officials.auto is Pro Plus post-V290. */
 async function seedPlusOrg(): Promise<AuthCtx> {
   const { auth } = await seedOrg("community");
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${auth.orgId}, 'pro_plus', 'active')
-    on conflict (org_id) do update set plan_key = 'pro_plus'`;
+  await setOrgPlan(auth.orgId, "pro_plus");
   await invalidateOrgEntitlements(auth.orgId);
   return auth;
 }
@@ -92,23 +98,46 @@ async function seedPlusOrg(): Promise<AuthCtx> {
  *  `officials` referees. Returns fixture ids in stable (round, seq) order. */
 async function seedOfficials(
   auth: AuthCtx,
-  opts: { entrants?: number; officials?: { name: string; roles: string[] }[] } = {},
-): Promise<{ divisionId: string; fixtureIds: string[]; officialIds: string[] }> {
-  const comp = await createCompetition(auth, { name: "AI Off", visibility: "public", branding: {} });
+  opts: {
+    entrants?: number;
+    officials?: { name: string; roles: string[] }[];
+  } = {},
+): Promise<{
+  divisionId: string;
+  fixtureIds: string[];
+  officialIds: string[];
+}> {
+  const comp = await createCompetition(auth, {
+    name: "AI Off",
+    visibility: "public",
+    branding: {},
+  });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: `open-${randomUUID().slice(0, 6)}`, sport_key: "generic",
-    variant_key: "score", config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: `open-${randomUUID().slice(0, 6)}`,
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const n = opts.entrants ?? 3;
   await createEntrants(
     auth,
     division.id,
     Array.from({ length: n }, (_, i) => ({
-      kind: "individual" as const, display_name: `E${i + 1}`, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: `E${i + 1}`,
+      seed: i + 1,
+      members: [],
     })),
   );
   await setSettings(division.id);
-  const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "League", config: {} });
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1,
+    kind: "league",
+    name: "League",
+    config: {},
+  });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   const officialIds: string[] = [];
   for (const o of opts.officials ?? []) {
@@ -125,17 +154,28 @@ async function seedOfficials(
 
 /** Dry-run schedule: each fixture `gapMin` apart on Court 1 (spaced so one
  *  referee can legally cover them all). */
-function spread(fixtureIds: string[], gapMin = 120): { fixture_id: string; scheduled_at: string; court_label: string }[] {
+function spread(
+  fixtureIds: string[],
+  gapMin = 120,
+): { fixture_id: string; scheduled_at: string; court_label: string }[] {
   return fixtureIds.map((id, i) => ({
-    fixture_id: id, scheduled_at: new Date(BASE + i * gapMin * MIN).toISOString(), court_label: "Court 1",
+    fixture_id: id,
+    scheduled_at: new Date(BASE + i * gapMin * MIN).toISOString(),
+    court_label: "Court 1",
   }));
 }
 
 /** A plan assigning one referee to every fixture, nothing unfilled. */
 function assignAll(fixtureIds: string[], officialId: string): unknown {
   return {
-    assignments: fixtureIds.map((id) => ({ fixture_id: id, official_id: officialId, role_key: "referee" })),
-    unfilled: [], explanations: [], summary: "ok",
+    assignments: fixtureIds.map((id) => ({
+      fixture_id: id,
+      official_id: officialId,
+      role_key: "referee",
+    })),
+    unfilled: [],
+    explanations: [],
+    summary: "ok",
   };
 }
 
@@ -163,7 +203,8 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
   it("echoes a locked assignment in the proposal (LLM path)", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     const refA = officialIds[0]!;
     await patchFixtureOfficials(auth, fixtureIds[0]!, {
@@ -172,21 +213,30 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
 
     parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, refA)));
     const out = await officialsAiPlanForDivision(auth, divisionId, {
-      instruction: "Ref A everywhere.", policy: POLICY, schedule: spread(fixtureIds),
+      instruction: "Ref A everywhere.",
+      policy: POLICY,
+      schedule: spread(fixtureIds),
     });
 
     expect(parse).toHaveBeenCalledTimes(1);
     // Explicit request timeout is load-bearing: the SDK refuses non-streaming
     // max_tokens:32000 calls without one ("Streaming is required…").
-    const callOpts = parse.mock.calls[0]![1] as { timeout?: number; signal?: unknown };
+    const callOpts = parse.mock.calls[0]![1] as {
+      timeout?: number;
+      signal?: unknown;
+    };
     expect(callOpts.timeout).toBeTypeOf("number");
     expect(callOpts.timeout!).toBeGreaterThan(0);
     // Phase B stays on effort:high while Phase A moved to medium — that move
     // was justified by a bench over SCHEDULE packs, and officials has never
     // been measured. Guards against someone "harmonising" the two defaults.
-    const body = parse.mock.calls[0]![0] as { output_config: { effort: string } };
+    const body = parse.mock.calls[0]![0] as {
+      output_config: { effort: string };
+    };
     expect(body.output_config.effort).toBe("high");
-    const lockedRow = out.assignments.find((a) => a.fixtureId === fixtureIds[0] && a.officialId === refA);
+    const lockedRow = out.assignments.find(
+      (a) => a.fixtureId === fixtureIds[0] && a.officialId === refA,
+    );
     expect(lockedRow).toMatchObject({ roleKey: "referee", locked: true });
     expect(out.usage.repair_rounds).toBe(0);
   });
@@ -194,7 +244,8 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
   it("empty instruction returns the solver draft with zero LLM calls; a locked row survives", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     const refA = officialIds[0]!;
     await patchFixtureOfficials(auth, fixtureIds[0]!, {
@@ -202,14 +253,22 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     });
 
     const out = await officialsAiPlanForDivision(auth, divisionId, {
-      instruction: "", policy: POLICY, schedule: spread(fixtureIds),
+      instruction: "",
+      policy: POLICY,
+      schedule: spread(fixtureIds),
     });
 
     expect(parse).not.toHaveBeenCalled();
-    expect(out.usage).toEqual({ input_tokens: 0, output_tokens: 0, repair_rounds: 0 });
+    expect(out.usage).toEqual({
+      input_tokens: 0,
+      output_tokens: 0,
+      repair_rounds: 0,
+    });
     expect(out.assignments.length).toBeGreaterThan(0);
     expect(
-      out.assignments.some((a) => a.fixtureId === fixtureIds[0] && a.officialId === refA && a.locked === true),
+      out.assignments.some(
+        (a) => a.fixtureId === fixtureIds[0] && a.officialId === refA && a.locked === true,
+      ),
     ).toBe(true);
 
     // Run ledger: the zero-token draft is stamped solver-draft with $0 cost —
@@ -225,38 +284,60 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
   it("an overlap is repaired: repair_rounds:1 and no residual official_overlap", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     const refA = officialIds[0]!;
     const [f0, f1, f2] = fixtureIds as [string, string, string];
     // f0 09:00–09:30 and f1 09:15–09:45 overlap; f2 far away.
     const schedule = [
-      { fixture_id: f0, scheduled_at: new Date(BASE).toISOString(), court_label: "Court 1" },
-      { fixture_id: f1, scheduled_at: new Date(BASE + 15 * MIN).toISOString(), court_label: "Court 1" },
-      { fixture_id: f2, scheduled_at: new Date(BASE + 180 * MIN).toISOString(), court_label: "Court 1" },
+      {
+        fixture_id: f0,
+        scheduled_at: new Date(BASE).toISOString(),
+        court_label: "Court 1",
+      },
+      {
+        fixture_id: f1,
+        scheduled_at: new Date(BASE + 15 * MIN).toISOString(),
+        court_label: "Court 1",
+      },
+      {
+        fixture_id: f2,
+        scheduled_at: new Date(BASE + 180 * MIN).toISOString(),
+        court_label: "Court 1",
+      },
     ];
     // Round 1: Ref A on all three (double-booked on f0/f1). Round 2: drop f1.
-    parse
-      .mockResolvedValueOnce(resp(assignAll(fixtureIds, refA)))
-      .mockResolvedValueOnce(
-        resp({
-          assignments: [
-            { fixture_id: f0, official_id: refA, role_key: "referee" },
-            { fixture_id: f2, official_id: refA, role_key: "referee" },
-          ],
-          unfilled: [{ fixture_id: f1, role_key: "referee", reason: "Ref A already on f0" }],
-          explanations: [], summary: "dropped one overlap",
-        }),
-      );
+    parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, refA))).mockResolvedValueOnce(
+      resp({
+        assignments: [
+          { fixture_id: f0, official_id: refA, role_key: "referee" },
+          { fixture_id: f2, official_id: refA, role_key: "referee" },
+        ],
+        unfilled: [
+          {
+            fixture_id: f1,
+            role_key: "referee",
+            reason: "Ref A already on f0",
+          },
+        ],
+        explanations: [],
+        summary: "dropped one overlap",
+      }),
+    );
 
     const out = await officialsAiPlanForDivision(auth, divisionId, {
-      instruction: "Cover everything with Ref A.", policy: POLICY, schedule,
+      instruction: "Cover everything with Ref A.",
+      policy: POLICY,
+      schedule,
     });
 
     expect(parse).toHaveBeenCalledTimes(2);
     expect(out.usage.repair_rounds).toBe(1);
     expect(out.conflicts.some((c) => c.kind === "official_overlap")).toBe(false);
-    expect(out.diff.unfilled).toEqual([{ fixture_id: f1, role_key: "referee", reason: "Ref A already on f0" }]);
+    expect(out.diff.unfilled).toEqual([
+      { fixture_id: f1, role_key: "referee", reason: "Ref A already on f0" },
+    ]);
   });
 
   it("a locked row survives an actual repair round (overlap + lock combined)", async () => {
@@ -267,7 +348,8 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     // without ever touching (or being allowed to touch) the locked f0 row.
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     const refA = officialIds[0]!;
     const [f0, f1, f2] = fixtureIds as [string, string, string];
@@ -275,25 +357,44 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
       set: [{ official_id: refA, role_key: "referee", locked: true }],
     });
     const schedule = [
-      { fixture_id: f0, scheduled_at: new Date(BASE).toISOString(), court_label: "Court 1" },
-      { fixture_id: f1, scheduled_at: new Date(BASE + 15 * MIN).toISOString(), court_label: "Court 1" },
-      { fixture_id: f2, scheduled_at: new Date(BASE + 180 * MIN).toISOString(), court_label: "Court 1" },
+      {
+        fixture_id: f0,
+        scheduled_at: new Date(BASE).toISOString(),
+        court_label: "Court 1",
+      },
+      {
+        fixture_id: f1,
+        scheduled_at: new Date(BASE + 15 * MIN).toISOString(),
+        court_label: "Court 1",
+      },
+      {
+        fixture_id: f2,
+        scheduled_at: new Date(BASE + 180 * MIN).toISOString(),
+        court_label: "Court 1",
+      },
     ];
-    parse
-      .mockResolvedValueOnce(resp(assignAll(fixtureIds, refA)))
-      .mockResolvedValueOnce(
-        resp({
-          assignments: [
-            { fixture_id: f0, official_id: refA, role_key: "referee" },
-            { fixture_id: f2, official_id: refA, role_key: "referee" },
-          ],
-          unfilled: [{ fixture_id: f1, role_key: "referee", reason: "Ref A already locked on f0" }],
-          explanations: [], summary: "dropped the non-locked overlap",
-        }),
-      );
+    parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, refA))).mockResolvedValueOnce(
+      resp({
+        assignments: [
+          { fixture_id: f0, official_id: refA, role_key: "referee" },
+          { fixture_id: f2, official_id: refA, role_key: "referee" },
+        ],
+        unfilled: [
+          {
+            fixture_id: f1,
+            role_key: "referee",
+            reason: "Ref A already locked on f0",
+          },
+        ],
+        explanations: [],
+        summary: "dropped the non-locked overlap",
+      }),
+    );
 
     const out = await officialsAiPlanForDivision(auth, divisionId, {
-      instruction: "Cover everything with Ref A.", policy: POLICY, schedule,
+      instruction: "Cover everything with Ref A.",
+      policy: POLICY,
+      schedule,
     });
 
     expect(parse).toHaveBeenCalledTimes(2);
@@ -310,7 +411,8 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     // echoes the lock must report that fixture as unchanged.
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     const refA = officialIds[0]!;
     const [f0, f1, f2] = fixtureIds as [string, string, string];
@@ -320,7 +422,9 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
 
     parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, refA)));
     const out = await officialsAiPlanForDivision(auth, divisionId, {
-      instruction: "Ref A everywhere.", policy: POLICY, schedule: spread(fixtureIds),
+      instruction: "Ref A everywhere.",
+      policy: POLICY,
+      schedule: spread(fixtureIds),
     });
 
     expect(out.diff.unchanged).toEqual([f0]);
@@ -333,7 +437,11 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     // actually differs from the prior — not the whole plan.
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }, { name: "Ref B", roles: ["referee"] }],
+      entrants: 3,
+      officials: [
+        { name: "Ref A", roles: ["referee"] },
+        { name: "Ref B", roles: ["referee"] },
+      ],
     });
     const [refA, refB] = officialIds as [string, string];
     const [f0, f1, f2] = fixtureIds as [string, string, string];
@@ -345,11 +453,15 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
           { fixture_id: f1, official_id: refB, role_key: "referee" }, // re-assigned (was refA)
           { fixture_id: f2, official_id: refB, role_key: "referee" }, // same as prior
         ],
-        unfilled: [], explanations: [], summary: "refine",
+        unfilled: [],
+        explanations: [],
+        summary: "refine",
       }),
     );
     const out = await officialsAiPlanForDivision(auth, divisionId, {
-      instruction: "Refine.", policy: POLICY, schedule: spread(fixtureIds),
+      instruction: "Refine.",
+      policy: POLICY,
+      schedule: spread(fixtureIds),
       prior: {
         instruction: "assign",
         assignments: [
@@ -366,10 +478,15 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
 
   it("empty roster → 422 NO_OFFICIALS before any LLM call", async () => {
     const auth = await seedPlusOrg();
-    const { divisionId, fixtureIds } = await seedOfficials(auth, { entrants: 3, officials: [] });
+    const { divisionId, fixtureIds } = await seedOfficials(auth, {
+      entrants: 3,
+      officials: [],
+    });
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 422, message: "NO_OFFICIALS" });
     expect(parse).not.toHaveBeenCalled();
@@ -383,21 +500,30 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     // the runner 422s AI_PLAN_FAILED after exactly two calls.
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     const refA = officialIds[0]!;
     const ghost = randomUUID();
     const bad = resp({
       assignments: [
         { fixture_id: ghost, official_id: refA, role_key: "referee" },
-        ...fixtureIds.slice(1).map((id) => ({ fixture_id: id, official_id: refA, role_key: "referee" })),
+        ...fixtureIds.slice(1).map((id) => ({
+          fixture_id: id,
+          official_id: refA,
+          role_key: "referee",
+        })),
       ],
-      unfilled: [], explanations: [], summary: "x",
+      unfilled: [],
+      explanations: [],
+      summary: "x",
     });
     parse.mockResolvedValueOnce(bad).mockResolvedValueOnce(bad);
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
     expect(parse).toHaveBeenCalledTimes(2);
@@ -408,17 +534,26 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — runner (v4/03 §2)", ()
     // pack roster must also fail loudly, not be silently dropped by the referee.
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     const ghostRef = randomUUID();
     const bad = resp({
-      assignments: fixtureIds.map((id) => ({ fixture_id: id, official_id: ghostRef, role_key: "referee" })),
-      unfilled: [], explanations: [], summary: "x",
+      assignments: fixtureIds.map((id) => ({
+        fixture_id: id,
+        official_id: ghostRef,
+        role_key: "referee",
+      })),
+      unfilled: [],
+      explanations: [],
+      summary: "x",
     });
     parse.mockResolvedValueOnce(bad).mockResolvedValueOnce(bad);
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
     expect(parse).toHaveBeenCalledTimes(2);
@@ -429,11 +564,14 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpu
   it("community org → 402 with feature_key officials.auto", async () => {
     const { auth } = await seedOrg("community");
     const { divisionId, fixtureIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 402, featureKey: "officials.auto" });
     expect(parse).not.toHaveBeenCalled();
@@ -443,11 +581,14 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpu
     isServerFeatureEnabled.mockResolvedValueOnce(false);
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 403, code: "FEATURE_DISABLED" });
     expect(parse).not.toHaveBeenCalled();
@@ -458,7 +599,8 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpu
     // is what 402s (not the base officials.auto gate that precedes it).
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value)
@@ -466,27 +608,36 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — gates (v4/03 §2, corpu
     await invalidateOrgEntitlements(auth.orgId);
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: { ...POLICY, roles: ["referee", "umpire"] },
+        instruction: "assign",
+        policy: { ...POLICY, roles: ["referee", "umpire"] },
         schedule: spread(fixtureIds),
       }),
-    ).rejects.toMatchObject({ status: 402, featureKey: "officials.roles_multi" });
+    ).rejects.toMatchObject({
+      status: 402,
+      featureKey: "officials.roles_multi",
+    });
     expect(parse).not.toHaveBeenCalled();
   });
 
   it("6th call in the hour → 429 (5/h per division, no run cap)", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     parse.mockResolvedValue(resp(assignAll(fixtureIds, officialIds[0]!)));
     for (let i = 0; i < 5; i++) {
       await officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       });
     }
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 429 });
     expect(parse).toHaveBeenCalledTimes(5);
@@ -497,11 +648,19 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — telemetry (v4/03 §2)",
   it("ai_plan_run fires with phase officials + usage on success", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds, officialIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
-    parse.mockResolvedValueOnce(resp(assignAll(fixtureIds, officialIds[0]!), { input_tokens: 900, output_tokens: 220 }));
+    parse.mockResolvedValueOnce(
+      resp(assignAll(fixtureIds, officialIds[0]!), {
+        input_tokens: 900,
+        output_tokens: 220,
+      }),
+    );
     await officialsAiPlanForDivision(auth, divisionId, {
-      instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+      instruction: "assign",
+      policy: POLICY,
+      schedule: spread(fixtureIds),
     });
     expect(captureServer).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -509,7 +668,11 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — telemetry (v4/03 §2)",
         distinctId: auth.userId,
         orgId: auth.orgId,
         properties: expect.objectContaining({
-          phase: "officials", input_tokens: 900, output_tokens: 220, blocking: 0, outcome: "ok",
+          phase: "officials",
+          input_tokens: 900,
+          output_tokens: 220,
+          blocking: 0,
+          outcome: "ok",
         }),
       }),
     );
@@ -518,20 +681,31 @@ describe.skipIf(!HAS_DB)("officialsAiPlanForDivision — telemetry (v4/03 §2)",
   it("a refusal 422 still meters the spent tokens (phase officials)", async () => {
     const auth = await seedPlusOrg();
     const { divisionId, fixtureIds } = await seedOfficials(auth, {
-      entrants: 3, officials: [{ name: "Ref A", roles: ["referee"] }],
+      entrants: 3,
+      officials: [{ name: "Ref A", roles: ["referee"] }],
     });
     parse.mockResolvedValueOnce({
-      parsed_output: null, stop_reason: "refusal", usage: { input_tokens: 60, output_tokens: 20 }, content: [],
+      parsed_output: null,
+      stop_reason: "refusal",
+      usage: { input_tokens: 60, output_tokens: 20 },
+      content: [],
     });
     await expect(
       officialsAiPlanForDivision(auth, divisionId, {
-        instruction: "assign", policy: POLICY, schedule: spread(fixtureIds),
+        instruction: "assign",
+        policy: POLICY,
+        schedule: spread(fixtureIds),
       }),
     ).rejects.toMatchObject({ status: 422, code: "AI_PLAN_FAILED" });
     expect(captureServer).toHaveBeenCalledWith(
       expect.objectContaining({
         event: "ai_plan_run",
-        properties: expect.objectContaining({ phase: "officials", input_tokens: 60, output_tokens: 20, outcome: "failed" }),
+        properties: expect.objectContaining({
+          phase: "officials",
+          input_tokens: 60,
+          output_tokens: 20,
+          outcome: "failed",
+        }),
       }),
     );
   });

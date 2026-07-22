@@ -38,12 +38,18 @@ async function seedLapsedComp(over: {
     insert into organizations (name, slug, created_by)
     values (${"Comp Org " + suffix}, ${"comp-org-" + suffix}, ${ownerId}) returning id`;
   await sql`
-    insert into subscriptions
-      (org_id, plan_key, status, stripe_subscription_id, comped_until, status_changed_at)
-    values (${orgId}, 'pro', ${over.status},
-            ${over.withStripeId === false ? null : "sub_" + suffix},
-            now() - interval '1 day',
-            now() - (${over.statusChangedDaysAgo ?? 1} * interval '1 day'))`;
+    with s as (
+      insert into subscriptions
+        (owner_user_id, plan_key, status, stripe_subscription_id, comped_until,
+         status_changed_at)
+      select o.created_by, 'pro', ${over.status},
+             ${over.withStripeId === false ? null : "sub_" + suffix},
+             now() - interval '1 day',
+             now() - (${over.statusChangedDaysAgo ?? 1} * interval '1 day')
+        from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations o set subscription_id = s.id from s where o.id = ${orgId}`;
   return orgId;
 }
 
@@ -88,14 +94,20 @@ describe.skipIf(!HAS_DB)("comp-expiry arm derives its status list from billing",
   });
 
   it("no stripe id at all (pure staff grant) expires on comped_until", async () => {
-    const orgId = await seedLapsedComp({ status: "canceled", withStripeId: false });
+    const orgId = await seedLapsedComp({
+      status: "canceled",
+      withStripeId: false,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
   });
 
   it("does not swallow the past_due grace arm — dunning past 14 days still degrades", async () => {
     // Live per the list above, so the comp arm exempts it; the NEXT arm must
     // still see it and degrade. Ordering regression guard.
-    const orgId = await seedLapsedComp({ status: "past_due", statusChangedDaysAgo: 20 });
+    const orgId = await seedLapsedComp({
+      status: "past_due",
+      statusChangedDaysAgo: 20,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
     expect(await getLimit(orgId, "competitions.max_active")).toBe(COMMUNITY_MAX_ACTIVE);
   });

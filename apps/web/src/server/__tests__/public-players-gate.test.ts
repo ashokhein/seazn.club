@@ -98,8 +98,17 @@ async function seedScene(): Promise<Scene> {
   // A raw org insert creates no subscriptions row; seed community explicitly so
   // the plan under test is stated, not inferred from a missing row.
   await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'community', 'active')`;
+    with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status)
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   // Two active competitions exceed the community cap (competitions.max_active);
   // the cap is not what is under test — lift it for this org only.
   await sql`

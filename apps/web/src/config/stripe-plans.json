@@ -1,25 +1,54 @@
 {
   "$comment": "Stripe product/price seed for paid plans + one-time Event Pass. Idempotent source of truth: `npm run stripe:sync` ensures each product + price exists in the Stripe account of STRIPE_SECRET_KEY (matched by price lookup_key), keeps multi-currency price points (currency_options) in sync on every run, and writes the resulting price ids into the `plans` table (stripe_price_id_monthly/annual, stripe_price_id_onetime for passes). Re-run after any DB wipe, and against each environment (test/prod) by pointing STRIPE_SECRET_KEY + DATABASE_URL at it. Non-USD amounts are SET price points (v3/07 §4), never FX conversions. Community is free (no Stripe).",
+  "$comment_tiers": "Billing groups (spec 2026-07-21 §Pricing): a subscription covers several organisations, so each paid price is a GRADUATED tiered price whose quantity is the number of organisations in the group. Tier 1 is the plan base; tier 2+ is an extra organisation at half the base. `unit_amount`/`currency_options` stay in place and always equal tier 1 — they are what a group of one pays, and what the pricing page and lib/currency.ts advertise. Per-currency tier amounts are SET price points like every other amount here, derived as half the tier-1 point rounded DOWN to a whole major unit (INR down to the nearest x99, matching its existing charm points) — never an FX conversion.",
   "currency": "usd",
   "plans": [
     {
       "key": "pro",
       "product": {
         "name": "Seazn Club Pro",
-        "description": "Unlimited competitions, multi-division, online registration + entry fees, realtime scoreboard, custom branding, CSV/PDF exports."
+        "description": "Unlimited competitions, multi-division, online registration + entry fees, realtime scoreboard, custom branding, CSV/PDF exports. Covers up to 5 organisations on one bill — each extra organisation is half the base rate."
       },
       "prices": {
         "monthly": {
           "lookup_key": "seazn_pro_monthly",
           "unit_amount": 1900,
           "interval": "month",
-          "currency_options": { "eur": 1800, "gbp": 1500, "inr": 139900, "aud": 2800 }
+          "currency_options": { "eur": 1800, "gbp": 1500, "inr": 139900, "aud": 2800 },
+          "billing_scheme": "tiered",
+          "tiers_mode": "graduated",
+          "tiers": [
+            {
+              "up_to": 1,
+              "unit_amount": 1900,
+              "currency_options": { "eur": 1800, "gbp": 1500, "inr": 139900, "aud": 2800 }
+            },
+            {
+              "up_to": "inf",
+              "unit_amount": 900,
+              "currency_options": { "eur": 900, "gbp": 700, "inr": 69900, "aud": 1400 }
+            }
+          ]
         },
         "annual": {
           "lookup_key": "seazn_pro_annual",
           "unit_amount": 15900,
           "interval": "year",
-          "currency_options": { "eur": 14900, "gbp": 12500, "inr": 1149900, "aud": 23500 }
+          "currency_options": { "eur": 14900, "gbp": 12500, "inr": 1149900, "aud": 23500 },
+          "billing_scheme": "tiered",
+          "tiers_mode": "graduated",
+          "tiers": [
+            {
+              "up_to": 1,
+              "unit_amount": 15900,
+              "currency_options": { "eur": 14900, "gbp": 12500, "inr": 1149900, "aud": 23500 }
+            },
+            {
+              "up_to": "inf",
+              "unit_amount": 7900,
+              "currency_options": { "eur": 7400, "gbp": 6200, "inr": 569900, "aud": 11700 }
+            }
+          ]
         }
       }
     },
@@ -27,20 +56,48 @@
       "key": "pro_plus",
       "product": {
         "name": "Seazn Club Pro Plus",
-        "description": "Everything in Pro, plus unlimited seats and scale, a 1% platform fee on entry fees, AI-assisted scheduling, auto officials assignment, write API access and priority support."
+        "description": "Everything in Pro, plus unlimited members, scorers and clubs inside every organisation, a 1% platform fee on entry fees, AI-assisted scheduling, auto officials assignment, write API access and priority support. Covers up to 10 organisations on one bill — each extra organisation is half the base rate."
       },
       "prices": {
         "monthly": {
           "lookup_key": "seazn_pro_plus_monthly",
           "unit_amount": 3900,
           "interval": "month",
-          "currency_options": { "eur": 3700, "gbp": 3300, "inr": 299900, "aud": 5900 }
+          "currency_options": { "eur": 3700, "gbp": 3300, "inr": 299900, "aud": 5900 },
+          "billing_scheme": "tiered",
+          "tiers_mode": "graduated",
+          "tiers": [
+            {
+              "up_to": 1,
+              "unit_amount": 3900,
+              "currency_options": { "eur": 3700, "gbp": 3300, "inr": 299900, "aud": 5900 }
+            },
+            {
+              "up_to": "inf",
+              "unit_amount": 1900,
+              "currency_options": { "eur": 1800, "gbp": 1600, "inr": 149900, "aud": 2900 }
+            }
+          ]
         },
         "annual": {
           "lookup_key": "seazn_pro_plus_annual",
           "unit_amount": 32700,
           "interval": "year",
-          "currency_options": { "eur": 30900, "gbp": 27700, "inr": 2499900, "aud": 49500 }
+          "currency_options": { "eur": 30900, "gbp": 27700, "inr": 2499900, "aud": 49500 },
+          "billing_scheme": "tiered",
+          "tiers_mode": "graduated",
+          "tiers": [
+            {
+              "up_to": 1,
+              "unit_amount": 32700,
+              "currency_options": { "eur": 30900, "gbp": 27700, "inr": 2499900, "aud": 49500 }
+            },
+            {
+              "up_to": "inf",
+              "unit_amount": 16300,
+              "currency_options": { "eur": 15400, "gbp": 13800, "inr": 1249900, "aud": 24700 }
+            }
+          ]
         }
       }
     }

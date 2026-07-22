@@ -60,9 +60,17 @@ async function seedProOrg(): Promise<{ orgId: string; orgSlug: string; ownerId: 
     insert into organizations (name, slug, created_by)
     values (${"Intake Org " + suffix}, ${orgSlug}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'pro', 'active')
-            on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
+  await sql`with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status)
+      select coalesce(o.created_by, (select id from _owner)), 'pro', 'active' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   await sql`update organizations
             set stripe_charges_enabled = true, stripe_account_id = ${"acct_" + suffix}
             where id = ${orgId}`;
@@ -154,7 +162,7 @@ async function revokedStripeRig(opts: { withPass?: boolean } = {}) {
   // charges_enabled is deliberately left true: the point of this suite is that
   // the Connect flag alone is not the gate.
   await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
-            where org_id = ${orgId}`;
+            where id = (select subscription_id from organizations o where o.id = ${orgId})`;
   if (opts.withPass) {
     await sql`insert into competition_passes (competition_id, org_id)
               values (${competition.id}, ${orgId})
@@ -179,7 +187,7 @@ async function downgradedStripeRig() {
     fee_cents: 500,
   });
   await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
-            where org_id = ${orgId}`;
+            where id = (select subscription_id from organizations o where o.id = ${orgId})`;
   await invalidateOrgEntitlements(orgId);
   return { orgId, orgSlug, ownerId, owner, competition, division };
 }
@@ -278,7 +286,7 @@ describe.skipIf(!HAS_DB)("revoked card intake gate (P2-10)", () => {
       fee_cents: 1500,
     });
     await sql`update subscriptions set plan_key = 'community', status = 'canceled', updated_at = now()
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await sql`insert into org_entitlement_overrides (org_id, feature_key, bool_value)
               values (${orgId}, 'registration.paid', false)
               on conflict (org_id, feature_key) do update set bool_value = false`;

@@ -61,8 +61,17 @@ async function seedPassBuyer(over?: { currency?: string | null }): Promise<{
     insert into competitions (org_id, name, slug)
     values (${orgId}, ${"Trace Cup " + suffix}, ${"trace-cup-" + suffix}) returning id`;
   await sql`
-    insert into subscriptions (org_id, plan_key, status, currency)
-    values (${orgId}, 'community', 'active', ${over?.currency ?? null})`;
+    with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status, currency)
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active', ${over?.currency ?? null} from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   return { orgId, compId };
 }
 
@@ -87,7 +96,9 @@ const passEvent = (session: Stripe.Checkout.Session) =>
 
 const readSub = (orgId: string) =>
   sql<{ stripe_customer_id: string | null; currency: string | null }[]>`
-    select stripe_customer_id, currency from subscriptions where org_id = ${orgId}`;
+    select s.stripe_customer_id, s.currency from subscriptions s
+    join organizations o on o.subscription_id = s.id
+    where o.id = ${orgId}`;
 
 beforeEach(() => {
   stripeMock.retrieve.mockReset();
@@ -105,7 +116,11 @@ afterAll(async () => {
 describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (reconcile-on-return)", () => {
   it("links the Stripe customer so the invoice reaches the billing page", async () => {
     const { orgId, compId } = await seedPassBuyer();
-    const session = passSession(orgId, compId, { customer: "cus_pass_link" });
+    // Unique per run: V314's partial unique index on stripe_customer_id means a
+    // fixed id would collide with a prior run's leftover (this suite runs in two
+    // CI DB steps against one schema and does not delete its rows).
+    const cid = "cus_pass_link_" + uniq();
+    const session = passSession(orgId, compId, { customer: cid });
     stripeMock.retrieve.mockResolvedValue(session);
 
     expect(await reconcilePassCheckout(orgId, "cs_pass")).toBe(true);
@@ -113,7 +128,7 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (reconcile-on-retu
     const [sub] = await readSub(orgId);
     // NULL before this branch: the billing page's invoices.list({ customer })
     // had no customer to list against.
-    expect(sub.stripe_customer_id).toBe("cus_pass_link");
+    expect(sub.stripe_customer_id).toBe(cid);
   });
 
   it("pins the org's billing currency at its first purchase", async () => {
@@ -169,24 +184,26 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (reconcile-on-retu
 describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => {
   it("links the customer and pins the currency on the pass branch too", async () => {
     const { orgId, compId } = await seedPassBuyer();
+    const cid = "cus_pass_hook_" + uniq();
 
     await processStripeEvent(
-      passEvent(passSession(orgId, compId, { customer: "cus_pass_hook", currency: "aud" })),
+      passEvent(passSession(orgId, compId, { customer: cid, currency: "aud" })),
     );
 
     const [sub] = await readSub(orgId);
     // The pass branch `return`s before the shared linkStripeCustomer call at the
     // bottom of handleCheckoutCompleted, so it needed its own.
-    expect(sub.stripe_customer_id).toBe("cus_pass_hook");
+    expect(sub.stripe_customer_id).toBe(cid);
     expect(sub.currency).toBe("aud");
   });
 
   it("a refunded duplicate does NOT repoint the org's customer or currency", async () => {
     const { orgId, compId } = await seedPassBuyer();
+    const winner = "cus_pass_winner_" + uniq();
     // First owner's purchase is the one that counts.
     stripeMock.retrieve.mockResolvedValue(
       passSession(orgId, compId, {
-        customer: "cus_pass_winner",
+        customer: winner,
         currency: "gbp",
         payment_intent: "pi_winner",
       }),
@@ -200,7 +217,7 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
     await processStripeEvent(
       passEvent(
         passSession(orgId, compId, {
-          customer: "cus_pass_loser",
+          customer: "cus_pass_loser_" + uniq(),
           currency: "usd",
           payment_intent: "pi_loser",
         }),
@@ -209,14 +226,15 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
 
     expect(stripeMock.refundCreate).toHaveBeenCalledTimes(1);
     const [sub] = await readSub(orgId);
-    expect(sub.stripe_customer_id).toBe("cus_pass_winner");
+    expect(sub.stripe_customer_id).toBe(winner);
     expect(sub.currency).toBe("gbp");
   });
 
   it("a REPLAY of the same payment re-runs both writes idempotently", async () => {
     const { orgId, compId } = await seedPassBuyer();
+    const replay = "cus_pass_replay_" + uniq();
     const session = passSession(orgId, compId, {
-      customer: "cus_pass_replay",
+      customer: replay,
       currency: "eur",
       payment_intent: "pi_replay",
     });
@@ -229,7 +247,7 @@ describe.skipIf(!HAS_DB)("Event Pass leaves a financial trace (webhook)", () => 
 
     expect(stripeMock.refundCreate).not.toHaveBeenCalled();
     const [sub] = await readSub(orgId);
-    expect(sub.stripe_customer_id).toBe("cus_pass_replay");
+    expect(sub.stripe_customer_id).toBe(replay);
     expect(sub.currency).toBe("eur");
   });
 });

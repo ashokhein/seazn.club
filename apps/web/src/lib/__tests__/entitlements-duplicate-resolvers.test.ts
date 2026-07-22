@@ -41,8 +41,17 @@ async function seedOwnerWithOneOrg(): Promise<{ userId: string; orgId: string }>
     values (${"Dup " + s}, ${"dup-" + s}, ${userId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
   await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'community', 'active')`;
+    with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status)
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   return { userId, orgId };
 }
 
@@ -86,7 +95,7 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
       update subscriptions
       set plan_key = 'pro', comped_until = now() - interval '1 day',
           stripe_subscription_id = null
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     // community orgs.max_owned = 1, and they already own one.
     await expect(assertMayOwnAnotherOrg(userId)).rejects.toThrow();
@@ -96,7 +105,7 @@ describe.skipIf(!HAS_DB)("assertMayOwnAnotherOrg respects read-time degradations
     const { userId, orgId } = await seedOwnerWithOneOrg();
     await sql`
       update subscriptions set plan_key = 'pro', status = 'active'
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     await invalidateOrgEntitlements(orgId);
     // pro orgs.max_owned = 3 (V112 seeded 5; V270__pricing_v3_matrix.sql:9
     // dropped it to 3, which is why the grandfathering overrides exist).
@@ -165,7 +174,7 @@ describe.skipIf(!HAS_DB)("the org plan panel shows what enforcement will do", ()
       update subscriptions
       set plan_key = 'pro', comped_until = now() - interval '1 day',
           stripe_subscription_id = null
-      where org_id = ${orgId}`;
+      where id = (select subscription_id from organizations o where o.id = ${orgId})`;
     const data = await readPanel(orgId);
     // The raw plan_key is still reported (contract), but every VALUE resolves
     // as community: pro is unlimited here, community caps at 5 (V311).

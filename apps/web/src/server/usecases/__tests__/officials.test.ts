@@ -19,12 +19,9 @@ import {
   patchFixtureOfficials,
 } from "../officials";
 import { acceptedOfficialCovers, fixtureScope } from "../scorers";
-import {
-  makeUser as makeSeedUser,
-  seedOrg as seedSeedOrg,
-  seedFutureDivision,
-} from "./_seed";
+import { makeUser as makeSeedUser, seedOrg as seedSeedOrg, seedFutureDivision } from "./_seed";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
@@ -34,18 +31,13 @@ const GENERIC_CONFIG = {
   progressScore: false,
 };
 
-async function seedOrg(
-  plan: "community" | "pro" | "pro_plus" = "pro",
-): Promise<{ auth: AuthCtx }> {
+async function seedOrg(plan: "community" | "pro" | "pro_plus" = "pro"): Promise<{ auth: AuthCtx }> {
   const suffix = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Off " + suffix}, ${"off-" + suffix})
     returning id`;
   if (plan !== "community") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${orgId}, ${plan}, 'active')
-      on conflict (org_id) do update set plan_key = ${plan}`;
+    await setOrgPlan(orgId, plan);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -56,30 +48,44 @@ async function seedOrg(
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 // competition + division + 4 entrants + league fixtures, all scheduled on one
 // court in 30-minute slots.
 async function seedScheduledDivision(auth: AuthCtx) {
   const comp = await createCompetition(auth, {
-    name: "Officials Cup", visibility: "public", branding: {},
+    name: "Officials Cup",
+    visibility: "public",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
     // full config override: the shared test DB's variant row may be a stale
     // partial — don't depend on it
-    config: GENERIC_CONFIG, eligibility: [],
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const entrants = await createEntrants(
     auth,
     division.id,
     ["A", "B", "C", "D"].map((name, i) => ({
-      kind: "individual" as const, display_name: name, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: name,
+      seed: i + 1,
+      members: [],
     })),
   );
   const [stage] = await createStages(auth, division.id, {
-    seq: 1, kind: "league", name: "League", config: {},
+    seq: 1,
+    kind: "league",
+    name: "League",
+    config: {},
   });
   const { fixtures } = await generateStageFixtures(auth, stage!.id);
   const t0 = Date.UTC(2026, 6, 10, 9, 0, 0);
@@ -106,13 +112,24 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     // officials.auto is a Pro Plus feature since V290 (hard move, no grandfather)
     const { auth } = await seedOrg("pro_plus");
     const { division, fixtures } = await seedScheduledDivision(auth);
-    await createOfficial(auth, { display_name: "Ref One", role_keys: ["referee"] });
-    await createOfficial(auth, { display_name: "Ref Two", role_keys: ["referee"] });
+    await createOfficial(auth, {
+      display_name: "Ref One",
+      role_keys: ["referee"],
+    });
+    await createOfficial(auth, {
+      display_name: "Ref Two",
+      role_keys: ["referee"],
+    });
 
     const proposal = await autoAssignOfficials(auth, division.id, {
       policy: {
-        roles: ["referee"], poolLock: false, blockStay: true, fairness: "tournament",
-        teamRefKeepDivision: false, restMinMinutes: 0, blockGapMinutes: 30,
+        roles: ["referee"],
+        poolLock: false,
+        blockStay: true,
+        fairness: "tournament",
+        teamRefKeepDivision: false,
+        restMinMinutes: 0,
+        blockGapMinutes: 30,
       },
       rng_seed: "t",
     });
@@ -123,7 +140,9 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     const idByName = new Map(officials.map((o) => [o.display_name, o.id]));
     const { applied } = await applyOfficialAssignments(auth, division.id, {
       assignments: proposal.assignments.map((a) => ({
-        fixture_id: a.fixtureId, official_id: a.officialId, role_key: a.roleKey,
+        fixture_id: a.fixtureId,
+        official_id: a.officialId,
+        role_key: a.roleKey,
         locked: false,
       })),
     });
@@ -147,25 +166,56 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
   it("stamps the ai block into officials_assigned when present, omits it otherwise", async () => {
     const { auth } = await seedOrg("pro_plus");
     const { division, fixtures } = await seedScheduledDivision(auth);
-    await createOfficial(auth, { display_name: "Ref One", role_keys: ["referee"] });
-    await createOfficial(auth, { display_name: "Ref Two", role_keys: ["referee"] });
+    await createOfficial(auth, {
+      display_name: "Ref One",
+      role_keys: ["referee"],
+    });
+    await createOfficial(auth, {
+      display_name: "Ref Two",
+      role_keys: ["referee"],
+    });
     const proposal = await autoAssignOfficials(auth, division.id, {
       policy: {
-        roles: ["referee"], poolLock: false, blockStay: true, fairness: "tournament",
-        teamRefKeepDivision: false, restMinMinutes: 0, blockGapMinutes: 30,
+        roles: ["referee"],
+        poolLock: false,
+        blockStay: true,
+        fairness: "tournament",
+        teamRefKeepDivision: false,
+        restMinMinutes: 0,
+        blockGapMinutes: 30,
       },
       rng_seed: "t",
     });
     const assignments = proposal.assignments.map((a) => ({
-      fixture_id: a.fixtureId, official_id: a.officialId, role_key: a.roleKey, locked: false,
+      fixture_id: a.fixtureId,
+      official_id: a.officialId,
+      role_key: a.roleKey,
+      locked: false,
     }));
 
     // With an ai block → trimmed instruction lands in the latest event payload.
     await applyOfficialAssignments(auth, division.id, {
       assignments,
-      ai: { instruction: "  cover every fixture  ", summary: "assigned refs", model: "claude-o", repair_rounds: 1 },
+      ai: {
+        instruction: "  cover every fixture  ",
+        summary: "assigned refs",
+        model: "claude-o",
+        repair_rounds: 1,
+      },
     });
-    const [withAi] = await sql<{ payload: { applied: number; ai?: { instruction: string; summary: string; model: string; repair_rounds: number } } }[]>`
+    const [withAi] = await sql<
+      {
+        payload: {
+          applied: number;
+          ai?: {
+            instruction: string;
+            summary: string;
+            model: string;
+            repair_rounds: number;
+          };
+        };
+      }[]
+    >`
       select payload from division_events
       where division_id = ${division.id} and type = 'officials_assigned'
       order by seq desc limit 1`;
@@ -189,19 +239,28 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     const { division, fixtures, entrants } = await seedScheduledDivision(auth);
     // one team-ref official belonging to entrant A — plays in 3 of 6 fixtures
     await createOfficial(auth, {
-      display_name: "Team A (ref)", role_keys: ["referee"], entrant_id: entrants[0]!.id,
+      display_name: "Team A (ref)",
+      role_keys: ["referee"],
+      entrant_id: entrants[0]!.id,
     });
     const proposal = await autoAssignOfficials(auth, division.id, {
       policy: {
-        roles: ["referee"], poolLock: false, blockStay: false, fairness: "tournament",
-        teamRefKeepDivision: false, restMinMinutes: 0, blockGapMinutes: 30,
+        roles: ["referee"],
+        poolLock: false,
+        blockStay: false,
+        fairness: "tournament",
+        teamRefKeepDivision: false,
+        restMinMinutes: 0,
+        blockGapMinutes: 30,
       },
       rng_seed: "t",
     });
     const aFixtures = new Set(
       fixtures
-        .filter((f: { home_entrant_id: string | null; away_entrant_id: string | null }) =>
-          f.home_entrant_id === entrants[0]!.id || f.away_entrant_id === entrants[0]!.id)
+        .filter(
+          (f: { home_entrant_id: string | null; away_entrant_id: string | null }) =>
+            f.home_entrant_id === entrants[0]!.id || f.away_entrant_id === entrants[0]!.id,
+        )
         .map((f: { id: string }) => f.id),
     );
     for (const a of proposal.assignments) {
@@ -212,7 +271,10 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
   it("locked assignments survive apply; re-apply keeps them", async () => {
     const { auth } = await seedOrg("pro_plus");
     const { division, fixtures } = await seedScheduledDivision(auth);
-    const ref = await createOfficial(auth, { display_name: "Pinned", role_keys: ["referee"] });
+    const ref = await createOfficial(auth, {
+      display_name: "Pinned",
+      role_keys: ["referee"],
+    });
     await patchFixtureOfficials(auth, fixtures[0]!.id, {
       set: [{ official_id: ref.id, role_key: "referee", locked: true }],
     });
@@ -225,7 +287,10 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
   it("hide-names strips officials from the public read (25 Jun)", async () => {
     const { auth } = await seedOrg();
     const { division, fixtures } = await seedScheduledDivision(auth);
-    const ref = await createOfficial(auth, { display_name: "Secret Ref", role_keys: ["referee"] });
+    const ref = await createOfficial(auth, {
+      display_name: "Secret Ref",
+      role_keys: ["referee"],
+    });
     await patchFixtureOfficials(auth, fixtures[0]!.id, {
       set: [{ official_id: ref.id, role_key: "referee", locked: false }],
     });
@@ -244,20 +309,31 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
   it("Community: manual single-role free; multi-role and auto 402", async () => {
     const { auth } = await seedOrg("community");
     const { division, fixtures } = await seedScheduledDivision(auth);
-    const ref = await createOfficial(auth, { display_name: "Solo", role_keys: ["referee"] });
+    const ref = await createOfficial(auth, {
+      display_name: "Solo",
+      role_keys: ["referee"],
+    });
     await patchFixtureOfficials(auth, fixtures[0]!.id, {
       set: [{ official_id: ref.id, role_key: "referee", locked: false }],
     });
 
     await expect(
-      createOfficial(auth, { display_name: "Multi", role_keys: ["referee", "judge"] }),
+      createOfficial(auth, {
+        display_name: "Multi",
+        role_keys: ["referee", "judge"],
+      }),
     ).rejects.toMatchObject({ featureKey: "officials.roles_multi" });
 
     await expect(
       autoAssignOfficials(auth, division.id, {
         policy: {
-          roles: ["referee"], poolLock: false, blockStay: false, fairness: "tournament",
-          teamRefKeepDivision: false, restMinMinutes: 0, blockGapMinutes: 30,
+          roles: ["referee"],
+          poolLock: false,
+          blockStay: false,
+          fairness: "tournament",
+          teamRefKeepDivision: false,
+          restMinMinutes: 0,
+          blockGapMinutes: 30,
         },
         rng_seed: "t",
       }),
@@ -267,8 +343,14 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
   it("Community: officials.per_fixture.max caps a fixture at one official; Pro lifts it", async () => {
     const { auth } = await seedOrg("community");
     const { fixtures } = await seedScheduledDivision(auth);
-    const refA = await createOfficial(auth, { display_name: "Ref A", role_keys: ["referee"] });
-    const refB = await createOfficial(auth, { display_name: "Ref B", role_keys: ["referee"] });
+    const refA = await createOfficial(auth, {
+      display_name: "Ref A",
+      role_keys: ["referee"],
+    });
+    const refB = await createOfficial(auth, {
+      display_name: "Ref B",
+      role_keys: ["referee"],
+    });
 
     // one official per fixture stays free
     await patchFixtureOfficials(auth, fixtures[0]!.id, {
@@ -285,10 +367,7 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
       }),
     ).rejects.toMatchObject({ featureKey: "officials.per_fixture.max" });
 
-    await sql`
-      insert into subscriptions (org_id, plan_key, status)
-      values (${auth.orgId}, 'pro', 'active')
-      on conflict (org_id) do update set plan_key = 'pro'`;
+    await setOrgPlan(auth.orgId);
     await invalidateOrgEntitlements(auth.orgId);
 
     const { officials } = await patchFixtureOfficials(auth, fixtures[0]!.id, {
@@ -309,7 +388,8 @@ describe.skipIf(!HAS_DB)("officials assignment (Jul3/02)", () => {
     expect(again).toEqual({ created: 0, skipped: 2 });
     const officials = await listOfficials(auth);
     expect(officials.find((o) => o.display_name === "Jay Judge")?.role_keys).toEqual([
-      "referee", "judge",
+      "referee",
+      "judge",
     ]);
   });
 });

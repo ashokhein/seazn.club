@@ -31,6 +31,34 @@ export async function invalidateOrgEntitlements(orgId: string): Promise<void> {
 }
 
 /**
+ * Drop cached entitlements for EVERY org billing through a subscription.
+ *
+ * Cache keys are per-org (`ent:<org>:…`) but the plan behind them is now per
+ * GROUP, so a plan change, cancel, or dunning transition on a three-org group
+ * would otherwise leave two orgs serving the old plan for up to the 300s TTL.
+ * Any write that touches a subscription row must call this, not
+ * invalidateOrgEntitlements — org-scoped writes (overrides, Event Passes) keep
+ * the single-org version, because those genuinely affect one org.
+ *
+ * Reads the membership itself rather than taking a caller-supplied list: the
+ * caller that just cancelled a subscription generally knows one org, and the
+ * whole point is the ones it does not know about.
+ */
+export async function invalidateGroupEntitlements(subscriptionId: string): Promise<void> {
+  const orgs = await sql<{ id: string }[]>`
+    select id from organizations where subscription_id = ${subscriptionId}`;
+  await Promise.all(orgs.map((o) => invalidateOrgEntitlements(o.id)));
+}
+
+/** Fan out from an org to every sibling org sharing its subscription. */
+export async function invalidateEntitlementsForOrgGroup(orgId: string): Promise<void> {
+  const [row] = await sql<{ subscription_id: string | null }[]>`
+    select subscription_id from organizations where id = ${orgId}`;
+  if (row?.subscription_id) await invalidateGroupEntitlements(row.subscription_id);
+  else await invalidateOrgEntitlements(orgId);
+}
+
+/**
  * Resolve a single entitlement for an org (cache-aside).
  * Priority (v3/07 §3): org_entitlement_overrides → competition pass (community
  * orgs only, when a competition is in scope) → plan_entitlements → null (deny).
@@ -103,11 +131,20 @@ export async function orgPlanKey(orgId: string): Promise<string> {
       -- negated rather than listing the dead statuses, which would drift.
       -- coalesce is load-bearing: a bare NOT IN over a null status yields NULL,
       -- not true, so the arm would silently never fire for rows with no status.
-      -- BEHAVIOUR CHANGE (deliberate): negating the live list is WIDER than the
-      -- old "status = canceled" test — it also fires for 'suspended', which is
-      -- written in-app by the staff suspend route and never restored on
-      -- reactivate. A suspended org's lapsed comp therefore now degrades where
-      -- before it kept running. That is the intent: suspension is not billing.
+      -- Negating the live list is WIDER than the old "status = canceled" test.
+      -- It used to also fire for 'suspended' on this row; since V310 NOTHING
+      -- writes that status (staff suspension moved to organizations.status, and
+      -- V310 cleared the rows the old route left behind), so that arm is now
+      -- reachable only by genuinely dead subscriptions. Suspension is handled by
+      -- the org branch below instead.
+      --
+      -- MODERATION, not billing: a suspended ORG resolves community regardless
+      -- of what its group pays for. This is deliberately scoped to the one org —
+      -- the group keeps billing, keeps its plan, and every sibling org is
+      -- untouched, because a moderator suspending one club must not degrade
+      -- other people's clubs that happen to share a payer. It also restores the
+      -- bite suspension lost when it stopped writing subscriptions.status.
+      when o.status = 'suspended' then 'community'
       when s.comped_until is not null and s.comped_until <= now()
            and (s.stripe_subscription_id is null
                 or coalesce(s.status, '') not in ${sql([...LIVE_SUBSCRIPTION_STATUSES])})
@@ -152,7 +189,7 @@ export async function orgPlanKey(orgId: string): Promise<string> {
       else coalesce(s.plan_key, 'community')
     end as plan_key
     from organizations o
-    left join subscriptions s on s.org_id = o.id
+    left join subscriptions s on s.id = o.subscription_id
     where o.id = ${orgId}`;
   return orgPlan?.plan_key ?? "community";
 }

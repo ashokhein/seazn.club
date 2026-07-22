@@ -48,11 +48,17 @@ async function seedSubOrg(over: {
   const changedDays =
     over.statusChangedDaysAgo === undefined ? over.daysAgo : over.statusChangedDaysAgo;
   await sql`
-    insert into subscriptions
-      (org_id, plan_key, status, stripe_subscription_id, updated_at, status_changed_at)
-    values (${orgId}, ${over.plan}, ${over.status}, ${"sub_" + suffix},
-            now() - (${over.daysAgo} * interval '1 day'),
-            ${changedDays === null ? null : sql`now() - (${changedDays} * interval '1 day')`})`;
+    with s as (
+      insert into subscriptions
+        (owner_user_id, plan_key, status, stripe_subscription_id, updated_at,
+         status_changed_at)
+      select o.created_by, ${over.plan}, ${over.status}, ${"sub_" + suffix},
+             now() - (${over.daysAgo} * interval '1 day'),
+             ${changedDays === null ? null : sql`now() - (${changedDays} * interval '1 day')`}
+        from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations o set subscription_id = s.id from s where o.id = ${orgId}`;
   return orgId;
 }
 
@@ -66,35 +72,59 @@ afterAll(async () => {
 
 describe.skipIf(!HAS_DB)("past_due read-time grace (P1-6)", () => {
   it("pro past_due beyond the 14-day grace degrades to community", async () => {
-    const orgId = await seedSubOrg({ plan: "pro", status: "past_due", daysAgo: 20 });
+    const orgId = await seedSubOrg({
+      plan: "pro",
+      status: "past_due",
+      daysAgo: 20,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false); // Pro gate revoked
     expect(await hasFeature(orgId, "exports")).toBe(true); // lands on community matrix, not a deny
   });
 
   it("pro past_due within the grace window keeps paid entitlements", async () => {
-    const orgId = await seedSubOrg({ plan: "pro", status: "past_due", daysAgo: 2 });
+    const orgId = await seedSubOrg({
+      plan: "pro",
+      status: "past_due",
+      daysAgo: 2,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(true);
   });
 
   it("pro_plus past_due beyond grace degrades to community (plan-generic)", async () => {
-    const orgId = await seedSubOrg({ plan: "pro_plus", status: "past_due", daysAgo: 20 });
+    const orgId = await seedSubOrg({
+      plan: "pro_plus",
+      status: "past_due",
+      daysAgo: 20,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
     expect(await hasFeature(orgId, "exports")).toBe(true);
   });
 
   it("pro_plus past_due within grace keeps paid entitlements (plan-generic)", async () => {
-    const orgId = await seedSubOrg({ plan: "pro_plus", status: "past_due", daysAgo: 2 });
+    const orgId = await seedSubOrg({
+      plan: "pro_plus",
+      status: "past_due",
+      daysAgo: 2,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(true);
   });
 
   it("at the 14-day boundary the grace has lapsed (<=) — degrades", async () => {
     // Seeded at now()-14d; by read time DB now() has advanced past the boundary.
-    const orgId = await seedSubOrg({ plan: "pro", status: "past_due", daysAgo: 14 });
+    const orgId = await seedSubOrg({
+      plan: "pro",
+      status: "past_due",
+      daysAgo: 14,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(false);
   });
 
   it("an old but ACTIVE sub is untouched — only past_due degrades", async () => {
-    const orgId = await seedSubOrg({ plan: "pro", status: "active", daysAgo: 60 });
+    const orgId = await seedSubOrg({
+      plan: "pro",
+      status: "active",
+      daysAgo: 60,
+    });
     expect(await hasFeature(orgId, "exports.branded")).toBe(true);
   });
 

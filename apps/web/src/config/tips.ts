@@ -56,6 +56,29 @@ export const TIPS = {
     body: "Nothing is deleted. Anything over the Community limits becomes read-only until you upgrade again or archive something. Your logo and your card entry fees keep working — only the platform fee goes back to 8% — while Pro extras like your brand colour, branded exports and API keys switch off.",
     helpSlug: "billing/downgrade",
   },
+  "billing.groups": {
+    title: "One subscription, several organisations",
+    body: "A subscription can pay for more than one organisation. They share one card and one invoice, but each keeps its own limits, its own Stripe connection and its own payouts.",
+    helpSlug: "billing/groups",
+  },
+  "billing.extra-org": {
+    title: "What another organisation costs",
+    body: "Each organisation after the first is half your plan's rate. It also moves to your plan's entry-fee cut — 2% on Pro or 1% on Pro Plus, instead of the 8% a free organisation pays.",
+    helpSlug: "billing/groups",
+  },
+  // Held back when the tips landed, because quantity_paid was written by
+  // nothing and a chip promising a free slot would have been a lie. It is
+  // written now (syncGroupQuantity), and the reconcile sweep keeps it honest.
+  "billing.freed-slot": {
+    title: "You have a slot you have already paid for",
+    body: "When an organisation leaves, we do not lower the bill mid-period — the slot stays yours until the subscription renews. Adding another organisation into it costs nothing until then.",
+    helpSlug: "billing/groups",
+  },
+  "billing.billed-by": {
+    title: "Why the plan is managed elsewhere",
+    body: "This organisation is covered by someone else's subscription. The card and the invoices sit with whoever pays, because one subscription can cover several organisations.",
+    helpSlug: "billing/groups",
+  },
   "billing.event-pass": {
     title: "What an Event Pass covers",
     body: "For this competition only: 64 entrants per division, 10 divisions, branded exports, public player cards, sponsor packages, the realtime scoreboard and a 5% platform fee instead of 8%. It is not Pro — your brand colour, player stats, officials, discipline, embeds and API access all stay Pro. A passed competition stops counting against your active-competition limit; the pass doesn't carry to next season's edition.",

@@ -63,6 +63,7 @@ export const HELP_ARTICLE_SLUGS = [
   "sharing/news",
   "sharing/presentation-mode",
   "billing/plans",
+  "billing/groups",
   "billing/downgrade",
   "billing/event-pass",
   "api/keys",

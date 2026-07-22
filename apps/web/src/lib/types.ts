@@ -200,6 +200,10 @@ export interface Plan {
 }
 
 export interface Subscription {
+  /** The BILLING GROUP's own id (V310). The row stopped being keyed by org and
+   *  gained an identity of its own; `org_id` below is now projected from
+   *  whichever org was asked about, because several may share this row. */
+  id: string;
   org_id: string;
   plan_key: PlanKey;
   status: SubscriptionStatus;

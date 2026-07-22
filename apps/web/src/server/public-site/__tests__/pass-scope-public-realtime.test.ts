@@ -49,8 +49,17 @@ async function seedCommunityOrg(): Promise<{ orgId: string; orgSlug: string }> {
     insert into organizations (name, slug) values (${"RT Org " + s}, ${orgSlug})
     returning id`;
   await sql`
-    insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'community', 'active')
-    on conflict (org_id) do update set plan_key = 'community', status = 'active'`;
+    with _owner as (
+      insert into users (email, display_name, email_verified)
+      values ('seedowner-' || gen_random_uuid() || '@test.local', 'Seed Owner', true)
+      returning id
+    ),
+    _seed_sub as (
+      insert into subscriptions (owner_user_id, plan_key, status)
+      select coalesce(o.created_by, (select id from _owner)), 'community', 'active' from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations set subscription_id = (select id from _seed_sub) where id = ${orgId}`;
   await invalidateOrgEntitlements(orgId);
   return { orgId, orgSlug };
 }

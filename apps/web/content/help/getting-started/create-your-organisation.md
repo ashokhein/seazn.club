@@ -4,7 +4,7 @@ description: Your organisation is home base — competitions, teammates and bill
 order: 1
 ---
 
-Everything you run on seazn.club lives inside an **organisation** — your club, league or school. You get one automatically when you sign up; you can rename it or create more at any time.
+Everything you run on seazn.club lives inside an **organisation** — your club, league or school. You get one automatically when you sign up, and you can rename it whenever you like. The free Community plan covers **one** organisation; running more than one means a paid plan, where a single subscription can cover several — see [one subscription, several organisations](/help/billing/groups).
 
 ## Set it up
 
@@ -22,7 +22,7 @@ The welcome tour walks you through this next, right after naming your organisati
 
 ## Common questions
 
-**Can I run more than one organisation?** Yes — switch between them from the organisation menu. Each has its own competitions, team and plan.
+**Can I run more than one organisation?** On a paid plan, yes — switch between them from the organisation menu. Each keeps its own competitions, team and Stripe payouts, but they don't need separate subscriptions: one plan covers up to 5 organisations on Pro or 10 on Pro Plus, with each one after the first at half the rate. Community covers one organisation. See [one subscription, several organisations](/help/billing/groups).
 
 **Who can see my organisation?** Only what you explicitly share. Competitions start Private; your public page at `/shared/your-org` lists only competitions you make Public.
 

@@ -15,7 +15,9 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 // fire-and-forget, so the mock is invoked synchronously inside the awaited
 // usecase (conv_vitest email-spy pattern). Above the usecase import so the
 // binding is the spy.
-const emailMock = vi.hoisted(() => ({ report: vi.fn().mockResolvedValue(true) }));
+const emailMock = vi.hoisted(() => ({
+  report: vi.fn().mockResolvedValue(true),
+}));
 vi.mock("@/lib/email", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email")>()),
   sendReportSubmittedEmail: emailMock.report,
@@ -31,6 +33,7 @@ import {
   type ReportIncident,
 } from "../match-reports";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 interface OrgCtx {
@@ -53,9 +56,7 @@ async function seedOrg(plan: "pro" | "community" = "pro"): Promise<OrgCtx> {
     values (${"Rep " + suffix}, ${"rep-" + suffix}, ${userId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
   if (plan === "pro") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'pro', 'active')
-      on conflict (org_id) do update set plan_key = 'pro'`;
+    await setOrgPlan(orgId);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -80,7 +81,12 @@ async function seedOrg(plan: "pro" | "community" = "pro"): Promise<OrgCtx> {
     values (${divisionId}, ${orgId}, 'team', 'Bravo', 2) returning id`;
   return {
     auth: { orgId, via: "session", userId, role: "owner", keyId: null },
-    orgId, userId, divisionId, stageId, entrantA, entrantB,
+    orgId,
+    userId,
+    divisionId,
+    stageId,
+    entrantA,
+    entrantB,
   };
 }
 
@@ -134,9 +140,9 @@ async function makeAssignment(
   return { fixtureOfficialId: id, fixtureId };
 }
 
-async function pendingReportSuspensions(divisionId: string): Promise<
-  { person_id: string; reason: string; status: string; bucket: number }[]
-> {
+async function pendingReportSuspensions(
+  divisionId: string,
+): Promise<{ person_id: string; reason: string; status: string; bucket: number }[]> {
   return sql`
     select person_id, reason, status, bucket from suspensions
     where division_id = ${divisionId} and source = 'report' order by bucket`;
@@ -170,12 +176,19 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
   it("blocks a report before the fixture ends, allows it once abandoned", async () => {
     const ctx = await seedOrg();
     const ref = await makeClaimedOfficial(ctx);
-    const scheduled = await makeAssignment(ctx, ref.officialId, { status: "scheduled" });
+    const scheduled = await makeAssignment(ctx, ref.officialId, {
+      status: "scheduled",
+    });
     await expect(
-      putMyReport(ref.userId, scheduled.fixtureOfficialId, { body: "x", incidents: [] }),
+      putMyReport(ref.userId, scheduled.fixtureOfficialId, {
+        body: "x",
+        incidents: [],
+      }),
     ).rejects.toMatchObject({ status: 403 });
 
-    const abandoned = await makeAssignment(ctx, ref.officialId, { status: "abandoned" });
+    const abandoned = await makeAssignment(ctx, ref.officialId, {
+      status: "abandoned",
+    });
     const saved = await putMyReport(ref.userId, abandoned.fixtureOfficialId, {
       body: "rain stopped play",
       incidents: [],
@@ -204,16 +217,24 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
 
     // Editing after submit → 409; resubmitting → 409.
     await expect(
-      putMyReport(ref.userId, fixtureOfficialId, { body: "changed", incidents: [] }),
+      putMyReport(ref.userId, fixtureOfficialId, {
+        body: "changed",
+        incidents: [],
+      }),
     ).rejects.toMatchObject({ status: 409 });
-    await expect(submitMyReport(ref.userId, fixtureOfficialId)).rejects.toMatchObject({ status: 409 });
+    await expect(submitMyReport(ref.userId, fixtureOfficialId)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it("re-closes the window when a fixture is voided back to scheduled after a draft exists", async () => {
     const ctx = await seedOrg();
     const ref = await makeClaimedOfficial(ctx);
     const { fixtureOfficialId, fixtureId } = await makeAssignment(ctx, ref.officialId);
-    const saved = await putMyReport(ref.userId, fixtureOfficialId, { body: "first draft", incidents: [] });
+    const saved = await putMyReport(ref.userId, fixtureOfficialId, {
+      body: "first draft",
+      incidents: [],
+    });
     expect(saved.status).toBe("draft");
 
     // Void the decision back to scheduled — the report window closes again even
@@ -221,7 +242,10 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     // on every write, never cached on the report row).
     await sql`update fixtures set status = 'scheduled' where id = ${fixtureId}`;
     await expect(
-      putMyReport(ref.userId, fixtureOfficialId, { body: "second draft", incidents: [] }),
+      putMyReport(ref.userId, fixtureOfficialId, {
+        body: "second draft",
+        incidents: [],
+      }),
     ).rejects.toMatchObject({ status: 403, code: "REPORT_WINDOW_CLOSED" });
   });
 
@@ -236,13 +260,23 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
       values (${a1.fixtureId}, ${ref2.officialId}, ${ctx.orgId}, 'assistant', 'manual', 'accepted')
       returning id`;
 
-    await putMyReport(ref1.userId, a1.fixtureOfficialId, { body: "ref one", incidents: [] });
+    await putMyReport(ref1.userId, a1.fixtureOfficialId, {
+      body: "ref one",
+      incidents: [],
+    });
     await submitMyReport(ref1.userId, a1.fixtureOfficialId);
-    await putMyReport(ref2.userId, foId2, { body: "ref two draft", incidents: [] });
+    await putMyReport(ref2.userId, foId2, {
+      body: "ref two draft",
+      incidents: [],
+    });
 
     const reports = await fixtureReports(ctx.auth, a1.fixtureId);
     expect(reports).toHaveLength(1);
-    expect(reports[0]).toMatchObject({ status: "submitted", body: "ref one", officialName: "The Ref" });
+    expect(reports[0]).toMatchObject({
+      status: "submitted",
+      body: "ref one",
+      officialName: "The Ref",
+    });
   });
 
   it("org B's fixtureReports never sees org A's submitted report (RLS)", async () => {
@@ -250,7 +284,10 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     const b = await seedOrg();
     const ref = await makeClaimedOfficial(a);
     const { fixtureOfficialId, fixtureId } = await makeAssignment(a, ref.officialId);
-    await putMyReport(ref.userId, fixtureOfficialId, { body: "org a only", incidents: [] });
+    await putMyReport(ref.userId, fixtureOfficialId, {
+      body: "org a only",
+      incidents: [],
+    });
     await submitMyReport(ref.userId, fixtureOfficialId);
 
     // Sanity: the raw superuser connection DOES see org A's row, so the tenant
@@ -277,10 +314,18 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     const { fixtureOfficialId } = await makeAssignment(ctx, ref.officialId);
 
     const incidents: ReportIncident[] = [
-      { kind: "red_card", person_id: player, entrant_id: ctx.entrantA, note: "violent conduct, 88'" },
+      {
+        kind: "red_card",
+        person_id: player,
+        entrant_id: ctx.entrantA,
+        note: "violent conduct, 88'",
+      },
       { kind: "injury", note: "keeper concussion" },
     ];
-    await putMyReport(ref.userId, fixtureOfficialId, { body: "eventful", incidents });
+    await putMyReport(ref.userId, fixtureOfficialId, {
+      body: "eventful",
+      incidents,
+    });
     await submitMyReport(ref.userId, fixtureOfficialId);
 
     const rows = await pendingReportSuspensions(ctx.divisionId);
@@ -388,7 +433,9 @@ describe.skipIf(!HAS_DB)("match reports (SPEC-3, PROMPT-80)", () => {
     const [{ id: stranger }] = await sql<{ id: string }[]>`
       insert into users (email, display_name, email_verified)
       values (${`x-${randomUUID().slice(0, 8)}@test.local`}, 'X', true) returning id`;
-    await expect(myFixtureSquad(stranger, fixtureOfficialId)).rejects.toMatchObject({ status: 404 });
+    await expect(myFixtureSquad(stranger, fixtureOfficialId)).rejects.toMatchObject({
+      status: 404,
+    });
   });
 
   it("emails owner + admins on submit with the fixture line, official name and incident count", async () => {

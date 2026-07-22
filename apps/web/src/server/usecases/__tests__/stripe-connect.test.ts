@@ -32,6 +32,7 @@ import {
   syncConnectAccount,
 } from "../stripe-connect";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seedProOrg(): Promise<{ owner: AuthCtx; orgId: string }> {
@@ -43,16 +44,23 @@ async function seedProOrg(): Promise<{ owner: AuthCtx; orgId: string }> {
     insert into organizations (name, slug, created_by)
     values (${"Connect Org " + suffix}, ${"cn-org-" + suffix}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'pro', 'active')
-            on conflict (org_id) do update set plan_key = 'pro', status = 'active'`;
-  return { owner: { orgId, via: "session", userId: ownerId, role: "owner", keyId: null }, orgId };
+  await setOrgPlan(orgId);
+  return {
+    owner: {
+      orgId,
+      via: "session",
+      userId: ownerId,
+      role: "owner",
+      keyId: null,
+    },
+    orgId,
+  };
 }
 
 beforeEach(() => {
-  stripeMock.accountCreate
-    .mockReset()
-    .mockImplementation(async () => ({ id: "acct_test_" + randomUUID().slice(0, 8) }));
+  stripeMock.accountCreate.mockReset().mockImplementation(async () => ({
+    id: "acct_test_" + randomUUID().slice(0, 8),
+  }));
   stripeMock.accountLinkCreate
     .mockReset()
     .mockResolvedValue({ url: "https://connect.stripe.test/onboard" });
@@ -84,7 +92,11 @@ describe.skipIf(!HAS_DB)("Connect onboarding ToS gate (PROMPT-55)", () => {
   it("agreement creates the account with the acceptance stamped in metadata", async () => {
     const { owner, orgId } = await seedProOrg();
     const { url } = await createConnectOnboardingLink(
-      owner, orgId, "http://test.local", "/settings/connect", true,
+      owner,
+      orgId,
+      "http://test.local",
+      "/settings/connect",
+      true,
     );
     expect(url).toBe("https://connect.stripe.test/onboard");
     expect(stripeMock.accountCreate).toHaveBeenCalledTimes(1);
@@ -103,7 +115,10 @@ describe.skipIf(!HAS_DB)("Connect onboarding ToS gate (PROMPT-55)", () => {
     await sql`update organizations set stripe_account_id = ${"acct_prior_" + orgId.slice(0, 8)}
               where id = ${orgId}`;
     const { url } = await createConnectOnboardingLink(
-      owner, orgId, "http://test.local", "/settings/connect",
+      owner,
+      orgId,
+      "http://test.local",
+      "/settings/connect",
     );
     expect(url).toBe("https://connect.stripe.test/onboard");
     expect(stripeMock.accountCreate).not.toHaveBeenCalled();
@@ -133,7 +148,11 @@ describe.skipIf(!HAS_DB)("Express dashboard login link", () => {
     await sql`update organizations set stripe_account_id = ${"acct_x_" + orgId.slice(0, 8)}
               where id = ${orgId}`;
     const scorer: AuthCtx = {
-      orgId, via: "session", userId: randomUUID(), role: "scorer", keyId: null,
+      orgId,
+      via: "session",
+      userId: randomUUID(),
+      role: "scorer",
+      keyId: null,
     };
     await expect(createConnectDashboardLink(scorer, orgId)).rejects.toMatchObject({
       status: 403,
@@ -162,9 +181,7 @@ describe.skipIf(!HAS_DB)("Express dashboard login link", () => {
               where id = ${orgId}`;
     stripeMock.loginLinkCreate.mockRejectedValue(
       Object.assign(
-        new Error(
-          "The provided key 'rk_test_abc123' does not have access to account 'acct_nope'",
-        ),
+        new Error("The provided key 'rk_test_abc123' does not have access to account 'acct_nope'"),
         { type: "StripeInvalidRequestError", statusCode: 400 },
       ),
     );
@@ -193,12 +210,14 @@ describe.skipIf(!HAS_DB)("Connect health mirror (P1-8)", () => {
     } as unknown as Stripe.Account;
     await syncConnectAccount(account);
 
-    const [org] = await sql<{
-      stripe_charges_enabled: boolean;
-      stripe_payouts_enabled: boolean;
-      stripe_disabled_reason: string | null;
-      stripe_requirements_due: number;
-    }[]>`
+    const [org] = await sql<
+      {
+        stripe_charges_enabled: boolean;
+        stripe_payouts_enabled: boolean;
+        stripe_disabled_reason: string | null;
+        stripe_requirements_due: number;
+      }[]
+    >`
       select stripe_charges_enabled, stripe_payouts_enabled,
              stripe_disabled_reason, stripe_requirements_due
       from organizations where id = ${orgId}`;

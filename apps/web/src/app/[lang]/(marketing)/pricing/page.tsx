@@ -34,12 +34,19 @@ const FAQ_KEYS = [
   "upgraded",
   "trialEnd",
   "fees",
+  "groups",
   "currencies",
   "annual",
   "cancel",
   "proPlus",
 ] as const;
 
+// `pricing.meta.description` quotes USD amounts deliberately, unlike the page
+// body, which honours the currency switcher. Metadata is what a crawler reads,
+// and a crawler carries no switcher cookie — it would always resolve to the
+// USD default anyway, so reading the cookie here would buy nothing and make the
+// <meta> vary per visitor for no SEO gain. One canonical currency, kept
+// accurate: the amounts must be re-checked whenever stripe-plans.json moves.
 export async function generateMetadata({
   params,
 }: {
@@ -121,6 +128,18 @@ export default async function PricingPage({
   const passCta = await passColumnCta().catch(() => "signup" as const);
   const proMonthly = formatMinor(proPrice("monthly", currency), currency);
   const plusMonthly = formatMinor(proPlusPrice("monthly", currency), currency);
+
+  // The FAQ used to hardcode "$19/mo" while the cards above it honoured the
+  // currency switcher — a GBP visitor saw £ and $ on one page. Every answer is
+  // interpolated with the same switched amounts instead; `t()` leaves an answer
+  // without placeholders untouched, so only the ones that quote a price change.
+  const faqVars = {
+    pass: passLabel,
+    pro: proMonthly,
+    proAnnual: formatMinor(proPrice("annual", currency), currency),
+    plus: plusMonthly,
+    plusAnnual: formatMinor(proPlusPrice("annual", currency), currency),
+  };
 
   // Most matrix cells are locale-free literals (numbers, ∞, ✓, —); only the
   // "passedEvent" prose cell is a real dict key (see lib/pricing-matrix).
@@ -289,7 +308,17 @@ export default async function PricingPage({
                         </tr>
                         {section.rows.map((r) => (
                           <tr key={r.labelKey}>
-                            <td className="font-medium text-slate-700">{t(d, r.labelKey)}</td>
+                            <td className="font-medium text-slate-700">
+                              {t(d, r.labelKey)}
+                              {/* A count that is really a price gets a second
+                                  line, so the number is never read as an
+                                  allowance (billing groups, spec 2026-07-21). */}
+                              {r.noteKey && (
+                                <span className="mt-0.5 block text-xs font-normal text-slate-500">
+                                  {t(d, r.noteKey)}
+                                </span>
+                              )}
+                            </td>
                             <td className="text-center text-slate-500">{cellText(r.free)}</td>
                             <td className="text-center text-[#4d7c0f]">{cellText(r.pass)}</td>
                             <td className="text-center font-medium text-purple-700">{cellText(r.pro)}</td>
@@ -324,7 +353,7 @@ export default async function PricingPage({
                     <h3 className="mb-2 font-semibold text-slate-800">
                       {t(d, `pricing.faq.${k}.q`)}
                     </h3>
-                    <p className="text-sm text-slate-600">{t(d, `pricing.faq.${k}.a`)}</p>
+                    <p className="text-sm text-slate-600">{t(d, `pricing.faq.${k}.a`, faqVars)}</p>
                   </div>
                 ))}
               </div>

@@ -73,7 +73,9 @@ async function keyWindowCount(keyId: string, windowSeconds: number): Promise<num
 
 async function apiKeyRateLimit(key: ApiKeyRow): Promise<void> {
   const [sub] = await sql<{ plan_key: string }[]>`
-    select plan_key from subscriptions where org_id = ${key.org_id}`;
+    select s.plan_key from subscriptions s
+    join organizations o on o.subscription_id = s.id
+    where o.id = ${key.org_id}`;
   const limit = sub?.plan_key === "pro" ? KEY_RATE.pro : KEY_RATE.free;
   const count = await keyWindowCount(key.id, KEY_RATE.windowSeconds);
   const reset = Math.ceil(Date.now() / 1000 / KEY_RATE.windowSeconds) * KEY_RATE.windowSeconds;

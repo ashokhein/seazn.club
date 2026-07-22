@@ -24,6 +24,7 @@ import {
 } from "../device-links";
 import { eventRecorderNames } from "../fixtures";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const DIVISION_CONFIG = {
@@ -52,9 +53,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{
     values (${"DL Org " + suffix}, ${"dl-org-" + suffix}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
   if (plan !== "community") {
-    await sql`insert into subscriptions (org_id, plan_key, status)
-              values (${orgId}, ${plan}, 'active')
-              on conflict (org_id) do update set plan_key = ${plan}, status = 'active'`;
+    await setOrgPlan(orgId, plan);
   }
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -77,17 +76,32 @@ const asOwner = (orgId: string, userId: string): AuthCtx => ({
 
 async function rig(owner: AuthCtx) {
   const competition = await createCompetition(owner, {
-    name: "DL Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {},
+    name: "DL Cup " + randomUUID().slice(0, 6),
+    visibility: "private",
+    branding: {},
   });
   const division = await createDivision(owner, competition.id, {
-    name: "Open", sport_key: "generic", variant_key: "score",
-    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    name: "Open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    eligibility: [],
   });
-  await createEntrants(owner, division.id, ["A", "B", "C", "D"].map((n, i) => ({
-    kind: "individual" as const, display_name: n, seed: i + 1, members: [],
-  })));
+  await createEntrants(
+    owner,
+    division.id,
+    ["A", "B", "C", "D"].map((n, i) => ({
+      kind: "individual" as const,
+      display_name: n,
+      seed: i + 1,
+      members: [],
+    })),
+  );
   const [stage] = await createStages(owner, division.id, {
-    seq: 1, kind: "league", name: "L", config: {},
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
   });
   const { fixtures } = await generateStageFixtures(owner, stage.id);
   await startDivision(owner, division.id);
@@ -147,14 +161,22 @@ describe.skipIf(!HAS_DB)("device links (doc 13 §7, PROMPT-21)", () => {
     );
 
     // Score winner without any session.
-    await scoreEvent(deviceAuth, fixture.id, { expected_seq: 0, type: "core.start", payload: {} });
+    await scoreEvent(deviceAuth, fixture.id, {
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
     const scored = await scoreEvent(deviceAuth, fixture.id, {
-      expected_seq: 1, type: "generic.result", payload: { p1Score: 2, p2Score: 1 },
+      expected_seq: 1,
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 1 },
     });
     expect(scored.outcome).not.toBeNull();
 
     // Attribution rides on the ledger: recorded_by = issuer + device_link_id.
-    const events = await sql<{ type: string; recorded_by: string; device_link_id: string | null }[]>`
+    const events = await sql<
+      { type: string; recorded_by: string; device_link_id: string | null }[]
+    >`
       select type, recorded_by, device_link_id from score_events
       where fixture_id = ${fixture.id} order by seq`;
     expect(events.every((e) => e.recorded_by === ownerId)).toBe(true);
@@ -170,27 +192,35 @@ describe.skipIf(!HAS_DB)("device links (doc 13 §7, PROMPT-21)", () => {
     const [{ id: resultEventId }] = await sql<{ id: string }[]>`
       select id from score_events where fixture_id = ${fixture.id} and type = 'generic.result'`;
     const undone = await scoreEvent(deviceAuth, fixture.id, {
-      expected_seq: 2, type: "core.void", payload: { event_id: resultEventId },
+      expected_seq: 2,
+      type: "core.void",
+      payload: { event_id: resultEventId },
     });
     expect(undone.outcome).toBeNull();
 
     // Cannot void an event another actor recorded.
     const ownerScored = await scoreEvent(owner, fixture.id, {
-      expected_seq: 3, type: "generic.result", payload: { p1Score: 3, p2Score: 0 },
+      expected_seq: 3,
+      type: "generic.result",
+      payload: { p1Score: 3, p2Score: 0 },
     });
     const [{ id: ownerEventId }] = await sql<{ id: string }[]>`
       select id from score_events
       where fixture_id = ${fixture.id} and seq = ${ownerScored.seq}`;
     await expect(
       scoreEvent(deviceAuth, fixture.id, {
-        expected_seq: ownerScored.seq, type: "core.void", payload: { event_id: ownerEventId },
+        expected_seq: ownerScored.seq,
+        type: "core.void",
+        payload: { event_id: ownerEventId },
       }),
     ).rejects.toThrowError(HttpError);
 
     // Finalize via link → 403 ("finalizing needs a human with a name").
     await expect(
       scoreEvent(deviceAuth, fixture.id, {
-        expected_seq: ownerScored.seq, type: "core.finalize", payload: {},
+        expected_seq: ownerScored.seq,
+        type: "core.finalize",
+        payload: {},
       }),
     ).rejects.toThrowError(HttpError);
 
@@ -245,9 +275,15 @@ describe.skipIf(!HAS_DB)("device links (doc 13 §7, PROMPT-21)", () => {
 
     // "Old" events: no device_link_id (exactly what pre-migration rows look
     // like after ADD COLUMN — null). Chain must verify…
-    await scoreEvent(owner, fixture.id, { expected_seq: 0, type: "core.start", payload: {} });
     await scoreEvent(owner, fixture.id, {
-      expected_seq: 1, type: "generic.result", payload: { p1Score: 1, p2Score: 0 },
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
+    await scoreEvent(owner, fixture.id, {
+      expected_seq: 1,
+      type: "generic.result",
+      payload: { p1Score: 1, p2Score: 0 },
     });
     const [{ bad: before }] = await sql<{ bad: string | null }[]>`
       select verify_score_events_chain(${fixture.id}) as bad`;
@@ -256,11 +292,17 @@ describe.skipIf(!HAS_DB)("device links (doc 13 §7, PROMPT-21)", () => {
     // …and a MIXED chain (null rider rows, then device-link rows on top)
     // also verifies — the canonical string never includes device_link_id.
     const mixed = fixtures[1];
-    await scoreEvent(owner, mixed.id, { expected_seq: 0, type: "core.start", payload: {} });
+    await scoreEvent(owner, mixed.id, {
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
+    });
     const link = await createDeviceLink(owner, mixed.id, null);
     const deviceAuth = await requireFixtureActor(dlRequest(link.secret), mixed.id, "score");
     await scoreEvent(deviceAuth, mixed.id, {
-      expected_seq: 1, type: "generic.result", payload: { p1Score: 0, p2Score: 4 },
+      expected_seq: 1,
+      type: "generic.result",
+      payload: { p1Score: 0, p2Score: 4 },
     });
     const riders = await sql<{ device_link_id: string | null }[]>`
       select device_link_id from score_events where fixture_id = ${mixed.id} order by seq`;
@@ -280,7 +322,9 @@ describe.skipIf(!HAS_DB)("device links (doc 13 §7, PROMPT-21)", () => {
     );
     // PROMPT-18 path untouched: the owner still scores by session.
     const scored = await scoreEvent(owner, fixtures[0].id, {
-      expected_seq: 0, type: "core.start", payload: {},
+      expected_seq: 0,
+      type: "core.start",
+      payload: {},
     });
     expect(scored.seq).toBe(1);
   });

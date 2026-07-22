@@ -7,21 +7,24 @@ import { randomUUID } from "node:crypto";
 
 const stripeMock = vi.hoisted(() => {
   const subscriptionUpdate = vi.fn();
-  return { subscriptionUpdate, stripe: { subscriptions: { update: subscriptionUpdate } } };
+  return {
+    subscriptionUpdate,
+    stripe: { subscriptions: { update: subscriptionUpdate } },
+  };
 });
 vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 
 import { sql } from "@/lib/db";
 import { extendTrial } from "@/server/usecases/admin-plan";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seedOrg(): Promise<{ orgId: string; actorId: string }> {
   const s = randomUUID().slice(0, 8);
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"AdmS " + s}, ${"adms-" + s}) returning id`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'community', 'active') on conflict (org_id) do nothing`;
+  await setOrgPlan(orgId, "community");
   const [{ id: actorId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, is_staff, staff_role)
     values (${"staffs-" + s + "@test.local"}, 'Staff', true, 'superadmin') returning id`;
@@ -46,7 +49,7 @@ describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_trialing', status = 'trialing',
                      plan_key = 'pro'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
 
     const end = await extendTrial(actorId, orgId, 7, "sales call");
 
@@ -60,10 +63,14 @@ describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
     // never writes it. What needs proving is that the PINNED local UPDATE ran at
     // all — a pin that matched nothing would leave the row untouched and be
     // invisible otherwise.
-    const [row] = await sql<{
-      comped_until: string | null; trial_end: string | null; trial_used_at: string | null;
-    }[]>`
-      select comped_until, trial_end, trial_used_at from subscriptions where org_id = ${orgId}`;
+    const [row] = await sql<
+      {
+        comped_until: string | null;
+        trial_end: string | null;
+        trial_used_at: string | null;
+      }[]
+    >`
+      select comped_until, trial_end, trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.comped_until).toBeNull(); // the subscription owns the lifecycle
     expect(row.trial_end).not.toBeNull();
     expect(new Date(row.trial_end as string).toISOString()).toBe(end);
@@ -82,30 +89,35 @@ describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_racing', status = 'trialing',
                      plan_key = 'pro', trial_end = now() - interval '30 days'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     const [seeded] = await sql<{ trial_end: string | null; status: string }[]>`
-      select trial_end, status from subscriptions where org_id = ${orgId}`;
+      select trial_end, status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(seeded.trial_end).not.toBeNull();
     expect(seeded.status).toBe("trialing"); // the arm under test is the live one
 
     stripeMock.subscriptionUpdate.mockImplementation(async () => {
       // The racing webhook: status moves, the id stays.
-      await sql`update subscriptions set status = 'canceled' where org_id = ${orgId}`;
+      await sql`update subscriptions set status = 'canceled' where id = (select subscription_id from organizations where id = ${orgId})`;
       return { id: "sub_racing" };
     });
 
     await extendTrial(actorId, orgId, 7, "sales call");
 
     expect(stripeMock.subscriptionUpdate).toHaveBeenCalledTimes(1);
-    const [after] = await sql<{
-      trial_end: string | null; status: string; stripe_subscription_id: string | null;
-    }[]>`
+    const [after] = await sql<
+      {
+        trial_end: string | null;
+        status: string;
+        stripe_subscription_id: string | null;
+      }[]
+    >`
       select trial_end, status, stripe_subscription_id
-        from subscriptions where org_id = ${orgId}`;
+        from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(after.status).toBe("canceled"); // the webhook's truth stands
     expect(after.stripe_subscription_id).toBe("sub_racing");
-    expect(new Date(after.trial_end as string).getTime())
-      .toBe(new Date(seeded.trial_end as string).getTime());
+    expect(new Date(after.trial_end as string).getTime()).toBe(
+      new Date(seeded.trial_end as string).getTime(),
+    );
 
     const [audit] = await sql<{ detail: { local_write_skipped?: boolean } }[]>`
       select detail from staff_audit_log
@@ -118,7 +130,7 @@ describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
     const { orgId, actorId } = await seedOrg();
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_dead', status = 'canceled'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     await extendTrial(actorId, orgId, 7, "win-back");
     expect(stripeMock.subscriptionUpdate).not.toHaveBeenCalled();
   });
@@ -128,7 +140,7 @@ describe.skipIf(!HAS_DB)("extendTrial Stripe arms", () => {
       const { orgId, actorId } = await seedOrg();
       await sql`update subscriptions
                    set stripe_subscription_id = ${"sub_" + status}, status = ${status}
-                 where org_id = ${orgId}`;
+                 where id = (select subscription_id from organizations where id = ${orgId})`;
       await expect(extendTrial(actorId, orgId, 7, "gift")).rejects.toThrow(/Stripe/i);
     }
     expect(stripeMock.subscriptionUpdate).not.toHaveBeenCalled();

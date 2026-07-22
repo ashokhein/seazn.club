@@ -72,6 +72,9 @@ export default defineConfig({
   test: {
     environment: "node",
     pool: "threads",
+    // Warns once when DATABASE_URL is absent: the DB suites then SKIP and the
+    // run still exits 0, which has already been misread as a pass. See the file.
+    globalSetup: ["./vitest.globalSetup.ts"],
     // Each DB suite lazily creates a postgres client (cached on globalThis) and
     // ends it in afterAll. With isolate:false that client + globalThis are shared
     // across files, so one file's teardown strands another file's in-flight query

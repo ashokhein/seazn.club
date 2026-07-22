@@ -1,4 +1,4 @@
-import { getActiveOrgId, requireOrgRole } from "@/lib/auth";
+import { requireUser } from "@/lib/auth";
 import { handler } from "@/lib/http";
 import { HttpError } from "@/lib/errors";
 import { getStripe } from "@/lib/stripe";
@@ -10,6 +10,8 @@ import {
   buildEmbeddedCheckoutParams,
   checkoutTrialDays,
 } from "@/lib/billing";
+import { billedQuantity } from "@/lib/billing-group";
+import { requireBillingOwner } from "@/server/usecases/billing-manage";
 import { preferredCurrency } from "@/lib/currency-server";
 import { creditPassTowardSubscription, orgHoldsAnyPass } from "@/server/usecases/pass-credit";
 import { routes } from "@/lib/routes";
@@ -19,11 +21,13 @@ import { routes } from "@/lib/routes";
  *  (in-page, no redirect until completion). */
 export async function POST(req: Request) {
   return handler(async () => {
-    const orgId = await getActiveOrgId();
-    if (!orgId) throw new HttpError(400, "No active organization");
-
-    // Only owners may manage billing
-    const { user } = await requireOrgRole(orgId, ["owner"]);
+    // The GROUP's payer, not this org's owner. This checkout reuses the group's
+    // Stripe customer (with the payer's saved cards on it), burns the group's
+    // single trial, and lands a plan that every sibling org resolves through —
+    // so a member org's owner starting it would be spending someone else's
+    // money. Same gate as every other billing mutation.
+    const user = await requireUser();
+    const { orgId, subscriptionId } = await requireBillingOwner();
     const { plan_key, interval } = checkoutSchema.parse(await req.json());
 
     // Resolve Stripe price ID from the plans table
@@ -38,7 +42,7 @@ export async function POST(req: Request) {
       );
 
     // Reuse existing Stripe customer if we already have one
-    const [[sub], [org]] = await Promise.all([
+    const [[sub], [org], quantity] = await Promise.all([
       sql<{
         stripe_customer_id: string | null;
         stripe_subscription_id: string | null;
@@ -46,12 +50,21 @@ export async function POST(req: Request) {
         trial_used_at: string | null;
       }[]>`
         select stripe_customer_id, stripe_subscription_id, status, trial_used_at
-        from subscriptions where org_id = ${orgId}`,
+        from subscriptions where id = ${subscriptionId}`,
       sql<{ slug: string }[]>`select slug from organizations where id = ${orgId}`,
+      // One seat per org already in the group (never fewer than what has been
+      // paid for), so a group of three checking out buys three seats up front.
+      billedQuantity(subscriptionId),
     ]);
     // A live Stripe sub changes plan in-app, never via a second checkout.
     assertCheckoutAllowed(sub);
 
+    // Only a multi-seat checkout needs to know how the price bills, so the
+    // single-org case (the overwhelming majority) pays no extra Stripe round
+    // trip. A flat legacy price would bill quantity x full rate — see
+    // assertPriceBillsQuantity, which refuses rather than overcharge.
+    const billingScheme =
+      quantity > 1 ? (await getStripe().prices.retrieve(plan.price_id)).billing_scheme : null;
     // Pass-to-Pro (v3/07, D12/D13). Both reads run BEFORE the session so the
     // credit is on the customer when the first invoice is drawn.
     //
@@ -69,12 +82,17 @@ export async function POST(req: Request) {
       buildEmbeddedCheckoutParams({
         priceId: plan.price_id,
         orgId,
+        // The durable webhook key: this subscription pays for THIS group, and
+        // stays true even if `orgId` later moves to another one.
+        subscriptionId,
         returnUrl: `${baseUrl(req)}${routes.billing(org.slug)}?checkout=success&session_id={CHECKOUT_SESSION_ID}`,
         // One trial per org — a re-subscribing org pays from day one.
         trialDays: checkoutTrialDays(sub),
         currency: await preferredCurrency(orgId, req),
         customerId: sub?.stripe_customer_id ?? undefined,
         customerEmail: user.email,
+        quantity,
+        billingScheme,
         requireCard,
       }),
     );

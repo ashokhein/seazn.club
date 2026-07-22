@@ -44,6 +44,32 @@ export function proPlusPrice(interval: "monthly" | "annual", currency: Currency)
   return amountFor(plus.prices[interval], currency);
 }
 
+/**
+ * What ONE more organisation in the billing group costs, in minor units.
+ *
+ * Read from the price seed's tier 2 (`up_to: "inf"`), not computed — the tier
+ * amounts are SET per-currency price points like every other amount in that
+ * file, never an FX conversion or an arithmetic half. Stripe bills from those
+ * tiers, so this is the only number that can honestly be advertised.
+ *
+ * It IS half of tier 1 today, and a lot of copy says so in prose across four
+ * locales. `extra-org-price-parity.test.ts` fails if that stops being true, and
+ * names the strings to rewrite — so the price can be changed, it just cannot be
+ * changed quietly.
+ */
+export function extraOrgPrice(
+  plan: "pro" | "pro_plus",
+  interval: "monthly" | "annual",
+  currency: Currency,
+): number {
+  const spec = stripePlans.plans.find((p) => p.key === plan);
+  if (!spec) throw new Error(`stripe-plans.json is missing the ${plan} plan`);
+  const price = spec.prices[interval];
+  const tier = price.tiers?.find((t) => t.up_to === "inf");
+  if (!tier) throw new Error(`${plan} ${interval} has no extra-organisation tier`);
+  return amountFor(tier, currency);
+}
+
 /** Event Pass one-time price in minor units for a currency. */
 export function passPrice(currency: Currency): number {
   const pass = stripePlans.passes?.find((p) => p.key === "event_pass");

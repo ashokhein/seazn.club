@@ -15,6 +15,7 @@ import { startDivision } from "../schedule";
 import { scoreEvent } from "../scoring";
 import { withdrawEntrantCascade } from "../withdrawal";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 const GENERIC_CONFIG = {
   resultMode: "score",
@@ -28,8 +29,7 @@ async function seedOrg(): Promise<AuthCtx> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug)
     values (${"Wdr " + suffix}, ${"wdr-" + suffix}) returning id`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'pro', 'active') on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
     values ('generic', 'Generic', '1.0.0', ${sql.json({ groups: [], lineup: { size: 1, benchMax: 0 } })})
@@ -51,17 +51,33 @@ interface Fx {
 
 async function rig(auth: AuthCtx, entrantNames: string[]) {
   const comp = await createCompetition(auth, {
-    name: `W ${randomUUID().slice(0, 6)}`, visibility: "private", branding: {},
+    name: `W ${randomUUID().slice(0, 6)}`,
+    visibility: "private",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", sport_key: "generic", variant_key: "score",
-    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+    name: "Open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+    eligibility: [],
   });
   const entrants = await createEntrants(
-    auth, division.id,
-    entrantNames.map((n, i) => ({ kind: "individual" as const, display_name: n, seed: i + 1, members: [] })),
+    auth,
+    division.id,
+    entrantNames.map((n, i) => ({
+      kind: "individual" as const,
+      display_name: n,
+      seed: i + 1,
+      members: [],
+    })),
   );
-  const [stage] = await createStages(auth, division.id, { seq: 1, kind: "league", name: "L", config: {} });
+  const [stage] = await createStages(auth, division.id, {
+    seq: 1,
+    kind: "league",
+    name: "L",
+    config: {},
+  });
   await generateStageFixtures(auth, stage!.id);
   await startDivision(auth, division.id);
   const byName = Object.fromEntries(entrants.map((e, i) => [entrantNames[i]!, e.id]));
@@ -73,7 +89,11 @@ const fixturesOf = (divisionId: string) => sql<Fx[]>`
   from fixtures where division_id = ${divisionId}`;
 
 async function decide(auth: AuthCtx, fixtureId: string, homeWins: boolean) {
-  await scoreEvent(auth, fixtureId, { expected_seq: 0, type: "core.start", payload: {} });
+  await scoreEvent(auth, fixtureId, {
+    expected_seq: 0,
+    type: "core.start",
+    payload: {},
+  });
   await scoreEvent(auth, fixtureId, {
     expected_seq: 1,
     type: "generic.result",
@@ -147,10 +167,17 @@ describe.skipIf(!HAS_DB)("withdrawal cascade (spec 05 §5)", () => {
 
   it("before the start there is no surgery — plain status flip", async () => {
     const auth = await seedOrg();
-    const comp = await createCompetition(auth, { name: "Pre", visibility: "private", branding: {} });
+    const comp = await createCompetition(auth, {
+      name: "Pre",
+      visibility: "private",
+      branding: {},
+    });
     const division = await createDivision(auth, comp.id, {
-      name: "Open", sport_key: "generic", variant_key: "score",
-      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false }, eligibility: [],
+      name: "Open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: { points: { w: 3, d: 1, l: 0 }, progressScore: false },
+      eligibility: [],
     });
     const entrants = await createEntrants(auth, division.id, [
       { kind: "individual", display_name: "A", seed: 1, members: [] },

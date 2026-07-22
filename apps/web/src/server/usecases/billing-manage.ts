@@ -3,13 +3,14 @@ import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
 import { sql } from "@/lib/db";
 import { HttpError } from "@/lib/errors";
-import { getActiveOrgId, requireOrgRole, requireUser } from "@/lib/auth";
+import { getActiveOrgId, requireUser } from "@/lib/auth";
 import {
   syncPaymentMethodFlag,
   syncPaymentMethodFlagFromCards,
   syncSubscription,
 } from "@/lib/billing";
-import { invalidateOrgEntitlements } from "@/lib/entitlements";
+import { invalidateEntitlementsForOrgGroup } from "@/lib/entitlements";
+import { subscriptionIdForOrg } from "@/lib/billing-group";
 import { logStaffAction } from "@/lib/admin";
 import {
   buildAddressUpdateParams,
@@ -34,7 +35,6 @@ import {
   type TaxIdType,
 } from "@/lib/billing-manage";
 export type { BillingInterval, IntervalPreview };
-import { proPrice, proPlusPrice, type Currency } from "@/lib/currency";
 import { captureServer } from "@/lib/posthog-server";
 import { EVENTS } from "@/lib/analytics-events";
 
@@ -55,24 +55,57 @@ interface SubRow {
   currency: string | null;
 }
 
+/** The billing GROUP behind an org (V310) — many orgs may share one row. */
 async function subRow(orgId: string): Promise<SubRow | null> {
   const [sub] = await sql<SubRow[]>`
-    select plan_key, status, stripe_customer_id, stripe_subscription_id,
-           current_period_end, trial_end, cancel_at_period_end, currency
-    from subscriptions where org_id = ${orgId}`;
+    select s.plan_key, s.status, s.stripe_customer_id, s.stripe_subscription_id,
+           s.current_period_end, s.trial_end, s.cancel_at_period_end, s.currency
+    from subscriptions s
+    join organizations o on o.subscription_id = s.id
+    where o.id = ${orgId}`;
   return sub ?? null;
 }
 
-/** Owner-gated org context shared by every manage route. Session auth comes
- *  FIRST so an unauthenticated caller (e.g. a developer API key — these
- *  routes never read Authorization) gets a clean 401, not a 400 about org
- *  state. */
-export async function requireBillingOwner(): Promise<{ orgId: string }> {
-  await requireUser();
+/**
+ * Payer-gated context shared by every manage route. Session auth comes FIRST so
+ * an unauthenticated caller (e.g. a developer API key — these routes never read
+ * Authorization) gets a clean 401, not a 400 about org state.
+ *
+ * Gates on `subscriptions.owner_user_id`, NOT on the active org's owner role.
+ * Billing belongs to the GROUP: a county association may pay for eight member
+ * clubs it is not a member of, and every one of those clubs has its own owner
+ * who must not be able to cancel, re-price or re-card somebody else's
+ * subscription. After an org ownership transfer the org's owner and the group's
+ * payer are different people by design.
+ *
+ * The deliberate split: Stripe Connect stays gated on the ORG's owner (it is the
+ * club's own bank account and KYC), billing gates on the GROUP's owner (it is
+ * the payer's card). Neither gate implies the other.
+ */
+export async function requireBillingOwner(): Promise<{
+  orgId: string;
+  subscriptionId: string;
+}> {
+  const user = await requireUser();
   const orgId = await getActiveOrgId();
   if (!orgId) throw new HttpError(400, "No active organization");
-  await requireOrgRole(orgId, ["owner"]);
-  return { orgId };
+  // NOT requireSubscriptionIdForOrg: that raises 500 ("no billing group"),
+  // which is right for an internal invariant but wrong here — the org id comes
+  // from a COOKIE, so a stale or foreign value is ordinary user-triggerable
+  // input and must not page anyone. 400 with the same remedy as a missing
+  // cookie: pick an organisation again.
+  const subscriptionId = await subscriptionIdForOrg(orgId);
+  if (!subscriptionId)
+    throw new HttpError(400, "No billing account for the selected organization.");
+  const [group] = await sql<{ owner_user_id: string }[]>`
+    select owner_user_id from subscriptions where id = ${subscriptionId}`;
+  if (!group || group.owner_user_id !== user.id) {
+    throw new HttpError(
+      403,
+      "Only the person who pays for this billing group can manage its subscription.",
+    );
+  }
+  return { orgId, subscriptionId };
 }
 
 async function requireCustomer(orgId: string): Promise<{ sub: SubRow; customerId: string }> {
@@ -132,7 +165,7 @@ export async function getBillingOverview(orgId: string): Promise<BillingOverview
     if (needsRenewalResync(sub) && sub.stripe_subscription_id) {
       const live = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
       await syncSubscription(orgId, live);
-      await invalidateOrgEntitlements(orgId);
+      await invalidateEntitlementsForOrgGroup(orgId);
     }
 
     const customerId = sub.stripe_customer_id;
@@ -486,17 +519,49 @@ async function resolveIntervalChange(
   );
 }
 
+/**
+ * What the NEXT full invoice will come to, asked of Stripe instead of computed.
+ *
+ * This used to be `proPrice(interval, currency)` — one flat price point. Prices
+ * are `tiers_mode: graduated` now, so a group of three orgs renews at
+ * $19 + 2 x $9 = $37 while the flat lookup still said $19: the confirm dialog
+ * quoted a number Stripe would never charge. Multiplying the tiers out here
+ * would just move the arithmetic into our code where it can drift from
+ * Stripe's; `preview_mode: "recurring"` returns the recurring invoice for the
+ * NEW configuration, tiers, quantity, discounts and tax included, so the quote
+ * is Stripe's own.
+ *
+ * No proration_date: this preview is deliberately not the proration invoice
+ * (that is the `dueTodayMinor` call), it is the steady-state one. Returns null
+ * rather than throwing — a failed quote hides one line of the dialog; it must
+ * not break the whole preview.
+ */
+async function renewalAmountMinorFor(ctx: IntervalContext): Promise<number | null> {
+  try {
+    const invoice = await getStripe().invoices.createPreview({
+      customer: ctx.customerId,
+      subscription: ctx.subscriptionId,
+      subscription_details: { items: [{ id: ctx.itemId, price: ctx.priceId }] },
+      preview_mode: "recurring",
+    });
+    return invoice.total;
+  } catch {
+    return null;
+  }
+}
+
 export async function previewIntervalChange(
   orgId: string,
   target: BillingInterval,
 ): Promise<IntervalPreview> {
   const ctx = await resolveIntervalChange(orgId, target);
   const prorationDate = Math.floor(Date.now() / 1000);
-  const renewalAmountMinor =
-    ctx.planKey === "pro" ? proPrice(target, ctx.currency as Currency) : null;
+  const renewalAmountMinor = await renewalAmountMinorFor(ctx);
 
   // Trialing: nothing has been paid, nothing is due today — the first charge
-  // is the plain new price at trial end. No Stripe call needed.
+  // is the plain new price at trial end. No PRORATION call needed (the
+  // recurring quote above is still asked for, since a trialing group of three
+  // must not be told it will renew at the one-org price).
   if (ctx.trialing) {
     return {
       interval: target,
@@ -554,7 +619,7 @@ export async function applyIntervalChange(
   }
 
   await syncSubscription(orgId, updated);
-  await invalidateOrgEntitlements(orgId);
+  await invalidateEntitlementsForOrgGroup(orgId);
   await captureServer({
     event: EVENTS.BILLING_INTERVAL_CHANGED,
     distinctId: await ownerDistinctId(orgId),
@@ -580,10 +645,6 @@ export async function applyIntervalChange(
 
 export type PlanKey = "pro" | "pro_plus";
 
-function renewalAmountFor(planKey: PlanKey, interval: BillingInterval, currency: Currency): number {
-  return planKey === "pro" ? proPrice(interval, currency) : proPlusPrice(interval, currency);
-}
-
 export async function previewPlanChange(
   orgId: string,
   planKey: PlanKey,
@@ -591,10 +652,13 @@ export async function previewPlanChange(
 ): Promise<IntervalPreview> {
   const ctx = await resolvePriceChange(orgId, planKey, interval);
   const prorationDate = Math.floor(Date.now() / 1000);
-  const renewalAmountMinor = renewalAmountFor(planKey, interval, ctx.currency as Currency);
+  // Stripe's own arithmetic — see renewalAmountMinorFor. The flat
+  // proPrice/proPlusPrice lookup this replaced could not see the graduated
+  // per-org tiers and under-quoted every multi-org group.
+  const renewalAmountMinor = await renewalAmountMinorFor(ctx);
 
   // Trialing: nothing has been paid, nothing is due today — the first charge
-  // is the plain new price at trial end. No Stripe call needed.
+  // is the plain new price at trial end. No PRORATION call needed.
   if (ctx.trialing) {
     return {
       interval,
@@ -650,7 +714,7 @@ export async function applyPlanChange(
   await syncSubscription(orgId, updated);
   // Unlike a plain interval switch, plan_key itself changes here — cached
   // entitlements (limits, feature gates) go stale and must be invalidated.
-  await invalidateOrgEntitlements(orgId);
+  await invalidateEntitlementsForOrgGroup(orgId);
   await captureServer({
     event: EVENTS.BILLING_PLAN_CHANGED,
     distinctId: await ownerDistinctId(orgId),
@@ -690,7 +754,7 @@ export async function setCancelAtPeriodEnd(
     cancel_at_period_end: cancel,
   });
   await syncSubscription(orgId, updated);
-  await invalidateOrgEntitlements(orgId);
+  await invalidateEntitlementsForOrgGroup(orgId);
   await captureServer({
     event: cancel ? EVENTS.SUBSCRIPTION_CANCEL_SCHEDULED : EVENTS.SUBSCRIPTION_RESUMED,
     distinctId: await ownerDistinctId(orgId),
@@ -736,7 +800,7 @@ export async function retryOpenInvoice(orgId: string): Promise<RetryInvoiceResul
   if (sub.stripe_subscription_id) {
     const live = await stripe.subscriptions.retrieve(sub.stripe_subscription_id);
     await syncSubscription(orgId, live);
-    await invalidateOrgEntitlements(orgId);
+    await invalidateEntitlementsForOrgGroup(orgId);
   }
   return { paid: true };
 }

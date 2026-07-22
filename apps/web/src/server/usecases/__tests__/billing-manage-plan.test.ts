@@ -18,7 +18,10 @@ type SubFixture = {
   currency: string | null;
 };
 
-type PlanRow = { stripe_price_id_monthly: string | null; stripe_price_id_annual: string | null };
+type PlanRow = {
+  stripe_price_id_monthly: string | null;
+  stripe_price_id_annual: string | null;
+};
 
 const db = vi.hoisted(() => ({
   sub: null as SubFixture | null,
@@ -60,11 +63,19 @@ vi.mock("@/lib/auth", () => ({
 }));
 
 const billingMock = vi.hoisted(() => ({ syncSubscription: vi.fn() }));
-vi.mock("@/lib/billing", () => ({ syncSubscription: billingMock.syncSubscription }));
+vi.mock("@/lib/billing", () => ({
+  syncSubscription: billingMock.syncSubscription,
+}));
 
-const entitlementsMock = vi.hoisted(() => ({ invalidateOrgEntitlements: vi.fn() }));
+// V310: the plan change lands on the billing GROUP, so the cache drop is
+// invalidateEntitlementsForOrgGroup — still called with the org id.
+const entitlementsMock = vi.hoisted(() => ({
+  invalidateOrgEntitlements: vi.fn(),
+  invalidateEntitlementsForOrgGroup: vi.fn(),
+}));
 vi.mock("@/lib/entitlements", () => ({
   invalidateOrgEntitlements: entitlementsMock.invalidateOrgEntitlements,
+  invalidateEntitlementsForOrgGroup: entitlementsMock.invalidateEntitlementsForOrgGroup,
 }));
 
 vi.mock("@/lib/posthog-server", () => ({ captureServer: vi.fn() }));
@@ -91,8 +102,14 @@ beforeEach(() => {
   vi.clearAllMocks();
   db.sub = null;
   db.plans = {
-    pro: { stripe_price_id_monthly: "price_pro_m", stripe_price_id_annual: "price_pro_y" },
-    pro_plus: { stripe_price_id_monthly: "price_plus_m", stripe_price_id_annual: "price_plus_y" },
+    pro: {
+      stripe_price_id_monthly: "price_pro_m",
+      stripe_price_id_annual: "price_pro_y",
+    },
+    pro_plus: {
+      stripe_price_id_monthly: "price_plus_m",
+      stripe_price_id_annual: "price_plus_y",
+    },
   };
 });
 
@@ -113,6 +130,19 @@ describe("previewPlanChange refusal (resolvePriceChange)", () => {
   });
 });
 
+/** Two previews are taken per plan change, and they must not be confused:
+ *  the PRORATION one (no preview_mode) drives "due today"/credit, and the
+ *  RECURRING one (preview_mode: "recurring") drives the renewal quote. Distinct
+ *  totals here so each assertion proves which call it came from. */
+function previewByMode(prorationTotal: number, recurringTotal: number) {
+  return (params: { preview_mode?: string }) =>
+    Promise.resolve({
+      total: params.preview_mode === "recurring" ? recurringTotal : prorationTotal,
+      currency: "usd",
+      lines: { data: [{ period: { end: 1_800_000_000 } }] },
+    });
+}
+
 describe("previewPlanChange price-id selection", () => {
   it("looks the target price up under the TARGET plan key, not the current one", async () => {
     db.sub = sub({ plan_key: "pro" });
@@ -121,11 +151,7 @@ describe("previewPlanChange price-id selection", () => {
       currency: "usd",
       items: { data: [{ id: "si_1", price: { id: "price_pro_m" } }] },
     });
-    stripeMock.createPreview.mockResolvedValue({
-      total: 2500,
-      currency: "usd",
-      lines: { data: [{ period: { end: 1_800_000_000 } }] },
-    });
+    stripeMock.createPreview.mockImplementation(previewByMode(2500, 5800));
 
     const preview = await previewPlanChange(ORG_ID, "pro_plus", "monthly");
 
@@ -136,22 +162,30 @@ describe("previewPlanChange price-id selection", () => {
         }),
       }),
     );
-    // Renewal formula switches to proPlusPrice for a pro_plus target.
-    expect(preview.renewalAmountMinor).toBe(proPlusPrice("monthly", "usd"));
+    // V310: the renewal quote is Stripe's own recurring preview, NOT
+    // proPlusPrice(). Prices are tiers_mode: graduated now, so the flat helper
+    // under-quotes every multi-org group — 5800 here is base + one extra org,
+    // a number the flat lookup cannot produce.
+    expect(preview.renewalAmountMinor).toBe(5800);
+    expect(preview.renewalAmountMinor).not.toBe(proPlusPrice("monthly", "usd"));
+    // …and the recurring preview is asked for the TARGET price, same as the
+    // proration one.
+    expect(stripeMock.createPreview).toHaveBeenCalledWith(
+      expect.objectContaining({
+        preview_mode: "recurring",
+        subscription_details: { items: [{ id: "si_1", price: "price_plus_m" }] },
+      }),
+    );
   });
 
-  it("uses proPrice's formula for a Pro Plus → Pro downgrade preview", async () => {
+  it("quotes a Pro Plus → Pro downgrade from the recurring preview, credit from the proration one", async () => {
     db.sub = sub({ plan_key: "pro_plus" });
     stripeMock.retrieveSubscription.mockResolvedValue({
       status: "active",
       currency: "usd",
       items: { data: [{ id: "si_1", price: { id: "price_plus_m" } }] },
     });
-    stripeMock.createPreview.mockResolvedValue({
-      total: -1500,
-      currency: "usd",
-      lines: { data: [{ period: { end: 1_800_000_000 } }] },
-    });
+    stripeMock.createPreview.mockImplementation(previewByMode(-1500, 2800));
 
     const preview = await previewPlanChange(ORG_ID, "pro", "monthly");
 
@@ -162,8 +196,34 @@ describe("previewPlanChange price-id selection", () => {
         }),
       }),
     );
-    expect(preview.renewalAmountMinor).toBe(proPrice("monthly", "usd"));
+    // Renewal from the recurring preview; credit still from the proration one.
+    expect(preview.renewalAmountMinor).toBe(2800);
+    expect(preview.renewalAmountMinor).not.toBe(proPrice("monthly", "usd"));
     expect(preview.creditMinor).toBe(1500);
+  });
+
+  it("degrades to a null renewal quote rather than failing the whole preview", async () => {
+    db.sub = sub({ plan_key: "pro" });
+    stripeMock.retrieveSubscription.mockResolvedValue({
+      status: "active",
+      currency: "usd",
+      items: { data: [{ id: "si_1", price: { id: "price_pro_m" } }] },
+    });
+    stripeMock.createPreview.mockImplementation((params: { preview_mode?: string }) =>
+      params.preview_mode === "recurring"
+        ? Promise.reject(new Error("stripe down"))
+        : Promise.resolve({
+            total: 2500,
+            currency: "usd",
+            lines: { data: [{ period: { end: 1_800_000_000 } }] },
+          }),
+    );
+
+    const preview = await previewPlanChange(ORG_ID, "pro_plus", "monthly");
+
+    // One line of the confirm dialog goes missing; "due today" still renders.
+    expect(preview.renewalAmountMinor).toBeNull();
+    expect(preview.dueTodayMinor).toBe(2500);
   });
 });
 
@@ -186,7 +246,7 @@ describe("applyPlanChange", () => {
     const result = await applyPlanChange(ORG_ID, "pro_plus", "monthly", 1_770_000_000);
 
     expect(billingMock.syncSubscription).toHaveBeenCalledWith(ORG_ID, updated);
-    expect(entitlementsMock.invalidateOrgEntitlements).toHaveBeenCalledWith(ORG_ID);
+    expect(entitlementsMock.invalidateEntitlementsForOrgGroup).toHaveBeenCalledWith(ORG_ID);
     expect(result).toEqual({ requires_action: false });
   });
 });

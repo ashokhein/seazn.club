@@ -23,10 +23,15 @@ const stripeMock = vi.hoisted(() => {
     reversalCreate,
     reversalList,
     stripe: {
-      checkout: { sessions: { create: checkoutCreate, retrieve: checkoutRetrieve } },
+      checkout: {
+        sessions: { create: checkoutCreate, retrieve: checkoutRetrieve },
+      },
       refunds: { create: refundCreate },
       charges: { retrieve: chargeRetrieve },
-      transfers: { createReversal: reversalCreate, listReversals: reversalList },
+      transfers: {
+        createReversal: reversalCreate,
+        listReversals: reversalList,
+      },
     },
   };
 });
@@ -35,7 +40,9 @@ vi.mock("@/lib/stripe", () => ({ getStripe: () => stripeMock.stripe }));
 
 // Observe the dispute-lost organiser email without touching the rest of the
 // email module (send() is a no-op without RESEND_API_KEY either way).
-const emailMock = vi.hoisted(() => ({ disputeLost: vi.fn().mockResolvedValue(true) }));
+const emailMock = vi.hoisted(() => ({
+  disputeLost: vi.fn().mockResolvedValue(true),
+}));
 vi.mock("@/lib/email", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/email")>()),
   sendDisputeLostEmail: emailMock.disputeLost,
@@ -80,6 +87,7 @@ import { isValidRefCode } from "@/lib/ref-code";
 import { LEGAL_VERSION } from "@/lib/legal";
 import { resolveNameDisplay } from "@/lib/name-display";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 // ---------------------------------------------------------------------------
@@ -98,7 +106,6 @@ describe("fee math (pure)", () => {
     expect(applicationFeeCents(100, 100)).toBe(100);
     expect(applicationFeeCents(1, 100)).toBe(1);
   });
-
 });
 
 describe("age & eligibility (pure, doc 06 §2)", () => {
@@ -114,7 +121,11 @@ describe("age & eligibility (pure, doc 06 §2)", () => {
   });
 
   const U16 = [
-    { kind: "age", maxAgeAt: 15, cutoff: { month: 9, day: 1, yearOf: "season_start" } },
+    {
+      kind: "age",
+      maxAgeAt: 15,
+      cutoff: { month: 9, day: 1, yearOf: "season_start" },
+    },
   ];
 
   it("U16 cutoff rule: 15-or-younger on Sep 1 of the season-start year", () => {
@@ -137,14 +148,30 @@ describe("age & eligibility (pure, doc 06 §2)", () => {
 
 describe("validateAnswers (pure)", () => {
   const fields = [
-    { key: "size", label: "Shirt size", kind: "select" as const, options: ["S", "M"], required: true },
+    {
+      key: "size",
+      label: "Shirt size",
+      kind: "select" as const,
+      options: ["S", "M"],
+      required: true,
+    },
     { key: "notes", label: "Notes", kind: "text" as const, required: false },
-    { key: "photo_ok", label: "Photo consent", kind: "checkbox" as const, required: false },
+    {
+      key: "photo_ok",
+      label: "Photo consent",
+      kind: "checkbox" as const,
+      required: false,
+    },
   ];
 
   it("keeps declared fields, drops unknown keys", () => {
     expect(
-      validateAnswers(fields, { size: "M", notes: "hi", photo_ok: true, evil: "x" }),
+      validateAnswers(fields, {
+        size: "M",
+        notes: "hi",
+        photo_ok: true,
+        evil: "x",
+      }),
     ).toEqual({ size: "M", notes: "hi", photo_ok: true });
   });
 
@@ -179,9 +206,7 @@ async function seedOrg(plan: "community" | "pro" = "pro"): Promise<{
     values (${"Reg Org " + suffix}, ${orgSlug}, ${ownerId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${ownerId}, 'owner')`;
   if (plan !== "community") {
-    await sql`insert into subscriptions (org_id, plan_key, status)
-              values (${orgId}, ${plan}, 'active')
-              on conflict (org_id) do update set plan_key = ${plan}, status = 'active'`;
+    await setOrgPlan(orgId, plan);
   }
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -237,13 +262,23 @@ const SUBMIT_BASE = {
   players: [],
 };
 
-function fakeSession(regId: string, amount: number): Stripe.Checkout.Session {
+function fakeSession(
+  regId: string,
+  amount: number,
+  feePercent?: number,
+): Stripe.Checkout.Session {
   return {
     id: "cs_test_" + regId.slice(0, 8),
     payment_intent: "pi_test_" + regId.slice(0, 8),
     payment_status: "paid",
     amount_total: amount,
-    metadata: { kind: "registration", registration_id: regId },
+    // The session carries the rate it was billed at, exactly as
+    // createRegistrationCheckout stamps it (V312).
+    metadata: {
+      kind: "registration",
+      registration_id: regId,
+      ...(feePercent === undefined ? {} : { fee_percent: String(feePercent) }),
+    },
   } as unknown as Stripe.Checkout.Session;
 }
 
@@ -274,19 +309,38 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
 
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id, dob: "1995-04-01",
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+        dob: "1995-04-01",
+      },
+      "http://test.local",
+    );
     expect(res.registration.status).toBe("pending");
     expect(res.checkout_url).toBeNull();
     expect(res.access_token.startsWith("rg_")).toBe(true);
 
     // GDPR (spec 2026-07-14): consent is demonstrable — timestamp + version stored.
-    const [stored] = await sql<{ privacy_consent_at: Date | null; privacy_consent_version: string | null }[]>`
+    const [stored] = await sql<
+      {
+        privacy_consent_at: Date | null;
+        privacy_consent_version: string | null;
+      }[]
+    >`
       select privacy_consent_at, privacy_consent_version from registrations where id = ${res.registration.id}`;
     expect(stored.privacy_consent_at).toBeInstanceOf(Date);
     expect(stored.privacy_consent_version).toBe(LEGAL_VERSION);
@@ -312,24 +366,40 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "team", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "team",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
 
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id, display_name: "Riverside FC",
-      players: [
-        { name: "Jordan Blake", dob: "2005-04-12", squad_number: 7 },
-        { name: "Sam Ortiz", squad_number: 10 },
-        { name: "Alex Kim" },
-      ],
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+        display_name: "Riverside FC",
+        players: [
+          { name: "Jordan Blake", dob: "2005-04-12", squad_number: 7 },
+          { name: "Sam Ortiz", squad_number: 10 },
+          { name: "Alex Kim" },
+        ],
+      },
+      "http://test.local",
+    );
     expect(res.registration.status).toBe("pending");
 
     const confirmed = await confirmRegistration(owner, res.registration.id);
     expect(confirmed.entrant_id).not.toBeNull();
 
-    const members = await sql<{ full_name: string; dob: string | null; squad_number: number | null }[]>`
+    const members = await sql<
+      { full_name: string; dob: string | null; squad_number: number | null }[]
+    >`
       select p.full_name, p.dob, em.squad_number
       from entrant_members em join persons p on p.id = em.person_id
       where em.entrant_id = ${confirmed.entrant_id as string}
@@ -357,13 +427,26 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
               where id = ${orgId}`;
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 2000, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 2000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
 
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     // Paid entry is accepted immediately as pending — no online checkout.
     expect(res.registration.status).toBe("pending");
     expect(res.checkout_url).toBeNull();
@@ -403,19 +486,40 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
               where id = ${orgId}`;
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 1000, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: 1, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 1000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: 1,
+      refund_lock_at: null,
     });
 
-    const first = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id, display_name: "First In",
-    }, "http://test.local");
+    const first = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+        display_name: "First In",
+      },
+      "http://test.local",
+    );
     expect(first.registration.status).toBe("pending");
 
-    const second = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id, display_name: "Wait Lister",
-      contact_email: "wait@test.local",
-    }, "http://test.local");
+    const second = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+        display_name: "Wait Lister",
+        contact_email: "wait@test.local",
+      },
+      "http://test.local",
+    );
     expect(second.registration.status).toBe("waitlisted");
     expect(second.checkout_url).toBeNull(); // no money taken on the waitlist
 
@@ -452,14 +556,26 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
               where id = ${orgId}`;
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 1000, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 1000,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
       refund_lock_at: "2020-01-01T00:00:00Z", // lock long past
     });
 
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 1000));
     stripeMock.refundCreate.mockClear();
 
@@ -478,12 +594,23 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner, {
       eligibility: [
-        { kind: "age", maxAgeAt: 15, cutoff: { month: 9, day: 1, yearOf: "season_start" } },
+        {
+          kind: "age",
+          maxAgeAt: 15,
+          cutoff: { month: 9, day: 1, yearOf: "season_start" },
+        },
       ],
     });
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
 
     const base = { ...SUBMIT_BASE, division_id: division.id };
@@ -493,16 +620,34 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     ).rejects.toThrow(HttpError);
     // Adult → 422.
     await expect(
-      submitRegistration(orgSlug, competition.slug, { ...base, dob: "1990-01-01" }, "http://t.local"),
+      submitRegistration(
+        orgSlug,
+        competition.slug,
+        { ...base, dob: "1990-01-01" },
+        "http://t.local",
+      ),
     ).rejects.toThrow(/Too old/);
     // Eligible minor without guardian consent → 422.
     await expect(
-      submitRegistration(orgSlug, competition.slug, { ...base, dob: "2012-05-01" }, "http://t.local"),
+      submitRegistration(
+        orgSlug,
+        competition.slug,
+        { ...base, dob: "2012-05-01" },
+        "http://t.local",
+      ),
     ).rejects.toThrow(/guardian/);
     // With consent → in.
-    const ok = await submitRegistration(orgSlug, competition.slug, {
-      ...base, dob: "2012-05-01", guardian_name: "Pat Parent", guardian_consent: true,
-    }, "http://t.local");
+    const ok = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...base,
+        dob: "2012-05-01",
+        guardian_name: "Pat Parent",
+        guardian_consent: true,
+      },
+      "http://t.local",
+    );
     expect(ok.registration.status).toBe("pending");
   });
 
@@ -511,14 +656,28 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
 
     await expect(
-      submitRegistration(orgSlug, competition.slug, {
-        ...SUBMIT_BASE, division_id: division.id, privacy_consent: false,
-      }, "http://t.local"),
+      submitRegistration(
+        orgSlug,
+        competition.slug,
+        {
+          ...SUBMIT_BASE,
+          division_id: division.id,
+          privacy_consent: false,
+        },
+        "http://t.local",
+      ),
     ).rejects.toThrow(/privacy/i);
   });
 
@@ -527,19 +686,37 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "team", fee_cents: 0, currency: "usd",
+      enabled: true,
+      entrant_kind: "team",
+      fee_cents: 0,
+      currency: "usd",
       form_fields: [
-        { key: "size", label: "Shirt size", kind: "select", options: ["S", "M"], required: true },
+        {
+          key: "size",
+          label: "Shirt size",
+          kind: "select",
+          options: ["S", "M"],
+          required: true,
+        },
       ],
-      opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
     const base = { ...SUBMIT_BASE, division_id: division.id };
     await expect(
       submitRegistration(orgSlug, competition.slug, base, "http://t.local"),
     ).rejects.toThrow(/Shirt size/);
-    const ok = await submitRegistration(orgSlug, competition.slug, {
-      ...base, answers: { size: "M", sneaky: "dropped" },
-    }, "http://t.local");
+    const ok = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...base,
+        answers: { size: "M", sneaky: "dropped" },
+      },
+      "http://t.local",
+    );
     expect(ok.registration.answers).toEqual({ size: "M" });
     // Team kind: entrant materialises WITHOUT a person.
     const confirmed = await confirmRegistration(owner, ok.registration.id);
@@ -554,27 +731,51 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: "2020-01-01T00:00:00Z",
-      capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: "2020-01-01T00:00:00Z",
+      capacity: null,
+      refund_lock_at: null,
     });
     await expect(
-      submitRegistration(orgSlug, competition.slug, { ...SUBMIT_BASE, division_id: division.id }, "http://t.local"),
+      submitRegistration(
+        orgSlug,
+        competition.slug,
+        { ...SUBMIT_BASE, division_id: division.id },
+        "http://t.local",
+      ),
     ).rejects.toThrow(/not open/);
 
     // Reopen; the public info panel reflects it.
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: 8, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: 8,
+      refund_lock_at: null,
     });
     const info = await publicRegistrationInfo(orgSlug, competition.slug);
     expect(info.divisions).toHaveLength(1);
     expect(info.divisions[0].open).toBe(true);
     expect(info.divisions[0].remaining).toBe(8);
 
-    const reg = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://t.local");
+    const reg = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://t.local",
+    );
     const waitlisted = await waitlistRegistration(owner, reg.registration.id);
     expect(waitlisted.status).toBe("waitlisted");
 
@@ -602,27 +803,54 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
 
     // Offline (no Stripe Connect) — a fee saves fine on Community.
     const saved = await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 500,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
     expect(saved.fee_cents).toBe(500);
 
     // Free registration still works.
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://t.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://t.local",
+    );
     expect(res.registration.status).toBe("pending");
 
     // An offline fee stays allowed even with charges enabled (the org may take
     // cards elsewhere but run this division in cash)…
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
     const offlineStill = await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 500, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 500,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
     expect(offlineStill.fee_cents).toBe(500);
 
@@ -647,8 +875,15 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const { division } = await rig(owner);
     await expect(
       putRegistrationSettings(owner, division.id, {
-        enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-        form_fields: [], opens_at: null, closes_at: null, capacity: 64, refund_lock_at: null,
+        enabled: true,
+        entrant_kind: "individual",
+        fee_cents: 0,
+        currency: "usd",
+        form_fields: [],
+        opens_at: null,
+        closes_at: null,
+        capacity: 64,
+        refund_lock_at: null,
       }),
     ).rejects.toThrow(/entrant limit/);
   });
@@ -660,12 +895,25 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
-    const { registration } = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const { registration } = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
 
     expect(registration.ref_code).toMatch(/^SZ-[A-Z2-9]{4}-[A-Z2-9]{4}$/);
     expect(isValidRefCode(registration.ref_code!)).toBe(true);
@@ -694,12 +942,25 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
-    const { registration, access_token } = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const { registration, access_token } = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     const ref = registration.ref_code!;
 
     await expect(withdrawRegistrationByRef(ref, "rg_wrong-token")).rejects.toThrow(/not found/);
@@ -717,23 +978,41 @@ describe.skipIf(!HAS_DB)("registration flows (doc 16 §1.1, PROMPT-20a)", () => 
     const { orgId, orgSlug, ownerId } = await seedOrg();
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner, {
-      eligibility: [{ kind: "age", maxAgeAt: 15, cutoff: { month: 9, day: 1, yearOf: "season_start" } }],
+      eligibility: [
+        {
+          kind: "age",
+          maxAgeAt: 15,
+          cutoff: { month: 9, day: 1, yearOf: "season_start" },
+        },
+      ],
     });
     expect(division.youth).toBe(true);
     expect(resolveNameDisplay(division.player_name_display, division.youth)).toBe("first_initial");
 
     await putRegistrationSettings(owner, division.id, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: null, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: null,
+      refund_lock_at: null,
     });
-    const { registration } = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE,
-      display_name: "Arun Kumar",
-      division_id: division.id,
-      dob: "2012-05-01",
-      guardian_name: "Priya Kumar",
-      guardian_consent: true,
-    }, "http://test.local");
+    const { registration } = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        display_name: "Arun Kumar",
+        division_id: division.id,
+        dob: "2012-05-01",
+        guardian_name: "Priya Kumar",
+        guardian_consent: true,
+      },
+      "http://test.local",
+    );
 
     const view = await publicRegistrationStatusByRef(registration.ref_code!);
     expect(view.display_name).toBe("Arun K.");
@@ -777,7 +1056,9 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     // No Connect account yet → card method rejected outright.
     await expect(
       putRegistrationSettings(owner, division.id, {
-        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+        ...SETTINGS_BASE,
+        payment_method: "stripe",
+        fee_cents: 500,
       }),
     ).rejects.toMatchObject({ status: 422 });
 
@@ -786,12 +1067,16 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     // Below Stripe's minimum charge (100 minor units) — rejected.
     await expect(
       putRegistrationSettings(owner, division.id, {
-        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 50,
+        ...SETTINGS_BASE,
+        payment_method: "stripe",
+        fee_cents: 50,
       }),
     ).rejects.toMatchObject({ status: 422 });
 
     const ok = await putRegistrationSettings(owner, division.id, {
-      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+      ...SETTINGS_BASE,
+      payment_method: "stripe",
+      fee_cents: 500,
     });
     expect(ok.payment_method).toBe("stripe");
     expect(ok.charges_enabled).toBe(true);
@@ -806,7 +1091,9 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     const { division } = await rig(owner);
     await sql`update organizations set stripe_charges_enabled = true where id = ${orgId}`;
     const ok = await putRegistrationSettings(owner, division.id, {
-      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+      ...SETTINGS_BASE,
+      payment_method: "stripe",
+      fee_cents: 500,
     });
     expect(ok.payment_method).toBe("stripe");
 
@@ -816,7 +1103,9 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     await invalidateOrgEntitlements(orgId);
     await expect(
       putRegistrationSettings(owner, division.id, {
-        ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 500,
+        ...SETTINGS_BASE,
+        payment_method: "stripe",
+        fee_cents: 500,
       }),
     ).rejects.toThrow(PaymentRequiredError);
   });
@@ -826,7 +1115,9 @@ describe.skipIf(!HAS_DB)("payment method settings (spec §3)", () => {
     const owner = asOwner(orgId, ownerId);
     const { division } = await rig(owner);
     const s = await putRegistrationSettings(owner, division.id, {
-      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 1500,
+      ...SETTINGS_BASE,
+      payment_method: "offline",
+      fee_cents: 1500,
       payment_instructions: "Cash to the front desk before round 1",
     });
     expect(s.payment_method).toBe("offline");
@@ -854,18 +1145,28 @@ describe.skipIf(!HAS_DB)("organiser payment actions (spec T7)", () => {
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 1500,
+      ...SETTINGS_BASE,
+      payment_method: "offline",
+      fee_cents: 1500,
     });
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     return { owner, ownerId, division, reg: res.registration };
   }
 
   it("mark-paid confirms an offline registrant and records the actor", async () => {
     const { owner, ownerId, reg } = await offlinePaidRig();
     // Plain confirm still refuses while unpaid…
-    await expect(confirmRegistration(owner, reg.id)).rejects.toMatchObject({ status: 422 });
+    await expect(confirmRegistration(owner, reg.id)).rejects.toMatchObject({
+      status: 422,
+    });
     // …mark-paid is the money-received path.
     const row = await markRegistrationPaidOffline(owner, reg.id);
     expect(row.status).toBe("confirmed");
@@ -882,12 +1183,19 @@ describe.skipIf(!HAS_DB)("organiser payment actions (spec T7)", () => {
 
   it("mark-paid rejects card-paid and free registrations", async () => {
     const { orgSlug, competition, division, owner } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
-    await expect(markRegistrationPaidOffline(owner, res.registration.id))
-      .rejects.toMatchObject({ status: 422 });
+    await expect(markRegistrationPaidOffline(owner, res.registration.id)).rejects.toMatchObject({
+      status: 422,
+    });
   });
 
   it("waive confirms without payment and audits the waiver", async () => {
@@ -915,8 +1223,10 @@ async function stripeRig(opts: { capacity?: number | null; feeCents?: number } =
             where id = ${orgId}`;
   const { competition, division } = await rig(owner);
   await putRegistrationSettings(owner, division.id, {
-    ...SETTINGS_BASE, payment_method: "stripe",
-    fee_cents: opts.feeCents ?? 500, capacity: opts.capacity ?? null,
+    ...SETTINGS_BASE,
+    payment_method: "stripe",
+    fee_cents: opts.feeCents ?? 500,
+    capacity: opts.capacity ?? null,
   });
   return { orgId, orgSlug, ownerId, owner, competition, division };
 }
@@ -924,9 +1234,15 @@ async function stripeRig(opts: { capacity?: number | null; feeCents?: number } =
 describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
   it("snapshots the method, opens a 48h window, returns a checkout URL", async () => {
     const { orgSlug, competition, division } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     expect(res.checkout_url).toBe("https://checkout.stripe.test/session");
     expect(res.registration.payment_method).toBe("stripe");
     expect(res.registration.expires_at).not.toBeNull();
@@ -937,12 +1253,138 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     expect(args.payment_intent_data.application_fee_amount).toBe(10);
   });
 
+  // V312: the fee rate locks at the FIRST paid entry, so a plan change or a
+  // group detach mid-competition cannot re-rate entrants who have already
+  // committed. This is the gap billing groups opened — a third party (the group
+  // payer) can now move an org's plan out from under its in-flight competitions.
+  it("locks the competition fee rate at the first paid entry, immune to a later plan change", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+
+    // First entrant pays while the org is Pro (2%): £5 → 10p fee.
+    const first = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    expect(stripeMock.checkoutCreate.mock.calls[0][0].payment_intent_data.application_fee_amount).toBe(10);
+    await handleRegistrationCheckoutCompleted(fakeSession(first.registration.id, 500));
+
+    const [locked] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(locked.fee_percent).toBe(2);
+
+    // The org drops to Community (8%) — exactly what a detach from a paid group
+    // leaves behind once the comp lapses.
+    await setOrgPlan(orgId, "community");
+    stripeMock.checkoutCreate.mockClear();
+
+    // A LATER entrant is still charged 2%, not 8%: 10p, not 40p.
+    const second = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, contact_email: "second@test.local", division_id: division.id },
+      "http://test.local",
+    );
+    expect(stripeMock.checkoutCreate.mock.calls[0][0].payment_intent_data.application_fee_amount).toBe(10);
+    // And the second registration froze the SAME rate it was charged at. Read
+    // from the DB, not the returned row: submitRegistration snapshots the
+    // registration before createRegistrationCheckout writes fee_percent.
+    const [secondRow] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from registrations where id = ${second.registration.id}`;
+    expect(secondRow.fee_percent).toBe(2);
+  });
+
+  it("keeps the rate live until the first entrant pays, so a pre-sales plan fix applies", async () => {
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+
+    // An unpaid entry does NOT lock the rate.
+    await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    const [before] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(before.fee_percent).toBeNull();
+
+    // Organiser corrects the plan up to Pro Plus (1%) before anyone pays.
+    await setOrgPlan(orgId, "pro_plus");
+    stripeMock.checkoutCreate.mockClear();
+
+    const paid = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, contact_email: "payer@test.local", division_id: division.id },
+      "http://test.local",
+    );
+    // £5 at 1% → 5p, the corrected rate, not the old 2%.
+    expect(stripeMock.checkoutCreate.mock.calls[0][0].payment_intent_data.application_fee_amount).toBe(5);
+    await handleRegistrationCheckoutCompleted(fakeSession(paid.registration.id, 500));
+    const [after] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(after.fee_percent).toBe(1);
+  });
+
+  it("locks the rate the PAID session was billed at, not a rate a re-mint overwrote", async () => {
+    // The stale-session hole: a checkout minted at 2% while the comp was on
+    // Pro, then the org drops to Community (8%) and the reg is re-minted (resume
+    // / reminder), overwriting reg.fee_percent to 8. The entrant completes the
+    // still-open ORIGINAL 2% session. The competition must lock at what that
+    // session charged (2%), not the overwritten reg.fee_percent (8%).
+    const { orgId, orgSlug, competition, division } = await stripeRig();
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    // Simulate the plan drop + re-mint overwriting the reg's frozen rate.
+    await setOrgPlan(orgId, "community");
+    await sql`update registrations set fee_percent = 8 where id = ${res.registration.id}`;
+
+    // Pay the ORIGINAL 2% session (its metadata still says 2).
+    await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500, 2));
+
+    const [c] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(c.fee_percent).toBe(2);
+  });
+
+  it("an offline paid entry does not lock the rate — no platform fee flowed", async () => {
+    const { orgId, orgSlug, ownerId } = await seedOrg("pro");
+    const owner = asOwner(orgId, ownerId);
+    const { competition, division } = await rig(owner);
+    await putRegistrationSettings(owner, division.id, {
+      ...SETTINGS_BASE,
+      payment_method: "offline",
+      fee_cents: 500,
+    });
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      { ...SUBMIT_BASE, division_id: division.id },
+      "http://test.local",
+    );
+    await markRegistrationPaidOffline(owner, res.registration.id);
+    const [c] = await sql<{ fee_percent: number | null }[]>`
+      select fee_percent from competitions where id = ${competition.id}`;
+    expect(c.fee_percent).toBeNull();
+  });
+
   it("a failed checkout mint keeps the registration (pay from status page)", async () => {
     const { orgSlug, competition, division } = await stripeRig();
     stripeMock.checkoutCreate.mockRejectedValueOnce(new Error("stripe down"));
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     expect(res.checkout_url).toBeNull();
     expect(res.registration.status).toBe("pending");
   });
@@ -952,11 +1394,19 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     const owner = asOwner(orgId, ownerId);
     const { competition, division } = await rig(owner);
     await putRegistrationSettings(owner, division.id, {
-      ...SETTINGS_BASE, payment_method: "offline", fee_cents: 500,
+      ...SETTINGS_BASE,
+      payment_method: "offline",
+      fee_cents: 500,
     });
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     expect(res.checkout_url).toBeNull();
     expect(res.registration.expires_at).toBeNull();
     expect(res.registration.payment_method).toBe("offline");
@@ -967,9 +1417,15 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
     const { orgId, orgSlug, competition, division } = await stripeRig();
     await sql`update organizations set stripe_charges_enabled = false where id = ${orgId}`;
     await expect(
-      submitRegistration(orgSlug, competition.slug, {
-        ...SUBMIT_BASE, division_id: division.id,
-      }, "http://test.local"),
+      submitRegistration(
+        orgSlug,
+        competition.slug,
+        {
+          ...SUBMIT_BASE,
+          division_id: division.id,
+        },
+        "http://test.local",
+      ),
     ).rejects.toMatchObject({ status: 503 });
     const info = await publicRegistrationInfo(orgSlug, competition.slug);
     const div = info.divisions.find((d) => d.division_id === division.id)!;
@@ -980,9 +1436,15 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
   it("late payment on a withdrawn registration is auto-refunded", async () => {
     const { orgSlug, competition, division } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     await withdrawRegistrationPublic(res.registration.id, res.access_token);
 
     // The abandoned checkout completes AFTER the withdrawal.
@@ -1003,9 +1465,15 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
   it("a second completed session refunds the duplicate intent, state untouched", async () => {
     const { orgSlug, competition, division } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
 
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
     const [confirmed] = await sql<RegistrationRow[]>`
@@ -1035,19 +1503,37 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
   });
 
   it("promotion snapshots the current fee and opens a 48h window for card divisions", async () => {
-    const { orgSlug, owner, competition, division } = await stripeRig({ capacity: 1 });
-    const a = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
-    const b = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id, contact_email: "b@test.local",
-    }, "http://test.local");
+    const { orgSlug, owner, competition, division } = await stripeRig({
+      capacity: 1,
+    });
+    const a = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
+    const b = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+        contact_email: "b@test.local",
+      },
+      "http://test.local",
+    );
     expect(b.registration.status).toBe("waitlisted");
     expect(b.registration.amount_cents).toBe(0);
 
     // Organiser raises the fee while B waits — promotion charges the NEW fee.
     await putRegistrationSettings(owner, division.id, {
-      ...SETTINGS_BASE, payment_method: "stripe", fee_cents: 700, capacity: 1,
+      ...SETTINGS_BASE,
+      payment_method: "stripe",
+      fee_cents: 700,
+      capacity: 1,
     });
     await withdrawRegistrationPublic(a.registration.id, a.access_token);
 
@@ -1073,12 +1559,25 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
   // regardless of what else the sweep legitimately picks up.
   it("sweep reminds once inside the last 24h, then expires and promotes", async () => {
     const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
-    const a = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
-    const b = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id, contact_email: "b@test.local",
-    }, "http://test.local");
+    const a = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
+    const b = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+        contact_email: "b@test.local",
+      },
+      "http://test.local",
+    );
     expect(b.registration.status).toBe("waitlisted");
 
     // Checkout sessions minted for OUR registration only — the sweep mints one per
@@ -1152,15 +1651,22 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
   it("reconciles by session from /r/[ref] (token-free return)", async () => {
     const { orgSlug, competition, division } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     const ref = res.registration.ref_code as string;
     const session = fakeSession(res.registration.id, 500);
 
     // Mismatched session (different registration) → no-op.
     stripeMock.checkoutRetrieve.mockResolvedValueOnce({
-      ...session, metadata: { kind: "registration", registration_id: randomUUID() },
+      ...session,
+      metadata: { kind: "registration", registration_id: randomUUID() },
     });
     expect(await reconcileRegistrationBySession(ref, session.id)).toBe(false);
 
@@ -1173,9 +1679,15 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
   it("status view drives the pay CTA: card pendings can pay, offline sees instructions", async () => {
     const { orgId, orgSlug, competition, division } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     let view = await publicRegistrationStatus(res.registration.id, res.access_token);
     expect(view.can_pay_online).toBe(true);
     expect(view.payment_method).toBe("stripe");
@@ -1190,14 +1702,25 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
   it("dispute lifecycle: created flags + audits, lost writes the money off", async () => {
     const { orgSlug, competition, division } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
     const intent = "pi_test_" + res.registration.id.slice(0, 8);
 
     await handleRegistrationDispute(
-      { id: "dp_1", payment_intent: intent, amount: 500, status: "needs_response" } as unknown as Stripe.Dispute,
+      {
+        id: "dp_1",
+        payment_intent: intent,
+        amount: 500,
+        status: "needs_response",
+      } as unknown as Stripe.Dispute,
       "created",
     );
     let [row] = await sql<RegistrationRow[]>`
@@ -1207,7 +1730,12 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
     // Won → flag clears, id stays for the audit trail.
     await handleRegistrationDispute(
-      { id: "dp_1", payment_intent: intent, amount: 500, status: "won" } as unknown as Stripe.Dispute,
+      {
+        id: "dp_1",
+        payment_intent: intent,
+        amount: 500,
+        status: "won",
+      } as unknown as Stripe.Dispute,
       "closed",
     );
     [row] = await sql<RegistrationRow[]>`
@@ -1217,11 +1745,21 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
     // Lost → money is gone: refunded_cents mirrors the full amount.
     await handleRegistrationDispute(
-      { id: "dp_1", payment_intent: intent, amount: 500, status: "needs_response" } as unknown as Stripe.Dispute,
+      {
+        id: "dp_1",
+        payment_intent: intent,
+        amount: 500,
+        status: "needs_response",
+      } as unknown as Stripe.Dispute,
       "created",
     );
     await handleRegistrationDispute(
-      { id: "dp_1", payment_intent: intent, amount: 500, status: "lost" } as unknown as Stripe.Dispute,
+      {
+        id: "dp_1",
+        payment_intent: intent,
+        amount: 500,
+        status: "lost",
+      } as unknown as Stripe.Dispute,
       "closed",
     );
     [row] = await sql<RegistrationRow[]>`
@@ -1231,23 +1769,31 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
   it("charge.refunded from the Stripe dashboard syncs refunded_cents", async () => {
     const { orgSlug, competition, division } = await stripeRig();
-    const res = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, 500));
     const intent = "pi_test_" + res.registration.id.slice(0, 8);
 
-    await syncRegistrationRefund(
-      { payment_intent: intent, amount_refunded: 300 } as unknown as Stripe.Charge,
-    );
+    await syncRegistrationRefund({
+      payment_intent: intent,
+      amount_refunded: 300,
+    } as unknown as Stripe.Charge);
     const [row] = await sql<RegistrationRow[]>`
       select * from registrations where id = ${res.registration.id}`;
     expect(row.refunded_cents).toBe(300);
 
     // Never regresses below what we already recorded.
-    await syncRegistrationRefund(
-      { payment_intent: intent, amount_refunded: 100 } as unknown as Stripe.Charge,
-    );
+    await syncRegistrationRefund({
+      payment_intent: intent,
+      amount_refunded: 100,
+    } as unknown as Stripe.Charge);
     const [after] = await sql<RegistrationRow[]>`
       select * from registrations where id = ${res.registration.id}`;
     expect(after.refunded_cents).toBe(300);
@@ -1255,13 +1801,26 @@ describe.skipIf(!HAS_DB)("card submit path (spec §3)", () => {
 
   it("waitlisted card submits take no window and no payment", async () => {
     const { orgSlug, competition, division } = await stripeRig({ capacity: 1 });
-    await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id,
-    }, "http://test.local");
+    await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+      },
+      "http://test.local",
+    );
     stripeMock.checkoutCreate.mockClear();
-    const second = await submitRegistration(orgSlug, competition.slug, {
-      ...SUBMIT_BASE, division_id: division.id, contact_email: "second@test.local",
-    }, "http://test.local");
+    const second = await submitRegistration(
+      orgSlug,
+      competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: division.id,
+        contact_email: "second@test.local",
+      },
+      "http://test.local",
+    );
     expect(second.registration.status).toBe("waitlisted");
     expect(second.checkout_url).toBeNull();
     expect(second.registration.expires_at).toBeNull();
@@ -1278,9 +1837,15 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
   /** Paid card registration + the Stripe objects a lost dispute resolves. */
   async function disputedRig(feeCents = 2000) {
     const rigged = await stripeRig({ feeCents });
-    const res = await submitRegistration(rigged.orgSlug, rigged.competition.slug, {
-      ...SUBMIT_BASE, division_id: rigged.division.id,
-    }, "http://test.local");
+    const res = await submitRegistration(
+      rigged.orgSlug,
+      rigged.competition.slug,
+      {
+        ...SUBMIT_BASE,
+        division_id: rigged.division.id,
+      },
+      "http://test.local",
+    );
     await handleRegistrationCheckoutCompleted(fakeSession(res.registration.id, feeCents));
     const intent = "pi_test_" + res.registration.id.slice(0, 8);
     const chargeId = "ch_" + res.registration.id.slice(0, 8);
@@ -1290,10 +1855,18 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
     // the connected account separately — so the club's net is
     // transfer.amount − application_fee_amount.
     stripeMock.chargeRetrieve.mockResolvedValue({
-      id: chargeId, amount: feeCents, application_fee_amount: 100,
+      id: chargeId,
+      amount: feeCents,
+      application_fee_amount: 100,
       transfer: { id: transferId, amount: feeCents, amount_reversed: 0 },
     });
-    return { ...rigged, regId: res.registration.id, intent, chargeId, transferId };
+    return {
+      ...rigged,
+      regId: res.registration.id,
+      intent,
+      chargeId,
+      transferId,
+    };
   }
 
   const disputeObj = (over: Record<string, unknown>) =>
@@ -1307,19 +1880,33 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
 
   it("lost dispute reverses the club's net share with a dispute-scoped idempotency key", async () => {
     const { regId, orgId, intent, chargeId, transferId } = await disputedRig();
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r1", payment_intent: intent, charge: chargeId, amount: 2000,
-      status: "needs_response",
-    }), "created");
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r1", payment_intent: intent, charge: chargeId, amount: 2000,
-    }), "closed");
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r1",
+        payment_intent: intent,
+        charge: chargeId,
+        amount: 2000,
+        status: "needs_response",
+      }),
+      "created",
+    );
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r1",
+        payment_intent: intent,
+        charge: chargeId,
+        amount: 2000,
+      }),
+      "closed",
+    );
 
     const [row] = await sql<RegistrationRow[]>`
       select * from registrations where id = ${regId}`;
     expect(row.refunded_cents).toBe(2000);
 
-    expect(stripeMock.chargeRetrieve).toHaveBeenCalledWith(chargeId, { expand: ["transfer"] });
+    expect(stripeMock.chargeRetrieve).toHaveBeenCalledWith(chargeId, {
+      expand: ["transfer"],
+    });
     expect(stripeMock.reversalCreate).toHaveBeenCalledTimes(1);
     expect(stripeMock.reversalCreate).toHaveBeenCalledWith(
       transferId,
@@ -1333,7 +1920,9 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
     const recovered = await auditRows("registration.dispute_recovered", regId);
     expect(recovered).toHaveLength(1);
     expect(recovered[0].payload).toMatchObject({
-      dispute_id: "dp_r1", transfer_id: transferId, reversed_cents: 1900,
+      dispute_id: "dp_r1",
+      transfer_id: transferId,
+      reversed_cents: 1900,
     });
 
     // Organiser hears about the loss + recovery — addressed to the current
@@ -1343,16 +1932,26 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
       where m.org_id = ${orgId} and m.role = 'owner'`;
     expect(emailMock.disputeLost).toHaveBeenCalledTimes(1);
     expect(emailMock.disputeLost).toHaveBeenCalledWith(
-      expect.objectContaining({ to: owner.email, amountCents: 2000, recoveredCents: 1900 }),
+      expect.objectContaining({
+        to: owner.email,
+        amountCents: 2000,
+        recoveredCents: 1900,
+      }),
     );
   });
 
   it("write-off lands even when the reversal throws (recovery_failed audited)", async () => {
     const { regId, intent, chargeId } = await disputedRig();
     stripeMock.reversalCreate.mockRejectedValue(new Error("stripe down"));
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r2", payment_intent: intent, charge: chargeId, amount: 2000,
-    }), "closed");
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r2",
+        payment_intent: intent,
+        charge: chargeId,
+        amount: 2000,
+      }),
+      "closed",
+    );
 
     const [row] = await sql<RegistrationRow[]>`
       select * from registrations where id = ${regId}`;
@@ -1369,55 +1968,85 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
 
   it("replayed lost event short-circuits on the metadata guard — one reversal, one email", async () => {
     const { regId, intent, chargeId, transferId } = await disputedRig();
-    stripeMock.reversalList
-      .mockResolvedValueOnce({ data: [] })
-      .mockResolvedValue({
-        data: [{ id: "trr_prior", amount: 1900, metadata: { dispute_id: "dp_r3" } }],
-      });
+    stripeMock.reversalList.mockResolvedValueOnce({ data: [] }).mockResolvedValue({
+      data: [{ id: "trr_prior", amount: 1900, metadata: { dispute_id: "dp_r3" } }],
+    });
     const lost = disputeObj({
-      id: "dp_r3", payment_intent: intent, charge: chargeId, amount: 2000,
+      id: "dp_r3",
+      payment_intent: intent,
+      charge: chargeId,
+      amount: 2000,
     });
     await handleRegistrationDispute(lost, "closed");
     await handleRegistrationDispute(lost, "closed"); // /admin/billing-events replay
 
     expect(stripeMock.reversalCreate).toHaveBeenCalledTimes(1);
-    expect(stripeMock.reversalList).toHaveBeenCalledWith(transferId, { limit: 100 });
+    expect(stripeMock.reversalList).toHaveBeenCalledWith(transferId, {
+      limit: 100,
+    });
     expect(await auditRows("registration.dispute_recovered", regId)).toHaveLength(1);
     expect(emailMock.disputeLost).toHaveBeenCalledTimes(1);
   });
 
   it("partial dispute reverses the proportional net share, capped by the unreversed remainder", async () => {
     const a = await disputedRig();
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r4", payment_intent: a.intent, charge: a.chargeId, amount: 500,
-    }), "closed");
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r4",
+        payment_intent: a.intent,
+        charge: a.chargeId,
+        amount: 500,
+      }),
+      "closed",
+    );
     // 500 of 2000 disputed → club's net share = 500 × 1900/2000 = 475.
     expect(stripeMock.reversalCreate).toHaveBeenCalledWith(
-      a.transferId, expect.objectContaining({ amount: 475 }), expect.anything(),
+      a.transferId,
+      expect.objectContaining({ amount: 475 }),
+      expect.anything(),
     );
 
     // Mostly-reversed transfer: never exceed what's left.
     const b = await disputedRig();
     stripeMock.chargeRetrieve.mockResolvedValue({
-      id: b.chargeId, amount: 2000, application_fee_amount: 100,
+      id: b.chargeId,
+      amount: 2000,
+      application_fee_amount: 100,
       transfer: { id: b.transferId, amount: 2000, amount_reversed: 1800 },
     });
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r5", payment_intent: b.intent, charge: b.chargeId, amount: 500,
-    }), "closed");
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r5",
+        payment_intent: b.intent,
+        charge: b.chargeId,
+        amount: 500,
+      }),
+      "closed",
+    );
     expect(stripeMock.reversalCreate).toHaveBeenLastCalledWith(
-      b.transferId, expect.objectContaining({ amount: 200 }), expect.anything(),
+      b.transferId,
+      expect.objectContaining({ amount: 200 }),
+      expect.anything(),
     );
   });
 
   it("no transfer on the charge → skip with an audit note, no reversal call", async () => {
     const { regId, intent, chargeId } = await disputedRig();
     stripeMock.chargeRetrieve.mockResolvedValue({
-      id: chargeId, amount: 2000, application_fee_amount: null, transfer: null,
+      id: chargeId,
+      amount: 2000,
+      application_fee_amount: null,
+      transfer: null,
     });
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r6", payment_intent: intent, charge: chargeId, amount: 2000,
-    }), "closed");
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r6",
+        payment_intent: intent,
+        charge: chargeId,
+        amount: 2000,
+      }),
+      "closed",
+    );
 
     expect(stripeMock.reversalCreate).not.toHaveBeenCalled();
     const skipped = await auditRows("registration.dispute_recovery_skipped", regId);
@@ -1430,13 +2059,26 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
 
   it("won dispute never touches transfers", async () => {
     const { regId, intent, chargeId } = await disputedRig();
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r7", payment_intent: intent, charge: chargeId, amount: 2000,
-      status: "needs_response",
-    }), "created");
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r7", payment_intent: intent, charge: chargeId, amount: 2000, status: "won",
-    }), "closed");
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r7",
+        payment_intent: intent,
+        charge: chargeId,
+        amount: 2000,
+        status: "needs_response",
+      }),
+      "created",
+    );
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r7",
+        payment_intent: intent,
+        charge: chargeId,
+        amount: 2000,
+        status: "won",
+      }),
+      "closed",
+    );
 
     expect(stripeMock.chargeRetrieve).not.toHaveBeenCalled();
     expect(stripeMock.reversalCreate).not.toHaveBeenCalled();
@@ -1457,9 +2099,15 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
     const [{ email: newOwnerEmail }] = await sql<{ email: string }[]>`
       select email from users where id = ${newOwnerId}`;
 
-    await handleRegistrationDispute(disputeObj({
-      id: "dp_r8", payment_intent: intent, charge: chargeId, amount: 2000,
-    }), "closed");
+    await handleRegistrationDispute(
+      disputeObj({
+        id: "dp_r8",
+        payment_intent: intent,
+        charge: chargeId,
+        amount: 2000,
+      }),
+      "closed",
+    );
 
     expect(emailMock.disputeLost).toHaveBeenCalledTimes(1);
     expect(emailMock.disputeLost).toHaveBeenCalledWith(
@@ -1472,8 +2120,15 @@ describe.skipIf(!HAS_DB)("dispute loss recovery (PROMPT-55)", () => {
 describe.skipIf(!HAS_DB)("per-registrant email locale (cycle 47)", () => {
   async function openDivision(owner: AuthCtx, divisionId: string) {
     await putRegistrationSettings(owner, divisionId, {
-      enabled: true, entrant_kind: "individual", fee_cents: 0, currency: "usd",
-      form_fields: [], opens_at: null, closes_at: null, capacity: 8, refund_lock_at: null,
+      enabled: true,
+      entrant_kind: "individual",
+      fee_cents: 0,
+      currency: "usd",
+      form_fields: [],
+      opens_at: null,
+      closes_at: null,
+      capacity: 8,
+      refund_lock_at: null,
     });
   }
 
@@ -1483,7 +2138,8 @@ describe.skipIf(!HAS_DB)("per-registrant email locale (cycle 47)", () => {
     const { competition, division } = await rig(owner);
     await openDivision(owner, division.id);
     const res = await submitRegistration(
-      orgSlug, competition.slug,
+      orgSlug,
+      competition.slug,
       { ...SUBMIT_BASE, division_id: division.id },
       "http://t.local",
       { locale: "fr" },
@@ -1497,7 +2153,8 @@ describe.skipIf(!HAS_DB)("per-registrant email locale (cycle 47)", () => {
     const { competition, division } = await rig(owner);
     await openDivision(owner, division.id);
     const res = await submitRegistration(
-      orgSlug, competition.slug,
+      orgSlug,
+      competition.slug,
       { ...SUBMIT_BASE, division_id: division.id },
       "http://t.local",
     );

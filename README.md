@@ -217,6 +217,12 @@ test-mode connected account id with charges enabled, since smoke's fabricated
 `acct_smoke_*` id is rejected by Stripe. Without it that one assertion is skipped, not
 failed, and the check count is unchanged. See [`apps/web/.env.example`](apps/web/.env.example).
 
+The smoke test needs `DATABASE_URL` (DB-backed suites skip silently without it). Stripe
+Connect destination charges additionally need `STRIPE_CONNECT_TEST_ACCOUNT` — a *real*
+test-mode connected account id with charges enabled, since smoke's fabricated
+`acct_smoke_*` id is rejected by Stripe. Without it that one assertion is skipped, not
+failed, and the check count is unchanged. See [`apps/web/.env.example`](apps/web/.env.example).
+
 ---
 
 ## Documentation

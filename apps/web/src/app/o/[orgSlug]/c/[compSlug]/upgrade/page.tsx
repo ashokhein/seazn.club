@@ -100,9 +100,10 @@ export default async function CompetitionUpgradePage({
       from competition_passes where competition_id = ${compId}`,
     // The resolver's derivation, NOT `subscriptions.plan_key` raw — see
     // lib/upgrade-page-state.ts. pass-checkout/route.ts now judges eligibility
-    // through this same `isPaidPlan(orgPlanKey(...))` (bfc9c796), so the page and
-    // the route agree: a lapsed comp or a past_due org beyond its 14-day grace is
-    // both OFFERED a pass here and allowed to buy it there.
+    // through this same `isPaidPlan(orgPlanKey(...))`, so the page and the route
+    // agree: a lapsed comp or a past_due org beyond its 14-day grace is both
+    // OFFERED a pass here and allowed to buy it there. orgPlanKey resolves
+    // through the billing group (org→subscription join) internally.
     orgPlanKey(orgId),
     preferredCurrency(orgId),
     resolveLocale(),

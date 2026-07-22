@@ -38,23 +38,32 @@ import {
   restoreTrial,
 } from "@/server/usecases/admin-plan";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-async function seedOrg(): Promise<{ orgId: string; actorId: string }> {
+// A REAL owner, not just an org row: this suite drives the whole staff billing
+// state machine, so it is where a payer-aware guard would first be needed —
+// and an org with no members would sail through one for the wrong reason.
+// setOrgPlan then derives subscriptions.owner_user_id from the owner member.
+async function seedOrg(): Promise<{ orgId: string; actorId: string; ownerId: string }> {
   const s = randomUUID().slice(0, 8);
+  const [{ id: ownerId }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name, email_verified)
+    values (${"owner-" + s + "@test.local"}, 'Owner', true) returning id`;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
-    insert into organizations (name, slug) values (${"Adm " + s}, ${"adm-" + s}) returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'community', 'active') on conflict (org_id) do nothing`;
+    insert into organizations (name, slug, created_by)
+    values (${"Adm " + s}, ${"adm-" + s}, ${ownerId}) returning id`;
+  await sql`insert into org_members (org_id, user_id, role)
+            values (${orgId}, ${ownerId}, 'owner')`;
+  await setOrgPlan(orgId, "community");
   const [{ id: actorId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, is_staff, staff_role)
     values (${"staff-" + s + "@test.local"}, 'Staff', true, 'superadmin') returning id`;
-  return { orgId, actorId };
+  return { orgId, actorId, ownerId };
 }
 
 afterAll(async () => {
@@ -76,7 +85,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
 
     // Clock-controlled lapse: write a past comped_until directly, then check
     // resolution treats the org as community without any job running.
-    await sql`update subscriptions set comped_until = now() - interval '1 day' where org_id = ${orgId}`;
+    await sql`update subscriptions set comped_until = now() - interval '1 day' where id = (select subscription_id from organizations where id = ${orgId})`;
     const { invalidateOrgEntitlements } = await import("@/lib/entitlements");
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "api.access")).toBe(false);
@@ -123,7 +132,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const result = await adminDowngrade(actorId, orgId, "abuse of comp");
     expect(result.frozen).toHaveLength(2);
     const [row] = await sql<{ plan_key: string }[]>`
-      select plan_key from subscriptions where org_id = ${orgId}`;
+      select plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.plan_key).toBe("community");
 
     const [audit] = await sql<{ detail: { reason: string; after: { frozen: string[] } } }[]>`
@@ -140,7 +149,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(days).toBeGreaterThan(13.9);
     expect(days).toBeLessThan(14.1);
     const [row] = await sql<{ status: string }[]>`
-      select status from subscriptions where org_id = ${orgId}`;
+      select status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.status).toBe("trialing");
   });
 
@@ -152,7 +161,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const readSub = async () =>
       (
         await sql<{ trial_used_at: string | null }[]>`
-          select trial_used_at from subscriptions where org_id = ${orgId}`
+          select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0];
     expect(checkoutTrialDays(await readSub())).toBe(14);
 
@@ -164,7 +173,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     // millisecond as the original — otherwise the equality below would hold
     // even without the coalesce.
     await sql`update subscriptions set trial_used_at = now() - interval '30 days'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     const stamped = (await readSub()).trial_used_at;
     expect(stamped).not.toBeNull();
 
@@ -181,7 +190,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const readSub = async () =>
       (
         await sql<{ trial_used_at: string | null }[]>`
-          select trial_used_at from subscriptions where org_id = ${orgId}`
+          select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0];
     expect(checkoutTrialDays(await readSub())).toBe(14);
 
@@ -192,7 +201,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     // millisecond as the original — otherwise the equality below would hold
     // even without the coalesce.
     await sql`update subscriptions set trial_used_at = now() - interval '30 days'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     const stamped = (await readSub()).trial_used_at;
     expect(stamped).not.toBeNull();
 
@@ -209,8 +218,12 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
 
     await extendTrial(actorId, orgId, 7, "sales call");
     const [row] = await sql<
-      { plan_key: string; comped_until: string | null; trial_end: string | null }[]
-    >`select plan_key, comped_until, trial_end from subscriptions where org_id = ${orgId}`;
+      {
+        plan_key: string;
+        comped_until: string | null;
+        trial_end: string | null;
+      }[]
+    >`select plan_key, comped_until, trial_end from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.plan_key).toBe("pro");
     // Both null would satisfy the equality below if the writes were dropped.
     expect(row.comped_until).not.toBeNull();
@@ -220,7 +233,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     // Clock-controlled lapse — no job flips it, the resolver does.
     await sql`update subscriptions set comped_until = now() - interval '1 minute',
                                        trial_end    = now() - interval '1 minute'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     const { invalidateOrgEntitlements } = await import("@/lib/entitlements");
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "api.access")).toBe(false);
@@ -233,9 +246,9 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     // millisecond compare equal, so without this the stamp assertion below
     // would hold even with the coalesce removed.
     await sql`update subscriptions set trial_used_at = now() - interval '30 days'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     const [{ trial_used_at: stamped }] = await sql<{ trial_used_at: string }[]>`
-      select trial_used_at from subscriptions where org_id = ${orgId}`;
+      select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(stamped).not.toBeNull();
 
     const second = await extendTrial(actorId, orgId, 7, "two");
@@ -245,17 +258,17 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     expect(new Date(second).getTime()).toBeGreaterThan(new Date(first).getTime());
 
     const [after] = await sql<{ trial_used_at: string; comped_until: string }[]>`
-      select trial_used_at, comped_until from subscriptions where org_id = ${orgId}`;
+      select trial_used_at, comped_until from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(after.trial_used_at).toEqual(stamped);
     expect(new Date(after.comped_until).toISOString()).toBe(second);
   });
 
   it("does not demote an org already comped above Pro", async () => {
     const { orgId, actorId } = await seedOrg();
-    await sql`update subscriptions set plan_key = 'pro_plus' where org_id = ${orgId}`;
+    await sql`update subscriptions set plan_key = 'pro_plus' where id = (select subscription_id from organizations where id = ${orgId})`;
     await extendTrial(actorId, orgId, 7, "keep the plus");
     const [row] = await sql<{ plan_key: string }[]>`
-      select plan_key from subscriptions where org_id = ${orgId}`;
+      select plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.plan_key).toBe("pro_plus");
   });
 
@@ -266,13 +279,13 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId, actorId } = await seedOrg();
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_dead', status = 'canceled'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
 
     await extendTrial(actorId, orgId, 7, "win-back");
     expect(await hasFeature(orgId, "api.access")).toBe(true);
 
     await sql`update subscriptions set comped_until = now() - interval '1 minute'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     const { invalidateOrgEntitlements } = await import("@/lib/entitlements");
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "api.access")).toBe(false);
@@ -284,10 +297,10 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId, actorId } = await seedOrg();
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_gone', status = 'canceled'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     await compToPro(actorId, orgId, null, "win-back comp");
     const [row] = await sql<{ plan_key: string }[]>`
-      select plan_key from subscriptions where org_id = ${orgId}`;
+      select plan_key from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.plan_key).toBe("pro");
     expect(await hasFeature(orgId, "api.access")).toBe(true);
   });
@@ -300,18 +313,18 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId, actorId } = await seedOrg();
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_gone', status = 'canceled'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
 
     await compToPro(actorId, orgId, new Date(Date.now() + 30 * 86_400_000), "win-back comp");
     expect(await hasFeature(orgId, "api.access")).toBe(true);
     const [row] = await sql<{ status: string; comped_until: string | null }[]>`
-      select status, comped_until from subscriptions where org_id = ${orgId}`;
+      select status, comped_until from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.comped_until).not.toBeNull();
     // The dead id keeps its cancelled status: nothing may fake liveness.
     expect(row.status).toBe("canceled");
 
     await sql`update subscriptions set comped_until = now() - interval '1 minute'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     const { invalidateOrgEntitlements } = await import("@/lib/entitlements");
     await invalidateOrgEntitlements(orgId);
     expect(await hasFeature(orgId, "api.access")).toBe(false);
@@ -325,14 +338,14 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId, actorId } = await seedOrg();
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_gone', status = 'canceled'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     await compToPro(actorId, orgId, null, "win-back comp");
     expect(await hasFeature(orgId, "api.access")).toBe(true);
 
     await adminDowngrade(actorId, orgId, "comp withdrawn");
 
     const [row] = await sql<{ plan_key: string; comped_until: string | null }[]>`
-      select plan_key, comped_until from subscriptions where org_id = ${orgId}`;
+      select plan_key, comped_until from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.plan_key).toBe("community");
     expect(row.comped_until).toBeNull();
     expect(await hasFeature(orgId, "api.access")).toBe(false);
@@ -342,10 +355,10 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId } = await seedOrg();
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_gone', status = 'canceled'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     expect((await planPanel(orgId)).source).not.toBe("stripe");
 
-    await sql`update subscriptions set status = 'active' where org_id = ${orgId}`;
+    await sql`update subscriptions set status = 'active' where id = (select subscription_id from organizations where id = ${orgId})`;
     expect((await planPanel(orgId)).source).toBe("stripe");
   });
 
@@ -354,13 +367,13 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_live', status = 'active',
                      plan_key = 'pro'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     const readRow = async () =>
       (
         await sql<Record<string, unknown>[]>`
           select plan_key, status, trial_end, comped_until, trial_used_at,
                  status_changed_at, updated_at
-          from subscriptions where org_id = ${orgId}`
+          from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0];
     const before = await readRow();
     expect(before.plan_key).toBe("pro");
@@ -373,13 +386,13 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const { orgId, actorId } = await seedOrg();
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_dunning', status = 'past_due'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     const readRow = async () =>
       (
         await sql<Record<string, unknown>[]>`
           select plan_key, status, trial_end, comped_until, trial_used_at,
                  status_changed_at, updated_at
-          from subscriptions where org_id = ${orgId}`
+          from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0];
     const before = await readRow();
     expect(before.status).toBe("past_due");
@@ -399,7 +412,7 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     const readSub = async () =>
       (
         await sql<{ trial_used_at: string | null }[]>`
-          select trial_used_at from subscriptions where org_id = ${orgId}`
+          select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
       )[0];
 
     await compToPro(actorId, orgId, null, "comp that became a deal");
@@ -433,17 +446,17 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_live', status = 'active',
                      plan_key = 'pro', trial_used_at = now() - interval '30 days'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     const before = (
       await sql<{ trial_used_at: string }[]>`
-        select trial_used_at from subscriptions where org_id = ${orgId}`
+        select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
     )[0];
 
     await expect(restoreTrial(actorId, orgId, "please undo")).rejects.toThrow(/Stripe/i);
 
     const after = (
       await sql<{ trial_used_at: string }[]>`
-        select trial_used_at from subscriptions where org_id = ${orgId}`
+        select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`
     )[0];
     expect(after.trial_used_at).toEqual(before.trial_used_at);
     const audits = await sql<{ id: string }[]>`
@@ -459,20 +472,35 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_gone', status = 'canceled',
                      trial_used_at = now() - interval '30 days'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
 
     await restoreTrial(actorId, orgId, "departed customer, giving them another shot");
     const [row] = await sql<{ trial_used_at: string | null }[]>`
-      select trial_used_at from subscriptions where org_id = ${orgId}`;
+      select trial_used_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
     expect(row.trial_used_at).toBeNull();
   });
 
-  it("restoring a trial for an org with no subscription row throws 404", async () => {
+  // V310 replaced "no subscription row" with "no billing group", and every
+  // staff path answers 404 for it — not 500. These are operator-supplied org
+  // ids, so a 500 would both blame us and page someone for a data condition the
+  // operator is looking straight at.
+  it("refuses EVERY staff path with a 404 for an org with no billing group", async () => {
     const s = randomUUID().slice(0, 8);
     const [{ id: orgId }] = await sql<{ id: string }[]>`
       insert into organizations (name, slug) values (${"No Sub " + s}, ${"no-sub-" + s}) returning id`;
     const { actorId } = await seedOrg();
-    await expect(restoreTrial(actorId, orgId, "reason")).rejects.toThrow(/subscription row/i);
+    const paths: [string, () => Promise<unknown>][] = [
+      ["restoreTrial", () => restoreTrial(actorId, orgId, "reason")],
+      ["compToPro", () => compToPro(actorId, orgId, null, "reason")],
+      ["adminDowngrade", () => adminDowngrade(actorId, orgId, "reason")],
+      ["extendTrial", () => extendTrial(actorId, orgId, 7, "reason")],
+    ];
+    for (const [name, run] of paths) {
+      await expect(run(), name).rejects.toMatchObject({
+        status: 404,
+        message: expect.stringMatching(/billing group/i),
+      });
+    }
   });
 
   // The admin panel needs trial_used_at to show whether Restore trial has
@@ -491,11 +519,52 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
     // than nulling it out because the subscription looks dead.
     await sql`update subscriptions
                  set stripe_subscription_id = 'sub_gone', status = 'canceled', plan_key = 'pro'
-               where org_id = ${orgId}`;
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     const departed = await planPanel(orgId);
     expect(departed.status).toBe("canceled");
     expect(departed.plan_key).toBe("pro");
     expect(departed.trial_used_at).toEqual(stamped);
+  });
+
+  // Blast radius (V310). Every staff action on the plan panel writes the SHARED
+  // subscriptions row, so a comp applied from one org's page moves the plan for
+  // every org on that bill. The usecases were group-wide from the start; what
+  // was missing was any way for staff to SEE it, and the panel can only warn
+  // with numbers planPanel actually selects.
+  it("planPanel counts the whole billing group, and names the other orgs on the bill", async () => {
+    const { orgId, ownerId } = await seedOrg();
+    const alone = await planPanel(orgId);
+    expect(alone.group_org_count).toBe(1);
+    expect(alone.group_other_orgs).toEqual([]);
+
+    // Two more orgs onto the same bill, plus one SOFT DELETED. A deleted org is
+    // not billed and must not inflate the warning — staff told "3 organisations"
+    // when two are live would go looking for an org that isn't there.
+    const groupId = (
+      await sql<{ subscription_id: string }[]>`
+        select subscription_id from organizations where id = ${orgId}`
+    )[0].subscription_id;
+    const mk = async (name: string, deleted: boolean) => {
+      const s = randomUUID().slice(0, 8);
+      const [{ id }] = await sql<{ id: string }[]>`
+        insert into organizations (name, slug, created_by, subscription_id, deleted_at)
+        values (${name}, ${"g-" + s}, ${ownerId}, ${groupId},
+                ${deleted ? sql`now()` : null})
+        returning id`;
+      return id;
+    };
+    await mk("Northside FC", false);
+    await mk("Eastvale United", false);
+    await mk("Closed Down FC", true);
+
+    const shared = await planPanel(orgId);
+    expect(shared.group_org_count).toBe(3);
+    expect(shared.group_other_orgs.map((o) => o.name).sort()).toEqual([
+      "Eastvale United",
+      "Northside FC",
+    ]);
+    // The org staff is looking at is counted but never listed as an "other".
+    expect(shared.group_other_orgs.map((o) => o.id)).not.toContain(orgId);
   });
 
   // planPanel is ALSO the shared "before" snapshot read by compToPro,
@@ -505,7 +574,12 @@ describe.skipIf(!HAS_DB)("admin plan tools", () => {
   // Stripe before this fix); an org with no customer id was never the bug.
   it("planPanel makes no Stripe calls, even for an org with a stripe_customer_id", async () => {
     const { orgId } = await seedOrg();
-    await sql`update subscriptions set stripe_customer_id = 'cus_test123' where org_id = ${orgId}`;
+    // Unique per run: V310 puts a partial unique index on stripe_customer_id
+    // (one Stripe customer belongs to one billing group, which is what makes the
+    // webhook's customer-id fallback safe), and this schema is not torn down
+    // between runs, so a hardcoded id collides with the previous run's row.
+    const customerId = `cus_test_${randomUUID().slice(0, 12)}`;
+    await sql`update subscriptions set stripe_customer_id = ${customerId} where id = (select subscription_id from organizations where id = ${orgId})`;
 
     await planPanel(orgId);
 

@@ -32,20 +32,37 @@ export async function POST(req: Request) {
 
     // A Pro org has nothing to gain from a pass (v3/07 §3 interplay).
     //
-    // Judged through the RESOLVER, not the raw `plan_key` column. The row keeps
-    // saying 'pro' after a comp lapses or a subscription is cancelled, while
-    // `orgPlanKey` applies the read-time degradations (expiry, `comped_until`,
-    // the past_due grace) and resolves such an org back to community. Reading
-    // the column directly told a lapsed org "Your plan already covers everything
-    // an Event Pass adds" — false, and it blocked a purchase they were entitled
-    // to make. The upgrade page renders from the resolver, so the raw read also
-    // left a visible buy button that 400s.
+    // Judged through the RESOLVER (main), not the raw `plan_key` column: the row
+    // keeps saying 'pro' after a comp lapses or a subscription is cancelled,
+    // while `orgPlanKey` applies the read-time degradations and resolves such an
+    // org back to community — otherwise a lapsed org is wrongly told its plan
+    // already covers the pass. The row is read through the billing GROUP
+    // (org→subscription join) so the payer gate below still has owner_user_id.
     const [sub] = await sql<
-      { stripe_customer_id: string | null }[]
-    >`select stripe_customer_id from subscriptions where org_id = ${orgId}`;
+      {
+        stripe_customer_id: string | null;
+        owner_user_id: string | null;
+      }[]
+    >`select s.stripe_customer_id, s.owner_user_id from subscriptions s
+       join organizations o on o.subscription_id = s.id
+       where o.id = ${orgId}`;
     if (isPaidPlan(await orgPlanKey(orgId))) {
       throw new HttpError(400, "Your plan already covers everything an Event Pass adds.");
     }
+
+    // An Event Pass is genuinely ORG-scoped — one competition, one
+    // competition_passes row keyed by this org — so a member org's owner keeps
+    // the right to buy one for their own competition; blocking that would make
+    // a club inside an association's group unable to unlock its own event.
+    //
+    // What must NOT happen is the charge landing on the GROUP's Stripe
+    // customer, which carries the payer's saved cards: a member owner could
+    // then bill the association at will. So the group's customer is reused only
+    // when the buyer IS the payer; anyone else checks out against their own
+    // email and Stripe mints them their own customer. Nothing links that
+    // customer back to the group — handleCheckoutCompleted returns before
+    // linkStripeCustomer for pass sessions — so the group's card stays untouched.
+    const isPayer = !!sub?.owner_user_id && sub.owner_user_id === user.id;
 
     const [pass] = await sql<{ competition_id: string }[]>`
       select competition_id from competition_passes where competition_id = ${competition_id}`;
@@ -71,7 +88,7 @@ export async function POST(req: Request) {
         competitionName: comp.name,
         returnUrl,
         currency: await preferredCurrency(orgId, req),
-        customerId: sub?.stripe_customer_id ?? undefined,
+        customerId: (isPayer ? sub?.stripe_customer_id : null) ?? undefined,
         customerEmail: user.email,
       }),
       // Scope the key to the REQUESTING owner (org+comp+user). A double-click /

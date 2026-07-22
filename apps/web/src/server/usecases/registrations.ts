@@ -63,6 +63,28 @@ export async function feePercentFor(orgId: string, competitionId?: string): Prom
   return pct == null || pct <= 0 ? platformFeeDefault() : pct;
 }
 
+/**
+ * The rate a charge in THIS competition must use (V312).
+ *
+ * Once a competition has taken a paid entry its rate is locked
+ * (`competitions.fee_percent`) and every later entry pays that same rate, immune
+ * to any plan change or group detach that happens mid-competition. Until then
+ * the rate is live, so an organiser can still fix their plan before sales open.
+ *
+ * The lock can be 0 in only one impossible case (a plan row of 0), which
+ * `feePercentFor` already treats as "unset"; a locked rate is always a real
+ * charged percent, so `> 0` is the correct guard for "is it locked".
+ */
+export async function effectiveFeePercentFor(
+  competitionId: string,
+  orgId: string,
+): Promise<number> {
+  const [c] = await sql<{ fee_percent: number | null }[]>`
+    select fee_percent from competitions where id = ${competitionId}`;
+  if (c?.fee_percent != null && c.fee_percent > 0) return c.fee_percent;
+  return feePercentFor(orgId, competitionId);
+}
+
 /** application_fee_amount for a destination charge. Never exceeds the fee. */
 export function applicationFeeCents(feeCents: number, percent: number): number {
   return Math.min(feeCents, Math.round((feeCents * percent) / 100));
@@ -221,6 +243,10 @@ export interface RegistrationRow {
   roster: { name: string; dob?: string | null; squad_number?: number | null }[];
   amount_cents: number;
   currency: string | null;
+  /** The platform-fee rate this card charge used, frozen at checkout creation
+   *  (V312). Null for offline registrations and pre-V312 card rows. It is what
+   *  stamps the competition's locked rate on the first paid entry. */
+  fee_percent: number | null;
   payment_method: "offline" | "stripe" | null;
   checkout_session_id: string | null;
   payment_intent_id: string | null;
@@ -243,7 +269,7 @@ export interface RegistrationRow {
 const REG_COLS = [
   "id", "division_id", "org_id", "status", "ref_code", "display_name",
   "contact_email", "dob", "gender", "guardian_name", "guardian_consent",
-  "answers", "roster", "amount_cents", "currency", "payment_method",
+  "answers", "roster", "amount_cents", "currency", "fee_percent", "payment_method",
   "checkout_session_id", "payment_intent_id", "refunded_cents", "refunded_at",
   "expires_at", "reminded_at", "offline_marked_paid_at", "disputed_at",
   "dispute_id", "entrant_id", "promoted_at", "withdrawn_at", "locale", "created_at",
@@ -961,10 +987,26 @@ async function createRegistrationCheckout(
     ? `${origin}/shared/${ctx.org_slug}/${ctx.comp_slug}/register/status` +
       `?rid=${reg.id}&token=${encodeURIComponent(token)}`
     : `${origin}/r/${reg.ref_code}?src=email`;
+  // The rate this charge uses: the competition's locked rate if it has one,
+  // otherwise the live plan rate. Resolved ONCE and both charged and frozen onto
+  // the registration, so the paid transition can stamp the competition with the
+  // exact percent this payer was billed — never a re-resolved one that a
+  // mid-competition plan change could have moved.
+  const feePercent = await effectiveFeePercentFor(ctx.competition_id, ctx.org_id);
   const session = await getStripe().checkout.sessions.create({
     mode: "payment",
     customer_email: reg.contact_email,
-    metadata: { kind: "registration", registration_id: reg.id, org_id: ctx.org_id },
+    // fee_percent rides the session so the paid transition can stamp the
+    // competition with the rate THIS session was billed at — not reg.fee_percent,
+    // which a later re-mint (resume, reminder) overwrites. Without it, paying a
+    // stale still-open session after a plan change would lock the competition at
+    // a rate no entrant was ever charged.
+    metadata: {
+      kind: "registration",
+      registration_id: reg.id,
+      org_id: ctx.org_id,
+      fee_percent: String(feePercent),
+    },
     line_items: [
       {
         quantity: 1,
@@ -976,10 +1018,7 @@ async function createRegistrationCheckout(
       },
     ],
     payment_intent_data: {
-      application_fee_amount: applicationFeeCents(
-        reg.amount_cents,
-        await feePercentFor(ctx.org_id, ctx.competition_id),
-      ),
+      application_fee_amount: applicationFeeCents(reg.amount_cents, feePercent),
       transfer_data: { destination: org.stripe_account_id },
       metadata: { registration_id: reg.id, org_id: ctx.org_id },
     },
@@ -989,7 +1028,7 @@ async function createRegistrationCheckout(
   if (!session.url) throw new HttpError(502, "Stripe did not return a checkout URL");
   await sql`
     update registrations
-    set checkout_session_id = ${session.id}, updated_at = now()
+    set checkout_session_id = ${session.id}, fee_percent = ${feePercent}, updated_at = now()
     where id = ${reg.id}`;
   return session.url;
 }
@@ -1013,7 +1052,17 @@ export async function handleRegistrationCheckoutCompleted(
     typeof session.payment_intent === "string"
       ? session.payment_intent
       : (session.payment_intent?.id ?? null);
-  await confirmPaidRegistration(regId, paymentIntent, session.amount_total ?? null);
+  // The rate THIS session was billed at (see createRegistrationCheckout). Absent
+  // on sessions minted before V312 — the stamp falls back to reg.fee_percent.
+  const raw = session.metadata?.fee_percent;
+  const chargedFeePercent =
+    raw != null && raw !== "" && Number.isFinite(Number(raw)) ? Number(raw) : null;
+  await confirmPaidRegistration(
+    regId,
+    paymentIntent,
+    session.amount_total ?? null,
+    chargedFeePercent,
+  );
 }
 
 type PayOutcome =
@@ -1025,6 +1074,7 @@ async function confirmPaidRegistration(
   regId: string,
   paymentIntentId: string | null,
   amountTotal: number | null,
+  chargedFeePercent: number | null = null,
 ): Promise<void> {
   const outcome = (await sql.begin(async (tx) => {
     const [reg] = await tx<RegistrationRow[]>`
@@ -1065,6 +1115,20 @@ async function confirmPaidRegistration(
           amount_cents = coalesce(${amountTotal}, amount_cents),
           updated_at = now()
       where id = ${regId}`;
+    // Lock the competition's fee rate on its FIRST paid entry (V312), from the
+    // rate the PAID SESSION was billed at — not reg.fee_percent, which a later
+    // re-mint overwrites, so paying a stale session after a plan change would
+    // otherwise lock a rate no entrant was charged. reg.fee_percent is the
+    // fallback only for sessions minted before the rate rode the metadata.
+    // `is null` makes it first-wins and idempotent: a replay, or a second
+    // concurrent payment, cannot move a rate already set. Offline entries carry
+    // no rate and leave the competition unlocked for the first card payer.
+    const lockRate = chargedFeePercent ?? reg.fee_percent;
+    if (lockRate != null) {
+      await tx`
+        update competitions set fee_percent = ${lockRate}
+         where id = ${div.competition_id} and fee_percent is null`;
+    }
     const entrantId = await materialise(
       tx,
       { ...reg, status: "paid" },

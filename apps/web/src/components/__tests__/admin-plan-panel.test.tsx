@@ -23,6 +23,8 @@ interface TestPlan {
   stripe_subscription_id: string | null;
   trial_used_at: string | null;
   cards: PaymentMethodRow[];
+  group_org_count: number;
+  group_other_orgs: { id: string; name: string }[];
 }
 
 const basePlan: TestPlan = {
@@ -36,6 +38,9 @@ const basePlan: TestPlan = {
   stripe_subscription_id: null,
   trial_used_at: null,
   cards: [],
+  // The ordinary case: this org is the only one on its bill, so no warning.
+  group_org_count: 1,
+  group_other_orgs: [],
 };
 
 function render(plan: TestPlan) {
@@ -262,5 +267,57 @@ describe("AdminPlanPanel — Payment methods (Task 6C staff-only card removal)",
   it("does not show the empty-cards line once real cards are on file — the pair the case above alone can't prove", () => {
     const html = render({ ...basePlan, stripe_customer_id: "cus_123", cards: [cardVisa] });
     expect(html).not.toContain("No cards on file — or Stripe could not be reached.");
+  });
+
+  // Blast radius (V310). Every control on this panel writes the SHARED
+  // subscriptions row, so a comp applied from one org's page moves the plan for
+  // every org on that bill. The usecases were always group-wide; the panel was
+  // not, so staff had no way to see how many orgs they were about to change.
+  describe("shared-bill warning", () => {
+    it("names the other orgs a plan change will also move", () => {
+      const html = render({
+        ...basePlan,
+        group_org_count: 3,
+        group_other_orgs: [
+          { id: "org-2", name: "Northside FC" },
+          { id: "org-3", name: "Eastvale United" },
+        ],
+      });
+      expect(html).toContain("This bill covers 3 organisations.");
+      expect(html).toContain("Northside FC");
+      expect(html).toContain("Eastvale United");
+      // Both others are named, so there is no overflow tail. Matched as the
+      // real phrase — a bare "more." appears elsewhere on the panel and would
+      // make this assertion pass or fail for unrelated reasons.
+      expect(html).not.toMatch(/and \d+ more/);
+    });
+
+    it("says how many are left over when the list is capped, so the count is never understated", () => {
+      // 24 orgs on the bill, 10 named: the warning has to be specific without
+      // rendering a whole federation into an admin page, and the number staff
+      // act on is the TOTAL, not the length of the list they can see.
+      const html = render({
+        ...basePlan,
+        group_org_count: 24,
+        group_other_orgs: Array.from({ length: 10 }, (_, i) => ({
+          id: `org-${i + 2}`,
+          name: `Club ${i + 2}`,
+        })),
+      });
+      expect(html).toContain("This bill covers 24 organisations.");
+      expect(html).toContain("and 13 more");
+    });
+
+    it("stays silent for an org that is alone on its bill", () => {
+      // The ordinary case. A warning that fires every time is one staff learns
+      // to click past, which would cost more than it buys.
+      const html = render(basePlan);
+      expect(html).not.toContain("This bill covers");
+    });
+
+    it("stays silent for an org with no billing group at all", () => {
+      const html = render({ ...basePlan, group_org_count: 0, group_other_orgs: [] });
+      expect(html).not.toContain("This bill covers");
+    });
   });
 });

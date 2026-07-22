@@ -46,13 +46,17 @@ const authState = vi.hoisted(() => ({
 vi.mock("@/lib/auth", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/auth")>()),
   getActiveOrgId: vi.fn(async () => authState.orgId),
-  requireOrgRole: vi.fn(async () => ({ user: authState.user, role: "owner" as const })),
+  requireOrgRole: vi.fn(async () => ({
+    user: authState.user,
+    role: "owner" as const,
+  })),
 }));
 
 import { sql } from "@/lib/db";
 import { recordPassPurchase } from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 import { POST as passCheckoutPOST } from "@/app/api/billing/pass-checkout/route";
+import { setOrgPlan } from "./_billing-group";
 
 const HAS_DB = !!process.env.DATABASE_URL;
 
@@ -63,7 +67,11 @@ const passCheckoutEvent = (orgId: string, competitionId: string, intent: string)
     type: "checkout.session.completed",
     data: {
       object: {
-        metadata: { org_id: orgId, competition_id: competitionId, pass_key: "event_pass" },
+        metadata: {
+          org_id: orgId,
+          competition_id: competitionId,
+          pass_key: "event_pass",
+        },
         payment_status: "paid",
         payment_intent: intent,
       },
@@ -74,9 +82,12 @@ const passCheckoutEvent = (orgId: string, competitionId: string, intent: string)
  *  the only two FK parents a competition_passes row needs. */
 async function seedOrgWithComp(): Promise<{ orgId: string; compId: string }> {
   const suffix = randomUUID().slice(0, 8);
+  const [{ id: payerId }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name)
+    values (${"payerdup-" + suffix + "@test.local"}, 'Payer') returning id`;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
-    insert into organizations (name, slug)
-    values (${"Dup Org " + suffix}, ${"dup-org-" + suffix}) returning id`;
+    insert into organizations (name, slug, created_by)
+    values (${"Dup Org " + suffix}, ${"dup-org-" + suffix}, ${payerId}) returning id`;
   const [{ id: compId }] = await sql<{ id: string }[]>`
     insert into competitions (org_id, name, slug)
     values (${orgId}, ${"Dup Cup " + suffix}, ${"dup-cup-" + suffix}) returning id`;
@@ -99,20 +110,40 @@ afterAll(async () => {
 describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
   it("first purchase records; second DIFFERENT intent reports a duplicate", async () => {
     const { orgId, compId } = await seedOrgWithComp();
-    const a = await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_a" });
+    const a = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_a",
+    });
     expect(a).toEqual({ recorded: true, duplicateIntent: null });
-    const b = await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_b" });
+    const b = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_b",
+    });
     expect(b).toEqual({ recorded: false, duplicateIntent: "pi_b" });
-    const same = await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_a" });
+    const same = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_a",
+    });
     expect(same).toEqual({ recorded: false, duplicateIntent: null }); // replay, not duplicate
   });
 
   it("a null-intent second purchase reports no refundable duplicate", async () => {
     const { orgId, compId } = await seedOrgWithComp();
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_first" });
+    await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_first",
+    });
     // Reconcile-on-return passes null when the session's intent isn't a string;
     // there is nothing to refund, so it must not be reported as a duplicate.
-    const res = await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: null });
+    const res = await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: null,
+    });
     expect(res).toEqual({ recorded: false, duplicateIntent: null });
   });
 
@@ -124,7 +155,11 @@ describe.skipIf(!HAS_DB)("recordPassPurchase duplicates", () => {
     // never two records.
     const results = await Promise.all(
       ["pi_race_a", "pi_race_b"].map((intent) =>
-        recordPassPurchase({ orgId, competitionId: compId, paymentIntent: intent }).then((r) => ({
+        recordPassPurchase({
+          orgId,
+          competitionId: compId,
+          paymentIntent: intent,
+        }).then((r) => ({
           intent,
           r,
         })),
@@ -143,7 +178,11 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
   it("refunds a duplicate charge with an idempotency key; the original pass is untouched", async () => {
     const { orgId, compId } = await seedOrgWithComp();
     // First owner already paid — pass recorded under pi_first.
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_first" });
+    await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_first",
+    });
     stripeMock.refundCreate.mockClear();
 
     // Second owner's checkout completes for the same, already-passed comp.
@@ -162,7 +201,11 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
 
   it("a replay of the SAME intent (webhook + reconcile on one payment) refunds nothing", async () => {
     const { orgId, compId } = await seedOrgWithComp();
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_solo" });
+    await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_solo",
+    });
     stripeMock.refundCreate.mockClear();
 
     await processStripeEvent(passCheckoutEvent(orgId, compId, "pi_solo"));
@@ -172,12 +215,18 @@ describe.skipIf(!HAS_DB)("Event Pass duplicate payment → auto-refund (checkout
 
   it("a Stripe refund failure never blocks the webhook ACK", async () => {
     const { orgId, compId } = await seedOrgWithComp();
-    await recordPassPurchase({ orgId, competitionId: compId, paymentIntent: "pi_keep" });
+    await recordPassPurchase({
+      orgId,
+      competitionId: compId,
+      paymentIntent: "pi_keep",
+    });
     stripeMock.refundCreate.mockClear();
     stripeMock.refundCreate.mockRejectedValueOnce(new Error("stripe unavailable"));
 
     // The dispatch must resolve (never throw) so processed_at is still stamped.
-    await expect(processStripeEvent(passCheckoutEvent(orgId, compId, "pi_dup"))).resolves.toBeUndefined();
+    await expect(
+      processStripeEvent(passCheckoutEvent(orgId, compId, "pi_dup")),
+    ).resolves.toBeUndefined();
     expect(stripeMock.refundCreate).toHaveBeenCalledTimes(1);
     const [row] = await sql`select 1 from competition_passes where competition_id = ${compId}`;
     expect(row).toBeTruthy();
@@ -217,9 +266,9 @@ describe.skipIf(!HAS_DB)("pass-checkout idempotency key is scoped per user (P0-3
     // A community sub carrying a currency short-circuits preferredCurrency BEFORE
     // it reaches next/headers (no request scope in a unit test) and keeps the
     // org pass-eligible (plan_key !== community would reject the pass).
-    await sql`insert into subscriptions (org_id, plan_key, status, currency)
-              values (${orgId}, 'community', 'active', 'usd')
-              on conflict (org_id) do update set plan_key = 'community', currency = 'usd'`;
+    await setOrgPlan(orgId, "community");
+    await sql`update subscriptions set currency = 'usd'
+               where id = (select subscription_id from organizations where id = ${orgId})`;
     // event_pass is a dark plan; its one-time price is written by stripe:sync in
     // real deploys. Capture whatever is there BEFORE overwriting it — on a shared
     // dev DB that is the real, live price id, and afterAll must put it back.

@@ -146,6 +146,24 @@ async function withDb<T>(
 }
 
 /**
+ * The billing group an org bills through, or a loud failure.
+ *
+ * Every fixture below writes the GROUP, so a missing link has to throw rather
+ * than update zero rows. A no-op fixture is the worst kind: the spec runs
+ * against whatever state the row already held and reports on the wrong thing,
+ * which is how the pre-V310 version of these helpers survived a schema change
+ * that had already made them impossible.
+ */
+async function requireGroupId(sql: import("postgres").Sql, orgId: string): Promise<string> {
+  const rows = await sql<{ subscription_id: string | null }[]>`
+    select subscription_id from organizations where id = ${orgId}`;
+  if (rows.length === 0) throw new Error(`no organization ${orgId}`);
+  const groupId = rows[0].subscription_id;
+  if (!groupId) throw new Error(`organization ${orgId} has no billing group (subscription_id)`);
+  return groupId;
+}
+
+/**
  * An integer limit straight from the live `plan_entitlements` matrix.
  *
  * For specs whose SETUP depends on where a ceiling currently sits — how many
@@ -176,6 +194,17 @@ export async function communityLimit(featureKey: string): Promise<number> {
 /**
  * Set an org's plan directly in the DB (same trick auth.setup.ts uses for the
  * Pro account). Targets by org id or by owner email.
+ *
+ * Writes the org's billing GROUP, because V310 moved the plan there and dropped
+ * `subscriptions.org_id`. Two consequences worth knowing before you call it:
+ *
+ *  - It UPDATES, never inserts. Post-V310 every org points at a group from the
+ *    moment it is created (lib/auth.ts createOrgForUser), so an insert here
+ *    would mint a second, orphaned group that nothing reads.
+ *  - The plan is a property of the group, so on a SHARED group this moves every
+ *    org on the bill, not just the one named. That is the product's actual
+ *    behaviour, not a limitation of the fixture — a spec that wants one org
+ *    changed must put it in a group of its own first.
  */
 export async function setOrgPlanBySql(
   target: { orgId?: string; email?: string },
@@ -183,18 +212,23 @@ export async function setOrgPlanBySql(
 ): Promise<void> {
   await withDb(async (sql) => {
     if (target.orgId) {
-      await sql`
-        insert into subscriptions (org_id, plan_key, status)
-        values (${target.orgId}, ${plan}, 'active')
-        on conflict (org_id) do update set plan_key = ${plan}, status = 'active'`;
+      const groupId = await requireGroupId(sql, target.orgId);
+      await sql`update subscriptions set plan_key = ${plan}, status = 'active'
+                 where id = ${groupId}`;
     } else if (target.email) {
-      await sql`
-        with org as (
-          select m.org_id from org_members m join users u on u.id = m.user_id
-          where u.email = ${target.email} limit 1)
-        insert into subscriptions (org_id, plan_key, status)
-        select org_id, ${plan}, 'active' from org
-        on conflict (org_id) do update set plan_key = ${plan}, status = 'active'`;
+      const res = await sql`
+        update subscriptions set plan_key = ${plan}, status = 'active'
+         where id = (
+           select o.subscription_id from organizations o
+             join org_members m on m.org_id = o.id
+             join users u on u.id = m.user_id
+            where u.email = ${target.email} and o.subscription_id is not null
+            limit 1)`;
+      // auth.setup.ts flips the SHARED Pro account this way, and every project
+      // in the run reads the storageState it produces. Silently matching
+      // nothing would hand all of them a community account and fail somewhere
+      // far from here.
+      if (res.count === 0) throw new Error(`no billing group for owner ${target.email}`);
     } else {
       throw new Error("setOrgPlanBySql: pass orgId or email");
     }
@@ -376,18 +410,115 @@ export async function setOrgSubscriptionSql(
   const used = fields.trial_used_at ?? null;
   const setId = "stripe_subscription_id" in fields;
   await withDb(async (sql) => {
+    // The org's billing GROUP — V310 moved every one of these columns onto it
+    // and dropped subscriptions.org_id. See setOrgPlanBySql for why this
+    // updates rather than inserts, and for the shared-group blast radius.
+    const groupId = await requireGroupId(sql, orgId);
     await sql`
-      insert into subscriptions (org_id, plan_key, status, trial_end, trial_used_at)
-      values (${orgId}, ${fields.plan_key}, ${fields.status}, ${fields.trial_end ?? null}, ${used})
-      on conflict (org_id) do update
-        set plan_key = ${fields.plan_key}, status = ${fields.status},
-            trial_end = ${fields.trial_end ?? null}`;
+      update subscriptions
+         set plan_key = ${fields.plan_key}, status = ${fields.status},
+             trial_end = ${fields.trial_end ?? null}
+       where id = ${groupId}`;
+    // Still separate statements, and still keyed off presence rather than
+    // value: the app only ever coalesces these two columns, so a fixture that
+    // wrote them unconditionally would hand back a trial the product cannot.
     if (burn) {
-      await sql`update subscriptions set trial_used_at = ${used} where org_id = ${orgId}`;
+      await sql`update subscriptions set trial_used_at = ${used} where id = ${groupId}`;
     }
     if (setId) {
-      await sql`update subscriptions set stripe_subscription_id = ${fields.stripe_subscription_id ?? null} where org_id = ${orgId}`;
+      await sql`update subscriptions set stripe_subscription_id = ${fields.stripe_subscription_id ?? null} where id = ${groupId}`;
     }
+  });
+}
+
+/** The billing group an org bills through. */
+export async function orgGroupIdSql(orgId: string): Promise<string> {
+  return withDb((sql) => requireGroupId(sql, orgId));
+}
+
+/**
+ * Put `orgId` onto `groupId`, the way a real attach would — without Stripe.
+ *
+ * `POST /api/billing/group/attach` is the product path and it prices the move,
+ * which means a live group would have it call Stripe. e2e must never do that,
+ * so a spec that needs a group of two builds it here and asserts on what the
+ * PANEL does with it. The pricing itself is covered where Stripe is mocked
+ * (server/usecases/__tests__/billing-group-move.test.ts).
+ *
+ * Drops the org's previous group if that leaves it empty, mirroring
+ * dropEmptyGroup — an abandoned group still belongs to the payer and would
+ * otherwise show up in `GET /api/billing/groups` as a phantom.
+ */
+export async function joinOrgToGroupSql(orgId: string, groupId: string): Promise<void> {
+  await withDb(async (sql) => {
+    const previous = await requireGroupId(sql, orgId);
+    if (previous === groupId) return;
+    await sql`update organizations set subscription_id = ${groupId} where id = ${orgId}`;
+    const [{ count }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from organizations
+       where subscription_id = ${previous} and deleted_at is null`;
+    if (count === 0) await sql`delete from subscriptions where id = ${previous}`;
+  });
+}
+
+/**
+ * Give `orgId` a billing group of ITS OWN, and return the new group's id.
+ *
+ * The inverse of joinOrgToGroupSql, and the fixture V309 made necessary: a new
+ * org joins its creator's EXISTING group (lib/auth.ts createOrgForUser), so
+ * three orgs minted by one e2e user are three orgs on ONE bill, not three
+ * groups. A spec that wants to watch orgs move between groups has to break them
+ * apart first, or every "join" it performs is a no-op against a group that
+ * already holds everything.
+ *
+ * Mirrors what a detach leaves behind — a fresh community group owned by the
+ * org's owner — and drops the old group if this emptied it, like dropEmptyGroup.
+ */
+export async function splitOrgIntoOwnGroupSql(orgId: string): Promise<string> {
+  return withDb(async (sql) => {
+    const previous = await requireGroupId(sql, orgId);
+    const [owner] = await sql<{ user_id: string }[]>`
+      select user_id from org_members
+       where org_id = ${orgId} and role = 'owner' limit 1`;
+    if (!owner) throw new Error(`organization ${orgId} has no owner member`);
+    const [group] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+      values (${owner.user_id}, 'community', 'active', 1)
+      returning id`;
+    await sql`update organizations set subscription_id = ${group.id} where id = ${orgId}`;
+    const [{ count }] = await sql<{ count: number }[]>`
+      select count(*)::int as count from organizations
+       where subscription_id = ${previous} and deleted_at is null`;
+    if (count === 0) await sql`delete from subscriptions where id = ${previous}`;
+    return group.id;
+  });
+}
+
+/**
+ * Force `quantity_paid` — the seats Stripe has already been billed for.
+ *
+ * Deliberately settable independently of the org count, because the two
+ * differing IS the state worth testing: a freed slot stays paid until renewal,
+ * so a group can hold fewer orgs than it has seats and the next move is free.
+ * Nothing in the app writes this without Stripe confirming first, so a spec
+ * cannot reach the state any other way.
+ */
+export async function setGroupSeatsPaidSql(groupId: string, seats: number): Promise<void> {
+  await withDb(async (sql) => {
+    const res = await sql`update subscriptions set quantity_paid = ${seats} where id = ${groupId}`;
+    if (res.count === 0) throw new Error(`no billing group ${groupId}`);
+  });
+}
+
+/**
+ * Moderation state. V310 moved suspension off `subscriptions.status` and onto
+ * the ORG, precisely so suspending one org cannot stop billing for the siblings
+ * that merely share its payer — so this writes the org and nothing else.
+ */
+export async function setOrgStatusSql(orgId: string, status: "active" | "suspended"): Promise<void> {
+  await withDb(async (sql) => {
+    const res = await sql`update organizations set status = ${status} where id = ${orgId}`;
+    if (res.count === 0) throw new Error(`no organization ${orgId}`);
   });
 }
 

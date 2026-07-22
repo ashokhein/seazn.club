@@ -10,13 +10,9 @@ import { sql, withTenant } from "@/lib/db";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import { PaymentRequiredError } from "@/lib/errors";
 import type { AuthCtx } from "@/server/api-v1/auth";
-import {
-  deleteMark,
-  myMarksAverage,
-  orgMarksSummary,
-  putMark,
-} from "../official-marks";
+import { deleteMark, myMarksAverage, orgMarksSummary, putMark } from "../official-marks";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 interface OrgCtx {
@@ -39,9 +35,7 @@ async function seedOrg(plan: "pro" | "community" = "pro"): Promise<OrgCtx> {
     values (${"Mk " + suffix}, ${"mk-" + suffix}, ${userId}) returning id`;
   await sql`insert into org_members (org_id, user_id, role) values (${orgId}, ${userId}, 'owner')`;
   if (plan === "pro") {
-    await sql`
-      insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'pro', 'active')
-      on conflict (org_id) do update set plan_key = 'pro'`;
+    await setOrgPlan(orgId);
   }
   await invalidateOrgEntitlements(orgId);
   await sql`
@@ -66,7 +60,12 @@ async function seedOrg(plan: "pro" | "community" = "pro"): Promise<OrgCtx> {
     values (${divisionId}, ${orgId}, 'team', 'Bravo', 2) returning id`;
   return {
     auth: { orgId, via: "session", userId, role: "owner", keyId: null },
-    orgId, userId, divisionId, stageId, entrantA, entrantB,
+    orgId,
+    userId,
+    divisionId,
+    stageId,
+    entrantA,
+    entrantB,
   };
 }
 
@@ -119,12 +118,20 @@ describe.skipIf(!HAS_DB)("official marks (SPEC-3, PROMPT-80)", () => {
     const ctx = await seedOrg();
     const off = await makeOfficial(ctx);
     // accepted but still scheduled → window closed.
-    const scheduled = await makeAssignment(ctx, off, { status: "scheduled", response: "accepted" });
-    await expect(putMark(ctx.auth, scheduled.fixtureOfficialId, { mark: 4 })).rejects.toMatchObject({
-      status: 403,
+    const scheduled = await makeAssignment(ctx, off, {
+      status: "scheduled",
+      response: "accepted",
     });
+    await expect(putMark(ctx.auth, scheduled.fixtureOfficialId, { mark: 4 })).rejects.toMatchObject(
+      {
+        status: 403,
+      },
+    );
     // decided but response pending → window closed.
-    const pending = await makeAssignment(ctx, off, { status: "decided", response: "pending" });
+    const pending = await makeAssignment(ctx, off, {
+      status: "decided",
+      response: "pending",
+    });
     await expect(putMark(ctx.auth, pending.fixtureOfficialId, { mark: 4 })).rejects.toMatchObject({
       status: 403,
     });
@@ -146,7 +153,10 @@ describe.skipIf(!HAS_DB)("official marks (SPEC-3, PROMPT-80)", () => {
     expect(summary.recent[0]).toMatchObject({ mark: 5, comment: "great" });
 
     await deleteMark(ctx.auth, fixtureOfficialId);
-    expect(await orgMarksSummary(ctx.auth, off)).toMatchObject({ average: null, count: 0 });
+    expect(await orgMarksSummary(ctx.auth, off)).toMatchObject({
+      average: null,
+      count: 0,
+    });
   });
 
   it("org B's summary never sees org A's marks (RLS)", async () => {
@@ -170,7 +180,10 @@ describe.skipIf(!HAS_DB)("official marks (SPEC-3, PROMPT-80)", () => {
     });
     expect(seen).toBe(0);
     // And org B's summary for org A's official reports empty.
-    expect(await orgMarksSummary(b.auth, offA)).toMatchObject({ average: null, count: 0 });
+    expect(await orgMarksSummary(b.auth, offA)).toMatchObject({
+      average: null,
+      count: 0,
+    });
   });
 
   it("the official-facing global average is null at 2 marks, a value at 3 across two orgs", async () => {

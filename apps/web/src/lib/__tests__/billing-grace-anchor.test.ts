@@ -11,6 +11,7 @@ import { sql } from "@/lib/db";
 import { syncSubscription } from "@/lib/billing";
 import { processStripeEvent } from "@/server/usecases/billing-events";
 
+import { setOrgPlan } from "./_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 async function seedOrg(): Promise<string> {
@@ -21,8 +22,7 @@ async function seedOrg(): Promise<string> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug, created_by)
     values (${"Anchor Org " + suffix}, ${"anchor-org-" + suffix}, ${ownerId}) returning id`;
-  await sql`insert into subscriptions (org_id, plan_key, status)
-            values (${orgId}, 'community', 'active')`;
+  await setOrgPlan(orgId, "community");
   return orgId;
 }
 
@@ -61,7 +61,7 @@ function paymentFailedEvent(subId: string): Stripe.Event {
 
 async function readAnchor(orgId: string) {
   const [row] = await sql<{ status: string; status_changed_at: string | null }[]>`
-    select status, status_changed_at from subscriptions where org_id = ${orgId}`;
+    select status, status_changed_at from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
   return row;
 }
 
@@ -87,19 +87,15 @@ describe.skipIf(!HAS_DB)("status_changed_at transition stamping", () => {
     // Age the anchor, then re-sync the SAME status (webhook replay / retry).
     await sql`update subscriptions
               set status_changed_at = now() - interval '5 days'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     await syncSubscription(orgId, stripeSub({ id: subId, status: "past_due" }));
     const held = await readAnchor(orgId);
-    expect(new Date(held.status_changed_at!).getTime()).toBeLessThan(
-      Date.now() - 4 * 86_400_000,
-    ); // still ~5 days old — not re-stamped
+    expect(new Date(held.status_changed_at!).getTime()).toBeLessThan(Date.now() - 4 * 86_400_000); // still ~5 days old — not re-stamped
 
     // past_due → active: transition again, stamp moves forward.
     await syncSubscription(orgId, stripeSub({ id: subId, status: "active" }));
     const flipped = await readAnchor(orgId);
-    expect(new Date(flipped.status_changed_at!).getTime()).toBeGreaterThan(
-      Date.now() - 60_000,
-    );
+    expect(new Date(flipped.status_changed_at!).getTime()).toBeGreaterThan(Date.now() - 60_000);
   });
 
   it("repeated invoice.payment_failed events do not move the anchor", async () => {
@@ -107,7 +103,7 @@ describe.skipIf(!HAS_DB)("status_changed_at transition stamping", () => {
     const subId = `sub_dun_${randomUUID().slice(0, 8)}`;
     await sql`update subscriptions
               set plan_key = 'pro', status = 'active', stripe_subscription_id = ${subId}
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
 
     // First failure: active → past_due, anchor stamped.
     await processStripeEvent(paymentFailedEvent(subId));
@@ -119,12 +115,10 @@ describe.skipIf(!HAS_DB)("status_changed_at transition stamping", () => {
     // Age the anchor, then a dunning RETRY fails again — same status, anchor holds.
     await sql`update subscriptions
               set status_changed_at = now() - interval '10 days'
-              where org_id = ${orgId}`;
+              where id = (select subscription_id from organizations where id = ${orgId})`;
     await processStripeEvent(paymentFailedEvent(subId));
     const held = await readAnchor(orgId);
     expect(held.status).toBe("past_due");
-    expect(new Date(held.status_changed_at!).getTime()).toBeLessThan(
-      Date.now() - 9 * 86_400_000,
-    );
+    expect(new Date(held.status_changed_at!).getTime()).toBeLessThan(Date.now() - 9 * 86_400_000);
   });
 });

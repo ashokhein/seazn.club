@@ -219,7 +219,9 @@ export async function creditPassTowardSubscription(orgId: string): Promise<PassC
   if (!intent) return none("unpaid_pass");
 
   const [sub] = await sql<{ stripe_customer_id: string | null; currency: string | null }[]>`
-    select stripe_customer_id, currency from subscriptions where org_id = ${orgId}`;
+    select s.stripe_customer_id, s.currency from subscriptions s
+    join organizations o on o.subscription_id = s.id
+    where o.id = ${orgId}`;
   if (!sub?.stripe_customer_id) return none("no_customer", intent);
   // A balance credit is denominated: a gbp credit does nothing for a usd
   // invoice, it just sits there. NULL means we cannot prove what the upcoming

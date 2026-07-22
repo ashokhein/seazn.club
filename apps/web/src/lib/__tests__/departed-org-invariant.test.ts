@@ -34,27 +34,47 @@ import { adminDowngrade, compToPro, extendTrial, restoreTrial } from "@/server/u
 const HAS_DB = !!process.env.DATABASE_URL;
 
 /** Every entry point that can write to a departed org's subscription row. */
-const WRITERS: { name: string; run: (orgId: string, actorId: string) => Promise<unknown> }[] = [
+const WRITERS: {
+  name: string;
+  run: (orgId: string, actorId: string) => Promise<unknown>;
+}[] = [
   { name: "compToPro", run: (o, a) => compToPro(a, o, null, "win-back comp") },
   {
     name: "compToPro (dated)",
     run: (o, a) => compToPro(a, o, new Date(Date.now() + 30 * 86_400_000), "win-back comp"),
   },
-  { name: "extendTrial", run: (o, a) => extendTrial(a, o, 7, "win-back trial") },
-  { name: "adminDowngrade", run: (o, a) => adminDowngrade(a, o, "comp withdrawn") },
+  {
+    name: "extendTrial",
+    run: (o, a) => extendTrial(a, o, 7, "win-back trial"),
+  },
+  {
+    name: "adminDowngrade",
+    run: (o, a) => adminDowngrade(a, o, "comp withdrawn"),
+  },
   { name: "downgradeToCommunity", run: (o) => downgradeToCommunity(o) },
-  { name: "restoreTrial", run: (o, a) => restoreTrial(a, o, "departed org, giving them another shot") },
+  {
+    name: "restoreTrial",
+    run: (o, a) => restoreTrial(a, o, "departed org, giving them another shot"),
+  },
 ];
 
 /** A departed org: Pro once, subscription cancelled, dead id still on the row. */
 async function seedDepartedOrg(): Promise<{ orgId: string; actorId: string }> {
   const s = randomUUID().slice(0, 8);
+  const [{ id: payerId }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name)
+    values (${"payerdep-" + s + "@test.local"}, 'Payer') returning id`;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
-    insert into organizations (name, slug)
-    values (${"Dep " + s}, ${"dep-" + s}) returning id`;
+    insert into organizations (name, slug, created_by)
+    values (${"Dep " + s}, ${"dep-" + s}, ${payerId}) returning id`;
   await sql`
-    insert into subscriptions (org_id, plan_key, status, stripe_subscription_id)
-    values (${orgId}, 'community', 'canceled', ${"sub_dead_" + s})`;
+    with s as (
+      insert into subscriptions (owner_user_id, plan_key, status, stripe_subscription_id)
+      select o.created_by, 'community', 'canceled', ${"sub_dead_" + s}
+        from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations o set subscription_id = s.id from s where o.id = ${orgId}`;
   const [{ id: actorId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, is_staff, staff_role)
     values (${"staffdep-" + s + "@test.local"}, 'Staff', true, 'superadmin') returning id`;
@@ -63,7 +83,7 @@ async function seedDepartedOrg(): Promise<{ orgId: string; actorId: string }> {
 
 async function readRow(orgId: string) {
   const [row] = await sql<{ stripe_subscription_id: string | null; status: string | null }[]>`
-    select stripe_subscription_id, status from subscriptions where org_id = ${orgId}`;
+    select stripe_subscription_id, status from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
   return row;
 }
 

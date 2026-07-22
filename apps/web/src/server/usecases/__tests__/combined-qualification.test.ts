@@ -13,10 +13,14 @@ import { createDivision } from "../divisions";
 import { createEntrants } from "../entrants";
 import { completeStage, createStages, generateStageFixtures } from "../stages";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
 async function seedOrg(): Promise<{ auth: AuthCtx }> {
@@ -24,9 +28,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Cq " + suffix}, ${"cq-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status) values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -36,7 +38,9 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 afterAll(async () => {
@@ -51,25 +55,43 @@ describe.skipIf(!HAS_DB)("combined qualification round-trip (PROMPT-59)", () => 
   it("group → complete → combined-spec knockout generates with slotOrder honoured", async () => {
     const { auth } = await seedOrg();
     const comp = await createCompetition(auth, {
-      name: "Cq Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {},
+      name: "Cq Cup " + randomUUID().slice(0, 6),
+      visibility: "private",
+      branding: {},
     });
     const division = await createDivision(auth, comp.id, {
-      name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-      config: GENERIC_CONFIG, eligibility: [],
+      name: "Open",
+      slug: "open",
+      sport_key: "generic",
+      variant_key: "score",
+      config: GENERIC_CONFIG,
+      eligibility: [],
     });
     // 12 entrants → 4 pools of 3 (seeded-snake).
     const entrants = await createEntrants(
-      auth, division.id,
+      auth,
+      division.id,
       Array.from({ length: 12 }, (_, i) => ({
-        kind: "individual" as const, display_name: `E${i + 1}`, seed: i + 1, members: [],
+        kind: "individual" as const,
+        display_name: `E${i + 1}`,
+        seed: i + 1,
+        members: [],
       })),
     );
     void entrants;
     const slotOrder = [1, 6, 4, 7, 2, 5, 3, 8]; // custom map over the 8 combined seeds
     const stages = await createStages(auth, division.id, [
-      { seq: 1, kind: "group", name: "Groups", config: { pools: { count: 4 } }, qualification: null },
       {
-        seq: 2, kind: "knockout", name: "KO",
+        seq: 1,
+        kind: "group",
+        name: "Groups",
+        config: { pools: { count: 4 } },
+        qualification: null,
+      },
+      {
+        seq: 2,
+        kind: "knockout",
+        name: "KO",
         config: { slotOrder },
         qualification: {
           combine: [
@@ -91,8 +113,12 @@ describe.skipIf(!HAS_DB)("combined qualification round-trip (PROMPT-59)", () => 
     >`select id, home_entrant_id, away_entrant_id from fixtures where stage_id = ${group.id}`;
     const seedOf = new Map(entrants.map((e) => [e.id, e.seed ?? 99]));
     for (const f of fixtures) {
-      const homeWins = (seedOf.get(f.home_entrant_id) ?? 99) < (seedOf.get(f.away_entrant_id) ?? 99);
-      await appendEvent(auth.orgId, f.id, 0, { type: "core.start", payload: {} });
+      const homeWins =
+        (seedOf.get(f.home_entrant_id) ?? 99) < (seedOf.get(f.away_entrant_id) ?? 99);
+      await appendEvent(auth.orgId, f.id, 0, {
+        type: "core.start",
+        payload: {},
+      });
       await appendEvent(auth.orgId, f.id, 1, {
         type: "generic.result",
         payload: homeWins ? { p1Score: 2, p2Score: 0 } : { p1Score: 0, p2Score: 2 },
@@ -113,7 +139,11 @@ describe.skipIf(!HAS_DB)("combined qualification round-trip (PROMPT-59)", () => 
     // seed list (4 winners then 4 best-seconds, each ordered deterministically).
     const seeds = done.qualified!.entrants;
     const r1 = await sql<
-      { seq_in_round: number; home_entrant_id: string; away_entrant_id: string }[]
+      {
+        seq_in_round: number;
+        home_entrant_id: string;
+        away_entrant_id: string;
+      }[]
     >`select seq_in_round, home_entrant_id, away_entrant_id from fixtures
       where stage_id = ${ko.id}
         and round_no = (select min(round_no) from fixtures where stage_id = ${ko.id})

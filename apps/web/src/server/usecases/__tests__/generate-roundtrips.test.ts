@@ -16,10 +16,14 @@ import { createEntrants } from "../entrants";
 import { createPerson } from "../persons";
 import { createStages, generateStageFixtures } from "../stages";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
 async function seedOrg(): Promise<{ auth: AuthCtx }> {
@@ -27,10 +31,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Rt " + suffix}, ${"rt-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -40,31 +41,49 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx, names: string[], individualsWithPersons = false) {
   const comp = await createCompetition(auth, {
-    name: "Rt Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {},
+    name: "Rt Cup " + randomUUID().slice(0, 6),
+    visibility: "private",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const entrants = await createEntrants(
-    auth, division.id,
+    auth,
+    division.id,
     await Promise.all(
       names.map(async (name, i) => ({
-        kind: "individual" as const, display_name: name, seed: i + 1,
+        kind: "individual" as const,
+        display_name: name,
+        seed: i + 1,
         members: individualsWithPersons
           ? [
               {
                 person_id: (
                   await createPerson(auth, {
-                    full_name: name, consent: {}, dob: null, gender: null, external_ref: null,
+                    full_name: name,
+                    consent: {},
+                    dob: null,
+                    gender: null,
+                    external_ref: null,
                   })
                 ).id,
-                is_captain: false, roles: [], default_position_key: null, squad_number: null,
+                is_captain: false,
+                roles: [],
+                default_position_key: null,
+                squad_number: null,
               },
             ]
           : [],
@@ -88,7 +107,10 @@ describe.skipIf(!HAS_DB)("fixture generation round-trip budget", () => {
     const names = Array.from({ length: 32 }, (_, i) => `K${i + 1}`);
     const { division } = await seedDivision(auth, names);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "knockout", name: "KO", config: {},
+      seq: 1,
+      kind: "knockout",
+      name: "KO",
+      config: {},
     });
 
     const before = statementCount();
@@ -108,7 +130,9 @@ describe.skipIf(!HAS_DB)("fixture generation round-trip budget", () => {
     const names = Array.from({ length: 8 }, (_, i) => `P${i + 1}`);
     const { division } = await seedDivision(auth, names, true);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "americano" as never, name: "Padel",
+      seq: 1,
+      kind: "americano" as never,
+      name: "Padel",
       config: { mode: "americano", courtCount: 2, rounds: 3 },
     });
 

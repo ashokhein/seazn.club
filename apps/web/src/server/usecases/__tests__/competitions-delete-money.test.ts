@@ -10,6 +10,7 @@ import type { AuthCtx } from "@/server/api-v1/auth";
 import { createCompetition, deleteCompetition } from "@/server/usecases/competitions";
 import { createDivision } from "@/server/usecases/divisions";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
@@ -32,10 +33,7 @@ async function seedCompWithDivision(): Promise<{
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Money " + suffix}, ${"money-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -45,7 +43,13 @@ async function seedCompWithDivision(): Promise<{
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  const auth: AuthCtx = { orgId, via: "session", userId: null, role: "owner", keyId: null };
+  const auth: AuthCtx = {
+    orgId,
+    via: "session",
+    userId: null,
+    role: "owner",
+    keyId: null,
+  };
   const comp = await createCompetition(auth, {
     name: `Cup ${randomUUID().slice(0, 6)}`,
     visibility: "private",
@@ -88,7 +92,9 @@ describe.skipIf(!HAS_DB)("deleteCompetition money guards", () => {
        payment_intent_id, refunded_cents, guardian_consent, answers, roster, access_token_hash)
       values (${divId}, ${orgId}, 'paid', 'P', 'p@x.test', 2000, 'pi_reg', 0,
               false, '{}', '[]', ${randomUUID()})`;
-    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({ status: 409 });
+    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it("409s when a paid sponsor order is scoped to this comp via its package", async () => {
@@ -99,7 +105,9 @@ describe.skipIf(!HAS_DB)("deleteCompetition money guards", () => {
     await sql`insert into sponsor_orders
       (org_id, package_id, sponsor_name, sponsor_email, amount_cents, currency, status, paid_at)
       values (${orgId}, ${pkg.id}, 'S', 's@x.test', 25000, 'gbp', 'paid', now())`;
-    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({ status: 409 });
+    await expect(deleteCompetition(auth, compId)).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   it("still deletes when money is fully refunded", async () => {

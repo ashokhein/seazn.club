@@ -9,12 +9,10 @@ import { HttpError } from "@/lib/errors";
 import { invalidateOrgEntitlements } from "@/lib/entitlements";
 import type { AuthCtx } from "@/server/api-v1/auth";
 import { uniqueSlug } from "@/server/usecases/slugs";
-import {
-  createCompetition,
-  patchCompetition,
-} from "@/server/usecases/competitions";
+import { createCompetition, patchCompetition } from "@/server/usecases/competitions";
 import { createDivision, patchDivision } from "@/server/usecases/divisions";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
@@ -29,10 +27,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Slug " + suffix}, ${"slug-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -42,7 +37,9 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 const compInput = (name: string) => ({
@@ -98,9 +95,9 @@ describe.skipIf(!HAS_DB)("slug hygiene (PROMPT-30)", () => {
     await expect(
       createCompetition(auth, { ...compInput("Second"), slug: "taken" }),
     ).rejects.toThrow(HttpError);
-    await expect(
-      createCompetition(auth, { ...compInput("Third"), slug: "new" }),
-    ).rejects.toThrow(/reserved/);
+    await expect(createCompetition(auth, { ...compInput("Third"), slug: "new" })).rejects.toThrow(
+      /reserved/,
+    );
   });
 
   it("competition rename regenerates the slug and records history", async () => {

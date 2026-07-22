@@ -13,10 +13,14 @@ import { createEntrants } from "../entrants";
 import { addFixture, createStages, generateStageFixtures } from "../stages";
 import { appendEvent, recomputeStandings } from "@/server/engine-db";
 
+import { setOrgPlan } from "@/lib/__tests__/_billing-group";
 const HAS_DB = !!process.env.DATABASE_URL;
 
 const GENERIC_CONFIG = {
-  resultMode: "score", allowDraws: true, points: { w: 3, d: 1, l: 0 }, progressScore: false,
+  resultMode: "score",
+  allowDraws: true,
+  points: { w: 3, d: 1, l: 0 },
+  progressScore: false,
 };
 
 async function seedOrg(): Promise<{ auth: AuthCtx }> {
@@ -24,10 +28,7 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
   const [{ id: orgId }] = await sql<{ id: string }[]>`
     insert into organizations (name, slug) values (${"Af " + suffix}, ${"af-" + suffix})
     returning id`;
-  await sql`
-    insert into subscriptions (org_id, plan_key, status)
-    values (${orgId}, 'pro', 'active')
-    on conflict (org_id) do update set plan_key = 'pro'`;
+  await setOrgPlan(orgId);
   await invalidateOrgEntitlements(orgId);
   await sql`
     insert into sports (key, name, module_version, position_catalog)
@@ -37,21 +38,33 @@ async function seedOrg(): Promise<{ auth: AuthCtx }> {
     insert into sport_variants (sport_key, key, name, config, is_system)
     values ('generic', 'score', 'Score', ${sql.json(GENERIC_CONFIG)}, true)
     on conflict do nothing`;
-  return { auth: { orgId, via: "session", userId: null, role: "owner", keyId: null } };
+  return {
+    auth: { orgId, via: "session", userId: null, role: "owner", keyId: null },
+  };
 }
 
 async function seedDivision(auth: AuthCtx, count: number) {
   const comp = await createCompetition(auth, {
-    name: "Af Cup " + randomUUID().slice(0, 6), visibility: "private", branding: {},
+    name: "Af Cup " + randomUUID().slice(0, 6),
+    visibility: "private",
+    branding: {},
   });
   const division = await createDivision(auth, comp.id, {
-    name: "Open", slug: "open", sport_key: "generic", variant_key: "score",
-    config: GENERIC_CONFIG, eligibility: [],
+    name: "Open",
+    slug: "open",
+    sport_key: "generic",
+    variant_key: "score",
+    config: GENERIC_CONFIG,
+    eligibility: [],
   });
   const entrants = await createEntrants(
-    auth, division.id,
+    auth,
+    division.id,
     Array.from({ length: count }, (_, i) => ({
-      kind: "individual" as const, display_name: `E${i + 1}`, seed: i + 1, members: [],
+      kind: "individual" as const,
+      display_name: `E${i + 1}`,
+      seed: i + 1,
+      members: [],
     })),
   );
   return { division, entrants: entrants.map((e) => e.id) };
@@ -70,7 +83,11 @@ describe.skipIf(!HAS_DB)("addFixture (PROMPT-66)", () => {
     const { auth } = await seedOrg();
     const { division, entrants } = await seedDivision(auth, 3);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "league", name: "League", config: {}, qualification: null,
+      seq: 1,
+      kind: "league",
+      name: "League",
+      config: {},
+      qualification: null,
     });
     await generateStageFixtures(auth, stage!.id);
     const [{ count: before }] = await sql<{ count: number }[]>`
@@ -84,7 +101,13 @@ describe.skipIf(!HAS_DB)("addFixture (PROMPT-66)", () => {
     });
 
     const [fx] = await sql<
-      { round_no: number; seq_in_round: number; status: string; ext_key: string; venue: string | null }[]
+      {
+        round_no: number;
+        seq_in_round: number;
+        status: string;
+        ext_key: string;
+        venue: string | null;
+      }[]
     >`select round_no, seq_in_round, status, ext_key, venue from fixtures where id = ${fixture_id}`;
     expect(fx.status).toBe("scheduled");
     expect(fx.ext_key.startsWith("adhoc-")).toBe(true);
@@ -94,9 +117,13 @@ describe.skipIf(!HAS_DB)("addFixture (PROMPT-66)", () => {
     expect(after).toBe(before + 1);
 
     // Score it — the standings fold every fixture, so the extra match counts.
-    await appendEvent(auth.orgId, fixture_id, 0, { type: "core.start", payload: {} });
+    await appendEvent(auth.orgId, fixture_id, 0, {
+      type: "core.start",
+      payload: {},
+    });
     await appendEvent(auth.orgId, fixture_id, 1, {
-      type: "generic.result", payload: { p1Score: 2, p2Score: 0 },
+      type: "generic.result",
+      payload: { p1Score: 2, p2Score: 0 },
     });
     const rows = await recomputeStandings(auth.orgId, stage!.id);
     const home = rows.find((r) => r.entrantId === entrants[0]);
@@ -110,12 +137,21 @@ describe.skipIf(!HAS_DB)("addFixture (PROMPT-66)", () => {
     const { auth } = await seedOrg();
     const { division, entrants } = await seedDivision(auth, 8);
     const [stage] = await createStages(auth, division.id, {
-      seq: 1, kind: "group", name: "Groups", config: { pools: { count: 2 } }, qualification: null,
+      seq: 1,
+      kind: "group",
+      name: "Groups",
+      config: { pools: { count: 2 } },
+      qualification: null,
     });
     await generateStageFixtures(auth, stage!.id);
     // Pick a real generated pairing so both entrants share a pool.
     const [pair] = await sql<
-      { pool_id: string; home_entrant_id: string; away_entrant_id: string; round_no: number }[]
+      {
+        pool_id: string;
+        home_entrant_id: string;
+        away_entrant_id: string;
+        round_no: number;
+      }[]
     >`select pool_id, home_entrant_id, away_entrant_id, round_no from fixtures
       where stage_id = ${stage!.id} and pool_id is not null limit 1`;
 
@@ -144,17 +180,28 @@ describe.skipIf(!HAS_DB)("addFixture (PROMPT-66)", () => {
     const { auth } = await seedOrg();
     const { division, entrants } = await seedDivision(auth, 4);
     const [ko] = await createStages(auth, division.id, {
-      seq: 1, kind: "knockout", name: "KO", config: {}, qualification: null,
+      seq: 1,
+      kind: "knockout",
+      name: "KO",
+      config: {},
+      qualification: null,
     });
     await generateStageFixtures(auth, ko!.id);
     await expect(
-      addFixture(auth, ko!.id, { home_entrant_id: entrants[0]!, away_entrant_id: entrants[1]! }),
+      addFixture(auth, ko!.id, {
+        home_entrant_id: entrants[0]!,
+        away_entrant_id: entrants[1]!,
+      }),
     ).rejects.toMatchObject({ status: 422 });
 
     // A second division provides a league stage + a foreign entrant.
     const other = await seedDivision(auth, 3);
     const [league] = await createStages(auth, other.division.id, {
-      seq: 1, kind: "league", name: "League", config: {}, qualification: null,
+      seq: 1,
+      kind: "league",
+      name: "League",
+      config: {},
+      qualification: null,
     });
     await expect(
       addFixture(auth, league!.id, {

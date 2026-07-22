@@ -42,13 +42,25 @@ async function seedOrg(
   opts: { hasFlag?: boolean } = {},
 ): Promise<{ orgId: string; actorId: string; customerId: string }> {
   const s = randomUUID().slice(0, 8);
+  // The group's payer (subscriptions.owner_user_id) — carried here by
+  // organizations.created_by so the group can be seeded from the org.
+  const [{ id: payerId }] = await sql<{ id: string }[]>`
+    insert into users (email, display_name)
+    values (${"payer6c-" + s + "@test.local"}, 'Payer') returning id`;
   const [{ id: orgId }] = await sql<{ id: string }[]>`
-    insert into organizations (name, slug) values (${"PM6C " + s}, ${"pm6c-" + s}) returning id`;
+    insert into organizations (name, slug, created_by)
+    values (${"PM6C " + s}, ${"pm6c-" + s}, ${payerId}) returning id`;
   const customerId = `cus_pm6c_${s}`;
   await sql`
-    insert into subscriptions
-      (org_id, plan_key, status, stripe_customer_id, stripe_subscription_id, has_payment_method)
-    values (${orgId}, 'pro', 'active', ${customerId}, ${"sub_" + s}, ${opts.hasFlag ?? true})`;
+    with s as (
+      insert into subscriptions
+        (owner_user_id, plan_key, status, stripe_customer_id, stripe_subscription_id,
+         has_payment_method)
+      select o.created_by, 'pro', 'active', ${customerId}, ${"sub_" + s}, ${opts.hasFlag ?? true}
+        from organizations o where o.id = ${orgId}
+      returning id
+    )
+    update organizations o set subscription_id = s.id from s where o.id = ${orgId}`;
   const [{ id: actorId }] = await sql<{ id: string }[]>`
     insert into users (email, display_name, is_staff, staff_role)
     values (${"staff6c-" + s + "@test.local"}, 'Staff', true, 'support') returning id`;
@@ -57,7 +69,7 @@ async function seedOrg(
 
 async function flagOf(orgId: string): Promise<boolean | null> {
   const [row] = await sql<{ has_payment_method: boolean }[]>`
-    select has_payment_method from subscriptions where org_id = ${orgId}`;
+    select has_payment_method from subscriptions where id = (select subscription_id from organizations where id = ${orgId})`;
   return row ? row.has_payment_method : null;
 }
 
@@ -66,7 +78,9 @@ function stripeHasCards(customerId: string, count: number) {
   stripeMock.retrieveCustomer.mockResolvedValue({
     id: customerId,
     deleted: false,
-    invoice_settings: { default_payment_method: count > 0 ? "pm_default" : null },
+    invoice_settings: {
+      default_payment_method: count > 0 ? "pm_default" : null,
+    },
   });
   stripeMock.listPaymentMethods.mockResolvedValue({
     data: Array.from({ length: count }, (_, i) => ({ id: `pm_${i}` })),
@@ -88,9 +102,9 @@ afterAll(async () => {
 describe.skipIf(!HAS_DB)("staffRemovePaymentMethod", () => {
   it("requires a reason before touching Stripe at all", async () => {
     const { orgId, actorId } = await seedOrg();
-    await expect(
-      staffRemovePaymentMethod(actorId, orgId, "pm_x", "   "),
-    ).rejects.toThrow(/reason/i);
+    await expect(staffRemovePaymentMethod(actorId, orgId, "pm_x", "   ")).rejects.toThrow(
+      /reason/i,
+    );
     expect(stripeMock.retrievePaymentMethod).not.toHaveBeenCalled();
   });
 
@@ -152,9 +166,9 @@ describe.skipIf(!HAS_DB)("staffRemovePaymentMethod", () => {
       id: "pm_other",
       customer: "cus_someone_else",
     });
-    await expect(
-      staffRemovePaymentMethod(actorId, orgId, "pm_other", "test"),
-    ).rejects.toThrow(/does not belong/i);
+    await expect(staffRemovePaymentMethod(actorId, orgId, "pm_other", "test")).rejects.toThrow(
+      /does not belong/i,
+    );
     expect(stripeMock.detachPaymentMethod).not.toHaveBeenCalled();
   });
 });
@@ -163,35 +177,44 @@ describe.skipIf(!HAS_DB)("staffRemovePaymentMethod", () => {
 // card-removal affordance for the default card. Task 6C adds a SEPARATE staff
 // usecase precisely so this guard never has to move — proven here by
 // exercising it directly, not by inference from the staff path's tests above.
-describe.skipIf(!HAS_DB)("removePaymentMethod (customer path) — default-card guard, unchanged", () => {
-  it("still 400s when asked to remove the customer's default card", async () => {
-    const { orgId, customerId } = await seedOrg();
-    stripeMock.retrievePaymentMethod.mockResolvedValue({ id: "pm_default", customer: customerId });
-    stripeMock.retrieveCustomer.mockResolvedValue({
-      id: customerId,
-      deleted: false,
-      invoice_settings: { default_payment_method: "pm_default" },
+describe.skipIf(!HAS_DB)(
+  "removePaymentMethod (customer path) — default-card guard, unchanged",
+  () => {
+    it("still 400s when asked to remove the customer's default card", async () => {
+      const { orgId, customerId } = await seedOrg();
+      stripeMock.retrievePaymentMethod.mockResolvedValue({
+        id: "pm_default",
+        customer: customerId,
+      });
+      stripeMock.retrieveCustomer.mockResolvedValue({
+        id: customerId,
+        deleted: false,
+        invoice_settings: { default_payment_method: "pm_default" },
+      });
+      await expect(removePaymentMethod(orgId, "pm_default")).rejects.toThrow(
+        "Make another card the default before removing this one.",
+      );
+      expect(stripeMock.detachPaymentMethod).not.toHaveBeenCalled();
     });
-    await expect(removePaymentMethod(orgId, "pm_default")).rejects.toThrow(
-      "Make another card the default before removing this one.",
-    );
-    expect(stripeMock.detachPaymentMethod).not.toHaveBeenCalled();
-  });
 
-  // The pair that proves the guard is keyed on card IDENTITY, not a blanket
-  // refusal to remove anything — without this, gutting the guard entirely
-  // (always throw, or always allow) could still pass the case above alone.
-  it("still allows removing a NON-default card", async () => {
-    const { orgId, customerId } = await seedOrg();
-    stripeMock.retrievePaymentMethod.mockResolvedValue({ id: "pm_secondary", customer: customerId });
-    stripeMock.retrieveCustomer.mockResolvedValue({
-      id: customerId,
-      deleted: false,
-      invoice_settings: { default_payment_method: "pm_default" },
+    // The pair that proves the guard is keyed on card IDENTITY, not a blanket
+    // refusal to remove anything — without this, gutting the guard entirely
+    // (always throw, or always allow) could still pass the case above alone.
+    it("still allows removing a NON-default card", async () => {
+      const { orgId, customerId } = await seedOrg();
+      stripeMock.retrievePaymentMethod.mockResolvedValue({
+        id: "pm_secondary",
+        customer: customerId,
+      });
+      stripeMock.retrieveCustomer.mockResolvedValue({
+        id: customerId,
+        deleted: false,
+        invoice_settings: { default_payment_method: "pm_default" },
+      });
+      stripeMock.detachPaymentMethod.mockResolvedValue({ id: "pm_secondary" });
+      stripeHasCards(customerId, 1);
+      await expect(removePaymentMethod(orgId, "pm_secondary")).resolves.toBeUndefined();
+      expect(stripeMock.detachPaymentMethod).toHaveBeenCalledWith("pm_secondary");
     });
-    stripeMock.detachPaymentMethod.mockResolvedValue({ id: "pm_secondary" });
-    stripeHasCards(customerId, 1);
-    await expect(removePaymentMethod(orgId, "pm_secondary")).resolves.toBeUndefined();
-    expect(stripeMock.detachPaymentMethod).toHaveBeenCalledWith("pm_secondary");
-  });
-});
+  },
+);

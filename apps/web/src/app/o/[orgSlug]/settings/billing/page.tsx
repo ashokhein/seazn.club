@@ -25,6 +25,8 @@ import { asCurrency, formatMinor, passPrice, proPrice, proPlusPrice } from "@/li
 import { preferredCurrency } from "@/lib/currency-server";
 import { planLabel } from "@/lib/plan-label";
 import { BackLink } from "@/components/back-link";
+import { Tip } from "@/components/ui/tip";
+import { BillingGroupPanel } from "@/components/billing-group-panel";
 import { routes } from "@/lib/routes";
 import { resolveLocale } from "@/lib/resolve-locale";
 import { getDictionary, t, plural, type Locale } from "@/lib/i18n";
@@ -59,9 +61,8 @@ export default async function BillingPage({
   searchParams: Promise<{ checkout?: string; session_id?: string }>;
 }) {
   const { orgSlug } = await params;
-  const { org } = await requireOrgPage(orgSlug, { tail: "/settings/billing" });
+  const { org, user } = await requireOrgPage(orgSlug, { tail: "/settings/billing" });
   const orgId = org.id;
-  const isOwner = org.role === "owner";
   const locale = await resolveLocale();
   const dict = await getDictionary(locale, "ui");
 
@@ -73,20 +74,47 @@ export default async function BillingPage({
     await reconcileCheckout(orgId, sp.session_id);
   }
 
-  // Live Stripe read for the manage sections (owner only). Runs BEFORE the
+  // WHO PAYS, not who owns this org (V310). A billing group can fund many orgs,
+  // each with its own owner, and everything below the plan summary —
+  // invoices, billing address, tax ids, cards, the credit balance, and every
+  // mutating control — belongs to the PAYER. Gating those on `org.role` would
+  // hand one club's owner another club's billing data, and show them buttons
+  // requireBillingOwner then 403s. A non-payer org owner gets the read-only
+  // treatment below instead.
+  const [payer] = await sql<{ owner_user_id: string; payer_name: string | null }[]>`
+    select s.owner_user_id, u.display_name as payer_name
+    from organizations o
+    join subscriptions s on s.id = o.subscription_id
+    join users u on u.id = s.owner_user_id
+    where o.id = ${orgId}`;
+  const isPayer = !!payer && payer.owner_user_id === user.id;
+  // The org's OWNER, which is separate from who pays: Event Pass purchases are
+  // per-org, so the owner sees them whether or not they pay for the group.
+  const isOwner = org.role === "owner";
+  // Someone who owns this org but does not pay for it. Not an error state —
+  // it is the normal shape for a club inside an association's group.
+  const isGuestOwner = org.role === "owner" && !isPayer;
+
+  // Live Stripe read for the manage sections (payer only). Runs BEFORE the
   // subscription select because it also performs the lazy renewal re-sync
   // (missed webhook / past_due self-heal) that may rewrite the row.
-  //
-  // Event Pass purchases ride ALONGSIDE it, not inside it: getBillingOverview
-  // returns null for an org with no Stripe customer or an unreachable Stripe,
-  // and passes are local rows — an org that holds one must see it either way.
+  // Billing overview is the PAYER's (they manage the group's subscription);
+  // Event Pass purchases ride ALONGSIDE it and are per-org, so the org OWNER
+  // sees them whether or not they pay. getBillingOverview returns null for an
+  // org with no Stripe customer or an unreachable Stripe, and passes are local
+  // rows — an org that holds one must see it either way.
   const [overview, passes] = await Promise.all([
-    isOwner ? getBillingOverview(orgId) : null,
+    isPayer ? getBillingOverview(orgId) : null,
     isOwner ? getPassPurchases(orgId) : [],
   ]);
 
+  // The billing GROUP behind this org (V310). `org_id` is projected from the
+  // org, not read from subscriptions — the column is gone, and the row may be
+  // shared with sibling orgs.
   const [sub] = await sql<Subscription[]>`
-    select * from subscriptions where org_id = ${orgId}`;
+    select s.*, o.id as org_id from subscriptions s
+    join organizations o on o.subscription_id = s.id
+    where o.id = ${orgId}`;
 
   const planKey = sub?.plan_key ?? "community";
   const status = sub?.status ?? "active";
@@ -199,6 +227,10 @@ export default async function BillingPage({
         <section data-tour="billing-plan" className="card mb-6 p-5">
           <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
             {t(dict, "billing.currentPlan")}
+            {/* A subscription can cover several organisations, so "current plan"
+                is a property of the GROUP, not of this org alone. The chip is
+                what stops that reading as a per-org plan. */}
+            <Tip id="billing.groups" className="ml-1 align-middle" small />
           </h2>
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -241,7 +273,7 @@ export default async function BillingPage({
               )}
             </div>
 
-            {isOwner &&
+            {isPayer &&
               isPaid &&
               status === "trialing" &&
               ((overview?.paymentMethods.length ?? 0) === 0 ? (
@@ -256,11 +288,29 @@ export default async function BillingPage({
                   {t(dict, "billing.cardOnFile")}
                 </p>
               ))}
-            {isOwner && isPaid && !hasStripeSubscription && <DowngradeButton />}
+            {isPayer && isPaid && !hasStripeSubscription && <DowngradeButton />}
           </div>
 
+          {/* Read-only treatment for an org owner who is not the payer: the
+              plan that applies to THIS org, and who to ask to change it.
+              Deliberately no invoices, cards, address, tax ids or credit —
+              those are the payer's, not this club's. Only the payer's display
+              name is shown; never their email or any Stripe instrument.
+              The copy says the org IS covered and who pays — deliberately not
+              framed as a missing permission, because nothing here is denied to
+              them; it simply belongs to another party. */}
+          {isGuestOwner && (
+            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              {payer?.payer_name
+                ? t(dict, "billing.billedBy.named", { payer: payer.payer_name })
+                : t(dict, "billing.billedBy.unnamed")}{" "}
+              {t(dict, "billing.billedBy.note")}
+              <Tip id="billing.billed-by" className="ml-1 align-middle" />
+            </div>
+          )}
+
           {/* In-app plan management (v3/11) — no Stripe portal. */}
-          {isOwner && isPaid && hasStripeSubscription && (
+          {isPayer && isPaid && hasStripeSubscription && (
             <div className="mt-4 flex flex-col gap-3 border-t border-slate-100 pt-4">
               {status === "past_due" && overview?.hasOpenInvoice && (
                 <div className="flex flex-wrap items-center gap-3 rounded-xl bg-amber-50 px-4 py-3">
@@ -309,8 +359,16 @@ export default async function BillingPage({
           )}
         </section>
 
+        {/* The organisations this subscription covers. Payer-only, and it
+            hides itself for a solo organisation with nothing to add — see the
+            component. Placed directly under the plan because the plan card now
+            describes the GROUP, and this is the list that makes that concrete. */}
+        {isPayer && sub?.id && (
+          <BillingGroupPanel subscriptionId={sub.id} currentUserId={user.id} />
+        )}
+
         {/* Payment methods — card entry stays in Stripe's iframe (SAQ A). */}
-        {isOwner && overview && (
+        {isPayer && overview && (
           <section id="payment-methods" className="card mb-6 p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
               {t(dict, "billing.paymentMethods")}
@@ -324,7 +382,7 @@ export default async function BillingPage({
 
         {/* Billing details — address drives automatic_tax; VAT/GST id prints
             on invoices and flips EU B2B to reverse charge. */}
-        {isOwner && overview && (
+        {isPayer && overview && (
           <section className="card mb-6 p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
               {t(dict, "billing.billingDetails")}
@@ -349,7 +407,7 @@ export default async function BillingPage({
         />
 
         {/* Invoices — Stripe-hosted view/PDF links; we never render documents. */}
-        {isOwner && overview && overview.invoices.length > 0 && (
+        {isPayer && overview && overview.invoices.length > 0 && (
           <section className="card mb-6 p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
               {t(dict, "billing.invoices")}
@@ -446,7 +504,7 @@ export default async function BillingPage({
         />
 
         {/* Upgrade / plan comparison */}
-        {!isPaid && isOwner && (
+        {!isPaid && isPayer && (
           <section className="card p-5">
             <h2 className="mb-4 text-xs font-semibold uppercase tracking-wide text-purple-600">
               {t(dict, "billing.upgradeToPro")}
