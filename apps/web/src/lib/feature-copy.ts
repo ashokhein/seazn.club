@@ -8,8 +8,12 @@ const FEATURE_REASONS: Record<string, string> = {
   // Billing groups (spec 2026-07-21): the cap belongs to the billing GROUP, so
   // the way forward is the group's plan — not a per-org purchase. Never says
   // "clubs", which is a separate in-org entity with its own clubs.max cap.
+  // Fires for BOTH caps: the per-USER limit (creating one org too many for your
+  // plan — Community allows 1) and the per-GROUP limit (a shared bill that is
+  // full). Worded to make sense for either, and to name the upgrade path and the
+  // half-price extra-org rule rather than the raw key.
   "orgs.max_owned":
-    "Your billing group already holds the most organisations its plan allows. Upgrade the group's plan in Settings → Billing to raise the cap — each extra organisation is half your plan's rate.",
+    "Your current plan covers the most organisations it allows (Community 1, Pro 5, Pro Plus 10). Upgrade in Settings → Billing to create more — each extra organisation is half your plan's rate, on one shared bill.",
   "members.max": "You've reached your plan's team-member seats.",
   "scorers.max": "You've reached your plan's scorer seats.",
   "competitions.max_active": "Your plan's active-competition limit is reached.",

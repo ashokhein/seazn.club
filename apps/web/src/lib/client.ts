@@ -16,7 +16,11 @@ export async function api<T = unknown>(
   });
   const payload = await res.json().catch(() => ({}));
   if (!res.ok || payload?.ok === false) {
-    throw new Error(payload?.error || `Request failed (${res.status})`);
+    // A 402 upgrade error carries a human `reason` (feature-copy) alongside the
+    // raw `error`, which leaks the internal feature key ("Plan upgrade required:
+    // orgs.max_owned"). Prefer the reason so a form shows the sentence, not the
+    // key. Everything else keeps its `error` message.
+    throw new Error(payload?.reason || payload?.error || `Request failed (${res.status})`);
   }
   return payload.data as T;
 }
