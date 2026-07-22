@@ -249,4 +249,38 @@ describe("applyPlanChange", () => {
     expect(entitlementsMock.invalidateEntitlementsForOrgGroup).toHaveBeenCalledWith(ORG_ID);
     expect(result).toEqual({ requires_action: false });
   });
+
+  it("hands the client secret back when the change needs SCA/3DS (requires_action)", async () => {
+    // SCA makes 3DS the normal path for European cards and Indian card mandates
+    // require it. When Stripe leaves the plan-change invoice OPEN pending
+    // confirmation, applyPlanChange must return the confirmation client_secret so
+    // the client can complete 3DS — a silent { requires_action: false } would
+    // look to the buyer like "I clicked upgrade and nothing happened" while
+    // Stripe holds an unconfirmed PaymentIntent. Only the false branch was
+    // covered before (the test above). (issue #205)
+    db.sub = sub({ plan_key: "pro" });
+    stripeMock.retrieveSubscription.mockResolvedValue({
+      status: "active",
+      currency: "usd",
+      items: { data: [{ id: "si_1", price: { id: "price_pro_m" } }] },
+    });
+    const updated = {
+      status: "active",
+      currency: "usd",
+      items: { data: [{ id: "si_1", price: { id: "price_plus_m" } }] },
+      latest_invoice: {
+        status: "open",
+        confirmation_secret: { client_secret: "pi_3ds_secret_abc" },
+      },
+    };
+    stripeMock.updateSubscription.mockResolvedValue(updated);
+
+    const result = await applyPlanChange(ORG_ID, "pro_plus", "monthly", 1_770_000_000);
+
+    expect(result).toEqual({ requires_action: true, client_secret: "pi_3ds_secret_abc" });
+    // The plan is still synced and the group cache still dropped BEFORE 3DS is
+    // handed back — the confirmation completes an already-applied change.
+    expect(billingMock.syncSubscription).toHaveBeenCalledWith(ORG_ID, updated);
+    expect(entitlementsMock.invalidateEntitlementsForOrgGroup).toHaveBeenCalledWith(ORG_ID);
+  });
 });

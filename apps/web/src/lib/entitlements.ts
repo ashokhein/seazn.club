@@ -203,6 +203,17 @@ async function resolveFromDb(
   // must be resolved exactly once.
   const planKey = await orgPlanKey(orgId);
 
+  // Plan row first: it is the base whenever no pass applies AND the fall-through
+  // the pass overlay below coalesces into — a pass that answers null on a bool
+  // is no answer, not a deny, and must resolve to the plan's bool (org_has_feature
+  // does exactly this in SQL). Fetching it unconditionally is behaviour-neutral:
+  // the old code reached the same query on every path a pass did not fully own.
+  const [planRow] = await sql<Resolved[]>`
+    select bool_value, int_value
+    from plan_entitlements
+    where plan_key = ${planKey} and feature_key = ${featureKey}`;
+  let base: Resolved | null = planRow ?? null;
+
   // Event Pass (v3/07 §3): lifts a single competition for community orgs
   // only — under any paid plan the pass is deliberately moot (Pro's matrix is
   // a strict superset), which is also what lets it survive a later downgrade.
@@ -212,7 +223,6 @@ async function resolveFromDb(
   // `isPaidPlan` is the same predicate the competition layout uses to decide
   // whether to OFFER a pass, on purpose: "the pass does nothing here" and
   // "stop selling the pass here" must never be able to disagree.
-  let base: Resolved | null = null;
   if (!isPaidPlan(planKey) && competitionId) {
     const [pass] = await sql<Resolved[]>`
       select pe.bool_value, pe.int_value
@@ -220,14 +230,18 @@ async function resolveFromDb(
       join plan_entitlements pe
         on pe.plan_key = cp.pass_key and pe.feature_key = ${featureKey}
       where cp.competition_id = ${competitionId} and cp.org_id = ${orgId}`;
-    base = pass ?? null;
-  }
-  if (!base) {
-    const [pe] = await sql<Resolved[]>`
-      select bool_value, int_value
-      from plan_entitlements
-      where plan_key = ${planKey} and feature_key = ${featureKey}`;
-    base = pe ?? null;
+    if (pass) {
+      // Overlay field by field, EXACTLY as the override arm below and as the SQL
+      // resolver's coalesce (org_has_feature, V306): a null pass bool_value is no
+      // answer and falls THROUGH to the plan bool, never a deny. int_value stays
+      // wholesale — a null pass int is UNLIMITED, a load-bearing answer on that
+      // column, not "unset". Skipping the coalesce is what let TS deny a feature
+      // the plan grants while SQL allowed it (issue #209).
+      base = {
+        bool_value: pass.bool_value ?? base?.bool_value ?? null,
+        int_value: pass.int_value,
+      };
+    }
   }
 
   // A live override wins — but a null `bool_value` is NO ANSWER, not a deny, so

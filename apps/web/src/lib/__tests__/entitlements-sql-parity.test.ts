@@ -153,6 +153,29 @@ describe.skipIf(!HAS_DB)("org_has_feature parity with lib/entitlements", () => {
     expect(await sqlHasFeature(orgId, "realtime", otherId)).toBe(false);
   });
 
+  it("coalesces a null-bool Event Pass row THROUGH to the plan, not into a deny", async () => {
+    // A pass row whose bool_value is null is NO answer, not a deny: it must fall
+    // through to the plan row, exactly as org_has_feature's coalesce does.
+    // Latent today — no shipped pass key is null-bool where community is true —
+    // so a run-unique key builds precisely that shape. Before the fix the TS
+    // resolver took the pass row as authoritative and denied while SQL allowed.
+    // See issue #209.
+    const key = `passnull-${uniq()}`;
+    await sql`
+      insert into plan_entitlements (plan_key, feature_key, bool_value, int_value)
+      values ('community',  ${key}, true, null),
+             ('event_pass', ${key}, null, 7)`;
+    const passedId = await seedCompetition(orgId, "passnull");
+    await sql`
+      insert into competition_passes (competition_id, org_id) values (${passedId}, ${orgId})`;
+    await invalidateOrgEntitlements(orgId);
+
+    expect(await sqlHasFeature(orgId, key, passedId)).toBe(true);
+    expect(await hasFeature(orgId, key, passedId)).toBe(true);
+
+    await sql`delete from plan_entitlements where feature_key = ${key}`;
+  });
+
   it("treats a null-bool override as no answer, not as a deny", async () => {
     await sql`
       insert into org_entitlement_overrides (org_id, feature_key, bool_value, int_value)
