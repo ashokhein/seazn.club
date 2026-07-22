@@ -857,17 +857,17 @@ async function p72Suite(): Promise<void> {
   const brokeDivs = v1data<{
     divisions: { open: boolean; closed_reason: string | null }[];
   }>(brokeInfo).divisions;
-  // V309 (community_branding_and_paid_registration) tore down the paywall:
-  // charging an entry fee is free for everyone, monetised by an 8% fee instead.
-  // Connect is LIVE here, so with the entitlement wall gone the card division is
-  // now OPEN — where before V309 it read payments_unavailable purely because the
-  // org was community.
+  // V310 freed the PLAN gate (community can charge), but a card division still
+  // needs a Connect account to pay into. Connect is OFF here, so the division is
+  // closed for payments_unavailable — the Connect dimension, isolated from the
+  // now-gone entitlement dimension the "Connect live is OPEN" check below pairs
+  // with.
   check(
     "p72: a community card division with Connect OFF reads payments_unavailable",
     brokeInfo.status === 200 &&
       brokeDivs.length === 1 &&
-      brokeDivs[0]!.open === true &&
-      brokeDivs[0]!.closed_reason === null,
+      brokeDivs[0]!.open === false &&
+      brokeDivs[0]!.closed_reason === "payments_unavailable",
   );
 
   // Connect LIVE → the same free-plan org's card division is OPEN: paid intake
