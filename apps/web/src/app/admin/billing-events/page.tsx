@@ -59,7 +59,7 @@ async function orgNamesByIds(ids: string[]): Promise<Map<string, string>> {
  * thing the webhook resolves through. Falls back to the org name for pre-group
  * events that never carried the subscription stamp.
  */
-async function groupLabelsByIds(ids: string[]): Promise<Map<string, string>> {
+export async function groupLabelsByIds(ids: string[]): Promise<Map<string, string>> {
   if (ids.length === 0) return new Map();
   const rows = await sql<{ id: string; payer: string | null; org_count: number }[]>`
     select s.id,
@@ -97,14 +97,22 @@ export default async function AdminBillingEventsPage() {
     .map((e) => meta(e).subscription_id)
     .filter((id): id is string => !!id && UUID_RE.test(id));
   const orgNames = await orgNamesByIds([...new Set(metaOrgIds)]);
-  const groupLabels = await groupLabelsByIds([...new Set(metaSubIds)]);
+  // invoice.* events carry no subscription_id in Stripe metadata, so the durable
+  // ledger stamp (resolved at ingest, V317/#223) is the only attribution for them.
+  // Feed the union of ledger stamps and live metadata to label both.
+  const ledgerSubIds = [...ledger.values()]
+    .map((r) => r.subscription_id)
+    .filter((id): id is string => !!id && UUID_RE.test(id));
+  const groupLabels = await groupLabelsByIds([...new Set([...metaSubIds, ...ledgerSubIds])]);
 
   const liveRows: Row[] = (live ?? []).map((e) => {
     const row = ledger.get(e.id);
     const m = meta(e);
     // The GROUP the event billed for wins: it names the payer and how many orgs,
     // where metadata.org_id would name only the buyer of a multi-org invoice.
-    const groupLabel = m.subscription_id ? (groupLabels.get(m.subscription_id) ?? null) : null;
+    // Prefer the durable ledger stamp — invoice events lack the metadata stamp.
+    const subId = row?.subscription_id ?? m.subscription_id ?? null;
+    const groupLabel = subId ? (groupLabels.get(subId) ?? null) : null;
     return {
       id: e.id,
       type: e.type,

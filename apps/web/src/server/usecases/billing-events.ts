@@ -781,6 +781,7 @@ export interface LedgerRow {
   type: string;
   org_id: string | null;
   org_name?: string | null;
+  subscription_id?: string | null; // resolved group (#223)
   received_at: string;
   processed_at: string | null;
 }
@@ -795,6 +796,38 @@ export function eventStatus(row: { processed_at: string | Date | null } | undefi
 }
 
 /**
+ * Best-effort billing GROUP for one event, stamped durably at ingest so
+ * attribution does not depend on live Stripe object metadata — which
+ * invoice.* events do not carry (Stripe never copies subscription metadata
+ * onto an invoice). Reuses the existing resolvers; a throw or a miss returns
+ * null, which falls back to org-based attribution. (#223)
+ */
+async function resolveEventGroup(event: Stripe.Event): Promise<string | null> {
+  try {
+    const obj = event.data.object;
+    if (event.type.startsWith("invoice.")) {
+      const subId = invoiceSubId(obj as Stripe.Invoice);
+      if (!subId) return null;
+      const [g] = await sql<{ id: string }[]>`
+        select id from subscriptions where stripe_subscription_id = ${subId}`;
+      return g?.id ?? null;
+    }
+    if (event.type.startsWith("customer.subscription.")) {
+      const r = await resolveGroupForStripeSub(obj as Stripe.Subscription);
+      return r?.subscriptionId ?? null;
+    }
+    if (event.type === "checkout.session.completed") {
+      const session = obj as Stripe.Checkout.Session;
+      return await checkoutGroupId(session, session.metadata?.org_id ?? "");
+    }
+    return null;
+  } catch (err) {
+    console.error(`[billing] resolveEventGroup failed for ${event.id}`, err);
+    return null;
+  }
+}
+
+/**
  * Record + process one event, stamping processed_at only after the handler
  * ran (a throw leaves the row in the "received" state for the console).
  * Shared by the signed webhook and the staff replay.
@@ -802,9 +835,10 @@ export function eventStatus(row: { processed_at: string | Date | null } | undefi
 export async function runEvent(event: Stripe.Event): Promise<void> {
   const orgId =
     (event.data.object as { metadata?: { org_id?: string } }).metadata?.org_id ?? null;
+  const groupId = await resolveEventGroup(event);
   await sql`
-    insert into billing_events (id, type, org_id, payload)
-    values (${event.id}, ${event.type}, ${orgId}, ${JSON.stringify(event.data.object)})
+    insert into billing_events (id, type, org_id, subscription_id, payload)
+    values (${event.id}, ${event.type}, ${orgId}, ${groupId}, ${JSON.stringify(event.data.object)})
     on conflict (id) do nothing`;
   await processStripeEvent(event);
   await sql`
@@ -826,7 +860,7 @@ export async function replayEvent(
 export async function ledgerByIds(ids: string[]): Promise<Map<string, LedgerRow>> {
   if (ids.length === 0) return new Map();
   const rows = await sql<LedgerRow[]>`
-    select b.id, b.type, b.org_id, o.name as org_name, b.received_at, b.processed_at
+    select b.id, b.type, b.org_id, o.name as org_name, b.subscription_id, b.received_at, b.processed_at
     from billing_events b
     left join organizations o on o.id = b.org_id
     where b.id in ${sql(ids)}`;
@@ -898,7 +932,7 @@ export async function stuckLedgerEvents(
   limit = 50,
 ): Promise<LedgerRow[]> {
   return sql<LedgerRow[]>`
-    select b.id, b.type, b.org_id, o.name as org_name, b.received_at, b.processed_at
+    select b.id, b.type, b.org_id, o.name as org_name, b.subscription_id, b.received_at, b.processed_at
     from billing_events b
     left join organizations o on o.id = b.org_id
     where b.processed_at is null
