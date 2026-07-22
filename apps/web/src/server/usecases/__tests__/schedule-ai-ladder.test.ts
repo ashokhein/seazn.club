@@ -170,6 +170,39 @@ describe("runLadder", () => {
     expect(out.served_model).toBe("claude-sonnet-5");
   });
 
+  it("a real failure on a configured rung is NOT masked by a trailing unconfigured skip", async () => {
+    // gemini unconfigured (skip) → sonnet throws a genuine provider error →
+    // grok unconfigured (skip, last). The thrown error must be sonnet's real
+    // AiProviderError, never grok's 'not configured' — otherwise a provider
+    // outage would surface as a spurious 503-not-configured (the CI regression).
+    const providerErr = new AiProviderError("credit balance too low");
+    const attempt = vi
+      .fn()
+      .mockRejectedValueOnce(new HttpError(503, "not configured", "AI_PROVIDER_NOT_CONFIGURED"))
+      .mockRejectedValueOnce(providerErr)
+      .mockRejectedValueOnce(new HttpError(503, "not configured", "AI_PROVIDER_NOT_CONFIGURED"));
+    const err = await runLadder<AiPlanResult>(R, attempt, alwaysOk).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(err).toBe(providerErr);
+    expect((err as { model?: string }).model).toBe("claude-sonnet-5");
+  });
+
+  it("a configured rung's AI_PLAN_FAILED wins over a trailing unconfigured skip", async () => {
+    const attempt = vi
+      .fn()
+      .mockRejectedValueOnce(new HttpError(503, "not configured", "AI_PROVIDER_NOT_CONFIGURED"))
+      .mockRejectedValueOnce(planFailed(usage(100, 50, 0.01)))
+      .mockRejectedValueOnce(new HttpError(503, "not configured", "AI_PROVIDER_NOT_CONFIGURED"));
+    const err = await runLadder<AiPlanResult>(R, attempt, alwaysOk).then(
+      () => null,
+      (e: HttpError) => e,
+    );
+    expect(err!.code).toBe("AI_PLAN_FAILED");
+    expect(err!.extra?.model).toBe("claude-sonnet-5");
+  });
+
   it("advances past a usable-but-unacceptable plan (warning flood) and pays for it", async () => {
     const attempt = vi
       .fn()

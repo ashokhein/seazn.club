@@ -1373,6 +1373,13 @@ export async function runLadder<T extends { usage: Usage }>(
 ): Promise<T & { served_model: string; escalated_from?: string; rungs_tried: string[] }> {
   let acc: Usage = { input_tokens: 0, output_tokens: 0, repair_rounds: 0, cost_usd: 0 };
   const tried: string[] = [];
+  // The most recent MEANINGFUL failure (anything but a skipped-because-
+  // unconfigured rung) and the model that raised it. On exhaustion this is
+  // thrown in preference to a trailing "not configured" skip, so a real outage
+  // or a genuine AI_PLAN_FAILED on a configured rung is never masked by a later
+  // key-less rung — it surfaces with its true code (AI_PROVIDER_UNAVAILABLE /
+  // AI_PLAN_FAILED), not a spurious 503-not-configured.
+  let meaningful: { err: unknown; model: string } | null = null;
   for (let i = 0; i < rungs.length; i++) {
     const rung = rungs[i]!;
     const last = i === rungs.length - 1;
@@ -1395,21 +1402,26 @@ export async function runLadder<T extends { usage: Usage }>(
       if (!isRecoverable(err)) throw err;
       const u = (err as { extra?: { usage?: Partial<Usage> } }).extra?.usage ?? {};
       acc = addUsage(acc, u);
+      const unconfigured = err instanceof HttpError && err.code === "AI_PROVIDER_NOT_CONFIGURED";
+      if (!unconfigured) meaningful = { err, model: rung.model };
       if (last) {
-        // All rungs exhausted: surface the full accumulated spend and the model
-        // that failed, so the caller's failure metering records the true total
-        // and the true (last) model. HttpError.extra is read-only, so rebuild
-        // it (preserving status/code/message); provider errors take loose fields.
-        if (err instanceof HttpError) {
-          throw new HttpError(err.status, err.message, err.code, {
-            ...(err.extra ?? {}),
+        // All rungs exhausted: throw the last MEANINGFUL failure (preferring it
+        // over a trailing unconfigured skip), carrying the full accumulated spend
+        // and the model that raised it, so the caller's failure metering records
+        // the true total and the true code. HttpError.extra is read-only, so
+        // rebuild it (preserving status/code/message); provider errors take
+        // loose fields.
+        const chosen = meaningful ?? { err, model: rung.model };
+        if (chosen.err instanceof HttpError) {
+          throw new HttpError(chosen.err.status, chosen.err.message, chosen.err.code, {
+            ...(chosen.err.extra ?? {}),
             usage: acc,
-            model: rung.model,
+            model: chosen.model,
           });
         }
-        (err as { usage?: Usage; model?: string }).usage = acc;
-        (err as { model?: string }).model = rung.model;
-        throw err;
+        (chosen.err as { usage?: Usage; model?: string }).usage = acc;
+        (chosen.err as { model?: string }).model = chosen.model;
+        throw chosen.err;
       }
     }
   }
