@@ -84,6 +84,66 @@ async function subscriptionItem(
 }
 
 /**
+ * What attaching one more org would cost RIGHT NOW, previewed before the click.
+ *
+ * Returns null — meaning "nothing to pay" — whenever the attach genuinely does
+ * not charge: a non-live group (community, or one with no Stripe subscription),
+ * or a re-add into a slot already paid for. Otherwise it asks Stripe for the
+ * prorated upcoming invoice at the raised quantity and sums its proration lines.
+ *
+ * Read-only: `invoices.createPreview` computes an invoice without issuing one,
+ * so calling this on every dialog open charges nobody. The confirm dialog turns
+ * the amount into "£X.XX now" — the price stated before the irreversible click,
+ * as an exact figure rather than "half your plan's rate".
+ *
+ * The amount is Stripe's own arithmetic on a real subscription; the fixture used
+ * in tests returns what it is told, so the NUMBER is only ever verified against
+ * a real test-mode account. What IS verified everywhere: null vs non-null — that
+ * a free move previews free and a charged one previews a charge.
+ */
+export async function previewAttachCharge(
+  subscriptionId: string,
+): Promise<{ amount_minor: number; currency: string } | null> {
+  const group = await groupRow(subscriptionId);
+  if (!group || !group.stripe_subscription_id || !hasLiveSubscription(group)) return null;
+  const active = await activeOrgCount(subscriptionId);
+  const raised = active + 1;
+  // A re-add into a paid-and-freed slot raises no proration.
+  if (raised <= group.quantity_paid) return null;
+
+  const { item } = await subscriptionItem(group.stripe_subscription_id);
+  const preview = await getStripe().invoices.createPreview({
+    subscription: group.stripe_subscription_id,
+    subscription_details: {
+      items: [{ id: item.id, quantity: raised }],
+      proration_behavior: "create_prorations",
+    },
+  });
+  const amount = (preview.lines?.data ?? [])
+    .filter((l) => (l as { proration?: boolean }).proration)
+    .reduce((sum, l) => sum + (l.amount ?? 0), 0);
+  if (amount <= 0) return null;
+  return { amount_minor: amount, currency: preview.currency ?? group_currency(group) };
+}
+
+function group_currency(group: GroupRow): string {
+  return (group as { currency?: string | null }).currency ?? "usd";
+}
+
+/** Gate a read on the group's PAYER — the group's billing shape belongs to
+ *  whoever pays for it, never to a member org's owner. Throws 403 otherwise. */
+export async function subscriptionIsOwnedBy(
+  subscriptionId: string,
+  userId: string,
+): Promise<void> {
+  const [row] = await sql<{ owner_user_id: string }[]>`
+    select owner_user_id from subscriptions where id = ${subscriptionId}`;
+  if (!row) throw new HttpError(404, "That billing group does not exist.");
+  if (row.owner_user_id !== userId)
+    throw new HttpError(403, "Only the person who pays for this billing group can see this.");
+}
+
+/**
  * Refuse, BEFORE anything is moved, to bill a seat the group's price cannot
  * price fairly.
  *

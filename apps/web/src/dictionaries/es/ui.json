@@ -552,6 +552,7 @@
   "billing.group.attach.confirmTitle": "¿Mover {org} a esta factura?",
   "billing.group.attach.confirmFree": "{org} pasa a este plan de inmediato. Tienes una plaza que ya has pagado, así que no hay nada que pagar ahora.",
   "billing.group.attach.confirmCharge": "{org} pasa a este plan de inmediato y tu factura sube la mitad de la tarifa de tu plan, con cargo ahora y prorrateado al resto de este periodo.",
+  "billing.group.attach.confirmChargeAmount": "De inmediato, y tu factura sube {amount} ahora, prorrateado al resto de este periodo.",
   "billing.group.attach.confirmAction": "Moverla a esta factura",
   "billing.group.detach.confirmTitle": "¿Quitar {org} de esta factura?",
   "billing.group.detach.confirmBody": "{org} conserva este plan hasta que termine el periodo que ya has pagado y después vuelve a Community. No hay reembolso, y la plaza sigue siendo tuya hasta que se renueve la suscripción. Su propietario pasa a gestionar su facturación.",

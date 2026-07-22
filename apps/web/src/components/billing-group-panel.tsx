@@ -16,6 +16,7 @@ import { Building2, Plus, X } from "lucide-react";
 import { Tip } from "@/components/ui/tip";
 import { useConfirm } from "@/components/ui/confirm-provider";
 import { useMsg } from "@/components/i18n/dict-provider";
+import { asCurrency, formatMinor } from "@/lib/currency";
 // The decisions live in a pure module so they can be tested. This component's
 // data arrives in an effect and the vitest environment here is `node` with no
 // jsdom, so a render test would assert against the null returned before the
@@ -128,14 +129,38 @@ export function BillingGroupPanel({
   }
 
   async function attach(org: GroupOrg & { from: Group }) {
+    // The EXACT prorated cost, previewed before the click, so the dialog states
+    // a figure ("£9.00 now") rather than "half your plan's rate". Best-effort: a
+    // preview that fails or is null (a free move) falls back to the rate copy,
+    // never blocking the attach.
+    let priceLine = msg(attachConfirmKey(freeSlots), { org: org.name });
+    try {
+      const res = await fetch("/api/billing/group/attach/preview", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ subscription_id: subscriptionId }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        data?: { preview?: { amount_minor: number; currency: string } | null };
+      };
+      const preview = json.data?.preview;
+      if (preview) {
+        priceLine = msg("billing.group.attach.confirmChargeAmount", {
+          org: org.name,
+          amount: formatMinor(preview.amount_minor, asCurrency(preview.currency)),
+        });
+      }
+    } catch {
+      /* keep the rate-based fallback */
+    }
     const ok = await confirm({
       title: msg("billing.group.attach.confirmTitle", { org: org.name }),
-      // The price comes FIRST (attachConfirmKey), then the short list of what
-      // else moving an organisation onto the bill changes — the fee-rate and
-      // Connect consequences a payer would otherwise meet by surprise.
+      // The price comes FIRST, then the short list of what else moving an
+      // organisation onto the bill changes — the fee-rate and Connect
+      // consequences a payer would otherwise meet by surprise.
       body: (
         <>
-          <p>{msg(attachConfirmKey(freeSlots), { org: org.name })}</p>
+          <p>{priceLine}</p>
           <EffectsList
             items={[
               msg("billing.group.attach.effects.plan"),

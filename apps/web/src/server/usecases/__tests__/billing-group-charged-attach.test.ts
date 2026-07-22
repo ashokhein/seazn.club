@@ -23,7 +23,7 @@ process.env.STRIPE_MOCK_PORT = "12111";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import { sql } from "@/lib/db";
-import { attachOrgToGroup } from "@/server/usecases/billing-groups";
+import { attachOrgToGroup, previewAttachCharge } from "@/server/usecases/billing-groups";
 import {
   startStripeFixtureServer,
   type StripeFixtureServer,
@@ -136,5 +136,42 @@ describe.skipIf(!HAS_DB)("charged attach against the real SDK + Stripe fixture",
       (c) => c.method === "POST" && c.path === `/v1/subscriptions/${subId}`,
     );
     expect(update).toBeUndefined();
+  });
+
+  it("previews the exact prorated amount on a live, fully-paid group", async () => {
+    const payer = await makeUser();
+    const subId = "sub_" + uniq();
+    const { groupId } = await makeGroupWithOrg(payer, {
+      stripeSubId: subId,
+      stripeCustomerId: "cus_" + uniq(),
+      quantityPaid: 1,
+    });
+    fixture.seedSubscription({ id: subId, customer: "cus_seed", quantity: 1 });
+    fixture.setUpcomingProration(900, "gbp"); // £9.00 prorated
+
+    const preview = await previewAttachCharge(groupId);
+    expect(preview).toEqual({ amount_minor: 900, currency: "gbp" });
+  });
+
+  it("previews null (free) for a non-live group and for a paid freed slot", async () => {
+    const payer = await makeUser();
+    // Non-live (community, no Stripe subscription).
+    const [{ id: community }] = await sql<{ id: string }[]>`
+      insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
+      values (${payer}, 'community', 'active', 1) returning id`;
+    const c = uniq();
+    await sql`insert into organizations (name, slug, created_by, subscription_id)
+              values (${`NL ${c}`}, ${`nl-${c}`}, ${payer}, ${community})`;
+    expect(await previewAttachCharge(community)).toBeNull();
+
+    // Live but with a freed, still-paid slot (quantity_paid 2, one org).
+    const subId = "sub_" + uniq();
+    const { groupId } = await makeGroupWithOrg(payer, {
+      stripeSubId: subId,
+      stripeCustomerId: "cus_" + uniq(),
+      quantityPaid: 2,
+    });
+    fixture.seedSubscription({ id: subId, customer: "cus_seed2", quantity: 2 });
+    expect(await previewAttachCharge(groupId)).toBeNull();
   });
 });

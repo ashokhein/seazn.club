@@ -552,6 +552,7 @@
   "billing.group.attach.confirmTitle": "Move {org} onto this bill?",
   "billing.group.attach.confirmFree": "{org} moves onto this plan straight away. You have a slot you have already paid for, so there is nothing to pay now.",
   "billing.group.attach.confirmCharge": "{org} moves onto this plan straight away, and your bill goes up by half your plan's rate — charged now, prorated to the rest of this period.",
+  "billing.group.attach.confirmChargeAmount": "Straight away, and your bill goes up by {amount} now — prorated to the rest of this period.",
   "billing.group.attach.confirmAction": "Move it onto this bill",
   "billing.group.detach.confirmTitle": "Take {org} off this bill?",
   "billing.group.detach.confirmBody": "{org} keeps this plan until the period you have already paid for runs out, then falls back to Community. There is no refund, and the slot stays yours until the subscription renews. Its owner takes over its billing.",

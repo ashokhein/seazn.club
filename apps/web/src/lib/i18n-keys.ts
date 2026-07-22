@@ -133,6 +133,7 @@ export type DictionaryKey =
   | "billing.group.atCap"
   | "billing.group.attach.confirmAction"
   | "billing.group.attach.confirmCharge"
+  | "billing.group.attach.confirmChargeAmount"
   | "billing.group.attach.confirmFree"
   | "billing.group.attach.confirmTitle"
   | "billing.group.attach.effects.connect"

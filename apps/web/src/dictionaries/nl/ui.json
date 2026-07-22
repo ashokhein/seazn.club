@@ -552,6 +552,7 @@
   "billing.group.attach.confirmTitle": "{org} naar deze factuur verplaatsen?",
   "billing.group.attach.confirmFree": "{org} gaat meteen over op dit abonnement. Je hebt een plek die al betaald is, dus er valt nu niets te betalen.",
   "billing.group.attach.confirmCharge": "{org} gaat meteen over op dit abonnement en je factuur stijgt met de helft van je abonnementstarief — nu in rekening gebracht, naar rato van de rest van deze periode.",
+  "billing.group.attach.confirmChargeAmount": "Meteen, en je factuur gaat nu met {amount} omhoog, naar rato van de rest van deze periode.",
   "billing.group.attach.confirmAction": "Naar deze factuur verplaatsen",
   "billing.group.detach.confirmTitle": "{org} van deze factuur halen?",
   "billing.group.detach.confirmBody": "{org} houdt dit abonnement tot de al betaalde periode afloopt en valt daarna terug op Community. Er is geen restitutie, en de plek blijft van jou tot het abonnement verlengt. De eigenaar neemt de facturering over.",

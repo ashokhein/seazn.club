@@ -552,6 +552,7 @@
   "billing.group.attach.confirmTitle": "Déplacer {org} sur cette facture ?",
   "billing.group.attach.confirmFree": "{org} passe sur cette formule immédiatement. Vous avez une place déjà payée, il n’y a donc rien à payer maintenant.",
   "billing.group.attach.confirmCharge": "{org} passe sur cette formule immédiatement, et votre facture augmente de la moitié du tarif de votre formule — prélevé maintenant, au prorata du reste de la période.",
+  "billing.group.attach.confirmChargeAmount": "Immédiatement, et votre facture augmente de {amount} maintenant, au prorata du reste de la période.",
   "billing.group.attach.confirmAction": "La déplacer sur cette facture",
   "billing.group.detach.confirmTitle": "Retirer {org} de cette facture ?",
   "billing.group.detach.confirmBody": "{org} conserve cette formule jusqu’à la fin de la période déjà payée, puis revient à Community. Il n’y a pas de remboursement, et la place reste la vôtre jusqu’au renouvellement. Son propriétaire reprend sa facturation.",
