@@ -25,6 +25,8 @@ import {
 } from "@/lib/entitlements";
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
 import { hasLiveSubscription } from "@/lib/subscription-status";
+import { intervalForPrice } from "@/lib/billing-manage";
+import { sendTransferOfferEmail, sendTransferCompleteEmail } from "@/lib/email";
 
 interface GroupRow {
   id: string;
@@ -967,6 +969,19 @@ export async function offerGroupTransfer(args: {
     if (!si.client_secret) throw new HttpError(500, "Stripe returned no client secret");
     await sql`
       update billing_group_transfers set setup_intent_id = ${si.id} where id = ${claim.id}`;
+
+    // BEST-EFFORT notification. The offer is already committed above; email is a
+    // convenience, so a send failure (or a missing RESEND key, or a query blip)
+    // must never surface as a failed transfer. Everything below is swallowed.
+    await notifyTransferOfferRecipient({
+      subscriptionId,
+      actorUserId,
+      recipientId: recipient.id,
+      recipientEmail: recipient.email,
+    }).catch((err) => {
+      console.error("[billing-groups] transfer-offer email failed (best-effort):", err);
+    });
+
     return {
       status: "pending_card",
       subscription_id: subscriptionId,
@@ -983,6 +998,20 @@ export async function offerGroupTransfer(args: {
   await assertRecipientOwnsAnOrgInGroup(subscriptionId, recipient.id);
   const moved = await handOverGroup(group, recipient, null);
   await finishHandover(moved, recipient, null);
+
+  // BEST-EFFORT notification. The recipient accepted nothing — the group is now
+  // simply on their account and they pay for it — so this is a DIFFERENT,
+  // informational message from the offer email. The transfer is already
+  // committed above; a send failure must never surface as a failed transfer.
+  await notifyTransferCompleteRecipient({
+    subscriptionId,
+    actorUserId,
+    recipientId: recipient.id,
+    recipientEmail: recipient.email,
+  }).catch((err) => {
+    console.error("[billing-groups] transfer-complete email failed (best-effort):", err);
+  });
+
   return { status: "transferred", subscription_id: subscriptionId, owner_user_id: recipient.id };
 }
 
@@ -1113,6 +1142,31 @@ export async function revokeGroupTransfer(args: {
   return { revoked: true };
 }
 
+/**
+ * The cost the RECIPIENT is taking on, shown before they add a card.
+ *
+ * `charge_now_minor` is ALWAYS 0: accepting a transfer bills nothing now —
+ * handOverGroup only makes the incoming card the customer default, and the
+ * current period is already paid by the outgoing payer. Future renewals bill the
+ * new card, which is what `renewal` describes. Everything but `renewal` is read
+ * from our own tables; `renewal` is a best-effort Stripe quote, null whenever the
+ * group has no live subscription or Stripe cannot be reached.
+ */
+export interface TransferOfferSummary {
+  plan_key: string;
+  org_count: number;
+  currency: string;
+  renewal_date: number | null;
+  /** True when the group has a LIVE Stripe subscription. The recipient copy keys
+   *  off this, not `renewal_date`: a no-live group can carry a stale
+   *  `current_period_end`, and using the date as the discriminator would tell a
+   *  recipient who will never be billed that their card renews at the plan's
+   *  rate. `renewal_date === null` is not "no subscription". */
+  has_live_subscription: boolean;
+  charge_now_minor: 0;
+  renewal: { amount_minor: number; interval: "monthly" | "annual" } | null;
+}
+
 export interface PendingTransferOffer {
   setup_intent_id: string;
   subscription_id: string;
@@ -1122,6 +1176,68 @@ export interface PendingTransferOffer {
   to_user_id: string | null;
   expires_at: number | null;
   direction: "made_by_me" | "made_to_me";
+  /** Only ever populated for offers made TO the caller — the cost they are being
+   *  asked to take on. Null on the offerer's outgoing view. */
+  summary: TransferOfferSummary | null;
+}
+
+/**
+ * The renewal quote on a transfer summary: best-effort, and never throws out of
+ * the offers list. Only a group with a live subscription has anything to bill;
+ * for it, we read the item's price interval (the plan mapping first, the price's
+ * own `recurring.interval` as a fallback) and ask Stripe for the recurring-invoice
+ * total — the same steady-state figure the interval-change preview quotes. Any
+ * failure returns null; a hidden renewal line is better than a blank list.
+ */
+async function transferRenewalQuote(
+  group: GroupRow,
+): Promise<{ amount_minor: number; interval: "monthly" | "annual" } | null> {
+  if (!group.stripe_subscription_id || !hasLiveSubscription(group)) return null;
+  try {
+    const { item } = await subscriptionItem(group.stripe_subscription_id);
+    const priceId = item.price?.id ?? null;
+    const [plan] = await sql<
+      { stripe_price_id_monthly: string | null; stripe_price_id_annual: string | null }[]
+    >`select stripe_price_id_monthly, stripe_price_id_annual
+        from plans where key = ${group.plan_key}`;
+    let interval = plan ? intervalForPrice(priceId, plan) : null;
+    if (!interval) {
+      const recurring = item.price?.recurring?.interval;
+      interval = recurring === "year" ? "annual" : recurring === "month" ? "monthly" : null;
+    }
+    if (!interval) return null;
+    const preview = await getStripe().invoices.createPreview({
+      ...(group.stripe_customer_id ? { customer: group.stripe_customer_id } : {}),
+      subscription: group.stripe_subscription_id,
+      subscription_details: { items: [{ id: item.id }] },
+      preview_mode: "recurring",
+    });
+    return { amount_minor: preview.total, interval };
+  } catch (err) {
+    console.error(`[billing] could not quote transfer renewal for group ${group.id}`, err);
+    return null;
+  }
+}
+
+/** The recipient-facing cost of taking over a group — see TransferOfferSummary. */
+async function transferOfferSummary(subscriptionId: string): Promise<TransferOfferSummary | null> {
+  const group = await groupRow(subscriptionId);
+  if (!group) return null;
+  const [{ n }] = await sql<{ n: number }[]>`
+    select count(*)::int as n from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null`;
+  const renewal_date = group.current_period_end
+    ? Math.floor(new Date(group.current_period_end).getTime() / 1000)
+    : null;
+  return {
+    plan_key: group.plan_key,
+    org_count: n,
+    currency: group_currency(group),
+    renewal_date,
+    has_live_subscription: hasLiveSubscription(group),
+    charge_now_minor: 0,
+    renewal: await transferRenewalQuote(group),
+  };
 }
 
 /**
@@ -1168,6 +1284,19 @@ export async function listGroupTransferOffers(
   for (const r of rows) {
     const toMe = r.to_user_id === userId;
     let clientSecret: string | null = null;
+    // Only the recipient sees what they are taking on; the offerer already pays.
+    // Best-effort, exactly like the client_secret retrieve below: a DB blip in
+    // the count/quote must leave the offer visible (just without a summary), not
+    // blank the WHOLE list — an outage must not blank the list.
+    const summary = toMe
+      ? await transferOfferSummary(r.subscription_id).catch((err) => {
+          console.error(
+            `[billing] could not load transfer summary for group ${r.subscription_id}`,
+            err,
+          );
+          return null;
+        })
+      : null;
     if (toMe) {
       // Best-effort: an offer whose secret cannot be fetched is still worth
       // showing — the recipient can see it exists and ask for a new one — and a
@@ -1188,6 +1317,7 @@ export async function listGroupTransferOffers(
       to_user_id: r.to_user_id,
       expires_at: Math.floor(new Date(r.expires_at).getTime() / 1000),
       direction: toMe ? "made_to_me" : "made_by_me",
+      summary,
     });
   }
   return offers;
@@ -1284,6 +1414,85 @@ async function finishHandover(
   // Re-derives the has_payment_method mirror from Stripe rather than assuming —
   // the same rule every other writer follows.
   await syncPaymentMethodFlagForSubscription(group.id);
+}
+
+/**
+ * An org IN THE GROUP the recipient can actually open, for the notification link.
+ *
+ * Prefers an org the RECIPIENT is a member of — the group's oldest org (the old
+ * "primary") may be one they cannot reach, sending them to a billing page that
+ * 403s. Falls back to the oldest live org only when they are a member of none
+ * (defensive: the link still lands somewhere valid, and the offer surfaces on any
+ * billing page they load). Returns the slug for the link and the name for the
+ * human group label; null when the group has no live org at all.
+ */
+async function recipientReachableOrg(
+  subscriptionId: string,
+  recipientId: string,
+): Promise<{ slug: string; name: string } | null> {
+  const [mine] = await sql<{ slug: string; name: string }[]>`
+    select o.slug, o.name from organizations o
+      join org_members m on m.org_id = o.id
+     where o.subscription_id = ${subscriptionId} and o.deleted_at is null
+       and m.user_id = ${recipientId}
+     order by o.created_at limit 1`;
+  if (mine) return mine;
+  const [primary] = await sql<{ slug: string; name: string }[]>`
+    select slug, name from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null
+     order by created_at limit 1`;
+  return primary ?? null;
+}
+
+/** Human name for the outgoing payer, with a neutral fallback. */
+async function payerDisplayName(actorUserId: string): Promise<string> {
+  const [payer] = await sql<{ display_name: string }[]>`
+    select display_name from users where id = ${actorUserId}`;
+  return payer?.display_name || "The current payer";
+}
+
+/** The billing settings URL for an org the recipient can reach. */
+function billingSettingsLink(slug: string): string {
+  const base = (
+    process.env.OAUTH_BASE_URL ||
+    process.env.NEXT_PUBLIC_BASE_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
+  return `${base}/o/${slug}/settings/billing`;
+}
+
+/** Fire the transfer-OFFER email to the recipient (live-sub path, two-phase).
+ *  Best-effort: the caller wraps this so nothing here can fail the offer. Links
+ *  to an org the recipient can reach in the group (see recipientReachableOrg),
+ *  and uses that org's name as the human label for the group. */
+async function notifyTransferOfferRecipient(args: {
+  subscriptionId: string;
+  actorUserId: string;
+  recipientId: string;
+  recipientEmail: string;
+}): Promise<void> {
+  const { subscriptionId, actorUserId, recipientId, recipientEmail } = args;
+  const org = await recipientReachableOrg(subscriptionId, recipientId);
+  if (!org) return; // no reachable org → no meaningful link to send.
+  const payerName = await payerDisplayName(actorUserId);
+  await sendTransferOfferEmail(recipientEmail, payerName, org.name, billingSettingsLink(org.slug));
+}
+
+/** Fire the transfer-COMPLETE email to the recipient (community / immediate
+ *  handover). Informational, not an offer: they accepted nothing and now simply
+ *  pay for the group. Best-effort — the caller wraps this so nothing here can
+ *  fail the already-committed transfer. Same recipient-reachable-org link. */
+async function notifyTransferCompleteRecipient(args: {
+  subscriptionId: string;
+  actorUserId: string;
+  recipientId: string;
+  recipientEmail: string;
+}): Promise<void> {
+  const { subscriptionId, actorUserId, recipientId, recipientEmail } = args;
+  const org = await recipientReachableOrg(subscriptionId, recipientId);
+  if (!org) return;
+  const payerName = await payerDisplayName(actorUserId);
+  await sendTransferCompleteEmail(recipientEmail, payerName, org.name, billingSettingsLink(org.slug));
 }
 
 async function transferRecipient(

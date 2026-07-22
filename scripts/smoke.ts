@@ -295,83 +295,40 @@ async function main() {
       (oldConsole.location ?? "").includes(`/o/${renamed.slug}`),
   );
 
-  // --- Billing groups (V310): the new org joined the PAYER'S group, it did not
-  // get one of its own. This is the whole point of the change — before V310 the
-  // pricing page promised "organisations you can create: 1 / 5 / 10" while orgs
-  // two and three were born `community` and each needed their own $19
-  // subscription. Nothing else in smoke would notice if that regressed: every
-  // other org here has its plan forced by setPlan, so a second org silently
-  // falling back to community would still pass every downstream assertion.
+  // --- Billing groups (#212): individual-by-default, sharing is opt-in. Before
+  // #212 (V309/V310) a Pro owner's second org was silently dropped onto the
+  // payer's EXISTING group and inherited Pro for the $9 tier the moment it was
+  // born. That auto-join is GONE: `createOrgForUser` now mints every new org its
+  // OWN community group, and joining a payer's group is a deliberate attach.
+  //
+  // This block proves the whole round trip in the NEW order — born individual,
+  // opt-in attached, detached back to individual — because nothing else in smoke
+  // would notice if the default regressed. Every other org here has its plan
+  // forced by setPlan, so a second org quietly auto-joining (or quietly failing
+  // to attach) would still pass every downstream assertion. Step 1 is exactly
+  // the #212 regression check the old block was missing: it used to assert org2
+  // was Pro straight after creation, which was the auto-join behaviour itself.
   {
+    // 1. THE DEFAULT (#212). A brand-new org is born on its OWN community bill,
+    // not the payer's Pro group. Its status is 'active' — a community group is a
+    // real, active subscription row that simply resolves to the free plan.
     const org2Sub = (await call(admin, `/api/orgs/${org2.id}/subscription`)) as {
       plan_key: string;
       status: string;
     };
     check(
-      "billing-group: a second org inherits the payer's plan, not community (V310)",
-      org2Sub.plan_key === "pro" && org2Sub.status === "active",
-    );
-    // Not merely the same plan NAME — the same resolved entitlements, through
-    // the group. A per-org plan column set to 'pro' would satisfy the check
-    // above; only the resolver proves the org is billing through the group.
-    const org2Ent = (await call(admin, `/api/orgs/${org2.id}/entitlements`)) as {
-      plan_key: string;
-      entitlements: Record<string, { enabled?: boolean; limit?: number | null }>;
-    };
-    check(
-      "billing-group: the second org resolves the group's entitlements",
-      org2Ent.plan_key === "pro" && org2Ent.entitlements["exports.branded"]?.enabled === true,
-    );
-    // Quotas stay PER ORG — that headroom is what the extra half-price seat
-    // buys, and confusing the two would make grouping look like a downgrade.
-    check(
-      "billing-group: quotas are per org, not shared across the group",
-      org2Ent.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 20,
+      "billing-group: a brand-new org starts on its own community bill, not the payer's group (#212)",
+      org2Sub.plan_key === "community" && org2Sub.status === "active",
     );
 
-    // Move it back OUT, onto a billing group of its own. Two reasons.
-    //
-    // It is the only group operation smoke can currently reach: detach takes
-    // just an org_id, while attach needs the target subscription_id and no
-    // endpoint returns one.
-    //
-    // And every suite below this point runs org2 as the FREE org — the v1 API
-    // 402 gate, the community theme checks, the division cap, the 'Powered by'
-    // attribution. Those read as community assertions and were written when a
-    // second org was born community; under V310 org2 is Pro through the group,
-    // and leaving it there turns eight paid-vs-free checks into assertions that
-    // silently prove nothing.
-    const detached = (await call(admin, "/api/billing/group/detach", "POST", {
-      org_id: org2.id,
-    })) as { subscription_id: string; cancelled_group: string | null };
-    check("billing-group: detach gives the org a group of its own", !!detached.subscription_id);
-    // The old group is still paying for org1, so it must NOT have been cancelled.
-    check("billing-group: detaching one org leaves the payer's group alive", detached.cancelled_group === null);
-    const afterDetach = (await call(admin, `/api/orgs/${org2.id}/subscription`)) as {
-      plan_key: string;
-    };
-    // No current_period_end and no comped_until on a SQL-set plan, so there is
-    // no paid-through date to inherit and Community is the only safe landing —
-    // detach must never mint a paid plan that nothing can ever expire.
-    check(
-      "billing-group: a detached org with no paid-through date lands on community",
-      afterDetach.plan_key === "community",
-    );
-
-    // --- ATTACH round trip. Detach above proves org2 gets a group of its own;
-    // this proves the payer can pull it back INTO the paid one — the listing,
-    // the plan inheritance, and that a repeat attach (the freed-slot path) is
-    // not refused. `GET /api/billing/groups` is what supplies the
-    // `subscription_id` the attach endpoint needs, since nothing else returns
-    // one (see that route's own doc comment).
-    //
-    // What this can't prove: whether a re-add into a freed slot is billed.
-    // That distinction only exists on a group with a LIVE Stripe subscription,
-    // and smoke sets plans by SQL and must never call the real Stripe API —
-    // so every group here has `has_live_subscription: false`, `charged` is
-    // always false, and the "paid seat stays yours" mechanics are the DB-backed
-    // unit suite's job (billing-group-move.test.ts), not smoke's. Smoke's job
-    // is that the HTTP round trip itself works.
+    // 2. The payer's group, and proof org2 is on a DIFFERENT one. `GET
+    // /api/billing/groups` is payer-gated and lists every group admin pays for,
+    // so both the Pro payer group (org) and org2's fresh community group appear
+    // here. It is also the only endpoint that returns the internal
+    // `subscription_id` the attach below needs — `/api/orgs/[id]/subscription`
+    // deliberately does not (it is member-gated and drops the payer's handles).
+    // Smoke sets plans by SQL and never calls Stripe, so the payer group carries
+    // no live subscription.
     type GroupListing = {
       id: string;
       quantity_paid: number;
@@ -380,12 +337,26 @@ async function main() {
     };
     const beforeAttach = (await call(admin, "/api/billing/groups")) as GroupListing[];
     const payerGroup = beforeAttach.find((g) => g.orgs.some((o) => o.id === org.id));
+    const org2Group = beforeAttach.find((g) => g.orgs.some((o) => o.id === org2.id));
     check("billing-group: GET /api/billing/groups lists the payer's group", !!payerGroup);
     check(
       "billing-group: the payer's group has no live Stripe subscription in smoke",
       payerGroup?.has_live_subscription === false,
     );
+    // The #212 default, at the group level: org2's subscription_id is a group of
+    // its own, distinct from the one the payer bills through.
+    check(
+      "billing-group: a brand-new org is on its own group, distinct from the payer's (#212)",
+      !!org2Group && !!payerGroup && org2Group.id !== payerGroup.id,
+    );
 
+    // 3. OPT-IN ATTACH. The payer pulls org2 into their Pro group explicitly —
+    // the deliberate step that used to happen automatically. No live Stripe
+    // subscription here, so nothing is charged: `charged` is always false, and
+    // whether a re-add into a freed slot is BILLED only exists on a group with a
+    // live subscription — that is the DB-backed unit suite's job
+    // (billing-group-move.test.ts), not smoke's. Smoke's job is that the HTTP
+    // round trip itself works and actually moves the org.
     const attached = (await call(admin, "/api/billing/group/attach", "POST", {
       org_id: org2.id,
       subscription_id: payerGroup!.id,
@@ -395,6 +366,38 @@ async function main() {
       attached.subscription_id === payerGroup!.id && attached.charged === false,
     );
 
+    // 4. ONLY NOW does org2 inherit the group's plan — and through the RESOLVER,
+    // not merely the same plan NAME. A per-org plan column set to 'pro' would
+    // satisfy the subscription check; only the entitlements resolver proves the
+    // org is billing through the group. Quotas stay PER ORG — that headroom is
+    // what the extra half-price seat buys, and confusing shared-vs-per-org would
+    // make grouping look like a downgrade.
+    const attachedSub = (await call(admin, `/api/orgs/${org2.id}/subscription`)) as {
+      plan_key: string;
+      status: string;
+    };
+    check(
+      "billing-group: an attached org inherits the payer's plan, not community",
+      attachedSub.plan_key === "pro" && attachedSub.status === "active",
+    );
+    const org2Ent = (await call(admin, `/api/orgs/${org2.id}/entitlements`)) as {
+      plan_key: string;
+      entitlements: Record<string, { enabled?: boolean; limit?: number | null }>;
+    };
+    check(
+      "billing-group: the attached org resolves the group's entitlements",
+      org2Ent.plan_key === "pro" && org2Ent.entitlements["exports.branded"]?.enabled === true,
+    );
+    check(
+      "billing-group: quotas are per org, not shared across the group",
+      org2Ent.entitlements["scheduling.ai.runs_per_division.max"]?.limit === 20,
+    );
+
+    // 5. The listing now shows BOTH orgs on the group, and quantity_paid is
+    // untouched (a relationship, not a magic number — see the AGENTS brief). It
+    // is only ever written once Stripe confirms the item, and this group has no
+    // live subscription, so an attach must leave it exactly where it was rather
+    // than inflate it to match the new (larger) org count.
     const afterAttach = (await call(admin, "/api/billing/groups")) as GroupListing[];
     const regrouped = afterAttach.find((g) => g.id === payerGroup!.id);
     check(
@@ -403,46 +406,37 @@ async function main() {
         regrouped.orgs.some((o) => o.id === org.id) &&
         regrouped.orgs.some((o) => o.id === org2.id),
     );
-    // Relationship, not a magic number (see AGENTS brief): quantity_paid is
-    // only ever written once Stripe confirms the item, and this group has no
-    // live subscription — so an attach must leave it exactly where it was,
-    // never inflate it to match the new (larger) org count.
     check(
       "billing-group: quantity_paid is untouched by an attach with no live subscription",
       regrouped?.quantity_paid === payerGroup!.quantity_paid,
     );
 
-    const reAttachedSub = (await call(admin, `/api/orgs/${org2.id}/subscription`)) as {
-      plan_key: string;
-      status: string;
-    };
-    check(
-      "billing-group: the attached org inherits the payer's plan, not its own previous one",
-      reAttachedSub.plan_key === "pro" && reAttachedSub.status === "active",
-    );
-
-    // Detach again — the group returns to just the payer's own org.
-    const detachedAgain = (await call(admin, "/api/billing/group/detach", "POST", {
+    // 6. DETACH back out, onto a billing group of its own. The old group is
+    // still paying for org1, so it must NOT be cancelled. And with no
+    // current_period_end and no comped_until on a SQL-set plan there is no
+    // paid-through date to inherit, so Community is the only safe landing —
+    // detach must never mint a paid plan that nothing can ever expire.
+    const detached = (await call(admin, "/api/billing/group/detach", "POST", {
       org_id: org2.id,
     })) as { subscription_id: string; cancelled_group: string | null };
+    check("billing-group: detach gives the org a group of its own", !!detached.subscription_id);
     check(
-      "billing-group: detaching the re-attached org succeeds again",
-      !!detachedAgain.subscription_id,
+      "billing-group: detaching one org leaves the payer's group alive",
+      detached.cancelled_group === null,
     );
+    const afterDetach = (await call(admin, `/api/orgs/${org2.id}/subscription`)) as {
+      plan_key: string;
+    };
     check(
-      "billing-group: detaching again still leaves the payer's group alive",
-      detachedAgain.cancelled_group === null,
-    );
-    const afterSecondDetach = (await call(admin, "/api/billing/groups")) as GroupListing[];
-    const solo = afterSecondDetach.find((g) => g.id === payerGroup!.id);
-    check(
-      "billing-group: the group is back down to one org",
-      !!solo && solo.orgs.length === 1 && solo.orgs[0].id === org.id,
+      "billing-group: a detached org with no paid-through date lands on community",
+      afterDetach.plan_key === "community",
     );
 
-    // RE-ATTACH the same org once more (the freed-slot path): the endpoint is
-    // idempotent-safe on its cap and ownership checks and must not refuse a
-    // repeat move just because the org has already been through this group.
+    // 7. FREED-SLOT re-attach idempotency. A detach frees the slot org2 held;
+    // the endpoint is idempotent-safe on its cap and ownership checks and must
+    // not refuse a repeat move just because the org has already been through
+    // this group. No live subscription, so the freed-slot re-add still charges
+    // nothing.
     const reAttached = (await call(admin, "/api/billing/group/attach", "POST", {
       org_id: org2.id,
       subscription_id: payerGroup!.id,
@@ -455,15 +449,27 @@ async function main() {
       "billing-group: the freed slot re-attach charges nothing (no live subscription)",
       reAttached.charged === false,
     );
+    const backOnGroup = (await call(admin, "/api/billing/groups")) as GroupListing[];
+    const regrouped2 = backOnGroup.find((g) => g.id === payerGroup!.id);
+    check(
+      "billing-group: the re-attached org is back on the payer's group",
+      !!regrouped2 && regrouped2.orgs.some((o) => o.id === org2.id),
+    );
 
-    // Restore the invariant everything below this point depends on: org2 back
-    // on a plain Community group of its own, exactly where the FIRST detach
-    // left it. v1Suite's 402 gate and the free-tier theme/attribution checks
-    // that follow all read org2 as the free org, right up until the explicit
-    // setPlan(org2, "pro") further down promotes it for jul3Suite onward.
+    // Restore the invariant everything below this point depends on: org2 back on
+    // a plain Community group of its own, exactly where the FIRST detach left it.
+    // Every suite AFTER this block runs org2 as the FREE org — the v1 API 402
+    // gate, the community theme checks, the division cap, the 'Powered by'
+    // attribution — right up until the explicit setPlan(org2, "pro") further down
+    // promotes it for jul3Suite onward. Leaving it attached would turn eight
+    // paid-vs-free checks into assertions that silently prove nothing.
     const finalDetach = (await call(admin, "/api/billing/group/detach", "POST", {
       org_id: org2.id,
     })) as { subscription_id: string; cancelled_group: string | null };
+    check(
+      "billing-group: detaching again still leaves the payer's group alive",
+      finalDetach.cancelled_group === null,
+    );
     check(
       "billing-group: the round trip leaves org2 detached again for the suites below",
       !!finalDetach.subscription_id,
