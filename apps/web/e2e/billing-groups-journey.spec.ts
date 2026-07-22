@@ -29,7 +29,8 @@ import {
 // the walkthrough cannot show a screen the product does not actually produce.
 //
 // ORG BUDGET: owned orgs are a SHARED, run-wide budget — cap and reasoning in
-// e2e/auth.setup.ts, "ORG BUDGET". This file mints TWO and reuses them.
+// e2e/auth.setup.ts, "ORG BUDGET". This file mints TWO it reuses throughout,
+// plus one transient org in step 02 (create-onto-an-existing-bill).
 const SHOTS = resolve(process.cwd(), "e2e/__shots__/billing-groups");
 
 test.describe.serial("billing groups — visual workflow", () => {
@@ -121,25 +122,28 @@ test.describe.serial("billing groups — visual workflow", () => {
     expect(b.status).toBeLessThan(300);
     otherOrg = b.data!.id;
 
-    // A new org JOINS its creator's existing group (lib/auth.ts
-    // createOrgForUser, `ownedGroups.length === 1`). So these two arrive on ONE
-    // bill together with the shared fixture's own org, and the walkthrough
-    // would open on a group of three with nothing to move in — no candidate
-    // button, no attach, no story. Break them apart so the journey starts where
-    // a real customer starts: separate organisations, separate bills.
-    await splitOrgIntoOwnGroupSql(payerOrg);
-    await splitOrgIntoOwnGroupSql(otherOrg);
+    // Individual by default (#212): every new org mints its OWN community group
+    // (lib/auth.ts createOrgForUser). So these two arrive on SEPARATE bills, with
+    // nothing to break apart — the journey opens where a real customer starts:
+    // separate organisations, separate bills. (Before #212 a second org joined
+    // its creator's existing group, and this step had to split them back out.)
+    const groups = await db((sql) =>
+      sql<{ id: string; subscription_id: string }[]>`
+        select id, subscription_id from organizations where id in (${payerOrg}, ${otherOrg})`,
+    );
+    const groupOf = (orgId: string) => groups.find((g) => g.id === orgId)!.subscription_id;
+    // The default IS separation: two freshly-created orgs sit on two bills.
+    expect(groupOf(payerOrg)).not.toBe(groupOf(otherOrg));
 
     // The payer's group goes Pro by SQL — buying a plan is checkout's job and
     // that DOES need Stripe. Everything after this point is the real product.
     const row = await db(async (sql) => {
-      const [org] = await sql<{ subscription_id: string }[]>`
-        select subscription_id from organizations where id = ${payerOrg}`;
+      const gid = groupOf(payerOrg);
       await sql`update subscriptions set plan_key = 'pro', status = 'active', quantity_paid = 1
-                 where id = ${org.subscription_id}`;
+                 where id = ${gid}`;
       const [g] = await sql<{ owner_user_id: string }[]>`
-        select owner_user_id from subscriptions where id = ${org.subscription_id}`;
-      return { groupId: org.subscription_id, ownerId: g.owner_user_id };
+        select owner_user_id from subscriptions where id = ${gid}`;
+      return { groupId: gid, ownerId: g.owner_user_id };
     });
     groupId = row.groupId;
     payerUserId = row.ownerId;
@@ -150,7 +154,44 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(panel, "one-org-on-the-bill");
   });
 
-  test("02 — moving an organisation in states the price before the click", async ({ page }) => {
+  test("02 — a new organisation can be created straight onto an existing bill", async ({ page }) => {
+    // Share AT CREATION (#212): the create-org form's "Add to an existing bill"
+    // choice POSTs `attachToGroupId`, and this drives that same server path
+    // (matching how every other step here issues requests). The org is born on
+    // the payer's paid group instead of a bill of its own.
+    const created = await apiJson<{ id: string; attach?: { ok: boolean; charged?: boolean } }>(
+      page.request,
+      "/api/orgs",
+      "POST",
+      { name: `Eastside ${TAG}`, attachToGroupId: groupId },
+    );
+    expect(created.status).toBeLessThan(300);
+    expect(created.data!.attach?.ok).toBe(true);
+    const thirdOrg = created.data!.id;
+
+    try {
+      // It really landed on the payer's group — one bill now covers both.
+      const landed = await db((sql) =>
+        sql<{ subscription_id: string }[]>`
+          select subscription_id from organizations where id = ${thirdOrg}`,
+      );
+      expect(landed[0].subscription_id).toBe(groupId);
+
+      const panel = await openBilling(page, payerOrg);
+      // The bill count rose from one to two, and both organisations are on it.
+      // quantity_paid stays 1: the group is not live, so nothing was billed.
+      await expect(panel.getByText("On this bill: 2 · Seats paid for: 1")).toBeVisible();
+      await expect(panel.getByText(`Riverside ${TAG}`)).toBeVisible();
+      await expect(panel.getByText(`Eastside ${TAG}`)).toBeVisible();
+      await shot(panel, "created-onto-an-existing-bill");
+    } finally {
+      // Restore the spine: the rest of the journey walks Riverside + Northside,
+      // so give Eastside a bill of its own again and leave the group at one org.
+      await splitOrgIntoOwnGroupSql(thirdOrg);
+    }
+  });
+
+  test("03 — moving an organisation in states the price before the click", async ({ page }) => {
     const panel = await openBilling(page, payerOrg);
     await panel.getByRole("button", { name: `Northside ${TAG}` }).click();
 
@@ -161,7 +202,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(dialog, "attach-confirm-charged");
   });
 
-  test("03 — the attach actually happens", async ({ page }) => {
+  test("04 — the attach actually happens", async ({ page }) => {
     const panel = await openBilling(page, payerOrg);
     await panel.getByRole("button", { name: `Northside ${TAG}` }).click();
     await confirmDialog(page, "Move it onto this bill");
@@ -175,7 +216,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(after, "two-orgs-on-one-bill");
   });
 
-  test("04 — the joined organisation inherits the plan on its own page", async ({ page }) => {
+  test("05 — the joined organisation inherits the plan on its own page", async ({ page }) => {
     // The point of the whole model: Northside did not buy anything, and is Pro.
     await activate(page, otherOrg);
     await page.goto("/settings/billing");
@@ -190,7 +231,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(page, "joined-org-is-pro");
   });
 
-  test("05 — removing an organisation says what it costs and what it does not", async ({
+  test("06 — removing an organisation says what it costs and what it does not", async ({
     page,
   }) => {
     const panel = await openBilling(page, payerOrg);
@@ -204,7 +245,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(dialog, "detach-confirm");
   });
 
-  test("06 — the detach happens, and the organisation lands on its own plan", async ({ page }) => {
+  test("07 — the detach happens, and the organisation lands on its own plan", async ({ page }) => {
     const panel = await openBilling(page, payerOrg);
     const row = panel.locator("li").filter({ hasText: `Northside ${TAG}` });
     await row.getByRole("button", { name: "Remove from this bill" }).click();
@@ -233,7 +274,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     expect(moved[0].subscription_id).not.toBe(groupId);
   });
 
-  test("07 — an organisation that already pays for itself cannot just join", async ({ page }) => {
+  test("08 — an organisation that already pays for itself cannot just join", async ({ page }) => {
     // attachOrgToGroup refuses this with a 409: Stripe cannot move credit
     // between customers, and refunding an annual plan mid-term could be $130+.
     // The panel used to offer it anyway, so the payer agreed to a charge and
@@ -259,7 +300,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     }
   });
 
-  test("08 — a paid slot that has been freed is stated, with its number", async ({ page }) => {
+  test("09 — a paid slot that has been freed is stated, with its number", async ({ page }) => {
     // Three seats were paid for at renewal; two organisations left the bill.
     // This is the state that makes the next move free, and the reason the panel
     // never merges the two counts into "1 of 3".
@@ -270,7 +311,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(panel, "freed-slots");
   });
 
-  test("09 — moving into a slot already paid for is offered as free", async ({ page }) => {
+  test("10 — moving into a slot already paid for is offered as free", async ({ page }) => {
     const panel = await openBilling(page, payerOrg);
     await panel.getByRole("button", { name: `Northside ${TAG}` }).click();
 
@@ -286,7 +327,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(after, "re-attached-into-a-freed-slot");
   });
 
-  test("10 — a full plan says so instead of offering a move it would refuse", async ({ page }) => {
+  test("11 — a full plan says so instead of offering a move it would refuse", async ({ page }) => {
     // groupOrgLimit resolves through the OLDEST org in the group.
     await setEntitlementOverrideSql(payerOrg, "orgs.max_owned", 2);
     try {
@@ -300,7 +341,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     }
   });
 
-  test("11 — with nobody else owning an org here, the handover explains itself", async ({
+  test("12 — with nobody else owning an org here, the handover explains itself", async ({
     page,
   }) => {
     const panel = await openBilling(page, payerOrg);
@@ -310,7 +351,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(panel, "handover-no-recipients");
   });
 
-  test("12 — handing the whole bill to someone else", async ({ page }) => {
+  test("13 — handing the whole bill to someone else", async ({ page }) => {
     // Give Northside a different owner, which is what makes them a candidate.
     // Ownership of an ORG is separate from who pays, and it is the only consent
     // in the no-card handover path.
@@ -367,7 +408,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     }
   });
 
-  test("13 — the panel on a phone", async ({ page }) => {
+  test("14 — the panel on a phone", async ({ page }) => {
     await setGroupSeatsPaidSql(groupId, 3);
     await page.setViewportSize({ width: 390, height: 844 });
     const panel = await openBilling(page, payerOrg);
@@ -379,7 +420,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
   });
 
-  test("14 — what the pricing page promises about it", async ({ page }) => {
+  test("15 — what the pricing page promises about it", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/pricing");
     const row = page.getByText("Organisations on one bill").first();
@@ -388,7 +429,7 @@ test.describe.serial("billing groups — visual workflow", () => {
     await shot(page, "pricing-row");
   });
 
-  test("15 — the help page a customer lands on", async ({ page }) => {
+  test("16 — the help page a customer lands on", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await page.goto("/help/billing/groups");
     await expect(page.getByRole("heading").first()).toBeVisible({ timeout: 20_000 });

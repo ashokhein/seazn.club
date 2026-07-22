@@ -588,8 +588,8 @@ describe.skipIf(!HAS_DB)("two attaches racing", () => {
     // the attach reads the pre-detach group and overwrites the detach's write:
     // the group the detach minted is left holding nothing, is invisible to
     // dropEmptyGroup (which only looks at the group the attach moved FROM), and
-    // its owner now holds two groups — after which createOrgForUser joins
-    // neither.
+    // its owner now holds two groups — orphaned billing that no create path
+    // reclaims (createOrgForUser always mints a fresh group of its own).
     //
     // The interleave is FORCED rather than hoped for. Firing the two at once
     // leaves a window of microseconds between the read and the write and passes
@@ -1270,22 +1270,22 @@ describe.skipIf(!HAS_DB)("quantity_paid across the cycle", () => {
 });
 
 describe.skipIf(!HAS_DB)("quantity drift", () => {
-  it("is billed for when a new org is created straight into a paid group", async () => {
-    // createOrgForUser puts the org into the creator's existing group. Its
-    // comment used to say callers reconcile the quantity afterwards; none did,
-    // so every org created this way was a seat nobody was billed for.
+  it("leaves a paid group's quantity untouched — a new org bills on its OWN group", async () => {
+    // Individual-by-default (#212): createOrgForUser no longer joins the
+    // creator's existing group, so it never adds a seat to — nor syncs the
+    // quantity of — a paid group. The new org lands on a fresh community group.
     const payer = await makeUser("payer");
     const group = await makeGroup(payer, { plan: "pro", stripeSubId: "sub_create_" + uniq() });
     await makeOrg(group, payer);
 
     const { createOrgForUser } = await import("@/lib/auth");
-    await createOrgForUser(payer, `Second ${uniq()}`);
+    const second = await createOrgForUser(payer, `Second ${uniq()}`);
 
-    expect(stripeMock.subscriptionsUpdate).toHaveBeenCalledTimes(1);
-    const [, params] = stripeMock.subscriptionsUpdate.mock
-      .calls[0] as unknown as [string, Stripe.SubscriptionUpdateParams];
-    expect(params.items).toEqual([{ id: stripeMock.state.itemId, quantity: 2 }]);
-    expect((await readGroup(group)).quantity_paid).toBe(2);
+    expect(stripeMock.subscriptionsUpdate).not.toHaveBeenCalled();
+    const [g] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${second.id}`;
+    expect(g.subscription_id).not.toBe(group); // its OWN new group
+    expect((await readGroup(group)).quantity_paid).toBe(1); // paid group untouched
   });
 
   it("is swept back into line by the reconcile cron, without issuing a credit", async () => {
@@ -1600,29 +1600,49 @@ describe.skipIf(!HAS_DB)("the connection pool", () => {
   );
 });
 
-describe.skipIf(!HAS_DB)("creating an org into an existing group", () => {
-  it("cannot exceed the group cap when two creations race", async () => {
-    // attachOrgToGroup locks the group row and counts under it; createOrgForUser
-    // checked the cap outside its transaction and inserted without the lock, so
-    // it walked straight around that design and two concurrent calls could land
-    // a Pro group with six orgs.
+describe.skipIf(!HAS_DB)("creating orgs, individual by default (#212)", () => {
+  it("gives two racing creations their OWN groups — never a shared one", async () => {
+    // The old auto-join locked the creator's group row and counted under it, so
+    // a race contended on one target. Individual-by-default mints a fresh group
+    // per creation, so there is no shared target: both succeed, each on its own
+    // group, and the creator's existing group is left untouched.
     const user = await makeUser("creator");
-    const group = await makeGroup(user, { plan: "pro", stripeSubId: null }); // cap 5
-    for (let i = 0; i < 4; i++) await makeOrg(group, user);
+    const group = await makeGroup(user, { plan: "pro", stripeSubId: null }); // per-user cap 5
+    for (let i = 0; i < 3; i++) await makeOrg(group, user); // owns 3, room for more
 
     const { createOrgForUser } = await import("@/lib/auth");
     const results = await Promise.allSettled([
       createOrgForUser(user, `Race A ${uniq()}`),
       createOrgForUser(user, `Race B ${uniq()}`),
     ]);
-    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
-    expect((results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason)
-      .toBeInstanceOf(PaymentRequiredError);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(2);
 
+    const a = (results[0] as PromiseFulfilledResult<{ id: string }>).value;
+    const b = (results[1] as PromiseFulfilledResult<{ id: string }>).value;
+    const [ga] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${a.id}`;
+    const [gb] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${b.id}`;
+    expect(ga.subscription_id).not.toBe(gb.subscription_id); // each its OWN group
+    expect(ga.subscription_id).not.toBe(group);
+    expect(gb.subscription_id).not.toBe(group);
     const [{ n }] = await sql<{ n: string }[]>`
       select count(*)::text as n from organizations
        where subscription_id = ${group} and deleted_at is null`;
-    expect(Number(n)).toBe(5);
+    expect(Number(n)).toBe(3); // creator's original group untouched
+  });
+
+  it("is still bounded by the per-user cap once the user is at it", async () => {
+    // The group cap no longer bites on this path; assertMayOwnAnotherOrg is what
+    // refuses a user who is already at their plan's orgs.max_owned.
+    const user = await makeUser("capped");
+    const group = await makeGroup(user, { plan: "pro", stripeSubId: null }); // per-user cap 5
+    for (let i = 0; i < 5; i++) await makeOrg(group, user); // at the cap
+
+    const { createOrgForUser } = await import("@/lib/auth");
+    await expect(createOrgForUser(user, `Over ${uniq()}`)).rejects.toBeInstanceOf(
+      PaymentRequiredError,
+    );
   });
 });
 

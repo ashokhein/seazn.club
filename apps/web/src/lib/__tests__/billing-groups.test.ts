@@ -223,9 +223,9 @@ describe.skipIf(!HAS_DB)("the per-user cap and the per-group cap are different g
     }
     expect((await groupIdsOwnedBy(userId)).length).toBe(2);
 
-    // createOrgForUser only consults the group cap when the user owns EXACTLY
-    // one group; with two, the new org would land in a brand-new group — and a
-    // new group has nothing to exceed, so the group guard waves it through.
+    // createOrgForUser is individual-by-default (#212): every new org mints its
+    // OWN community group, so no group cap is ever consulted on this path — a
+    // fresh group has nothing to exceed. The per-USER cap is the only guard.
     const [{ id: emptyGroup }] = await sql<{ id: string }[]>`
       insert into subscriptions (owner_user_id, plan_key, status)
       values (${userId}, 'community', 'active') returning id`;
@@ -237,6 +237,34 @@ describe.skipIf(!HAS_DB)("the per-user cap and the per-group cap are different g
     await expect(createOrgForUser(userId, `Third ${s}`)).rejects.toBeInstanceOf(
       PaymentRequiredError,
     );
+  });
+});
+
+describe.skipIf(!HAS_DB)("individual-per-org is the default (#212)", () => {
+  it("a second org does NOT join the first — each gets its own group", async () => {
+    const { createOrgForUser } = await import("@/lib/auth");
+    const s = uniq();
+    // Seed a user who owns exactly one PRO group with one org, so the OLD code
+    // would auto-join the second org onto it.
+    const [{ id: userId }] = await sql<{ id: string }[]>`
+      insert into users (email, display_name, email_verified)
+      values (${`indiv-${s}@test.local`}, 'Indiv', true) returning id`;
+    const first = await createOrgForUser(userId, `First ${s}`);
+    // Lift the per-user cap so creation is allowed (community caps at 1 org).
+    await sql`update subscriptions set plan_key = 'pro'
+               where id = (select subscription_id from organizations where id = ${first.id})`;
+
+    const second = await createOrgForUser(userId, `Second ${s}`);
+
+    const [f] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${first.id}`;
+    const [g] = await sql<{ subscription_id: string }[]>`
+      select subscription_id from organizations where id = ${second.id}`;
+    expect(g.subscription_id).not.toBe(f.subscription_id); // its OWN group
+    const [cnt] = await sql<{ n: string }[]>`
+      select count(*)::text as n from organizations
+       where subscription_id = ${f.subscription_id} and deleted_at is null`;
+    expect(cnt.n).toBe("1"); // first group unchanged
   });
 });
 
