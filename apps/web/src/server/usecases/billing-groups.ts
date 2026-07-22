@@ -25,6 +25,7 @@ import {
 } from "@/lib/entitlements";
 import { activeOrgCount, assertWithinGroupCap, groupOrgLimit } from "@/lib/billing-group";
 import { hasLiveSubscription } from "@/lib/subscription-status";
+import { intervalForPrice } from "@/lib/billing-manage";
 
 interface GroupRow {
   id: string;
@@ -1113,6 +1114,25 @@ export async function revokeGroupTransfer(args: {
   return { revoked: true };
 }
 
+/**
+ * The cost the RECIPIENT is taking on, shown before they add a card.
+ *
+ * `charge_now_minor` is ALWAYS 0: accepting a transfer bills nothing now —
+ * handOverGroup only makes the incoming card the customer default, and the
+ * current period is already paid by the outgoing payer. Future renewals bill the
+ * new card, which is what `renewal` describes. Everything but `renewal` is read
+ * from our own tables; `renewal` is a best-effort Stripe quote, null whenever the
+ * group has no live subscription or Stripe cannot be reached.
+ */
+export interface TransferOfferSummary {
+  plan_key: string;
+  org_count: number;
+  currency: string;
+  renewal_date: number | null;
+  charge_now_minor: 0;
+  renewal: { amount_minor: number; interval: "monthly" | "annual" } | null;
+}
+
 export interface PendingTransferOffer {
   setup_intent_id: string;
   subscription_id: string;
@@ -1122,6 +1142,67 @@ export interface PendingTransferOffer {
   to_user_id: string | null;
   expires_at: number | null;
   direction: "made_by_me" | "made_to_me";
+  /** Only ever populated for offers made TO the caller — the cost they are being
+   *  asked to take on. Null on the offerer's outgoing view. */
+  summary: TransferOfferSummary | null;
+}
+
+/**
+ * The renewal quote on a transfer summary: best-effort, and never throws out of
+ * the offers list. Only a group with a live subscription has anything to bill;
+ * for it, we read the item's price interval (the plan mapping first, the price's
+ * own `recurring.interval` as a fallback) and ask Stripe for the recurring-invoice
+ * total — the same steady-state figure the interval-change preview quotes. Any
+ * failure returns null; a hidden renewal line is better than a blank list.
+ */
+async function transferRenewalQuote(
+  group: GroupRow,
+): Promise<{ amount_minor: number; interval: "monthly" | "annual" } | null> {
+  if (!group.stripe_subscription_id || !hasLiveSubscription(group)) return null;
+  try {
+    const { item } = await subscriptionItem(group.stripe_subscription_id);
+    const priceId = item.price?.id ?? null;
+    const [plan] = await sql<
+      { stripe_price_id_monthly: string | null; stripe_price_id_annual: string | null }[]
+    >`select stripe_price_id_monthly, stripe_price_id_annual
+        from plans where key = ${group.plan_key}`;
+    let interval = plan ? intervalForPrice(priceId, plan) : null;
+    if (!interval) {
+      const recurring = item.price?.recurring?.interval;
+      interval = recurring === "year" ? "annual" : recurring === "month" ? "monthly" : null;
+    }
+    if (!interval) return null;
+    const preview = await getStripe().invoices.createPreview({
+      ...(group.stripe_customer_id ? { customer: group.stripe_customer_id } : {}),
+      subscription: group.stripe_subscription_id,
+      subscription_details: { items: [{ id: item.id }] },
+      preview_mode: "recurring",
+    });
+    return { amount_minor: preview.total, interval };
+  } catch (err) {
+    console.error(`[billing] could not quote transfer renewal for group ${group.id}`, err);
+    return null;
+  }
+}
+
+/** The recipient-facing cost of taking over a group — see TransferOfferSummary. */
+async function transferOfferSummary(subscriptionId: string): Promise<TransferOfferSummary | null> {
+  const group = await groupRow(subscriptionId);
+  if (!group) return null;
+  const [{ n }] = await sql<{ n: number }[]>`
+    select count(*)::int as n from organizations
+     where subscription_id = ${subscriptionId} and deleted_at is null`;
+  const renewal_date = group.current_period_end
+    ? Math.floor(new Date(group.current_period_end).getTime() / 1000)
+    : null;
+  return {
+    plan_key: group.plan_key,
+    org_count: n,
+    currency: group_currency(group),
+    renewal_date,
+    charge_now_minor: 0,
+    renewal: await transferRenewalQuote(group),
+  };
 }
 
 /**
@@ -1168,6 +1249,8 @@ export async function listGroupTransferOffers(
   for (const r of rows) {
     const toMe = r.to_user_id === userId;
     let clientSecret: string | null = null;
+    // Only the recipient sees what they are taking on; the offerer already pays.
+    const summary = toMe ? await transferOfferSummary(r.subscription_id) : null;
     if (toMe) {
       // Best-effort: an offer whose secret cannot be fetched is still worth
       // showing — the recipient can see it exists and ask for a new one — and a
@@ -1188,6 +1271,7 @@ export async function listGroupTransferOffers(
       to_user_id: r.to_user_id,
       expires_at: Math.floor(new Date(r.expires_at).getTime() / 1000),
       direction: toMe ? "made_to_me" : "made_by_me",
+      summary,
     });
   }
   return offers;
