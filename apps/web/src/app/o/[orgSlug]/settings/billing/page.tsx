@@ -210,11 +210,6 @@ export default async function BillingPage({
           <h1 className="page-title">
             {t(dict, "billing.title")}
           </h1>
-          {/* Quiet trust signal, not a headline: card entry never touches our
-              servers (SAQ A), and saying so belongs above the plan card. */}
-          <p className="mt-1 text-xs text-slate-500">
-            {t(dict, "billing.poweredByStripe")}
-          </p>
         </div>
 
         {justCheckedOut && (

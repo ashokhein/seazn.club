@@ -76,21 +76,20 @@ export async function MarketingFooter({ lang = "en" }: { lang?: string }) {
             </div>
           ))}
         </div>
-        <div className="mt-10 flex flex-col items-center justify-between gap-2 border-t border-[#2b1d5c] pt-6 text-xs text-[#8d7fc0] sm:flex-row">
+        <div className="mt-10 flex flex-col items-center justify-between gap-3 border-t border-[#2b1d5c] pt-6 text-xs text-[#8d7fc0] sm:flex-row">
           <span>{t(d, "footer.rights", { year: new Date().getFullYear() })}</span>
-          <LocaleSwitcher />
+          {/* Language picker sits alongside the official "Powered by Stripe"
+              lockup (white variant for the night slab, language-neutral image)
+              — trust line and locale share one row. */}
+          <div className="flex items-center gap-4">
+            <LocaleSwitcher />
+            <PoweredByStripe
+              variant="white"
+              width={104}
+              className="inline-block opacity-80 transition hover:opacity-100"
+            />
+          </div>
           <span className="mk-display tracking-[0.2em]">{t(d, "footer.tagline")}</span>
-        </div>
-        {/* Trust line: entry fees run on Stripe (Checkout + Connect) — say so
-            where the whole site signs off. Quiet by design, dead-centered. */}
-        <div className="mt-4 flex w-full justify-center">
-          {/* Official "Powered by Stripe" lockup, white variant for the night
-              slab. A language-neutral image, so no localized lead-in here. */}
-          <PoweredByStripe
-            variant="white"
-            width={112}
-            className="inline-block opacity-80 transition hover:opacity-100"
-          />
         </div>
       </div>
     </footer>

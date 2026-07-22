@@ -534,7 +534,6 @@
   "role.viewer": "Viewer",
   "role.scorer": "Scorer",
   "billing.title": "Plan & Billing",
-  "billing.poweredByStripe": "Payments powered by Stripe",
   "billing.checkoutComplete": "Checkout complete — your plan is now",
   "billing.trialSuffix": " (trial)",
   "billing.currentPlan": "Current plan",
