@@ -34,6 +34,8 @@ Ownership of an organisation and payment for it are separate things. If an organ
 
 ## Adding an organisation
 
+A new organisation starts on its **own** bill — its own plan and invoice. You choose to share a bill deliberately, never automatically: either when you create the organisation (pick "Add to an existing bill") or later from **Settings → Billing → Billing group**. You can also **leave** a bill later and go back to your own — see [Leaving a group](#leaving-a-group).
+
 Adding is done by someone who owns **both** the organisation being added and the group it's joining — admins run the competition, not the money.
 
 - The bill goes up by half the plan rate straight away, prorated to the rest of the period.
