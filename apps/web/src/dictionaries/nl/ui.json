@@ -997,7 +997,6 @@
   "orgNew.bill.separateHint": "Een eigen abonnement en factuur.",
   "orgNew.bill.addToExisting": "Toevoegen aan een bestaande factuur",
   "orgNew.bill.addToExistingHint": "Elke extra organisatie is voor de helft van de prijs op dezelfde kaart en factuur.",
-  "orgNew.bill.pickLabel": "Welke factuur?",
   "orgNew.bill.reasonPastDue": "Betaling te laat",
   "orgNew.bill.reasonCancelling": "Gepland om te annuleren",
   "orgNew.bill.reasonInactive": "Niet actief",

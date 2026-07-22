@@ -997,7 +997,6 @@
   "orgNew.bill.separateHint": "Its own plan and invoice.",
   "orgNew.bill.addToExisting": "Add to an existing bill",
   "orgNew.bill.addToExistingHint": "Every extra organisation is half price on the same card and invoice.",
-  "orgNew.bill.pickLabel": "Which bill?",
   "orgNew.bill.reasonPastDue": "Payment overdue",
   "orgNew.bill.reasonCancelling": "Scheduled to cancel",
   "orgNew.bill.reasonInactive": "Not active",

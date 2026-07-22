@@ -997,7 +997,6 @@
   "orgNew.bill.separateHint": "Su propio plan y factura.",
   "orgNew.bill.addToExisting": "Añadir a una factura existente",
   "orgNew.bill.addToExistingHint": "Cada organización adicional cuesta la mitad en la misma tarjeta y factura.",
-  "orgNew.bill.pickLabel": "¿Qué factura?",
   "orgNew.bill.reasonPastDue": "Pago pendiente",
   "orgNew.bill.reasonCancelling": "Programada para cancelarse",
   "orgNew.bill.reasonInactive": "No activa",

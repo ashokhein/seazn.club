@@ -1795,7 +1795,6 @@ export type DictionaryKey =
   | "orgNew.bill.chargeNow"
   | "orgNew.bill.legend"
   | "orgNew.bill.noneEligible"
-  | "orgNew.bill.pickLabel"
   | "orgNew.bill.reasonCancelling"
   | "orgNew.bill.reasonFull"
   | "orgNew.bill.reasonInactive"

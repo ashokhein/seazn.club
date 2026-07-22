@@ -997,7 +997,6 @@
   "orgNew.bill.separateHint": "Son propre forfait et sa propre facture.",
   "orgNew.bill.addToExisting": "Ajouter à une facture existante",
   "orgNew.bill.addToExistingHint": "Chaque organisation supplémentaire est à moitié prix sur la même carte et la même facture.",
-  "orgNew.bill.pickLabel": "Quelle facture ?",
   "orgNew.bill.reasonPastDue": "Paiement en retard",
   "orgNew.bill.reasonCancelling": "Annulation programmée",
   "orgNew.bill.reasonInactive": "Inactive",
