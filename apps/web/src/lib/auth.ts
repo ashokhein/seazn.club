@@ -255,7 +255,6 @@ export async function createOrgForUser(
   userId: string,
   name: string,
 ): Promise<Organization> {
-  await assertMayOwnAnotherOrg(userId);
   // Readable slugs can collide when two same-named orgs sign up concurrently
   // (check-then-insert race) — retry past the unique index, then salt.
   let org: Organization | undefined;
@@ -264,6 +263,16 @@ export async function createOrgForUser(
     const slug = attempt < 2 ? base : `${base}-${Math.random().toString(36).slice(2, 6)}`;
     try {
       org = await sql.begin(async (tx) => {
+        // #229 P0-1: serialize org creation per user. assertMayOwnAnotherOrg
+        // reads the quota BEFORE any row is written, so two concurrent creates
+        // both saw spare capacity and each minted an org + a Community group —
+        // busting orgs.max_owned and multiplying per-org free-tier grants. The
+        // transaction-scoped advisory lock (released on commit/rollback) makes a
+        // rival wait here until this create commits, so the check below always
+        // counts a just-created org. A failed check throws PaymentRequiredError,
+        // not a 23505 — the catch below rethrows it without retrying.
+        await tx`select pg_advisory_xact_lock(hashtext(${"org-create:" + userId}))`;
+        await assertMayOwnAnotherOrg(userId);
         const [s] = await tx<{ id: string }[]>`
           insert into subscriptions (owner_user_id, plan_key, status, quantity_paid)
           values (${userId}, 'community', 'active', 1)

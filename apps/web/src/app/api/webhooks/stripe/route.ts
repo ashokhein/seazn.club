@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
 import { getStripe } from "@/lib/stripe";
-import { sql } from "@/lib/db";
 import { runEvent } from "@/server/usecases/billing-events";
 
 // Signed Stripe webhook. The dispatch table lives in
 // server/usecases/billing-events.ts, shared with the staff console's
-// "process now" replay — this route only owns signature verification and
-// the already-processed fast path.
+// "process now" replay — this route only owns signature verification.
 export async function POST(req: Request) {
   const rawBody = await req.text();
   const sig = req.headers.get("stripe-signature");
@@ -24,14 +22,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
-  // Idempotency: skip if already recorded (processed or mid-flight).
-  const [existing] = await sql<{ id: string }[]>`
-    select id from billing_events where id = ${event.id}`;
-  if (existing) return NextResponse.json({ received: true });
-
   try {
-    // Records the row first, stamps processed_at only after the handler ran —
-    // a throw leaves it visible as "received" on /admin/billing-events.
+    // runEvent claims the event atomically and processes it exactly once
+    // (#229 P0-2); a duplicate or concurrent delivery is a no-op. It stamps
+    // processed_at only after the handler ran, so a throw leaves the row
+    // visible as "received" on /admin/billing-events for replay.
     await runEvent(event);
   } catch (err) {
     // Return 5xx so Stripe retries

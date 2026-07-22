@@ -828,32 +828,52 @@ async function resolveEventGroup(event: Stripe.Event): Promise<string | null> {
 }
 
 /**
- * Record + process one event, stamping processed_at only after the handler
- * ran (a throw leaves the row in the "received" state for the console).
+ * Record + process one event exactly once, stamping processed_at only after the
+ * handler ran (a throw leaves the row in the "received" state for the console).
  * Shared by the signed webhook and the staff replay.
+ *
+ * #229 P0-2: the claim is atomic. The webhook used to SELECT then INSERT ON
+ * CONFLICT DO NOTHING but process unconditionally, so two concurrent deliveries
+ * of the same event both ran the handler (a second dunning email/analytics
+ * event) while only one wrote the ledger row. Now a single statement either
+ * inserts a fresh row (leased now) or takes over a row that is still unprocessed
+ * AND whose lease has expired (a crashed attempt); a row already processed, or
+ * being processed under a live lease, matches nothing and returns no id. Only
+ * the caller that gets an id back runs the handler. Returns whether it did.
  */
-export async function runEvent(event: Stripe.Event): Promise<void> {
+export async function runEvent(event: Stripe.Event): Promise<boolean> {
   const orgId =
     (event.data.object as { metadata?: { org_id?: string } }).metadata?.org_id ?? null;
   const groupId = await resolveEventGroup(event);
-  await sql`
-    insert into billing_events (id, type, org_id, subscription_id, payload)
-    values (${event.id}, ${event.type}, ${orgId}, ${groupId}, ${JSON.stringify(event.data.object)})
-    on conflict (id) do nothing`;
+  const claimed = await sql<{ id: string }[]>`
+    insert into billing_events
+      (id, type, org_id, subscription_id, payload, processing_started_at)
+    values (${event.id}, ${event.type}, ${orgId}, ${groupId},
+            ${JSON.stringify(event.data.object)}, now())
+    on conflict (id) do update
+      set processing_started_at = now()
+      where billing_events.processed_at is null
+        -- Lease is shorter than the hourly stuck-event sweep, so a crash
+        -- mid-handler is recovered, but long enough to cover a slow handler.
+        and (billing_events.processing_started_at is null
+             or billing_events.processing_started_at < now() - interval '10 minutes')
+    returning id`;
+  if (claimed.length === 0) return false;
   await processStripeEvent(event);
   await sql`
     update billing_events set processed_at = now() where id = ${event.id}`;
+  return true;
 }
 
-/** Staff replay: skip events the ledger already saw through. */
+/** Staff replay: skip events the ledger already saw through; heal a stuck one. */
 export async function replayEvent(
   event: Stripe.Event,
 ): Promise<"processed" | "already_processed"> {
   const [existing] = await sql<{ processed_at: string | null }[]>`
     select processed_at from billing_events where id = ${event.id}`;
   if (existing?.processed_at) return "already_processed";
-  await runEvent(event);
-  return "processed";
+  // runEvent claims atomically; a live delivery may have taken the lease first.
+  return (await runEvent(event)) ? "processed" : "already_processed";
 }
 
 /** Ledger rows for a set of live Stripe event ids (the diff read). */
