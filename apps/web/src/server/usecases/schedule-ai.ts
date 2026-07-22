@@ -983,8 +983,10 @@ async function callModel(
  * returning best-so-far. Takes the pack + movable id set as data — never touches
  * the DB.
  *
- * @throws HttpError 503 (no ANTHROPIC_API_KEY), 422 AI_PLAN_FAILED (model
- *   refusal, or an un-correctable structural violation), 422 AI_PLAN_TIMEOUT.
+ * @throws HttpError 503 (the resolved AI provider is not configured — no
+ *   ANTHROPIC_API_KEY for an Anthropic rung, no OPENROUTER_API_KEY for an
+ *   OpenRouter rung), 422 AI_PLAN_FAILED (model refusal, or an un-correctable
+ *   structural violation), 422 AI_PLAN_TIMEOUT.
  */
 export async function runAiPlan(
   pack: SchedulePack,

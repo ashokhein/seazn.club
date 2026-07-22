@@ -6,8 +6,8 @@
 // touches a real model on EITHER provider path. The Next server under test is
 // pointed at it via SCHEDULING_AI_BASE_URL (Anthropic dialect) or
 // OPENROUTER_BASE_URL (OpenRouter dialect) — see playwright.config.ts's
-// webServer.env and the local run recipe in the spec. anthropicClient() in
-// schedule-ai.ts POSTs `${baseURL}/v1/messages`; openRouterProvider() in
+// webServer.env and the local run recipe in the spec. anthropicProvider() in
+// anthropic-provider.ts POSTs `${baseURL}/v1/messages`; openRouterProvider() in
 // openrouter-provider.ts POSTs `${baseURL}/chat/completions`. Which dialect
 // the app actually speaks is chosen by AI_PROVIDER, not by anything this
 // server does — both routes are always live here.
