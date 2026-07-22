@@ -192,7 +192,6 @@ export type DictionaryKey =
   | "billing.plus.f4"
   | "billing.plus.f5"
   | "billing.plusSupport"
-  | "billing.poweredByStripe"
   | "billing.pro.f1"
   | "billing.pro.f2"
   | "billing.pro.f3"
